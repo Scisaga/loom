@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"unicode/utf8"
 )
 
@@ -479,6 +480,76 @@ func BootstrapTransitionProofHash(proof *BootstrapTransitionProofV1ToV2) (string
 	return HashObject(DomainBootstrapTransitionProof, proof)
 }
 
+// NewBootstrapTransitionProof 使用原 v1 平台私钥签署完整 transition body。
+// key ID、digest 和 body hash 都从 exact bytes 复核，调用方不能只传一组自称匹配的摘要。
+func NewBootstrapTransitionProof(body BootstrapTransitionBodyV1ToV2,
+	platformKey ed25519.PrivateKey) (BootstrapTransitionProofV1ToV2, error) {
+	if len(platformKey) != ed25519.PrivateKeySize {
+		return BootstrapTransitionProofV1ToV2{}, errors.New("[bootstrap] v1 platform private key 无效")
+	}
+	public := platformKey.Public().(ed25519.PublicKey)
+	digest := sha256.Sum256(public)
+	if body.V1PlatformKeyDigest != fmt.Sprintf("sha256:%x", digest) {
+		return BootstrapTransitionProofV1ToV2{}, errors.New("[bootstrap] transition body 与 v1 platform key 不匹配")
+	}
+	bodyHash, err := BootstrapTransitionBodyHash(&body)
+	if err != nil {
+		return BootstrapTransitionProofV1ToV2{}, err
+	}
+	canonical, err := MarshalCanonical(body)
+	if err != nil {
+		return BootstrapTransitionProofV1ToV2{}, err
+	}
+	message, err := Frame(DomainBootstrapTransitionSignature, canonical)
+	if err != nil {
+		return BootstrapTransitionProofV1ToV2{}, err
+	}
+	proof := BootstrapTransitionProofV1ToV2{Body: body, BodyHash: bodyHash,
+		V1PlatformSignature: V1PlatformSignatureV1{KeyID: body.V1PlatformKeyID,
+			Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(platformKey, message))}}
+	if _, err := BootstrapTransitionProofHash(&proof); err != nil {
+		return BootstrapTransitionProofV1ToV2{}, err
+	}
+	return proof, nil
+}
+
+// NewInitialV2BootstrapHead 按 payload → transition → Head 的单向对象图构造
+// epoch 0/index 1 Head。QC 必须在该 Head 完成 durable commit 后另行形成。
+func NewInitialV2BootstrapHead(payload InitialV2HeadPayloadV1, proof BootstrapTransitionProofV1ToV2,
+	raftTerm int64, committedLogicalTime string) (HeadEntryV2, error) {
+	payloadHash, err := InitialV2HeadPayloadHash(&payload)
+	if err != nil {
+		return HeadEntryV2{}, err
+	}
+	transitionHash, err := BootstrapTransitionProofHash(&proof)
+	if err != nil {
+		return HeadEntryV2{}, err
+	}
+	if proof.Body.InitialV2HeadPayloadHash != payloadHash || !initialPayloadMatchesBootstrap(&proof.Body, &payload) {
+		return HeadEntryV2{}, errors.New("[bootstrap] transition 未绑定 exact initial payload")
+	}
+	context, err := MarshalCanonical(BootstrapHeadContextV1{Schema: 1, Kind: "bootstrap",
+		InitialV2HeadPayloadHash: payloadHash})
+	if err != nil {
+		return HeadEntryV2{}, err
+	}
+	return NewHeadEntry(HeadEntryBodyV2{Payload: HeadEntryPayloadV2{
+		Schema: 2, HeadKind: "bootstrap", ClusterID: payload.ClusterID,
+		RecoveryEpoch: payload.RecoveryEpoch, RecoveryStatementHash: payload.RecoveryStatementHash,
+		RecoveryPolicyHash: payload.RecoveryPolicyHash, ControlEpoch: payload.ControlEpoch,
+		ControlSetHash: payload.ControlSetHash, ControlPeerDirectoryHash: payload.ControlPeerDirectoryHash,
+		RaftTerm: raftTerm, RaftIndex: 1, PreviousLogEntryHash: EmptyHashV1,
+		ControlRevision: payload.ControlRevision, ParentHeadHash: EmptyHashV1,
+		OperationRoot: payload.OperationRoot, SnapshotHash: payload.SnapshotHash,
+		EffectiveSSOTHash: payload.EffectiveSSOTHash, DeviceViewsRoot: payload.DeviceViewsRoot,
+		AdminACLRoot: payload.AdminACLRoot, CAProfileRoot: payload.CAProfileRoot,
+		BootstrapIssuerRegistryRoot: payload.BootstrapIssuerRegistryRoot,
+		RenderContractVersion:       payload.RenderContractVersion, MinReaderVersion: payload.MinReaderVersion,
+		CommittedLogicalTime: committedLogicalTime, MaxClockSkewSeconds: payload.MaxClockSkewSeconds,
+		TransitionContext: context,
+	}, TransitionProofHash: transitionHash})
+}
+
 func VerifyBootstrapTransitionBundle(bundle *BootstrapTransitionBundleV1ToV2, platformKey ed25519.PublicKey, expectedPlatformKeyID, expectedMigrationAnchorDigest string) (string, error) {
 	if bundle == nil || bundle.Schema != 1 || len(platformKey) != ed25519.PublicKeySize {
 		return "", errors.New("[bootstrap] transition bundle/platform key 无效")
@@ -624,6 +695,52 @@ func VerifyBootstrapDeviceFloor(proof *BootstrapDeviceFloorProofV1, expectedDevi
 	}
 	leaf, _ := MarshalCanonical(proof.Leaf)
 	return VerifyMerkleInclusion(leaf, proof.LeafIndex, proof.TreeSize, path, root)
+}
+
+// BuildBootstrapDeviceFloorProofs 按 Device ID 原始字节排序并为每台存量 Device
+// 生成 RFC 6962 inclusion proof。返回副本，不改写调用方输入。
+func BuildBootstrapDeviceFloorProofs(values []BootstrapDeviceFloorLeafV1) (string, []BootstrapDeviceFloorProofV1, error) {
+	if len(values) == 0 {
+		return "", nil, errors.New("[bootstrap] v1 Device floor 不能为空")
+	}
+	leaves := append([]BootstrapDeviceFloorLeafV1(nil), values...)
+	sort.Slice(leaves, func(i, j int) bool { return leaves[i].DeviceID < leaves[j].DeviceID })
+	canonical := make([][]byte, len(leaves))
+	for i := range leaves {
+		leaf := &leaves[i]
+		if leaf.Schema != 1 || !validIdentifier(leaf.DeviceID, 128) || leaf.V1Generation < 1 {
+			return "", nil, errors.New("[bootstrap] v1 Device floor leaf 无效")
+		}
+		if i > 0 && leaves[i-1].DeviceID == leaf.DeviceID {
+			return "", nil, errors.New("[bootstrap] v1 Device floor leaf 重复")
+		}
+		if err := requireCanonicalHashes(leaf.V1SignedCurrentHash, leaf.V1PayloadHash); err != nil {
+			return "", nil, err
+		}
+		var err error
+		canonical[i], err = MarshalCanonical(*leaf)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	root := fmt.Sprintf("sha256:%x", MerkleRoot(canonical))
+	proofs := make([]BootstrapDeviceFloorProofV1, len(leaves))
+	for i := range leaves {
+		path, err := MerkleInclusionPath(canonical, int64(i))
+		if err != nil {
+			return "", nil, err
+		}
+		proofs[i] = BootstrapDeviceFloorProofV1{Schema: 1, Leaf: leaves[i], LeafIndex: int64(i),
+			TreeSize: int64(len(leaves)), AuditPath: make([]string, len(path))}
+		for j := range path {
+			proofs[i].AuditPath[j] = fmt.Sprintf("sha256:%x", path[j])
+		}
+		if err := VerifyBootstrapDeviceFloor(&proofs[i], leaves[i].DeviceID, leaves[i].V1Generation,
+			leaves[i].V1SignedCurrentHash, leaves[i].V1PayloadHash, root); err != nil {
+			return "", nil, err
+		}
+	}
+	return root, proofs, nil
 }
 
 func RecoveryTransitionProofHash(proof *RecoveryTransitionProofV1, previousPolicy *RecoveryPolicyV1) (string, error) {

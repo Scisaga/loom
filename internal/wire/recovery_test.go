@@ -28,6 +28,83 @@ func TestBootstrapTransitionBundleEstablishesExactLatchAuthority(t *testing.T) {
 	}
 }
 
+func TestBootstrapProducerBuildsExactTransitionHeadAndDeviceFloors(t *testing.T) {
+	bundle, _, _, _ := bootstrapBundleFixture(t)
+	_, platformPrivate := deterministicEd25519(0x21)
+	proof, err := NewBootstrapTransitionProof(bundle.TransitionProof.Body, platformPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !EqualCanonical(proof, bundle.TransitionProof) {
+		t.Fatal("正式 producer 与同源 bootstrap golden 的 transition proof 不一致")
+	}
+	head, err := NewInitialV2BootstrapHead(bundle.InitialHeadEntry.InitialPayload, proof,
+		bundle.InitialHeadEntry.Head.Body.Payload.RaftTerm,
+		bundle.InitialHeadEntry.Head.Body.Payload.CommittedLogicalTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !EqualCanonical(head, bundle.InitialHeadEntry.Head) {
+		t.Fatal("正式 producer 与同源 bootstrap golden 的 initial Head 不一致")
+	}
+
+	values := []BootstrapDeviceFloorLeafV1{
+		{Schema: 1, DeviceID: "demo-device-c", V1Generation: 7,
+			V1SignedCurrentHash: recoveryTestHash("current-c"), V1PayloadHash: recoveryTestHash("payload-c")},
+		{Schema: 1, DeviceID: "demo-device-a", V1Generation: 5,
+			V1SignedCurrentHash: recoveryTestHash("current-a"), V1PayloadHash: recoveryTestHash("payload-a")},
+		{Schema: 1, DeviceID: "demo-device-b", V1Generation: 6,
+			V1SignedCurrentHash: recoveryTestHash("current-b"), V1PayloadHash: recoveryTestHash("payload-b")},
+	}
+	root, proofs, err := BuildBootstrapDeviceFloorProofs(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proofs) != len(values) || proofs[0].Leaf.DeviceID != "demo-device-a" ||
+		proofs[1].Leaf.DeviceID != "demo-device-b" || proofs[2].Leaf.DeviceID != "demo-device-c" {
+		t.Fatalf("floor proofs 未按 Device ID 确定性排序: %+v", proofs)
+	}
+	secondRoot, secondProofs, err := BuildBootstrapDeviceFloorProofs([]BootstrapDeviceFloorLeafV1{values[1], values[2], values[0]})
+	if err != nil || root != secondRoot || !EqualCanonical(proofs, secondProofs) {
+		t.Fatal("同一 floor 集合的 root/proof 受输入遍历顺序影响")
+	}
+	for i := range proofs {
+		leaf := proofs[i].Leaf
+		if err := VerifyBootstrapDeviceFloor(&proofs[i], leaf.DeviceID, leaf.V1Generation,
+			leaf.V1SignedCurrentHash, leaf.V1PayloadHash, root); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestBootstrapProducerRejectsMissingDuplicateAndSplicedInputs(t *testing.T) {
+	if _, _, err := BuildBootstrapDeviceFloorProofs(nil); err == nil {
+		t.Fatal("空 v1 Device floor 被 producer 接受")
+	}
+	leaf := BootstrapDeviceFloorLeafV1{Schema: 1, DeviceID: "demo-device", V1Generation: 1,
+		V1SignedCurrentHash: recoveryTestHash("current"), V1PayloadHash: recoveryTestHash("payload")}
+	if _, _, err := BuildBootstrapDeviceFloorProofs([]BootstrapDeviceFloorLeafV1{leaf, leaf}); err == nil {
+		t.Fatal("重复 v1 Device floor 被 producer 接受")
+	}
+	bundle, _, _, _ := bootstrapBundleFixture(t)
+	_, platformPrivate := deterministicEd25519(0x21)
+	foreign := bundle.TransitionProof.Body
+	foreign.InitialV2HeadPayloadHash = recoveryTestHash("foreign-payload")
+	proof, err := NewBootstrapTransitionProof(foreign, platformPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewInitialV2BootstrapHead(bundle.InitialHeadEntry.InitialPayload, proof, 1,
+		"2026-09-11T00:00:00Z"); err == nil {
+		t.Fatal("拼接其他 initial payload 的 transition 被 producer 接受")
+	}
+	wrongKeyBody := bundle.TransitionProof.Body
+	_, wrongPrivate := deterministicEd25519(0x22)
+	if _, err := NewBootstrapTransitionProof(wrongKeyBody, wrongPrivate); err == nil {
+		t.Fatal("错误 v1 platform key 被 producer 接受")
+	}
+}
+
 func TestEmergencyRecoveryRequiresOldThresholdAndNewQC(t *testing.T) {
 	bootstrap, platformPublic, platformID, anchor := bootstrapBundleFixture(t)
 	if _, err := VerifyBootstrapTransitionBundle(&bootstrap, platformPublic, platformID, anchor); err != nil {
