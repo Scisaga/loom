@@ -10,6 +10,7 @@ import (
 	"errors"
 	"time"
 
+	"loom/internal/devicehttp"
 	"loom/internal/wire"
 )
 
@@ -148,8 +149,7 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 		return err
 	}
 	defer client.CloseIdleConnections()
-	shared := &PrivateDeviceHTTPClient{client: client.client, baseURL: client.baseURL}
-	observations, err := shared.PostDeviceReportWithObservations(ctx, envelope)
+	_, observations, err := devicehttp.PostReport(ctx, client.client, client.baseURL, envelope)
 	if err == nil && options.Observations != nil {
 		options.Observations(ctx, observations)
 	}

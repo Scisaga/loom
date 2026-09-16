@@ -50,9 +50,8 @@ internal class V2DeviceReporter(
     /** 配置响应只在共享 verifier 完成 QC/Merkle/floor 检查后进入 protected LKG。 */
     fun refreshConfiguration(): V2ConfigurationRefresh {
         val now = wireTime()
-        val plans = stateStore.privateControlPlans("device_config", now)
-        val delivery = client.getFirst(plans)
         val state = checkNotNull(stateStore.current()) { "[Android config] v2 Device state 尚未安装" }
+        val delivery = client.getFirst(state, now)
         val currentProfile = checkNotNull(stateStore.runtimeProfile()) { "[Android config] active state 缺 runtime" }
         val fetchPlan = Loomcore.prepareAndroidV2PrivateDeviceConfigFetchPlan(
             state,
@@ -139,6 +138,7 @@ internal class V2DeviceReporter(
         )
         journal.pending?.let { pending ->
             val retired = Loomcore.retireAndroidV2DeviceReport(state, keys.ensureIdentity(), pending, now)
+                ?: ByteArray(0)
             if (retired.isNotEmpty()) {
                 check(journal.nextSequence < Long.MAX_VALUE) { "[Android report] sequence 已耗尽" }
                 journal = journal.copy(retired = retired, nextSequence = journal.nextSequence + 1, pending = null)
@@ -152,8 +152,7 @@ internal class V2DeviceReporter(
             persistJournal(journal)
         }
 
-        val plans = stateStore.privateControlPlans("device_report", now)
-        val response = client.postFirst(plans, envelope)
+        val response = client.postFirst(state, envelope, now)
 
         // 服务端可能已经提交而本机尚未落盘；回读并比较 pending，禁止并发发送
         // 用同一 sequence 的另一份正文覆盖它。

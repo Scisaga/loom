@@ -116,17 +116,6 @@ class V2DeviceStateStore(context: Context) {
         )
     }
 
-    /** 只从 protected state 投影当前获权的 private overlay replicas。 */
-    @Synchronized
-    internal fun privateControlPlans(role: String, trustedTime: String): List<V2PrivateControlPlan> {
-        val state = checkNotNull(protected.get(STATE)) { "[Android control] v2 Device state 尚未安装" }
-        Loomcore.validateAndroidV2DeviceState(state)
-        return V2PrivateControlClient.decodePlans(
-            Loomcore.prepareAndroidV2PrivateControlPlans(state, keys.ensureIdentity(), role, trustedTime),
-            role,
-        )
-    }
-
     /** Verify a delivery without moving the durable current pointer. */
     @Synchronized
     internal fun preparePrivateDelivery(delivery: ByteArray): ByteArray {
