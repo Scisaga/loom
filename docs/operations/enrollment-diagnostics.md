@@ -18,3 +18,17 @@
    不使用空制品、伪造结果或静默回退旧协议。客户端排查不授权修改路由器/NAT 或追加业务探测。
 4. 服务端修改接入正式 daemon，完成当前授权的发布和相关正常流程验收；新版替换同时移除
    对应旧实现。真实耗时、节点及制品信息存入 `deploy/evidence/`，不在本页追加任务记录。
+
+## Android 静态制品下载
+
+先区分底层网络解析、TCP 建连、TLS 身份与 pin、HTTP 状态、制品摘要及安装验证。
+系统进程或构建机可达不证明 Android 应用可达；检查时保留应用身份、实际选中的底层
+`Network` 和失败异常链，不用另一进程的请求代替应用成功。
+
+需要进一步定位时，可显式运行
+[`ConfigMirrorDeviceInstrumentedTest`](../../clients/android/app/src/androidTest/java/io/github/scisaga/loom/ConfigMirrorDeviceInstrumentedTest.kt)：
+传入 `configMirror=true`，并在目标应用的外部文件目录提供管理员导出的
+`diagnostic.loom-config`。它使用现有身份验证配置交付物，通过正常 reader 对每个认证镜像
+下载一次运行制品，只写诊断结果，不激活配置、推进 floor 或产生选路观测。
+插桩运行会重启应用，须遵守 [ADB 操作边界](android-device.md)。测试框架返回成功只说明
+诊断执行完毕；实际下载结果看每个镜像的 `verified` 与异常链，配置生效和私有报告另行验收。
