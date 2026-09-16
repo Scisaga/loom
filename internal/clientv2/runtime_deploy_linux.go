@@ -156,6 +156,11 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 		plan.InventoryGuard = &deploy.InventoryGuard{Path: installStatePath, Absent: true}
 	}
 	plan.Files[installStatePath] = string(nextBody)
+	if installation.MigrationProof != nil {
+		if err := bindLinuxMigrationRetirement(plan, readMigrationManagedFile); err != nil {
+			return nil, err
+		}
+	}
 	return plan, nil
 }
 

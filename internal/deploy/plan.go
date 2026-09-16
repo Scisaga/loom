@@ -50,6 +50,8 @@ type Plan struct {
 	// apply 与 pull 都设置这道 guard：两者读 inventory 时持有的上层锁不同，
 	// 真正共享的 deploy.lock 要到脚本里才取得，必须在那之后再核对一次。
 	InventoryGuard *InventoryGuard
+	// 迁移同时绑定新旧清单及被接管的旧 unit；都在部署锁内验证后才修改文件。
+	AdditionalInventoryGuards []InventoryGuard
 	// InvalidateOnChange 是只在这次 desired/installed 文件集合真的有变化时，
 	// 与配置同事务备份并删除的本机坐标。备用 apply 用它清掉 applied 与
 	// rollout：失败恢复旧坐标，成功后节点不会拿旧快照号冒充当前配置。

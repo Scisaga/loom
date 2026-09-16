@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,6 +83,9 @@ func executeScript(t *testing.T, p *Plan, opts scriptRunOptions) scriptRunResult
 	}
 	if p.InventoryGuard != nil {
 		assertWithin(t, paths.target(p.InventoryGuard.Path), opts.allowedTargetRoot)
+	}
+	for _, guard := range p.AdditionalInventoryGuards {
+		assertWithin(t, paths.target(guard.Path), opts.allowedTargetRoot)
 	}
 	if opts.beforeRun != nil {
 		opts.beforeRun(paths)
@@ -521,33 +525,41 @@ func TestConcurrentDeploymentIsRejectedBeforeTouchingTargets(t *testing.T) {
 }
 
 func TestInventoryGuardRejectsConcurrentManifestChangeBeforeTouchingTargets(t *testing.T) {
-	dir := t.TempDir()
-	manifest := filepath.Join(dir, "manifest.json")
-	target := filepath.Join(dir, "app.conf")
-	if err := os.WriteFile(manifest, []byte("new inventory\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, []byte("healthy\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := &Plan{
-		Node:  "n1",
-		Files: map[string]string{target: "candidate\n"},
-		InventoryGuard: &InventoryGuard{
-			Path:   manifest,
-			SHA256: strings.Repeat("0", 64), // 控制端读完后，清单已被另一轮部署改写。
-		},
-	}
-	r := executeScript(t, p, scriptRunOptions{allowedTargetRoot: dir})
-	if r.err == nil {
-		t.Fatalf("清单乐观锁不匹配时必须失败：\n%s", r.output)
-	}
-	got, err := os.ReadFile(target)
-	if err != nil || string(got) != "healthy\n" {
-		t.Fatalf("清单变化后仍碰了线上目标：%q %v\n%s", got, err, r.output)
-	}
-	if !strings.Contains(r.output, "并发操作中变化") {
-		t.Fatalf("错误没有解释需要重试：\n%s", r.output)
+	for _, additional := range []bool{false, true} {
+		t.Run(fmt.Sprint(additional), func(t *testing.T) {
+			dir := t.TempDir()
+			manifest := filepath.Join(dir, "manifest.json")
+			target := filepath.Join(dir, "app.conf")
+			if err := os.WriteFile(manifest, []byte("new inventory\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("healthy\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			p := &Plan{
+				Node:  "n1",
+				Files: map[string]string{target: "candidate\n"},
+				InventoryGuard: &InventoryGuard{
+					Path:   manifest,
+					SHA256: strings.Repeat("0", 64), // 控制端读完后，清单已被另一轮部署改写。
+				},
+			}
+			if additional {
+				p.AdditionalInventoryGuards = []InventoryGuard{*p.InventoryGuard}
+				p.InventoryGuard = &InventoryGuard{Path: filepath.Join(dir, "new-inventory.json"), Absent: true}
+			}
+			r := executeScript(t, p, scriptRunOptions{allowedTargetRoot: dir})
+			if r.err == nil {
+				t.Fatalf("清单乐观锁不匹配时必须失败：\n%s", r.output)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil || string(got) != "healthy\n" {
+				t.Fatalf("清单变化后仍碰了线上目标：%q %v\n%s", got, err, r.output)
+			}
+			if !strings.Contains(r.output, "并发操作中变化") {
+				t.Fatalf("错误没有解释需要重试：\n%s", r.output)
+			}
+		})
 	}
 }
 

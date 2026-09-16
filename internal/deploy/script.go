@@ -449,15 +449,19 @@ func script(p *Plan, runID string, layout scriptPaths) string {
 	w("  rm -rf \"$STAGE\" \"$PREV\" || { echo '!! 已 committed，但清理事务材料失败' >&2; exit 1; }")
 	w("}")
 	w("")
+	guards := append([]InventoryGuard(nil), p.AdditionalInventoryGuards...)
 	if p.InventoryGuard != nil {
-		guardPath := layout.target(p.InventoryGuard.Path)
+		guards = append(guards, *p.InventoryGuard)
+	}
+	for _, guard := range guards {
+		guardPath := layout.target(guard.Path)
 		w("# apply 清单乐观锁:持有部署锁后确认差集依据没有被并发 pull 改写")
-		if p.InventoryGuard.Absent {
+		if guard.Absent {
 			w("[ ! -e %s ] || fail '目标安装清单已在并发操作中出现,请重试'", shq(guardPath))
 		} else {
 			w("[ -f %s ] || fail '目标安装清单已在并发操作中消失,请重试'", shq(guardPath))
 			w("guard_sum=$(sha256sum %s | awk '{print $1}')", shq(guardPath))
-			w("[ \"$guard_sum\" = %s ] || fail '目标安装清单已在并发操作中变化,请重试'", shq(p.InventoryGuard.SHA256))
+			w("[ \"$guard_sum\" = %s ] || fail '目标安装清单已在并发操作中变化,请重试'", shq(guard.SHA256))
 		}
 		w("")
 	}
