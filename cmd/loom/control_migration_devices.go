@@ -92,6 +92,12 @@ func (runtime *controlRuntime) prepareMigrationDevices(input *controlMigrationIn
 	if spec.ServerCAPEM != "" && !roots.AppendCertsFromPEM([]byte(spec.ServerCAPEM)) {
 		return errors.New("原服务器 CA 无效")
 	}
+	// 原节点观测与 v2 私有服务使用不同 CA；把已验证的原根一起认证迁移，
+	// 不得用新控制 TLS 根代替原观测身份。
+	if input.Application.ObservationCAPEM != "" && input.Application.ObservationCAPEM != spec.ServerCAPEM {
+		return errors.New("迁移输入替换了原服务器观测 CA")
+	}
+	input.Application.ObservationCAPEM = spec.ServerCAPEM
 	// 此文件由正式材料准备命令生成；profile 必须与其真实封装密钥相符。
 	var profile wire.DeviceCertificateProfileStateV1
 	if err := readCanonicalFile(filepath.Join(runtime.dir, "software-material", "device-ca-prepared.json"), 4<<20, &profile); err != nil {

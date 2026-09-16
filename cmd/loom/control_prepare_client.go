@@ -104,6 +104,9 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 	if err := wire.ValidateRuntimeCABundle(request.Input.ObservationCA); err != nil {
 		return empty, err
 	}
+	if application.ObservationCAPEM != "" && application.ObservationCAPEM != request.Input.ObservationCA {
+		return empty, errors.New("[配置生成] 观测 CA 与认证迁移的原根不一致")
+	}
 	ssot, err := model.Load([]byte(application.LegacySSOT))
 	if err != nil {
 		return empty, err

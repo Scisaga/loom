@@ -165,6 +165,10 @@ func (runtime *controlRuntime) migrateControlApplication(inputPath, adminDir, pl
 				return errors.New("逐设备请求不能混用手填迁移结果")
 			}
 			expected.Devices, expected.DeviceMigrations = input.Application.Devices, input.Application.DeviceMigrations
+			if expected.ObservationCAPEM != input.DeviceInputs.ServerCAPEM {
+				return errors.New("迁移请求不再对应原服务器观测 CA")
+			}
+			expected.ObservationCAPEM = input.Application.ObservationCAPEM
 		}
 		if input.Prepared == nil && !wire.EqualCanonical(expected, input.Application) {
 			return errors.New("迁移请求不再对应原 application 输入")

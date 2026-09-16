@@ -73,10 +73,14 @@ func (runtime *controlRuntime) verifyNodeReportObservation(payload []byte, ident
 	}
 	own := &decoded.Observation
 	active := identity.CurrentDeviceView.Payload.Active
-	if identity.Record.IdentityStatus != "active" || active == nil || !containsControlValue(active.Responsibilities.Values, "forward") || own.Node != identity.Record.DeviceID || len(runtime.controlTLS.Certificate) != 2 {
+	if identity.Record.IdentityStatus != "active" || active == nil || !containsControlValue(active.Responsibilities.Values, "forward") || own.Node != identity.Record.DeviceID {
 		return nil, errors.New("[节点报告] 原观测不属于当前活动 forward 身份")
 	}
-	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: runtime.controlTLS.Certificate[1]})
+	application, err := runtime.certifiedApplicationLocked()
+	if err != nil || application == nil || application.ObservationCAPEM == "" {
+		return nil, errors.Join(errors.New("[节点报告] 缺认证迁移的原观测 CA"), err)
+	}
+	ca := []byte(application.ObservationCAPEM)
 	trusted, err := observation.VerifyObservationAtLeast(own, ca, now, 10*time.Minute, 5)
 	if err != nil || !trusted.MeasurementsVerified {
 		return nil, errors.Join(errors.New("[节点报告] 原测量签名无效或已过期"), err)

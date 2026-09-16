@@ -26,6 +26,7 @@ type controlApplicationV1 struct {
 	ClusterID             string                                          `json:"cluster_id"`
 	LegacySSOT            string                                          `json:"legacy_ssot"`
 	LegacyRegistryHash    string                                          `json:"legacy_registry_hash"`
+	ObservationCAPEM      string                                          `json:"observation_ca_pem,omitempty"`
 	RecoveryPolicy        wire.RecoveryPolicyV1                           `json:"recovery_policy"`
 	RecoveryCustody       wire.RecoveryPrivateCustodyObjectV1             `json:"recovery_custody"`
 	Authorizations        []wire.AdminAuthorizationV1                     `json:"authorizations"`
@@ -125,11 +126,12 @@ func (application *controlApplicationV1) roots() (wire.RuntimeActivationRootsV1,
 	// Invitation/reservation/provisional 不授予业务访问；effective config 只含现有
 	// 配置与 completion 已激活的 Device projection（D104、D130）。
 	effective, err := wire.HashObject(controlEffectiveDomain, struct {
-		Schema     int                    `json:"schema"`
-		ClusterID  string                 `json:"cluster_id"`
-		LegacySSOT string                 `json:"legacy_ssot"`
-		Devices    []controlDeviceStateV1 `json:"devices"`
-	}{1, application.ClusterID, application.LegacySSOT, application.Devices})
+		Schema           int                    `json:"schema"`
+		ClusterID        string                 `json:"cluster_id"`
+		LegacySSOT       string                 `json:"legacy_ssot"`
+		Devices          []controlDeviceStateV1 `json:"devices"`
+		ObservationCAPEM string                 `json:"observation_ca_pem,omitempty"`
+	}{1, application.ClusterID, application.LegacySSOT, application.Devices, application.ObservationCAPEM})
 	if err != nil {
 		return wire.RuntimeActivationRootsV1{}, err
 	}
@@ -170,6 +172,11 @@ func (application *controlApplicationV1) validate() error {
 	}
 	if err := application.validateDeviceControlLinks(); err != nil {
 		return err
+	}
+	if application.ObservationCAPEM != "" {
+		if err := wire.ValidateRuntimeCABundle(application.ObservationCAPEM); err != nil {
+			return err
+		}
 	}
 	if _, err := wire.ParseHash(application.LegacyRegistryHash); err != nil {
 		return err

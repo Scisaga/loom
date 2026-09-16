@@ -108,18 +108,11 @@ func testControlDeviceRuntimeReports(t *testing.T, server bool) {
 		migration.DeviceCertificateProfileHash, _ = wire.DeviceCertificateProfileStateHash(&profile)
 		application.Devices[0].View.Active.IdentitySPKIHash = identityHash
 		if server {
-			var secrets controlDiskSecretsV1
-			if err := readCanonicalFile(filepath.Join(runtime.dir, controlSecretsName), 8<<20, &secrets); err != nil {
-				t.Fatal(err)
-			}
-			key, err := parsePrivateKeyPKCS8PEM([]byte(secrets.InternalCAPrivateKeyPKCS8PEM))
+			rootPEM, root, key, err := makeCertificateAuthority("Demo original observation CA", now.Add(-time.Hour), now.Add(365*24*time.Hour))
 			if err != nil {
 				t.Fatal(err)
 			}
-			root, err := x509.ParseCertificate(runtime.controlTLS.Certificate[1])
-			if err != nil {
-				t.Fatal(err)
-			}
+			application.ObservationCAPEM = string(rootPEM)
 			name := migration.DeviceID + ".node.internal"
 			template := &x509.Certificate{SerialNumber: big.NewInt(9), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}, NotBefore: root.NotBefore, NotAfter: root.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 			der, err := x509.CreateCertificate(rand.Reader, template, root, identity.Public(), key)
