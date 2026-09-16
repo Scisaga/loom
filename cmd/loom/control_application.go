@@ -33,6 +33,7 @@ type controlApplicationV1 struct {
 	EnrollmentService  wire.PrivateEnrollmentServiceRefV1      `json:"enrollment_service"`
 	InvitePolicy       wire.InviteIssuancePolicyV2             `json:"invite_policy"`
 	BootstrapIssuers   []wire.BootstrapIssuerAuthorizationV1   `json:"bootstrap_issuers"`
+	DistributionSets   []wire.DistributionEndpointSetV1        `json:"distribution_sets,omitempty"`
 	BootstrapCatalog   wire.BootstrapEndpointCatalogV1         `json:"bootstrap_catalog"`
 	Mirrors            []wire.DistributionMirrorRefV1          `json:"mirrors"`
 	Invites            []controlInviteStateV1                  `json:"invites"`
@@ -212,6 +213,22 @@ func (application *controlApplicationV1) validate() error {
 	}
 	if err := wire.ValidateDistributionMirrorRefs(application.Mirrors); err != nil {
 		return err
+	}
+	if application.DistributionSets != nil {
+		sets := make(map[string]wire.DistributionEndpointSetV1, len(application.DistributionSets))
+		for _, set := range application.DistributionSets {
+			hash, err := wire.DistributionEndpointSetHash(&set)
+			if err != nil || set.ClusterID != application.ClusterID {
+				return errors.New("分发 preimage 不属于当前网络或格式无效")
+			}
+			if _, found := sets[hash]; found {
+				return errors.New("重复的分发 preimage")
+			}
+			sets[hash] = set
+		}
+		if err := wire.ValidateDistributionMirrorBindings(application.ClusterID, application.Mirrors, sets); err != nil {
+			return err
+		}
 	}
 	if int64(len(application.Mirrors)) < application.InvitePolicy.MinimumDistributionMirrors ||
 		int64(len(application.Mirrors)) > application.InvitePolicy.MaximumDistributionMirrors {

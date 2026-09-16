@@ -168,8 +168,17 @@ signed current；Linux 另附原设备证书及原服务器 CA。它从原 regis
 在原 Raft 加载后生成，不能同时提供手填 Device view。生成的证书和 current 以内容摘要耐久保存，
 同一输入重试复用第一次迁移请求与回执，不重新签发，也不伪造 Enrollment。
 这一阶段生成的身份没有运行配置，须经正常配置发布后才能交付客户端使用。
-完整生产 application 的服务、catalog、public listener 及配置仍须来自经过验证的部署输入；
-客户端请求不是可直接提交的完整 application。接线进度以[实现对照](../development/implementation.md)为准。
+正常材料入口使用 `prepared` 与 `device_inputs`，`application` 留为零值且不另填恢复证明。
+`prepared` 包含 `prepare-migration-materials`、`prepare-recovery` 的完整输出，以及邀请 policy、
+bootstrap catalog/issuer、完整 distribution sets、mirror refs 和明确暂存的历史身份。迁移命令从
+原日志导出管理员的下一代授权，复用原身份、范围和有效期，仅开放本轮需要的非 DNS 操作。
+它验证目录与原 Head/QC、mirror 的 exact set/URL/pin，并回读实际 CA/TLS/issuer 私钥和封装
+存储；不能用只有 hash 的目录、另一套材料或手填 Device 结果代替。
+首次迁移请求保存后，重试复用原组装结果；原 SSOT/registry 的内容改变会被拒绝。
+
+公开安装计划及运行配置仍须来自真实部署输入。组装和认证不证明 public listener 已部署或
+通过外部验证，也不证明新设备已完成 Enrollment；这些接线与配置交付仍见
+[实现对照](../development/implementation.md)。
 
 本次不在用、尚未提供原 key 迁移请求的独立客户端可以在 `deferred_migrations` 中明确保留原
 设备 ID、平台与身份摘要。导入时必须匹配原 SSOT 和 registry；该记录不生成 v2 Device view、

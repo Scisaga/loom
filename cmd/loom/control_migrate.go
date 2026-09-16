@@ -27,6 +27,7 @@ type controlMigrationInputV1 struct {
 	Registry       string                              `json:"registry"`
 	Application    controlApplicationV1                `json:"application"`
 	RecoveryProofs []wire.RecoveryKeyPossessionProofV1 `json:"recovery_key_possession_proofs"`
+	Prepared       *controlMigrationPreparedV1         `json:"prepared,omitempty"`
 	DeviceInputs   *controlMigrationDeviceInputsV1     `json:"device_inputs,omitempty"`
 }
 
@@ -98,7 +99,14 @@ func (runtime *controlRuntime) migrateControlApplication(inputPath, adminDir, pl
 	if _, err := wire.DecodeStrict(raw, 64<<20, &input); err != nil {
 		return err
 	}
-	if input.Application.ClusterID != runtime.config.ClusterID {
+	clusterID := input.Application.ClusterID
+	if input.Prepared != nil {
+		if !wire.EqualCanonical(input.Application, controlApplicationV1{}) || len(input.RecoveryProofs) != 0 {
+			return errors.New("prepared 输入不能混用手填 application 或恢复证明")
+		}
+		clusterID = input.Prepared.ClusterID
+	}
+	if clusterID != runtime.config.ClusterID {
 		return errors.New("迁移输入不属于原网络")
 	}
 	inputHash, err := wire.HashObject("loom-control-migration-input-v1", input)
@@ -117,6 +125,11 @@ func (runtime *controlRuntime) migrateControlApplication(inputPath, adminDir, pl
 	var request controlMigrationRequestV1
 	retained, err := readOwnerOnlyFile(requestPath, 64<<20)
 	if errors.Is(err, os.ErrNotExist) {
+		if input.Prepared != nil {
+			if err := runtime.prepareMigrationApplication(&input); err != nil {
+				return err
+			}
+		}
 		if input.DeviceInputs != nil {
 			key, err := readKey(platformPath, ed25519.PrivateKeySize)
 			if err != nil {
@@ -153,7 +166,7 @@ func (runtime *controlRuntime) migrateControlApplication(inputPath, adminDir, pl
 			}
 			expected.Devices, expected.DeviceMigrations = input.Application.Devices, input.Application.DeviceMigrations
 		}
-		if !wire.EqualCanonical(expected, input.Application) {
+		if input.Prepared == nil && !wire.EqualCanonical(expected, input.Application) {
 			return errors.New("迁移请求不再对应原 application 输入")
 		}
 		input.Application = request.Activation.Application
