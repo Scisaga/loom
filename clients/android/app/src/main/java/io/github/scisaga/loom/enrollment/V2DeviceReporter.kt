@@ -8,7 +8,6 @@ import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONArray
 import org.json.JSONObject
-import java.time.Instant
 import java.util.Base64
 
 internal data class V2ConfigurationRefresh(
@@ -50,7 +49,7 @@ internal class V2DeviceReporter(
 
     /** 配置响应只在共享 verifier 完成 QC/Merkle/floor 检查后进入 protected LKG。 */
     fun refreshConfiguration(): V2ConfigurationRefresh {
-        val now = Instant.now().toString()
+        val now = wireTime()
         val plans = stateStore.privateControlPlans("device_config", now)
         val delivery = client.getFirst(plans)
         val state = checkNotNull(stateStore.current()) { "[Android config] v2 Device state 尚未安装" }
@@ -130,7 +129,7 @@ internal class V2DeviceReporter(
     fun sendHealth(profile: ManagedProfile, healthy: Boolean): V2ReportAccepted {
         check(profile.protocol == 2) { "[Android report] v2 reporter 拒绝 v1 profile" }
         val state = checkNotNull(stateStore.current()) { "[Android report] v2 Device state 尚未安装" }
-        val now = Instant.now().toString()
+        val now = wireTime()
         var journal = loadJournal(profile.nodeID) ?: ReportJournal(
             deviceID = profile.nodeID,
             lastAcceptedSequence = 0,

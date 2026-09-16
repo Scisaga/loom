@@ -38,7 +38,6 @@ import java.net.NoRouteToHostException
 import java.net.ProtocolException
 import java.net.SocketException
 import java.net.SocketTimeoutException
-import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLException
 
@@ -295,7 +294,7 @@ class EnrollmentManager private constructor(context: Context) {
         val canonical = Loomcore.canonicalizeV2(raw)
         val verified = Loomcore.verifyAndroidV2MigrationPackage(
             canonical, source.floor, source.platformKey, identity, wrapping.subjectPublicKeyInfo,
-            source.deviceID, Instant.now().toString(),
+            source.deviceID, wireTime(),
         )
         val delivery = JSONObject(verified.decodeToString())
         val configuration = delivery.getJSONObject("configuration")
@@ -324,7 +323,7 @@ class EnrollmentManager private constructor(context: Context) {
         val state = Loomcore.prepareAndroidV2MigrationInstallation(
             verified, source.floor, source.platformKey, identity, wrapping.subjectPublicKeyInfo,
             Loomcore.canonicalizeV2(credentials.toString().encodeToByteArray()), configs,
-            source.deviceID, Instant.now().toString(),
+            source.deviceID, wireTime(),
         )
         val profile = v2StateStore.installMigration(state)
         ready(profile, "已保留原设备身份并切换到 v2；连接后读取私有配置并上报状态")
@@ -346,7 +345,7 @@ class EnrollmentManager private constructor(context: Context) {
             }
             return
         }
-        val trustedTime = Instant.now().toString()
+        val trustedTime = wireTime()
         mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在下载并验证公开 bootstrap 证明…")
         val artifacts = V2MirrorFetcher(appContext).fetch(canonicalDescriptor, trustedTime)
         val pending = V2PendingEnrollment(
@@ -372,7 +371,7 @@ class EnrollmentManager private constructor(context: Context) {
         check(pending.claimCore != null && pending.progressStatus != null && pending.resumeExpected != null) {
             "本机 pending 尚未取得 certified reservation；不能使用 resume"
         }
-        val trustedTime = Instant.now().toString()
+        val trustedTime = wireTime()
         mutableStatus.value = EnrollmentStatus(
             EnrollmentPhase.CLAIMING,
             "正在下载并验证带外 resume authority…",
@@ -403,7 +402,7 @@ class EnrollmentManager private constructor(context: Context) {
         )
         val service = withTimeout(BOOTSTRAP_SERVICE_TIMEOUT_MS) { BootstrapServiceRegistry.await() }
         val network = service.prepareBootstrapNetwork(store::recordV2ConnectionAttempt)
-        val trustedTime = Instant.now().toString()
+        val trustedTime = wireTime()
         val session = try {
             Loomcore.newAndroidV2BootstrapSession(
                 pending.descriptor,
@@ -423,10 +422,10 @@ class EnrollmentManager private constructor(context: Context) {
                 pending.selectedUnderlay == underlayIdentity && pending.selectedTransport != null
             ) {
                 mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在恢复当前网络已验证的注册入口…")
-                session.restoreProbe(pending.selectedTransport, Instant.now().toString())
+                session.restoreProbe(pending.selectedTransport, wireTime())
             } else {
                 mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在验证当前网络的 HY2/Trojan 注册入口…")
-                session.probe(Instant.now().toString())
+                session.probe(wireTime())
             }
             pending = pending.withSelection(underlayIdentity, selection)
             store.putV2Pending(pending)
@@ -435,15 +434,15 @@ class EnrollmentManager private constructor(context: Context) {
             val preflightRequest = crypto.preparePreflight(
                 pending.descriptor,
                 pending.proofBundle,
-                Instant.now().toString(),
+                wireTime(),
             )
             mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在私有隧道内核对设备授权…")
-            val preflight = session.preflight(preflightRequest, Instant.now().toString())
+            val preflight = session.preflight(preflightRequest, wireTime())
             crypto.verifyPreflightBeforeKeys(
                 pending.descriptor,
                 pending.proofBundle,
                 preflight,
-                Instant.now().toString(),
+                wireTime(),
             )
             pending = pending
                 .withConnectionAttempts(session.connectionAttempts())
@@ -460,12 +459,12 @@ class EnrollmentManager private constructor(context: Context) {
                 checkNotNull(pending.preflightResponse),
                 checkNotNull(pending.requestID),
                 checkNotNull(pending.clientNonce),
-                Instant.now().toString(),
+                wireTime(),
             )
             pending = pending.withClaimCore(core)
             store.putV2Pending(pending)
 
-            val challenge = session.challenge(core, Instant.now().toString())
+            val challenge = session.challenge(core, wireTime())
             pending = pending.withConnectionAttempts(session.connectionAttempts())
             store.putV2Pending(pending)
             val submission = crypto.assembleClaimSubmission(
@@ -474,17 +473,17 @@ class EnrollmentManager private constructor(context: Context) {
                 checkNotNull(pending.preflightResponse),
                 core,
                 challenge,
-                Instant.now().toString(),
+                wireTime(),
             )
             mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在提交一次性 token 与 Keystore PoP…")
-            val result = session.submitClaim(submission, Instant.now().toString())
+            val result = session.submitClaim(submission, wireTime())
             val verifiedResult = crypto.verifyClaimResult(
                 pending.descriptor,
                 pending.proofBundle,
                 checkNotNull(pending.preflightResponse),
                 core,
                 result,
-                Instant.now().toString(),
+                wireTime(),
             )
             pending = pending
                 .withConnectionAttempts(session.connectionAttempts())
@@ -499,7 +498,7 @@ class EnrollmentManager private constructor(context: Context) {
                 val installedConfigs = V2MirrorFetcher(appContext).fetchCompletionConfigs(
                     session.completionConfigFetchPlan(),
                 )
-                val released = session.fetchReleasedArtifacts(Instant.now().toString())
+                val released = session.fetchReleasedArtifacts(wireTime())
                 val profile = installV2Completion(
                     pending, result, verifiedResult, released, installedConfigs, crypto,
                 )
@@ -550,7 +549,7 @@ class EnrollmentManager private constructor(context: Context) {
                 expected,
                 TrustAnchor.platformPublicKey(),
                 progressStatus,
-                Instant.now().toString(),
+                wireTime(),
                 pending.resumeConnectionAttempts,
                 network,
             )
@@ -568,45 +567,45 @@ class EnrollmentManager private constructor(context: Context) {
                     EnrollmentPhase.CLAIMING,
                     "正在恢复当前网络已验证的 resume 入口…",
                 )
-                session.restoreProbe(pending.resumeSelectedTransport, Instant.now().toString())
+                session.restoreProbe(pending.resumeSelectedTransport, wireTime())
             } else {
                 mutableStatus.value = EnrollmentStatus(
                     EnrollmentPhase.CLAIMING,
                     "正在验证当前网络的 HY2/Trojan resume 入口…",
                 )
-                session.probe(Instant.now().toString())
+                session.probe(wireTime())
             }
             pending = pending.withResumeSelection(underlayIdentity, selection)
             store.putV2Pending(pending)
 
             val crypto = V2EnrollmentCrypto(keys)
-            val preflightMessage = session.resumePreflightAuthorizationMessage(Instant.now().toString())
+            val preflightMessage = session.resumePreflightAuthorizationMessage(wireTime())
             val preflightRequest = session.resumePreflightRequest(
                 crypto.signPreflightMessage(preflightMessage),
-                Instant.now().toString(),
+                wireTime(),
             )
             mutableStatus.value = EnrollmentStatus(
                 EnrollmentPhase.CLAIMING,
                 "正在私有隧道内恢复 exact committed opening…",
             )
-            session.preflight(preflightRequest, Instant.now().toString())
+            session.preflight(preflightRequest, wireTime())
             pending = pending.withResumeConnectionAttempts(session.connectionAttempts())
             store.putV2Pending(pending)
 
-            session.challenge(core, Instant.now().toString())
+            session.challenge(core, wireTime())
             pending = pending.withResumeConnectionAttempts(session.connectionAttempts())
             store.putV2Pending(pending)
-            val pop = session.prepareResumePoPBody(Instant.now().toString())
+            val pop = session.prepareResumePoPBody(wireTime())
             val submission = session.assembleResumeSubmission(
                 pop,
                 crypto.signPoP(pop),
-                Instant.now().toString(),
+                wireTime(),
             )
             mutableStatus.value = EnrollmentStatus(
                 EnrollmentPhase.CLAIMING,
                 "正在以 Keystore 新鲜 PoP 恢复原注册事务…",
             )
-            val verifiedResult = session.submitResume(submission, Instant.now().toString())
+            val verifiedResult = session.submitResume(submission, wireTime())
             val verified = JSONObject(verifiedResult.decodeToString())
             val result = Loomcore.canonicalizeV2(
                 verified.getJSONObject("exact_result").toString().encodeToByteArray(),
@@ -623,7 +622,7 @@ class EnrollmentManager private constructor(context: Context) {
                 val installedConfigs = V2MirrorFetcher(appContext).fetchCompletionConfigs(
                     session.completionConfigFetchPlan(),
                 )
-                val released = session.fetchReleasedArtifacts(Instant.now().toString())
+                val released = session.fetchReleasedArtifacts(wireTime())
                 val installed = prepareV2InstalledCredentials(verifiedResult, released, crypto)
                 val state = session.prepareResumeInstallationStateWithConfigs(installed, installedConfigs)
                 v2StateStore.installCompletion(state, store::clearPending)
@@ -660,7 +659,7 @@ class EnrollmentManager private constructor(context: Context) {
             result,
             installedCanonical,
             installedConfigs,
-            Instant.now().toString(),
+            wireTime(),
         )
         v2StateStore.installCompletion(state, store::clearPending)
         return checkNotNull(v2StateStore.runtimeProfile()) { "v2 completion 安装后缺 runtime" }
