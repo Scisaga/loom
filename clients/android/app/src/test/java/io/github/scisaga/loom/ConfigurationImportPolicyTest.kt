@@ -12,6 +12,16 @@ class ConfigurationImportPolicyTest {
     private val installed = EnrollmentStatus(phase = EnrollmentPhase.READY, protocol = 2, snapshot = "demo-head")
 
     @Test
+    fun failedOrDownloadingUpdatesDoNotClaimAnActivatedOrVerifiedCandidate() {
+        val failed = enrollmentSummary(installed.copy(phase = EnrollmentPhase.ERROR))
+        assertTrue(failed.contains("原身份与已安装配置保留"))
+        assertFalse(failed.contains("候选"))
+        val downloading = enrollmentSummary(installed.copy(phase = EnrollmentPhase.PULLING))
+        assertFalse(downloading.contains("已验签"))
+        assertTrue(downloading.contains("正在下载"))
+    }
+
+    @Test
     fun recoveryIsAvailableWhileDisconnectedAndAfterAFailedImport() {
         assertTrue(canImportV2Configuration("demo-profile", installed, VpnStatus()))
         assertTrue(canImportV2Configuration("demo-profile", installed.copy(phase = EnrollmentPhase.ERROR),

@@ -576,10 +576,12 @@ private fun HomeTabIcon(tab: HomeTab, selected: Boolean) {
     }
 }
 
-private fun enrollmentSummary(join: EnrollmentStatus): String = when {
+internal fun enrollmentSummary(join: EnrollmentStatus): String = when {
     join.phase == EnrollmentPhase.READY -> "设备已加入 · 配置签名已验证"
     join.phase == EnrollmentPhase.TERMINAL -> "Device 已终止 · 数据连接已锁定关闭"
-    join.snapshot.isNotEmpty() -> "候选已验签 · 连接后完成激活"
+    join.phase == EnrollmentPhase.PULLING -> "正在下载并验证配置更新"
+    join.phase == EnrollmentPhase.ERROR && join.snapshot.isNotEmpty() -> "更新未完成 · 原身份与已安装配置保留"
+    join.snapshot.isNotEmpty() -> "设备已加入 · 已安装配置保留"
     else -> "加入网络、管理配置与本机信息"
 }
 
