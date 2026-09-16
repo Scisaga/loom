@@ -370,6 +370,9 @@ func TestPlanOnlyReadsLocalMetadata(t *testing.T) {
 	if _, err := f.WriteString("LOOM_DEPLOY_COMMAND=" + binary + "\n"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.WriteString("LOOM_CLIENT_RELEASE_SOURCE=missing-client-releases\n"); err != nil {
+		t.Fatal(err)
+	}
 	f.Close()
 	commit := strings.Repeat("a", 40)
 	calls := 0
@@ -392,11 +395,13 @@ func TestPlanOnlyReadsLocalMetadata(t *testing.T) {
 		return version.Coordinate{Commit: commit, Platform: "linux/" + runtime.GOARCH}, nil
 	}
 	var output bytes.Buffer
-	err = runWith([]string{"--env", envPath, "--binary", binary, "--commit", commit, "--reason", "demo-reason", "--plan"}, &output, makeRunner, inspect)
+	err = runWith([]string{"--env", envPath, "--binary", binary, "--commit", commit, "--reason", "demo-reason",
+		"--skip-client-releases", "--plan"}, &output, makeRunner, inspect)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || !strings.Contains(output.String(), `"mode":"plan"`) {
+	if calls != 1 || !strings.Contains(output.String(), `"mode":"plan"`) ||
+		!strings.Contains(output.String(), `"client_releases":false`) {
 		t.Fatalf("plan 结果错误：calls=%d %s", calls, output.String())
 	}
 	for _, path := range []string{c.releaseDir, c.pinDir, c.history, c.outputs[0]} {

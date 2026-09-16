@@ -25,13 +25,17 @@ import (
 	"loom/internal/wire"
 )
 
-const MaximumPrivateDeviceViewBytes = 32 << 20
+const (
+	MaximumPrivateDeviceViewBytes           = 32 << 20
+	maximumBootstrapCapabilityResponseBytes = 1 << 20
+)
 
 type DialContext func(context.Context, string, string) (net.Conn, error)
 
 type PrivateDeviceHTTPClient struct {
 	client  *http.Client
 	baseURL string
+	now     func() time.Time
 }
 
 // NewPrivateDeviceHTTPClient 使用 Device certificate + 平台 crypto.Signer 完成
@@ -112,7 +116,7 @@ func NewPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("[client] private service 禁止 redirect")
 		},
-	}, baseURL: baseURL}, nil
+	}, baseURL: baseURL, now: now}, nil
 }
 
 func identitySignerPublicP256(signer crypto.Signer) (*ecdsa.PublicKey, bool) {
@@ -188,6 +192,45 @@ func (client *PrivateDeviceHTTPClient) FetchDeviceConfigDelivery(ctx context.Con
 		return wire.DeviceConfigDeliveryV1{}, errors.New("[client] private Device delivery 不是 exact canonical wire")
 	}
 	return delivery, nil
+}
+
+func (client *PrivateDeviceHTTPClient) ResolveBootstrapCapability(ctx context.Context,
+	lookup wire.BootstrapCapabilityLookupRequestV1) (wire.VerifiedBootstrapCapabilityV1, error) {
+	if client == nil || client.client == nil || client.now == nil || ctx == nil {
+		return wire.VerifiedBootstrapCapabilityV1{}, errors.New("[client] capability lookup client/context 缺失")
+	}
+	if err := wire.ValidateBootstrapCapabilityLookupRequest(&lookup); err != nil {
+		return wire.VerifiedBootstrapCapabilityV1{}, err
+	}
+	body, err := wire.MarshalCanonical(lookup)
+	if err != nil {
+		return wire.VerifiedBootstrapCapabilityV1{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		client.baseURL+wire.PrivateBootstrapCapabilityLookupPathV1, bytes.NewReader(body))
+	if err != nil {
+		return wire.VerifiedBootstrapCapabilityV1{}, err
+	}
+	request.Header.Set("Content-Type", wire.BootstrapCapabilityLookupMediaTypeV1)
+	request.Header.Set("Accept", wire.BootstrapCapabilityLookupMediaTypeV1)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return wire.VerifiedBootstrapCapabilityV1{}, errors.New("[client] 私有 capability lookup 失败")
+	}
+	defer response.Body.Close()
+	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, maximumBootstrapCapabilityResponseBytes+1))
+	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if readErr != nil || len(responseBody) == 0 || len(responseBody) > maximumBootstrapCapabilityResponseBytes ||
+		response.StatusCode != http.StatusOK || mediaErr != nil || mediaType != wire.BootstrapCapabilityLookupMediaTypeV1 ||
+		response.Header.Get("Content-Encoding") != "" {
+		return wire.VerifiedBootstrapCapabilityV1{}, errors.New("[client] capability lookup 响应状态/类型/大小无效")
+	}
+	var result wire.BootstrapCapabilityLookupResponseV1
+	canonical, err := wire.DecodeStrict(responseBody, maximumBootstrapCapabilityResponseBytes, &result)
+	if err != nil || !bytes.Equal(canonical, responseBody) {
+		return wire.VerifiedBootstrapCapabilityV1{}, errors.New("[client] capability lookup 响应不是 exact canonical wire")
+	}
+	return wire.VerifyBootstrapCapabilityLookupResponse(&lookup, &result, client.now().UTC())
 }
 
 func (client *PrivateDeviceHTTPClient) PostDeviceReport(ctx context.Context,

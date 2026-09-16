@@ -59,7 +59,7 @@ func (runtime *controlRuntime) prepareMigrationApplication(input *controlMigrati
 	admin.PreviousAuthorizationHash, _ = wire.AdminAuthorizationHash(&previous, &profile)
 	admin.Generation++
 	// 本轮不激活 DNS 操作；原管理员的身份、范围与有效期原样保留。
-	admin.AllowedOperationKinds = []string{controlPingKind, controlCreateInviteKind, controlPublishDeviceKind}
+	admin.AllowedOperationKinds = []string{controlPingKind, controlCreateInviteKind, controlPublishDeviceKind, controlAdvertiseBootstrapKind}
 	sort.Strings(admin.AllowedOperationKinds)
 	source, err := os.ReadFile(input.Source)
 	if err != nil {

@@ -397,7 +397,9 @@ func TestInstalledLinuxPrivateControlCredentialReplacesOperatorNetworkInputs(t *
 	context, found, err := installedLinuxPrivateControlContext(installation,
 		mustDeviceFloors(t, &envelope, &set), envelope.Payload.DeviceID)
 	if err != nil || !found || context.directoryHash != directoryHash ||
-		!wire.EqualCanonical(context.directory, directory) || context.roots == nil {
+		!wire.EqualCanonical(context.directory, directory) || context.roots == nil ||
+		!wire.EqualCanonical(context.parentHead, credential.ParentHead) ||
+		!wire.EqualCanonical(context.controlSet, credential.ControlSet) || context.previousSet != nil {
 		t.Fatalf("installed private context 未恢复: found=%v context=%#v err=%v", found, context, err)
 	}
 	parent := advanceClientEnvelopeWithArtifacts(t, envelope, &set, configKey,
@@ -437,6 +439,38 @@ func TestInstalledLinuxPrivateControlCredentialReplacesOperatorNetworkInputs(t *
 	if _, found, err := installedLinuxPrivateControlContext(installation,
 		mustDeviceFloors(t, &current, &set), envelope.Payload.DeviceID); err == nil || !found {
 		t.Fatalf("损坏 installed credential 未 fail closed: found=%v err=%v", found, err)
+	}
+}
+
+func TestBootstrapIngressSelectsOneCertifiedConfigAndEnrollmentService(t *testing.T) {
+	now := time.Date(2026, 9, 12, 10, 45, 0, 0, time.UTC)
+	_, _, set, envelope := installedDeviceConfigState(t, now)
+	setHash, _ := wire.ControlSetHash(&set)
+	hash := func(value string) string { return wire.HashRaw("bootstrap-ingress-service-test", []byte(value)) }
+	directory := wire.ControlServiceDirectoryV1{Schema: 1, ClusterID: set.ClusterID, Generation: 3,
+		ControlSetHash: setHash, ParentHeadHash: envelope.SignedCurrent.Head.HeadHash,
+		ConfigQC: append([]byte(nil), envelope.SignedCurrent.QuorumCertificate...),
+		Services: []wire.PrivateControlServiceV1{
+			{ServiceID: "a-device-config", Role: "device_config", OverlayIP: "10.50.0.2", Port: 7445,
+				CertificateProfileRef: "internal-config", SPKIPins: []string{hash("config")},
+				AuthorizedSubjectProfiles: []string{"device-profile"}},
+			{ServiceID: "b-enrollment", Role: "enroll", OverlayIP: "10.50.0.3", Port: 7446,
+				CertificateProfileRef: "internal-enroll", SPKIPins: []string{hash("enroll")},
+				AuthorizedSubjectProfiles: []string{"device-profile"}},
+		}}
+	profile, config, enrollment, err := selectBootstrapIngressPrivateServices(&directory)
+	if err != nil || profile != "device-profile" || config.ServiceID != "a-device-config" ||
+		enrollment.ServiceID != "b-enrollment" || enrollment.ServiceGeneration != directory.Generation {
+		t.Fatalf("未从 certified directory 唯一选择私有服务: profile=%q config=%#v enrollment=%#v err=%v",
+			profile, config, enrollment, err)
+	}
+	duplicate := directory
+	duplicate.Services = append([]wire.PrivateControlServiceV1(nil), directory.Services...)
+	duplicate.Services = append(duplicate.Services, wire.PrivateControlServiceV1{ServiceID: "c-device-config", Role: "device_config",
+		OverlayIP: "10.50.0.4", Port: 7447, CertificateProfileRef: "internal-config-2", SPKIPins: []string{hash("config-2")},
+		AuthorizedSubjectProfiles: []string{"device-profile"}})
+	if _, _, _, err := selectBootstrapIngressPrivateServices(&duplicate); err == nil {
+		t.Fatal("接受多个 device_config service")
 	}
 }
 

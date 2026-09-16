@@ -147,6 +147,88 @@ func (verified VerifiedBootstrapLocalReadinessV1) Evidence() BootstrapLocalReadi
 	return clone
 }
 
+// VerifyBootstrapLocalReadinessEvidence 在 control 接管证据后按 exact prepared
+// runtime plan 重算全部 binding、TLS identity、时间窗口和 state hash。实际 socket
+// 探测只在节点侧产生；这里不把一个裸 hash 当作 readiness。
+func VerifyBootstrapLocalReadinessEvidence(authorized rotation.AuthorizedRuntimePlanV1,
+	runtimePlan BootstrapIngressRuntimePlanV1,
+	evidence *BootstrapLocalReadinessEvidenceV1) (VerifiedBootstrapLocalReadinessV1, error) {
+	if evidence == nil || evidence.Schema != 1 {
+		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[local verify] stored evidence 缺失")
+	}
+	intent, state := authorized.Intent(), authorized.State()
+	stateHash, err := wire.HashObject(rotation.DomainState, state)
+	if err != nil {
+		return VerifiedBootstrapLocalReadinessV1{}, err
+	}
+	outer, err := BuildBootstrapOuterProbePlan(runtimePlan, authorized)
+	if err != nil {
+		return VerifiedBootstrapLocalReadinessV1{}, err
+	}
+	verifiedAt, err := wire.ParseTimeZ(evidence.VerifiedAt)
+	if err != nil {
+		return VerifiedBootstrapLocalReadinessV1{}, err
+	}
+	validUntil, err := wire.ParseTimeZ(evidence.ValidUntil)
+	if err != nil {
+		return VerifiedBootstrapLocalReadinessV1{}, err
+	}
+	listenerFrom, _ := wire.ParseTimeZ(outer.ValidFrom)
+	listenerUntil, _ := wire.ParseTimeZ(outer.ValidUntil)
+	wantUntil := verifiedAt.Add(bootstrapLocalReadinessAge)
+	if listenerUntil.Before(wantUntil) {
+		wantUntil = listenerUntil
+	}
+	bindings := runtimePlan.Bindings()
+	if state.Phase != "prepared" || evidence.ClusterID != intent.ClusterID ||
+		evidence.RotationID != intent.RotationID ||
+		evidence.FrozenDependenciesHash != intent.FrozenDependenciesHash ||
+		evidence.CertifiedStateHash != stateHash ||
+		evidence.EndpointSetHash != intent.ExpectedEndpointSetHash ||
+		evidence.EndpointID != intent.FrozenDependencies.EndpointID ||
+		evidence.LogicalServerID != intent.FrozenDependencies.LogicalServerID ||
+		evidence.Transport != intent.FrozenDependencies.Transport ||
+		evidence.ListenerGeneration != state.TargetListenerGeneration ||
+		verifiedAt.Before(listenerFrom) || !verifiedAt.Before(listenerUntil) ||
+		!validUntil.Equal(wantUntil) || len(evidence.Results) != len(bindings) {
+		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[local verify] stored evidence 未绑定 exact prepared runtime")
+	}
+	for index, binding := range bindings {
+		result := evidence.Results[index]
+		dial, err := bootstrapLocalDialTuple(binding.projection.BindTuple)
+		if err != nil {
+			return VerifiedBootstrapLocalReadinessV1{}, err
+		}
+		protocol := ""
+		if binding.projection.Transport == "hysteria2" {
+			protocol = "h3"
+		}
+		if result.BindingHash != binding.bindingHash ||
+			result.BindTuple != binding.projection.BindTuple || result.DialTuple != dial ||
+			result.TLSVersion != int64(tls.VersionTLS13) ||
+			result.NegotiatedProtocol != protocol ||
+			!containsBootstrapString(binding.projection.SPKIPins, result.LeafSPKIHash) {
+			return VerifiedBootstrapLocalReadinessV1{}, errors.New("[local verify] stored result 未覆盖 exact binding/TLS identity")
+		}
+	}
+	clone := *evidence
+	clone.Results = append([]BootstrapLocalReadinessResultV1(nil), evidence.Results...)
+	hash, err := wire.HashObject(domainBootstrapLocalReadiness, clone)
+	if err != nil {
+		return VerifiedBootstrapLocalReadinessV1{}, err
+	}
+	return VerifiedBootstrapLocalReadinessV1{evidence: clone, hash: hash}, nil
+}
+
+func containsBootstrapString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 // validateAdvertiseTransition 要求 advertise 精确引用刚从 prepared runtime
 // 验出的 local evidence，并限制其只能用于同一 certified state 的短窗口。
 func (verified VerifiedBootstrapLocalReadinessV1) validateAdvertiseTransition(

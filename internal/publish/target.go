@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"loom/internal/netx"
 	"loom/internal/render"
 	"loom/internal/snapshot"
@@ -308,6 +309,23 @@ func (l *localTarget) Push(t *Tree) error {
 	return nil
 }
 
+func (l *localTarget) pushImmutable(files map[string][]byte) error {
+	rootFD, err := openAbsoluteDirNoFollow(l.dir, true)
+	if err != nil {
+		return fmt.Errorf("打开本地不可变分发根目录:%w", err)
+	}
+	defer syscall.Close(rootFD)
+	if err := syscall.Fchmod(rootFD, 0o755); err != nil {
+		return err
+	}
+	for _, p := range immutablePaths(files) {
+		if err := writeImmutableAt(rootFD, p, files[p], 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // writeAtomic 先写临时文件再 rename。
 //
 // **current.json 是节点看世界的入口**:它指向哪个快照,节点就装哪个。
@@ -491,6 +509,101 @@ func writeAtomicAt(rootFD int, p string, body []byte, mode os.FileMode) (retErr 
 		return err
 	}
 	return nil
+}
+
+// writeImmutableAt 使用 linkat 的 no-replace 语义。内容寻址目标已存在时只能
+// 接受 exact bytes；镜像损坏不能通过覆盖后继续而被隐藏。
+func writeImmutableAt(rootFD int, p string, body []byte, mode os.FileMode) (retErr error) {
+	if err := validateImmutablePath(p, body); err != nil {
+		return err
+	}
+	dirFD, err := openRelativeDirNoFollow(rootFD, filepath.Dir(p), true)
+	if err != nil {
+		return err
+	}
+	defer syscall.Close(dirFD)
+	base := filepath.Base(p)
+	if existing, err := readFileAt(dirFD, base, len(body)+1); err == nil {
+		if bytes.Equal(existing, body) {
+			return nil
+		}
+		return fmt.Errorf("不可变分发对象 %s 已存在不同内容", p)
+	} else if !errors.Is(err, syscall.ENOENT) {
+		return err
+	}
+	var tmp string
+	fd := -1
+	for attempt := 0; attempt < 10; attempt++ {
+		var nonce [8]byte
+		if _, err := crand.Read(nonce[:]); err != nil {
+			return err
+		}
+		tmp = ".immutable.tmp-" + hex.EncodeToString(nonce[:])
+		fd, err = syscall.Openat(dirFD, tmp,
+			syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW|syscall.O_CLOEXEC,
+			uint32(mode.Perm()))
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EEXIST) {
+			return err
+		}
+	}
+	if fd < 0 || err != nil {
+		return fmt.Errorf("创建不可变对象临时文件:%w", err)
+	}
+	f := os.NewFile(uintptr(fd), tmp)
+	defer func() {
+		_ = f.Close()
+		_ = syscall.Unlinkat(dirFD, tmp)
+	}()
+	if err := f.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := f.Write(body); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := unix.Linkat(dirFD, tmp, dirFD, base, 0); err != nil {
+		if !errors.Is(err, syscall.EEXIST) {
+			return err
+		}
+		existing, readErr := readFileAt(dirFD, base, len(body)+1)
+		if readErr != nil || !bytes.Equal(existing, body) {
+			return fmt.Errorf("不可变分发对象 %s 并发冲突", p)
+		}
+	}
+	if err := syscall.Fsync(dirFD); err != nil {
+		return err
+	}
+	return nil
+}
+
+func readFileAt(dirFD int, name string, maximum int) ([]byte, error) {
+	fd, err := syscall.Openat(dirFD, name,
+		syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), name)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("不可变分发目标不是普通文件")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, int64(maximum)))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) >= maximum {
+		return nil, fmt.Errorf("不可变分发对象超过大小上限")
+	}
+	return body, nil
 }
 
 func (l *localTarget) Current() (string, error) {
@@ -769,6 +882,37 @@ func (s *sshTarget) Push(t *Tree) error {
 	return nil
 }
 
+func (s *sshTarget) pushImmutable(files map[string][]byte) error {
+	for _, p := range immutablePaths(files) {
+		body := files[p]
+		if err := validateImmutablePath(p, body); err != nil {
+			return err
+		}
+		guard, err := sshDirectoryGuard(s.dir, filepath.Dir(p), true)
+		if err != nil {
+			return err
+		}
+		base := shellQuote("./" + filepath.Base(p))
+		remote := guard + fmt.Sprintf(
+			"tmp=$(mktemp './.loom-immutable.XXXXXX'); "+
+				"if [ -L \"$tmp\" ] || [ ! -f \"$tmp\" ]; then echo 'mktemp 未返回普通文件' >&2; exit 90; fi; "+
+				"trap 'rm -f \"$tmp\"' EXIT; cat > \"$tmp\"; chmod a+r \"$tmp\"; "+
+				"if [ -L %s ] || { [ -e %s ] && [ ! -f %s ]; }; then echo '拒绝远端非普通不可变目标' >&2; exit 90; fi; "+
+				"if [ -e %s ]; then cmp -s \"$tmp\" %s || { echo '不可变目标内容冲突' >&2; exit 90; }; "+
+				"else ln \"$tmp\" %s || { [ -f %s ] && cmp -s \"$tmp\" %s; } || { echo '不可变目标并发冲突' >&2; exit 90; }; fi; "+
+				"trap - EXIT; rm -f \"$tmp\"",
+			base, base, base, base, base, base, base, base)
+		if err := s.run(remote, bytes.NewReader(body), sshPushTimeout(int64(len(body)))); err != nil {
+			return fmt.Errorf("推送不可变对象 %s:%w", p, err)
+		}
+		got, found, err := s.ReadFile(p)
+		if err != nil || !found || !bytes.Equal(got, body) {
+			return fmt.Errorf("回读不可变对象 %s 失败", p)
+		}
+	}
+	return nil
+}
+
 func expectedBlobSHA(p string) (string, error) {
 	clean := filepath.Clean(p)
 	want := filepath.Base(clean)
@@ -788,6 +932,30 @@ func validateTreePath(p string) error {
 		return fmt.Errorf("分发树路径 %q 必须是规范的相对路径", p)
 	}
 	return nil
+}
+
+func validateImmutablePath(p string, body []byte) error {
+	if len(body) == 0 || len(body) > maxTargetReadFileBytes {
+		return fmt.Errorf("不可变分发对象大小无效")
+	}
+	if err := validateTreePath(p); err != nil {
+		return err
+	}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	if !strings.HasPrefix(clean, "distribution/sha256/") ||
+		strings.Count(clean, "/") != 2 || !validSHA256(filepath.Base(clean)) {
+		return fmt.Errorf("不可变分发路径 %q 必须是 distribution/sha256/<digest>", p)
+	}
+	return nil
+}
+
+func immutablePaths(files map[string][]byte) []string {
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func validateTreePaths(t *Tree) error {

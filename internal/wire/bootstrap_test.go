@@ -2,9 +2,11 @@ package wire
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -130,6 +132,27 @@ func TestBootstrapIssuerProofAndCapabilityLimits(t *testing.T) {
 	trustedTime := time.Date(2026, 9, 11, 11, 5, 0, 0, time.UTC)
 	if err := VerifyCapabilityAuthorization(capability, proof, &policy, trustedTime); err != nil {
 		t.Fatal(err)
+	}
+	verified, err := VerifyCapabilityAuthorizationEvidence(capability, proof, &policy, trustedTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := BootstrapCapabilityLookupResponseV1{Schema: 1, Capability: *capability,
+		IssuerProof: *proof, Policy: policy}
+	requests := []BootstrapCapabilityLookupRequestV1{{Schema: 1, IngressSetHash: ingressHash,
+		Transport: "hysteria2", Authentication: verified.TransportCredential()}}
+	trojanDigest := sha256.Sum224([]byte(verified.TransportCredential()))
+	requests = append(requests, BootstrapCapabilityLookupRequestV1{Schema: 1, IngressSetHash: ingressHash,
+		Transport: "trojan_tls", Authentication: hex.EncodeToString(trojanDigest[:])})
+	for _, request := range requests {
+		resolved, err := VerifyBootstrapCapabilityLookupResponse(&request, &response, trustedTime)
+		if err != nil || resolved.CapabilityID() != capability.CapabilityID {
+			t.Fatalf("%s lookup 未恢复 exact verified capability: %v", request.Transport, err)
+		}
+		request.Authentication = strings.Repeat("0", len(request.Authentication))
+		if _, err := VerifyBootstrapCapabilityLookupResponse(&request, &response, trustedTime); err == nil {
+			t.Fatalf("%s lookup 接受被替换的 transport authentication", request.Transport)
+		}
 	}
 	capability.Body.MaximumTotalBytes++
 	if err := VerifyCapabilityAuthorization(capability, proof, &policy, trustedTime); err == nil {

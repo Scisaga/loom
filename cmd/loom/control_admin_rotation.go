@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"loom/internal/publish"
@@ -55,6 +56,8 @@ func cmdControlRotateAdmin(args []string) error {
 	adminDir := fs.String("admin-dir", "", "当前管理员完整身份目录")
 	out := fs.String("out-dir", "", "新管理员身份目录；不得覆盖原目录")
 	reason := fs.String("reason", "", "本机证书轮换的审计理由")
+	enableBootstrapAdvertise := fs.Bool("enable-bootstrap-advertise", false,
+		"为旧迁移 ACL 仅增加 advertise_bootstrap；新迁移无需使用")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -90,14 +93,20 @@ func cmdControlRotateAdmin(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runtime.rotateAdminCertificate(*adminDir, *out, *reason)
+	return runtime.rotateAdminCertificate(*adminDir, *out, *reason, *enableBootstrapAdvertise)
 }
 
-// 本机 root 维护仪式只替换自己的证书，要求旧身份签名与新 key PoP。
-// 它不注册到网络管理 API，也不扩大旧 ACL 的任何 kind/capability/scope 或有效期。
-func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason string) error {
+// 本机 root 维护仪式替换自己的证书，要求旧身份签名与新 key PoP。默认权限
+// 完全不变；旧迁移可显式增加唯一的 advertise_bootstrap kind，其他 capability、
+// scope、有效期或任意 operation kind 扩张仍被 reducer 拒绝。
+func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason string,
+	enableBootstrapAdvertise ...bool) error {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
+	enableAdvertise := len(enableBootstrapAdvertise) == 1 && enableBootstrapAdvertise[0]
+	if len(enableBootstrapAdvertise) > 1 {
+		return errors.New("[admin rotation] bootstrap advertise 选项重复")
+	}
 	oldAbs, err := filepath.Abs(adminDir)
 	if err != nil {
 		return err
@@ -116,6 +125,10 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	if encoded, err := readOwnerOnlyFile(filepath.Join(outDir, controlAdminCertName), 1<<20); err == nil {
 		leaf, err := parseSingleCertificatePEM(encoded)
 		if err == nil && runtime.adminCertificateAuthorizedLocked(leaf.Raw) {
+			if enableAdvertise && !containsControlValue(runtime.config.Authorizations[0].AllowedOperationKinds,
+				controlAdvertiseBootstrapKind) {
+				return errors.New("[admin rotation] 已完成的轮换没有请求的 bootstrap advertise 权限")
+			}
 			if err := exportAdminPKCS12(outDir, runtime.now().UTC()); err != nil {
 				return err
 			}
@@ -248,6 +261,10 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	next.CertificateProfileRef = wire.AdminCertificateProfileRefV1{ProfileID: profile.ProfileID,
 		Generation: profile.Generation, AdminCertificateProfileHash: profileHash}
 	next.AllowedOperationKinds, next.Capabilities, next.Scopes = old.AllowedOperationKinds, old.Capabilities, old.Scopes
+	if enableAdvertise && !containsControlValue(next.AllowedOperationKinds, controlAdvertiseBootstrapKind) {
+		next.AllowedOperationKinds = append(append([]string(nil), next.AllowedOperationKinds...), controlAdvertiseBootstrapKind)
+		sort.Strings(next.AllowedOperationKinds)
+	}
 	next.NotAfter = old.NotAfter
 	// 只有尚未进入任何 Raft log 的末尾准备记录可重建；已提交记录由恢复流程继续完成。
 	for i, record := range runtime.journal.Records {
@@ -340,7 +357,11 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	if err := writeCanonicalAtomic(filepath.Join(outDir, "rotation-receipt.json"), result, 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("✓ 管理员 P-256 证书与完整 PKCS#12 已生成；权限保持原范围，轮换已 Raft commit/apply/QC\n  admin: %s\n", outDir)
+	permissionResult := "权限保持原范围"
+	if !wire.EqualCanonical(next.AllowedOperationKinds, old.AllowedOperationKinds) {
+		permissionResult = "旧迁移 ACL 已仅增加 advertise_bootstrap"
+	}
+	fmt.Printf("✓ 管理员 P-256 证书与完整 PKCS#12 已生成；%s，轮换已 Raft commit/apply/QC\n  admin: %s\n", permissionResult, outDir)
 	return nil
 }
 
@@ -385,7 +406,7 @@ func (runtime *controlRuntime) applyAdminRotationRoots(body *wire.HeadEntryBodyV
 func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 	record := runtime.journal.Records[index]
 	rotation := record.AdminRotation
-	if rotation == nil || record.Activation != nil || record.Enrollment != nil || record.Invite != nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 0 {
+	if rotation == nil || record.Activation != nil || record.Enrollment != nil || record.Invite != nil || record.DevicePublication != nil || record.BootstrapAdvertisement != nil || len(record.AdditionalLeaves) != 0 {
 		return errors.New("[D104 admin rotation] 缺轮换 preimage")
 	}
 	p := rotation.Payload
@@ -406,7 +427,8 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		p.NextAuthorization.NotAfter != p.PreviousAuthorization.NotAfter ||
 		!wire.EqualCanonical(p.NextAuthorization.Scopes, p.PreviousAuthorization.Scopes) ||
 		!wire.EqualCanonical(p.NextAuthorization.Capabilities, p.PreviousAuthorization.Capabilities) ||
-		!wire.EqualCanonical(p.NextAuthorization.AllowedOperationKinds, p.PreviousAuthorization.AllowedOperationKinds) {
+		!validAdminRotationOperationKinds(p.PreviousAuthorization.AllowedOperationKinds,
+			p.NextAuthorization.AllowedOperationKinds) {
 		return errors.New("[admin rotation] 轮换改变了既有管理员权限/有效期或代际")
 	}
 	for _, pair := range []struct {
@@ -484,6 +506,18 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		return errors.New("[admin rotation] 操作日志 leaf 与签名对象不一致")
 	}
 	return nil
+}
+
+func validAdminRotationOperationKinds(previous, next []string) bool {
+	if wire.EqualCanonical(previous, next) {
+		return true
+	}
+	if containsControlValue(previous, controlAdvertiseBootstrapKind) {
+		return false
+	}
+	want := append(append([]string(nil), previous...), controlAdvertiseBootstrapKind)
+	sort.Strings(want)
+	return wire.EqualCanonical(want, next)
 }
 
 func (runtime *controlRuntime) projectAdminRotations() error {

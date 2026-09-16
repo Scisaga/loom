@@ -15,12 +15,14 @@ import (
 func (runtime *controlRuntime) verifyAdminOperationRecord(index int) error {
 	record := &runtime.journal.Records[index]
 	if record.Schema != 1 || record.AdminRotation != nil || record.Activation != nil || record.Enrollment != nil ||
-		(record.Operation.Body.Kind != controlPingKind && record.Operation.Body.Kind != controlCreateInviteKind && record.Operation.Body.Kind != controlPublishDeviceKind) {
+		(record.Operation.Body.Kind != controlPingKind && record.Operation.Body.Kind != controlCreateInviteKind &&
+			record.Operation.Body.Kind != controlPublishDeviceKind && record.Operation.Body.Kind != controlAdvertiseBootstrapKind) {
 		return errors.New("[D104] 未登记的管理 operation")
 	}
-	if record.Operation.Body.Kind == controlPingKind && (record.Invite != nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 0) ||
-		record.Operation.Body.Kind == controlCreateInviteKind && (record.Invite == nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 1) ||
-		record.Operation.Body.Kind == controlPublishDeviceKind && (record.DevicePublication == nil || record.Invite != nil || len(record.AdditionalLeaves) != 0) {
+	if record.Operation.Body.Kind == controlPingKind && (record.Invite != nil || record.DevicePublication != nil || record.BootstrapAdvertisement != nil || len(record.AdditionalLeaves) != 0) ||
+		record.Operation.Body.Kind == controlCreateInviteKind && (record.Invite == nil || record.DevicePublication != nil || record.BootstrapAdvertisement != nil || len(record.AdditionalLeaves) != 1) ||
+		record.Operation.Body.Kind == controlPublishDeviceKind && (record.DevicePublication == nil || record.Invite != nil || record.BootstrapAdvertisement != nil || len(record.AdditionalLeaves) != 0) ||
+		record.Operation.Body.Kind == controlAdvertiseBootstrapKind && (record.BootstrapAdvertisement == nil || record.Invite != nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 0) {
 		return errors.New("[D104] 管理 operation union/leaf 不一致")
 	}
 	var parent *wire.HeadEntryV2
@@ -141,6 +143,31 @@ func (runtime *controlRuntime) verifyAdminOperationRecord(index int) error {
 		next, err := application.reduceDevicePublication(*record.DevicePublication, record.Operation.Body, actual.Payload.CommittedLogicalTime)
 		if err != nil {
 			return err
+		}
+		roots, err := next.roots()
+		if err != nil {
+			return err
+		}
+		controlApplyRoots(&expected, roots)
+	}
+	if record.BootstrapAdvertisement != nil {
+		application, err := runtime.applicationBefore(index)
+		if err != nil {
+			return err
+		}
+		preparedHead, err := runtime.bootstrapPreparedHeadBefore(index, application,
+			record.BootstrapAdvertisement.Payload)
+		if err != nil {
+			return err
+		}
+		next, transitions, err := application.reduceBootstrapAdvertisement(
+			record.BootstrapAdvertisement.Payload, record.Operation.Body,
+			actual.Payload.CommittedLogicalTime, preparedHead, record.Candidate.HeadHash)
+		if err != nil {
+			return err
+		}
+		if !wire.EqualCanonical(transitions, record.BootstrapAdvertisement.Transitions) {
+			return errors.New("[bootstrap advertise] durable transition 未绑定 certified Head")
 		}
 		roots, err := next.roots()
 		if err != nil {

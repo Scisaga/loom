@@ -16,6 +16,9 @@ import (
 type linuxInstalledPrivateControlContext struct {
 	directory     wire.ControlServiceDirectoryV1
 	directoryHash string
+	parentHead    wire.HeadEntryV2
+	controlSet    wire.ControlSetV1
+	previousSet   *wire.ControlSetV1
 	roots         *x509.CertPool
 }
 
@@ -71,6 +74,10 @@ func installedLinuxPrivateControlContext(installation *DeviceInstallationV1,
 	}
 	return linuxInstalledPrivateControlContext{
 		directory:     cloneStoreValue(credential.ControlServiceDirectory),
-		directoryHash: credential.ControlServiceDirectoryHash, roots: roots,
+		directoryHash: credential.ControlServiceDirectoryHash,
+		parentHead:    cloneStoreValue(credential.ParentHead),
+		controlSet:    cloneStoreValue(credential.ControlSet),
+		previousSet:   cloneStoreValue(credential.PreviousControlSet),
+		roots:         roots,
 	}, true, nil
 }

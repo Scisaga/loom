@@ -20,7 +20,7 @@ var digestPath = regexp.MustCompile(`^/distribution/sha256/[0-9a-f]{64}$`)
 
 type NginxInput struct {
 	FQDN           string
-	PublicPort     int
+	ListenPort     int
 	Certificate    string
 	CertificateKey string
 	StaticRoot     string
@@ -28,7 +28,7 @@ type NginxInput struct {
 
 // RenderNginx 只渲染 fake root 与内容寻址 GET/HEAD；所有其他路径直接 404。
 func RenderNginx(input NginxInput) ([]byte, error) {
-	if !wire.ValidFQDN(input.FQDN) || input.PublicPort < 1 || input.PublicPort > 65535 ||
+	if !wire.ValidFQDN(input.FQDN) || input.ListenPort < 1 || input.ListenPort > 65535 ||
 		!safeAbsolutePath(input.Certificate) || !safeAbsolutePath(input.CertificateKey) || !safeAbsolutePath(input.StaticRoot) {
 		return nil, errors.New("[public surface] Nginx FQDN/port/path 无效")
 	}
@@ -62,7 +62,7 @@ func RenderNginx(input NginxInput) ([]byte, error) {
 
     location / { return 404; }
 }
-`, input.PublicPort, input.FQDN, input.Certificate, input.CertificateKey, input.StaticRoot, input.StaticRoot)
+`, input.ListenPort, input.FQDN, input.Certificate, input.CertificateKey, input.StaticRoot, input.StaticRoot)
 	if err := ValidatePublicNginx([]byte(config)); err != nil {
 		return nil, err
 	}

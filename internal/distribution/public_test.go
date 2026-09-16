@@ -16,7 +16,7 @@ import (
 
 func TestRenderNginxHasOnlyFakeAndImmutableSurface(t *testing.T) {
 	config, err := RenderNginx(NginxInput{
-		FQDN: "demo-edge.example", PublicPort: 8443,
+		FQDN: "demo-edge.example", ListenPort: 8443,
 		Certificate: "/etc/loom/public-tls/cert.pem", CertificateKey: "/etc/loom/public-tls/key.pem",
 		StaticRoot: "/var/www/loom-public",
 	})

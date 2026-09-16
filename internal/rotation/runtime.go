@@ -3,6 +3,7 @@ package rotation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -68,6 +69,45 @@ type AuthorizedRuntimePlanV1 struct {
 	state      StateV1
 	plan       ExecutionPlanV1
 	projection RuntimeProjectionV1
+}
+
+// AuthorizeInitialPreparedRuntimePlan 用于控制面重验首次部署的 prepared
+// listener 证据。它与节点侧 Store+ExecutionPlanStore 走相同的 reducer、hash
+// 和 authority verifier，但不创建第二份本地持久状态。
+func AuthorizeInitialPreparedRuntimePlan(intent IntentV1, plan ExecutionPlanV1,
+	transition Transition, verify CertifiedAuthorityVerifier) (AuthorizedRuntimePlanV1, error) {
+	transition = normalizeTransition(transition)
+	if verify == nil || transition.NextPhase != "prepared" ||
+		intent.FrozenDependencies.SourceListenerGeneration != nil {
+		return AuthorizedRuntimePlanV1{}, errors.New("[rotation] 首次 prepared runtime authority 输入无效")
+	}
+	if err := ValidateIntent(&intent); err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	if err := ValidateExecutionPlan(&intent, &plan); err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	if err := validateInitialTransition(&intent, &transition); err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	if err := verify(&intent, nil, &transition); err != nil {
+		return AuthorizedRuntimePlanV1{}, fmt.Errorf("[rotation] prepared head 未获 certified authority: %w", err)
+	}
+	state, err := initialState(intent, transition)
+	if err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	record, err := newTransitionRecord(1, wire.EmptyHashV1, transition, state)
+	if err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	planHash, err := ExecutionPlanHash(&intent, &plan)
+	if err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	durable := DurableStateV1{Schema: 1, Intent: &intent, Current: &state,
+		History: []TransitionRecordV1{record}}
+	return AuthorizeRuntimePlan(durable, frozenExecutionPlan(plan, planHash), verify)
 }
 
 // AuthorizeRuntimePlan 把 Store 与 ExecutionPlanStore 的两个耐久边界重新合并验证。

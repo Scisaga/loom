@@ -1,6 +1,7 @@
 package bootstrapaccess
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -25,13 +26,23 @@ type CredentialRegistry struct {
 	ingressSetHash string
 	byCredential   map[string]credentialBinding
 	byTrojanKey    map[[trojanKeyLength]byte]credentialBinding
+	resolve        CapabilityResolver
 }
+
+// CapabilityResolver 只能返回 wire 完整验证产生的 opaque evidence。transport
+// authentication 会在 registry 内再次精确匹配，避免私有服务响应替换 capability。
+type CapabilityResolver func(context.Context, wire.BootstrapCapabilityLookupRequestV1) (wire.VerifiedBootstrapCapabilityV1, error)
 
 const trojanKeyLength = sha256.Size224 * 2
 
 func NewCredentialRegistry(ingressSetHash string,
 	capabilities []wire.VerifiedBootstrapCapabilityV1) (*CredentialRegistry, error) {
-	registry := &CredentialRegistry{}
+	return NewCredentialRegistryWithResolver(ingressSetHash, capabilities, nil)
+}
+
+func NewCredentialRegistryWithResolver(ingressSetHash string,
+	capabilities []wire.VerifiedBootstrapCapabilityV1, resolve CapabilityResolver) (*CredentialRegistry, error) {
+	registry := &CredentialRegistry{resolve: resolve}
 	if err := registry.replace(ingressSetHash, capabilities); err != nil {
 		return nil, err
 	}
@@ -91,36 +102,72 @@ func (registry *CredentialRegistry) replace(ingressSetHash string,
 
 // openTrojanSession 在同一个 registry read lock 下完成 key lookup 与 durable
 // OpenSession。Replace 一旦返回，任何尚未落盘的新连接都不可能再使用旧表。
-func (registry *CredentialRegistry) openTrojanSession(manager *Manager,
+func (registry *CredentialRegistry) openTrojanSession(ctx context.Context, manager *Manager,
 	key [trojanKeyLength]byte, sessionID string) (*Session, error) {
 	if registry == nil || manager == nil {
 		return nil, errors.New("[capability] Trojan credential/session manager 缺失")
 	}
 	registry.mu.RLock()
 	binding, ok := registry.byTrojanKey[key]
-	if !ok {
+	ingressSetHash, resolve := registry.ingressSetHash, registry.resolve
+	if resolve == nil {
+		if !ok {
+			registry.mu.RUnlock()
+			return nil, errors.New("[capability] Trojan transport credential 无效")
+		}
+		session, err := manager.OpenSession(binding.verified, sessionID, ingressSetHash)
 		registry.mu.RUnlock()
+		return session, err
+	}
+	registry.mu.RUnlock()
+	verified, err := resolve(ctx, wire.BootstrapCapabilityLookupRequestV1{Schema: 1,
+		IngressSetHash: ingressSetHash, Transport: "trojan_tls", Authentication: string(key[:])})
+	if err != nil || verified.Body().AllowedIngressSetHash != ingressSetHash ||
+		trojanCredentialKey(verified.TransportCredential()) != key {
 		return nil, errors.New("[capability] Trojan transport credential 无效")
 	}
-	session, err := manager.OpenSession(binding.verified, sessionID, registry.ingressSetHash)
+	registry.mu.RLock()
+	if registry.ingressSetHash != ingressSetHash {
+		registry.mu.RUnlock()
+		return nil, errors.New("[capability] Trojan ingress set 已变化")
+	}
+	session, err := manager.OpenSession(verified, sessionID, ingressSetHash)
 	registry.mu.RUnlock()
 	return session, err
 }
 
 // openHysteria2Session 与 Trojan 路径共享同一个撤销竞态边界，但 HY2 的认证
 // header 能直接携带 transport credential，不需要协议 SHA-224 key。
-func (registry *CredentialRegistry) openHysteria2Session(manager *Manager,
+func (registry *CredentialRegistry) openHysteria2Session(ctx context.Context, manager *Manager,
 	credential, sessionID string) (*Session, error) {
 	if registry == nil || manager == nil || credential == "" {
 		return nil, errors.New("[capability] Hysteria2 credential/session manager 缺失")
 	}
 	registry.mu.RLock()
 	binding, ok := registry.byCredential[credential]
-	if !ok {
+	ingressSetHash, resolve := registry.ingressSetHash, registry.resolve
+	if resolve == nil {
+		if !ok {
+			registry.mu.RUnlock()
+			return nil, errors.New("[capability] Hysteria2 transport credential 无效")
+		}
+		session, err := manager.OpenSession(binding.verified, sessionID, ingressSetHash)
 		registry.mu.RUnlock()
+		return session, err
+	}
+	registry.mu.RUnlock()
+	verified, err := resolve(ctx, wire.BootstrapCapabilityLookupRequestV1{Schema: 1,
+		IngressSetHash: ingressSetHash, Transport: "hysteria2", Authentication: credential})
+	if err != nil || verified.Body().AllowedIngressSetHash != ingressSetHash ||
+		verified.TransportCredential() != credential {
 		return nil, errors.New("[capability] Hysteria2 transport credential 无效")
 	}
-	session, err := manager.OpenSession(binding.verified, sessionID, registry.ingressSetHash)
+	registry.mu.RLock()
+	if registry.ingressSetHash != ingressSetHash {
+		registry.mu.RUnlock()
+		return nil, errors.New("[capability] Hysteria2 ingress set 已变化")
+	}
+	session, err := manager.OpenSession(verified, sessionID, ingressSetHash)
 	registry.mu.RUnlock()
 	return session, err
 }

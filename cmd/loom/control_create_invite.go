@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"loom/internal/model"
+	"loom/internal/publish"
 	"loom/internal/wire"
 )
 
@@ -39,6 +40,7 @@ type controlInviteContextV1 struct {
 	Issuers  []wire.BootstrapIssuerAuthorizationV1  `json:"issuers"`
 	Catalog  wire.BootstrapEndpointCatalogV1        `json:"catalog"`
 	Service  wire.PrivateEnrollmentServiceRefV1     `json:"service"`
+	Mirrors  []wire.DistributionMirrorRefV1         `json:"mirrors"`
 	Grants   []controlInviteGrantOptionV1           `json:"grants"`
 }
 
@@ -59,6 +61,19 @@ type controlInviteRequestFileV1 struct {
 	Request controlOperationRequestV1  `json:"request"`
 }
 
+type controlInviteDistributionOptionsV1 struct {
+	Targets   []string
+	SSHConfig string
+}
+
+type controlInviteStaticPublicationV1 struct {
+	Schema      int      `json:"schema"`
+	CatalogHash string   `json:"catalog_hash"`
+	ProofHash   string   `json:"proof_hash"`
+	Paths       []string `json:"paths"`
+	MirrorCount int64    `json:"mirror_count"`
+}
+
 func cmdControlCreateInvite(args []string) error {
 	fs := flag.NewFlagSet("control create-invite", flag.ContinueOnError)
 	adminDir := fs.String("admin-dir", "", "管理员证书与 endpoint 目录")
@@ -69,11 +84,14 @@ func cmdControlCreateInvite(args []string) error {
 	grants := fs.String("grants", "", "逗号分隔的 service:<ID> 或 egress:<ID>")
 	ttl := fs.Duration("ttl", 15*time.Minute, "邀请有效期")
 	list := fs.Bool("list-grants", false, "列出当前可授权目标")
+	sshConfig := fs.String("ssh-config", ".ssh_config", "SSH 分发目标使用的配置")
+	var distributionTargets repeatedFlag
+	fs.Var(&distributionTargets, "distribution-target", "静态镜像根目录或 ssh://<alias>/<绝对目录>；按 descriptor 镜像逐个提供")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *adminDir == "" || !*list && (*out == "" || strings.TrimSpace(*name) == "") {
-		return errors.New("用法: loom control create-invite -admin-dir <dir> -name <name> -out <dir> [-platform linux-server|android|windows-desktop] [-grants service:<ID>,egress:<ID>]；可先加 -list-grants")
+	if fs.NArg() != 0 || *adminDir == "" || !*list && (*out == "" || strings.TrimSpace(*name) == "" || len(distributionTargets) < 2 || len(distributionTargets) > 3) {
+		return errors.New("用法: loom control create-invite -admin-dir <dir> -name <name> -out <dir> -distribution-target <root|ssh://alias/root>（重复 2–3 次） [-platform linux-server|android|windows-desktop] [-grants service:<ID>,egress:<ID>]；可先加 -list-grants")
 	}
 	endpoint, client, err := loadControlAdminClient(*adminDir)
 	if err != nil {
@@ -100,7 +118,8 @@ func cmdControlCreateInvite(args []string) error {
 	if *ttl <= 0 || *ttl%time.Second != 0 {
 		return errors.New("邀请有效期必须是正整秒")
 	}
-	if err := createControlInvite(ctx, *adminDir, endpoint, client, input, *out, time.Now); err != nil {
+	if err := createControlInvite(ctx, *adminDir, endpoint, client, input, *out, time.Now,
+		controlInviteDistributionOptionsV1{Targets: distributionTargets, SSHConfig: *sshConfig}); err != nil {
 		return err
 	}
 	fmt.Printf("✓ 邀请已由控制日志认证；交付文件：%s\n", filepath.Join(*out, "invite.loom-invite"))
@@ -126,9 +145,28 @@ func controlResponsibilityValues(raw string) []string {
 }
 
 func createControlInvite(ctx context.Context, adminDir string, endpoint controlAdminEndpointV1, client *http.Client,
-	input controlCreateInviteInputV1, output string, now func() time.Time) error {
+	input controlCreateInviteInputV1, output string, now func() time.Time,
+	distribution ...controlInviteDistributionOptionsV1) error {
 	if now == nil {
 		return errors.New("创建邀请缺可信时钟")
+	}
+	if len(distribution) > 1 {
+		return errors.New("创建邀请的静态分发配置重复")
+	}
+	if len(distribution) == 1 {
+		if len(distribution[0].Targets) < 2 || len(distribution[0].Targets) > 3 {
+			return errors.New("创建邀请必须配置 2–3 个静态分发目标")
+		}
+		seen := make(map[string]bool, len(distribution[0].Targets))
+		for _, spec := range distribution[0].Targets {
+			if seen[spec] {
+				return errors.New("创建邀请的静态分发目标重复")
+			}
+			seen[spec] = true
+			if _, err := publish.ParseTarget(spec, distribution[0].SSHConfig); err != nil {
+				return err
+			}
+		}
 	}
 	if err := os.MkdirAll(output, 0o700); err != nil {
 		return err
@@ -149,6 +187,9 @@ func createControlInvite(ctx context.Context, adminDir string, endpoint controlA
 		var options controlInviteContextV1
 		if err := fetchControlInviteJSON(ctx, endpoint, client, privateControlInviteContextPath, &options); err != nil {
 			return err
+		}
+		if len(distribution) == 1 && len(distribution[0].Targets) != len(options.Mirrors) {
+			return errors.New("静态分发目标数量必须逐一覆盖当前 certified mirrors")
 		}
 		request, err := buildControlInviteRequest(adminDir, endpoint, options, input, now().UTC().Truncate(time.Second))
 		if err != nil {
@@ -194,7 +235,77 @@ func createControlInvite(ctx context.Context, adminDir string, endpoint controlA
 			return err
 		}
 	}
+	if len(distribution) == 1 {
+		if err := publishControlInviteStatic(output, delivery, distribution[0]); err != nil {
+			return fmt.Errorf("邀请事务已认证但静态镜像尚未完整发布；使用相同输出目录重试: %w", err)
+		}
+	}
 	return nil
+}
+
+func publishControlInviteStatic(output string, delivery controlInviteDeliveryV1,
+	options controlInviteDistributionOptionsV1) error {
+	if len(options.Targets) != len(delivery.Descriptor.DistributionMirrors) || len(options.Targets) < 2 || len(options.Targets) > 3 {
+		return errors.New("静态分发目标数量必须逐一覆盖 descriptor 的 2–3 个镜像")
+	}
+	proofBody, err := wire.MarshalCanonical(delivery.Proof)
+	if err != nil {
+		return err
+	}
+	catalogBody, err := wire.MarshalCanonical(delivery.Catalog)
+	if err != nil {
+		return err
+	}
+	proofHash, err := wire.InviteProofBundleHash(&delivery.Proof)
+	if err != nil || proofHash != delivery.Descriptor.ProofBundleHash {
+		return errors.New("静态 proof 与 descriptor hash 不一致")
+	}
+	catalogHash, err := wire.BootstrapEndpointCatalogHash(&delivery.Catalog)
+	if err != nil || catalogHash != delivery.Descriptor.BootstrapCatalogHash {
+		return errors.New("静态 catalog 与 descriptor hash 不一致")
+	}
+	pathFor := func(hash string) (string, error) {
+		digest, err := wire.ParseHash(hash)
+		if err != nil {
+			return "", err
+		}
+		return filepath.ToSlash(filepath.Join("distribution", "sha256", hex.EncodeToString(digest))), nil
+	}
+	proofPath, err := pathFor(proofHash)
+	if err != nil {
+		return err
+	}
+	catalogPath, err := pathFor(catalogHash)
+	if err != nil {
+		return err
+	}
+	targets := make([]publish.Target, 0, len(options.Targets))
+	for _, spec := range options.Targets {
+		target, err := publish.ParseTarget(spec, options.SSHConfig)
+		if err != nil {
+			return err
+		}
+		targets = append(targets, target)
+	}
+	mirrors, err := publish.NewMirrorSet(targets...)
+	if err != nil {
+		return err
+	}
+	objects := map[string][]byte{proofPath: proofBody, catalogPath: catalogBody}
+	if err := publish.PushImmutable(mirrors, objects); err != nil {
+		return err
+	}
+	for path, expected := range objects {
+		got, found, err := mirrors.ReadFile(path)
+		if err != nil || !found || !bytes.Equal(got, expected) {
+			return fmt.Errorf("静态镜像未回读 exact object %s", path)
+		}
+	}
+	paths := []string{"/" + catalogPath, "/" + proofPath}
+	sort.Strings(paths)
+	receipt := controlInviteStaticPublicationV1{Schema: 1, CatalogHash: catalogHash,
+		ProofHash: proofHash, Paths: paths, MirrorCount: int64(len(targets))}
+	return writeCanonicalAtomic(filepath.Join(output, "static-publication.json"), receipt, 0o600)
 }
 
 func fetchControlInviteJSON(ctx context.Context, endpoint controlAdminEndpointV1, client *http.Client, path string, target any) error {
@@ -367,6 +478,13 @@ func validateControlInviteContext(endpoint controlAdminEndpointV1, options contr
 	if _, err := wire.BootstrapEndpointCatalogHash(&options.Catalog); err != nil {
 		return err
 	}
+	if err := wire.ValidateDistributionMirrorRefs(options.Mirrors); err != nil {
+		return err
+	}
+	if int64(len(options.Mirrors)) < options.Policy.MinimumDistributionMirrors ||
+		int64(len(options.Mirrors)) > options.Policy.MaximumDistributionMirrors {
+		return errors.New("创建邀请的镜像数量不满足当前 policy")
+	}
 	return nil
 }
 
@@ -401,7 +519,8 @@ func (runtime *controlRuntime) serveInviteContext(writer http.ResponseWriter, re
 		MemberID: runtime.config.MemberID, Quorum: quorum, Head: *state.CertifiedHead, ConfigQC: qc, ControlSet: state.ControlSet,
 		Raft: controlRaftStatusV1{Term: raft.CurrentTerm, CommitIndex: raft.CommitIndex, LastApplied: raft.LastApplied}, Service: runtime.config.ControlService},
 		Policy: application.InvitePolicy, Profiles: application.CARegistry.DeviceProfiles, Issuers: application.BootstrapIssuers,
-		Catalog: application.BootstrapCatalog, Service: application.EnrollmentService, Grants: []controlInviteGrantOptionV1{}}
+		Catalog: application.BootstrapCatalog, Service: application.EnrollmentService,
+		Mirrors: append([]wire.DistributionMirrorRefV1(nil), application.Mirrors...), Grants: []controlInviteGrantOptionV1{}}
 	ssot, err := model.Load([]byte(application.LegacySSOT))
 	if err != nil {
 		writeControlRuntimeError(writer, http.StatusServiceUnavailable, "[D115 Invite] 当前目标授权不可读")

@@ -113,6 +113,11 @@ func TestExistingCertificatePreservesOwnerKeyAndExplicitNameSubset(t *testing.T)
 			if err != nil || runtime.CertificateIntentHash != "" || runtime.ExistingCertificateBindingHash == "" {
 				t.Fatalf("existing runtime: %v", err)
 			}
+			chainPath, keyPath, err := ExistingRuntimeCertificatePaths(f.dir, binding, binding.Identity, f.roots, f.now)
+			if err != nil || chainPath != existingCertificateArtifactPath(f.dir, binding.CertificateChainHash, "chain") ||
+				keyPath != existingCertificateArtifactPath(f.dir, binding.Identity.KeyArtifactHash, "key") {
+				t.Fatalf("existing runtime paths: %q %q %v", chainPath, keyPath, err)
+			}
 			if !bytes.Equal(runtime.TLSCertificate.Certificate[0], runtime.TLSCertificate.Leaf.Raw) {
 				t.Fatal("leaf 不匹配")
 			}

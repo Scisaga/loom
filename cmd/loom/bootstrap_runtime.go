@@ -34,8 +34,15 @@ type bootstrapPreparedReadinessV1 struct {
 
 type preparedBootstrapRuntime struct {
 	generations []*bootstrapaccess.PreparedBootstrapGeneration
+	access      bootstrapRuntimeDeviceAccess
 	unlocked    func()
 	done        chan error
+}
+
+type bootstrapRuntimeDeviceAccess interface {
+	Resolve(context.Context, wire.BootstrapCapabilityLookupRequestV1) (wire.VerifiedBootstrapCapabilityV1, error)
+	DialContext(context.Context, string, string) (net.Conn, error)
+	Close()
 }
 
 func (runtime *preparedBootstrapRuntime) Close() {
@@ -46,6 +53,10 @@ func (runtime *preparedBootstrapRuntime) Close() {
 		runtime.unlocked()
 		runtime.unlocked = nil
 	}
+	if runtime.access != nil {
+		runtime.access.Close()
+		runtime.access = nil
+	}
 }
 
 func cmdBootstrapServe(args []string) error {
@@ -54,6 +65,7 @@ func cmdBootstrapServe(args []string) error {
 	device := flags.String("device", "", "原 Device ID")
 	platform := flags.String("platform-pubkey", "/etc/loom/trust/platform.pub", "原平台公钥，仅验证迁移证明")
 	state := flags.String("state-dir", "/var/lib/loom-bootstrap-v2", "持久 listener 与 capability 使用状态")
+	deviceState := flags.String("device-state-dir", "/var/lib/loom/client-v2", "已迁移 Device 身份与 LKG 目录")
 	certificates := flags.String("certificate-dir", "/var/lib/loom-public-v2/certificates", "原节点已有证书材料目录")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -69,14 +81,31 @@ func cmdBootstrapServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	runtime, err := startPreparedBootstrapRuntime(ctx, bundle, key, *device, *state, *certificates, nil, time.Now)
+	installation, err := verifyBootstrapInstallationBundle(bundle, key, *device)
 	if err != nil {
 		return err
 	}
+	access, err := openBootstrapRuntimeDeviceAccess(filepath.Join(*deviceState, "state.json"),
+		filepath.Join(*deviceState, "identity.json"), *device,
+		installation.Catalog.BootstrapIngressSetHash, time.Now, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			access.Close()
+		}
+	}()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	runtime, err := startPreparedBootstrapRuntime(ctx, bundle, key, *device, *state, *certificates, nil, time.Now, access)
+	if err != nil {
+		return err
+	}
+	transferred = true
 	defer runtime.Close()
-	fmt.Println("✓ 认证的 Bootstrap prepared listeners 已启动并完成本机 TLS/QUIC 验证；等待认证发布")
+	fmt.Println("✓ 认证的 Bootstrap listeners 已启动并完成本机 TLS/QUIC 验证；新连接按当前 certified capability 判定")
 	select {
 	case <-ctx.Done():
 		return nil
@@ -89,7 +118,8 @@ func cmdBootstrapServe(args []string) error {
 }
 
 func startPreparedBootstrapRuntime(ctx context.Context, bundle bootstrapInstallationBundleV1, public ed25519.PublicKey,
-	deviceID, stateDir, certificateDir string, roots *x509.CertPool, now func() time.Time) (*preparedBootstrapRuntime, error) {
+	deviceID, stateDir, certificateDir string, roots *x509.CertPool, now func() time.Time,
+	deviceAccess ...bootstrapRuntimeDeviceAccess) (*preparedBootstrapRuntime, error) {
 	if ctx == nil || now == nil {
 		return nil, errors.New("[bootstrap] 缺运行 context 或可信时间")
 	}
@@ -111,7 +141,15 @@ func startPreparedBootstrapRuntime(ctx context.Context, bundle bootstrapInstalla
 	if err != nil {
 		return nil, err
 	}
-	runtime := &preparedBootstrapRuntime{unlocked: unlock, done: make(chan error, len(installation.Plans))}
+	var access bootstrapRuntimeDeviceAccess
+	if len(deviceAccess) > 1 {
+		unlock()
+		return nil, errors.New("[bootstrap] Device access 重复")
+	}
+	if len(deviceAccess) == 1 {
+		access = deviceAccess[0]
+	}
+	runtime := &preparedBootstrapRuntime{access: access, unlocked: unlock, done: make(chan error, len(installation.Plans))}
 	success := false
 	defer func() {
 		if !success {
@@ -148,7 +186,14 @@ func startPreparedBootstrapRuntime(ctx context.Context, bundle bootstrapInstalla
 	}
 	// 初始 prepared 阶段不接受任何 bearer；只有后续认证发布及实际邀请
 	// capability 的验证输入才能开放加入，不能用固定 credential 代替。
-	registry, err := bootstrapaccess.NewCredentialRegistry(installation.Catalog.BootstrapIngressSetHash, []wire.VerifiedBootstrapCapabilityV1{})
+	var resolver bootstrapaccess.CapabilityResolver
+	dial := bootstrapaccess.DialContext((&net.Dialer{}).DialContext)
+	if access != nil {
+		resolver = access.Resolve
+		dial = access.DialContext
+	}
+	registry, err := bootstrapaccess.NewCredentialRegistryWithResolver(installation.Catalog.BootstrapIngressSetHash,
+		[]wire.VerifiedBootstrapCapabilityV1{}, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +239,7 @@ func startPreparedBootstrapRuntime(ctx context.Context, bundle bootstrapInstalla
 			return nil, err
 		}
 		transport, err := bootstrapaccess.NewBootstrapIngressRuntime(bootstrapaccess.BootstrapIngressRuntimeOptions{Plan: runtimePlan, Manager: manager, Registry: registry,
-			TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate.TLSCertificate}, MinVersion: tls.VersionTLS13}, Dial: (&net.Dialer{}).DialContext,
+			TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate.TLSCertificate}, MinVersion: tls.VersionTLS13}, Dial: dial,
 			HandshakeTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaximumConcurrentConnections: 128, MaximumStreamsPerConnection: 8})
 		if err != nil {
 			return nil, err

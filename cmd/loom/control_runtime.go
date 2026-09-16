@@ -61,7 +61,8 @@ const (
 	controlLoopbackIP       = "127.0.0.1"
 )
 
-var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1, controlCreateInviteKind: 1, controlPublishDeviceKind: 1, dnsprovider.BindingOperationKind: 1}
+var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1, controlCreateInviteKind: 1,
+	controlPublishDeviceKind: 1, controlAdvertiseBootstrapKind: 1, dnsprovider.BindingOperationKind: 1}
 
 type controlDiskConfigV1 struct {
 	Schema          int                                       `json:"schema"`
@@ -112,19 +113,20 @@ type controlBrowserTLSV1 struct {
 }
 
 type controlOperationRecordV1 struct {
-	Schema            int                                `json:"schema"`
-	Payload           json.RawMessage                    `json:"payload,omitempty"`
-	Operation         wire.ControlOperationV1            `json:"operation"`
-	Leaf              wire.ControlOperationLeafV1        `json:"leaf"`
-	Candidate         wire.HeadEntryV2                   `json:"candidate"`
-	Result            *controlCertifiedOperationResultV1 `json:"result,omitempty"`
-	AdminRotation     *controlAdminRotationV1            `json:"admin_rotation,omitempty"`
-	Activation        *controlRuntimeActivationV1        `json:"activation,omitempty"`
-	Enrollment        *controlEnrollmentOperationV1      `json:"enrollment,omitempty"`
-	Invite            *controlInviteStateV1              `json:"invite,omitempty"`
-	DevicePublication *controlDevicePublicationV1        `json:"device_publication,omitempty"`
-	AdditionalLeaves  []wire.ControlOperationLeafV1      `json:"additional_leaves,omitempty"`
-	Phases            []controlplane.Phase               `json:"phases,omitempty"`
+	Schema                 int                                `json:"schema"`
+	Payload                json.RawMessage                    `json:"payload,omitempty"`
+	Operation              wire.ControlOperationV1            `json:"operation"`
+	Leaf                   wire.ControlOperationLeafV1        `json:"leaf"`
+	Candidate              wire.HeadEntryV2                   `json:"candidate"`
+	Result                 *controlCertifiedOperationResultV1 `json:"result,omitempty"`
+	AdminRotation          *controlAdminRotationV1            `json:"admin_rotation,omitempty"`
+	Activation             *controlRuntimeActivationV1        `json:"activation,omitempty"`
+	Enrollment             *controlEnrollmentOperationV1      `json:"enrollment,omitempty"`
+	Invite                 *controlInviteStateV1              `json:"invite,omitempty"`
+	DevicePublication      *controlDevicePublicationV1        `json:"device_publication,omitempty"`
+	BootstrapAdvertisement *controlBootstrapAdvertisementV1   `json:"bootstrap_advertisement,omitempty"`
+	AdditionalLeaves       []wire.ControlOperationLeafV1      `json:"additional_leaves,omitempty"`
+	Phases                 []controlplane.Phase               `json:"phases,omitempty"`
 }
 
 type controlOperationJournalV1 struct {
@@ -207,7 +209,7 @@ type controlRuntime struct {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("control 需要 bootstrap、enable-loopback、rotate-admin、export-admin、serve、status、create-invite、migrate 或 request")
+		return errors.New("control 需要 bootstrap、enable-loopback、rotate-admin、export-admin、serve、status、create-invite、advertise-bootstrap、migrate 或 request")
 	}
 	switch args[0] {
 	case "bootstrap":
@@ -226,6 +228,8 @@ func cmdControl(args []string) error {
 		return cmdControlRequest(args[1:])
 	case "create-invite":
 		return cmdControlCreateInvite(args[1:])
+	case "advertise-bootstrap":
+		return cmdControlAdvertiseBootstrap(args[1:])
 	case "publish-device-config":
 		return cmdControlPublishDeviceConfig(args[1:])
 	case "publish-client-config":
@@ -1053,6 +1057,10 @@ func (runtime *controlRuntime) resolveScope(ctx context.Context,
 		if _, err := decodeControlDevicePublication(controlplane.OperationPayload(ctx), operation); err != nil {
 			return wire.AdminResourceScopeV1{}, err
 		}
+	} else if operation.Body.Kind == controlAdvertiseBootstrapKind {
+		if _, err := decodeControlBootstrapAdvertisement(controlplane.OperationPayload(ctx), operation); err != nil {
+			return wire.AdminResourceScopeV1{}, err
+		}
 	} else if err := validateControlPayload(operation, controlplane.OperationPayload(ctx)); err != nil {
 		return wire.AdminResourceScopeV1{}, err
 	}
@@ -1075,6 +1083,9 @@ func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	}
 	if operation.Body.Kind == controlPublishDeviceKind {
 		return runtime.commitDevicePublicationLocked(ctx, verified)
+	}
+	if operation.Body.Kind == controlAdvertiseBootstrapKind {
+		return runtime.commitBootstrapAdvertisementLocked(ctx, verified)
 	}
 	payload := controlplane.OperationPayload(ctx)
 	if err := validateControlPayload(operation, payload); err != nil {

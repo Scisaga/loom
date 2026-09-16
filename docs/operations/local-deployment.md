@@ -63,6 +63,10 @@ go run ./scripts/deploy-code --env .env --commit "$release_commit" \
   --binary dist/loom-linux-amd64 --reason "本次已审核修改" --plan
 ```
 
+当前 issue 只改服务端、且 `.env` 同时指向其他提交构建的客户端目录时，显式加
+`--skip-client-releases`。它只跳过本次客户端目录校验与复制，不修改目录、不把旧客户端重标为新提交，
+也不能用于需要交付客户端变更的 issue。实际发布必须复用计划阶段的同一选项。
+
 `release_commit` 必须是构建该制品的完整提交。`--plan` 检查配置、节点集合、SSH 别名、制品与签名材料，
 不执行发布或连接节点。实际已获授权的发布使用相同参数去掉 `--plan`，工具依次执行：
 

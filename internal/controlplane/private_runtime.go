@@ -31,6 +31,7 @@ type PrivateRuntimeOptions struct {
 	VerifyReport     DeviceReportPayloadVerifier
 	CommitReport     DeviceReportCommitter
 	Observations     DeviceReportObservationReader
+	ResolveBootstrap BootstrapCapabilityResolver
 	ReportSchemas    wire.DeviceReportSchemaRegistry
 	Now              func() time.Time
 	Listen           func(context.Context, string, string) (net.Listener, error)
@@ -128,7 +129,8 @@ func newPrivateRuntime(options PrivateRuntimeOptions, enrollment bool) (*Private
 		case "enroll":
 			handler = enrollmenttransport.Handler(options.Enrollment.ServeVerifiedHTTP)
 		case "device_config":
-			handler, err = NewPrivateDeviceConfigService(service, options.Identities, options.Now)
+			handler, err = NewPrivateDeviceConfigService(service, options.Identities, options.Now,
+				options.ResolveBootstrap)
 		case "device_report":
 			var reports *PrivateDeviceReportService
 			reports, err = NewPrivateDeviceReportService(service, options.ReportIdentities, options.VerifyReport,

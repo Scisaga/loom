@@ -202,7 +202,7 @@ func (session *hysteria2Connection) ServeHTTP(writer http.ResponseWriter, reques
 		return
 	}
 	verifiedSession, err := session.server.registry.openHysteria2Session(
-		session.server.manager, credential, session.sessionID)
+		request.Context(), session.server.manager, credential, session.sessionID)
 	credential = ""
 	if err != nil {
 		session.authMu.Unlock()

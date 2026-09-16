@@ -43,18 +43,58 @@ CLI 校验系统 WebPKI 信任、名字、有效期和私钥匹配，以不可�
 外部 observer 策略确定性生成 HY2 与独立 Trojan/TLS 计划。计划的地址、端口和证书不会在重试时
 重新分配；原 Head 或输入改变时拒绝覆盖。迁移输入的 `prepared.bootstrap_installation` 承诺完整
 计划，`prepared.bootstrap_catalog` 必须与之相等。计划生成不修改运行服务，尚未完成认证发布时
-不能用它创建新邀请；外部验证结果提交、capability 更新及静态发布的接线仍见实现对照。
+不能用它创建新邀请。
 
 迁移提交后，`loom control export-bootstrap -admin-dir <原交付目录> -device <入口节点> -out <交付文件>`
 经私有管理 API 导出安装部分及 Merkle 证明，不能把完整私有 application 复制到 forward 节点。
 `loom bootstrap serve -bundle <交付文件> -device <原节点>` 用节点保存的原平台公钥验证迁移与部分证明，
-只加载原节点证书，冻结本地端口计划，并启动 HY2/Trojan prepared listeners。它逐个完成真实本机
-TLS/QUIC 握手后保存 readiness 和无 bearer 的 outer probe plan；失败关闭整批，重启不重分配端口。
-初始 prepared 阶段不开放邀请 bearer。外部验证、认证 advertise、capability 更新与客户端成功入网
-必须继续接通和验收，不能把此阶段的握手回执当作加入成功。
+只加载原节点证书和 `/var/lib/loom/client-v2` 中已迁移的 forward Device 身份，冻结本地端口计划，
+并启动 HY2/Trojan listeners。可用 `-device-state-dir` 显式指定同一 durable Device 状态目录；缺身份、
+职责、当前私有服务目录或认证绑定时整体拒绝启动。它逐个完成真实本机 TLS/QUIC 握手后保存 readiness
+和无 bearer 的 outer probe plan；失败关闭整批，重启不重分配端口。每个新连接都经该 Device 的
+private `device_config` 服务查询当前 certified capability，再由 Device mTLS 转发到 exact private
+Enrollment tuple；不会缓存一个长期有效的静态 bearer。
+
+外部 observer 对每份 plan 执行：
+
+```bash
+loom bootstrap probe-outer -plan <outer-plan> -observer-id <observer-id> \
+  -key <observer-key> -o <signed-observation>
+```
+
+管理员收齐每个 endpoint 的 readiness 与策略要求的外部签名报告后，提交同一认证日志：
+
+```bash
+loom control advertise-bootstrap -admin-dir <offline-admin-directory> \
+  -bundle <交付文件> -readiness <readiness>... -observation <signed-observation>... \
+  -out <protected-request-directory>
+```
+
+事务会重建 frozen runtime plan、重验本机与外部证据，并把完整 ingress set 一次性从 prepared 提升为
+advertised；重启按日志重放相同结果。发布前 capability 查询保持拒绝，发布后邀请撤销、过期、issuer
+变化或 forward Device 撤权会在下一次连接立即生效。
+
+公网 Nginx 配置从同一认证交付生成，不手填域名、端口或证书路径：
+
+```bash
+loom bootstrap render-public -bundle <交付文件> -device <原节点> \
+  -static-root <fake-and-immutable-root> -out <staged-nginx-config>
+```
+
+命令重新验证现有证书完整链、私钥、SPKI 与认证 identity，使用 certified
+`nginx_local_tcp_port`，且只渲染 fake `/` 和 `/distribution/sha256/<digest>`。它不自动 reload；
+须先以部署节点的 `nginx -t` 验证，再原子替换并 reload。被忽略的本机旧 Nginx 输入不是源码，
+不得在新配置激活前删除；激活并核对旧公网路径消失后再从私有部署目录清理。
+
+`loom control create-invite` 必须按当前 descriptor 的 2–3 个 mirror 重复传入
+`-distribution-target <local-root|ssh://alias/root>`。命令在认证邀请后把 exact catalog/proof 按 typed hash
+发布到全部静态镜像并回读；token、opening 与 capability 只留在受保护交付和私有服务中。任一镜像失败时
+保留已认证结果，以相同输出目录重试，不生成第二个邀请。即使这些源码入口已接通，仍须以精确部署提交、
+公网正常下载和一次真实 Enrollment 成功回读证明生产完成，不能用握手或 404 代替业务验收。
 
 服务模板为 `packaging/systemd/loom-bootstrap-v2.service`；节点 `/etc/loom/bootstrap-v2.env` 只提供
-`BOOTSTRAP_BUNDLE` 与 `DEVICE_ID`。材料和配置文件保持受保护，部署命令仍遵守精确制品发布规程。
+`BOOTSTRAP_BUNDLE` 与 `DEVICE_ID`，其余路径使用上述默认值或在本机 unit override 中显式指定。
+材料和配置文件保持受保护，部署命令仍遵守精确制品发布规程。
 
 ## 首次初始化
 

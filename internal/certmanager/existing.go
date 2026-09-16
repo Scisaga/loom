@@ -247,6 +247,18 @@ func LoadExistingRuntimeCertificate(directory string, binding ExistingCertificat
 		ExistingCertificateBindingHash: hash, SPKIPins: []string{identity.SPKIHash}}, nil
 }
 
+// ExistingRuntimeCertificatePaths 只在完整验证本地不可变副本后返回 Nginx
+// 可直接消费的绝对路径。调用方不能由 hash 自行拼接路径而绕过证书、私钥与
+// 认证 identity 的一致性检查。
+func ExistingRuntimeCertificatePaths(directory string, binding ExistingCertificateBindingV1,
+	identity wire.CertificateIdentityProjectionV1, roots *x509.CertPool, now time.Time) (string, string, error) {
+	if _, err := LoadExistingRuntimeCertificate(directory, binding, identity, roots, now); err != nil {
+		return "", "", err
+	}
+	return existingCertificateArtifactPath(directory, binding.CertificateChainHash, "chain"),
+		existingCertificateArtifactPath(directory, identity.KeyArtifactHash, "key"), nil
+}
+
 func verifyExistingCertificateChain(body []byte, identity wire.CertificateIdentityProjectionV1, roots *x509.CertPool,
 	now time.Time) ([]byte, *x509.Certificate, error) {
 	if _, err := wire.CertificateIdentityProjectionHash(&identity); err != nil {

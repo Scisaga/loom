@@ -2,6 +2,8 @@ package wire
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -17,7 +19,74 @@ const (
 	DomainBootstrapIssuerAuthorization     = "loom-bootstrap-issuer-authorization-v1"
 	DomainBootstrapIssuerAuthorizationLeaf = "loom-bootstrap-issuer-authorization-leaf-v1"
 	DomainEnrollmentPreflightRequest       = "loom-enrollment-intent-preflight-request-v1"
+	BootstrapCapabilityLookupMediaTypeV1   = "application/vnd.loom.bootstrap-capability-lookup.v1+json"
+	PrivateBootstrapCapabilityLookupPathV1 = "/private/v2/device/bootstrap-capability"
 )
+
+type BootstrapCapabilityLookupRequestV1 struct {
+	Schema         int    `json:"schema"`
+	IngressSetHash string `json:"ingress_set_hash"`
+	Transport      string `json:"transport"`
+	Authentication string `json:"authentication"`
+}
+
+type BootstrapCapabilityLookupResponseV1 struct {
+	Schema      int                                 `json:"schema"`
+	Capability  BootstrapTunnelCapabilityV1         `json:"capability"`
+	IssuerProof BootstrapIssuerAuthorizationProofV1 `json:"issuer_proof"`
+	Policy      InviteIssuancePolicyV2              `json:"policy"`
+}
+
+func ValidateBootstrapCapabilityLookupRequest(request *BootstrapCapabilityLookupRequestV1) error {
+	if request == nil || request.Schema != 1 ||
+		(request.Transport != "hysteria2" && request.Transport != "trojan_tls") {
+		return errors.New("[capability lookup] 请求 schema/transport 无效")
+	}
+	if _, err := ParseHash(request.IngressSetHash); err != nil {
+		return err
+	}
+	if request.Transport == "hysteria2" {
+		if _, err := ParseHash(request.Authentication); err != nil {
+			return errors.New("[capability lookup] HY2 authentication 无效")
+		}
+		return nil
+	}
+	decoded, err := hex.DecodeString(request.Authentication)
+	if err != nil || len(decoded) != sha256.Size224 || hex.EncodeToString(decoded) != request.Authentication {
+		return errors.New("[capability lookup] Trojan authentication 无效")
+	}
+	return nil
+}
+
+// VerifyBootstrapCapabilityLookupResponse 在 ingress 本机重新验证 issuer proof、
+// policy、capability 签名、时间和 transport authentication；私有 control 的成功
+// HTTP 状态本身不能构造 opaque capability evidence。
+func VerifyBootstrapCapabilityLookupResponse(request *BootstrapCapabilityLookupRequestV1,
+	response *BootstrapCapabilityLookupResponseV1, trustedTime time.Time) (VerifiedBootstrapCapabilityV1, error) {
+	if err := ValidateBootstrapCapabilityLookupRequest(request); err != nil {
+		return VerifiedBootstrapCapabilityV1{}, err
+	}
+	if response == nil || response.Schema != 1 || trustedTime.IsZero() {
+		return VerifiedBootstrapCapabilityV1{}, errors.New("[capability lookup] 响应/可信时间无效")
+	}
+	verified, err := VerifyCapabilityAuthorizationEvidence(&response.Capability, &response.IssuerProof,
+		&response.Policy, trustedTime)
+	if err != nil {
+		return VerifiedBootstrapCapabilityV1{}, err
+	}
+	if verified.Body().AllowedIngressSetHash != request.IngressSetHash {
+		return VerifiedBootstrapCapabilityV1{}, errors.New("[capability lookup] capability 不属于请求的 ingress set")
+	}
+	want := verified.TransportCredential()
+	if request.Transport == "trojan_tls" {
+		digest := sha256.Sum224([]byte(want))
+		want = hex.EncodeToString(digest[:])
+	}
+	if request.Authentication != want {
+		return VerifiedBootstrapCapabilityV1{}, errors.New("[capability lookup] transport authentication 未绑定 capability")
+	}
+	return verified, nil
+}
 
 type InviteIssuancePolicyV2 struct {
 	Schema                             int      `json:"schema"`

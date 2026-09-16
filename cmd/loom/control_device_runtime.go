@@ -54,7 +54,8 @@ func (runtime *controlRuntime) deviceRuntimeOptions() (*controlplane.PrivateRunt
 		Services: application.Services, Certificates: certificates,
 		Identities: runtime.readDeviceIdentity, ReportIdentities: runtime.readDeviceReportIdentity, VerifyReport: verifyControlDeviceReportPayload,
 		CommitReport: commit, Observations: runtime.deviceReportObservations(store),
-		ReportSchemas: controlDeviceReportSchemas, Now: runtime.now,
+		ResolveBootstrap: runtime.resolveBootstrapCapability,
+		ReportSchemas:    controlDeviceReportSchemas, Now: runtime.now,
 	}, closeKeys, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -143,6 +144,34 @@ func TestControlAdminBundleRejectsLegacyAndIncompleteChain(t *testing.T) {
 	}
 	if err := verifyAdminPKCS12(admin, leaf.Raw, root.Raw); err == nil {
 		t.Fatal("接受了缺少 issuer 的旧打包方式")
+	}
+}
+
+func TestControlAdminRotationExplicitlyAddsOnlyBootstrapAdvertise(t *testing.T) {
+	dir, admin := newAdminRotationFixture(t, false)
+	runtime, err := openControlRuntime(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := append([]string(nil), runtime.config.Authorizations[0].AllowedOperationKinds...)
+	out := filepath.Join(t.TempDir(), "admin")
+	if err := runtime.rotateAdminCertificate(admin, out, "enable certified bootstrap advertise", true); err != nil {
+		t.Fatal(err)
+	}
+	next := runtime.config.Authorizations[0].AllowedOperationKinds
+	want := append(previous, controlAdvertiseBootstrapKind)
+	sort.Strings(want)
+	if !wire.EqualCanonical(next, want) || !validAdminRotationOperationKinds(previous, next) {
+		t.Fatalf("显式 ACL 升级超出唯一允许的 kind: got=%v want=%v", next, want)
+	}
+	forged := append(append([]string(nil), next...), "unapproved")
+	sort.Strings(forged)
+	if validAdminRotationOperationKinds(previous, forged) {
+		t.Fatal("管理员轮换接受了 advertise_bootstrap 之外的权限扩张")
+	}
+	reopened, err := openControlRuntime(dir, time.Now)
+	if err != nil || !wire.EqualCanonical(reopened.config.Authorizations[0].AllowedOperationKinds, want) {
+		t.Fatalf("重启丢失显式 ACL 升级: %v", err)
 	}
 }
 

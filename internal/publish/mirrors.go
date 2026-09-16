@@ -58,6 +58,24 @@ func (m *mirrorSet) Push(tree *Tree) error {
 	return nil
 }
 
+func (m *mirrorSet) pushImmutable(files map[string][]byte) error {
+	var failures []string
+	for _, target := range m.targets {
+		writer, ok := target.(interface{ pushImmutable(map[string][]byte) error })
+		if !ok {
+			failures = append(failures, fmt.Sprintf("%s:不支持不可变对象", target))
+			continue
+		}
+		if err := writer.pushImmutable(files); err != nil {
+			failures = append(failures, fmt.Sprintf("%s:%v", target, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%d/%d 个镜像不可变发布失败: %s", len(failures), len(m.targets), strings.Join(failures, "; "))
+	}
+	return nil
+}
+
 func (m *mirrorSet) ReadFile(path string) ([]byte, bool, error) {
 	var reference []byte
 	haveReference := false

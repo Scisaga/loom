@@ -131,7 +131,7 @@ func (server *TrojanTLSServer) handle(ctx context.Context, raw net.Conn) error {
 	if err != nil {
 		return err
 	}
-	session, err := server.registry.openTrojanSession(server.manager, key, sessionID)
+	session, err := server.registry.openTrojanSession(ctx, server.manager, key, sessionID)
 	if err != nil {
 		return err
 	}

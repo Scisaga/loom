@@ -80,6 +80,17 @@ func TestBootstrapLocalReadinessProbesStartedCertifiedGeneration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			reopenedLocal, err := VerifyBootstrapLocalReadinessEvidence(fixture.authorized, runtimePlan, &evidence)
+			if err != nil || reopenedLocal.EvidenceHash() != localHash {
+				t.Fatalf("stored local readiness 未确定性重验 hash=%q want=%q err=%v",
+					reopenedLocal.EvidenceHash(), localHash, err)
+			}
+			forgedEvidence := evidence
+			forgedEvidence.Results = append([]BootstrapLocalReadinessResultV1(nil), evidence.Results...)
+			forgedEvidence.Results[0].LeafSPKIHash = runtimePlanHash("forged-spki")
+			if _, err := VerifyBootstrapLocalReadinessEvidence(fixture.authorized, runtimePlan, &forgedEvidence); err == nil {
+				t.Fatal("stored local readiness 接受被替换的 TLS identity")
+			}
 			if localHash == "" || len(evidence.Results) != 1 ||
 				evidence.Results[0].BindTuple != runtimePlan.Bindings()[0].Tuple() ||
 				evidence.Results[0].TLSVersion != int64(tls.VersionTLS13) ||

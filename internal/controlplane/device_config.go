@@ -8,15 +8,21 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"loom/internal/wire"
 )
 
-const PrivateDeviceConfigPath = "/private/v2/device/config"
+const (
+	PrivateDeviceConfigPath              = "/private/v2/device/config"
+	PrivateBootstrapCapabilityLookupPath = wire.PrivateBootstrapCapabilityLookupPathV1
+	maximumBootstrapCapabilityLookupSize = 64 << 10
+)
 
 type DeviceIdentityRecordV1 struct {
 	Schema           int                                  `json:"schema"`
@@ -56,6 +62,9 @@ type DeviceIdentityAuthorityV1 struct {
 
 type DeviceIdentityReader func(context.Context, string) (DeviceIdentityAuthorityV1, error)
 
+type BootstrapCapabilityResolver func(context.Context, VerifiedDeviceIdentityV1,
+	wire.BootstrapCapabilityLookupRequestV1) (wire.BootstrapCapabilityLookupResponseV1, error)
+
 // VerifiedDeviceIdentityV1 只有 exact Device certificate/profile/registry record 全部
 // 通过后才能产生；config reader 不接受裸 Device ID 或调用方自报的 active 布尔值。
 type VerifiedDeviceIdentityV1 struct {
@@ -85,29 +94,38 @@ func (verified VerifiedDeviceIdentityV1) Responsibilities() []string {
 }
 
 type PrivateDeviceConfigService struct {
-	localAddress    string
-	allowedProfiles []string
-	identities      DeviceIdentityReader
-	now             func() time.Time
+	localAddress     string
+	allowedProfiles  []string
+	identities       DeviceIdentityReader
+	resolveBootstrap BootstrapCapabilityResolver
+	now              func() time.Time
 }
 
 func NewPrivateDeviceConfigService(endpoint wire.PrivateControlServiceV1, identities DeviceIdentityReader,
-	now func() time.Time) (*PrivateDeviceConfigService, error) {
+	now func() time.Time, resolvers ...BootstrapCapabilityResolver) (*PrivateDeviceConfigService, error) {
 	if err := wire.ValidatePrivateControlService(&endpoint); err != nil {
 		return nil, err
 	}
 	if endpoint.Role != "device_config" || identities == nil || now == nil {
 		return nil, errors.New("[device_config] service role/dependencies 无效")
 	}
+	if len(resolvers) > 1 {
+		return nil, errors.New("[device_config] bootstrap capability resolver 重复")
+	}
+	var resolver BootstrapCapabilityResolver
+	if len(resolvers) == 1 {
+		resolver = resolvers[0]
+	}
 	return &PrivateDeviceConfigService{
 		localAddress:    net.JoinHostPort(endpoint.OverlayIP, strconv.FormatInt(endpoint.Port, 10)),
 		allowedProfiles: append([]string(nil), endpoint.AuthorizedSubjectProfiles...),
-		identities:      identities, now: now,
+		identities:      identities, resolveBootstrap: resolver, now: now,
 	}, nil
 }
 
 func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet || request.URL.Path != PrivateDeviceConfigPath || request.URL.RawQuery != "" {
+	if request.URL.RawQuery != "" || request.URL.RawPath != "" ||
+		(request.URL.Path != PrivateDeviceConfigPath && request.URL.Path != PrivateBootstrapCapabilityLookupPath) {
 		writePrivateControlError(writer, http.StatusNotFound, "[device_config] 路由不存在")
 		return
 	}
@@ -116,16 +134,20 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 		writePrivateControlError(writer, http.StatusForbidden, "[device_config] Device mTLS 被拒绝")
 		return
 	}
-	if request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" ||
-		request.Header.Get("Referer") != "" || request.Header.Get("Content-Encoding") != "" ||
-		request.ContentLength > 0 || len(request.TransferEncoding) != 0 {
-		writePrivateControlError(writer, http.StatusBadRequest, "[device_config] 请求格式被拒绝")
-		return
-	}
 	trustedTime := service.now().UTC()
 	identity, err := service.authenticate(request.Context(), request.TLS.PeerCertificates[0].Raw, trustedTime)
 	if err != nil || !matchesDevicePresentedChain(identity, request.TLS.PeerCertificates) {
 		writePrivateControlError(writer, http.StatusForbidden, "[device_config] Device identity 被拒绝")
+		return
+	}
+	if request.URL.Path == PrivateBootstrapCapabilityLookupPath {
+		service.serveBootstrapCapability(writer, request, identity, trustedTime)
+		return
+	}
+	if request.Method != http.MethodGet || request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" ||
+		request.Header.Get("Referer") != "" || request.Header.Get("Content-Encoding") != "" ||
+		request.ContentLength > 0 || len(request.TransferEncoding) != 0 {
+		writePrivateControlError(writer, http.StatusBadRequest, "[device_config] 请求格式被拒绝")
 		return
 	}
 	var body []byte
@@ -147,6 +169,51 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(body)
+}
+
+func (service *PrivateDeviceConfigService) serveBootstrapCapability(writer http.ResponseWriter,
+	request *http.Request, identity VerifiedDeviceIdentityV1, trustedTime time.Time) {
+	contentType := strings.TrimSpace(strings.Split(request.Header.Get("Content-Type"), ";")[0])
+	if request.Method != http.MethodPost || service.resolveBootstrap == nil ||
+		contentType != wire.BootstrapCapabilityLookupMediaTypeV1 ||
+		request.Header.Get("Accept") != wire.BootstrapCapabilityLookupMediaTypeV1 ||
+		request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" ||
+		request.Header.Get("Referer") != "" || request.Header.Get("Content-Encoding") != "" ||
+		request.ContentLength <= 0 || request.ContentLength > maximumBootstrapCapabilityLookupSize ||
+		len(request.TransferEncoding) != 0 {
+		writePrivateControlError(writer, http.StatusBadRequest, "[capability lookup] 请求格式被拒绝")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(request.Body, maximumBootstrapCapabilityLookupSize+1))
+	if err != nil || len(body) == 0 || len(body) > maximumBootstrapCapabilityLookupSize {
+		writePrivateControlError(writer, http.StatusBadRequest, "[capability lookup] 请求读取失败")
+		return
+	}
+	var lookup wire.BootstrapCapabilityLookupRequestV1
+	canonical, err := wire.DecodeStrict(body, maximumBootstrapCapabilityLookupSize, &lookup)
+	if err != nil || !bytes.Equal(canonical, body) || wire.ValidateBootstrapCapabilityLookupRequest(&lookup) != nil {
+		writePrivateControlError(writer, http.StatusBadRequest, "[capability lookup] 请求不是 exact canonical wire")
+		return
+	}
+	response, err := service.resolveBootstrap(request.Context(), identity, lookup)
+	if err != nil {
+		writePrivateControlError(writer, http.StatusForbidden, "[capability lookup] 当前 identity/credential 未获授权")
+		return
+	}
+	if _, err := wire.VerifyBootstrapCapabilityLookupResponse(&lookup, &response, trustedTime); err != nil {
+		writePrivateControlError(writer, http.StatusInternalServerError, "[capability lookup] resolver 返回无效 authority")
+		return
+	}
+	encoded, err := wire.MarshalCanonical(response)
+	if err != nil {
+		writePrivateControlError(writer, http.StatusInternalServerError, "[capability lookup] 响应编码失败")
+		return
+	}
+	writer.Header().Set("Content-Type", wire.BootstrapCapabilityLookupMediaTypeV1)
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(encoded)
 }
 
 // Android/Windows 的标准 TLS key manager 会发送完整链。身份仍只由当前

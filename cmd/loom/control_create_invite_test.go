@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,7 +41,9 @@ func TestControlCreateInviteNormalEntryAndRetainedRetry(t *testing.T) {
 	if len(runtime.journal.Records) != 1 {
 		t.Fatal("未持有交付锁的请求发生了创建")
 	}
-	if err := createControlInvite(ctx, adminDir, endpoint, client, input, output, runtime.now); err != nil {
+	staticRoots := []string{filepath.Join(t.TempDir(), "mirror-a"), filepath.Join(t.TempDir(), "mirror-b")}
+	distribution := controlInviteDistributionOptionsV1{Targets: staticRoots}
+	if err := createControlInvite(ctx, adminDir, endpoint, client, input, output, runtime.now, distribution); err != nil {
 		t.Fatal(err)
 	}
 	var retained controlInviteRequestFileV1
@@ -59,11 +62,31 @@ func TestControlCreateInviteNormalEntryAndRetainedRetry(t *testing.T) {
 	if err != nil || verified.Head().HeadHash != runtime.store.Snapshot().CertifiedHead.HeadHash {
 		t.Fatalf("正常入口交付的证明不可被客户端验证: %v", err)
 	}
+	if len(descriptor.DistributionMirrors) != len(staticRoots) {
+		t.Fatal("测试镜像数量与 descriptor 不一致")
+	}
+	for _, hash := range []string{descriptor.ProofBundleHash, descriptor.BootstrapCatalogHash} {
+		digest, err := wire.ParseHash(hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, root := range staticRoots {
+			body, err := os.ReadFile(filepath.Join(root, "distribution", "sha256", hex.EncodeToString(digest)))
+			if err != nil || bytes.Contains(body, []byte(descriptor.Token)) {
+				t.Fatalf("静态镜像缺对象或泄漏 token: %v", err)
+			}
+		}
+	}
+	var publication controlInviteStaticPublicationV1
+	if err := readCanonicalFile(filepath.Join(output, "static-publication.json"), 1<<20, &publication); err != nil ||
+		publication.MirrorCount != int64(len(staticRoots)) {
+		t.Fatalf("缺静态发布回执: %#v %v", publication, err)
+	}
 	first, err := os.ReadFile(filepath.Join(output, "invite.loom-invite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := createControlInvite(ctx, adminDir, endpoint, client, input, output, runtime.now); err != nil {
+	if err := createControlInvite(ctx, adminDir, endpoint, client, input, output, runtime.now, distribution); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(filepath.Join(output, "invite.loom-invite"))

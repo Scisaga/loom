@@ -1,6 +1,8 @@
 package bootstrapaccess
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +45,54 @@ func TestCredentialRegistryAcceptsOnlyVerifierEvidenceForExactIngress(t *testing
 		t.Fatal(err)
 	}
 	session.Close()
+}
+
+func TestCredentialRegistryResolverUsesCurrentAuthorityForEverySession(t *testing.T) {
+	instant := time.Date(2026, 9, 11, 11, 1, 0, 0, time.UTC)
+	verified, ingressHash := verifiedCapability(t, instant)
+	for _, transport := range []string{"hysteria2", "trojan_tls"} {
+		t.Run(transport, func(t *testing.T) {
+			allowed, calls := true, 0
+			registry, err := NewCredentialRegistryWithResolver(ingressHash, nil,
+				func(_ context.Context, request wire.BootstrapCapabilityLookupRequestV1) (wire.VerifiedBootstrapCapabilityV1, error) {
+					calls++
+					if request.Transport != transport || request.IngressSetHash != ingressHash || !allowed {
+						return wire.VerifiedBootstrapCapabilityV1{}, errors.New("revoked")
+					}
+					return verified, nil
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager, err := Open(filepath.Join(t.TempDir(), "usage.json"), func() time.Time { return instant })
+			if err != nil {
+				t.Fatal(err)
+			}
+			var first *Session
+			if transport == "hysteria2" {
+				first, err = registry.openHysteria2Session(context.Background(), manager,
+					verified.TransportCredential(), "session-1")
+			} else {
+				first, err = registry.openTrojanSession(context.Background(), manager,
+					trojanCredentialKey(verified.TransportCredential()), "session-1")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			first.Close()
+			allowed = false
+			if transport == "hysteria2" {
+				_, err = registry.openHysteria2Session(context.Background(), manager,
+					verified.TransportCredential(), "session-2")
+			} else {
+				_, err = registry.openTrojanSession(context.Background(), manager,
+					trojanCredentialKey(verified.TransportCredential()), "session-2")
+			}
+			if err == nil || calls != 2 || len(registry.snapshot()) != 0 {
+				t.Fatalf("动态 resolver 缓存或绕过当前撤权: calls=%d err=%v", calls, err)
+			}
+		})
+	}
 }
 
 func TestCredentialRegistryReplaceIsAtomicAndSorted(t *testing.T) {

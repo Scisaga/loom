@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"loom/internal/certmanager"
+	"loom/internal/wire"
 )
 
 func TestExistingCertificateCommandProducesReloadablePublicBinding(t *testing.T) {
@@ -79,6 +80,11 @@ func TestExistingCertificateCommandProducesReloadablePublicBinding(t *testing.T)
 		t.Fatal(err)
 	}
 	bootstrapRequest := testBootstrapPreparationFromCertificate(t, binding, roots, now)
+	for index := range bootstrapRequest.Listeners {
+		bootstrapRequest.Listeners[index].Resources.NginxLocalTCPPort = 18443
+		bootstrapRequest.Listeners[index].Profile.ForwardListenerResourcesHash, _ =
+			wire.ForwardServerListenerResourcesHash(&bootstrapRequest.Listeners[index].Resources)
+	}
 	testCertifiedBootstrapRuntime(t, bootstrapRequest, roots, materials)
 	if err := prepareExistingCertificateCommand(args, roots, now); err != nil {
 		t.Fatal(err)

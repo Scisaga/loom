@@ -256,6 +256,7 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 	binary := fs.String("binary", "", "已构建一次的待发布制品")
 	reason := fs.String("reason", "", "本次发布理由")
 	plan := fs.Bool("plan", false, "只检查本地输入并打印计划，不发布、不连接节点")
+	skipClientReleases := fs.Bool("skip-client-releases", false, "本次仅发布服务端代码，不校验或复制客户端制品目录")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -265,6 +266,9 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 	c, err := loadConfig(*envPath)
 	if err != nil {
 		return err
+	}
+	if *skipClientReleases {
+		c.clientReleases = ""
 	}
 	if err := validateInventory(c); err != nil {
 		return err
@@ -298,13 +302,15 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 	}
 	if *plan {
 		return json.NewEncoder(output).Encode(struct {
-			Mode   string   `json:"mode"`
-			Commit string   `json:"commit"`
-			SHA256 string   `json:"sha256"`
-			Hosts  []string `json:"hosts"`
-			Local  string   `json:"local_node,omitempty"`
-			Steps  []string `json:"steps"`
-		}{"plan", *commit, candidate.SHA256, c.hosts, c.local, []string{"loom release", "loom publish（一次）", "核对 signed current 与制品绑定", "并行复制、校验、原子替换、重启现有常驻服务"}})
+			Mode           string   `json:"mode"`
+			Commit         string   `json:"commit"`
+			SHA256         string   `json:"sha256"`
+			Hosts          []string `json:"hosts"`
+			Local          string   `json:"local_node,omitempty"`
+			ClientReleases bool     `json:"client_releases"`
+			Steps          []string `json:"steps"`
+		}{"plan", *commit, candidate.SHA256, c.hosts, c.local, c.clientReleases != "",
+			[]string{"loom release", "loom publish（一次）", "核对 signed current 与制品绑定", "并行复制、校验、原子替换、重启现有常驻服务"}})
 	}
 	// 从已验证字节创建私有稳定副本，后续 release/SCP 不重开原制品路径。
 	if err := os.MkdirAll(c.releaseDir, 0o700); err != nil {

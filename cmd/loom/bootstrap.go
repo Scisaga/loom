@@ -25,6 +25,9 @@ const bootstrapUsage = `loom bootstrap —— bootstrap 公网入口验证
 用法:
   loom bootstrap serve -bundle <认证安装交付> -device <原节点 ID>
       [-platform-pubkey <原平台公钥>] [-state-dir <持久目录>] [-certificate-dir <现有材料目录>]
+  loom bootstrap render-public -bundle <认证安装交付> -device <原节点 ID>
+      -static-root <静态根目录> -out <Nginx 配置>
+      [-platform-pubkey <原平台公钥>] [-certificate-dir <现有材料目录>]
   loom bootstrap probe-outer -plan <canonical-json> -observer-id <id>
       -key <Ed25519 私钥> -o <签名报告> [-ca <PEM>] [-timeout 10s]
 
@@ -39,6 +42,8 @@ func cmdBootstrap(args []string) error {
 	switch args[0] {
 	case "serve":
 		return cmdBootstrapServe(args[1:])
+	case "render-public":
+		return cmdBootstrapRenderPublic(args[1:])
 	case "probe-outer":
 		return cmdBootstrapProbeOuter(args[1:])
 	case "help", "-h", "--help":

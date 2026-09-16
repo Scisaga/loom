@@ -210,6 +210,25 @@ func (runtime *controlRuntime) walkApplications(limit int,
 			if err != nil {
 				return nil, err
 			}
+		} else if record.BootstrapAdvertisement != nil {
+			if application == nil {
+				return nil, errors.New("[bootstrap advertise] application 尚未激活")
+			}
+			preparedHead, err := runtime.bootstrapPreparedHeadBefore(i, application,
+				record.BootstrapAdvertisement.Payload)
+			if err != nil {
+				return nil, err
+			}
+			next, transitions, err := application.reduceBootstrapAdvertisement(
+				record.BootstrapAdvertisement.Payload, record.Operation.Body,
+				record.Candidate.Body.Payload.CommittedLogicalTime, preparedHead, record.Candidate.HeadHash)
+			if err != nil || !wire.EqualCanonical(transitions, record.BootstrapAdvertisement.Transitions) {
+				if err != nil {
+					return nil, err
+				}
+				return nil, errors.New("[bootstrap advertise] durable transition 与 evidence 派生结果不一致")
+			}
+			application = next
 		} else if record.Enrollment != nil {
 			var err error
 			application, err = application.reduceEnrollment(record.Enrollment.Mutation, controlEnrollmentCoordinate(record.Candidate), runtime.config.ControlSet)
@@ -245,7 +264,7 @@ func (runtime *controlRuntime) walkApplications(limit int,
 
 func (runtime *controlRuntime) verifyEnrollmentRecord(index int) error {
 	record := &runtime.journal.Records[index]
-	if record.Enrollment == nil || record.Activation != nil || record.AdminRotation != nil || record.Invite != nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 0 ||
+	if record.Enrollment == nil || record.Activation != nil || record.AdminRotation != nil || record.Invite != nil || record.DevicePublication != nil || record.BootstrapAdvertisement != nil || len(record.AdditionalLeaves) != 0 ||
 		!wire.EqualCanonical(record.Leaf, record.Enrollment.Mutation.OperationLeaf) {
 		return errors.New("[D130 daemon] enrollment operation union/leaf 不一致")
 	}
