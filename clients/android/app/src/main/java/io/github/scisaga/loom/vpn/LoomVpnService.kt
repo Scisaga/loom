@@ -511,7 +511,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         val routeChanged = requiresV2RouteApplication(current, candidate)
         try {
             if (routeChanged) RouteManager.get(profileContext).applyToRunning(candidate)
-            val committed = reporter.commitConfigurationCandidate(candidate)
+            val committed = if (routeChanged) {
+                reporter.commitConfigurationCandidate(candidate)
+            } else {
+                RouteManager.get(profileContext).advanceRunningAuthority(current, candidate) {
+                    reporter.commitConfigurationCandidate(candidate)
+                }
+            }
             activeManagedProfile = committed
             if (routeChanged) startRouteSession(committed)
             committed
