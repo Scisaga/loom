@@ -1181,6 +1181,11 @@ func (runtime *controlRuntime) persistJournalLocked() error {
 }
 
 func (runtime *controlRuntime) serve() error {
+	deviceRuntime, closeDeviceKeys, err := runtime.newDeviceRuntime()
+	if err != nil {
+		return err
+	}
+	defer closeDeviceKeys()
 	controlAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort))
 	loopbackAddress := net.JoinHostPort(controlLoopbackIP, fmt.Sprint(runtime.config.ControlPort))
 	raftAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.RaftPort))
@@ -1231,6 +1236,16 @@ func (runtime *controlRuntime) serve() error {
 		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	raftServer := &http.Server{Handler: raftHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	deviceContext, cancelDevices := context.WithCancel(context.Background())
+	defer cancelDevices()
+	var deviceDone <-chan error
+	if deviceRuntime != nil {
+		deviceDone, err = deviceRuntime.Start(deviceContext)
+		if err != nil {
+			return err
+		}
+		defer func() { cancelDevices(); <-deviceDone }()
+	}
 	errorsOut := make(chan error, 3)
 	go func() { errorsOut <- controlServer.Serve(tls.NewListener(controlListener, controlTLSConfig)) }()
 	go func() { errorsOut <- loopbackServer.Serve(tls.NewListener(loopbackListener, loopbackTLSConfig)) }()
@@ -1248,6 +1263,9 @@ func (runtime *controlRuntime) serve() error {
 		_ = raftServer.Shutdown(ctx)
 	}
 	select {
+	case deviceErr := <-deviceDone:
+		shutdown()
+		return deviceErr
 	case sig := <-stop:
 		shutdown()
 		fmt.Printf("control runtime 收到 %s，已停止\n", sig)

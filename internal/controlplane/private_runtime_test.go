@@ -26,7 +26,20 @@ import (
 
 // 这里经真实 TCP/TLS 进入生产服务组合，不给 request 伪造 TLS 状态（D131）。
 func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T) {
+	for _, onlyDevices := range []bool{false, true} {
+		t.Run(fmt.Sprintf("device-only-%v", onlyDevices), func(t *testing.T) {
+			privateRuntimeDeviceBusinessTest(t, onlyDevices)
+		})
+	}
+}
+
+func privateRuntimeDeviceBusinessTest(t *testing.T, onlyDevices bool) {
 	options, device, reports := privateRuntimeFixture(t)
+	construct := NewPrivateRuntime
+	if onlyDevices {
+		construct = NewPrivateDeviceRuntime
+		options.Enrollment, options.AuthorizeRelay = nil, nil
+	}
 	// 回执传送原对象，不在传输层制造签名或健康结论；客户端观测 verifier 单独验签。
 	observation := json.RawMessage(`{"node":"demo-server","ts":"2026-09-11T12:00:00Z"}`)
 	reads := 0
@@ -40,7 +53,7 @@ func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T)
 	}
 	addresses := map[string]string{}
 	options.Listen = privateRuntimeLoopbackListen(addresses)
-	runtime, err := NewPrivateRuntime(options)
+	runtime, err := construct(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +64,9 @@ func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cancel(); <-done })
+	if onlyDevices && len(addresses) != 2 {
+		t.Fatal("Device 服务启动了职责以外的 listener")
+	}
 	client := privateRuntimeClient(t, options, addresses, &tls.Certificate{
 		Certificate: privateRuntimeDeviceChain(t, device), PrivateKey: device.identityKey,
 	})

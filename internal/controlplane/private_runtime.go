@@ -50,9 +50,19 @@ type PrivateRuntime struct {
 }
 
 func NewPrivateRuntime(options PrivateRuntimeOptions) (*PrivateRuntime, error) {
-	if options.Now == nil || options.Enrollment == nil || options.AuthorizeRelay == nil ||
-		options.Identities == nil || options.VerifyReport == nil || options.CommitReport == nil {
-		return nil, errors.New("[D131 runtime] Enrollment/Device 业务依赖不完整")
+	return newPrivateRuntime(options, true)
+}
+
+// NewPrivateDeviceRuntime 启动已入网 Device 的配置和报告服务。Enrollment
+// 具有独立的受限 relay 生命周期；此构造器不安装代替 Enrollment 的空 handler。
+func NewPrivateDeviceRuntime(options PrivateRuntimeOptions) (*PrivateRuntime, error) {
+	return newPrivateRuntime(options, false)
+}
+
+func newPrivateRuntime(options PrivateRuntimeOptions, enrollment bool) (*PrivateRuntime, error) {
+	if options.Now == nil || options.Identities == nil || options.VerifyReport == nil || options.CommitReport == nil ||
+		enrollment && (options.Enrollment == nil || options.AuthorizeRelay == nil) {
+		return nil, errors.New("[私有服务] 实际业务依赖不完整")
 	}
 	runtime := &PrivateRuntime{authorize: options.AuthorizeRelay, listen: options.Listen}
 	if runtime.listen == nil {
@@ -60,7 +70,7 @@ func NewPrivateRuntime(options PrivateRuntimeOptions) (*PrivateRuntime, error) {
 	}
 	roles, addresses, pins := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, service := range options.Services {
-		if service.Role == "control_api" {
+		if service.Role == "control_api" || service.Role == "enroll" && !enrollment {
 			addresses[net.JoinHostPort(service.OverlayIP, strconv.FormatInt(service.Port, 10))] = true
 			for _, pin := range service.SPKIPins {
 				pins[pin] = true
@@ -72,6 +82,9 @@ func NewPrivateRuntime(options PrivateRuntimeOptions) (*PrivateRuntime, error) {
 			return nil, err
 		}
 		if service.Role == "control_api" {
+			continue
+		}
+		if service.Role == "enroll" && !enrollment {
 			continue
 		}
 		address := net.JoinHostPort(service.OverlayIP, strconv.FormatInt(service.Port, 10))
@@ -126,8 +139,12 @@ func NewPrivateRuntime(options PrivateRuntimeOptions) (*PrivateRuntime, error) {
 		}
 		runtime.servers = append(runtime.servers, privateRuntimeServer{service: service, certificate: certificate, handler: handler})
 	}
-	if len(roles) != 3 {
-		return nil, errors.New("[D131 runtime] 必须同时配置 Enrollment/config/report")
+	wantRoles := 2
+	if enrollment {
+		wantRoles++
+	}
+	if len(roles) != wantRoles || !roles["device_config"] || !roles["device_report"] || enrollment && !roles["enroll"] {
+		return nil, errors.New("[私有服务] 缺所需独立业务 listener")
 	}
 	return runtime, nil
 }

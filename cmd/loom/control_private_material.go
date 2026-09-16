@@ -231,6 +231,12 @@ func (runtime *controlRuntime) loadPrivateServiceCertificates(application *contr
 	}
 	defer material.Close()
 	certificates := make(map[string]tls.Certificate)
+	loaded := false
+	defer func() {
+		if !loaded {
+			clearPrivateRuntimeCertificates(certificates)
+		}
+	}()
 	for _, entry := range prepared.Services {
 		matched := false
 		for _, service := range application.Services {
@@ -245,6 +251,7 @@ func (runtime *controlRuntime) loadPrivateServiceCertificates(application *contr
 		}
 		certificates[entry.Service.ServiceID] = certificate
 	}
+	loaded = true
 	return certificates, nil
 }
 
