@@ -27,6 +27,10 @@ type RuntimeMaterialV1 struct {
 // PrepareRuntimeMaterial 只从一个已经完整验证的 DPAPI LKG 中选取
 // windows-runtime，并把 exact credential refs hydrate 到短生命周期副本。
 func PrepareRuntimeMaterial(state *StateV1) (RuntimeMaterialV1, error) {
+	return PrepareRuntimeMaterialWithIdentity(state, nil)
+}
+
+func PrepareRuntimeMaterialWithIdentity(state *StateV1, identity *Identity) (RuntimeMaterialV1, error) {
 	if err := validateState(state); err != nil {
 		return RuntimeMaterialV1{}, err
 	}
@@ -63,6 +67,21 @@ func PrepareRuntimeMaterial(state *StateV1) (RuntimeMaterialV1, error) {
 	}
 	secrets := make(map[string]string, len(artifact.CredentialRefs))
 	for _, ref := range artifact.CredentialRefs {
+		if ref == wire.LocalWireGuardKeySecretID {
+			if identity == nil || state.Enrollment == nil {
+				return RuntimeMaterialV1{}, errors.New("[Windows runtime] 本机 WireGuard 密钥或原 claim 缺失")
+			}
+			if err := wire.VerifyEnrollmentLocalWireGuardKey(&state.Enrollment.ClaimCore, identity.wireGuard); err != nil {
+				return RuntimeMaterialV1{}, err
+			}
+			for _, credential := range state.material().Credentials {
+				if credential.SecretID == ref {
+					return RuntimeMaterialV1{}, errors.New("[Windows runtime] 远端凭据不能覆盖本机 WireGuard 密钥")
+				}
+			}
+			secrets[ref] = base64.StdEncoding.EncodeToString(identity.wireGuard)
+			continue
+		}
 		var credential *InstalledSecretV1
 		for index := range state.material().Credentials {
 			candidate := &state.material().Credentials[index]

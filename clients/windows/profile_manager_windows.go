@@ -154,7 +154,7 @@ func readWindowsLocalSelectorPlan(root string, protector clientsecret.Protector,
 		return nil, err
 	}
 	if state != nil {
-		material, err := windowsv2.PrepareRuntimeMaterial(state)
+		material, err := prepareWindowsV2RuntimeMaterial(root, protector, state)
 		if err != nil {
 			return nil, err
 		}

@@ -4,6 +4,7 @@ package clientv2
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -24,6 +25,7 @@ const LinuxSoftwareKeyProtectionProfile = "linux-root-only-pkcs8-v1"
 
 // EnrollmentIdentityV1 把 Linux 无硬件 keystore 时的降级显式写入受保护状态，绝不伪装成不可导出 key。
 type EnrollmentIdentityV1 struct {
+	WireGuardPrivateKey     string `json:"wireguard_private_key,omitempty"`
 	Schema                  int    `json:"schema"`
 	ProtectionProfile       string `json:"protection_profile"`
 	IdentityPrivateKeyPKCS8 string `json:"identity_private_key_pkcs8"`
@@ -76,12 +78,17 @@ func OpenOrCreateEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) 
 	if err != nil {
 		return nil, err
 	}
+	wg, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
 	identityPKCS8, _ := x509.MarshalPKCS8PrivateKey(identityKey)
 	wrappingPKCS8, _ := x509.MarshalPKCS8PrivateKey(wrappingKey)
 	identitySPKI, _ := x509.MarshalPKIXPublicKey(&identityKey.PublicKey)
 	wrappingSPKI, _ := x509.MarshalPKIXPublicKey(&wrappingKey.PublicKey)
 	state := &EnrollmentIdentityV1{
 		Schema: 1, ProtectionProfile: LinuxSoftwareKeyProtectionProfile,
+		WireGuardPrivateKey:     base64.StdEncoding.EncodeToString(wg.Bytes()),
 		IdentityPrivateKeyPKCS8: base64.RawURLEncoding.EncodeToString(identityPKCS8),
 		IdentityPublicKeySPKI:   base64.RawURLEncoding.EncodeToString(identitySPKI),
 		WrappingPrivateKeyPKCS8: base64.RawURLEncoding.EncodeToString(wrappingPKCS8),
@@ -119,6 +126,15 @@ func (state *EnrollmentIdentityV1) PrepareClaimCore(input ClaimCoreInputV2) (wir
 	if err != nil {
 		return wire.EnrollmentClaimCoreV2{}, "", err
 	}
+	local, err := base64.StdEncoding.Strict().DecodeString(state.WireGuardPrivateKey)
+	if err != nil {
+		return wire.EnrollmentClaimCoreV2{}, "", err
+	}
+	defer clear(local)
+	wg, err := ecdh.X25519().NewPrivateKey(local)
+	if err != nil {
+		return wire.EnrollmentClaimCoreV2{}, "", errors.New("[Enrollment] 本机 WireGuard 身份缺失")
+	}
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: input.RequestID}}, identityKey)
 	if err != nil {
 		return wire.EnrollmentClaimCoreV2{}, "", err
@@ -126,7 +142,8 @@ func (state *EnrollmentIdentityV1) PrepareClaimCore(input ClaimCoreInputV2) (wir
 	identitySPKI, _ := x509.MarshalPKIXPublicKey(&identityKey.PublicKey)
 	wrappingSPKI, _ := x509.MarshalPKIXPublicKey(&wrappingKey.PublicKey)
 	core := wire.EnrollmentClaimCoreV2{
-		Schema: 2, ClusterID: input.ClusterID, InviteID: input.InviteID, RequestID: input.RequestID,
+		WireGuardPublicKey: base64.StdEncoding.EncodeToString(wg.PublicKey().Bytes()),
+		Schema:             2, ClusterID: input.ClusterID, InviteID: input.InviteID, RequestID: input.RequestID,
 		CertifiedInviteRecordHash:            input.CertifiedInviteRecordHash,
 		DeviceEnrollmentIntentCommitmentHash: input.DeviceEnrollmentIntentCommitmentHash,
 		DeviceEnrollmentIntentOpeningHash:    input.DeviceEnrollmentIntentOpeningHash,

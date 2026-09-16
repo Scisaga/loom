@@ -312,7 +312,7 @@ class EnrollmentManager private constructor(context: Context) {
         val envelopes = configuration.getJSONArray("secret_envelopes")
         check(refs.length() == envelopes.length()) { "迁移凭据未完整覆盖认证配置" }
         val credentials = JSONArray()
-        val crypto = V2EnrollmentCrypto(keys)
+        val crypto = V2EnrollmentCrypto(keys, io.github.scisaga.loom.security.WireGuardKeyStore(appContext)::publicKeyForEnrollment)
         for (index in 0 until refs.length()) {
             credentials.put(JSONObject(crypto.unsealInstalledSecret(
                 Loomcore.canonicalizeV2(refs.getJSONObject(index).toString().encodeToByteArray()),
@@ -430,7 +430,7 @@ class EnrollmentManager private constructor(context: Context) {
             pending = pending.withSelection(underlayIdentity, selection)
             store.putV2Pending(pending)
 
-            val crypto = V2EnrollmentCrypto(keys)
+            val crypto = V2EnrollmentCrypto(keys, io.github.scisaga.loom.security.WireGuardKeyStore(appContext)::publicKeyForEnrollment)
             val preflightRequest = crypto.preparePreflight(
                 pending.descriptor,
                 pending.proofBundle,
@@ -578,7 +578,7 @@ class EnrollmentManager private constructor(context: Context) {
             pending = pending.withResumeSelection(underlayIdentity, selection)
             store.putV2Pending(pending)
 
-            val crypto = V2EnrollmentCrypto(keys)
+            val crypto = V2EnrollmentCrypto(keys, io.github.scisaga.loom.security.WireGuardKeyStore(appContext)::publicKeyForEnrollment)
             val preflightMessage = session.resumePreflightAuthorizationMessage(wireTime())
             val preflightRequest = session.resumePreflightRequest(
                 crypto.signPreflightMessage(preflightMessage),

@@ -29,6 +29,10 @@ type preparedAndroidV2Runtime struct {
 // 生成内存态 libbox 运行投影。它不持久 hydrate 后的秘密，也不会把
 // 旧 v1 current 当成 v2 latch 的回退配置（Issue #14）。
 func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
+	return PrepareAndroidV2RuntimeWithLocalKey(stateJSON, nil)
+}
+
+func PrepareAndroidV2RuntimeWithLocalKey(stateJSON, localWireGuardKey []byte) ([]byte, error) {
 	state, err := decodeAndroidV2DeviceState(stateJSON)
 	if err != nil {
 		return nil, err
@@ -45,6 +49,23 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	secrets, err := androidRuntimeSecrets(state.material().Credentials)
 	if err != nil {
 		return nil, err
+	}
+	if strings.Contains(string(installed.Config), "${secret:"+wire.LocalWireGuardKeySecretID+"}") {
+		if state.Enrollment == nil {
+			clear(secrets)
+			return nil, errors.New("[Android runtime] 本机 WireGuard 缺原入网 claim 绑定")
+		}
+		if err := wire.VerifyEnrollmentLocalWireGuardKey(&state.Enrollment.ClaimCore, localWireGuardKey); err != nil {
+			clear(secrets)
+			return nil, err
+		}
+		for _, credential := range state.material().Credentials {
+			if credential.SecretID == wire.LocalWireGuardKeySecretID {
+				clear(secrets)
+				return nil, errors.New("[Android runtime] 远端凭据不能覆盖本机 WireGuard 密钥")
+			}
+		}
+		secrets = append(secrets, []byte(wire.LocalWireGuardKeySecretID+"="+base64.StdEncoding.EncodeToString(localWireGuardKey)+"\n")...)
 	}
 	preparedJSON, err := PrepareAndroidRuntime(installed.Config, secrets)
 	clear(secrets)

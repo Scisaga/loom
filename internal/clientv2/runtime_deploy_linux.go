@@ -114,7 +114,28 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 		return nil, err
 	}
 
-	files, err := hydrateLinuxRuntimeFiles(&runtimeState.Plan, &runtimeArtifact, installation.Credentials)
+	var localKey string
+	if enrollment := deviceStore.Enrollment(); enrollment != nil && enrollment.ClaimCore.WireGuardPublicKey != "" {
+		identity, err := LoadEnrollmentIdentityForResume(filepath.Join(filepath.Dir(deviceStatePath), "identity.json"))
+		if err != nil {
+			return nil, err
+		}
+		hash, err := identity.IdentitySPKIHash()
+		if err != nil || hash != installation.IdentityKeyHash {
+			return nil, errors.New("[Linux runtime] 本机身份与已安装设备不一致")
+		}
+		private, err := base64.StdEncoding.Strict().DecodeString(identity.WireGuardPrivateKey)
+		if err != nil {
+			return nil, err
+		}
+		err = wire.VerifyEnrollmentLocalWireGuardKey(&enrollment.ClaimCore, private)
+		clear(private)
+		if err != nil {
+			return nil, err
+		}
+		localKey = identity.WireGuardPrivateKey
+	}
+	files, err := hydrateLinuxRuntimeFilesWithKey(&runtimeState.Plan, &runtimeArtifact, installation.Credentials, localKey)
 	if err != nil {
 		return nil, err
 	}
@@ -383,6 +404,12 @@ func linuxRuntimeEndpointKey(endpointID, transport string, generation int64) str
 func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.LinuxRuntimeArtifactV1,
 	credentials []InstalledSecretV1,
 ) (map[string]string, error) {
+	return hydrateLinuxRuntimeFilesWithKey(plan, artifact, credentials, "")
+}
+
+func hydrateLinuxRuntimeFilesWithKey(plan *LinuxLinkRuntimePlanV1, artifact *wire.LinuxRuntimeArtifactV1,
+	credentials []InstalledSecretV1, enrollmentKey string,
+) (map[string]string, error) {
 	required := make(map[string]bool)
 	if plan.LocalRuntime != nil {
 		for _, ref := range plan.LocalRuntime.CredentialRefs {
@@ -411,9 +438,15 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 		if !required[local.SecretID] {
 			return nil, errors.New("[Linux runtime] 本地 WireGuard key 未被当前 intent 引用")
 		}
-		value, err := loadLinuxLocalWireGuardKey(model.SecretPath, local.PublicKey)
-		if err != nil {
-			return nil, err
+		value := enrollmentKey
+		if value == "" {
+			var err error
+			value, err = loadLinuxLocalWireGuardKey(model.SecretPath, local.PublicKey)
+			if err != nil {
+				return nil, err
+			}
+		} else if wireGuardPublicKey(value) != local.PublicKey {
+			return nil, errors.New("[Linux runtime] claim 本机密钥与认证 LinkIntent 公钥不同")
 		}
 		secrets[local.SecretID] = value
 	}

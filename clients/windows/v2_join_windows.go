@@ -328,7 +328,7 @@ func ensureWindowsV2Joined(ctx context.Context, root string, protector clientsec
 		Result: result.Result, Completion: result.Completion, VerifiedProof: verifiedProof,
 		SecretEnvelopes: secretEnvelopes, Configs: configs,
 		ValidateCandidate: func(candidate *windowsv2.StateV1) error {
-			return preflightWindowsV2InstallCandidate(joinContext, root, candidate, platformKey)
+			return preflightWindowsV2InstallCandidate(joinContext, root, protector, candidate, platformKey)
 		},
 	}); err != nil {
 		return windowsJoinResult{}, err

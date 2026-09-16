@@ -2,6 +2,7 @@ package wire
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -63,6 +64,11 @@ func TestEnrollmentSubmissionBindsTokenOpeningCoreChallengeAndP256PoP(t *testing
 		WrappingPublicKey: base64.RawURLEncoding.EncodeToString(wrappingSPKI), WrappingKeyProfile: "p256-root-only-pkcs8-ecdh-v1",
 		CSRDER: base64.RawURLEncoding.EncodeToString(csrDER), ClientNonce: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
 	}
+	wg, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.WireGuardPublicKey = base64.StdEncoding.EncodeToString(wg.PublicKey().Bytes())
 	coreHash, err := EnrollmentClaimCoreHash(&core)
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +87,19 @@ func TestEnrollmentSubmissionBindsTokenOpeningCoreChallengeAndP256PoP(t *testing
 	verified, err := VerifyEnrollmentClaimSubmission(submission, &record, &policy, &opening, "enrollment-service-1", now)
 	if err != nil || verified.ClaimCoreHash() != coreHash || verified.IdentityKeyHash() == "" || verified.WrappingKeyHash() == "" || verified.CSRHash() == "" {
 		t.Fatalf("verified=%#v err=%v", verified, err)
+	}
+	otherWG, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	submission.ClaimCore.WireGuardPublicKey = base64.StdEncoding.EncodeToString(otherWG.PublicKey().Bytes())
+	if _, err := VerifyEnrollmentClaimSubmission(submission, &record, &policy, &opening, "enrollment-service-1", now); err == nil {
+		t.Fatal("替换 WireGuard 公钥仍通过原 challenge/PoP")
+	}
+	submission.ClaimCore = core
+	for _, invalid := range []string{"", "not-base64", base64.StdEncoding.EncodeToString(make([]byte, 32))} {
+		bad := core
+		bad.WireGuardPublicKey = invalid
+		if _, err := EnrollmentWireGuardPublicKey(&bad); err == nil {
+			t.Fatal("新入网接受了无效 WireGuard peer")
+		}
 	}
 	binding := BootstrapCapabilityResumeBindingV1{
 		RequestID: core.RequestID, ClaimOperationHash: hash("claim-operation"),

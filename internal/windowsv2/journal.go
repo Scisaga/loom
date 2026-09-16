@@ -261,6 +261,11 @@ func validateEnrollmentJournal(journal *EnrollmentJournalV1, identity *Identity)
 		identityHash != wantedIdentityHash || wrappingHash != wantedWrappingHash {
 		return errors.New("[Windows] journal core 不属于 protected identity/wrapping keys")
 	}
+	if journal.ClaimCore.WireGuardPublicKey != "" {
+		if err := wire.VerifyEnrollmentLocalWireGuardKey(&journal.ClaimCore, identity.wireGuard); err != nil {
+			return err
+		}
+	}
 	record := &journal.ProofBundle.CertifiedInviteRecord
 	if journal.Descriptor.ClusterID != record.ClusterID || journal.Descriptor.InviteID != record.InviteID ||
 		journal.ClaimCore.ClusterID != record.ClusterID || journal.ClaimCore.InviteID != record.InviteID ||

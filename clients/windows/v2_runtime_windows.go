@@ -39,7 +39,7 @@ func prepareWindowsV2ClientAt(root string, protector clientsecret.Protector,
 		return nil, errors.Join(windowsV2TerminalError(state),
 			cleanupWindowsV2TerminalMaterial(root, protector))
 	}
-	initial, err := prepareWindowsV2ActivationFromState(root, state, edition)
+	initial, err := prepareWindowsV2ActivationFromState(root, protector, state, edition)
 	if err != nil {
 		return nil, fmt.Errorf("恢复 Windows v2 LKG 数据面: %w", err)
 	}
@@ -74,13 +74,13 @@ func prepareWindowsV2Activation(root string, protector clientsecret.Protector,
 	if state == nil {
 		return nil, os.ErrNotExist
 	}
-	return prepareWindowsV2ActivationFromState(root, state, edition)
+	return prepareWindowsV2ActivationFromState(root, protector, state, edition)
 }
 
-func prepareWindowsV2ActivationFromState(root string, state *windowsv2.StateV1,
+func prepareWindowsV2ActivationFromState(root string, protector clientsecret.Protector, state *windowsv2.StateV1,
 	edition clientEdition,
 ) (*clientActivation, error) {
-	material, err := windowsv2.PrepareRuntimeMaterial(state)
+	material, err := prepareWindowsV2RuntimeMaterial(root, protector, state)
 	if err != nil {
 		return nil, err
 	}
@@ -170,10 +170,10 @@ func prepareWindowsV2ActivationMaterial(root string, material *windowsv2.Runtime
 
 // Enrollment 在正式 v2 state pointer 出现前执行同一 renderer、组件和上游
 // sing-box check。Mixed 派生不创建 TUN，也不改系统路由，适合三个 edition 共用。
-func preflightWindowsV2InstallCandidate(ctx context.Context, root string,
+func preflightWindowsV2InstallCandidate(ctx context.Context, root string, protector clientsecret.Protector,
 	state *windowsv2.StateV1, platformKey []byte,
 ) error {
-	material, err := windowsv2.PrepareRuntimeMaterial(state)
+	material, err := prepareWindowsV2RuntimeMaterial(root, protector, state)
 	if err != nil {
 		return err
 	}
@@ -206,10 +206,10 @@ func preflightWindowsV2InstallCandidate(ctx context.Context, root string,
 		filepath.Join(root, "runtime"), clientruntime.WindowsPortableMixedProfile, caPath)
 }
 
-func preflightWindowsV2RuntimeCandidate(ctx context.Context, root string,
+func preflightWindowsV2RuntimeCandidate(ctx context.Context, root string, protector clientsecret.Protector,
 	state *windowsv2.StateV1, edition clientEdition,
 ) error {
-	material, err := windowsv2.PrepareRuntimeMaterial(state)
+	material, err := prepareWindowsV2RuntimeMaterial(root, protector, state)
 	if err != nil {
 		return err
 	}
@@ -383,7 +383,7 @@ func reconcileWindowsV2Control(ctx context.Context, root string,
 		},
 	}
 	validate := func(candidate *windowsv2.StateV1) error {
-		return preflightWindowsV2RuntimeCandidate(ctx, root, candidate, edition)
+		return preflightWindowsV2RuntimeCandidate(ctx, root, protector, candidate, edition)
 	}
 	_, syncErr := windowsv2.SyncDeviceConfig(ctx, windowsv2.DeviceConfigSyncOptions{
 		StatePath: windowsV2StatePath(root), IdentityPath: windowsV2IdentityPath(root),
@@ -404,7 +404,7 @@ func reconcileWindowsV2Control(ctx context.Context, root string,
 		return errors.Join(terminalErr, stopErr, cleanupErr)
 	}
 	if syncErr == nil {
-		next, err := prepareWindowsV2ActivationFromState(root, state, edition)
+		next, err := prepareWindowsV2ActivationFromState(root, protector, state, edition)
 		if err != nil {
 			return err
 		}
@@ -537,4 +537,17 @@ func cleanupWindowsV2PublicCAs(root string, keep ...string) error {
 		cleanupErr = errors.Join(cleanupErr, removeWindowsV2RuntimeFile(path))
 	}
 	return cleanupErr
+}
+
+// 宿主只在短生命周期的 hydrate 中加载本机 DPAPI 身份，随后清除内存。
+func prepareWindowsV2RuntimeMaterial(root string, protector clientsecret.Protector, state *windowsv2.StateV1) (windowsv2.RuntimeMaterialV1, error) {
+	if state.Enrollment == nil || state.Enrollment.ClaimCore.WireGuardPublicKey == "" {
+		return windowsv2.PrepareRuntimeMaterial(state)
+	}
+	identity, err := windowsv2.LoadIdentity(windowsV2IdentityPath(root), protector)
+	if err != nil {
+		return windowsv2.RuntimeMaterialV1{}, err
+	}
+	defer identity.Close()
+	return windowsv2.PrepareRuntimeMaterialWithIdentity(state, identity)
 }

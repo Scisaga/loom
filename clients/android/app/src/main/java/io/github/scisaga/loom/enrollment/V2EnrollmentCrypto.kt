@@ -12,6 +12,7 @@ import javax.crypto.spec.SecretKeySpec
 /** #14：共享 Go 核心解释 wire；Kotlin callback 只调用不可导出的 Keystore key。 */
 internal class V2EnrollmentCrypto(
     private val keys: DeviceKeyStore = DeviceKeyStore(),
+    private val wireGuardPublicKey: (() -> ByteArray)? = null,
 ) {
     fun identitySubjectPublicKeyInfo(): ByteArray = keys.ensureIdentity()
 
@@ -62,7 +63,8 @@ internal class V2EnrollmentCrypto(
         val identity = keys.ensureIdentity()
         val wrapping = keys.ensureWrapping()
         val csr = keys.createCSRDER(requestID)
-        return Loomcore.prepareAndroidEnrollmentV2ClaimCore(
+        val wireGuard = checkNotNull(wireGuardPublicKey) { "加入前缺本机 WireGuard 密钥存储" }.invoke()
+        return Loomcore.prepareAndroidEnrollmentV2ClaimCoreWithWireGuard(
             canonicalDescriptor,
             canonicalProofBundle,
             canonicalPreflightResponse,
@@ -72,6 +74,7 @@ internal class V2EnrollmentCrypto(
             wrapping.subjectPublicKeyInfo,
             wrapping.profile,
             clientNonce,
+            wireGuard,
             trustedTime,
         )
     }

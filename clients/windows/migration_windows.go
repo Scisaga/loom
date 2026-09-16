@@ -242,7 +242,7 @@ func migrateWindowsDevice(ctx context.Context, root string, protector clientsecr
 		StatePath: windowsV2StatePath(root), IdentityPath: windowsV2IdentityPath(root), Protector: protector,
 		Package: delivery, Expected: expected, LegacyFloor: floor, Trust: trust, Now: time.Now().UTC(), Configs: configs,
 		ValidateCandidate: func(candidate *windowsv2.StateV1) error {
-			return preflightWindowsV2InstallCandidate(ctx, root, candidate, platform)
+			return preflightWindowsV2InstallCandidate(ctx, root, protector, candidate, platform)
 		},
 	}); err != nil {
 		return windowsJoinResult{}, err

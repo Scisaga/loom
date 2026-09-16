@@ -22,6 +22,7 @@ internal data class V2InstalledDeviceState(
 class V2DeviceStateStore(context: Context) {
     private val protected = EncryptedStore(context.applicationContext)
     private val keys = DeviceKeyStore(ProfileContext.keySuffix(context))
+    private val wireGuard = io.github.scisaga.loom.security.WireGuardKeyStore(context)
     private val runtimeDirectory = libboxWorkingDirectory(context.filesDir)
 
     @Synchronized
@@ -212,7 +213,10 @@ class V2DeviceStateStore(context: Context) {
         if (persisted.getJSONObject("envelope").getJSONObject("payload").getString("state") != "active") {
             return null
         }
-        val runtime = JSONObject(Loomcore.prepareAndroidV2Runtime(state).decodeToString())
+        val localKey = wireGuard.existing() ?: ByteArray(0)
+        val runtime = try {
+            JSONObject(Loomcore.prepareAndroidV2RuntimeWithLocalKey(state, localKey).decodeToString())
+        } finally { localKey.fill(0) }
         check(runtime.getInt("schema") == 1) { "v2 Android runtime projection schema 无效" }
         val headHash = runtime.getString("head_hash")
         val ca = runtime.optString("observation_ca").encodeToByteArray()

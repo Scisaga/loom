@@ -16,6 +16,11 @@ overlay IP SAN 和/或 certified SPKI pin；不得关闭证书验证或接受任
 Windows/Linux 使用各自受保护的不可导出能力，确实无法做到时必须在平台 profile 中明确降级，
 不能把导出私钥伪装成硬件保护。
 
+设备还在本机生成独立的 WireGuard X25519 密钥，公钥进入 stable claim core，由身份 PoP 和
+admission QC 一并认证。私钥只由本机受保护存储保存并在激活时注入运行时；不得进入邀请、
+控制日志或远端封装凭据。缺失或损坏时失败，不能在重试/恢复时生成另一把密钥。新入网必须
+提供该公钥；没有此字段的既存 claim 只允许读取和验证历史事务，不能成为新申请的回退格式。
+
 ~~~text
 EnrollmentClaimCoreV2                  # 幂等核心；不含 token/server nonce/PoP 签名
   schema = 2, cluster_id, invite_id, request_id
@@ -29,6 +34,7 @@ EnrollmentClaimCoreV2                  # 幂等核心；不含 token/server nonc
   device_identity_key_profile
   wrapping_public_key
   wrapping_key_profile
+  wireguard_public_key                 # 本机生成的 X25519 公钥，规范 padded base64
   csr_der
   client_nonce
 
