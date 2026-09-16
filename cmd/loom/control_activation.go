@@ -87,6 +87,9 @@ func (runtime *controlRuntime) verifyActivationRecord(index int) error {
 	if err != nil {
 		return err
 	}
+	if err := wire.VerifyRecoveryPrivateCustody(&activation.Application.RecoveryPolicy, &activation.Application.RecoveryCustody, at, 0); err != nil {
+		return err
+	}
 	old, profile := activation.PreviousAuthorization, activation.PreviousProfile
 	if err := wire.ValidateAdminAuthorizationAt(&old, &profile, at); err != nil {
 		return err

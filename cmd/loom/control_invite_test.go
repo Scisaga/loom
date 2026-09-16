@@ -418,13 +418,7 @@ func controlInviteApplication(t *testing.T, runtime *controlRuntime) (controlApp
 	if err != nil {
 		t.Fatal(err)
 	}
-	public, recoveryKey, _ := ed25519.GenerateKey(rand.Reader)
-	keyID, _ := wire.ControlKeyID(public)
-	recovery := wire.RecoveryPolicyV1{Schema: 1, ClusterID: runtime.config.ClusterID, PolicyID: "demo-recovery", Generation: 1,
-		Algorithm: "ed25519-multisig-v1", Threshold: 1, PrivateKeyCustodyRoot: hash("recovery-custody"), CeremonyProfile: "offline-independent-keys-v1",
-		Keys: []wire.RecoveryPolicyKeyV1{{KeyID: keyID, Algorithm: "ed25519", PublicKey: base64.RawURLEncoding.EncodeToString(public)}}}
-	pop, err := wire.NewRecoveryKeyPossessionProof(wire.RecoveryKeyPossessionProofBodyV1{Schema: 1, ClusterID: recovery.ClusterID,
-		PolicyID: recovery.PolicyID, PolicyGeneration: 1, KeyID: keyID, PublicKey: recovery.Keys[0].PublicKey}, recoveryKey)
+	recovery, err := prepareControlRecovery(filepath.Join(t.TempDir(), "custody"), runtime.config.ClusterID, "demo-recovery", "demo-custodian", "demo-prepare", now.UTC().Truncate(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +478,7 @@ func controlInviteApplication(t *testing.T, runtime *controlRuntime) (controlApp
 			MaximumSessionSeconds: 180, MaximumTotalBytes: 8 << 20, PermittedIngressSetHashes: []string{ingressHash}, PermittedServiceIDs: []string{enroll.ServiceID},
 			PermittedModes: []string{"initial_claim", "resume_committed_claim"}}}
 	application := controlApplicationV1{Schema: 1, ClusterID: runtime.config.ClusterID, LegacySSOT: string(ssot), LegacyRegistryHash: hash("legacy-registry"),
-		RecoveryPolicy: recovery, Authorizations: []wire.AdminAuthorizationV1{next}, CARegistry: enrollmentv2.CARegistryPreimageV1{
+		RecoveryPolicy: recovery.Policy, RecoveryCustody: recovery.Custody, Authorizations: []wire.AdminAuthorizationV1{next}, CARegistry: enrollmentv2.CARegistryPreimageV1{
 			AdminProfiles: []wire.AdminCertificateProfileV1{profile}, DeviceProfiles: []wire.DeviceCertificateProfileStateV1{controlInviteDeviceProfile(t, runtime)}},
 		Services: services, EnrollmentService: enroll, InvitePolicy: policy, BootstrapIssuers: []wire.BootstrapIssuerAuthorizationV1{issuer}, BootstrapCatalog: catalog,
 		Mirrors: []wire.DistributionMirrorRefV1{}, Invites: []controlInviteStateV1{}, Transactions: []enrollmentv2.TransactionStateV2{},
@@ -494,7 +488,7 @@ func controlInviteApplication(t *testing.T, runtime *controlRuntime) (controlApp
 			DistributionEndpointSetHash: hash("mirror-" + id), ListenerGeneration: 1, BaseURL: "https://demo-mirror-" + id + ".example.test:8443/distribution/sha256/",
 			ServerName: "demo-mirror-" + id + ".example.test", WebPKIProfileRef: "webpki-v1", SPKIPins: []string{hash("mirror-pin-" + id)}})
 	}
-	return application, []wire.RecoveryKeyPossessionProofV1{pop}
+	return application, recovery.Proofs
 }
 
 func controlInviteDeviceProfile(t *testing.T, runtime *controlRuntime) wire.DeviceCertificateProfileStateV1 {

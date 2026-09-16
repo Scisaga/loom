@@ -26,6 +26,7 @@ type controlApplicationV1 struct {
 	LegacySSOT         string                                  `json:"legacy_ssot"`
 	LegacyRegistryHash string                                  `json:"legacy_registry_hash"`
 	RecoveryPolicy     wire.RecoveryPolicyV1                   `json:"recovery_policy"`
+	RecoveryCustody    wire.RecoveryPrivateCustodyObjectV1     `json:"recovery_custody"`
 	Authorizations     []wire.AdminAuthorizationV1             `json:"authorizations"`
 	CARegistry         enrollmentv2.CARegistryPreimageV1       `json:"ca_registry"`
 	Services           []wire.PrivateControlServiceV1          `json:"services"`
@@ -160,6 +161,9 @@ func (application *controlApplicationV1) validate() error {
 		return err
 	}
 	if err := wire.ValidateRecoveryPolicy(&application.RecoveryPolicy); err != nil {
+		return err
+	}
+	if err := wire.ValidateRecoveryPrivateCustody(&application.RecoveryPolicy, &application.RecoveryCustody); err != nil {
 		return err
 	}
 	for i, policy := range application.ArtifactPolicies {

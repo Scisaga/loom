@@ -140,9 +140,26 @@ loom control prepare-migration-materials -state-dir <original-state-dir> \
   -report-port <private-report-port> -out <protected-directory>/materials.json
 ```
 
-该命令复用原 internal CA，持久保存独立软件 custody 与封装证据；同请求重试复用原材料。
+该命令持有与 `control serve` 相同的维护锁，须先停止控制 daemon，准备后恢复原服务。
+它复用原 internal CA，持久保存独立软件 custody 与封装证据；同请求重试复用原材料。
 输出目录必须为 `0700`。它不打开 Raft、不竞选、不修改原日志，也不启动或认证新服务；
 这份材料仍须进入完整迁移事务。不能把材料准备成功当作设备迁移或生产接入成功。
+
+恢复密钥使用与 control state 分离的受保护保管目录，由显式维护命令生成：
+
+```bash
+loom control prepare-recovery -custody-dir <protected-recovery-directory> \
+  -cluster-id <original-cluster-id> -policy-id <recovery-policy-id> \
+  -custodian-id <custodian-id> -request-id <fixed-receipt-request-id> \
+  -out <protected-directory>/recovery-materials.json
+```
+
+单保管人软件模式明确使用一份回执、一个故障域。恢复 key、解封 key 和回执 key 相互独立；
+从耐久密文回读、解封并实际签名后才生成回执。控制日志接收 policy、保管证明和 PoP，
+不接收保管目录中的解封私钥。此命令不证明材料已经复制到离线介质。
+同请求返回原回执；回执超过十五分钟时，用新 request ID 和新输出路径显式刷新，沿用原 key/密文。
+缺失或损坏的保管材料不会自动重建。迁移提交必须验证完整私有保管对象及实际提交时间；
+历史重放使用原提交时间，不以当前时钟否定已经认证的记录。
 
 已有设备通过 [客户端迁移](../protocols/control-plane/migration.md) 保留原身份和本机 floor。
 `control migrate` 仍要求经过验证的完整生产 application 输入；客户端的迁移请求不是可直接
