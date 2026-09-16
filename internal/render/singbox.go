@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"loom/internal/model"
+	"loom/internal/wire"
 )
 
 // 本文件渲染三类节点的 sing-box 配置:接入(客户端档案)、中继、落地目标。
@@ -246,12 +247,13 @@ type sbDNSFakeIP struct {
 }
 
 type sbConfig struct {
-	Log          sbLog           `json:"log"`
-	DNS          *sbDNS          `json:"dns,omitempty"`
-	Inbounds     []sbInbound     `json:"inbounds"`
-	Outbounds    []sbOutbound    `json:"outbounds"`
-	Route        sbRoute         `json:"route"`
-	Experimental *sbExperimental `json:"experimental,omitempty"`
+	Endpoints    []wire.DeviceControlEndpointV1 `json:"endpoints,omitempty"`
+	Log          sbLog                          `json:"log"`
+	DNS          *sbDNS                         `json:"dns,omitempty"`
+	Inbounds     []sbInbound                    `json:"inbounds"`
+	Outbounds    []sbOutbound                   `json:"outbounds"`
+	Route        sbRoute                        `json:"route"`
+	Experimental *sbExperimental                `json:"experimental,omitempty"`
 }
 
 func encode(c *sbConfig) (string, error) {

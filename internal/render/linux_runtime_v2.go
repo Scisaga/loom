@@ -19,6 +19,7 @@ type LinuxRuntimeV2Input struct {
 	DeviceID           string
 	DeviceGeneration   int64
 	ArtifactGeneration int64
+	DeviceControlLinks []wire.DeviceControlLinkV1
 }
 
 type LinuxRuntimeV2 struct {
@@ -92,11 +93,15 @@ func RenderLinuxRuntimeV2(input LinuxRuntimeV2Input) (LinuxRuntimeV2, error) {
 			return result, err
 		}
 	}
+	if err := addLinuxDeviceControlLinks(&wg, &source, input, view.ClusterID); err != nil {
+		return result, err
+	}
 	links := wire.LinuxLinkIntentArtifactV1{Schema: 1, ClusterID: view.ClusterID, DeviceID: input.DeviceID,
 		DeviceGeneration: input.DeviceGeneration, Generation: input.ArtifactGeneration, RenderContractID: wire.LinuxLinkIntentRenderContract,
 		AuthorityHeadHash: input.Authority.Head.HeadHash, Authority: input.Authority, LinkIntents: wg.LinkIntents,
 		WireGuardResources: wg.Resources, LocalWireGuardKey: wg.LocalKey,
 		LocalRuntime: &wire.LinuxLocalRuntimeV1{AccessMode: "none", CredentialRefs: []string{}, Listeners: []wire.LinuxLocalListenerV1{}}}
+	links.LocalRuntime.DeviceControlLinks = input.DeviceControlLinks
 	file, skips, err := renderSingBoxWithScopes(&source, node, scopes[input.DeviceID], scopes)
 	if err != nil {
 		return result, err
@@ -104,6 +109,9 @@ func RenderLinuxRuntimeV2(input LinuxRuntimeV2Input) (LinuxRuntimeV2, error) {
 	result.Runtime.Skipped = append(result.Runtime.Skipped, skips...)
 	var config sbConfig
 	if err := json.Unmarshal([]byte(file.Content), &config); err != nil {
+		return result, err
+	}
+	if err := addLinuxDeviceControlEndpoints(&config, input.DeviceControlLinks); err != nil {
 		return result, err
 	}
 	for _, inbound := range config.Inbounds {

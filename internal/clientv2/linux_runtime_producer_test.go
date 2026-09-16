@@ -103,6 +103,22 @@ func testLinuxProducerRuntime(t *testing.T, hybrid bool) {
 			input := render.LinuxRuntimeV2Input{SSOT: source, Views: views,
 				Authority: wire.CertifiedHeadV1{Head: base.SignedCurrent.Head, QC: base.SignedCurrent.QuorumCertificate},
 				DeviceID:  node.ID, DeviceGeneration: 2, ArtifactGeneration: 1}
+			if node.Server != nil {
+				for _, client := range source.Nodes {
+					if client.Access != nil && client.Access.Platform == model.WindowsDesktop {
+						clientKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+						if err != nil {
+							t.Fatal(err)
+						}
+						services := []wire.PrivateControlServiceV1{}
+						for i, role := range []string{"device_config", "device_report"} {
+							services = append(services, wire.PrivateControlServiceV1{ServiceID: "private-" + role, Role: role, OverlayIP: "10.250.0.1", Port: int64(44000 + i), CertificateProfileRef: "demo-private-tls", SPKIPins: []string{wire.HashRaw("demo-pin", []byte(role))}, AuthorizedSubjectProfiles: []string{"demo-device"}})
+						}
+						input.DeviceControlLinks = []wire.DeviceControlLinkV1{{Resource: wire.LinuxWireGuardResourceV1{ResourceID: "device-control-demo", LinkID: "device-control-demo", ListenerDeviceID: node.ID, DialerDeviceID: client.ID, ListenerGeneration: 1, EndpointAddress: "10.250.0.1", EndpointPort: 51998, ListenerPublicKey: node.Server.WGPublicKey, DialerPublicKey: base64.StdEncoding.EncodeToString(clientKey.PublicKey().Bytes()), ListenerTunnelPrefix: "10.250.0.3/32", DialerTunnelPrefix: "10.250.0.2/32"}, Services: services}}
+						break
+					}
+				}
+			}
 			result, err := render.RenderLinuxRuntimeV2(input)
 			if err != nil {
 				t.Fatal(err)
@@ -161,13 +177,34 @@ func testLinuxProducerRuntime(t *testing.T, hybrid bool) {
 				if len(missing) != 0 {
 					t.Fatal(missing)
 				}
-				if strings.Contains(value, "self_report") || strings.Contains(value, "\"peers\"") {
+				if file.Path == "agent/v2/config.json" && (strings.Contains(value, "self_report") || strings.Contains(value, "\"peers\"")) {
 					t.Fatal("v2 runtime 仍引用旧 report endpoint")
 				}
 				files[file.Path] = value
 			}
 			if err := validateLinuxRuntimeConfigSemantics(&plan, &artifact, files); err != nil {
 				t.Fatal(err)
+			}
+			if len(input.DeviceControlLinks) > 0 {
+				for _, mutation := range []struct{ before, after string }{
+					{`"allowed_ips":["10.250.0.2/32"]`, `"allowed_ips":["10.0.0.0/8"]`},
+					{`"outbound":"device-control-block"`, `"outbound":"device-control-direct"`},
+					{`"ip_cidr":["10.250.0.1/32"]`, `"ip_cidr":["10.0.0.0/8"]`},
+					{`"system":false`, `"system":true`},
+				} {
+					broken := map[string]string{}
+					for path, body := range files {
+						broken[path] = body
+					}
+					path := "sing-box/v2/config.json"
+					broken[path] = strings.Replace(broken[path], mutation.before, mutation.after, 1)
+					if broken[path] == files[path] {
+						t.Fatal("故障注入未命中")
+					}
+					if err := validateLinuxRuntimeConfigSemantics(&plan, &artifact, broken); err == nil {
+						t.Fatal("接受扩大私有控制通道的配置")
+					}
+				}
 			}
 			if node.Server != nil && node.Access == nil {
 				denied := map[string]wire.DeviceViewPayloadV2{}

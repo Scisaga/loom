@@ -48,6 +48,15 @@ payload reader contract、freshness 和 identity signature。sink 以 `(Device I
 证书 EKU、ACL、端口和 handler 必须分别校验。报告失败不停止已安装数据面，配置不可达时继续
 使用 LKG；任何过期 bootstrap capability 都不能充当稳态恢复通道。
 
+普通客户端的稳态 WireGuard 与承载节点必须使用同一认证分配：客户端身份、两端公钥、
+独立隧道地址、私网 listener tuple 及允许访问的 `device_config/device_report` tuple。
+承载侧使用 sing-box userspace endpoint，路由首先按该 endpoint 放行精确服务地址和端口，
+随后拒绝其他目的；不能借此取得互联网转发、管理员 API 或 Raft 权限。该分配只授予受限数据链路，
+不授予 ControlSet membership。承载配置仍须单独认证发布并实际安装，客户端配置发布成功不代表通道已可用。
+
+隧道两端地址必须与私有服务地址分离；sing-box 会把 endpoint 自身地址映射到 loopback，
+复用地址会改变实际目的，破坏目录绑定。参见 [sing-box endpoint 实现](https://github.com/SagerNet/sing-box/blob/v1.11.4/protocol/wireguard/endpoint.go)。
+
 Linux 稳态客户端只从已原子安装的 identity/certificate/LKG 组装 Device mTLS，
 且只拨号 private directory 中的 exact overlay tuple。它同时校验 TLS 1.3、internal CA、
 overlay IP SAN 和 SPKI pin。现有 `config_qc` 是 parent Head 的 QC，不单独承诺

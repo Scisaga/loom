@@ -35,28 +35,11 @@ func ValidateLinuxWireGuardResources(artifact *LinuxLinkIntentArtifactV1) error 
 	}
 	resources := make(map[string]LinuxWireGuardResourceV1, len(artifact.WireGuardResources))
 	for i, resource := range artifact.WireGuardResources {
-		if !validIdentifier(resource.ResourceID, 128) || !validIdentifier(resource.LinkID, 128) ||
-			!validIdentifier(resource.ListenerDeviceID, 128) || !validIdentifier(resource.DialerDeviceID, 128) ||
-			resource.ListenerDeviceID == resource.DialerDeviceID || resource.ListenerGeneration < 1 ||
-			resource.EndpointPort < 1 || resource.EndpointPort > 65535 ||
-			!validWireGuardPublicKey(resource.ListenerPublicKey) || !validWireGuardPublicKey(resource.DialerPublicKey) ||
-			(i > 0 && artifact.WireGuardResources[i-1].ResourceID >= resource.ResourceID) {
-			return errors.New("[Linux WireGuard] peer 资源身份、端口、公钥或顺序无效")
+		if err := ValidateLinuxWireGuardResource(resource); err != nil {
+			return err
 		}
-		address, err := netip.ParseAddr(resource.EndpointAddress)
-		if err != nil {
-			if !ValidFQDN(resource.EndpointAddress) {
-				return errors.New("[Linux WireGuard] peer endpoint 不是明确的 IP 或域名")
-			}
-		} else if address.String() != resource.EndpointAddress || address.Is4In6() || address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() || address.IsLinkLocalUnicast() {
-			return errors.New("[Linux WireGuard] peer endpoint 地址无效")
-		}
-		listener, err := netip.ParsePrefix(resource.ListenerTunnelPrefix)
-		dialer, dialErr := netip.ParsePrefix(resource.DialerTunnelPrefix)
-		if err != nil || dialErr != nil || listener.String() != resource.ListenerTunnelPrefix || dialer.String() != resource.DialerTunnelPrefix ||
-			!listener.Addr().IsPrivate() || !dialer.Addr().IsPrivate() || listener.Addr().Is4() != dialer.Addr().Is4() ||
-			listener.Bits() != listener.Addr().BitLen() || dialer.Bits() != dialer.Addr().BitLen() || listener == dialer {
-			return errors.New("[Linux WireGuard] 隧道两端必须是不同的同地址族私网主机前缀")
+		if i > 0 && artifact.WireGuardResources[i-1].ResourceID >= resource.ResourceID {
+			return errors.New("[Linux WireGuard] peer 资源顺序无效")
 		}
 		resources[resource.ResourceID] = resource
 	}
@@ -107,4 +90,30 @@ func validWireGuardPublicKey(value string) bool {
 		combined |= item
 	}
 	return combined != 0
+}
+
+func ValidateLinuxWireGuardResource(resource LinuxWireGuardResourceV1) error {
+	if !validIdentifier(resource.ResourceID, 128) || !validIdentifier(resource.LinkID, 128) ||
+		!validIdentifier(resource.ListenerDeviceID, 128) || !validIdentifier(resource.DialerDeviceID, 128) ||
+		resource.ListenerDeviceID == resource.DialerDeviceID || resource.ListenerGeneration < 1 ||
+		resource.EndpointPort < 1 || resource.EndpointPort > 65535 ||
+		!validWireGuardPublicKey(resource.ListenerPublicKey) || !validWireGuardPublicKey(resource.DialerPublicKey) {
+		return errors.New("[Linux WireGuard] peer 资源身份、端口、公钥或顺序无效")
+	}
+	address, err := netip.ParseAddr(resource.EndpointAddress)
+	if err != nil {
+		if !ValidFQDN(resource.EndpointAddress) {
+			return errors.New("[Linux WireGuard] peer endpoint 不是明确的 IP 或域名")
+		}
+	} else if address.String() != resource.EndpointAddress || address.Is4In6() || address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() || address.IsLinkLocalUnicast() {
+		return errors.New("[Linux WireGuard] peer endpoint 地址无效")
+	}
+	listener, err := netip.ParsePrefix(resource.ListenerTunnelPrefix)
+	dialer, dialErr := netip.ParsePrefix(resource.DialerTunnelPrefix)
+	if err != nil || dialErr != nil || listener.String() != resource.ListenerTunnelPrefix || dialer.String() != resource.DialerTunnelPrefix ||
+		!listener.Addr().IsPrivate() || !dialer.Addr().IsPrivate() || listener.Addr().Is4() != dialer.Addr().Is4() ||
+		listener.Bits() != listener.Addr().BitLen() || dialer.Bits() != dialer.Addr().BitLen() || listener == dialer {
+		return errors.New("[Linux WireGuard] 隧道两端必须是不同的同地址族私网主机前缀")
+	}
+	return nil
 }

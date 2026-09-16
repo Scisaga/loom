@@ -16,14 +16,16 @@ import (
 // ClientControlTunnelV2 由认证的设备分配与服务目录生成；只含公开参数和
 // secret 引用。它不是客户端自报地址，也不会增加入口探测。
 type ClientControlTunnelV2 struct {
-	Address       []string `json:"address"`
-	PrivateKeyRef string   `json:"private_key_ref"`
-	PeerAddress   string   `json:"peer_address"`
-	PeerPort      int      `json:"peer_port"`
-	PeerPublicKey string   `json:"peer_public_key"`
-	AllowedIPs    []string `json:"allowed_ips"`
-	Detour        string   `json:"detour,omitempty"`
-	MTU           int      `json:"mtu"`
+	PeerDeviceID     string   `json:"peer_device_id,omitempty"`
+	PeerTunnelPrefix string   `json:"peer_tunnel_prefix,omitempty"`
+	Address          []string `json:"address"`
+	PrivateKeyRef    string   `json:"private_key_ref"`
+	PeerAddress      string   `json:"peer_address"`
+	PeerPort         int      `json:"peer_port"`
+	PeerPublicKey    string   `json:"peer_public_key"`
+	AllowedIPs       []string `json:"allowed_ips"`
+	Detour           string   `json:"detour,omitempty"`
+	MTU              int      `json:"mtu"`
 }
 
 type ClientRuntimeV2Input struct {

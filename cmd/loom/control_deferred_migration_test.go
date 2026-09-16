@@ -29,7 +29,16 @@ func TestControlMigrationRetainsOfflineIdentityWithoutInventingWrappingOrEnrollm
 	}
 	// 为本测试的其他 source 节点构造已迁移 view；待迁移 Windows 始终没有
 	// v2 view、certificate、wrapping key 或伪造的 Enrollment 事务。
-	active := controlClone(application.Devices[0])
+	var active controlDeviceStateV1
+	for _, device := range application.Devices {
+		if device.View.DeviceID == migration.DeviceID {
+			active = controlClone(device)
+			break
+		}
+	}
+	if active.View.DeviceID == "" {
+		t.Fatal("测试原身份缺少已迁移视图")
+	}
 	application.Devices, application.DeviceMigrations = nil, nil
 	for _, node := range ssot.Nodes {
 		if node.ID == migration.DeviceID {

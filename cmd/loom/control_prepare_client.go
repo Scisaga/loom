@@ -118,6 +118,7 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 		}
 	}
 	var rendered render.ClientRuntimeV2
+	var controlLink *wire.DeviceControlLinkV1
 	configs := []controlPublishedConfigV1{}
 	if platform == "linux-server" {
 		if !wire.EqualCanonical(request.Input.ControlTunnel, render.ClientControlTunnelV2{}) {
@@ -133,7 +134,8 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 		}
 		linux, err := render.RenderLinuxRuntimeV2(render.LinuxRuntimeV2Input{SSOT: ssot, Views: views,
 			Authority: wire.CertifiedHeadV1{Head: *state.CertifiedHead, QC: qc}, DeviceID: device.View.DeviceID,
-			DeviceGeneration: device.View.DeviceGeneration + 1, ArtifactGeneration: artifactGeneration})
+			DeviceGeneration: device.View.DeviceGeneration + 1, ArtifactGeneration: artifactGeneration,
+			DeviceControlLinks: application.deviceControlLinksFor(device.View.DeviceID)})
 		if err != nil {
 			return empty, err
 		}
@@ -141,6 +143,11 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 		configs = append(configs, controlPublishedConfigV1{Ref: linux.Links.Ref, Content: linux.Links.Content})
 	} else {
 		tunnel := controlClone(request.Input.ControlTunnel)
+		link, err := application.prepareDeviceControlLink(request.Input, device.View.DeviceGeneration+1)
+		if err != nil {
+			return empty, err
+		}
+		controlLink = &link
 		// 客户端控制路由由认证目录限定，不接受管理员输入扩大到任意私网。
 		allowed := map[string]bool{}
 		for _, service := range application.Services {
@@ -217,7 +224,7 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 	}
 	payload := controlPublishDevicePayloadV1{Schema: 1, Publication: controlDevicePublicationV1{Schema: 1,
 		DeviceID: device.View.DeviceID, PreviousViewHash: previous, Configs: configs,
-		Secrets: []enrollmentv2.SealedMaterialEvidenceV1{}}, Envelopes: []wire.SealedSecretEnvelopeV1{}}
+		Secrets: []enrollmentv2.SealedMaterialEvidenceV1{}, ControlLink: controlLink}, Envelopes: []wire.SealedSecretEnvelopeV1{}}
 	// Secret root 先按用途枚举排序：device_credential 在 data_plane_credential
 	// 前；每个用途内按 ID 排序。renderer 已返回排序后的数据面 ref。
 	ids := append([]string{wire.DevicePrivateControlCredentialSecretIDV1, wire.DeviceObservationCASecretIDV1}, rendered.CredentialRefs...)

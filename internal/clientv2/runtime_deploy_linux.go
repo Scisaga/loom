@@ -505,6 +505,19 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 	}
 	for _, binding := range artifact.Bindings {
 		if binding.Transport == "wireguard" {
+			if binding.RuntimeTag != "" {
+				if plan.LocalRuntime == nil {
+					return errors.New("[设备控制链路] 缺认证本机配置")
+				}
+				found := false
+				for _, link := range plan.LocalRuntime.DeviceControlLinks {
+					found = found || link.Resource.LinkID == binding.LinkID
+				}
+				if !found {
+					return errors.New("[设备控制链路] userspace WireGuard 未获本机授权")
+				}
+				continue
+			}
 			for _, action := range plan.Actions {
 				if action.LinkID == binding.LinkID && action.WireGuardPeer != nil {
 					if err := validateLinuxPeerWireGuardConfig(files[binding.ConfigPath], plan.DeviceID, *action.WireGuardPeer); err != nil {
@@ -542,6 +555,11 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 	}
 	if local := plan.LocalRuntime; local != nil {
 		if err := validateLinuxLocalRuntimeConfig(plan, artifact, files, inbounds, outbounds); err != nil {
+			return err
+		}
+	}
+	if body, found := files["sing-box/v2/config.json"]; found {
+		if err := validateLinuxDeviceControlEndpoints(plan, artifact, body); err != nil {
 			return err
 		}
 	}

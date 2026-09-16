@@ -3,79 +3,26 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 	"time"
 
 	"loom/internal/controlplane"
-	"loom/internal/enrollmentv2"
+	"loom/internal/model"
 	"loom/internal/wire"
 )
 
 func controlPublicationFixture(t *testing.T) (*controlRuntime, string, wire.RuntimeDeviceMigrationLeafV1, controlPublishDevicePayloadV1) {
 	t.Helper()
-	var material *controlSoftwareMaterial
-	wrapping, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	wrapSPKI, _ := x509.MarshalPKIXPublicKey(wrapping.Public())
-	wrapHash, _ := wire.HashBytes(wire.DomainEnrollmentWrappingSPKI, wrapSPKI)
-	runtime, admin, migration, _ := controlMigratedDeviceRuntime(t, func(application *controlApplicationV1, runtime *controlRuntime) {
-		var err error
-		material, err = openControlSoftwareMaterial(runtime.dir, runtime.config.DeviceID, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		policy, err := material.availabilityPolicy(application.ClusterID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		application.ArtifactPolicies = []wire.ArtifactAvailabilityPolicyV1{policy}
-		application.DeviceMigrations[0].WrappingKeyHash = wrapHash
-		application.Authorizations[0].AllowedOperationKinds = append(application.Authorizations[0].AllowedOperationKinds, controlPublishDeviceKind)
-		sort.Strings(application.Authorizations[0].AllowedOperationKinds)
-	})
-	defer material.Close()
-	application, err := runtime.certifiedApplicationLocked()
+	runtime, admin, migration, input, _ := controlRenderedClientFixture(t, model.Android)
+	state := runtime.store.Snapshot()
+	payload, err := runtime.prepareClientConfigLocked(controlPrepareClientRequestV1{Schema: 1, RequestID: "demo-publish", ExpectedHead: state.CertifiedHead.HeadHash, Input: input})
 	if err != nil {
 		t.Fatal(err)
 	}
-	previous, _ := wire.DeviceViewHash(&application.Devices[0].View)
-	key, _ := enrollmentv2.MaterialAuthorityKey(wrapping.Public())
-	sealing := wire.P256SealingPolicyV1()
-	recipients := []wire.SealedBlobRecipientKeyRefV1{{RecipientID: migration.DeviceID, RecipientKeyGeneration: 1,
-		RecipientKeyID: key.KeyID, RecipientKeyProfile: sealing.RecipientKeyProfile, RecipientPublicKey: key}}
-	sealContext, err := wire.NewSealedSecretContext(application.ClusterID, "demo-publish", "demo-data", "data_plane_credential",
-		wire.SecretArtifactOwnerV1{Kind: "device", Device: &wire.SecretArtifactDeviceOwnerV1{DeviceID: migration.DeviceID}}, 1, &sealing, recipients)
-	if err != nil {
-		t.Fatal(err)
-	}
-	evidence, err := enrollmentv2.CreateLocalSealedMaterial(material.store, sealContext, sealing, recipients, []byte("demo-private-credential"), nil,
-		application.ArtifactPolicies[0], material.deviceID, material.reporter, runtime.now().UTC().Truncate(time.Second), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	envelope, err := material.store.Get(evidence.Ref.SealedBlob.CiphertextDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := wire.MarshalCanonical(struct {
-		Owner string            `json:"owner"`
-		Files map[string]string `json:"files"`
-	}{migration.DeviceID, map[string]string{"agent/config.json": `{"server":"demo-server"}`,
-		"sing-box/config.json": `{"outbounds":[{"password":"${secret:demo-data}","type":"hysteria2"}]}`}})
-	hash, _ := wire.DeviceConfigArtifactContentHash(raw)
-	config := controlPublishedConfigV1{Ref: wire.DeviceConfigArtifactRefV1{ArtifactID: "android-runtime", Generation: 1,
-		Platform: "android", MediaType: "application/vnd.loom.config+json", RenderContractID: "android-runtime-v1", SizeBytes: int64(len(raw)), ContentHash: hash}, Content: raw}
-	return runtime, admin, migration, controlPublishDevicePayloadV1{Schema: 1,
-		Publication: controlDevicePublicationV1{Schema: 1, DeviceID: migration.DeviceID, PreviousViewHash: previous,
-			Configs: []controlPublishedConfigV1{config}, Secrets: []enrollmentv2.SealedMaterialEvidenceV1{evidence}},
-		Envelopes: []wire.SealedSecretEnvelopeV1{envelope}}
+	return runtime, admin, migration, payload
 }
 
 func TestControlDevicePublicationCommitsOriginalIdentityAndReplaysAfterLostResponse(t *testing.T) {
@@ -115,7 +62,7 @@ func TestControlDevicePublicationCommitsOriginalIdentityAndReplaysAfterLostRespo
 	if err != nil || after.Record.IdentitySPKIHash != before.Record.IdentitySPKIHash || after.Record.CertificateHash != before.Record.CertificateHash ||
 		!wire.EqualCanonical(after.CurrentDeviceView.Payload.Active.Responsibilities, before.CurrentDeviceView.Payload.Active.Responsibilities) ||
 		!wire.EqualCanonical(after.CurrentDeviceView.Payload.Active.Grants, before.CurrentDeviceView.Payload.Active.Grants) ||
-		after.CurrentDeviceView.Payload.DeviceGeneration != 2 || len(after.DeviceConfigUpdates) != 2 || len(after.DeviceSecretEnvelopes) != 1 {
+		after.CurrentDeviceView.Payload.DeviceGeneration != 2 || len(after.DeviceConfigUpdates) != 2 || len(after.DeviceSecretEnvelopes) != len(payload.Envelopes) {
 		t.Fatal("publication did not preserve identity/authority or deliver config and sealed material", err)
 	}
 	if err := wire.VerifyDeviceViewSuccessor(&before.CurrentDeviceView, &after.CurrentDeviceView); err != nil {
@@ -127,7 +74,7 @@ func TestControlDevicePublicationCommitsOriginalIdentityAndReplaysAfterLostRespo
 	}
 	for _, name := range []string{controlJournalName, controlRaftName, controlStateName} {
 		raw, err := os.ReadFile(filepath.Join(runtime.dir, name))
-		if err != nil || bytes.Contains(raw, []byte("demo-private-credential")) {
+		if err != nil || bytes.Contains(raw, []byte("demo-sealed-client-credential")) {
 			t.Fatal("credential leaked into control state", err)
 		}
 	}

@@ -27,6 +27,7 @@ type controlDevicePublicationV1 struct {
 	PreviousViewHash string                                  `json:"previous_view_hash"`
 	Configs          []controlPublishedConfigV1              `json:"configs"`
 	Secrets          []enrollmentv2.SealedMaterialEvidenceV1 `json:"secrets"`
+	ControlLink      *wire.DeviceControlLinkV1               `json:"control_link,omitempty"`
 }
 
 type controlPublishedConfigV1 struct {
@@ -168,6 +169,9 @@ func (application *controlApplicationV1) reduceDevicePublication(publication con
 		return nil, err
 	}
 	next := controlClone(*application)
+	if err := next.applyDeviceControlPublication(publication, platform); err != nil {
+		return nil, err
+	}
 	device := &next.Devices[index]
 	device.PreviousViewHash = previousHash
 	device.View.DeviceGeneration++

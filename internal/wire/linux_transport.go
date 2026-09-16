@@ -28,9 +28,10 @@ type LinuxLocalListenerV1 struct {
 // 本机 API/probe 口令不是另一条网络边的凭据；访问模式和共享 listener
 // 由同一认证制品明确列出，不能从 use_loom 推导出默认接管主机路由。
 type LinuxLocalRuntimeV1 struct {
-	AccessMode     string                 `json:"access_mode"`
-	CredentialRefs []string               `json:"credential_refs"`
-	Listeners      []LinuxLocalListenerV1 `json:"listeners"`
+	AccessMode         string                 `json:"access_mode"`
+	CredentialRefs     []string               `json:"credential_refs"`
+	Listeners          []LinuxLocalListenerV1 `json:"listeners"`
+	DeviceControlLinks []DeviceControlLinkV1  `json:"device_control_links,omitempty"`
 }
 
 func ValidateLinuxLocalRuntime(artifact *LinuxLinkIntentArtifactV1) error {
@@ -50,6 +51,34 @@ func ValidateLinuxLocalRuntime(artifact *LinuxLinkIntentArtifactV1) error {
 				err != nil || address.String() != listener.Address || address.IsMulticast() || listener.Port < 1 || listener.Port > 65535 ||
 				(i > 0 && local.Listeners[i-1].Tag >= listener.Tag) {
 				return errors.New("[Linux runtime] 本机 listener tuple 或顺序无效")
+			}
+		}
+		ports := map[int64]bool{}
+		for i, link := range local.DeviceControlLinks {
+			if err := ValidateDeviceControlLink(&link); err != nil {
+				return err
+			}
+			if link.Resource.ListenerDeviceID != artifact.DeviceID || ports[link.Resource.EndpointPort] ||
+				i > 0 && local.DeviceControlLinks[i-1].Resource.ResourceID >= link.Resource.ResourceID {
+				return errors.New("[Linux runtime] 私有控制链路 listener 归属、顺序或端口冲突")
+			}
+			ports[link.Resource.EndpointPort] = true
+			found := false
+			for _, resource := range artifact.WireGuardResources {
+				found = found || EqualCanonical(resource, link.Resource)
+			}
+			if !found {
+				return errors.New("[Linux runtime] 私有控制链路缺同源 WireGuard 资源")
+			}
+			if artifact.LocalWireGuardKey == nil {
+				return errors.New("[Linux runtime] 私有控制链路缺承载节点原密钥")
+			}
+			found = false
+			for _, intent := range artifact.LinkIntents {
+				found = found || EqualCanonical(intent, DeviceControlLinkIntent(artifact.ClusterID, link.Resource, artifact.AuthorityHeadHash, artifact.LocalWireGuardKey.SecretID))
+			}
+			if !found {
+				return errors.New("[Linux runtime] 私有控制链路未绑定受限 LinkIntent")
 			}
 		}
 	}

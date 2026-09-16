@@ -81,7 +81,7 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 		application.Devices[0].View.Active.Responsibilities, application.Devices[0].View.Active.Grants = roles, grants
 		application.Devices[0].View.Active.ResponsibilitiesHash, _ = wire.HashObject("loom-enrollment-responsibilities-v1", roles)
 		application.Devices[0].View.Active.GrantsHash, _ = wire.HashObject("loom-enrollment-destination-grants-v1", grants)
-		if platform == model.LinuxServer {
+		{
 			for _, node := range effective.Nodes {
 				if node.Server == nil {
 					continue
@@ -113,7 +113,7 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 		Recipient: wire.SealedBlobRecipientKeyRefV1{RecipientID: migration.DeviceID, RecipientKeyGeneration: 1,
 			RecipientKeyID: key.KeyID, RecipientKeyProfile: wire.P256SealingPolicyV1().RecipientKeyProfile, RecipientPublicKey: key},
 		ControlTunnel: render.ClientControlTunnelV2{Address: []string{"10.250.0.2/32"}, PrivateKeyRef: "private-control-wg-key",
-			PeerAddress: "192.0.2.34", PeerPort: 51820, PeerPublicKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{19}, 32)), MTU: 1280},
+			PeerAddress: "10.250.0.1", PeerTunnelPrefix: "10.250.0.3/32", PeerPort: 51998, MTU: 1280},
 		SingBoxVersion: "1.11.4", ObservationCA: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: runtime.controlTLS.Certificate[1]})),
 		Credentials: map[string]string{}}
 	application, err := runtime.certifiedApplicationLocked()
@@ -123,6 +123,12 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 	ssot, err := model.Load([]byte(application.LegacySSOT))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, node := range ssot.Nodes {
+		if node.Server != nil {
+			input.ControlTunnel.PeerDeviceID, input.ControlTunnel.PeerPublicKey = node.ID, node.Server.WGPublicKey
+			break
+		}
 	}
 	tunnel := input.ControlTunnel
 	tunnel.AllowedIPs = []string{"10.250.0.1/32"}
@@ -145,7 +151,13 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 		}
 		return runtime, admin, migration, input, wrapping
 	}
-	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, Grants: &application.Devices[0].View.Active.Grants, ClusterID: application.ClusterID,
+	var clientGrants wire.EnrollmentDestinationGrantsV1
+	for _, device := range application.Devices {
+		if device.View.DeviceID == input.DeviceID {
+			clientGrants = device.View.Active.Grants
+		}
+	}
+	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, Grants: &clientGrants, ClusterID: application.ClusterID,
 		DeviceID: input.DeviceID, DeviceGeneration: 2, ArtifactGeneration: 1, SingBoxVersion: input.SingBoxVersion,
 		ObservationCA: input.ObservationCA, ControlTunnel: tunnel})
 	if err != nil {
@@ -268,6 +280,34 @@ func TestControlClientConfigRendersSealsPublishesAndReplays(t *testing.T) {
 				len(authority.DeviceSecretEnvelopes) != len(payload.Envelopes) || len(authority.DeviceConfigUpdates) != 2 ||
 				len(authority.CurrentDeviceView.Payload.Active.ConfigArtifactRefs) != len(payload.Publication.Configs) {
 				t.Fatal("真实身份读取链缺生成后的配置与材料", err)
+			}
+			if platform != model.LinuxServer {
+				application, err := reopened.certifiedApplicationLocked()
+				if err != nil {
+					t.Fatal(err)
+				}
+				links := application.deviceControlLinksFor(input.ControlTunnel.PeerDeviceID)
+				if len(links) != 1 || !wire.EqualCanonical(links[0], *payload.Publication.ControlLink) {
+					t.Fatal("承载分配未随同一认证操作持久恢复")
+				}
+				source, err := model.Load([]byte(application.LegacySSOT))
+				if err != nil {
+					t.Fatal(err)
+				}
+				views := map[string]wire.DeviceViewPayloadV2{}
+				for _, device := range application.Devices {
+					views[device.View.DeviceID] = device.View
+				}
+				current := reopened.store.Snapshot()
+				qc, _ := wire.MarshalCanonical(current.CertifiedQC)
+				rendered, err := render.RenderLinuxRuntimeV2(render.LinuxRuntimeV2Input{SSOT: source, Views: views, Authority: wire.CertifiedHeadV1{Head: *current.CertifiedHead, QC: qc}, DeviceID: input.ControlTunnel.PeerDeviceID, DeviceGeneration: 2, ArtifactGeneration: 1, DeviceControlLinks: links})
+				if err != nil {
+					t.Fatal("认证分配无法生成实际承载配置", err)
+				}
+				var serverLinks wire.LinuxLinkIntentArtifactV1
+				if json.Unmarshal(rendered.Links.Content, &serverLinks) != nil || !wire.EqualCanonical(serverLinks.LocalRuntime.DeviceControlLinks, links) {
+					t.Fatal("承载生成器丢失已认证两端绑定")
+				}
 			}
 			repeated, err = prepareControlClientConfig(context.Background(), endpoint, client, prepare)
 			if err != nil || !wire.EqualCanonical(payload, repeated) {
