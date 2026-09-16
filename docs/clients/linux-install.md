@@ -6,7 +6,7 @@
 [实现对照](../development/implementation.md)。只有部署具备相应私有服务且交付有效输入时，才可完成以下正常流程。
 命令存在或开发检查通过不表示某环境已具备 v2 入网能力。
 
-当前使用 v1 身份与 signed pull 的部署，维护步骤见[v1 安装手册](../operations/linux-v1-install.md)。
+原 v1 身份通过认证迁移继续使用；安装器和 `client enroll` 只接受 v2 邀请，不再消费旧加入码。
 两代状态与输入不可混用；已加入身份不因文档变更重新生成。管理端职责及 SSH/本地执行的分工见
 [本机部署说明](../operations/local-deployment.md)。
 
@@ -113,13 +113,13 @@ catalog parent Head 对应的 ControlSet 验 config QC；descriptor 自报 hash 
 签名客户端包可直接安装并执行同一条 v2 路径：
 
 ```bash
-sudo ./install.sh --invite-v2-file ../client.loom-invite
+sudo ./install.sh --invite-file ../client.loom-invite
 ```
 
 在 root 身份下从标准输入或普通 exact canonical `.loom-invite` 文件执行初次加入：
 
 ```bash
-sudo loom client enroll-v2 \
+sudo loom client enroll \
   -invite-file /path/from/private-channel/device.loom-invite
 ```
 

@@ -66,9 +66,9 @@ func TestBuildIsReproducibleAndVerifiable(t *testing.T) {
 	}
 }
 
-func TestLinuxInstallerExposesV2WithoutRemovingV1Compatibility(t *testing.T) {
+func TestLinuxInstallerUsesOnlyPrivateEnrollment(t *testing.T) {
 	for _, expected := range []string{
-		"--invite-v2-file", "client enroll-v2", "--resume-v2-file", "client resume-v2",
+		"--invite-v2-file", "client enroll -invite-file", "--resume-v2-file", "client resume-v2",
 		"--secret-envelope-dir", "--invite-file", "client enroll",
 	} {
 		if !strings.Contains(installScript, expected) {

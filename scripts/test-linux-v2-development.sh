@@ -14,7 +14,7 @@ temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 
 LOOM_INSTALLER_NAMESPACE_TEST=1 go test ./cmd/loom ./internal/wire ./internal/clientv2 ./internal/clientcomponent \
-    ./internal/clientdist ./internal/clientenroll ./internal/clientruntime \
+    ./internal/clientdist ./internal/clientruntime \
     ./internal/controlplane ./internal/deploy -count=1
 
 # 在无宿主权限、仅 loopback 的 user+network namespace 中启动固定版本
@@ -74,7 +74,6 @@ evidence = {
         "loom/internal/clientv2",
         "loom/internal/clientcomponent",
         "loom/internal/clientdist",
-        "loom/internal/clientenroll",
         "loom/internal/clientruntime",
         "loom/internal/controlplane",
         "loom/internal/deploy",

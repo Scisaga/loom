@@ -505,53 +505,30 @@ shell history:
 
     tar -xzf loom-client-linux-amd64.tar.gz
     cd loom-client-linux-amd64
-    sudo ./install.sh --invite-v2-file ../client.loom-invite
+    sudo ./install.sh --invite-file ../client.loom-invite
 
 Remove only this host's installed v2 runtime and services with:
 
     sudo ./uninstall.sh
 
 The uninstall keeps Device identity, certified LKG, anti-rollback floors and
-the shared Loom/sing-box binaries.  Keeping those files is intentional before
-Gate B: reinstall can resume the same Device, and a coexisting v1 runtime must
-not be damaged by a v2 uninstall.  It does not revoke the Device in the control
-plane.
+shared Loom/sing-box binaries so reinstall can resume the same Device. It does
+not revoke the Device in the control plane.
 
-The historical v1 command remains available as --invite-file. The two modes
-use separate state directories and are never auto-detected from bearer bytes.
+Only v2 invitations are accepted. Existing devices must use the authenticated
+identity migration flow; an old invitation cannot re-enroll or replace them.
 
-If the invitation pins a forwarding/server purpose, declare the real public
-endpoint before running the installer:
-
-    sudo install -d -m 0755 /etc/loom
-    sudoedit /etc/loom/device.yaml
-
-    server:
-      public_endpoint: edge.example.net
-      inbound_port: 61698
-      direction: bidirectional
-
-This is the server's reachability declaration, not a client route selection.
-Enrollment creates or reuses /etc/wireguard/node.key locally, sends only its
-public key, and installs wireguard-tools through a supported package manager
-before consuming the invitation when the tools are absent.
-
-The installer binds a locally generated P-256 CSR identity to the Device that
-the control plane already created (the private key never leaves the machine), installs
-the bootstrap response, and starts the first signed pull when the control plane
-returned a complete provisioning envelope. It never changes global proxy
-environment variables.
 `
 
 const systemdReadme = `# systemd lifecycle boundary
 
-The exact sing-box, pull, Agent, and reporter units depend on the enrolled node
-ID and its signed configuration. They are intentionally not generic files in
-this bootstrap archive. A successful first signed pull installs the units from
-the node-bound bundle and uses the existing transactional apply/rollback path.
+Node-specific units come from the certified v2 runtime. Enrollment verifies
+the completed transaction, installs that runtime atomically, and starts
+loom-client-v2 for private configuration synchronization and signed reports.
+The installer does not create generic units or start a signed-current pull.
 
-If enrollment returns no complete provisioning envelope, no service is enabled
-or started. That state is provisioning, not online.
+An incomplete enrollment keeps its durable request and identity for exact
+resume. It does not activate an unverified configuration.
 `
 
 const installScript = `#!/bin/sh
@@ -559,17 +536,14 @@ set -eu
 umask 077
 
 usage() {
-    echo "usage: sudo ./install.sh --invite-v2-file PATH [--v2-state-dir PATH] [--secret-envelope-dir PATH]" >&2
+    echo "usage: sudo ./install.sh --invite-file PATH [--state-dir PATH] [--secret-envelope-dir PATH]" >&2
     echo "       sudo ./install.sh --resume-v2-file PATH --v1-platform-key-id ID --v1-migration-anchor SHA256 [--v2-state-dir PATH] [--secret-envelope-dir PATH]" >&2
-    echo "       sudo ./install.sh --invite-file PATH [--state-dir PATH]  # v1 compatibility" >&2
     echo "       sudo ./install.sh --no-enroll" >&2
     exit 2
 }
 
-invite_file=
 invite_v2_file=
 resume_v2_file=
-state_dir=/etc/loom/client
 v2_state_dir=/var/lib/loom/client-v2
 secret_envelope_dir=
 v1_platform_key_id=
@@ -577,11 +551,9 @@ v1_migration_anchor=
 no_enroll=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --invite-file) [ "$#" -ge 2 ] || usage; invite_file=$2; shift 2 ;;
-        --invite-v2-file) [ "$#" -ge 2 ] || usage; invite_v2_file=$2; shift 2 ;;
+        --invite-file|--invite-v2-file) [ "$#" -ge 2 ] || usage; invite_v2_file=$2; shift 2 ;;
         --resume-v2-file) [ "$#" -ge 2 ] || usage; resume_v2_file=$2; shift 2 ;;
-        --state-dir) [ "$#" -ge 2 ] || usage; state_dir=$2; shift 2 ;;
-        --v2-state-dir) [ "$#" -ge 2 ] || usage; v2_state_dir=$2; shift 2 ;;
+        --state-dir|--v2-state-dir) [ "$#" -ge 2 ] || usage; v2_state_dir=$2; shift 2 ;;
         --secret-envelope-dir) [ "$#" -ge 2 ] || usage; secret_envelope_dir=$2; shift 2 ;;
         --v1-platform-key-id) [ "$#" -ge 2 ] || usage; v1_platform_key_id=$2; shift 2 ;;
         --v1-migration-anchor) [ "$#" -ge 2 ] || usage; v1_migration_anchor=$2; shift 2 ;;
@@ -593,7 +565,6 @@ done
 
 [ "$(id -u)" -eq 0 ] || { echo "install.sh must run as root" >&2; exit 1; }
 mode_count=0
-[ -z "$invite_file" ] || mode_count=$((mode_count + 1))
 [ -z "$invite_v2_file" ] || mode_count=$((mode_count + 1))
 [ -z "$resume_v2_file" ] || mode_count=$((mode_count + 1))
 [ "$no_enroll" -eq 0 ] || mode_count=$((mode_count + 1))
@@ -616,11 +587,7 @@ done
 
 install -d -m 0755 /usr/local/bin /etc/loom/trust /var/lib/loom
 install -d -m 0700 /etc/loom/secrets
-if [ -n "$invite_file" ]; then
-    install -d -m 0700 "$state_dir"
-else
-    install -d -m 0700 "$v2_state_dir"
-fi
+install -d -m 0700 "$v2_state_dir"
 command -v flock >/dev/null || { echo "flock is required for transactional install" >&2; exit 1; }
 exec 9>/var/lib/loom/deploy.lock
 flock -x 9
@@ -781,10 +748,8 @@ if [ "$no_enroll" -eq 1 ]; then
     exit 0
 fi
 
-if [ -n "$invite_file" ]; then
-    /usr/local/bin/loom client enroll -invite-file "$invite_file" -state-dir "$state_dir"
-elif [ -n "$invite_v2_file" ]; then
-    set -- client enroll-v2 -invite-file "$invite_v2_file" -state-dir "$v2_state_dir"
+if [ -n "$invite_v2_file" ]; then
+    set -- client enroll -invite-file "$invite_v2_file" -state-dir "$v2_state_dir"
     [ -z "$secret_envelope_dir" ] || set -- "$@" -secret-envelope-dir "$secret_envelope_dir"
     /usr/local/bin/loom "$@"
 else
