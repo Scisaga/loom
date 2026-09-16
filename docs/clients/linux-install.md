@@ -48,6 +48,10 @@ sudo loom client import-migration \
 随后执行正常 `accept-v2-runtime -apply` 事务。control 节点还须用
 `-control-peer-directory` 交付 Head 认证的私有 peer directory。
 
+系统解析器不可用时，首次导入可用 `-dns <既有解析器 IP>` 解析认证镜像的名称。
+后续配置同步复用已安装、已认证的服务器配置中的解析器；不改宿主 DNS 设置或记录，
+镜像的 WebPKI、SNI、SPKI pin 与内容摘要校验保持不变。
+
 `-dry-run` 只验证候选，不保存 migration state 或激活服务。若身份已保存而运行事务失败，错误
 会明确指出这一状态；修复主机条件后运行 `client accept-v2-runtime -apply`，不删身份、不降低
 floor、不重新入网。稳态配置与报告直接消费同一 v2 installation；迁移不会生成虚假的 Enrollment 记录。

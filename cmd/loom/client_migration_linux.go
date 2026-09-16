@@ -142,6 +142,7 @@ func cmdClientImportMigration(args []string) error {
 	floorPath := fs.String("floor", "", "原 signed pull floor 文件")
 	platformPath := fs.String("platform-pubkey", "/etc/loom/trust/platform.pub", "原平台公钥")
 	peerPath := fs.String("control-peer-directory", "", "control 节点的 certified 私有 peer directory")
+	dnsServer := fs.String("dns", "", "首次下载使用的既有解析器 IP；后续同步复用认证配置的解析器")
 	dryRun := fs.Bool("dry-run", false, "验证完整迁移与运行配置，不安装身份或激活服务")
 	timeout := fs.Duration("timeout", 2*time.Minute, "下载与激活各自的超时")
 	if err := fs.Parse(args); err != nil {
@@ -216,8 +217,12 @@ func cmdClientImportMigration(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	envelope := verified.Configuration().Envelope()
+	fetcher, err := clientv2.LinuxMirrorFetcher(*dnsServer, linuxClientV2NetworkTimeout(*timeout))
+	if err != nil {
+		return err
+	}
 	configs, err := clientv2.FetchLinuxDeviceConfigArtifacts(ctx, delivery.DistributionMirrors,
-		envelope.Payload.Active.ConfigArtifactRefs, clientv2.MirrorFetcher{Timeout: linuxClientV2NetworkTimeout(*timeout)})
+		envelope.Payload.Active.ConfigArtifactRefs, fetcher)
 	if err != nil {
 		return err
 	}

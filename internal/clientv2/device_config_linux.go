@@ -133,6 +133,10 @@ func SyncLinuxDeviceView(ctx context.Context,
 			if fetcher.Timeout == 0 {
 				fetcher.Timeout = options.Timeout
 			}
+			fetcher, err = installedLinuxMirrorFetcher(installation, fetcher)
+			if err != nil {
+				return store.Floors(), err
+			}
 			installed, err := FetchLinuxDeviceConfigArtifacts(ctx,
 				installation.DistributionMirrors, finalEnvelope.Payload.Active.ConfigArtifactRefs,
 				fetcher)
