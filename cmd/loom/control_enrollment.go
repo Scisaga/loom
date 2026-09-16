@@ -182,7 +182,71 @@ func controlEnrollmentCoordinate(head wire.HeadEntryV2) enrollmentv2.EnrollmentC
 // applicationBefore 从迁移 preimage 和已认证 operation 重算私有状态。它不读取
 // 一份可独立修改的“当前 application.json”，磁盘唯一 authority 仍是原 Head/QC 日志。
 func (runtime *controlRuntime) applicationBefore(limit int) (*controlApplicationV1, error) {
-	return runtime.walkApplications(limit, nil)
+	if limit < 0 || limit > len(runtime.journal.Records) {
+		return nil, errors.New("[D104 daemon] application 重放范围无效")
+	}
+	setHash, err := wire.ControlSetHash(&runtime.config.ControlSet)
+	if err != nil {
+		return nil, err
+	}
+	cache := &runtime.applicationCache
+	if cache.controlSetHash != setHash {
+		*cache = controlApplicationCache{controlSetHash: setHash}
+	}
+	keys := make([]string, limit)
+	common := 0
+	for i := 0; i < limit; i++ {
+		keys[i], err = controlApplicationRecordKey(runtime.journal.Records[i])
+		if err != nil {
+			return nil, err
+		}
+		if i < len(cache.recordKeys) && i < len(cache.history) && cache.recordKeys[i] == keys[i] && common == i {
+			common++
+		}
+	}
+	if common == limit {
+		if limit == 0 || cache.history[limit-1] == nil {
+			return nil, nil
+		}
+		copy := controlClone(*cache.history[limit-1])
+		return &copy, nil
+	}
+	history := append([]*controlApplicationV1(nil), cache.history[:common]...)
+	var application *controlApplicationV1
+	if common > 0 && history[common-1] != nil {
+		copy := controlClone(*history[common-1])
+		application = &copy
+	}
+	for i := common; i < limit; i++ {
+		application, err = runtime.reduceApplicationRecord(i, application)
+		if err != nil {
+			return nil, err
+		}
+		if application == nil {
+			history = append(history, nil)
+		} else {
+			copy := controlClone(*application)
+			history = append(history, &copy)
+		}
+	}
+	cache.key = ""
+	cache.controlSetHash = setHash
+	cache.recordKeys = keys
+	cache.history = history
+	if limit == 0 || application == nil {
+		return nil, nil
+	}
+	copy := controlClone(*application)
+	return &copy, nil
+}
+
+// phase/result 会在同一 preimage 上依次耐久推进，不影响 application 投影；把它们
+// 排除在记录 key 外，避免一次提交的五个阶段反复重放全部历史。其余字节任何变化
+// 都会截断缓存并从首个不同记录重新验证。
+func controlApplicationRecordKey(record controlOperationRecordV1) (string, error) {
+	record.Phases = nil
+	record.Result = nil
+	return wire.HashObject("loom-control-application-record-v1", record)
 }
 
 // 连续构造各代 projection，每条操作仍经过 reducer 和 Head 根校验。
@@ -191,72 +255,83 @@ func (runtime *controlRuntime) walkApplications(limit int,
 	visit func(int, *controlApplicationV1) error) (*controlApplicationV1, error) {
 	var application *controlApplicationV1
 	for i := 0; i < limit; i++ {
-		record := &runtime.journal.Records[i]
-		if activation := record.Activation; activation != nil {
-			if application != nil {
-				return nil, errors.New("[D104 daemon] 重复 application 激活")
-			}
-			copy := controlClone(activation.Application)
-			application = &copy
-		} else if record.Invite != nil {
-			var err error
-			application, err = application.reduceInvite(*record.Invite, record.Operation.Body, record.Candidate.Body.Payload.CommittedLogicalTime)
-			if err != nil {
-				return nil, err
-			}
-		} else if record.DevicePublication != nil {
-			var err error
-			application, err = application.reduceDevicePublication(*record.DevicePublication, record.Operation.Body, record.Candidate.Body.Payload.CommittedLogicalTime)
-			if err != nil {
-				return nil, err
-			}
-		} else if record.BootstrapAdvertisement != nil {
-			if application == nil {
-				return nil, errors.New("[bootstrap advertise] application 尚未激活")
-			}
-			preparedHead, err := runtime.bootstrapPreparedHeadBefore(i, application,
-				record.BootstrapAdvertisement.Payload)
-			if err != nil {
-				return nil, err
-			}
-			next, transitions, err := application.reduceBootstrapAdvertisement(
-				record.BootstrapAdvertisement.Payload, record.Operation.Body,
-				record.Candidate.Body.Payload.CommittedLogicalTime, preparedHead, record.Candidate.HeadHash)
-			if err != nil || !wire.EqualCanonical(transitions, record.BootstrapAdvertisement.Transitions) {
-				if err != nil {
-					return nil, err
-				}
-				return nil, errors.New("[bootstrap advertise] durable transition 与 evidence 派生结果不一致")
-			}
-			application = next
-		} else if record.Enrollment != nil {
-			var err error
-			application, err = application.reduceEnrollment(record.Enrollment.Mutation, controlEnrollmentCoordinate(record.Candidate), runtime.config.ControlSet)
-			if err != nil {
-				return nil, err
-			}
-		} else if application != nil && record.AdminRotation != nil {
-			var err error
-			application, err = application.reduceAdminRotation(record.AdminRotation.Payload)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if application != nil {
-			roots, err := application.roots()
-			if err != nil {
-				return nil, err
-			}
-			expected := record.Candidate.Body
-			controlApplyRoots(&expected, roots)
-			if !wire.EqualCanonical(expected, record.Candidate.Body) {
-				return nil, errors.New("[D104 daemon] application 重放与 Head 根不一致")
-			}
+		var err error
+		application, err = runtime.reduceApplicationRecord(i, application)
+		if err != nil {
+			return nil, err
 		}
 		if visit != nil {
 			if err := visit(i, application); err != nil {
 				return nil, err
 			}
+		}
+	}
+	return application, nil
+}
+
+func (runtime *controlRuntime) reduceApplicationRecord(index int,
+	application *controlApplicationV1) (*controlApplicationV1, error) {
+	record := &runtime.journal.Records[index]
+	if activation := record.Activation; activation != nil {
+		if application != nil {
+			return nil, errors.New("[D104 daemon] 重复 application 激活")
+		}
+		copy := controlClone(activation.Application)
+		application = &copy
+	} else if record.Invite != nil {
+		var err error
+		application, err = application.reduceInvite(*record.Invite, record.Operation.Body, record.Candidate.Body.Payload.CommittedLogicalTime)
+		if err != nil {
+			return nil, err
+		}
+	} else if record.DevicePublication != nil {
+		var err error
+		application, err = application.reduceDevicePublication(*record.DevicePublication, record.Operation.Body, record.Candidate.Body.Payload.CommittedLogicalTime)
+		if err != nil {
+			return nil, err
+		}
+	} else if record.BootstrapAdvertisement != nil {
+		if application == nil {
+			return nil, errors.New("[bootstrap advertise] application 尚未激活")
+		}
+		preparedHead, err := runtime.bootstrapPreparedHeadBefore(index, application,
+			record.BootstrapAdvertisement.Payload)
+		if err != nil {
+			return nil, err
+		}
+		next, transitions, err := application.reduceBootstrapAdvertisement(
+			record.BootstrapAdvertisement.Payload, record.Operation.Body,
+			record.Candidate.Body.Payload.CommittedLogicalTime, preparedHead, record.Candidate.HeadHash)
+		if err != nil || !wire.EqualCanonical(transitions, record.BootstrapAdvertisement.Transitions) {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errors.New("[bootstrap advertise] durable transition 与 evidence 派生结果不一致")
+		}
+		application = next
+	} else if record.Enrollment != nil {
+		var err error
+		application, err = application.reduceEnrollment(record.Enrollment.Mutation,
+			controlEnrollmentCoordinate(record.Candidate), runtime.config.ControlSet)
+		if err != nil {
+			return nil, err
+		}
+	} else if application != nil && record.AdminRotation != nil {
+		var err error
+		application, err = application.reduceAdminRotation(record.AdminRotation.Payload)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if application != nil {
+		roots, err := application.roots()
+		if err != nil {
+			return nil, err
+		}
+		expected := record.Candidate.Body
+		controlApplyRoots(&expected, roots)
+		if !wire.EqualCanonical(expected, record.Candidate.Body) {
+			return nil, errors.New("[D104 daemon] application 重放与 Head 根不一致")
 		}
 	}
 	return application, nil

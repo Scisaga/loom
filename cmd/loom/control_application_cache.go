@@ -10,8 +10,10 @@ import (
 // 只缓存已验证日志的内存投影；不写独立状态文件，也不缓存 sealed artifact。
 // key 包含完整日志与认证状态，同一 Head 下的 preimage 变化也必须重新验证。
 type controlApplicationCache struct {
-	key     string
-	history []*controlApplicationV1
+	key            string
+	controlSetHash string
+	recordKeys     []string
+	history        []*controlApplicationV1
 }
 
 // 调用方必须持有 runtime.mu，并将返回值视为只读。面向外部的 reader 另做深拷贝。
@@ -41,17 +43,9 @@ func (runtime *controlRuntime) certifiedApplicationsLocked() ([]*controlApplicat
 	if key == runtime.applicationCache.key {
 		return runtime.applicationCache.history, nil
 	}
-	history := make([]*controlApplicationV1, len(runtime.journal.Records))
-	_, err = runtime.walkApplications(len(history), func(i int, application *controlApplicationV1) error {
-		if application != nil {
-			copy := controlClone(*application)
-			history[i] = &copy
-		}
-		return nil
-	})
-	if err != nil {
+	if _, err := runtime.applicationBefore(len(runtime.journal.Records)); err != nil {
 		return nil, err
 	}
-	runtime.applicationCache = controlApplicationCache{key: key, history: history}
-	return history, nil
+	runtime.applicationCache.key = key
+	return runtime.applicationCache.history, nil
 }
