@@ -2,6 +2,7 @@ package render
 
 import (
 	"errors"
+	"sort"
 
 	"loom/internal/model"
 	"loom/internal/wire"
@@ -12,6 +13,29 @@ import (
 type clientAccessScope struct {
 	services map[string]bool
 	egress   map[string]bool
+}
+
+func (scope *clientAccessScope) serverCandidates(ssot *model.SSOT, node *model.Node, declaration *model.AccessDeclaration) []model.RouteCandidate {
+	byTag := map[string]model.RouteCandidate{}
+	candidates, _ := scope.candidates(ssot, node, declaration)
+	for _, candidate := range candidates {
+		byTag[candidate.Tag()] = candidate
+	}
+	for _, service := range ssot.Services {
+		if service.Declaration != declaration.ID {
+			continue
+		}
+		candidates, _ := scope.serviceCandidates(ssot, node, declaration, &service)
+		for _, candidate := range candidates {
+			byTag[candidate.Tag()] = candidate
+		}
+	}
+	result := make([]model.RouteCandidate, 0, len(byTag))
+	for _, candidate := range byTag {
+		result = append(result, candidate)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Tag() < result[j].Tag() })
+	return result
 }
 
 func newClientAccessScope(ssot *model.SSOT, grants *wire.EnrollmentDestinationGrantsV1) (*clientAccessScope, error) {

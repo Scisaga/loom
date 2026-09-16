@@ -53,11 +53,22 @@ DataIngressEndpoint 分开。每项绑定一条 intent 的 listener/dialer Devic
 `local_wireguard_key` 可引用节点原有的固定密钥位置：私钥在节点本地读取并核对认证公钥，
 不会回收至控制面或进入分发制品；sealed credential 不能覆盖这个引用。
 
+原网络内部 CA 认证的 HY2/Trojan 数据传输使用 `peer_transports`，每项与本机发起的
+LinkIntent 绑定对端 Device、实际拨号地址/端口、TLS server name、transport 和 generation。
+同一传输被多条业务路径复用时，runtime 可为其绑定多个不同 outbound tag，但每个 tag
+只能属于一个资源；reader 必须覆盖全部资源并验证实际 tuple、内部 CA 路径和 generation floor。
+这些资源不属于公开 EndpointSet，不提供 bootstrap 或 distribution 的 advertise 证据。
+
+`local_runtime` 明确认证本机访问模式、API/probe 等凭据引用和共享 HY2/Trojan listener。
+Linux 默认保留 mixed 模式，不因 `use_loom` 自动开启 TUN；共享 listener 只允许 `forward`。
+listener 使用固定的原节点 TLS 材料，业务出站绑定已认证 WireGuard 接口。服务端同时按所有
+当前 Device grants 生成入口用户及路由规则，已撤销权限不能从原 SSOT 声明恢复。
+
 Linux 的第二级 `linux-runtime-v1` config artifact 是服务端 renderer 对上述授权计划的确定性投影。
 它必须绑定 exact `linux-link-intents` content hash/generation，并逐项声明
 `link_id/link_generation/mode/transport/endpoint_id/listener_generation/config_path/runtime_tag`；客户端
 将其与已经落盘的 runtime plan 作集合级 exact 比较，不能靠数组顺序、相邻端口或本机角色补全。
-artifact 只能写固定的 sing-box/Agent/WireGuard v2 目标，内容仍保留 LinkIntent 授权的
+artifact 只能写固定的 sing-box/Agent/WireGuard v2 目标，内容仍保留 LinkIntent 或本机运行配置授权的
 `${secret:...}` 引用。Linux 在本机 hydrate 后检查 JSON/WireGuard hook、certified FQDN/port/TLS 与
 TUN/mixed 语义，再通过受 inventory CAS 保护的 staging/precheck/install/restart/verify/rollback
 事务启用。生成的 systemd unit 固定在客户端代码中，服务端 artifact 无权下发任意 ExecStart。

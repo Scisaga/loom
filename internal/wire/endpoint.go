@@ -39,6 +39,8 @@ type LinuxLinkIntentArtifactV1 struct {
 	LinkIntents        []LinkIntentV1             `json:"link_intents"`
 	WireGuardResources []LinuxWireGuardResourceV1 `json:"wireguard_resources,omitempty"`
 	LocalWireGuardKey  *LinuxLocalWireGuardKeyV1  `json:"local_wireguard_key,omitempty"`
+	LocalRuntime       *LinuxLocalRuntimeV1       `json:"local_runtime,omitempty"`
+	PeerTransports     []LinuxPeerTransportV1     `json:"peer_transports,omitempty"`
 }
 
 type LinkIntentDestinationV1 struct {
@@ -292,7 +294,10 @@ func ValidateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1) error 
 			return errors.New("[Linux runtime] LinkIntents 必须绑定 authority parent/本 Device 并按 link_id 严格排序")
 		}
 	}
-	return ValidateLinuxWireGuardResources(artifact)
+	if err := ValidateLinuxWireGuardResources(artifact); err != nil {
+		return err
+	}
+	return ValidateLinuxLocalRuntime(artifact)
 }
 
 func ValidateListenerGeneration(generation *ListenerGenerationV2, transport string) error {

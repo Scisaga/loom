@@ -109,6 +109,9 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 		return nil, err
 	}
 	for _, action := range plan.Actions {
+		if peer := action.PeerTransport; peer != nil && peer.ListenerGeneration > minimums[peer.ResourceID] {
+			minimums[peer.ResourceID] = peer.ListenerGeneration
+		}
 		if peer := action.WireGuardPeer; peer != nil && peer.ListenerGeneration > minimums[peer.ResourceID] {
 			minimums[peer.ResourceID] = peer.ListenerGeneration
 		}

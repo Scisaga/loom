@@ -19,6 +19,7 @@ type LinuxLinkDialCandidateV1 struct {
 	ListenerGeneration int64  `json:"listener_generation"`
 	DialTargetFQDN     string `json:"dial_target_fqdn"`
 	PeerAddress        string `json:"peer_address,omitempty"`
+	TLSServerName      string `json:"tls_server_name,omitempty"`
 	PublicPort         int64  `json:"public_port"`
 	PublishedState     string `json:"published_state"`
 }
@@ -36,6 +37,7 @@ type LinuxLinkRuntimeActionV1 struct {
 	ResolveAtFinalEgress bool                           `json:"resolve_at_final_egress"`
 	DialCandidates       []LinuxLinkDialCandidateV1     `json:"dial_candidates"`
 	WireGuardPeer        *wire.LinuxWireGuardResourceV1 `json:"wireguard_peer,omitempty"`
+	PeerTransport        *wire.LinuxPeerTransportV1     `json:"peer_transport,omitempty"`
 }
 
 type LinuxLinkRuntimePlanV1 struct {
@@ -52,6 +54,7 @@ type LinuxLinkRuntimePlanV1 struct {
 	ControlMemberID     string                         `json:"control_member_id,omitempty"`
 	Actions             []LinuxLinkRuntimeActionV1     `json:"actions"`
 	LocalWireGuardKey   *wire.LinuxLocalWireGuardKeyV1 `json:"local_wireguard_key,omitempty"`
+	LocalRuntime        *wire.LinuxLocalRuntimeV1      `json:"local_runtime,omitempty"`
 }
 
 // BuildLinuxLinkRuntimePlan 只把 current Device view 承诺的 exact artifact
@@ -96,6 +99,15 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		ServeInternetEgress: containsString(responsibilities, "internet_egress"),
 		Actions:             []LinuxLinkRuntimeActionV1{},
 		LocalWireGuardKey:   artifact.LocalWireGuardKey,
+		LocalRuntime:        artifact.LocalRuntime,
+	}
+	if local := plan.LocalRuntime; local != nil {
+		if !containsString(responsibilities, "use_loom") && local.AccessMode != "none" ||
+			!plan.ServeForward && len(local.Listeners) > 0 {
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 本机运行功能超出认证职责")
+		}
+		plan.EnableTUN = local.AccessMode == "tun" || local.AccessMode == "mixed_tun"
+		plan.EnableMixed = local.AccessMode == "mixed" || local.AccessMode == "mixed_tun"
 	}
 	memberIDs, err := linuxCertifiedControlMembers(set, peerDirectory,
 		envelope.SignedCurrent.Head.Body.Payload.ControlPeerDirectoryHash)
@@ -118,6 +130,13 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		}
 		credentialIDs[credential.SecretID] = struct{}{}
 	}
+	if plan.LocalRuntime != nil {
+		for _, ref := range plan.LocalRuntime.CredentialRefs {
+			if _, found := credentialIDs[ref]; !found {
+				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 本机运行功能引用未安装 credential")
+			}
+		}
+	}
 	endpoints, err := linuxAuthorizedDataEndpoints(&envelope.Payload.Active.EndpointBundle)
 	if err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
@@ -128,6 +147,13 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] private peer 资源与公开 endpoint ID 冲突")
 		}
 		wireguard[resource.ResourceID] = resource
+	}
+	transports := map[string]wire.LinuxPeerTransportV1{}
+	for _, resource := range artifact.PeerTransports {
+		if _, collision := endpoints[resource.ResourceID]; collision {
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] private transport 与公开 endpoint ID 冲突")
+		}
+		transports[resource.ResourceID] = resource
 	}
 	for _, intent := range artifact.LinkIntents {
 		for _, credentialRef := range intent.CredentialRefs {
@@ -156,6 +182,16 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 			DialCandidates: []LinuxLinkDialCandidateV1{},
 		}
 		if len(intent.ListenerResourceRefs) == 1 {
+			if resource, found := transports[intent.ListenerResourceRefs[0]]; found {
+				if resource.ListenerGeneration < minimumGenerations[resource.ResourceID] {
+					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 私有传输低于已见 generation")
+				}
+				action.PeerTransport = &resource
+				action.DialCandidates = append(action.DialCandidates, LinuxLinkDialCandidateV1{
+					EndpointID: resource.ResourceID, LogicalServerID: resource.ListenerDeviceID, Transport: resource.Transport,
+					ListenerGeneration: resource.ListenerGeneration, PeerAddress: resource.Address,
+					PublicPort: resource.Port, TLSServerName: resource.TLSServerName, PublishedState: "preferred"})
+			}
 			if resource, found := wireguard[intent.ListenerResourceRefs[0]]; found {
 				if resource.ListenerGeneration < minimumGenerations[resource.ResourceID] {
 					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] peer WireGuard listener 低于已见 generation")
@@ -186,12 +222,12 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 未授权 forward 的 Device 不得监听 data edge")
 			}
 			if touchesFrom && !plan.ServeForward {
-				if !plan.EnableTUN || !linuxDestinationGranted(envelope.Payload.Active.Grants, intent.To) {
+				if !(plan.EnableTUN || plan.EnableMixed) || !linuxDestinationGranted(envelope.Payload.Active.Grants, intent.To) {
 					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] use_loom data edge 缺 exact destination grant")
 				}
 			}
 			action.ResolveAtFinalEgress = touchesFrom && linuxEgressGranted(envelope.Payload.Active.Grants, intent.To)
-			if action.WireGuardPeer != nil {
+			if action.WireGuardPeer != nil || action.PeerTransport != nil {
 				break
 			}
 			for _, endpointID := range intent.ListenerResourceRefs {

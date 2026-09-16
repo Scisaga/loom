@@ -87,13 +87,15 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 			device = &application.Devices[i]
 		}
 	}
-	if device == nil || device.View.Active == nil || device.View.State != "active" || device.View.DeviceGeneration == math.MaxInt64 ||
-		!wire.EqualCanonical(device.View.Active.Responsibilities.Values, []string{"use_loom"}) {
+	if device == nil || device.View.Active == nil || device.View.State != "active" || device.View.DeviceGeneration == math.MaxInt64 {
 		return empty, errors.New("[配置生成] 设备未激活、已撤销或配置代耗尽")
 	}
 	platform, err := application.devicePlatform(request.Input.DeviceID)
-	if err != nil || platform != "android" && platform != "windows-desktop" {
-		return empty, errors.New("[配置生成] 本入口要求已认证的 Android/Windows 客户端")
+	if err != nil || platform != "android" && platform != "windows-desktop" && platform != "linux-server" {
+		return empty, errors.New("[配置生成] 本入口要求已认证的 Linux/Android/Windows 设备")
+	}
+	if platform != "linux-server" && !wire.EqualCanonical(device.View.Active.Responsibilities.Values, []string{"use_loom"}) {
+		return empty, errors.New("[配置生成] Android/Windows 职责必须为 use_loom")
 	}
 	sealing, err := clientConfigSealingPolicy(application, *device, request.Input.Recipient, platform)
 	if err != nil {
@@ -115,36 +117,61 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 			artifactGeneration = ref.Generation + 1
 		}
 	}
-	tunnel := controlClone(request.Input.ControlTunnel)
-	// 客户端控制路由由认证目录限定，不接受管理员输入扩大到任意私网。
-	allowed := map[string]bool{}
-	for _, service := range application.Services {
-		if service.Role != "device_config" && service.Role != "device_report" {
-			continue
+	var rendered render.ClientRuntimeV2
+	configs := []controlPublishedConfigV1{}
+	if platform == "linux-server" {
+		if !wire.EqualCanonical(request.Input.ControlTunnel, render.ClientControlTunnelV2{}) {
+			return empty, errors.New("[配置生成] Linux 从认证网络生成逐边隧道，不接收移动端隧道输入")
 		}
-		address, err := netip.ParseAddr(service.OverlayIP)
-		if err != nil || !address.IsPrivate() {
-			return empty, errors.New("[配置生成] 设备控制服务必须使用认证私网地址")
+		views := map[string]wire.DeviceViewPayloadV2{}
+		for _, current := range application.Devices {
+			views[current.View.DeviceID] = current.View
 		}
-		allowed[netip.PrefixFrom(address, address.BitLen()).String()] = true
+		qc, err := wire.MarshalCanonical(state.CertifiedQC)
+		if err != nil {
+			return empty, err
+		}
+		linux, err := render.RenderLinuxRuntimeV2(render.LinuxRuntimeV2Input{SSOT: ssot, Views: views,
+			Authority: wire.CertifiedHeadV1{Head: *state.CertifiedHead, QC: qc}, DeviceID: device.View.DeviceID,
+			DeviceGeneration: device.View.DeviceGeneration + 1, ArtifactGeneration: artifactGeneration})
+		if err != nil {
+			return empty, err
+		}
+		rendered = linux.Runtime
+		configs = append(configs, controlPublishedConfigV1{Ref: linux.Links.Ref, Content: linux.Links.Content})
+	} else {
+		tunnel := controlClone(request.Input.ControlTunnel)
+		// 客户端控制路由由认证目录限定，不接受管理员输入扩大到任意私网。
+		allowed := map[string]bool{}
+		for _, service := range application.Services {
+			if service.Role != "device_config" && service.Role != "device_report" {
+				continue
+			}
+			address, err := netip.ParseAddr(service.OverlayIP)
+			if err != nil || !address.IsPrivate() {
+				return empty, errors.New("[配置生成] 设备控制服务必须使用认证私网地址")
+			}
+			allowed[netip.PrefixFrom(address, address.BitLen()).String()] = true
+		}
+		tunnel.AllowedIPs = make([]string, 0, len(allowed))
+		for prefix := range allowed {
+			tunnel.AllowedIPs = append(tunnel.AllowedIPs, prefix)
+		}
+		sort.Strings(tunnel.AllowedIPs)
+		if len(tunnel.AllowedIPs) == 0 {
+			return empty, errors.New("[配置生成] 缺设备控制服务")
+		}
+		if len(request.Input.ControlTunnel.AllowedIPs) != 0 && !wire.EqualCanonical(request.Input.ControlTunnel.AllowedIPs, tunnel.AllowedIPs) {
+			return empty, errors.New("[配置生成] 指定控制路由与认证服务目录不同")
+		}
+		rendered, err = render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, Grants: &device.View.Active.Grants, ClusterID: application.ClusterID,
+			DeviceID: device.View.DeviceID, DeviceGeneration: device.View.DeviceGeneration + 1, ArtifactGeneration: artifactGeneration,
+			SingBoxVersion: request.Input.SingBoxVersion, ObservationCA: request.Input.ObservationCA, ControlTunnel: tunnel})
+		if err != nil {
+			return empty, err
+		}
 	}
-	tunnel.AllowedIPs = make([]string, 0, len(allowed))
-	for prefix := range allowed {
-		tunnel.AllowedIPs = append(tunnel.AllowedIPs, prefix)
-	}
-	sort.Strings(tunnel.AllowedIPs)
-	if len(tunnel.AllowedIPs) == 0 {
-		return empty, errors.New("[配置生成] 缺设备控制服务")
-	}
-	if len(request.Input.ControlTunnel.AllowedIPs) != 0 && !wire.EqualCanonical(request.Input.ControlTunnel.AllowedIPs, tunnel.AllowedIPs) {
-		return empty, errors.New("[配置生成] 指定控制路由与认证服务目录不同")
-	}
-	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, Grants: &device.View.Active.Grants, ClusterID: application.ClusterID,
-		DeviceID: device.View.DeviceID, DeviceGeneration: device.View.DeviceGeneration + 1, ArtifactGeneration: artifactGeneration,
-		SingBoxVersion: request.Input.SingBoxVersion, ObservationCA: request.Input.ObservationCA, ControlTunnel: tunnel})
-	if err != nil {
-		return empty, err
-	}
+	configs = append(configs, controlPublishedConfigV1{Ref: rendered.Ref, Content: rendered.Content})
 	if len(rendered.Skipped) != 0 {
 		return empty, errors.New("[配置生成] 运行配置包含未实现的渲染项")
 	}
@@ -189,7 +216,7 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 		return empty, err
 	}
 	payload := controlPublishDevicePayloadV1{Schema: 1, Publication: controlDevicePublicationV1{Schema: 1,
-		DeviceID: device.View.DeviceID, PreviousViewHash: previous, Configs: []controlPublishedConfigV1{{Ref: rendered.Ref, Content: rendered.Content}},
+		DeviceID: device.View.DeviceID, PreviousViewHash: previous, Configs: configs,
 		Secrets: []enrollmentv2.SealedMaterialEvidenceV1{}}, Envelopes: []wire.SealedSecretEnvelopeV1{}}
 	// Secret root 先按用途枚举排序：device_credential 在 data_plane_credential
 	// 前；每个用途内按 ID 排序。renderer 已返回排序后的数据面 ref。

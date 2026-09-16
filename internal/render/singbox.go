@@ -601,6 +601,10 @@ func findAddress(s *model.SSOT, c *model.RouteCandidate) *model.ServiceAddress {
 //
 // 服务器做准入校验,不做选路:白名单之外一律阻断。
 func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
+	serverIntoScoped(cfg, s, sv, nil)
+}
+
+func serverIntoScoped(cfg *sbConfig, s *model.SSOT, sv *model.Node, scopes map[string]*clientAccessScope) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
 
@@ -637,6 +641,13 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 			continue
 		}
 		cands, _ := s.EnumerateCandidates(owner, d)
+		if scopes != nil {
+			scope, found := scopes[owner.ID]
+			if !found {
+				continue
+			}
+			cands = scope.serverCandidates(s, owner, d)
+		}
 
 		r := rule{user: c.ID, nextHops: map[string]string{}, nextHopDomains: map[string]string{}}
 		domains := map[string]bool{}
@@ -848,6 +859,10 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 }
 
 func renderSingBoxScoped(s *model.SSOT, n *model.Node, scope *clientAccessScope) (File, []Skip, error) {
+	return renderSingBoxWithScopes(s, n, scope, nil)
+}
+
+func renderSingBoxWithScopes(s *model.SSOT, n *model.Node, scope *clientAccessScope, serverScopes map[string]*clientAccessScope) (File, []Skip, error) {
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip
 
@@ -912,7 +927,7 @@ func renderSingBoxScoped(s *model.SSOT, n *model.Node, scope *clientAccessScope)
 		}
 	}
 	if n.IsServer() && n.Server.InboundPort > 0 {
-		serverInto(cfg, s, n)
+		serverIntoScoped(cfg, s, n, serverScopes)
 	}
 	linkMetricInto(cfg, s, n)
 

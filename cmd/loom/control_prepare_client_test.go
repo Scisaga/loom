@@ -81,6 +81,29 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 		application.Devices[0].View.Active.Responsibilities, application.Devices[0].View.Active.Grants = roles, grants
 		application.Devices[0].View.Active.ResponsibilitiesHash, _ = wire.HashObject("loom-enrollment-responsibilities-v1", roles)
 		application.Devices[0].View.Active.GrantsHash, _ = wire.HashObject("loom-enrollment-destination-grants-v1", grants)
+		if platform == model.LinuxServer {
+			for _, node := range effective.Nodes {
+				if node.Server == nil {
+					continue
+				}
+				state := controlClone(application.Devices[0])
+				state.View.DeviceID = node.ID
+				state.View.Active.IdentitySPKIHash = wire.HashRaw("demo-server-identity", []byte(node.ID))
+				state.View.Active.EndpointBundle.DeviceID = node.ID
+				state.View.Active.EndpointBundleHash, _ = wire.DeviceEndpointBundleHash(&state.View.Active.EndpointBundle)
+				_, roles, grants, err := migrationDeviceAuthorization(effective, &node)
+				if err != nil {
+					t.Fatal(err)
+				}
+				state.View.Active.Responsibilities, state.View.Active.Grants = roles, grants
+				state.View.Active.ResponsibilitiesHash, _ = wire.HashObject("loom-enrollment-responsibilities-v1", roles)
+				state.View.Active.GrantsHash, _ = wire.HashObject("loom-enrollment-destination-grants-v1", grants)
+				application.Devices = append(application.Devices, state)
+			}
+			sort.Slice(application.Devices, func(i, j int) bool {
+				return application.Devices[i].View.DeviceID < application.Devices[j].View.DeviceID
+			})
+		}
 	})
 	key, err := enrollmentv2.MaterialAuthorityKey(wrapping.Public())
 	if err != nil {
@@ -103,6 +126,24 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 	}
 	tunnel := input.ControlTunnel
 	tunnel.AllowedIPs = []string{"10.250.0.1/32"}
+	if platform == model.LinuxServer {
+		input.ControlTunnel = render.ClientControlTunnelV2{}
+		views := map[string]wire.DeviceViewPayloadV2{}
+		for _, device := range application.Devices {
+			views[device.View.DeviceID] = device.View
+		}
+		state := runtime.store.Snapshot()
+		qc, _ := wire.MarshalCanonical(state.CertifiedQC)
+		rendered, err := render.RenderLinuxRuntimeV2(render.LinuxRuntimeV2Input{SSOT: ssot, Views: views,
+			Authority: wire.CertifiedHeadV1{Head: *state.CertifiedHead, QC: qc}, DeviceID: input.DeviceID, DeviceGeneration: 2, ArtifactGeneration: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ref := range rendered.Runtime.CredentialRefs {
+			input.Credentials[ref] = "demo-sealed-client-credential"
+		}
+		return runtime, admin, migration, input, wrapping
+	}
 	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, Grants: &application.Devices[0].View.Active.Grants, ClusterID: application.ClusterID,
 		DeviceID: input.DeviceID, DeviceGeneration: 2, ArtifactGeneration: 1, SingBoxVersion: input.SingBoxVersion,
 		ObservationCA: input.ObservationCA, ControlTunnel: tunnel})
@@ -117,7 +158,7 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 }
 
 func TestControlClientConfigRendersSealsPublishesAndReplays(t *testing.T) {
-	for _, platform := range []model.Platform{model.Android, model.WindowsDesktop} {
+	for _, platform := range []model.Platform{model.Android, model.WindowsDesktop, model.LinuxServer} {
 		t.Run(string(platform), func(t *testing.T) {
 			runtime, admin, migration, input, wrapping := controlRenderedClientFixture(t, platform)
 			endpoint, client, _ := progressTestServer(t, runtime, admin)
@@ -161,6 +202,29 @@ func TestControlClientConfigRendersSealsPublishesAndReplays(t *testing.T) {
 				if err != nil || json.Unmarshal(prepared, &runtime) != nil || loomcore.ValidateAndroidV2RuntimeHost([]byte(runtime.Config)) != nil {
 					t.Fatal("Android 无法消费正常发布的配置", err)
 				}
+			} else if platform == model.LinuxServer {
+				if len(payload.Publication.Configs) != 2 {
+					t.Fatal("Linux 发布必须同时交付 LinkIntent 与 runtime")
+				}
+				var links wire.LinuxLinkIntentArtifactV1
+				var artifact wire.LinuxRuntimeArtifactV1
+				if _, err := wire.DecodeStrict(payload.Publication.Configs[0].Content, 4<<20, &links); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := wire.DecodeStrict(payload.Publication.Configs[1].Content, 4<<20, &artifact); err != nil {
+					t.Fatal(err)
+				}
+				if err := wire.ValidateLinuxRuntimeRedaction(&artifact, &links); err != nil {
+					t.Fatal(err)
+				}
+				if links.LocalRuntime.AccessMode != "mixed" {
+					t.Fatal("Linux 默认代理模式改变")
+				}
+				for _, file := range artifact.Files {
+					if _, missing := secret.Hydrate(file.Content, values); len(missing) != 0 {
+						t.Fatal("Linux 缺原 key 解封的凭据", missing)
+					}
+				}
 			} else {
 				var artifact wire.WindowsRuntimeArtifactV1
 				if _, err := wire.DecodeStrict(payload.Publication.Configs[0].Content, 4<<20, &artifact); err != nil {
@@ -200,7 +264,8 @@ func TestControlClientConfigRendersSealsPublishesAndReplays(t *testing.T) {
 			}
 			authority, err := reopened.readDeviceIdentityLocked(migration.DeviceCertificateHash)
 			if err != nil || authority.Record.IdentitySPKIHash != migration.IdentitySPKIHash || authority.CurrentDeviceView.Payload.DeviceGeneration != 2 ||
-				len(authority.DeviceSecretEnvelopes) != len(payload.Envelopes) || len(authority.DeviceConfigUpdates) != 2 {
+				len(authority.DeviceSecretEnvelopes) != len(payload.Envelopes) || len(authority.DeviceConfigUpdates) != 2 ||
+				len(authority.CurrentDeviceView.Payload.Active.ConfigArtifactRefs) != len(payload.Publication.Configs) {
 				t.Fatal("真实身份读取链缺生成后的配置与材料", err)
 			}
 			repeated, err = prepareControlClientConfig(context.Background(), endpoint, client, prepare)

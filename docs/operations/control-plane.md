@@ -234,7 +234,7 @@ loom control export-migration \
 生成的 `device.loom-migration` 由客户端正常文件导入入口消费。它绑定原平台、身份、
 wrapping key、旧 signed current 与实际 v2 Head；不能用新邀请替代迁移，也不能清除本机身份重试。
 
-已迁入认证状态的 Android/Windows 设备可使用 `control publish-client-config`，从当前认证网络
+已迁入认证状态的 Linux/Android/Windows 设备可使用 `control publish-client-config`，从当前认证网络
 生成运行配置、封装原 wrapping key 对应的凭据，并提交管理员签名操作：
 
 ```bash
@@ -248,6 +248,12 @@ loom control publish-client-config \
 WireGuard 分配、固定 sing-box 版本、服务器观测 CA 和 exact 数据面凭据；它不接受另一份网络
 或权限清单。控制目的路由从认证服务目录推导。生成所用的本机 artifact reporter 必须已经获得
 当前 authority 授权。原始凭据不写入请求日志，响应丢失时复用输出目录和相同输入。
+
+Linux 的 `control_tunnel` 留为零值；服务器从认证网络和全部当前 Device 权限生成
+`linux-link-intents`、`linux-runtime` 两份配套制品，包括原 WireGuard、sing-box 与 Agent。
+节点原 WireGuard 私钥留在固定本机路径，只在安装时核对公钥并填入；不能把它放入输入凭据。
+Linux Agent 制品不再引用旧 report HTTP 地址。常驻配置同步、报告和观测消费须由 v2 宿主接线；
+本命令的成功回执只证明认证发布，不证明节点已安装或常驻服务已接管。
 
 已有生成器材料也可使用 `control publish-device-config`。`<publication-file>` 保存规范配置、
 密文与真实证据；`<proposal-id>` 必须与生成材料时的 ID 相同：

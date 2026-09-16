@@ -106,6 +106,11 @@ func ValidateLinuxRuntimeRedaction(runtime *LinuxRuntimeArtifactV1,
 		return err
 	}
 	allowed := make(map[string]bool)
+	if links.LocalRuntime != nil {
+		for _, ref := range links.LocalRuntime.CredentialRefs {
+			allowed[ref] = true
+		}
+	}
 	for _, intent := range links.LinkIntents {
 		for _, ref := range intent.CredentialRefs {
 			allowed[ref] = true

@@ -281,7 +281,7 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 			return errors.New("[Linux runtime] runtime artifact 未覆盖每条 accepted action")
 		}
 		if action.Mode == "dial" {
-			if len(bindings) != len(action.DialCandidates) {
+			if action.PeerTransport == nil && len(bindings) != len(action.DialCandidates) {
 				return errors.New("[Linux runtime] dial bindings 未 exact 覆盖 generation candidates")
 			}
 			candidates := make(map[string]bool, len(action.DialCandidates))
@@ -289,16 +289,20 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 				candidates[linuxRuntimeEndpointKey(candidate.EndpointID, candidate.Transport,
 					candidate.ListenerGeneration)] = true
 			}
+			covered := make(map[string]bool, len(candidates))
 			for _, binding := range bindings {
 				if binding.LinkGeneration != action.Generation || binding.Mode != action.Mode ||
 					!candidates[linuxRuntimeEndpointKey(binding.EndpointID, binding.Transport,
 						binding.ListenerGeneration)] {
 					return errors.New("[Linux runtime] dial binding endpoint/generation 分叉")
 				}
-				delete(candidates, linuxRuntimeEndpointKey(binding.EndpointID, binding.Transport,
-					binding.ListenerGeneration))
+				key := linuxRuntimeEndpointKey(binding.EndpointID, binding.Transport, binding.ListenerGeneration)
+				if covered[key] && action.PeerTransport == nil {
+					return errors.New("[Linux runtime] dial binding 重复")
+				}
+				covered[key] = true
 			}
-			if len(candidates) != 0 {
+			if len(covered) != len(candidates) {
 				return errors.New("[Linux runtime] dial bindings 遗漏 generation candidate")
 			}
 		} else {
@@ -341,7 +345,7 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 		}
 	}
 	for path := range files {
-		if path == "agent/v2/config.json" || usedPaths[path] {
+		if path == "agent/v2/config.json" || usedPaths[path] || path == "sing-box/v2/config.json" && plan.LocalRuntime != nil {
 			continue
 		}
 		return errors.New("[Linux runtime] runtime artifact 含未绑定 config file")
@@ -370,6 +374,11 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 	credentials []InstalledSecretV1,
 ) (map[string]string, error) {
 	required := make(map[string]bool)
+	if plan.LocalRuntime != nil {
+		for _, ref := range plan.LocalRuntime.CredentialRefs {
+			required[ref] = true
+		}
+	}
 	for _, action := range plan.Actions {
 		for _, ref := range action.CredentialRefs {
 			required[ref] = true
@@ -450,13 +459,18 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 }
 
 type linuxRuntimeSingBoxEntry struct {
-	Type       string `json:"type"`
-	Tag        string `json:"tag"`
-	Server     string `json:"server,omitempty"`
-	ServerPort int64  `json:"server_port,omitempty"`
-	TLS        *struct {
-		Enabled    bool   `json:"enabled"`
-		ServerName string `json:"server_name,omitempty"`
+	Type          string `json:"type"`
+	Tag           string `json:"tag"`
+	Server        string `json:"server,omitempty"`
+	ServerPort    int64  `json:"server_port,omitempty"`
+	Listen        string `json:"listen,omitempty"`
+	ListenPort    int64  `json:"listen_port,omitempty"`
+	BindInterface string `json:"bind_interface,omitempty"`
+	TLS           *struct {
+		Enabled         bool   `json:"enabled"`
+		ServerName      string `json:"server_name,omitempty"`
+		CertificatePath string `json:"certificate_path,omitempty"`
+		KeyPath         string `json:"key_path,omitempty"`
 	} `json:"tls,omitempty"`
 }
 
@@ -515,10 +529,20 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 		}
 		if binding.Mode == "dial" {
 			candidate, found := linuxRuntimeCandidate(plan, binding)
-			if !found || entry.Server != candidate.DialTargetFQDN || entry.ServerPort != candidate.PublicPort ||
-				entry.TLS == nil || !entry.TLS.Enabled || entry.TLS.ServerName != candidate.DialTargetFQDN {
+			address, name := candidate.DialTargetFQDN, candidate.DialTargetFQDN
+			if candidate.PeerAddress != "" {
+				address, name = candidate.PeerAddress, candidate.TLSServerName
+			}
+			if !found || entry.Server != address || entry.ServerPort != candidate.PublicPort ||
+				entry.TLS == nil || !entry.TLS.Enabled || entry.TLS.ServerName != name ||
+				candidate.PeerAddress != "" && entry.TLS.CertificatePath != "/etc/loom/tls/ca.crt" {
 				return errors.New("[Linux runtime] sing-box outbound 未绑定 certified FQDN/port/TLS generation")
 			}
+		}
+	}
+	if local := plan.LocalRuntime; local != nil {
+		if err := validateLinuxLocalRuntimeConfig(plan, artifact, files, inbounds, outbounds); err != nil {
+			return err
 		}
 	}
 	if plan.EnableTUN && !inboundTypes["tun"] {
@@ -531,6 +555,45 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 		config, err := agent.Load([]byte(body))
 		if err != nil || config.Node != plan.DeviceID {
 			return errors.New("[Linux runtime] Linux Agent config 未绑定本 Device")
+		}
+		if plan.LocalRuntime != nil && (len(config.Peers) != 0 || config.SelfReport != "" || config.PeerPeriod != "") {
+			return errors.New("[Linux runtime] v2 Agent 禁止读取旧 report HTTP 路径")
+		}
+	}
+	return nil
+}
+
+func validateLinuxLocalRuntimeConfig(plan *LinuxLinkRuntimePlanV1, artifact *wire.LinuxRuntimeArtifactV1, files map[string]string,
+	inbounds, outbounds map[string]linuxRuntimeSingBoxEntry) error {
+	listeners := map[string]bool{}
+	for _, listener := range plan.LocalRuntime.Listeners {
+		entry, found := inbounds[listener.Tag]
+		if !found || entry.Type != strings.TrimSuffix(listener.Transport, "_tls") || entry.Listen != listener.Address ||
+			entry.ListenPort != listener.Port || entry.TLS == nil || !entry.TLS.Enabled ||
+			entry.TLS.CertificatePath != "/etc/loom/tls/node.crt" || entry.TLS.KeyPath != "/etc/loom/tls/node.key" {
+			return errors.New("[Linux runtime] 本机共享 listener 未绑定认证 tuple 与原节点 TLS 材料")
+		}
+		listeners[listener.Tag] = true
+	}
+	for _, entry := range inbounds {
+		if (entry.Type == "hysteria2" || entry.Type == "trojan") && !listeners[entry.Tag] || entry.Type == "tun" && !plan.EnableTUN {
+			return errors.New("[Linux runtime] 存在未授权的数据 listener 或 TUN")
+		}
+	}
+	bound := map[string]bool{}
+	for _, binding := range artifact.Bindings {
+		if binding.Mode == "dial" {
+			bound[binding.RuntimeTag] = true
+		}
+	}
+	for _, entry := range outbounds {
+		if (entry.Type == "hysteria2" || entry.Type == "trojan") && !bound[entry.Tag] || entry.Tag == "egress" && !plan.ServeInternetEgress {
+			return errors.New("[Linux runtime] 存在未绑定的数据出站或未授权出口")
+		}
+		if entry.BindInterface != "" {
+			if _, found := files["wireguard/"+entry.BindInterface+".conf"]; !found {
+				return errors.New("[Linux runtime] 数据出站引用未认证 WireGuard 接口")
+			}
 		}
 	}
 	return nil
