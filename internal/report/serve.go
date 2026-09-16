@@ -163,9 +163,6 @@ func ServeWithLocalObservation(ctx context.Context, cfg *Config, now func() time
 	if trafficStore != nil {
 		defer trafficStore.Close()
 	}
-	if ctl != nil && cfg.RuntimeProfile != "private-v2" {
-		mux.Handle("/api/client/report", newClientReportReceiver(tbl, ctl, now, maxAge, logw))
-	}
 	mux.Handle("/presence", newServerPresenceReceiver(tbl, cfg, now))
 	// 61802 只保留节点机器接口。浏览器 UI 只有 private HTTPS
 	// control listener 一个入口，避免同一套页面同时暴露为明文和 mTLS 两种边界。
@@ -199,7 +196,7 @@ func ServeWithLocalObservation(ctx context.Context, cfg *Config, now func() time
 			path    string
 			handler http.Handler
 		}{
-			{webui.ReadOnlySocketPath, deviceObservationSocketHandler(webui.Handler(deps), tbl, now, maxAge)},
+			{webui.ReadOnlySocketPath, webui.Handler(deps)},
 			{webui.AdminSocketPath, webui.Handler(adminDeps)},
 		} {
 			listener, err := listenControlUISocket(candidate.path)

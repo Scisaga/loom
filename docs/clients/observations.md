@@ -1,15 +1,13 @@
 # 客户端复用现有签名 Observation
 
 > **类型与归属：** 本文是 Windows / Android 入口探测预算、签名观测消费、分段选路与展示的规范正文，
-> 同时定义现有 v1 Observation 读取适配；平台手册只补宿主接线。Linux Agent 的总体模型见
+> 同时定义现有服务器 Observation 的私有报告读取契约；平台手册只补宿主接线。Linux Agent 的总体模型见
 > [架构总览](../architecture/README.md)，本任务不增加 SSOT 字段、服务器测量协议或推荐路径表。
 
-> **协议代次：** v1 兼容契约使用同源 report POST、内存 gossip table 和
-> `200/204` 响应。目标 v2 保持 Observation 的生产者签名与原时间不变，但通过 certified
+> **协议代次：** 服务器 Observation 保持原生产者签名与测量时间。客户端通过 certified
 > private `ControlServiceDirectoryV1` 取得 overlay-only `device_report` 服务，以 Device mTLS
-> 认证，并将不可变报告按
-> `(device_id, observed_at, attestation_hash)` 在 control
-> 副本间 CRDT 去重；ControlSet QC 决定授权范围，CRDT 到达本身不能改变期望态。
+> 与带持久序号的签名报告认证，回读 exact 绑定回执中的观测。副本间 CRDT 去重不改变授权；
+> ControlSet QC 决定当前期望态和可读范围。
 > 服务发现、认证和持久信任状态由[分布式控制平面规范](../protocols/control-plane/README.md)定义。
 > 源码入口见[实现对照](../development/implementation.md)；生产与真机结论按[部署和证据规程](../operations/local-deployment.md)核对。
 >
@@ -22,43 +20,33 @@
 | 消费者 | 契约边界 |
 |---|---|
 | Linux Agent | `internal/agent/observed.go` 的 `pollPeers` 通过 `report.FetchContext` 读取本机及 WG 邻居 `/status` 中的 `observation` 和 `learned`；`ingestObservation` 校验签名绑定、新鲜度及 measurements 后进入现有按来源去重的观测缓存 |
-| Windows | 在原有 NAT 签名上报周期内请求观测，经跨平台校验器验证后接入入口与服务器分段选路；继续拒绝 Linux 专用 `peers/self_report` 配置 |
-| Android | `mobile/loomcore` 拒绝 Linux peer/report 配置并复用同一验签/决策包；宿主在原健康周期兼容 204 或读取 200 观测，按实际 selector 读回重算，不另起探测周期 |
+| Windows | 在私有 v2 健康上报周期内读取观测，经跨平台校验器验证后接入入口与服务器分段选路；继续拒绝 Linux 专用 `peers/self_report` 配置 |
+| Android | `mobile/loomcore` 拒绝 Linux peer/report 配置并复用同一验签/决策包；宿主在原健康周期读取 200 回执中的观测，按实际 selector 读回重算，不另起探测周期 |
 
-Linux 的 canonical v5 闸门覆盖测量；旧兼容阶段的本机例外不能用于客户端读取。
-v1 公网报告入口将客户端报告写入与 WG gossip、`/status`、控制面展示相同的
-内存表。读取适配只从该表取快照，不重新采集、刷新原始时间或调用探测器。
+Linux 的 canonical v5 闸门覆盖测量；本机采集例外不能用于客户端读取。
+服务器在原周期采集后，将原签名 Observation 随私有 `node-health` 报告提交。
+回执 reader 只读已接受的持久报告，不重新采集、刷新原始时间或调用探测器。
 
-## v1 兼容契约：报告 POST 的可选响应
+## 私有 v2 报告与观测回执
 
-沿用已验证加入入口的同源报告地址，保持原报告 JSON 和签名不变：
+报告地址由已认证的 private service directory 指定，不从 distribution URL 推导。
+客户端通过已授权隧道访问私有 `device_report`，验证内部 CA、服务角色和 SPKI，
+服务端同时验证 Device mTLS、当前认证身份与 Device view、持久 floor、报告签名及序号。
+旧公开报告 handler、同源 URL 推导和本机观测桥接入口已删除。
 
-```http
-POST /loom-client/report?observations=1
-Content-Type: application/json
+- 报告必须为严格 canonical JSON，绑定当前 Device 身份、配置 floor 与 payload 摘要。
+  持久 store 原子保存后才返回 `200`；同序号仅允许同一报告重试，冲突或过期权限被拒绝。
+- 回执绑定原报告 hash、序号和当前授权，客户端验证后才提交报告队列并消费观测；
+  `200` 证明报告接受，不代表客户端或返回服务器健康。
+- 只返回该客户端**当前认证运行配置候选链中的在役服务器**观测；
+  `committed_not_certified` 不能扩张读取集。来源必须仍拥有当前职责与原观测身份，
+  排除客户端自己、其他客户端、已移除及范围外来源、过期或验签失败的整份观测，按来源排序。
+- 过滤单位是完整的来源 Observation，不裁剪、归一化或重新签署正文。
+  保留来源、原始时间、全部签名附件及测量；客户端仍以原观测 CA 验证。
+- 没有可用观测时保持空集合；不调用旧 HTTP/Unix 报告入口，不增加采样或等待。
 
-<现有客户端签名 Observation JSON>
-```
-
-公网反代对应控制端 `/api/client/report?observations=1`；继续使用现有 HTTPS
-出站通路，无需开放公网 `/status`、增加 WG 隧道或新增 endpoint 配置。
-查询参数是传输层读取开关，不属于已签名 Observation 正文。
-
-- 无 `observations=1`：成功仍为空正文 `204`，现有客户端兼容。
-- 显式请求：成功为 `200 application/json`，正文是 `report.Observation` 对象数组，
-  无可用观测时为 `[]`；`Cache-Control: no-store`。
-- 请求继续执行原有 v5 measurements、自检及可选附件验签、registry 当前 enrollment
-  身份/SPKI 绑定、在役 Windows/Android SSOT membership 检查；撤销身份不能读取。
-  不增加 Bearer token 或 mTLS。认证仍来自签名报告，保留既有时间窗口内重放边界。
-- 只返回该客户端**v1 已验证 SSOT 候选链中的在役服务器**观测；候选范围复用
-  `ExpectedRoutesForAccess`，不是另一份配置。目标 v2 用 certified Device view 的授权
-  候选取代该范围，`committed_not_certified` 不能扩张读取集。排除客户端自己、其他客户端、
-  已移除及范围外来源、过期或未通过 v5 测量验签的整份观测，按来源排序。
-- 过滤单位是完整的来源 Observation，不是内部单个目标。返回对象仍可能包含该
-  来源对其他目标的测量及它自己的 Agent 状态；不裁剪、归一化或重新签署正文。
-  保留 `node`、`ts`、`attest`、`attest_extended` 及所有原有附件。
-- HTTP 方法、请求体 1 MiB 上限及原有 400/403/413/415/503 边界不变。
-  200 表示报告已接受并返回快照，不代表客户端或返回节点健康。
+源码入口为 [私有报告服务](../../internal/controlplane/device_report.go)与
+[认证观测回读](../../cmd/loom/control_device_observations.go)。
 
 ## 哪些信息可复用
 
@@ -167,7 +155,7 @@ Windows 客户端适配只能使用 `agent.RunClient`，不得调用服务器完
 必需回归矩阵覆盖：
 
 - 空路径/根路径等价、其他 URL 语义隔离、缺失目标未知以及原始签名内容/时间保留；
-- 端到端 report POST、200/204 兼容、范围过滤、撤销拒读，以及过期、无签名或篡改证据缺席；
+- 端到端私有 report POST、持久序号与 exact 回执、范围过滤、撤销拒读，以及过期、无签名或篡改证据缺席；
 - v2 private `device_report` service 的 overlay IP、internal CA/EKU、SPKI pin、Device mTLS 与角色隔离，
   `committed_not_certified` 不授权，四组 floor/recovery policy hash 和 latch 回退拒绝；
 - Windows/Android 的 Direct 不探测；每底层网络代首次进入 Auto/指定出口时，才对当时冻结

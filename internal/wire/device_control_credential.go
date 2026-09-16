@@ -8,6 +8,9 @@ import (
 
 const DevicePrivateControlCredentialSecretIDV1 = "device-private-control"
 
+// 节点观测继续由原观测 CA 验证，不能被新控制服务的 TLS CA 替代。
+const DeviceObservationCASecretIDV1 = "server-observation-ca"
+
 // DevicePrivateControlCredentialV1 是 Enrollment 通过 Device-owned sealed secret
 // 私下交付的稳态控制入口。它不进入 public mirror；目录 hash pin 与 internal CA roots
 // 来自同一份已被 Device view secret refs root 承诺的 plaintext。

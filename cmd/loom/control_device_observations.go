@@ -33,12 +33,12 @@ func (runtime *controlRuntime) deviceReportObservations(store *controlplane.Devi
 		if identity.Record.IdentityStatus != "active" || identity.CurrentDeviceView.Payload.Active == nil {
 			return nil, errors.New("[服务器观测] 请求设备不再活动")
 		}
-		query, err := runtime.deviceObservationQuery(report.DeviceID(), identity.CurrentDeviceView.Payload.Active.ConfigArtifactRefs)
+		sources, err := runtime.deviceObservationSources(report.DeviceID(), identity.CurrentDeviceView.Payload.Active.ConfigArtifactRefs)
 		if err != nil {
 			return nil, err
 		}
 		allowed := map[string]bool{}
-		for _, id := range query.Servers {
+		for _, id := range sources {
 			allowed[id] = true
 		}
 		latest := map[string]json.RawMessage{}
@@ -63,7 +63,7 @@ func (runtime *controlRuntime) deviceReportObservations(store *controlplane.Devi
 		}
 		out := []json.RawMessage{}
 		total := 2
-		for _, id := range query.Servers {
+		for _, id := range sources {
 			body, found := latest[id]
 			if !found || total+len(body)+1 > 1<<20 || len(out) >= 256 {
 				continue
@@ -75,24 +75,24 @@ func (runtime *controlRuntime) deviceReportObservations(store *controlplane.Devi
 	}
 }
 
-func (runtime *controlRuntime) deviceObservationQuery(deviceID string, refs []wire.DeviceConfigArtifactRefV1) (wire.DeviceObservationQueryV1, error) {
-	query := wire.DeviceObservationQueryV1{Schema: 1, Servers: []string{}}
+func (runtime *controlRuntime) deviceObservationSources(deviceID string, refs []wire.DeviceConfigArtifactRefV1) ([]string, error) {
+	sources := []string{}
 	servers := map[string]bool{}
 	for _, ref := range refs {
 		if ref.ArtifactID != wire.WindowsRuntimeArtifactID && ref.ArtifactID != "android-runtime" && ref.ArtifactID != wire.LinuxRuntimeArtifactID {
 			continue
 		}
 		if _, err := wire.ParseHash(ref.ContentHash); err != nil {
-			return query, err
+			return nil, err
 		}
 		file := filepath.Join(runtime.dir, "public", "distribution", "sha256", strings.TrimPrefix(ref.ContentHash, "sha256:"))
 		raw, err := os.ReadFile(file)
 		if err != nil {
-			return query, err
+			return nil, err
 		}
 		hash, err := wire.DeviceConfigArtifactContentHash(raw)
 		if err != nil || hash != ref.ContentHash || int64(len(raw)) != ref.SizeBytes {
-			return query, errors.New("[服务器观测] 当前 runtime 制品摘要不匹配")
+			return nil, errors.New("[服务器观测] 当前 runtime 制品摘要不匹配")
 		}
 		var config string
 		switch ref.Platform {
@@ -102,13 +102,13 @@ func (runtime *controlRuntime) deviceObservationQuery(deviceID string, refs []wi
 				Files map[string]string `json:"files"`
 			}
 			if _, err := wire.DecodeStrict(raw, 4<<20, &bundle); err != nil || bundle.Owner != deviceID {
-				return query, errors.New("[服务器观测] Android runtime 身份无效")
+				return nil, errors.New("[服务器观测] Android runtime 身份无效")
 			}
 			config = bundle.Files["agent/config.json"]
 		case "windows-desktop":
 			var artifact wire.WindowsRuntimeArtifactV1
 			if _, err := wire.DecodeStrict(raw, 4<<20, &artifact); err != nil || artifact.DeviceID != deviceID {
-				return query, errors.New("[服务器观测] Windows runtime 身份无效")
+				return nil, errors.New("[服务器观测] Windows runtime 身份无效")
 			}
 			for _, file := range artifact.Files {
 				if file.Path == "agent/config.json" {
@@ -118,7 +118,7 @@ func (runtime *controlRuntime) deviceObservationQuery(deviceID string, refs []wi
 		case "linux-server":
 			var artifact wire.LinuxRuntimeArtifactV1
 			if _, err := wire.DecodeStrict(raw, 4<<20, &artifact); err != nil || artifact.DeviceID != deviceID {
-				return query, errors.New("[服务器观测] Linux runtime 身份无效")
+				return nil, errors.New("[服务器观测] Linux runtime 身份无效")
 			}
 			for _, file := range artifact.Files {
 				if file.Path == "agent/v2/config.json" {
@@ -131,7 +131,7 @@ func (runtime *controlRuntime) deviceObservationQuery(deviceID string, refs []wi
 		}
 		var routing agent.Config
 		if err := json.Unmarshal([]byte(config), &routing); err != nil || routing.Node != deviceID {
-			return query, errors.New("[服务器观测] 当前选路配置身份无效")
+			return nil, errors.New("[服务器观测] 当前选路配置身份无效")
 		}
 		for _, declaration := range routing.Declarations {
 			for _, candidate := range declaration.Candidates {
@@ -144,8 +144,11 @@ func (runtime *controlRuntime) deviceObservationQuery(deviceID string, refs []wi
 		}
 	}
 	for id := range servers {
-		query.Servers = append(query.Servers, id)
+		sources = append(sources, id)
 	}
-	sort.Strings(query.Servers)
-	return query, wire.ValidateDeviceObservationQuery(&query)
+	sort.Strings(sources)
+	if len(sources) > 256 {
+		return nil, errors.New("[服务器观测] 来源集合超过读取上限")
+	}
+	return sources, nil
 }
