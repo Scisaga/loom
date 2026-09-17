@@ -12,6 +12,11 @@ Loom 用一份 YAML 配置管理设备、隧道、服务和访问规则，生成
 
 你可以用 Loom 连接自己的电脑和服务器，访问内网服务，或在多个代理和跨机房服务实例之间选择合适的路径。
 
+> [!IMPORTANT]
+> 当前分支是从 `6be9e4c9` 开始的 **v2 最小重建**，不是可直接部署的完成版本，也不表示生产环境回退到 v1。
+> 下方界面和能力说明是要保留的产品目标；实现范围、核心模型、移植白名单及完成条件以
+> [重建入口](docs/rebuild/README.md)为准。旧 v2 实现只在 `archive/v2-overgrown-20260917` 中封存取证。
+
 ## 界面预览
 
 <p align="center">
@@ -248,10 +253,11 @@ Windows 发行签名说明见 [Code signing policy](docs/code-signing-policy.md)
 
 ## 深入阅读
 
-- [设计文档](docs/design.md)：模型、不变量、数据平面、控制平面与部署顺序。
-- [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)：统一 Device、加入协议、授权边界、版本化对象图与分阶段迁移。
-- [客户端接入设计](docs/client-access.md)：Windows、Linux Server、Android 的单入口、设备默认出口、加入网络、分发与升级边界。
+- [v2 最小重建](docs/rebuild/README.md)：当前模型、实施顺序、移植边界与完成条件。
+- [旧设计文档](docs/design.md)：重建前的设计背景，仅供历史取证，不是当前实现目标。
+- [旧 Device 生命周期设计](docs/device-lifecycle-and-delivery.md)：重建前背景；当前语义以核心模型为准。
+- [旧客户端接入设计](docs/client-access.md)：重建前背景；当前语义以客户端运行时模型为准。
 - [Local Network 目标设计](docs/local-network.md)：具名局域网、重复 CIDR、显式 TCP/UDP 访问及 SSOT/授权边界；当前尚未实现。
 - [Linux 客户端安装](docs/linux-client-install.md)：从中控创建 Device 和加入码、下载并校验分发包、完成首次签名拉取。
-- [决策记录](docs/decisions.md)：重要设计选择、被推翻的假设及其证据。
+- [旧决策记录](docs/decisions.md)：历史选择与反例，不能直接作为重建需求。
 - [参考 SSOT](testdata/matrix/ssot.yaml)：覆盖方向约束、双轴选择、服务契约与多平台接入的合成示例。
