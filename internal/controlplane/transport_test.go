@@ -147,6 +147,57 @@ func TestRaftHTTPRejectsCandidateBeforeFsyncButPersistsHigherTerm(t *testing.T) 
 	}
 }
 
+func TestRaftElectionHooksRejectPrematurePreVoteAndObserveAppend(t *testing.T) {
+	set, _ := testControlSet(t, 3)
+	directory, certificates := raftDirectoryFixture(t, set)
+	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	storage, err := OpenRaftStorage(filepath.Join(t.TempDir(), "raft.json"), set.Members[0].MemberID, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewRaftHTTPHandler(storage, set, directory, now,
+		func(context.Context, RaftLogRecordV1, []RaftLogRecordV1) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := 0
+	if err := handler.SetElectionHooks(func() bool { return false }, func() { observed++ }); err != nil {
+		t.Fatal(err)
+	}
+	peerID := set.Members[1].MemberID
+	vote := VoteRequestV1{Term: 1, CandidateID: peerID, PreVote: true}
+	body, _ := wire.MarshalCanonical(vote)
+	request := httptest.NewRequest(http.MethodPost, "https://10.20.0.1:7443"+RaftVotePath,
+		bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[peerID].Leaf}}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var voteResult VoteResultV1
+	if _, err := wire.DecodeStrict(response.Body.Bytes(), 1<<20, &voteResult); err != nil ||
+		response.Code != http.StatusOK || voteResult.Granted || storage.SnapshotRaft().CurrentTerm != 0 {
+		t.Fatalf("近期 leader contact 后仍批准 pre-vote: status=%d result=%#v err=%v",
+			response.Code, voteResult, err)
+	}
+
+	head := testControlHead(t, &set)
+	appendRequest := AppendEntriesRequestV1{Term: 1, LeaderID: peerID,
+		PrevLogHash: wire.EmptyHashV1, Entries: []RaftLogRecordV1{recordForEntry(head)}}
+	body, _ = wire.MarshalCanonical(appendRequest)
+	request = httptest.NewRequest(http.MethodPost, "https://10.20.0.1:7443"+RaftAppendPath,
+		bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[peerID].Leaf}}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || observed != 1 {
+		t.Fatalf("合法 AppendEntries 未刷新 election timer: status=%d observed=%d body=%s",
+			response.Code, observed, response.Body.String())
+	}
+}
+
 func TestRaftLearnerHTTPReplicatesButNeverVotes(t *testing.T) {
 	oldSet, _ := testControlSet(t, 1)
 	newSet, _ := testControlSet(t, 3)

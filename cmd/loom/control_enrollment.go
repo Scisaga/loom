@@ -405,7 +405,7 @@ func (runtime *controlRuntime) enrollmentLineage(from wire.HeadEntryV2, parentHa
 // journal；不存在能绕过管理员事务或覆盖同一 parent 的独立 Enrollment head。
 func (runtime *controlRuntime) CommitEnrollmentOperation(ctx context.Context, operationID string,
 	from *wire.HeadEntryV2, build enrollmentv2.EnrollmentOperationBuilder) (enrollmentv2.EnrollmentOperationCommitResultV1, error) {
-	if runtime.leader == nil || !runtime.leader.IsCurrent() {
+	if runtime.consensusLeader(true) == nil {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("当前 control follower 不接受 Enrollment 状态变更")
 	}
 	if from == nil || operationID == "" || build == nil {

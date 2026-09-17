@@ -188,6 +188,9 @@ type RaftHTTPHandler struct {
 	identify func([]byte, time.Time) (string, error)
 	learner  bool
 	verify   RaftCandidateVerifier
+	// election hooks 只控制本机 liveness timer，不改变 committed authority。
+	preVoteAllowed func() bool
+	appendObserved func()
 }
 
 // RaftCandidateVerifier 必须对 data-bearing record 重放其完整确定性验证；HTTP
@@ -274,6 +277,18 @@ func newRaftHTTPHandler(storage *RaftStorage, now func() time.Time, learner bool
 		learner: learner, verify: verify}
 }
 
+// SetElectionHooks 必须在 handler 开始服务前调用。近期仍收到合法 leader
+// AppendEntries 时拒绝 pre-vote，避免失联候选打断健康 leader 的任期。
+func (handler *RaftHTTPHandler) SetElectionHooks(preVoteAllowed func() bool,
+	appendObserved func()) error {
+	if handler == nil || preVoteAllowed == nil || appendObserved == nil {
+		return errors.New("[Raft RPC] election hooks 不能为空")
+	}
+	handler.preVoteAllowed = preVoteAllowed
+	handler.appendObserved = appendObserved
+	return nil
+}
+
 func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	if request == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" || request.URL.Fragment != "" ||
 		request.Method != http.MethodPost || request.TLS == nil || !request.TLS.HandshakeComplete ||
@@ -311,6 +326,10 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 			writeRaftError(response, http.StatusBadRequest, "vote body 或 mTLS member binding 无效")
 			return
 		}
+		if message.PreVote && handler.preVoteAllowed != nil && !handler.preVoteAllowed() {
+			writeRaftCanonical(response, VoteResultV1{Term: handler.storage.SnapshotRaft().CurrentTerm})
+			return
+		}
 		result, err := handler.storage.HandleVote(message)
 		if err != nil {
 			writeRaftError(response, http.StatusBadRequest, err.Error())
@@ -337,6 +356,9 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 		if err != nil {
 			writeRaftError(response, http.StatusBadRequest, err.Error())
 			return
+		}
+		if result.Success && handler.appendObserved != nil {
+			handler.appendObserved()
 		}
 		writeRaftCanonical(response, result)
 	}

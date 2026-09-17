@@ -208,6 +208,24 @@ func TestConfiguredControlRuntimeDefersCampaignUntilPeerListenerCanStart(t *test
 	}
 }
 
+func TestControlElectionTimeoutIsStaggeredAndContactGated(t *testing.T) {
+	runtime := &controlRuntime{config: controlDiskConfigV1{MemberID: "member-b",
+		ControlSet: wire.ControlSetV1{Members: []wire.ControlMemberV1{
+			{MemberID: "member-a"}, {MemberID: "member-b"}, {MemberID: "member-c"},
+		}}}}
+	if got, want := runtime.electionTimeout(), controlElectionBase+controlElectionStep; got != want {
+		t.Fatalf("member rank 未形成确定性错峰 election timeout: got=%s want=%s", got, want)
+	}
+	runtime.markRaftContact()
+	if runtime.preVoteAllowed() {
+		t.Fatal("刚收到合法 AppendEntries 仍允许 pre-vote")
+	}
+	runtime.lastRaftContact.Store(time.Now().Add(-runtime.electionTimeout() - time.Second).UnixNano())
+	if !runtime.preVoteAllowed() {
+		t.Fatal("超过 election timeout 后仍禁止 pre-vote")
+	}
+}
+
 func TestControlRuntimeEnableLoopbackPreservesAuthorityAndIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "state")

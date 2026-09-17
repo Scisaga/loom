@@ -162,7 +162,11 @@ func (runtime *controlRuntime) configureStableControlPeers(local controlplane.He
 // 在 Raft fsync 前独立重算，随后在 committed prefix 上再次 apply。
 func (runtime *controlRuntime) replicateHead(ctx context.Context,
 	head wire.HeadEntryV2) (controlplane.StableRaftCommitResult, error) {
-	if runtime == nil || runtime.leader == nil || runtime.store == nil {
+	if runtime == nil || runtime.store == nil {
+		return controlplane.StableRaftCommitResult{}, errors.New("[control peer] 本机当前不是可写 Raft leader")
+	}
+	leader := runtime.consensusLeader(false)
+	if leader == nil {
 		return controlplane.StableRaftCommitResult{}, errors.New("[control peer] 本机当前不是可写 Raft leader")
 	}
 	if head.Body.Payload.HeadKind != "bootstrap" {
@@ -170,7 +174,7 @@ func (runtime *controlRuntime) replicateHead(ctx context.Context,
 			return controlplane.StableRaftCommitResult{}, err
 		}
 	}
-	return runtime.leader.ReplicateHead(ctx, runtime.store, head)
+	return leader.ReplicateHead(ctx, runtime.store, head)
 }
 
 func (runtime *controlRuntime) syncOperationMaterialsToQuorum(ctx context.Context) error {

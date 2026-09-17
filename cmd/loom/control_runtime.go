@@ -186,6 +186,7 @@ type controlCertifiedOperationResultV1 struct {
 
 type controlRuntime struct {
 	mu                 sync.Mutex
+	consensusMu        sync.RWMutex
 	dir                string
 	config             controlDiskConfigV1
 	journal            controlOperationJournalV1
@@ -197,6 +198,7 @@ type controlRuntime struct {
 	storage            *controlplane.RaftStorage
 	store              *controlplane.Store
 	leader             *controlplane.StableRaftLeader
+	leaderReady        bool
 	raftPeers          map[string]controlplane.RaftPeer
 	service            *controlplane.PrivateControlService
 	uiReadOnly         http.Handler
@@ -210,6 +212,7 @@ type controlRuntime struct {
 	// verifiedMaterials 只消除同一进程 pre-append→apply 对 exact immutable
 	// bytes 的重复重算；重启后为空，不能替代 durable verification。
 	verifiedMaterials sync.Map
+	lastRaftContact   atomic.Int64
 	// verificationLog 仅用于 follower 在 fsync 前重算同一 AppendEntries 批次；
 	// 正式运行状态始终从 storage 读取，不能把它当作第二份 Raft 状态。
 	verificationLog []controlplane.RaftLogRecordV1
@@ -945,14 +948,37 @@ func (runtime *controlRuntime) campaignAndRecover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	runtime.leader = leader
+	runtime.setConsensusLeader(leader, false)
 	if err := runtime.recoverCommitted(); err != nil {
+		runtime.setConsensusLeader(nil, false)
 		return err
 	}
 	if err := runtime.recoverPendingOperations(); err != nil {
+		runtime.setConsensusLeader(nil, false)
 		return err
 	}
-	return runtime.reconcileEnrollmentDistributionPrefix()
+	if err := runtime.reconcileEnrollmentDistributionPrefix(); err != nil {
+		runtime.setConsensusLeader(nil, false)
+		return err
+	}
+	runtime.setConsensusLeader(leader, true)
+	return nil
+}
+
+func (runtime *controlRuntime) setConsensusLeader(leader *controlplane.StableRaftLeader, ready bool) {
+	runtime.consensusMu.Lock()
+	runtime.leader, runtime.leaderReady = leader, leader != nil && ready
+	runtime.consensusMu.Unlock()
+}
+
+func (runtime *controlRuntime) consensusLeader(requireReady bool) *controlplane.StableRaftLeader {
+	runtime.consensusMu.RLock()
+	leader, ready := runtime.leader, runtime.leaderReady
+	runtime.consensusMu.RUnlock()
+	if leader == nil || requireReady && !ready || !leader.IsCurrent() {
+		return nil
+	}
+	return leader
 }
 
 func (runtime *controlRuntime) commitGenesis(at time.Time, aclRoot, peerDirectoryHash string) error {
@@ -1032,7 +1058,7 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 		return runtime.recoverAppliedProgressLocked()
 	}
 	if (state.Active.Phase != controlplane.PhaseCertified && state.Active.Phase != controlplane.PhaseReconciled) || state.Active.QC == nil {
-		return errors.New("N=1 committed Head 未形成 exact QC")
+		return errors.New("committed Head 未形成 exact quorum QC")
 	}
 	if state.Active.Entry.Body.Payload.HeadKind != "bootstrap" {
 		if err := runtime.finalizeJournalResultLocked(state.Active.Entry, state.Active.QC); err != nil {
@@ -1173,7 +1199,7 @@ func (runtime *controlRuntime) resolveScope(ctx context.Context,
 
 func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	verified wire.VerifiedAdminOperationV1) (controlplane.CertifiedControlOperationV1, error) {
-	if runtime.leader == nil || !runtime.leader.IsCurrent() {
+	if runtime.consensusLeader(true) == nil {
 		return controlplane.CertifiedControlOperationV1{}, errors.New("当前 control follower 不接受权限变更")
 	}
 	if err := runtime.expireEnrollmentTransactions(ctx); err != nil {
@@ -1361,6 +1387,9 @@ func (runtime *controlRuntime) serve() error {
 	if err != nil {
 		return err
 	}
+	if err := raftHandler.SetElectionHooks(runtime.preVoteAllowed, runtime.markRaftContact); err != nil {
+		return err
+	}
 	controlHandler := runtime.controlHandler()
 	peers := http.NewServeMux()
 	peers.Handle(controlplane.HeadAttestationVotePath, runtime.headPeers)
@@ -1389,6 +1418,7 @@ func (runtime *controlRuntime) serve() error {
 		_ = raftServer.Close()
 		return err
 	}
+	runtime.markRaftContact()
 	select {
 	case serveErr := <-errorsOut:
 		if !errors.Is(serveErr, http.ErrServerClosed) {
@@ -1396,21 +1426,23 @@ func (runtime *controlRuntime) serve() error {
 		}
 	default:
 	}
+	runtimeContext, cancelRuntime := context.WithCancel(context.Background())
+	defer cancelRuntime()
+	consensusDone := runtime.startStableConsensusLoop(runtimeContext)
 	deviceRuntime, closeDeviceKeys, err := runtime.newDeviceRuntime()
 	if err != nil {
+		cancelRuntime()
 		_ = raftServer.Close()
 		return err
 	}
 	defer closeDeviceKeys()
-	deviceContext, cancelDevices := context.WithCancel(context.Background())
-	defer cancelDevices()
 	var deviceDone <-chan error
 	if deviceRuntime != nil {
-		deviceDone, err = deviceRuntime.Start(deviceContext)
+		deviceDone, err = deviceRuntime.Start(runtimeContext)
 		if err != nil {
 			return err
 		}
-		defer func() { cancelDevices(); <-deviceDone }()
+		defer func() { cancelRuntime(); <-deviceDone }()
 	}
 	go func() { errorsOut <- controlServer.Serve(tls.NewListener(controlListener, controlTLSConfig)) }()
 	go func() { errorsOut <- loopbackServer.Serve(tls.NewListener(loopbackListener, loopbackTLSConfig)) }()
@@ -1431,6 +1463,9 @@ func (runtime *controlRuntime) serve() error {
 	case deviceErr := <-deviceDone:
 		shutdown()
 		return deviceErr
+	case consensusErr := <-consensusDone:
+		shutdown()
+		return consensusErr
 	case sig := <-stop:
 		shutdown()
 		fmt.Printf("control runtime 收到 %s，已停止\n", sig)
