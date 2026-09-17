@@ -25,6 +25,57 @@
 7. 所需写能力仍不可用时，立即报告受阻的具体远端结果、已检查通道及其当前层级/错误、需要的连接动作；不得等本地实现结束后才披露。未受阻的本地工作可继续，但必须始终与远端状态分开陈述。
 8. 会话压缩、工具集变化或长任务恢复后，重新发现并复用原通道，不能把暂时未显示的工具误判为能力永久消失。
 
+### 当前服务器的 GitHub HTTPS 凭据
+
+本机已经验证可用的 GitHub 通道是 VS Code Git 扩展提供的 AskPass/IPC。新开的交互终端通常会继承
+`GIT_ASKPASS` 和 `VSCODE_GIT_*`，但隔离启动的 agent 命令子进程可能没有继承。两者环境不同不表示
+服务器没有凭据，也不能因为 `/root/.git-credentials`、`.netrc`、`gh` 或全局 credential helper 中没有记录
+就宣称 GitHub 不可写。
+
+当前进程缺少 AskPass 环境时，先在同一用户、同一仓库目录的现有交互 shell 中发现成功通道，只导入下面
+五类变量，不能打印整个 `/proc/<pid>/environ`：
+
+```bash
+repo_root=$(git rev-parse --show-toplevel)
+askpass_pid=''
+for pid in $(pgrep -x bash); do
+  [ "$(stat -c %u "/proc/$pid" 2>/dev/null || true)" = "$(id -u)" ] || continue
+  [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$repo_root" ] || continue
+  if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -q '^GIT_ASKPASS='; then
+    askpass_pid=$pid
+    break
+  fi
+done
+test -n "$askpass_pid"
+
+while IFS= read -r -d '' item; do
+  case "$item" in
+    GIT_ASKPASS=*|VSCODE_GIT_ASKPASS_EXTRA_ARGS=*|VSCODE_GIT_ASKPASS_MAIN=*|\
+    VSCODE_GIT_ASKPASS_NODE=*|VSCODE_GIT_IPC_HANDLE=*) export "$item" ;;
+  esac
+done < "/proc/$askpass_pid/environ"
+```
+
+普通 `git ls-remote`、fetch 或 push 在导入这些变量后直接使用 AskPass。需要调用 GitHub API 时，凭据查询
+必须包含精确仓库 `path`，并把 `GIT_TERMINAL_PROMPT=0` 施加在 `git credential fill` 上，而不是管道左侧的
+`printf` 上：
+
+```bash
+credential=$(
+  printf 'protocol=https\nhost=github.com\npath=Scisaga/loom.git\n\n' |
+    GIT_TERMINAL_PROMPT=0 git credential fill
+)
+username=$(printf '%s\n' "$credential" | sed -n 's/^username=//p')
+password=$(printf '%s\n' "$credential" | sed -n 's/^password=//p')
+test -n "$username" && test -n "$password"
+```
+
+不得开启 `set -x`、输出 `credential`/用户名/密码、把 token 放进命令行参数或提交临时文件。API 调用只在
+内存中解析密码；如 `curl` 需要认证 header，使用 `0600` 的临时 config 并用 `trap` 在退出时删除。完成后
+`unset credential username password`。权限预检读取仓库的 `permissions`，目标写操作后仍按本节上方规则
+回读；不得创建测试 issue。若同仓库交互 shell 也没有 AskPass 环境，再检查已连接 app/plugin、项目脚本、
+`gh auth status` 和 Git credential helper，并报告各通道的真实层级。
+
 完成状态必须逐层陈述：
 
 - “已提交”至少给出本地 commit；“已推送”还必须回读远端 ref 指向同一 commit；
