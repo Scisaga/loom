@@ -106,6 +106,73 @@ func TestCertifiedQCSignerSetCannotChange(t *testing.T) {
 	}
 }
 
+func TestInstallCertificationRequiresCommittedEntryAndFreezesExactQC(t *testing.T) {
+	set, configKeys := testControlSet(t, 3)
+	entry := testControlHead(t, &set)
+	attestation := wire.AttestationForHead(&entry)
+	signatures := make([]wire.ControlConfigSignatureV1, 0, 2)
+	for _, member := range set.Members[:2] {
+		signature, err := wire.SignHeadAttestation(attestation, member, configKeys[member.MemberID])
+		if err != nil {
+			t.Fatal(err)
+		}
+		signatures = append(signatures, signature)
+	}
+	qc := wire.StableQC(&entry, signatures)
+
+	pending, _ := Open(filepath.Join(t.TempDir(), "pending.json"), set)
+	if err := pending.Prepare(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.InstallCertification(entry.EntryHash, qc); err == nil {
+		t.Fatal("未 committed entry 安装了远端 QC")
+	}
+
+	committed, _ := Open(filepath.Join(t.TempDir(), "committed.json"), set)
+	if err := committed.Prepare(entry); err != nil {
+		t.Fatal(err)
+	}
+	raft := committedRaftForHead(t, set, 0, entry, map[string]int64{set.Members[1].MemberID: 1})
+	if err := committed.CommitFromRaft(raft, entry.EntryHash); err != nil {
+		t.Fatal(err)
+	}
+	if err := committed.AddAttestation(entry.EntryHash, signatures[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := committed.InstallCertification(entry.EntryHash, qc); err != nil {
+		t.Fatal(err)
+	}
+	state := committed.Snapshot()
+	if state.Active == nil || state.Active.Phase != PhaseCertified || state.Active.QC == nil ||
+		!wire.EqualCanonical(*state.Active.QC, qc) || state.CertifiedHead == nil ||
+		state.CertifiedHead.EntryHash != entry.EntryHash {
+		t.Fatalf("exact QC 未耐久安装: %#v", state)
+	}
+
+	conflicting, _ := Open(filepath.Join(t.TempDir(), "conflicting.json"), set)
+	if err := conflicting.Prepare(entry); err != nil {
+		t.Fatal(err)
+	}
+	conflictRaft := committedRaftForHead(t, set, 2, entry, map[string]int64{set.Members[0].MemberID: 1})
+	if err := conflicting.CommitFromRaft(conflictRaft, entry.EntryHash); err != nil {
+		t.Fatal(err)
+	}
+	third := set.Members[2]
+	thirdSignature, _ := wire.SignHeadAttestation(attestation, third, configKeys[third.MemberID])
+	if err := conflicting.AddAttestation(entry.EntryHash, thirdSignature); err != nil {
+		t.Fatal(err)
+	}
+	if err := conflicting.InstallCertification(entry.EntryHash, qc); err != nil {
+		t.Fatal(err)
+	}
+	conflictingState := conflicting.Snapshot()
+	if conflictingState.Active == nil || conflictingState.Active.QC == nil ||
+		!wire.EqualCanonical(*conflictingState.Active.QC, qc) ||
+		!wire.EqualCanonical(conflictingState.Active.Signatures, qc.Signatures) {
+		t.Fatal("follower 未把非入选 vote 收敛为 exact certified QC signer set")
+	}
+}
+
 func committedRaftForHead(t *testing.T, set wire.ControlSetV1, memberIndex int, entry wire.HeadEntryV2,
 	matches map[string]int64) *RaftStorage {
 	t.Helper()

@@ -233,6 +233,53 @@ func (s *Store) AddAttestation(entryHash string, signature wire.ControlConfigSig
 	return nil
 }
 
+// InstallCertification 接受已由 committed ControlSet 形成的 exact stable QC。
+// follower 只能给本机 committed/apply 后的 active entry 安装该证明；调用方不能
+// 用一份远端 QC 跳过本机 Raft prefix 或改写已经冻结的 certified bytes。
+func (s *Store) InstallCertification(entryHash string, qc wire.StableHeadReplicationQCV1) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.CertifiedHead != nil && s.state.CertifiedHead.EntryHash == entryHash &&
+		s.state.CertifiedQC != nil && wire.EqualCanonical(*s.state.CertifiedQC, qc) {
+		return nil
+	}
+	active, err := s.active(entryHash)
+	if err != nil {
+		return err
+	}
+	if active.Phase == PhasePending || active.RaftCommit == nil {
+		return errors.New("[QC] 本机尚未 commit/apply 的 entry 禁止安装 certification")
+	}
+	if err := wire.VerifyStableHeadQC(&active.Entry, &s.state.ControlSet, &qc); err != nil {
+		return err
+	}
+	if active.QC != nil && !wire.EqualCanonical(*active.QC, qc) {
+		return errors.New("[QC] 已冻结的 certification bytes 不能改变")
+	}
+	for _, existing := range active.Signatures {
+		for _, signature := range qc.Signatures {
+			if signature.MemberID == existing.MemberID {
+				if !wire.EqualCanonical(signature, existing) {
+					return errors.New("[QC] certification 与本机已保存 signer bytes 冲突")
+				}
+				break
+			}
+		}
+	}
+	candidate := cloneState(s.state)
+	candidate.Active.Signatures = append([]wire.ControlConfigSignatureV1(nil), qc.Signatures...)
+	candidate.Active.QC = cloneStableQC(&qc)
+	candidate.Active.Phase = PhaseCertified
+	entry := candidate.Active.Entry
+	candidate.CertifiedHead = &entry
+	candidate.CertifiedQC = cloneStableQC(&qc)
+	if err := s.persistLocked(candidate); err != nil {
+		return err
+	}
+	s.state = candidate
+	return nil
+}
+
 // RecoverCertification 只保留 N=1 bootstrap/compatibility 恢复；多成员 ControlSet
 // 必须经 HeadAttestationCollector 逐 peer 取签，禁止把所有 config 私钥集中到 executor。
 func (s *Store) RecoverCertification(keys map[string]ed25519.PrivateKey) error {
@@ -377,6 +424,16 @@ func cloneState(state State) State {
 	var clone State
 	_ = json.Unmarshal(body, &clone)
 	return clone
+}
+
+func cloneStableQC(qc *wire.StableHeadReplicationQCV1) *wire.StableHeadReplicationQCV1 {
+	if qc == nil {
+		return nil
+	}
+	body, _ := json.Marshal(qc)
+	var clone wire.StableHeadReplicationQCV1
+	_ = json.Unmarshal(body, &clone)
+	return &clone
 }
 
 func validateState(state *State) error {

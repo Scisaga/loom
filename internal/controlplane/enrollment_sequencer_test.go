@@ -257,7 +257,14 @@ func TestStableEnrollmentSequencerRetriesExactUncommittedTail(t *testing.T) {
 	recompute := HeadRecomputer(func(context.Context, wire.HeadEntryV2) error { return nil })
 	voters := make(map[string]HeadAttestationPeer, len(set.Members))
 	for index, member := range set.Members {
-		voter, err := NewHeadAttestationVoter(storages[index], set, member.MemberID,
+		voterStore := store
+		if index != 0 {
+			voterStore, err = Open(filepath.Join(directory, member.MemberID+"-control.json"), set)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		voter, err := NewHeadAttestationVoter(storages[index], voterStore, set, member.MemberID,
 			configKeys[member.MemberID], recompute)
 		if err != nil {
 			t.Fatal(err)
@@ -347,7 +354,7 @@ func newStableEnrollmentSequencerFixture(t *testing.T) stableEnrollmentSequencer
 		t.Fatal(err)
 	}
 	recompute := HeadRecomputer(func(context.Context, wire.HeadEntryV2) error { return nil })
-	voter, err := NewHeadAttestationVoter(storage, set, set.Members[0].MemberID,
+	voter, err := NewHeadAttestationVoter(storage, store, set, set.Members[0].MemberID,
 		configKeys[set.Members[0].MemberID], recompute)
 	if err != nil {
 		t.Fatal(err)

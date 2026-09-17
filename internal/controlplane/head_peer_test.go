@@ -20,6 +20,8 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 	entry := testControlHead(t, &set)
 	peers := make(map[string]HeadAttestationPeer, len(set.Members))
 	var commitStorage *RaftStorage
+	var commitStorePath string
+	followerStores := make([]*Store, 0, len(set.Members)-1)
 	var recomputes atomic.Int32
 	for memberIndex, member := range set.Members {
 		storage, err := OpenRaftStorage(filepath.Join(t.TempDir(), member.MemberID+".json"), member.MemberID, set)
@@ -44,7 +46,17 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 		if memberIndex == 0 {
 			commitStorage = storage
 		}
-		voter, err := NewHeadAttestationVoter(storage, set, member.MemberID, configKeys[member.MemberID],
+		storePath := filepath.Join(t.TempDir(), member.MemberID+"-control.json")
+		store, err := Open(storePath, set)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if memberIndex == 0 {
+			commitStorePath = storePath
+		} else {
+			followerStores = append(followerStores, store)
+		}
+		voter, err := NewHeadAttestationVoter(storage, store, set, member.MemberID, configKeys[member.MemberID],
 			func(_ context.Context, candidate wire.HeadEntryV2) error {
 				if !wire.EqualCanonical(candidate, entry) {
 					return context.Canceled
@@ -61,8 +73,7 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	controlPath := filepath.Join(t.TempDir(), "control.json")
-	store, err := Open(controlPath, set)
+	store, err := Open(commitStorePath, set)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +83,24 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 	if err := store.CommitFromRaft(commitStorage, entry.EntryHash); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(controlPath, set)
+	reopened, err := Open(commitStorePath, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localMember := set.Members[0]
+	localVoter, err := NewHeadAttestationVoter(commitStorage, reopened, set, localMember.MemberID,
+		configKeys[localMember.MemberID], func(_ context.Context, candidate wire.HeadEntryV2) error {
+			if !wire.EqualCanonical(candidate, entry) {
+				return context.Canceled
+			}
+			recomputes.Add(1)
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peers[localMember.MemberID] = localVoter
+	collector, err = NewHeadAttestationCollector(set, peers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +115,19 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 	if err := wire.VerifyStableHeadQC(&entry, &set, state.Active.QC); err != nil {
 		t.Fatal(err)
 	}
+	installedCount := 1
+	for _, follower := range followerStores {
+		followerState := follower.Snapshot()
+		if followerState.Active == nil && followerState.CertifiedHead != nil &&
+			followerState.CertifiedQC != nil && followerState.CertifiedHead.EntryHash == entry.EntryHash &&
+			wire.EqualCanonical(*followerState.CertifiedQC, *state.Active.QC) {
+			installedCount++
+		}
+	}
+	quorum, _ := wire.Quorum(len(set.Members))
+	if installedCount < quorum {
+		t.Fatalf("exact QC 只耐久安装到 %d/%d voters", installedCount, len(set.Members))
+	}
 }
 
 func TestHeadAttestationCollectorDoesNotShrinkQuorumToCommittedOnlineReplica(t *testing.T) {
@@ -95,6 +136,7 @@ func TestHeadAttestationCollectorDoesNotShrinkQuorumToCommittedOnlineReplica(t *
 	peers := make(map[string]HeadAttestationPeer, len(set.Members))
 	for index, member := range set.Members {
 		storage, _ := OpenRaftStorage(filepath.Join(t.TempDir(), member.MemberID+".json"), member.MemberID, set)
+		store, _ := Open(filepath.Join(t.TempDir(), member.MemberID+"-control.json"), set)
 		_, _ = storage.StartElection()
 		if err := storage.AppendLocal(entry); err != nil {
 			t.Fatal(err)
@@ -104,7 +146,7 @@ func TestHeadAttestationCollectorDoesNotShrinkQuorumToCommittedOnlineReplica(t *
 				t.Fatalf("single committed replica setup failed: commit=%d err=%v", committed, err)
 			}
 		}
-		voter, err := NewHeadAttestationVoter(storage, set, member.MemberID, configKeys[member.MemberID],
+		voter, err := NewHeadAttestationVoter(storage, store, set, member.MemberID, configKeys[member.MemberID],
 			func(context.Context, wire.HeadEntryV2) error { return nil })
 		if err != nil {
 			t.Fatal(err)
@@ -121,11 +163,12 @@ func TestHeadAttestationVoterRejectsUncommittedEntry(t *testing.T) {
 	set, configKeys := testControlSet(t, 1)
 	entry := testControlHead(t, &set)
 	storage, _ := OpenRaftStorage(filepath.Join(t.TempDir(), "raft.json"), set.Members[0].MemberID, set)
+	store, _ := Open(filepath.Join(t.TempDir(), "control.json"), set)
 	_, _ = storage.StartElection()
 	if err := storage.AppendLocal(entry); err != nil {
 		t.Fatal(err)
 	}
-	voter, err := NewHeadAttestationVoter(storage, set, set.Members[0].MemberID,
+	voter, err := NewHeadAttestationVoter(storage, store, set, set.Members[0].MemberID,
 		configKeys[set.Members[0].MemberID], func(context.Context, wire.HeadEntryV2) error {
 			t.Fatal("uncommitted entry 到达 recompute")
 			return nil
@@ -144,10 +187,11 @@ func TestHeadAttestationHTTPRequiresControlPeerMTLS(t *testing.T) {
 	directory, certificates := raftDirectoryFixture(t, set)
 	entry := testControlHead(t, &set)
 	storage, _ := OpenRaftStorage(filepath.Join(t.TempDir(), "raft.json"), set.Members[0].MemberID, set)
+	store, _ := Open(filepath.Join(t.TempDir(), "control.json"), set)
 	_, _ = storage.StartElection()
 	_ = storage.AppendLocal(entry)
 	_, _ = storage.AdvanceLeaderCommit(nil)
-	voter, _ := NewHeadAttestationVoter(storage, set, set.Members[0].MemberID,
+	voter, _ := NewHeadAttestationVoter(storage, store, set, set.Members[0].MemberID,
 		configKeys[set.Members[0].MemberID], func(context.Context, wire.HeadEntryV2) error { return nil })
 	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
 	handler, err := NewHeadAttestationHTTPHandler(set, directory, now, voter)
@@ -171,6 +215,31 @@ func TestHeadAttestationHTTPRequiresControlPeerMTLS(t *testing.T) {
 	if err != nil || !bytes.Equal(canonical, response.Body.Bytes()) ||
 		wire.VerifyHeadAttestationSignature(&entry, &result.Signature, &set) != nil {
 		t.Fatalf("head attestation response 无效: %#v err=%v", result, err)
+	}
+	certification := HeadCertificationRequestV1{Schema: 1, RaftIndex: 1,
+		EntryHash: entry.EntryHash, QC: wire.StableQC(&entry, []wire.ControlConfigSignatureV1{result.Signature})}
+	certificationBody, _ := wire.MarshalCanonical(certification)
+	request = httptest.NewRequest(http.MethodPost,
+		"https://10.20.0.1:7443"+HeadCertificationPath, bytes.NewReader(certificationBody))
+	request.Header.Set("Content-Type", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[set.Members[0].MemberID].Leaf}}
+	certificationResponse := httptest.NewRecorder()
+	handler.ServeHTTP(certificationResponse, request)
+	if certificationResponse.Code != http.StatusOK || store.Snapshot().Active != nil ||
+		store.Snapshot().CertifiedHead == nil {
+		t.Fatalf("valid head certification status=%d state=%#v",
+			certificationResponse.Code, store.Snapshot())
+	}
+	request = httptest.NewRequest(http.MethodPost,
+		"https://10.20.0.1:7443"+HeadCertificationPath, bytes.NewReader(certificationBody))
+	request.Header.Set("Content-Type", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[set.Members[0].MemberID].Leaf}}
+	retryResponse := httptest.NewRecorder()
+	handler.ServeHTTP(retryResponse, request)
+	if retryResponse.Code != http.StatusOK {
+		t.Fatalf("exact head certification retry status=%d", retryResponse.Code)
 	}
 
 	request = httptest.NewRequest(http.MethodPost,

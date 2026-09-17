@@ -20,7 +20,8 @@ import (
 
 const (
 	HeadAttestationVotePath = "/private/v2/raft/head-attestation"
-	headPeerMaxBody         = 64 << 10
+	HeadCertificationPath   = "/private/v2/raft/head-certification"
+	headPeerMaxBody         = 1 << 20
 )
 
 type HeadAttestationVoteRequestV1 struct {
@@ -34,8 +35,20 @@ type HeadAttestationVoteResponseV1 struct {
 	Signature wire.ControlConfigSignatureV1 `json:"signature"`
 }
 
+type HeadCertificationRequestV1 struct {
+	Schema    int                            `json:"schema"`
+	RaftIndex int64                          `json:"raft_index"`
+	EntryHash string                         `json:"entry_hash"`
+	QC        wire.StableHeadReplicationQCV1 `json:"qc"`
+}
+
+type HeadCertificationResponseV1 struct {
+	Schema int `json:"schema"`
+}
+
 type HeadAttestationPeer interface {
 	VoteHeadAttestation(context.Context, HeadAttestationVoteRequestV1) (wire.ControlConfigSignatureV1, error)
+	InstallHeadCertification(context.Context, HeadCertificationRequestV1) error
 }
 
 type HeadRecomputer func(context.Context, wire.HeadEntryV2) error
@@ -44,16 +57,17 @@ type HeadRecomputer func(context.Context, wire.HeadEntryV2) error
 // recompute 必须先独立重放确定性 reducer，不能信任 leader 提交的 snapshot hash。
 type HeadAttestationVoter struct {
 	storage    *RaftStorage
+	store      *Store
 	set        wire.ControlSetV1
 	member     wire.ControlMemberV1
 	privateKey ed25519.PrivateKey
 	recompute  HeadRecomputer
 }
 
-func NewHeadAttestationVoter(storage *RaftStorage, set wire.ControlSetV1, memberID string,
+func NewHeadAttestationVoter(storage *RaftStorage, store *Store, set wire.ControlSetV1, memberID string,
 	privateKey ed25519.PrivateKey, recompute HeadRecomputer) (*HeadAttestationVoter, error) {
-	if storage == nil || memberID == "" || len(privateKey) != ed25519.PrivateKeySize || recompute == nil {
-		return nil, errors.New("[QC peer] storage/member/key/recomputer 配置不完整")
+	if storage == nil || store == nil || memberID == "" || len(privateKey) != ed25519.PrivateKeySize || recompute == nil {
+		return nil, errors.New("[QC peer] storage/store/member/key/recomputer 配置不完整")
 	}
 	if err := wire.ValidateControlSet(&set); err != nil {
 		return nil, err
@@ -75,7 +89,12 @@ func NewHeadAttestationVoter(storage *RaftStorage, set wire.ControlSetV1, member
 	if snapshot.MemberID != memberID || setHash != storageSetHash {
 		return nil, errors.New("[QC peer] voter identity/ControlSet 与 Raft storage 不一致")
 	}
-	return &HeadAttestationVoter{storage: storage, set: set, member: *member,
+	storeState := store.Snapshot()
+	storeSetHash, _ := wire.ControlSetHash(&storeState.ControlSet)
+	if storeSetHash != setHash {
+		return nil, errors.New("[QC peer] voter control store 与 committed ControlSet 不一致")
+	}
+	return &HeadAttestationVoter{storage: storage, store: store, set: set, member: *member,
 		privateKey: append(ed25519.PrivateKey(nil), privateKey...), recompute: recompute}, nil
 }
 
@@ -100,10 +119,60 @@ func (voter *HeadAttestationVoter) VoteHeadAttestation(ctx context.Context,
 		record.Head.EntryHash != request.EntryHash || record.Head.Body.Payload.ControlSetHash != setHash {
 		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] committed entry/hash/ControlSet binding 无效")
 	}
-	if err := voter.recompute(ctx, *record.Head); err != nil {
-		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] deterministic recompute 拒绝 committed entry")
+	if _, err := ApplyCommittedPrefix(ctx, voter.storage, voter.store, voter.recompute); err != nil {
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] 本机 committed prefix apply 失败")
 	}
-	return wire.SignHeadAttestation(wire.AttestationForHead(record.Head), voter.member, voter.privateKey)
+	state := voter.store.Snapshot()
+	if state.Active == nil || state.Active.Entry.EntryHash != request.EntryHash ||
+		state.Active.Phase != PhaseCommittedNotCertified {
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] 本机 entry 尚未进入 committed_not_certified")
+	}
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(record.Head), voter.member, voter.privateKey)
+	if err != nil {
+		return wire.ControlConfigSignatureV1{}, err
+	}
+	if err := voter.store.AddAttestation(request.EntryHash, signature); err != nil {
+		return wire.ControlConfigSignatureV1{}, err
+	}
+	return signature, nil
+}
+
+// InstallHeadCertification 在 follower 本机先重放 committed prefix，再安装由
+// committed ControlSet 形成的 exact QC。普通 follower 不执行 leader 的外部
+// reconciler；certified state 已耐久后即可清除 active gate 并接收下一条 Head。
+func (voter *HeadAttestationVoter) InstallHeadCertification(ctx context.Context,
+	request HeadCertificationRequestV1) error {
+	if voter == nil || request.Schema != 1 || request.RaftIndex < 1 {
+		return errors.New("[QC peer] certification request header 无效")
+	}
+	if _, err := wire.ParseHash(request.EntryHash); err != nil {
+		return err
+	}
+	snapshot := voter.storage.SnapshotRaft()
+	if request.RaftIndex > snapshot.CommitIndex || request.RaftIndex > int64(len(snapshot.Log)) {
+		return errors.New("[QC peer] certification entry 不在本机 committed prefix")
+	}
+	record := snapshot.Log[request.RaftIndex-1]
+	if record.Kind != RaftRecordHead || record.Head == nil || record.EntryHash != request.EntryHash ||
+		record.Head.EntryHash != request.EntryHash {
+		return errors.New("[QC peer] certification entry/hash binding 无效")
+	}
+	if err := wire.VerifyStableHeadQC(record.Head, &voter.set, &request.QC); err != nil {
+		return err
+	}
+	if _, err := ApplyCommittedPrefix(ctx, voter.storage, voter.store, voter.recompute); err != nil {
+		return err
+	}
+	if err := voter.store.InstallCertification(request.EntryHash, request.QC); err != nil {
+		return err
+	}
+	installed := voter.store.Snapshot()
+	if installed.Active == nil && installed.CertifiedHead != nil &&
+		installed.CertifiedHead.EntryHash == request.EntryHash && installed.CertifiedQC != nil &&
+		wire.EqualCanonical(*installed.CertifiedQC, request.QC) {
+		return nil
+	}
+	return voter.store.MarkApplied(request.EntryHash)
 }
 
 type HeadAttestationHTTPHandler struct {
@@ -125,7 +194,8 @@ func NewHeadAttestationHTTPHandler(set wire.ControlSetV1, directory wire.Control
 }
 
 func (handler *HeadAttestationHTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if request == nil || request.Method != http.MethodPost || request.URL.Path != HeadAttestationVotePath ||
+	if request == nil || request.Method != http.MethodPost ||
+		(request.URL.Path != HeadAttestationVotePath && request.URL.Path != HeadCertificationPath) ||
 		request.URL.RawPath != "" || request.URL.RawQuery != "" || request.URL.Fragment != "" ||
 		request.TLS == nil || !request.TLS.HandshakeComplete || request.TLS.Version < tls.VersionTLS13 ||
 		len(request.TLS.PeerCertificates) != 1 || request.Header.Get("Authorization") != "" ||
@@ -144,18 +214,30 @@ func (handler *HeadAttestationHTTPHandler) ServeHTTP(response http.ResponseWrite
 		writeHeadPeerError(response, http.StatusBadRequest)
 		return
 	}
-	var submitted HeadAttestationVoteRequestV1
-	canonical, err := wire.DecodeStrict(body, headPeerMaxBody, &submitted)
-	if err != nil || !bytes.Equal(canonical, body) {
-		writeHeadPeerError(response, http.StatusBadRequest)
-		return
+	switch request.URL.Path {
+	case HeadAttestationVotePath:
+		var submitted HeadAttestationVoteRequestV1
+		canonical, err := wire.DecodeStrict(body, headPeerMaxBody, &submitted)
+		if err != nil || !bytes.Equal(canonical, body) {
+			writeHeadPeerError(response, http.StatusBadRequest)
+			return
+		}
+		signature, err := handler.voter.VoteHeadAttestation(request.Context(), submitted)
+		if err != nil {
+			writeHeadPeerError(response, http.StatusForbidden)
+			return
+		}
+		writeRaftCanonical(response, HeadAttestationVoteResponseV1{Schema: 1, Signature: signature})
+	case HeadCertificationPath:
+		var submitted HeadCertificationRequestV1
+		canonical, err := wire.DecodeStrict(body, headPeerMaxBody, &submitted)
+		if err != nil || !bytes.Equal(canonical, body) ||
+			handler.voter.InstallHeadCertification(request.Context(), submitted) != nil {
+			writeHeadPeerError(response, http.StatusForbidden)
+			return
+		}
+		writeRaftCanonical(response, HeadCertificationResponseV1{Schema: 1})
 	}
-	signature, err := handler.voter.VoteHeadAttestation(request.Context(), submitted)
-	if err != nil {
-		writeHeadPeerError(response, http.StatusForbidden)
-		return
-	}
-	writeRaftCanonical(response, HeadAttestationVoteResponseV1{Schema: 1, Signature: signature})
 }
 
 type HeadAttestationPeerClient struct {
@@ -226,6 +308,39 @@ func (client *HeadAttestationPeerClient) VoteHeadAttestation(ctx context.Context
 		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] response wire 无效")
 	}
 	return result.Signature, nil
+}
+
+func (client *HeadAttestationPeerClient) InstallHeadCertification(ctx context.Context,
+	request HeadCertificationRequestV1) error {
+	body, err := wire.MarshalCanonical(request)
+	if err != nil {
+		return err
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		client.baseURL+HeadCertificationPath, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "application/json")
+	response, err := client.client.Do(httpRequest)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, headPeerMaxBody+1))
+	if err != nil || len(responseBody) == 0 || len(responseBody) > headPeerMaxBody {
+		return errors.New("[QC peer] certification response 读取失败或过大")
+	}
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("[QC peer] certification peer 返回 HTTP %d", response.StatusCode)
+	}
+	var result HeadCertificationResponseV1
+	canonical, err := wire.DecodeStrict(responseBody, headPeerMaxBody, &result)
+	if err != nil || !bytes.Equal(canonical, responseBody) || result.Schema != 1 {
+		return errors.New("[QC peer] certification response wire 无效")
+	}
+	return nil
 }
 
 type HeadAttestationCollector struct {
@@ -317,27 +432,74 @@ func (collector *HeadAttestationCollector) CertifyActive(ctx context.Context, st
 	if state.Active == nil {
 		return nil
 	}
-	if state.Active.Phase == PhaseCertified || state.Active.Phase == PhaseReconciled || state.Active.Phase == PhaseApplied {
-		return nil
-	}
-	if state.Active.Phase != PhaseCommittedNotCertified {
+	if state.Active.Phase != PhaseCommittedNotCertified && state.Active.Phase != PhaseCertified &&
+		state.Active.Phase != PhaseReconciled && state.Active.Phase != PhaseApplied {
 		return errors.New("[QC peer] pending entry 未完成 Raft commit")
 	}
-	qc, err := collector.Collect(ctx, state.Active.Entry)
-	if err != nil {
-		return err
-	}
-	for _, signature := range qc.Signatures {
-		if err := store.AddAttestation(state.Active.Entry.EntryHash, signature); err != nil {
+	if state.Active.Phase == PhaseCommittedNotCertified {
+		qc, err := collector.Collect(ctx, state.Active.Entry)
+		if err != nil {
 			return err
+		}
+		for _, signature := range qc.Signatures {
+			if err := store.AddAttestation(state.Active.Entry.EntryHash, signature); err != nil {
+				return err
+			}
 		}
 	}
 	certified := store.Snapshot()
-	if certified.Active == nil || certified.Active.Phase != PhaseCertified || certified.Active.QC == nil ||
-		!wire.EqualCanonical(*certified.Active.QC, qc) {
+	if certified.Active == nil || certified.Active.QC == nil ||
+		(certified.Active.Phase != PhaseCertified && certified.Active.Phase != PhaseReconciled &&
+			certified.Active.Phase != PhaseApplied) {
 		return errors.New("[QC peer] durable store 未冻结 exact collected QC")
 	}
-	return nil
+	return collector.distributeCertification(ctx, certified.Active)
+}
+
+func (collector *HeadAttestationCollector) distributeCertification(ctx context.Context,
+	active *OperationState) error {
+	if collector == nil || active == nil || active.QC == nil || active.RaftCommit == nil {
+		return errors.New("[QC peer] certification distribution context 不完整")
+	}
+	request := HeadCertificationRequestV1{Schema: 1,
+		RaftIndex: active.Entry.Body.Payload.RaftIndex,
+		EntryHash: active.Entry.EntryHash, QC: *cloneStableQC(active.QC)}
+	quorum, _ := wire.Quorum(len(collector.set.Members))
+	if quorum == 1 {
+		return nil
+	}
+	peerContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan error, len(collector.peers)-1)
+	remoteCount := 0
+	for memberID, peer := range collector.peers {
+		if memberID == active.RaftCommit.MemberID {
+			continue
+		}
+		remoteCount++
+		peer := peer
+		go func() {
+			results <- peer.InstallHeadCertification(peerContext, request)
+		}()
+	}
+	installed := 1
+	for received := 0; received < remoteCount; received++ {
+		select {
+		case err := <-results:
+			if err == nil {
+				installed++
+				if installed >= quorum {
+					return nil
+				}
+			}
+			if installed+(remoteCount-received-1) < quorum {
+				return errors.New("[QC peer] certification 未耐久安装到 committed ControlSet quorum")
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return errors.New("[QC peer] certification 未耐久安装到 committed ControlSet quorum")
 }
 
 func writeHeadPeerError(response http.ResponseWriter, status int) {
