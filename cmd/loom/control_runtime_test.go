@@ -14,10 +14,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"loom/internal/controlplane"
+	"loom/internal/crdt"
 	"loom/internal/wire"
 )
 
@@ -75,6 +77,56 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 		result.OperationTreeSize, result.OperationAuditPath, &result.Head); err != nil {
 		t.Fatal(err)
 	}
+	if runtime.operationMaterials == nil || runtime.operationPeers == nil {
+		t.Fatal("正式 control daemon 未初始化 operation material anti-entropy")
+	}
+	materials := runtime.operationMaterials.Snapshot()
+	if len(materials) != 1 || bytes.Contains(materials[0].Payload, []byte(`"result"`)) ||
+		bytes.Contains(materials[0].Payload, []byte(`"phases"`)) {
+		t.Fatalf("operation material 混入本地执行进度: %#v", materials)
+	}
+	material, err := decodeControlOperationMaterialObject(materials[0])
+	if err != nil || material.Candidate.EntryHash != result.Head.EntryHash ||
+		material.Leaf.OperationID != submitted.Operation.Body.OperationID {
+		t.Fatalf("operation material 未绑定 certified Head: %#v err=%v", material, err)
+	}
+	t.Run("rejects tampered immutable material", func(t *testing.T) {
+		tamperedObject := materials[0]
+		tamperedObject.ObjectID = "sha256:" + strings.Repeat("0", 64)
+		if _, err := decodeControlOperationMaterialObject(tamperedObject); err == nil {
+			t.Fatal("接受了 object_id 与 exact bytes 不匹配的 operation material")
+		}
+
+		tamperedCandidate := controlClone(material)
+		tamperedCandidate.Candidate.EntryHash = "sha256:" + strings.Repeat("1", 64)
+		payload, err := wire.MarshalCanonical(tamperedCandidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		object, err := crdt.NewObject(tamperedCandidate.Candidate.EntryHash,
+			controlOperationMaterialKind, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeControlOperationMaterialObject(object); err == nil {
+			t.Fatal("接受了未绑定 body 的伪造 candidate entry hash")
+		}
+
+		duplicateLeaf := controlClone(material)
+		duplicateLeaf.AdditionalLeaves = []wire.ControlOperationLeafV1{duplicateLeaf.Leaf}
+		payload, err = wire.MarshalCanonical(duplicateLeaf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		object, err = crdt.NewObject(duplicateLeaf.Candidate.EntryHash,
+			controlOperationMaterialKind, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeControlOperationMaterialObject(object); err == nil {
+			t.Fatal("接受了重复 operation ID 的 additional leaf")
+		}
+	})
 
 	// Reopening must campaign again, commit/apply the barrier, and preserve the
 	// exact certified operation head rather than synthesizing a second result.
@@ -86,6 +138,10 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 	if after.Head.HeadHash != result.Head.HeadHash || after.Raft.Term <= status.Raft.Term ||
 		after.Raft.CommitIndex != after.Raft.LastApplied {
 		t.Fatalf("restart recovery changed authority or left prefix unapplied: %#v", after.Raft)
+	}
+	if got := reopened.operationMaterials.Snapshot(); len(got) != 1 ||
+		got[0].ObjectID != materials[0].ObjectID {
+		t.Fatalf("restart changed immutable operation material: %#v", got)
 	}
 }
 

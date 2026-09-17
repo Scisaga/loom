@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"loom/internal/controlplane"
+	"loom/internal/crdt"
 	"loom/internal/dnsprovider"
 	"loom/internal/enrollmentv2"
 	"loom/internal/publish"
@@ -184,29 +185,31 @@ type controlCertifiedOperationResultV1 struct {
 }
 
 type controlRuntime struct {
-	mu               sync.Mutex
-	dir              string
-	config           controlDiskConfigV1
-	journal          controlOperationJournalV1
-	applicationCache controlApplicationCache
-	configKey        ed25519.PrivateKey
-	controlTLS       tls.Certificate
-	browserTLS       tls.Certificate
-	peerTLS          tls.Certificate
-	storage          *controlplane.RaftStorage
-	store            *controlplane.Store
-	leader           *controlplane.StableRaftLeader
-	service          *controlplane.PrivateControlService
-	uiReadOnly       http.Handler
-	uiAdmin          http.Handler
-	enrollmentPeers  http.Handler
-	headPeers        http.Handler
-	headCollector    *controlplane.HeadAttestationCollector
-	now              func() time.Time
-	progress         atomic.Pointer[controlOperationReadState]
-	enrollmentStore  *enrollmentv2.Store
-	enrollmentKey    ed25519.PrivateKey
-	distribution     publish.Target
+	mu                 sync.Mutex
+	dir                string
+	config             controlDiskConfigV1
+	journal            controlOperationJournalV1
+	applicationCache   controlApplicationCache
+	configKey          ed25519.PrivateKey
+	controlTLS         tls.Certificate
+	browserTLS         tls.Certificate
+	peerTLS            tls.Certificate
+	storage            *controlplane.RaftStorage
+	store              *controlplane.Store
+	leader             *controlplane.StableRaftLeader
+	service            *controlplane.PrivateControlService
+	uiReadOnly         http.Handler
+	uiAdmin            http.Handler
+	enrollmentPeers    http.Handler
+	headPeers          http.Handler
+	headCollector      *controlplane.HeadAttestationCollector
+	operationPeers     http.Handler
+	operationMaterials *crdt.Store
+	now                func() time.Time
+	progress           atomic.Pointer[controlOperationReadState]
+	enrollmentStore    *enrollmentv2.Store
+	enrollmentKey      ed25519.PrivateKey
+	distribution       publish.Target
 	// checkpoint 在每个已耐久化阶段之后调用，用于故障注入验证恢复边界（D104）。
 	checkpoint func(controlplane.Phase) error
 }
@@ -851,6 +854,24 @@ func openControlRuntimeConfigured(dir string, now func() time.Time, distribution
 	runtime := &controlRuntime{dir: dir, config: config, journal: journal, distribution: distribution,
 		configKey: decodedKeys[1], enrollmentKey: decodedKeys[2], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
 		storage: storage, store: store, now: now}
+	runtime.operationMaterials, err = crdt.Open(filepath.Join(dir, controlOperationMaterialName))
+	if err != nil {
+		return nil, err
+	}
+	if err := runtime.persistOperationMaterialsLocked(); err != nil {
+		return nil, err
+	}
+	for _, object := range runtime.operationMaterials.Snapshot() {
+		if err := runtime.verifyControlOperationMaterialObject(context.Background(), object); err != nil {
+			return nil, err
+		}
+	}
+	runtime.operationPeers, err = controlplane.NewCRDTAntiEntropyHTTPHandler(config.MemberID,
+		runtime.operationMaterials, config.ControlSet, config.PeerDirectory, now,
+		runtime.verifyControlOperationMaterialObject)
+	if err != nil {
+		return nil, err
+	}
 	headVoter, err := controlplane.NewHeadAttestationVoter(storage, store, config.ControlSet,
 		config.MemberID, decodedKeys[1], runtime.verifyCommittedHead)
 	if err != nil {
@@ -1251,6 +1272,9 @@ func controlplaneResult(result *controlCertifiedOperationResultV1) (controlplane
 }
 
 func (runtime *controlRuntime) persistJournalLocked() error {
+	if err := runtime.persistOperationMaterialsLocked(); err != nil {
+		return err
+	}
 	if err := writeCanonicalAtomic(filepath.Join(runtime.dir, controlJournalName), runtime.journal, 0o600); err != nil {
 		return err
 	}
@@ -1311,6 +1335,7 @@ func (runtime *controlRuntime) serve() error {
 	peers := http.NewServeMux()
 	peers.Handle(controlplane.HeadAttestationVotePath, runtime.headPeers)
 	peers.Handle(controlplane.HeadCertificationPath, runtime.headPeers)
+	peers.Handle(controlplane.CRDTAntiEntropyPath, runtime.operationPeers)
 	if runtime.enrollmentPeers != nil {
 		peers.Handle(controlplane.EnrollmentAdmissionVotePath, runtime.enrollmentPeers)
 		peers.Handle(controlplane.EnrollmentApprovalVotePath, runtime.enrollmentPeers)
