@@ -92,6 +92,21 @@ loom bootstrap render-public -bundle <交付文件> -device <原节点> \
 保留已认证结果，以相同输出目录重试，不生成第二个邀请。即使这些源码入口已接通，仍须以精确部署提交、
 公网正常下载和一次真实 Enrollment 成功回读证明生产完成，不能用握手或 404 代替业务验收。
 
+正式 `control serve` 还必须配置同一组 2–3 个发布目标；SSH 目标同时要求绝对 `-ssh-config`：
+
+```text
+loom control serve -state-dir /var/lib/loom-control \
+  -ssh-config /etc/loom/distribution-ssh.conf \
+  -distribution-target /srv/loom-static \
+  -distribution-target ssh://demo-mirror-b/srv/loom-static
+```
+
+生产 unit 用 drop-in 原子替换 `ExecStart`，并按实际本地镜像补充 `ReadWritePaths`、按实际 SSH 配置和
+identity 补充 `ReadOnlyPaths`；不得放宽整个文件系统。未配置镜像时 daemon 可继续提供既有 LKG，
+但新的 Enrollment 会在 completion 返回前失败关闭。配置完成后，daemon 只在 completion 已取得 QC 后
+发布客户端及承载服务器的无秘密配置，并要求全部镜像逐对象回读 exact bytes；部分发布或重启只重放同一
+内容地址对象，不重新签发身份或产生第二个 Device。
+
 分阶段验收可在 Linux fresh profile 的正常入口增加 `-defer-runtime`：它仍完成真实 Bootstrap、
 私有 Enrollment、sealed artifact/config 下载以及 identity/view/floors 的原子持久化，只暂不修改宿主
 systemd 与数据面。该选项只能证明控制链和客户端回读，不能抵扣 Linux issue 的 runtime、流量或故障矩阵。

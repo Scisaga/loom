@@ -39,6 +39,7 @@ import (
 	"loom/internal/controlplane"
 	"loom/internal/dnsprovider"
 	"loom/internal/enrollmentv2"
+	"loom/internal/publish"
 	"loom/internal/webui"
 	"loom/internal/wire"
 )
@@ -203,6 +204,7 @@ type controlRuntime struct {
 	progress         atomic.Pointer[controlOperationReadState]
 	enrollmentStore  *enrollmentv2.Store
 	enrollmentKey    ed25519.PrivateKey
+	distribution     publish.Target
 	// checkpoint 在每个已耐久化阶段之后调用，用于故障注入验证恢复边界（D104）。
 	checkpoint func(controlplane.Phase) error
 }
@@ -299,18 +301,25 @@ func cmdControlBootstrap(args []string) error {
 func cmdControlServe(args []string) error {
 	fs := flag.NewFlagSet("control serve", flag.ContinueOnError)
 	dir := fs.String("state-dir", "/var/lib/loom-control", "控制面状态目录")
+	sshConfig := fs.String("ssh-config", "", "SSH 静态分发目标使用的绝对配置路径")
+	var distributionTargets repeatedFlag
+	fs.Var(&distributionTargets, "distribution-target", "静态镜像根目录或 ssh://<alias>/<绝对目录>；生产 Enrollment 重复提供 2–3 次")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("control serve 不接受位置参数")
 	}
+	distribution, err := controlDistributionTarget(distributionTargets, *sshConfig)
+	if err != nil {
+		return err
+	}
 	unlock, err := lockControlState(*dir)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	runtime, err := openControlRuntime(*dir, time.Now)
+	runtime, err := openControlRuntimeConfigured(*dir, time.Now, distribution)
 	if err != nil {
 		return err
 	}
@@ -737,6 +746,14 @@ func makeControlGenesisEvidence(clusterID, setHash, directoryHash, aclRoot strin
 }
 
 func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, error) {
+	local, err := publish.ParseTarget(filepath.Join(dir, "public"), "")
+	if err != nil {
+		return nil, err
+	}
+	return openControlRuntimeConfigured(dir, now, local)
+}
+
+func openControlRuntimeConfigured(dir string, now func() time.Time, distribution publish.Target) (*controlRuntime, error) {
 	if now == nil {
 		return nil, errors.New("control runtime 需要可信时间源")
 	}
@@ -829,7 +846,7 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	if err != nil {
 		return nil, err
 	}
-	runtime := &controlRuntime{dir: dir, config: config, journal: journal,
+	runtime := &controlRuntime{dir: dir, config: config, journal: journal, distribution: distribution,
 		configKey: decodedKeys[1], enrollmentKey: decodedKeys[2], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
 		storage: storage, store: store, now: now}
 	runtime.enrollmentStore, err = enrollmentv2.OpenStore(filepath.Join(dir, "enrollment-transactions.json"))
@@ -852,6 +869,9 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 		return nil, err
 	}
 	if err := runtime.recoverPendingOperations(); err != nil {
+		return nil, err
+	}
+	if err := runtime.reconcileEnrollmentDistributionPrefix(); err != nil {
 		return nil, err
 	}
 	service, err := controlplane.NewPrivateControlService(config.OverlayIP, config.ControlPort,
@@ -952,11 +972,24 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 		if err := runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseCertified); err != nil {
 			return err
 		}
+		evidence := []string{}
+		for index := range runtime.journal.Records {
+			record := &runtime.journal.Records[index]
+			if record.Candidate.EntryHash != state.Active.Entry.EntryHash {
+				continue
+			}
+			var err error
+			evidence, err = runtime.reconcileEnrollmentDistributionRecordLocked(record)
+			if err != nil {
+				return err
+			}
+			break
+		}
 		if err := runtime.reconcileEnrollmentPrefixLocked(); err != nil {
 			return err
 		}
-		// 私有事务投影已耐久化；ping 本身没有外部副作用（D108、D130）。
-		if err := runtime.store.MarkReconciled(state.Active.Entry.EntryHash, []string{}); err != nil {
+		// completion 的全部公开配置已在认证镜像回读；随后才开放私有事务结果。
+		if err := runtime.store.MarkReconciled(state.Active.Entry.EntryHash, evidence); err != nil {
 			return err
 		}
 	}
