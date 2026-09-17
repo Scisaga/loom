@@ -892,13 +892,13 @@ func openControlRuntimeConfiguredMode(dir string, now func() time.Time, distribu
 		return nil, err
 	}
 	for _, object := range runtime.operationMaterials.Snapshot() {
-		if err := runtime.verifyControlOperationMaterialObject(context.Background(), object); err != nil {
+		if err := runtime.verifyControlReplicationMaterialObject(context.Background(), object); err != nil {
 			return nil, err
 		}
 	}
 	runtime.operationPeers, err = controlplane.NewCRDTAntiEntropyHTTPHandler(config.MemberID,
 		runtime.operationMaterials, config.ControlSet, config.PeerDirectory, now,
-		runtime.verifyControlOperationMaterialObject)
+		runtime.verifyControlReplicationMaterialObject)
 	if err != nil {
 		return nil, err
 	}
@@ -908,7 +908,7 @@ func openControlRuntimeConfiguredMode(dir string, now func() time.Time, distribu
 		return nil, err
 	}
 	runtime.headPeers, err = controlplane.NewHeadAttestationHTTPHandler(config.ControlSet,
-		config.PeerDirectory, now, headVoter)
+		config.PeerDirectory, now, &controlFollowerHeadPeer{runtime: runtime, peer: headVoter})
 	if err != nil {
 		return nil, err
 	}
@@ -1036,6 +1036,12 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 		return err
 	}
 	state := runtime.store.Snapshot()
+	if state.CertifiedHead != nil && state.CertifiedQC != nil {
+		if err := runtime.persistHeadCertificationMaterialLocked(*state.CertifiedHead,
+			*state.CertifiedQC); err != nil {
+			return err
+		}
+	}
 	if state.Active != nil && state.Active.Phase == controlplane.PhaseCommittedNotCertified {
 		if err := runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseCommittedNotCertified); err != nil {
 			return err
@@ -1048,6 +1054,12 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 		return err
 	}
 	state = runtime.store.Snapshot()
+	if state.CertifiedHead != nil && state.CertifiedQC != nil {
+		if err := runtime.persistHeadCertificationMaterialLocked(*state.CertifiedHead,
+			*state.CertifiedQC); err != nil {
+			return err
+		}
+	}
 	if state.Active == nil {
 		if err := runtime.projectAdminRotations(); err != nil {
 			return err
@@ -1142,23 +1154,37 @@ func (runtime *controlRuntime) finalizeJournalResultLocked(head wire.HeadEntryV2
 		if record.Result != nil {
 			return nil
 		}
-		leaves := runtime.operationLeaves(index + 1)
-		leaf, leafIndex, treeSize, path, err := wire.ControlOperationInclusionProof(leaves,
-			record.Leaf.OperationID)
+		result, err := runtime.certifiedOperationResultLocked(index, head, qc)
 		if err != nil {
 			return err
 		}
-		encodedQC, err := wire.MarshalCanonical(qc)
-		if err != nil {
-			return err
-		}
-		record.Result = &controlCertifiedOperationResultV1{Schema: 1, Status: "certified",
-			RequestID: record.Leaf.OperationID, Head: head, ConfigQC: encodedQC,
-			OperationLeaf: leaf, OperationLeafIndex: leafIndex, OperationTreeSize: treeSize,
-			OperationAuditPath: path}
+		record.Result = result
 		return runtime.persistJournalLocked()
 	}
 	return errors.New("certified ordinary Head 缺 operation journal record")
+}
+
+func (runtime *controlRuntime) certifiedOperationResultLocked(index int, head wire.HeadEntryV2,
+	qc *wire.StableHeadReplicationQCV1) (*controlCertifiedOperationResultV1, error) {
+	if qc == nil || index < 0 || index >= len(runtime.journal.Records) ||
+		!wire.EqualCanonical(runtime.journal.Records[index].Candidate, head) {
+		return nil, errors.New("certified operation result 的 journal/head/QC binding 无效")
+	}
+	record := &runtime.journal.Records[index]
+	leaves := runtime.operationLeaves(index + 1)
+	leaf, leafIndex, treeSize, path, err := wire.ControlOperationInclusionProof(leaves,
+		record.Leaf.OperationID)
+	if err != nil {
+		return nil, err
+	}
+	encodedQC, err := wire.MarshalCanonical(qc)
+	if err != nil {
+		return nil, err
+	}
+	return &controlCertifiedOperationResultV1{Schema: 1, Status: "certified",
+		RequestID: record.Leaf.OperationID, Head: head, ConfigQC: encodedQC,
+		OperationLeaf: leaf, OperationLeafIndex: leafIndex, OperationTreeSize: treeSize,
+		OperationAuditPath: path}, nil
 }
 
 func (runtime *controlRuntime) readAuthority(_ context.Context) (controlplane.ControlAuthoritySnapshotV1, error) {

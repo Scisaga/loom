@@ -1,6 +1,7 @@
 # v2 私有控制面运维
 
-**适用范围：** 本仓库提供的 N=1 控制服务初始化、管理员材料、启动与相关验收。
+**适用范围：** 本仓库提供的初始 N=1 控制 authority、已提交稳定 ControlSet 的服务启动、
+管理员材料与相关验收。
 正常业务接线及缺口见[实现对照](../development/implementation.md)；协议按[控制面规范](../protocols/control-plane/README.md)。
 本文不表示某环境已部署，也不自行授权初始化、换证、发布或停服。
 
@@ -9,7 +10,9 @@
 
 ## 服务边界
 
-- `control` 为 Device 的正交职责；当前 daemon 仅支持 `N=1,q=1`。
+- `control` 为 Device 的正交职责；`control bootstrap` 只初始化 `N=1,q=1`，`control serve`
+  可按已提交的稳定 ControlSet 启动 N 个 voter，并以 `q=floor(N/2)+1` 提交和认证。在线添加
+  learner、Joint/Final 换届仍未接入正式管理事务，不能靠直接编辑静态配置扩容。
 - overlay `control_api` 与 Raft 使用不同端口，均不经公网 Nginx。exact IPv4 loopback 上的同号
   control listener 仅提供浏览器 UI，不开放 private status/operation。
 - overlay 保留 certified Ed25519 native identity/SPKI pin；loopback 使用独立 P-256 browser

@@ -13,6 +13,37 @@ type controlOperationMaterialPeer interface {
 	Sync(context.Context) (controlplane.CRDTAntiEntropyResultV1, error)
 }
 
+// controlFollowerHeadPeer 在 controlplane 已验证并耐久安装 QC 后，把同一
+// certification 加入复制材料并重建本副本业务投影。leader 的本机 voter 不走该
+// wrapper，避免在持有 runtime.mu 的提交路径中重入。
+type controlFollowerHeadPeer struct {
+	runtime *controlRuntime
+	peer    controlplane.HeadAttestationPeer
+}
+
+func (peer *controlFollowerHeadPeer) VoteHeadAttestation(ctx context.Context,
+	request controlplane.HeadAttestationVoteRequestV1) (wire.ControlConfigSignatureV1, error) {
+	if peer == nil || peer.runtime == nil || peer.peer == nil {
+		return wire.ControlConfigSignatureV1{}, errors.New("[control follower] Head voter 未初始化")
+	}
+	peer.runtime.mu.Lock()
+	defer peer.runtime.mu.Unlock()
+	return peer.peer.VoteHeadAttestation(ctx, request)
+}
+
+func (peer *controlFollowerHeadPeer) InstallHeadCertification(ctx context.Context,
+	request controlplane.HeadCertificationRequestV1) error {
+	if peer == nil || peer.runtime == nil || peer.peer == nil {
+		return errors.New("[control follower] Head voter 未初始化")
+	}
+	peer.runtime.mu.Lock()
+	defer peer.runtime.mu.Unlock()
+	if err := peer.peer.InstallHeadCertification(ctx, request); err != nil {
+		return err
+	}
+	return peer.runtime.installFollowerProjectionLocked(request)
+}
+
 type controlRaftPeerGroup struct {
 	memberID string
 	clients  []*controlplane.RaftPeerClient
@@ -135,7 +166,7 @@ func (runtime *controlRuntime) configureStableControlPeers(local controlplane.He
 			operationClient, err := controlplane.NewCRDTAntiEntropyPeerClient(endpoint.URL,
 				runtime.config.MemberID, member.MemberID, runtime.peerTLS, runtime.config.ControlSet,
 				runtime.config.PeerDirectory, runtime.operationMaterials, runtime.now,
-				runtime.verifyControlOperationMaterialObject)
+				runtime.verifyControlReplicationMaterialObject)
 			if err != nil {
 				return err
 			}

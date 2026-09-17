@@ -119,8 +119,9 @@ func (voter *HeadAttestationVoter) VoteHeadAttestation(ctx context.Context,
 		record.Head.EntryHash != request.EntryHash || record.Head.Body.Payload.ControlSetHash != setHash {
 		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] committed entry/hash/ControlSet binding 无效")
 	}
-	if _, err := ApplyCommittedPrefix(ctx, voter.storage, voter.store, voter.recompute); err != nil {
-		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] 本机 committed prefix apply 失败")
+	if _, err := ApplyCommittedPrefixThrough(ctx, voter.storage, voter.store, voter.recompute,
+		request.RaftIndex); err != nil {
+		return wire.ControlConfigSignatureV1{}, fmt.Errorf("[QC peer] 本机 committed prefix apply 失败: %w", err)
 	}
 	state := voter.store.Snapshot()
 	if state.Active == nil || state.Active.Entry.EntryHash != request.EntryHash ||
@@ -160,7 +161,8 @@ func (voter *HeadAttestationVoter) InstallHeadCertification(ctx context.Context,
 	if err := wire.VerifyStableHeadQC(record.Head, &voter.set, &request.QC); err != nil {
 		return err
 	}
-	if _, err := ApplyCommittedPrefix(ctx, voter.storage, voter.store, voter.recompute); err != nil {
+	if _, err := ApplyCommittedPrefixThrough(ctx, voter.storage, voter.store, voter.recompute,
+		request.RaftIndex); err != nil {
 		return err
 	}
 	if err := voter.store.InstallCertification(request.EntryHash, request.QC); err != nil {
@@ -392,6 +394,7 @@ func (collector *HeadAttestationCollector) Collect(ctx context.Context,
 		}()
 	}
 	signatures := make([]wire.ControlConfigSignatureV1, 0, len(collector.set.Members))
+	lastError := errors.New("[QC peer] 没有有效 attestation")
 	for range collector.set.Members {
 		var value result
 		select {
@@ -399,15 +402,21 @@ func (collector *HeadAttestationCollector) Collect(ctx context.Context,
 		case <-ctx.Done():
 			return wire.StableHeadReplicationQCV1{}, ctx.Err()
 		}
-		if value.err != nil || value.value.MemberID != value.memberID ||
+		if value.err != nil {
+			lastError = value.err
+			continue
+		}
+		if value.value.MemberID != value.memberID ||
 			wire.VerifyHeadAttestationSignature(&entry, &value.value, &collector.set) != nil {
+			lastError = errors.New("[QC peer] attestation signer/binding 无效")
 			continue
 		}
 		signatures = append(signatures, value.value)
 	}
 	quorum, _ := wire.Quorum(len(collector.set.Members))
 	if len(signatures) < quorum {
-		return wire.StableHeadReplicationQCV1{}, errors.New("[QC peer] post-commit attestations 未达到 committed ControlSet quorum")
+		return wire.StableHeadReplicationQCV1{}, fmt.Errorf(
+			"[QC peer] post-commit attestations 未达到 committed ControlSet quorum: %w", lastError)
 	}
 	sort.Slice(signatures, func(i, j int) bool {
 		if signatures[i].MemberID != signatures[j].MemberID {

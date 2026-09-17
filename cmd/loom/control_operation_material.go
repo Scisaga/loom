@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	controlOperationMaterialName = "operation-materials.json"
-	controlOperationMaterialKind = "control_operation_material_v1"
+	controlOperationMaterialName          = "operation-materials.json"
+	controlOperationMaterialKind          = "control_operation_material_v1"
+	controlHeadCertificationMaterialKind  = "control_head_certification_material_v1"
+	controlHeadCertificationLogicalSuffix = ".certification"
 )
 
 // controlOperationMaterialV1 只包含 follower 重算 Head 所需的不可变输入。
@@ -32,6 +34,16 @@ type controlOperationMaterialV1 struct {
 	DevicePublication      *controlDevicePublicationV1      `json:"device_publication,omitempty"`
 	BootstrapAdvertisement *controlBootstrapAdvertisementV1 `json:"bootstrap_advertisement,omitempty"`
 	AdditionalLeaves       []wire.ControlOperationLeafV1    `json:"additional_leaves,omitempty"`
+}
+
+// controlHeadCertificationMaterialV1 保存已由 committed ControlSet 形成的 exact
+// QC。它与 reducer preimage 分成两个 add-only 对象，避免在认证后改写原 CRDT
+// 对象；learner 可据此按 Raft 顺序逐条恢复历史 certified Head。
+type controlHeadCertificationMaterialV1 struct {
+	Schema     int                            `json:"schema"`
+	Head       wire.HeadEntryV2               `json:"head"`
+	ControlSet wire.ControlSetV1              `json:"control_set"`
+	QC         wire.StableHeadReplicationQCV1 `json:"qc"`
 }
 
 func controlOperationMaterial(record controlOperationRecordV1) controlOperationMaterialV1 {
@@ -101,6 +113,75 @@ func decodeControlOperationMaterialObject(object crdt.Object) (controlOperationM
 	return material, nil
 }
 
+func newControlHeadCertificationMaterialObject(head wire.HeadEntryV2, set wire.ControlSetV1,
+	qc wire.StableHeadReplicationQCV1) (crdt.Object, error) {
+	material := controlHeadCertificationMaterialV1{Schema: 1, Head: controlClone(head),
+		ControlSet: controlClone(set), QC: controlClone(qc)}
+	if err := validateControlHeadCertificationMaterial(&material); err != nil {
+		return crdt.Object{}, err
+	}
+	logicalID, err := controlHeadCertificationLogicalID(&material)
+	if err != nil {
+		return crdt.Object{}, err
+	}
+	payload, err := wire.MarshalCanonical(material)
+	if err != nil {
+		return crdt.Object{}, err
+	}
+	return crdt.NewObject(logicalID,
+		controlHeadCertificationMaterialKind, payload)
+}
+
+func decodeControlHeadCertificationMaterialObject(object crdt.Object) (controlHeadCertificationMaterialV1, error) {
+	var material controlHeadCertificationMaterialV1
+	if object.Kind != controlHeadCertificationMaterialKind || object.ID == "" {
+		return material, errors.New("[Head certification material] CRDT object kind/id 无效")
+	}
+	rebuiltObject, err := crdt.NewObject(object.ID, object.Kind, object.Payload)
+	if err != nil || rebuiltObject.ObjectID != object.ObjectID {
+		return material, errors.New("[Head certification material] CRDT object hash 无效")
+	}
+	canonical, err := wire.DecodeStrict(object.Payload, 16<<20, &material)
+	if err != nil || string(canonical) != string(object.Payload) {
+		return material, errors.New("[Head certification material] payload 不是 exact canonical wire")
+	}
+	if err := validateControlHeadCertificationMaterial(&material); err != nil {
+		return material, err
+	}
+	logicalID, err := controlHeadCertificationLogicalID(&material)
+	if err != nil || object.ID != logicalID {
+		return material, errors.New("[Head certification material] logical ID 未绑定 Head")
+	}
+	return material, nil
+}
+
+// 同一 Head 在 leader 换届时可能形成不同但都有效的 quorum signer 子集。logical
+// ID 必须同时绑定 QC hash，才能让 add-only union 保存这些证明而不是制造伪冲突。
+func controlHeadCertificationLogicalID(material *controlHeadCertificationMaterialV1) (string, error) {
+	if material == nil {
+		return "", errors.New("[Head certification material] material 不能为空")
+	}
+	qcHash, err := wire.QCStableHash(&material.QC)
+	if err != nil {
+		return "", err
+	}
+	return material.Head.EntryHash + controlHeadCertificationLogicalSuffix + "." + qcHash, nil
+}
+
+func validateControlHeadCertificationMaterial(material *controlHeadCertificationMaterialV1) error {
+	if material == nil || material.Schema != 1 {
+		return errors.New("[Head certification material] schema 无效")
+	}
+	if err := wire.ValidateHeadEntry(&material.Head, nil); err != nil {
+		return err
+	}
+	setHash, err := wire.ControlSetHash(&material.ControlSet)
+	if err != nil || setHash != material.Head.Body.Payload.ControlSetHash {
+		return errors.New("[Head certification material] ControlSet 未绑定 Head")
+	}
+	return wire.VerifyStableHeadQC(&material.Head, &material.ControlSet, &material.QC)
+}
+
 func validateControlOperationMaterial(material *controlOperationMaterialV1) error {
 	if material == nil || material.Schema != 1 || material.Candidate.Body.Payload.HeadKind == "bootstrap" ||
 		material.Candidate.Body.Payload.RaftIndex < 2 || material.Leaf.Schema != 1 ||
@@ -144,10 +225,206 @@ func validateControlOperationMaterial(material *controlOperationMaterialV1) erro
 	return nil
 }
 
-func (runtime *controlRuntime) verifyControlOperationMaterialObject(_ context.Context,
+func (runtime *controlRuntime) verifyControlReplicationMaterialObject(_ context.Context,
 	object crdt.Object) error {
-	_, err := decodeControlOperationMaterialObject(object)
-	return err
+	switch object.Kind {
+	case controlOperationMaterialKind:
+		_, err := decodeControlOperationMaterialObject(object)
+		return err
+	case controlHeadCertificationMaterialKind:
+		_, err := decodeControlHeadCertificationMaterialObject(object)
+		return err
+	default:
+		return errors.New("[control replication material] 未知 CRDT object kind")
+	}
+}
+
+func (runtime *controlRuntime) persistHeadCertificationMaterialLocked(head wire.HeadEntryV2,
+	qc wire.StableHeadReplicationQCV1) error {
+	if runtime.operationMaterials == nil {
+		return errors.New("[Head certification material] store 未初始化")
+	}
+	object, err := newControlHeadCertificationMaterialObject(head, runtime.config.ControlSet, qc)
+	if err != nil {
+		return err
+	}
+	return runtime.operationMaterials.Add(object)
+}
+
+// installFollowerProjectionLocked 在 controlplane 已完成 commit/QC 安装之后重建本
+// 副本的 durable journal 与业务投影。每个历史 Head 都必须同时具备 exact reducer
+// preimage 和 exact certification；缺一项就失败关闭，不能用当前 QC 推导历史结果。
+func (runtime *controlRuntime) installFollowerProjectionLocked(
+	request controlplane.HeadCertificationRequestV1) error {
+	if runtime.storage == nil || runtime.store == nil || runtime.operationMaterials == nil {
+		return errors.New("[control follower] storage/store/replication material 未初始化")
+	}
+	raft := runtime.storage.SnapshotRaft()
+	if request.RaftIndex < 1 || request.RaftIndex > raft.LastApplied ||
+		request.RaftIndex > int64(len(raft.Log)) {
+		return errors.New("[control follower] certification 尚未 apply 到本机 Raft prefix")
+	}
+	target := raft.Log[request.RaftIndex-1]
+	if target.Kind != controlplane.RaftRecordHead || target.Head == nil ||
+		target.EntryHash != request.EntryHash {
+		return errors.New("[control follower] certification target 不是 exact Head record")
+	}
+	if err := runtime.persistHeadCertificationMaterialLocked(*target.Head, request.QC); err != nil {
+		return err
+	}
+	return runtime.rebuildCertifiedJournalLocked(request.RaftIndex)
+}
+
+func (runtime *controlRuntime) rebuildCertifiedJournalLocked(through int64) error {
+	raft := runtime.storage.SnapshotRaft()
+	state := runtime.store.Snapshot()
+	if through < 1 || through > raft.LastApplied || through > raft.CommitIndex ||
+		state.CertifiedHead == nil || state.CertifiedQC == nil ||
+		state.CertifiedHead.Body.Payload.RaftIndex != through {
+		return errors.New("[control follower] certified journal 恢复坐标无效")
+	}
+	needsApply := state.Active != nil
+	if needsApply && (state.Active.Entry.EntryHash != state.CertifiedHead.EntryHash ||
+		(state.Active.Phase != controlplane.PhaseCertified &&
+			state.Active.Phase != controlplane.PhaseReconciled)) {
+		return errors.New("[control follower] certified active state 与恢复 Head 不一致")
+	}
+	operationMaterials := make(map[string]controlOperationMaterialV1)
+	certifications := make(map[string][]controlHeadCertificationMaterialV1)
+	for _, object := range runtime.operationMaterials.Snapshot() {
+		switch object.Kind {
+		case controlOperationMaterialKind:
+			material, err := decodeControlOperationMaterialObject(object)
+			if err != nil {
+				return err
+			}
+			operationMaterials[material.Candidate.EntryHash] = material
+		case controlHeadCertificationMaterialKind:
+			material, err := decodeControlHeadCertificationMaterialObject(object)
+			if err != nil {
+				return err
+			}
+			certifications[material.Head.EntryHash] = append(
+				certifications[material.Head.EntryHash], material)
+		default:
+			return errors.New("[control follower] replication material 含未知 kind")
+		}
+	}
+
+	original := runtime.journal
+	rebuilt := controlOperationJournalV1{Schema: 1, Records: []controlOperationRecordV1{}}
+	runtime.journal = rebuilt
+	restore := true
+	defer func() {
+		if restore {
+			runtime.journal = original
+		}
+	}()
+	for _, raftRecord := range raft.Log[:through] {
+		if raftRecord.Kind == controlplane.RaftRecordNoOp {
+			continue
+		}
+		if raftRecord.Kind != controlplane.RaftRecordHead || raftRecord.Head == nil {
+			return errors.New("[control follower] stable certified prefix 含 membership record")
+		}
+		if raftRecord.Head.Body.Payload.HeadKind == "bootstrap" {
+			continue
+		}
+		material, materialOK := operationMaterials[raftRecord.EntryHash]
+		certification, certificationOK := selectControlHeadCertification(
+			certifications[raftRecord.EntryHash], *raftRecord.Head, through,
+			state.CertifiedQC, original, len(runtime.journal.Records))
+		if !materialOK || !certificationOK ||
+			!wire.EqualCanonical(material.Candidate, *raftRecord.Head) ||
+			!wire.EqualCanonical(certification.Head, *raftRecord.Head) {
+			return errors.New("[control follower] committed Head 缺 exact preimage/certification")
+		}
+		record := controlOperationMaterialRecord(material)
+		runtime.journal.Records = append(runtime.journal.Records, record)
+		index := len(runtime.journal.Records) - 1
+		if err := runtime.verifyOperationRecord(index); err != nil {
+			return fmt.Errorf("[control follower] record[%d] 独立重算失败: %w", index, err)
+		}
+		result, err := runtime.certifiedOperationResultLocked(index, record.Candidate,
+			&certification.QC)
+		if err != nil {
+			return err
+		}
+		runtime.journal.Records[index].Result = result
+		phases := []controlplane.Phase{
+			controlplane.PhasePending, controlplane.PhaseCommittedNotCertified,
+			controlplane.PhaseCertified,
+		}
+		if raftRecord.Index < through || !needsApply {
+			phases = append(phases, controlplane.PhaseReconciled, controlplane.PhaseApplied)
+		}
+		runtime.journal.Records[index].Phases = phases
+	}
+	if len(original.Records) > len(runtime.journal.Records) {
+		for _, pending := range original.Records[len(runtime.journal.Records):] {
+			if pending.Result != nil || pending.Candidate.Body.Payload.RaftIndex <= through {
+				return errors.New("[control follower] 本地 journal 与 certified prefix 冲突")
+			}
+			runtime.journal.Records = append(runtime.journal.Records, controlClone(pending))
+		}
+	}
+	if err := runtime.persistJournalLocked(); err != nil {
+		return err
+	}
+	restore = false
+	if err := runtime.reconcileEnrollmentPrefixLocked(); err != nil {
+		return err
+	}
+	if needsApply {
+		entryHash := state.CertifiedHead.EntryHash
+		if err := runtime.store.MarkReconciled(entryHash, nil); err != nil {
+			return err
+		}
+		if err := runtime.recordOperationPhaseLocked(entryHash, controlplane.PhaseReconciled); err != nil {
+			return err
+		}
+		if err := runtime.store.MarkApplied(entryHash); err != nil {
+			return err
+		}
+		if err := runtime.recordOperationPhaseLocked(entryHash, controlplane.PhaseApplied); err != nil {
+			return err
+		}
+	}
+	if err := runtime.projectAdminRotations(); err != nil {
+		return err
+	}
+	return runtime.recoverAppliedProgressLocked()
+}
+
+func selectControlHeadCertification(candidates []controlHeadCertificationMaterialV1,
+	head wire.HeadEntryV2, through int64, currentQC *wire.StableHeadReplicationQCV1,
+	original controlOperationJournalV1, journalIndex int) (controlHeadCertificationMaterialV1, bool) {
+	if len(candidates) == 0 {
+		return controlHeadCertificationMaterialV1{}, false
+	}
+	// 当前恢复点必须使用 control Store 已耐久安装的 exact QC。
+	if head.Body.Payload.RaftIndex == through && currentQC != nil {
+		for _, candidate := range candidates {
+			if wire.EqualCanonical(candidate.QC, *currentQC) {
+				return candidate, true
+			}
+		}
+		return controlHeadCertificationMaterialV1{}, false
+	}
+	// 历史 journal 已存在时保持它原先回读的 exact QC；新 learner 没有历史
+	// result 时使用按 CRDT logical ID 排序后遇到的第一份有效证明。
+	if journalIndex < len(original.Records) && original.Records[journalIndex].Result != nil {
+		var originalQC wire.StableHeadReplicationQCV1
+		if _, err := wire.DecodeStrict(original.Records[journalIndex].Result.ConfigQC,
+			4<<20, &originalQC); err == nil {
+			for _, candidate := range candidates {
+				if wire.EqualCanonical(candidate.QC, originalQC) {
+					return candidate, true
+				}
+			}
+		}
+	}
+	return candidates[0], true
 }
 
 func (runtime *controlRuntime) persistOperationMaterialsLocked() error {
@@ -281,6 +558,9 @@ func (runtime *controlRuntime) operationJournalForHead(head wire.HeadEntryV2,
 	}
 	materials := make(map[string]controlOperationMaterialV1)
 	for _, object := range runtime.operationMaterials.Snapshot() {
+		if object.Kind != controlOperationMaterialKind {
+			continue
+		}
 		material, err := decodeControlOperationMaterialObject(object)
 		if err != nil {
 			return journal, err

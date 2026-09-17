@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -83,11 +84,27 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 		t.Fatal("正式 control daemon 未初始化 operation material anti-entropy")
 	}
 	materials := runtime.operationMaterials.Snapshot()
-	if len(materials) != 1 || bytes.Contains(materials[0].Payload, []byte(`"result"`)) ||
-		bytes.Contains(materials[0].Payload, []byte(`"phases"`)) {
-		t.Fatalf("operation material 混入本地执行进度: %#v", materials)
+	var operationObject crdt.Object
+	certificationCount := 0
+	for _, object := range materials {
+		switch object.Kind {
+		case controlOperationMaterialKind:
+			operationObject = object
+		case controlHeadCertificationMaterialKind:
+			if _, err := decodeControlHeadCertificationMaterialObject(object); err != nil {
+				t.Fatal(err)
+			}
+			certificationCount++
+		default:
+			t.Fatalf("未知 control replication material: %#v", object)
+		}
 	}
-	material, err := decodeControlOperationMaterialObject(materials[0])
+	if operationObject.ID == "" || certificationCount != 2 ||
+		bytes.Contains(operationObject.Payload, []byte(`"result"`)) ||
+		bytes.Contains(operationObject.Payload, []byte(`"phases"`)) {
+		t.Fatalf("operation/certification material 分离无效: %#v", materials)
+	}
+	material, err := decodeControlOperationMaterialObject(operationObject)
 	if err != nil || material.Candidate.EntryHash != result.Head.EntryHash ||
 		material.Leaf.OperationID != submitted.Operation.Body.OperationID {
 		t.Fatalf("operation material 未绑定 certified Head: %#v err=%v", material, err)
@@ -103,8 +120,139 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 		runtime.storage.SnapshotRaft().Log); err != nil {
 		t.Fatalf("空 follower 未能用同批 Raft prefix 和复制材料重算 Head: %v", err)
 	}
+
+	// learner 可以先取得完整 committed log/material，再按历史 index 逐条安装
+	// bootstrap 与 ordinary QC；每次安装都重建正式 daemon journal，而不是只更新
+	// controlplane.Store 后留下空业务投影。
+	followerDir := filepath.Join(root, "follower-state")
+	if err := os.MkdirAll(followerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCanonicalAtomic(filepath.Join(followerDir, controlConfigName), runtime.config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCanonicalAtomic(filepath.Join(followerDir, controlJournalName),
+		controlOperationJournalV1{Schema: 1, Records: []controlOperationRecordV1{}}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	followerMaterials, err := crdt.Open(filepath.Join(followerDir, controlOperationMaterialName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := followerMaterials.Merge(materials); err != nil {
+		t.Fatal(err)
+	}
+	followerStorage, err = controlplane.OpenRaftStorage(filepath.Join(followerDir, controlRaftName),
+		runtime.config.MemberID, runtime.config.ControlSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaderRaft := runtime.storage.SnapshotRaft()
+	appendResult, err := followerStorage.HandleAppendEntries(controlplane.AppendEntriesRequestV1{
+		Term: leaderRaft.CurrentTerm, LeaderID: runtime.config.MemberID,
+		PrevLogHash: wire.EmptyHashV1, Entries: leaderRaft.Log, LeaderCommit: leaderRaft.CommitIndex,
+	})
+	if err != nil || !appendResult.Success {
+		t.Fatalf("follower committed prefix 安装失败: result=%#v err=%v", appendResult, err)
+	}
+	followerStore, err := controlplane.Open(filepath.Join(followerDir, controlStateName), runtime.config.ControlSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	follower := &controlRuntime{dir: followerDir, config: controlClone(runtime.config),
+		journal:   controlOperationJournalV1{Schema: 1, Records: []controlOperationRecordV1{}},
+		configKey: runtime.configKey, storage: followerStorage, store: followerStore,
+		operationMaterials: followerMaterials, now: clock}
+	voter, err := controlplane.NewHeadAttestationVoter(followerStorage, followerStore,
+		follower.config.ControlSet, follower.config.MemberID, follower.configKey,
+		follower.verifyCommittedHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	followerPeer := &controlFollowerHeadPeer{runtime: follower, peer: voter}
+	certifications := make([]controlHeadCertificationMaterialV1, 0, 2)
+	for _, object := range materials {
+		if object.Kind != controlHeadCertificationMaterialKind {
+			continue
+		}
+		certification, err := decodeControlHeadCertificationMaterialObject(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certifications = append(certifications, certification)
+	}
+	sort.Slice(certifications, func(i, j int) bool {
+		return certifications[i].Head.Body.Payload.RaftIndex < certifications[j].Head.Body.Payload.RaftIndex
+	})
+	for _, certification := range certifications {
+		if err := followerPeer.InstallHeadCertification(context.Background(),
+			controlplane.HeadCertificationRequestV1{Schema: 1,
+				RaftIndex: certification.Head.Body.Payload.RaftIndex,
+				EntryHash: certification.Head.EntryHash, QC: certification.QC}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(follower.journal.Records) != 1 || follower.journal.Records[0].Result == nil ||
+		follower.journal.Records[0].Result.Head.EntryHash != result.Head.EntryHash ||
+		follower.storage.SnapshotRaft().LastApplied != follower.storage.SnapshotRaft().CommitIndex ||
+		follower.store.Snapshot().Active != nil ||
+		follower.journal.Records[0].Phases[len(follower.journal.Records[0].Phases)-1] != controlplane.PhaseApplied {
+		t.Fatalf("follower 未恢复 exact certified journal/projection: %#v", follower.journal)
+	}
+	// 第一条 Head 的 projection 必须已经释放 active；随后同一 follower 才能连续
+	// apply 第二条 Head，而不是停在“已有 QC、不能继续”的假恢复状态。
+	secondRequest, err := newControlPingRequest(adminDir, endpoint,
+		serveRuntimeStatus(t, runtime, peer), "runtime integration second", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondResult := serveRuntimeOperation(t, runtime, peer, secondRequest, http.StatusOK)
+	secondMaterials := runtime.operationMaterials.Snapshot()
+	if err := followerMaterials.Merge(secondMaterials); err != nil {
+		t.Fatal(err)
+	}
+	followerRaft := followerStorage.SnapshotRaft()
+	leaderRaft = runtime.storage.SnapshotRaft()
+	previous := followerRaft.Log[len(followerRaft.Log)-1]
+	appendResult, err = followerStorage.HandleAppendEntries(controlplane.AppendEntriesRequestV1{
+		Term: leaderRaft.CurrentTerm, LeaderID: runtime.config.MemberID,
+		PrevLogIndex: previous.Index, PrevLogTerm: previous.Term, PrevLogHash: previous.EntryHash,
+		Entries: leaderRaft.Log[len(followerRaft.Log):], LeaderCommit: leaderRaft.CommitIndex,
+	})
+	if err != nil || !appendResult.Success {
+		t.Fatalf("follower 第二段 committed prefix 安装失败: result=%#v err=%v", appendResult, err)
+	}
+	var secondCertification *controlHeadCertificationMaterialV1
+	for _, object := range secondMaterials {
+		if object.Kind != controlHeadCertificationMaterialKind {
+			continue
+		}
+		certification, decodeErr := decodeControlHeadCertificationMaterialObject(object)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		if certification.Head.EntryHash == secondResult.Head.EntryHash {
+			secondCertification = &certification
+			break
+		}
+	}
+	if secondCertification == nil {
+		t.Fatal("第二条 Head 缺 certification material")
+	}
+	if err := followerPeer.InstallHeadCertification(context.Background(),
+		controlplane.HeadCertificationRequestV1{Schema: 1,
+			RaftIndex: secondCertification.Head.Body.Payload.RaftIndex,
+			EntryHash: secondCertification.Head.EntryHash, QC: secondCertification.QC}); err != nil {
+		t.Fatal(err)
+	}
+	if len(follower.journal.Records) != 2 || follower.store.Snapshot().Active != nil ||
+		follower.journal.Records[1].Result == nil ||
+		follower.journal.Records[1].Result.Head.EntryHash != secondResult.Head.EntryHash {
+		t.Fatalf("follower 不能连续恢复第二条 certified Head: %#v", follower.journal)
+	}
+	materials = secondMaterials
 	t.Run("rejects tampered immutable material", func(t *testing.T) {
-		tamperedObject := materials[0]
+		tamperedObject := operationObject
 		tamperedObject.ObjectID = "sha256:" + strings.Repeat("0", 64)
 		if _, err := decodeControlOperationMaterialObject(tamperedObject); err == nil {
 			t.Fatal("接受了 object_id 与 exact bytes 不匹配的 operation material")
@@ -139,6 +287,21 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 		if _, err := decodeControlOperationMaterialObject(object); err == nil {
 			t.Fatal("接受了重复 operation ID 的 additional leaf")
 		}
+
+		certification := certifications[len(certifications)-1]
+		certification.QC.Signatures[0].Signature = base64.RawURLEncoding.EncodeToString(make([]byte, 64))
+		payload, err = wire.MarshalCanonical(certification)
+		if err != nil {
+			t.Fatal(err)
+		}
+		object, err = crdt.NewObject(certification.Head.EntryHash+controlHeadCertificationLogicalSuffix,
+			controlHeadCertificationMaterialKind, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeControlHeadCertificationMaterialObject(object); err == nil {
+			t.Fatal("接受了重算 object hash 后伪造的 Head QC")
+		}
 	})
 
 	// Reopening must campaign again, commit/apply the barrier, and preserve the
@@ -148,12 +311,14 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := serveRuntimeStatus(t, reopened, peer)
-	if after.Head.HeadHash != result.Head.HeadHash || after.Raft.Term <= status.Raft.Term ||
+	if after.Head.HeadHash != secondResult.Head.HeadHash || after.Raft.Term <= status.Raft.Term ||
 		after.Raft.CommitIndex != after.Raft.LastApplied {
 		t.Fatalf("restart recovery changed authority or left prefix unapplied: %#v", after.Raft)
 	}
-	if got := reopened.operationMaterials.Snapshot(); len(got) != 1 ||
-		got[0].ObjectID != materials[0].ObjectID {
+	got := reopened.operationMaterials.Snapshot()
+	wantRoot, wantErr := crdt.SnapshotRoot(materials)
+	gotRoot, gotErr := crdt.SnapshotRoot(got)
+	if wantErr != nil || gotErr != nil || gotRoot != wantRoot {
 		t.Fatalf("restart changed immutable operation material: %#v", got)
 	}
 }

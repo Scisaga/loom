@@ -229,6 +229,14 @@ func (leader *StableRaftLeader) BroadcastCommit(ctx context.Context) ([]string, 
 // 因而任一写点崩溃后可安全重跑。
 func ApplyCommittedPrefix(ctx context.Context, storage *RaftStorage, store *Store,
 	recompute HeadRecomputer) (int, error) {
+	return ApplyCommittedPrefixThrough(ctx, storage, store, recompute, 0)
+}
+
+// ApplyCommittedPrefixThrough 最多推进到 through（含）。through=0 表示当前
+// commitIndex。新 learner 可以先复制完整 committed log，再按历史 Head 顺序安装
+// exact QC；不能因为 commitIndex 已在更后面，就越过尚未 certified 的前一 Head。
+func ApplyCommittedPrefixThrough(ctx context.Context, storage *RaftStorage, store *Store,
+	recompute HeadRecomputer, through int64) (int, error) {
 	if storage == nil || store == nil || recompute == nil {
 		return 0, errors.New("[apply] storage/store/recomputer 不能为空")
 	}
@@ -238,7 +246,16 @@ func ApplyCommittedPrefix(ctx context.Context, storage *RaftStorage, store *Stor
 			return applied, err
 		}
 		raft := storage.SnapshotRaft()
-		if raft.LastApplied == raft.CommitIndex {
+		limit := through
+		if limit == 0 {
+			limit = raft.CommitIndex
+		}
+		if limit > raft.CommitIndex {
+			return applied, errors.New("[apply] 指定恢复坐标不在 committed prefix")
+		}
+		// current-term no-op 不产生应用状态，因此 active Head 的 index 可能小于
+		// LastApplied。该 Head 的 QC 仍可随后幂等安装，不能因 barrier 越过它而拒绝。
+		if raft.LastApplied >= limit {
 			return applied, nil
 		}
 		if raft.LastApplied < 0 || raft.LastApplied >= int64(len(raft.Log)) {
