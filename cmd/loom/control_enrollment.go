@@ -405,6 +405,9 @@ func (runtime *controlRuntime) enrollmentLineage(from wire.HeadEntryV2, parentHa
 // journal；不存在能绕过管理员事务或覆盖同一 parent 的独立 Enrollment head。
 func (runtime *controlRuntime) CommitEnrollmentOperation(ctx context.Context, operationID string,
 	from *wire.HeadEntryV2, build enrollmentv2.EnrollmentOperationBuilder) (enrollmentv2.EnrollmentOperationCommitResultV1, error) {
+	if runtime.leader == nil || !runtime.leader.IsCurrent() {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("当前 control follower 不接受 Enrollment 状态变更")
+	}
 	if from == nil || operationID == "" || build == nil {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D130 daemon] Enrollment builder/base 缺失")
 	}
@@ -508,7 +511,7 @@ func (runtime *controlRuntime) CommitEnrollmentOperation(ctx context.Context, op
 			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
 		}
 	}
-	if _, err := runtime.leader.ReplicateHead(ctx, runtime.store, candidate); err != nil {
+	if _, err := runtime.replicateHead(ctx, candidate); err != nil {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
 	}
 	if err := runtime.finishCommittedLocked(); err != nil {

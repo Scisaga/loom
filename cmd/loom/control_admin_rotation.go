@@ -344,7 +344,7 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	if err := runtime.persistJournalLocked(); err != nil {
 		return err
 	}
-	if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, candidate); err != nil {
+	if _, err := runtime.replicateHead(context.Background(), candidate); err != nil {
 		return err
 	}
 	if err := runtime.finishCommittedLocked(); err != nil {

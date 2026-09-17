@@ -159,8 +159,9 @@ func TestCampaignDoesNotAdvanceTermWithoutPreVoteQuorum(t *testing.T) {
 		set.Members[1].MemberID: unavailableRaftPeer{},
 		set.Members[2].MemberID: unavailableRaftPeer{},
 	}
-	if _, err := CampaignStableRaft(context.Background(), storage, set, peers); err == nil {
-		t.Fatal("minority pre-vote elected leader")
+	if _, err := CampaignStableRaft(context.Background(), storage, set, peers); err == nil ||
+		!errors.Is(err, ErrRaftCampaignNotLeader) {
+		t.Fatalf("minority pre-vote 未返回 not-leader 结果: %v", err)
 	}
 	state := storage.SnapshotRaft()
 	if state.CurrentTerm != 0 || state.VotedFor != "" {
@@ -205,6 +206,15 @@ func TestStableRaftCampaignAndCommitN1AndN5(t *testing.T) {
 			quorum, _ := wire.Quorum(count)
 			if len(result.CommitKnownMemberIDs) != quorum {
 				t.Fatalf("N=%d post-commit known=%v want quorum=%d", count, result.CommitKnownMemberIDs, quorum)
+			}
+			if !leader.IsCurrent() {
+				t.Fatalf("N=%d 新 leader 未绑定 durable term/self-vote", count)
+			}
+			if _, err := leaderStorage.ObserveTerm(leaderStorage.SnapshotRaft().CurrentTerm + 1); err != nil {
+				t.Fatal(err)
+			}
+			if leader.IsCurrent() {
+				t.Fatalf("N=%d 观察到更高 term 后仍报告可写 leader", count)
 			}
 		})
 	}

@@ -163,7 +163,7 @@ func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 			if err := runtime.verifyEnrollmentRecord(index); err != nil {
 				return err
 			}
-			if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, record.Candidate); err != nil {
+			if _, err := runtime.replicateHead(context.Background(), record.Candidate); err != nil {
 				return err
 			}
 			if err := runtime.finishCommittedLocked(); err != nil {
@@ -248,7 +248,7 @@ func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 		if err := runtime.verifyPendingHead(context.Background(), candidate); err != nil {
 			return err
 		}
-		if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, candidate); err != nil {
+		if _, err := runtime.replicateHead(context.Background(), candidate); err != nil {
 			return err
 		}
 		if err := runtime.finishCommittedLocked(); err != nil {

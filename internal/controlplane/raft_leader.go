@@ -9,6 +9,8 @@ import (
 	"loom/internal/wire"
 )
 
+var ErrRaftCampaignNotLeader = errors.New("[Raft] 本轮 campaign 未取得 leadership")
+
 // RaftPeer 是稳定配置 election/replication 所需的完整 private peer 能力。
 type RaftPeer interface {
 	RequestVote(context.Context, VoteRequestV1) (VoteResultV1, error)
@@ -30,6 +32,16 @@ type StableRaftCommitResult struct {
 	EntryHash            string
 	CommitIndex          int64
 	CommitKnownMemberIDs []string
+}
+
+// IsCurrent 只报告本进程保存的 leadership 是否仍与 durable term/self-vote 一致。
+// 它不提供 lease；真正提交仍必须重新取得多数。
+func (leader *StableRaftLeader) IsCurrent() bool {
+	if leader == nil || leader.storage == nil {
+		return false
+	}
+	state := leader.storage.SnapshotRaft()
+	return state.CurrentTerm == leader.term && state.VotedFor == state.MemberID
 }
 
 // CampaignStableRaft 先做不落盘的 pre-vote，再 fsync self-vote 并取得稳定配置多数。
@@ -57,11 +69,11 @@ func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.Cont
 		if observeErr != nil {
 			return nil, observeErr
 		}
-		return nil, errors.New("[Raft] pre-vote 观察到更高任期")
+		return nil, fmt.Errorf("%w: pre-vote 观察到更高任期", ErrRaftCampaignNotLeader)
 	}
 	quorum, _ := wire.Quorum(len(set.Members))
 	if granted < quorum {
-		return nil, errors.New("[Raft] pre-vote 未达到 committed ControlSet 多数")
+		return nil, fmt.Errorf("%w: pre-vote 未达到 committed ControlSet 多数", ErrRaftCampaignNotLeader)
 	}
 	vote, err := storage.StartElection()
 	if err != nil {
@@ -73,10 +85,10 @@ func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.Cont
 		if observeErr != nil {
 			return nil, observeErr
 		}
-		return nil, errors.New("[Raft] election 观察到更高任期")
+		return nil, fmt.Errorf("%w: election 观察到更高任期", ErrRaftCampaignNotLeader)
 	}
 	if granted < quorum {
-		return nil, errors.New("[Raft] election 未达到 committed ControlSet 多数")
+		return nil, fmt.Errorf("%w: election 未达到 committed ControlSet 多数", ErrRaftCampaignNotLeader)
 	}
 	leader := &StableRaftLeader{storage: storage, set: set, peers: validated, term: vote.Term}
 	if len(snapshot.Log) > 0 {

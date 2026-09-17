@@ -397,7 +397,7 @@ func (runtime *controlRuntime) commitInviteLocked(ctx context.Context, verified 
 			return controlplane.CertifiedControlOperationV1{}, err
 		}
 	}
-	if _, err := runtime.leader.ReplicateHead(ctx, runtime.store, candidate); err != nil {
+	if _, err := runtime.replicateHead(ctx, candidate); err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
 	if err := runtime.finishCommittedLocked(); err != nil {

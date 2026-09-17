@@ -20,6 +20,7 @@ import (
 
 	"loom/internal/controlplane"
 	"loom/internal/crdt"
+	"loom/internal/publish"
 	"loom/internal/wire"
 )
 
@@ -37,7 +38,8 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.headCollector == nil || runtime.headPeers == nil {
+	if runtime.headCollector == nil || runtime.headPeers == nil || runtime.raftPeers == nil ||
+		runtime.operationClients == nil || len(runtime.raftPeers) != 0 || len(runtime.operationClients) != 0 {
 		t.Fatal("正式 control daemon 未初始化 Head QC peer/collector")
 	}
 	peer := readAdminTestCertificate(t, filepath.Join(adminDir, controlAdminCertName))
@@ -153,6 +155,56 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 	if got := reopened.operationMaterials.Snapshot(); len(got) != 1 ||
 		got[0].ObjectID != materials[0].ObjectID {
 		t.Fatalf("restart changed immutable operation material: %#v", got)
+	}
+}
+
+type controlOperationMaterialPeerStub struct {
+	err error
+}
+
+func (peer controlOperationMaterialPeerStub) Sync(context.Context) (controlplane.CRDTAntiEntropyResultV1, error) {
+	return controlplane.CRDTAntiEntropyResultV1{}, peer.err
+}
+
+func TestControlOperationMaterialSyncRequiresCommittedQuorum(t *testing.T) {
+	runtime := &controlRuntime{config: controlDiskConfigV1{ControlSet: wire.ControlSetV1{
+		Members: []wire.ControlMemberV1{{MemberID: "member-a"}, {MemberID: "member-b"}, {MemberID: "member-c"}},
+	}}, operationClients: map[string]controlOperationMaterialPeer{
+		"member-b": controlOperationMaterialPeerStub{},
+		"member-c": controlOperationMaterialPeerStub{err: errors.New("unreachable")},
+	}}
+	if err := runtime.syncOperationMaterialsToQuorum(context.Background()); err != nil {
+		t.Fatalf("self + one durable remote 应达到 N=3 quorum: %v", err)
+	}
+	runtime.operationClients["member-b"] = controlOperationMaterialPeerStub{err: errors.New("unreachable")}
+	if err := runtime.syncOperationMaterialsToQuorum(context.Background()); err == nil {
+		t.Fatal("只在 leader 本机持有 operation material 时仍允许 Raft append")
+	}
+}
+
+func TestConfiguredControlRuntimeDefersCampaignUntilPeerListenerCanStart(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	adminDir := filepath.Join(root, "admin")
+	now := time.Now().UTC().Truncate(time.Second)
+	clock := func() time.Time { return now }
+	if err := bootstrapControlRuntime(stateDir, adminDir, "runtime-passive-test",
+		"00000000000000000000000000", "device-test", "10.40.0.2", 21444, 21445, clock); err != nil {
+		t.Fatal(err)
+	}
+	distribution, err := publish.ParseTarget(filepath.Join(root, "public"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := openControlRuntimeConfigured(stateDir, clock, distribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.leader != nil {
+		t.Fatal("configured serve open 在 peer listener 启动前提前 campaign")
+	}
+	if err := runtime.campaignAndRecover(context.Background()); err != nil || runtime.leader == nil {
+		t.Fatalf("peer listener 就绪边界后的 N=1 campaign 失败: %v", err)
 	}
 }
 

@@ -197,6 +197,7 @@ type controlRuntime struct {
 	storage            *controlplane.RaftStorage
 	store              *controlplane.Store
 	leader             *controlplane.StableRaftLeader
+	raftPeers          map[string]controlplane.RaftPeer
 	service            *controlplane.PrivateControlService
 	uiReadOnly         http.Handler
 	uiAdmin            http.Handler
@@ -205,6 +206,7 @@ type controlRuntime struct {
 	headCollector      *controlplane.HeadAttestationCollector
 	operationPeers     http.Handler
 	operationMaterials *crdt.Store
+	operationClients   map[string]controlOperationMaterialPeer
 	// verifiedMaterials 只消除同一进程 pre-append→apply 对 exact immutable
 	// bytes 的重复重算；重启后为空，不能替代 durable verification。
 	verifiedMaterials sync.Map
@@ -761,10 +763,15 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	if err != nil {
 		return nil, err
 	}
-	return openControlRuntimeConfigured(dir, now, local)
+	return openControlRuntimeConfiguredMode(dir, now, local, true)
 }
 
 func openControlRuntimeConfigured(dir string, now func() time.Time, distribution publish.Target) (*controlRuntime, error) {
+	return openControlRuntimeConfiguredMode(dir, now, distribution, false)
+}
+
+func openControlRuntimeConfiguredMode(dir string, now func() time.Time, distribution publish.Target,
+	campaign bool) (*controlRuntime, error) {
 	if now == nil {
 		return nil, errors.New("control runtime 需要可信时间源")
 	}
@@ -779,12 +786,27 @@ func openControlRuntimeConfigured(dir string, now func() time.Time, distribution
 	if err := wire.ValidateControlSet(&config.ControlSet); err != nil {
 		return nil, err
 	}
-	if len(config.ControlSet.Members) != 1 || config.ControlSet.Members[0].MemberID != config.MemberID ||
-		len(config.PeerDirectory.Members) != 1 || config.PeerDirectory.Members[0].DeviceID != config.DeviceID ||
-		len(config.PeerDirectory.Members[0].PeerEndpoints) != 1 ||
-		config.PeerDirectory.Members[0].PeerEndpoints[0].URL !=
-			fmt.Sprintf("https://%s:%d", config.OverlayIP, config.RaftPort) {
-		return nil, errors.New("N=1 config 的 member/Device/Raft tuple 不一致")
+	var member *wire.ControlMemberV1
+	var directoryMember *wire.ControlPeerDirectoryMemberV1
+	for index := range config.ControlSet.Members {
+		if config.ControlSet.Members[index].MemberID == config.MemberID {
+			member = &config.ControlSet.Members[index]
+		}
+	}
+	for index := range config.PeerDirectory.Members {
+		if config.PeerDirectory.Members[index].MemberID == config.MemberID {
+			directoryMember = &config.PeerDirectory.Members[index]
+		}
+	}
+	expectedPeerURL := "https://" + net.JoinHostPort(config.OverlayIP, fmt.Sprint(config.RaftPort))
+	localEndpoint := false
+	if directoryMember != nil {
+		for _, endpoint := range directoryMember.PeerEndpoints {
+			localEndpoint = localEndpoint || endpoint.URL == expectedPeerURL
+		}
+	}
+	if member == nil || directoryMember == nil || directoryMember.DeviceID != config.DeviceID || !localEndpoint {
+		return nil, errors.New("control config 的本机 member/Device/Raft tuple 不一致")
 	}
 	if err := wire.ValidateControlPeerDirectoryAt(&config.ControlSet, &config.PeerDirectory, now().UTC()); err != nil {
 		return nil, err
@@ -806,7 +828,6 @@ func openControlRuntimeConfigured(dir string, now func() time.Time, distribution
 	if secrets.Schema != 1 {
 		return nil, errors.New("control secrets schema 无效")
 	}
-	member := config.ControlSet.Members[0]
 	privateKeys := []struct {
 		encoded string
 		public  string
@@ -888,9 +909,7 @@ func openControlRuntimeConfigured(dir string, now func() time.Time, distribution
 	if err != nil {
 		return nil, err
 	}
-	runtime.headCollector, err = controlplane.NewHeadAttestationCollector(config.ControlSet,
-		map[string]controlplane.HeadAttestationPeer{config.MemberID: headVoter})
-	if err != nil {
+	if err := runtime.configureStableControlPeers(headVoter); err != nil {
 		return nil, err
 	}
 	runtime.enrollmentStore, err = enrollmentv2.OpenStore(filepath.Join(dir, "enrollment-transactions.json"))
@@ -901,23 +920,6 @@ func openControlRuntimeConfigured(dir string, now func() time.Time, distribution
 		return nil, err
 	}
 	runtime.publishOperationProgressLocked()
-	// A restart never reuses an old leadership assertion. N=1 still campaigns and
-	// commits a current-term barrier before serving writes.
-	leader, err := controlplane.CampaignStableRaft(context.Background(), storage, config.ControlSet,
-		map[string]controlplane.RaftPeer{})
-	if err != nil {
-		return nil, err
-	}
-	runtime.leader = leader
-	if err := runtime.recoverCommitted(); err != nil {
-		return nil, err
-	}
-	if err := runtime.recoverPendingOperations(); err != nil {
-		return nil, err
-	}
-	if err := runtime.reconcileEnrollmentDistributionPrefix(); err != nil {
-		return nil, err
-	}
 	service, err := controlplane.NewPrivateControlService(config.OverlayIP, config.ControlPort,
 		runtime.readAuthority, runtime.resolveScope, runtime.commitOperation,
 		controlOperationSchemas, now, runtime.readCommittedOperation)
@@ -927,7 +929,30 @@ func openControlRuntimeConfigured(dir string, now func() time.Time, distribution
 	runtime.service = service
 	runtime.uiReadOnly = newControlUIProxy(webui.ReadOnlySocketPath)
 	runtime.uiAdmin = newControlUIProxy(webui.AdminSocketPath)
+	if campaign {
+		if err := runtime.campaignAndRecover(context.Background()); err != nil {
+			return nil, err
+		}
+	}
 	return runtime, nil
+}
+
+// campaignAndRecover 只在 private peer listener 已就绪后用于正式 serve；离线维护
+// 入口仍通过 openControlRuntime 在返回前完成同一流程。旧 leadership 不跨重启复用。
+func (runtime *controlRuntime) campaignAndRecover(ctx context.Context) error {
+	leader, err := controlplane.CampaignStableRaft(ctx, runtime.storage,
+		runtime.config.ControlSet, runtime.raftPeers)
+	if err != nil {
+		return err
+	}
+	runtime.leader = leader
+	if err := runtime.recoverCommitted(); err != nil {
+		return err
+	}
+	if err := runtime.recoverPendingOperations(); err != nil {
+		return err
+	}
+	return runtime.reconcileEnrollmentDistributionPrefix()
 }
 
 func (runtime *controlRuntime) commitGenesis(at time.Time, aclRoot, peerDirectoryHash string) error {
@@ -964,7 +989,7 @@ func (runtime *controlRuntime) commitGenesis(at time.Time, aclRoot, peerDirector
 	if err != nil {
 		return err
 	}
-	if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, head); err != nil {
+	if _, err := runtime.replicateHead(context.Background(), head); err != nil {
 		return err
 	}
 	if err := runtime.finishCommittedLocked(); err != nil {
@@ -1148,6 +1173,9 @@ func (runtime *controlRuntime) resolveScope(ctx context.Context,
 
 func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	verified wire.VerifiedAdminOperationV1) (controlplane.CertifiedControlOperationV1, error) {
+	if runtime.leader == nil || !runtime.leader.IsCurrent() {
+		return controlplane.CertifiedControlOperationV1{}, errors.New("当前 control follower 不接受权限变更")
+	}
 	if err := runtime.expireEnrollmentTransactions(ctx); err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
@@ -1256,7 +1284,7 @@ func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	if err := runtime.verifyPendingHead(context.Background(), candidate); err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
-	if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, candidate); err != nil {
+	if _, err := runtime.replicateHead(context.Background(), candidate); err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
 	if err := runtime.finishCommittedLocked(); err != nil {
@@ -1289,11 +1317,6 @@ func (runtime *controlRuntime) persistJournalLocked() error {
 }
 
 func (runtime *controlRuntime) serve() error {
-	deviceRuntime, closeDeviceKeys, err := runtime.newDeviceRuntime()
-	if err != nil {
-		return err
-	}
-	defer closeDeviceKeys()
 	controlAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort))
 	loopbackAddress := net.JoinHostPort(controlLoopbackIP, fmt.Sprint(runtime.config.ControlPort))
 	raftAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.RaftPort))
@@ -1355,6 +1378,30 @@ func (runtime *controlRuntime) serve() error {
 		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	raftServer := &http.Server{Handler: peerHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	errorsOut := make(chan error, 3)
+	go func() { errorsOut <- raftServer.Serve(tls.NewListener(raftListener, raftTLSConfig)) }()
+	// 所有成员先开放受 pin 的 peer listener，再参与 campaign。分裂选票的成员保持
+	// follower 服务，不把一次未当选误报成配置损坏或让 peer endpoint 消失。
+	role := "follower"
+	if err := runtime.campaignAndRecover(context.Background()); err == nil {
+		role = "leader"
+	} else if !errors.Is(err, controlplane.ErrRaftCampaignNotLeader) {
+		_ = raftServer.Close()
+		return err
+	}
+	select {
+	case serveErr := <-errorsOut:
+		if !errors.Is(serveErr, http.ErrServerClosed) {
+			return serveErr
+		}
+	default:
+	}
+	deviceRuntime, closeDeviceKeys, err := runtime.newDeviceRuntime()
+	if err != nil {
+		_ = raftServer.Close()
+		return err
+	}
+	defer closeDeviceKeys()
 	deviceContext, cancelDevices := context.WithCancel(context.Background())
 	defer cancelDevices()
 	var deviceDone <-chan error
@@ -1365,12 +1412,11 @@ func (runtime *controlRuntime) serve() error {
 		}
 		defer func() { cancelDevices(); <-deviceDone }()
 	}
-	errorsOut := make(chan error, 3)
 	go func() { errorsOut <- controlServer.Serve(tls.NewListener(controlListener, controlTLSConfig)) }()
 	go func() { errorsOut <- loopbackServer.Serve(tls.NewListener(loopbackListener, loopbackTLSConfig)) }()
-	go func() { errorsOut <- raftServer.Serve(tls.NewListener(raftListener, raftTLSConfig)) }()
-	fmt.Printf("✓ v2 control_api 监听 %s；浏览器转发入口监听 %s；Raft 监听 %s；ControlSet N=1 q=1\n",
-		controlAddress, loopbackAddress, raftAddress)
+	quorum, _ := wire.Quorum(len(runtime.config.ControlSet.Members))
+	fmt.Printf("✓ v2 control_api 监听 %s；浏览器转发入口监听 %s；Raft 监听 %s；ControlSet N=%d q=%d；本轮角色=%s\n",
+		controlAddress, loopbackAddress, raftAddress, len(runtime.config.ControlSet.Members), quorum, role)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(stop)
