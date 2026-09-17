@@ -19,6 +19,9 @@
                 <action android:name="io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS" />
                 <action android:name="io.github.scisaga.loom.debug.BUSINESS_PROBE" />
                 <action android:name="io.github.scisaga.loom.debug.BUSINESS_PROBE_STATUS" />
+                <action android:name="io.github.scisaga.loom.debug.EGRESS_PROBE" />
+                <action android:name="io.github.scisaga.loom.debug.EGRESS_PROBE_STATUS" />
+                <action android:name="io.github.scisaga.loom.debug.DURABLE_STATE_STATUS" />
                 <action android:name="io.github.scisaga.loom.debug.ROUTE_DIRECT" />
                 <action android:name="io.github.scisaga.loom.debug.ROUTE_AUTO" />
                 <action android:name="io.github.scisaga.loom.debug.ROUTE_SAVE_AND_DIRECT" />

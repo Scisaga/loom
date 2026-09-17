@@ -7,6 +7,8 @@ import androidx.core.content.ContextCompat
 import io.github.scisaga.loom.BuildConfig
 import io.github.scisaga.loom.LoomApplication
 import io.github.scisaga.loom.enrollment.EnrollmentManager
+import io.github.scisaga.loom.enrollment.V2DeviceStateStore
+import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.readBounded
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.RouteMode
@@ -15,6 +17,9 @@ import io.github.scisaga.loom.vpn.NetworkProbe
 import io.github.scisaga.loom.vpn.ProbeSession
 import io.github.scisaga.loom.vpn.VpnRuntime
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,6 +61,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
                 append(";busy=").append(status.busy)
                 append(";blocked=").append(status.blocked)
                 append(";mode=").append(status.mode.wire)
+                append(";exitIndex=").append(status.exits.indexOf(status.exit))
                 append(";exits=").append(status.exits.size)
                 append(";paths=").append(status.currentPaths.size)
                 append(";detail=").append(status.detail)
@@ -104,6 +110,40 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         }
         if (intent.action == ACTION_BUSINESS_PROBE_STATUS) {
             resultData = lastBusinessProbe
+            return
+        }
+        if (intent.action == ACTION_EGRESS_PROBE) {
+            val generation = ++egressProbeGeneration
+            lastEgressProbe = "running"
+            businessProbeScope.launch {
+                val result = runCatching {
+                    val connection = URL(EGRESS_URL).openConnection() as HttpURLConnection
+                    connection.connectTimeout = EGRESS_TIMEOUT_MS
+                    connection.readTimeout = EGRESS_TIMEOUT_MS
+                    connection.useCaches = false
+                    try {
+                        check(connection.responseCode == 200) { "出口回读未成功" }
+                        val value = connection.inputStream.use { readBounded(it, MAX_EGRESS_BYTES) }
+                            .decodeToString().trim()
+                        check(value.length in 3..45 && value.all { it.isDigit() || it in "abcdefABCDEF:." }) {
+                            "出口回读格式无效"
+                        }
+                        "sha256:${digest(value.encodeToByteArray())}"
+                    } finally {
+                        connection.disconnect()
+                    }
+                }.getOrElse { "failed:${it.javaClass.simpleName}" }
+                if (egressProbeGeneration == generation) lastEgressProbe = result
+            }
+            return
+        }
+        if (intent.action == ACTION_EGRESS_PROBE_STATUS) {
+            resultData = lastEgressProbe
+            return
+        }
+        if (intent.action == ACTION_DURABLE_STATE_STATUS) {
+            val store = V2DeviceStateStore(ProfileCatalog.scoped(context))
+            resultData = "state=${store.current()?.let { digest(it) } ?: "missing"};floors=${store.floors()?.let { digest(it) } ?: "missing"}"
             return
         }
         if (intent.action == ACTION_ROUTE_SAVE_AND_DIRECT) {
@@ -179,6 +219,9 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         const val ACTION_PROBE_REGISTRY_STATUS = "io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS"
         const val ACTION_BUSINESS_PROBE = "io.github.scisaga.loom.debug.BUSINESS_PROBE"
         const val ACTION_BUSINESS_PROBE_STATUS = "io.github.scisaga.loom.debug.BUSINESS_PROBE_STATUS"
+        const val ACTION_EGRESS_PROBE = "io.github.scisaga.loom.debug.EGRESS_PROBE"
+        const val ACTION_EGRESS_PROBE_STATUS = "io.github.scisaga.loom.debug.EGRESS_PROBE_STATUS"
+        const val ACTION_DURABLE_STATE_STATUS = "io.github.scisaga.loom.debug.DURABLE_STATE_STATUS"
         const val ACTION_ROUTE_DIRECT = "io.github.scisaga.loom.debug.ROUTE_DIRECT"
         const val ACTION_ROUTE_AUTO = "io.github.scisaga.loom.debug.ROUTE_AUTO"
         const val ACTION_ROUTE_SAVE_AND_DIRECT = "io.github.scisaga.loom.debug.ROUTE_SAVE_AND_DIRECT"
@@ -187,10 +230,18 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         const val EXTRA_EXIT_INDEX = "exit_index"
         private const val PENDING_INVITE = "pending.loom-invite"
         private const val MAX_INVITE_BYTES = 16 * 1024
+        private const val MAX_EGRESS_BYTES = 64
+        private const val EGRESS_TIMEOUT_MS = 10_000
+        private const val EGRESS_URL = "https://api.ipify.org/"
         private val businessProbeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         @Volatile private var lastBusinessProbe = "not-run"
         @Volatile private var businessProbeGeneration = 0L
         @Volatile private var businessProbeSession: ProbeSession? = null
+        @Volatile private var egressProbeGeneration = 0L
+        @Volatile private var lastEgressProbe = "not-run"
         private var savedRoutePreference: Pair<RouteMode, String>? = null
+
+        private fun digest(value: ByteArray): String = MessageDigest.getInstance("SHA-256")
+            .digest(value).joinToString("") { "%02x".format(it) }
     }
 }
