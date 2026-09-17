@@ -11,8 +11,14 @@ import io.github.scisaga.loom.readBounded
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.vpn.LoomVpnService
+import io.github.scisaga.loom.vpn.NetworkProbe
+import io.github.scisaga.loom.vpn.ProbeSession
 import io.github.scisaga.loom.vpn.VpnRuntime
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** ADB-only control surface for physical-device data-plane acceptance. */
 class DebugVpnControlReceiver : BroadcastReceiver() {
@@ -50,6 +56,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
                 append(";busy=").append(status.busy)
                 append(";blocked=").append(status.blocked)
                 append(";mode=").append(status.mode.wire)
+                append(";exits=").append(status.exits.size)
                 append(";paths=").append(status.currentPaths.size)
                 append(";detail=").append(status.detail)
             }
@@ -74,6 +81,49 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
                 append(";frozen=").append(status.frozenFingerprint.isNotEmpty())
                 append(";fingerprint=").append(status.frozenFingerprint.ifEmpty { "none" })
             }
+            return
+        }
+        if (intent.action == ACTION_BUSINESS_PROBE) {
+            val generation = ++businessProbeGeneration
+            val session = ProbeSession()
+            businessProbeSession?.cancel()
+            businessProbeSession = session
+            lastBusinessProbe = "running"
+            VpnRuntime.transform {
+                it.copy(dnsProbe = "执行中", httpsProbe = "执行中")
+            }
+            businessProbeScope.launch {
+                val result = runCatching { NetworkProbe.run(session) }.getOrNull() ?: return@launch
+                if (businessProbeGeneration != generation) return@launch
+                lastBusinessProbe = "dns=${result.dns};https=${result.https}"
+                VpnRuntime.transform {
+                    it.copy(dnsProbe = result.dns, httpsProbe = result.https)
+                }
+            }
+            return
+        }
+        if (intent.action == ACTION_BUSINESS_PROBE_STATUS) {
+            resultData = lastBusinessProbe
+            return
+        }
+        if (intent.action == ACTION_ROUTE_SAVE_AND_DIRECT) {
+            RouteManager.get(context).status.value.let {
+                savedRoutePreference = it.mode to it.exit
+            }
+            RouteManager.get(context).select(RouteMode.DIRECT)
+            return
+        }
+        if (intent.action == ACTION_ROUTE_RESTORE) {
+            savedRoutePreference?.let { (mode, exit) ->
+                RouteManager.get(context).select(mode, exit)
+            }
+            return
+        }
+        if (intent.action == ACTION_ROUTE_FIXED_EXIT_INDEX) {
+            val status = RouteManager.get(context).status.value
+            val index = intent.getIntExtra(EXTRA_EXIT_INDEX, -1)
+            require(index in status.exits.indices) { "固定出口索引无效" }
+            RouteManager.get(context).select(RouteMode.FIXED_EXIT, status.exits[index])
             return
         }
         if (intent.action == ACTION_ROUTE_DIRECT || intent.action == ACTION_ROUTE_AUTO) {
@@ -127,9 +177,20 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         const val ACTION_ROUTE_STATUS = "io.github.scisaga.loom.debug.ROUTE_STATUS"
         const val ACTION_RUNTIME_STATUS = "io.github.scisaga.loom.debug.RUNTIME_STATUS"
         const val ACTION_PROBE_REGISTRY_STATUS = "io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS"
+        const val ACTION_BUSINESS_PROBE = "io.github.scisaga.loom.debug.BUSINESS_PROBE"
+        const val ACTION_BUSINESS_PROBE_STATUS = "io.github.scisaga.loom.debug.BUSINESS_PROBE_STATUS"
         const val ACTION_ROUTE_DIRECT = "io.github.scisaga.loom.debug.ROUTE_DIRECT"
         const val ACTION_ROUTE_AUTO = "io.github.scisaga.loom.debug.ROUTE_AUTO"
+        const val ACTION_ROUTE_SAVE_AND_DIRECT = "io.github.scisaga.loom.debug.ROUTE_SAVE_AND_DIRECT"
+        const val ACTION_ROUTE_RESTORE = "io.github.scisaga.loom.debug.ROUTE_RESTORE"
+        const val ACTION_ROUTE_FIXED_EXIT_INDEX = "io.github.scisaga.loom.debug.ROUTE_FIXED_EXIT_INDEX"
+        const val EXTRA_EXIT_INDEX = "exit_index"
         private const val PENDING_INVITE = "pending.loom-invite"
         private const val MAX_INVITE_BYTES = 16 * 1024
+        private val businessProbeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        @Volatile private var lastBusinessProbe = "not-run"
+        @Volatile private var businessProbeGeneration = 0L
+        @Volatile private var businessProbeSession: ProbeSession? = null
+        private var savedRoutePreference: Pair<RouteMode, String>? = null
     }
 }

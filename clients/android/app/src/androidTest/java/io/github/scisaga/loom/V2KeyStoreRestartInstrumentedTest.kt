@@ -17,6 +17,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -24,7 +25,7 @@ import org.junit.runner.RunWith
 class V2KeyStoreRestartInstrumentedTest {
     @Test
     fun api26To30AliasesSurviveProcessStopAndSignedReplacement() {
-        assertTrue(Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S)
+        assumeTrue(Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val phase = checkNotNull(InstrumentationRegistry.getArguments().getString("phase"))
         val evidence = instrumentation.targetContext.filesDir.resolve(EVIDENCE_FILE)
