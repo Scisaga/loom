@@ -132,9 +132,10 @@
 2. Android VPN permission、前台服务、protect、防回环和 Keystore 正常；
 3. Wi-Fi 默认 Network/AP 变化创建新 network generation，旧代观测不污染新代；蜂窝与
    Wi-Fi 切换在独立 GitHub Issue #16 的具备 telephony 真机上验收，不阻塞 Wi-Fi 主矩阵；
-4. Windows/Android 的 Direct 不主动探测；Auto/指定出口复用同代 registry。Android 运行中
-   Direct→代理先应用 selector，再按既定单批预算异步更新；RTT 来自实际 ICMP reply，
-   仅在 runtime/配置/网络代仍匹配时按当前最新模式/出口重算，迟到结果不能恢复旧模式或污染新代；
+4. Windows/Android 的 Direct 不主动探测；Auto/指定出口先应用合法 selector，不等待测量。
+   授权候选与实时可用性分开；ICMP 只能提供地址层 RTT，实际 transport/业务结果才可证明候选可用或不可用。
+   直连明确失败时切到同一最终出口的已授权中继，恢复后重新参与选择；异步结果只提交给匹配的
+   runtime、配置和网络上下文，迟到结果不能恢复旧模式或污染新代；
 5. 锁屏、省电、进程回收、重启后恢复正式 LKG，不恢复 bootstrap token；
 6. 固定出口只更换入口/listener generation，不偷偷更换最终出口；
 7. DNS 在最终出口解析的既有数据面要求继续验收；

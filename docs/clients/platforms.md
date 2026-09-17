@@ -154,7 +154,9 @@ Android App 包含：
   启用 `public_data_ingress` 时，移动端可获得到最终出口的一跳已配置 data-ingress transport
   候选（Hysteria2 或 Trojan）；v2 latch 后该布尔值单独无效，必须由 certified
   `PublicEndpointIntent` 和本 Device 的 `DataIngressEndpointSetV2` 授权。两跳国内中继
-  保留兼容，但不得让同协议套叠的两跳候选压过同等健康的一跳路径；
+  与同一最终出口的一跳直连同时保留。上述声明只证明候选已配置并获授权，不证明当前网络可达；
+  客户端依据实时观测在两者间选择，直连不可用时允许使用更长的同出口中继，恢复后可重新参与选择。
+  同等可用且同等质量时优先较短路径；
 - 继续使用现有窄 `mobile/loomcore` binding，通过 `gomobile bind` 与钉住的 libbox 一起
   生成 Android AAR，复用平台无关的 Loom 验签、generation floor、最后可用配置和
   selector 状态机；不得把完整 CLI/server core 绑定进应用，也不得在 Kotlin 中另写一套

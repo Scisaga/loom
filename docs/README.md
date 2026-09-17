@@ -5,6 +5,7 @@
 
 | 任务 | 规范与操作入口 |
 |---|---|
+| 设计、实现、修复或审查功能 | [最小模型交付法](development/minimal-model.md)、[源码能力对照](development/implementation.md) |
 | 理解模型、渲染、隧道和服务器调度 | [架构总览](architecture/README.md)、[实现依赖](development/dependencies.md) |
 | 控制面、共识、Enrollment 与迁移 | [控制面规范](protocols/control-plane/README.md)、[实施规程](development/control-plane.md)、[操作手册](operations/control-plane.md) |
 | Device 创建、权限与生命周期 | [Device 生命周期](architecture/device-lifecycle.md) |
