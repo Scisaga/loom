@@ -29,7 +29,7 @@
 | 动态 ControlSet | [成员账本](../../internal/controlplane/membership_ledger.go)、[joint leader](../../internal/controlplane/raft_joint_leader.go) | learner、成员和 quorum 组件存在；daemon 仍限制 N=1，没有正常晋升/移除入口，不能称多成员控制面已接通。 |
 | Linux v2 客户端 | [client 子命令分发](../../cmd/loom/client.go)、[原身份迁移](../../cmd/loom/client_migration_linux.go)、[Linux v2 加入及运行](../../cmd/loom/client_v2_linux.go) | 安装器与 `client enroll` 只执行私有 v2 Enrollment；旧公开 claim/signed pull 安装分支已删除。`export-migration-request` 验证原证书后复用原 P-256 身份、保存独立 wrapping key；`import-migration` 验证原 floor、认证迁移和完整运行配置后安装独立 migration state，并经正常 runtime deploy 事务激活。完成态 Enrollment 默认激活 runtime 并安装 `loom-client-v2` 常驻服务；显式 `-defer-runtime` 仍原子安装正式 identity/view/config/floors，仅把宿主 runtime 留给后续部署验收。宿主先恢复 LKG，再同步、事务应用并按实际 unit 状态上报，共用持久报告队列及 exact 回执验证；Agent 经本机文件事件消费原始观测并继续验签，观测不触发额外网络轮询。配置与报告读同一 installation；迁移不伪造 Enrollment。正常生产入网仍依赖上述服务端接线及迁移包生成。当前要求 Linux amd64 原生验收；arm64 构建与静态检查另列。 |
 | Windows 客户端 | [统一加入入口](../../clients/windows/join_windows.go)、[迁移入口](../../clients/windows/migration_windows.go)、[v2 运行](../../clients/windows/v2_runtime_windows.go) | GUI/剪贴板/Installed broker 只接收 v2 carrier；旧加入、current 轮询、Observation/presence 发送与恢复分支已删除。`--migration-request` 导出原身份签名请求，普通导入入口验证迁移包后安装独立的 v2 migration state，原 P-256 key 导入 CNG，原 DPAPI 与 floor 保留。迁移包已接通认证导出；新 Enrollment 的 bootstrap/capability/公开制品交付仍缺，新制品发布和原生实测分别核对，不能从交叉编译推断。 |
-| Android 客户端 | [应用](../../clients/android/app/src)、[迁移安装](../../mobile/loomcore/migration_v2.go)、[v2 报告](../../mobile/loomcore/android_device_report_v2.go) | 原生 UI、多配置与 v2 桥接已接通；旧加入、公开报告/心跳、current 拉取和旧配置恢复已删除。历史配置提供迁移请求导出与文件导入，验证原平台签名、本机身份/floor、迁移证明后原子安装；Keystore 原身份保持。迁移包已接通认证导出，Enrollment 已使用正式 daemon 与签发器，外部 bootstrap 和制品交付仍未接通；私有配置/报告共用 Go TLS 1.3 的内部 CA、SPKI 和精确目的校验，原 Keystore 通过完整消息回调签名，私钥不导出，也不依赖系统 TLS 支持 Ed25519；私有健康报告可消费 exact 绑定回执中的原始服务器观测，仍走原 CA/签名校验；正式 daemon 已挂载回执 reader；只更新认证 Head 时原子接续运行记录，保留报告循环、selector 与当前网络代的入口预算，初次启动和进行中的探测均跟随新认证记录。v2 Android 运行配置显式使用绑定当前非 VPN Network 的 local DNS，业务 FakeIP 继续保留 FQDN 到最终出口；静态 DNS 与移动网络不匹配时，不改变出口业务解析。连接配置菜单在 VPN 停用时也可导入 `.loom-config`；先释放旧 TUN，再经底层网络下载并验证，新配置启动与 selector 应用成功后才提交候选。失败保持 VPN 停用及原身份/LKG，并保留重试导入入口；普通在线 reader 仍走私有控制链路。实际私有配置/报告和 Head 更新后的连续运行以真机回执核对。Debug、Release 与实际安装分别核对，见[交付规程](../clients/android-delivery.md)。 |
+| Android 客户端 | [应用](../../clients/android/app/src)、[迁移安装](../../mobile/loomcore/migration_v2.go)、[v2 报告](../../mobile/loomcore/android_device_report_v2.go) | 原生 UI、多配置与 v2 桥接已接通；旧加入、公开报告/心跳、current 拉取和旧配置恢复已删除。历史配置提供迁移请求导出与文件导入，验证原平台签名、本机身份/floor、迁移证明后原子安装；Keystore 原身份保持。迁移包已接通认证导出，Enrollment 已使用正式 daemon 与签发器，外部 bootstrap 和制品交付仍未接通；私有配置/报告共用 Go TLS 1.3 的内部 CA、SPKI 和精确目的校验，原 Keystore 通过完整消息回调签名，私钥不导出，也不依赖系统 TLS 支持 Ed25519；私有健康报告可消费 exact 绑定回执中的原始服务器观测，仍走原 CA/签名校验；正式 daemon 已挂载回执 reader；只更新认证 Head 时原子接续运行记录，保留报告循环、selector 与当前网络代的入口预算，初次启动和进行中的探测均跟随新认证记录。v2 Android 运行配置显式使用绑定当前非 VPN Network 的 local DNS，业务 FakeIP 继续保留 FQDN 到最终出口；静态 DNS 与移动网络不匹配时，不改变出口业务解析。连接配置菜单在 VPN 停用时也可导入 `.loom-config`；先释放旧 TUN，再经底层网络下载并验证，新配置启动与 selector 应用成功后才提交候选。失败保持 VPN 停用及原身份/LKG，并保留重试导入入口；普通在线 reader 仍走私有控制链路。现有真机 smoke 只验证状态、报告和入口探测预算，并明确不执行真实业务 DNS/HTTPS，因此 `CONNECTED`、报告成功或脚本通过都不能证明数据面可用；真机验收必须补充实际 DNS、HTTPS、TCP、UDP 和出口核对。Debug、Release 与实际安装分别核对，见[交付规程](../clients/android-delivery.md)。 |
 | 客户端选路 | [入口 registry](../../internal/agent/entry_registry.go)、[观测缓存](../../internal/agent/observation_cache.go)、[Windows 进程入口](../../clients/windows/main_windows.go) | Windows 进程已订阅 OS 网络变化事件并沿宿主调用链更新网络代，同代复用 registry；Windows 原生实机验收仍须单独完成。Android 从实际 ICMP reply 读取 RTT，运行中 Direct→代理先应用 selector，再单批异步更新并拒绝旧 runtime/config/网络代结果；旧阻塞入口已删除。测试、构建和各宿主实机验收分别核对，以[观测复用契约](../clients/observations.md)为准；这些选路修复不补齐上述 v2 服务端和入网缺口。 |
 | 浏览器管理界面 | [静态前端](../../internal/webui/static)、[JSON 业务接口](../../internal/webui/browser.go)、[结构化实时推送](../../internal/webui/device_inventory_live.go) | 顶层页面由浏览器渲染；设备职责筛选、条件表单和增量更新已接通。添加设备采用响应式双栏；详情按生命周期显示重发加入码、重新入网和删除操作，隐藏没有数据的链路面板。旧 SSR 页面及 HTML 推送已删除。流量复用已有 WireGuard 证据，不提供缺失的客户端应用流量。 |
 | 客户端制品与发布页 | [签名目录](../../internal/clientrelease)、[构建目录工具](../../scripts/client-releases)、[发布工具](../../scripts/deploy-code)、[下载接口](../../internal/webui/releases.go) | Linux/Android/Windows 使用真实制品元数据、校验和及平台签名目录；部署工具只向配置的 distribution 位置增量复制，并在校验通过后激活控制节点目录。Android OS 签名与 Windows 预览状态分别展示；源码能力不证明某个制品已发布。 |
@@ -41,17 +41,23 @@ Linux 完整配置生产器已与管理员签名发布接通，同时交付 Link
 报告和观测消费已接入正式命令；当前 Linux 配置生成只保留 mixed 模式，可选 TUN 仍缺。
 显式离线配置递送与在线刷新共用原身份/Head/QC/密文校验，不复用初次迁移覆盖状态；不能从调用链与配置发布测试推断已完成生产迁移。
 
-## 控制面迁移的下一处实际工作
+## 当前恢复顺序与下一处实际工作
+
+当前先恢复可验证的 N=1 基线和 Android 数据面，不继续扩展动态 ControlSet。控制面 Web 页面、
+只读库存与发布页保留；其管理写动作仍须接入管理员认证 v2 事务，不能恢复旧 registry/SSOT
+写回调。Android 的首要缺口是用当前真机复现并修复真实业务 DNS、HTTPS、TCP、UDP，而不是继续
+依赖运行状态或报告回执推断可用性；修复必须保留 Keystore 身份、floor 和 LKG。
 
 Enrollment、device_config/device_report 已由正式 daemon 启动，`use_loom` 与 Linux `forward`
 职责组合共用真实签发器、持久首次结果、本地 WireGuard key、双方配置原子发布及过期终止。
 流程测试覆盖纯 `forward` 与 `use_loom + forward + internet_egress`：身份先完成，公网入口保持
 preparing，后续配置复用原 claim 公钥；仍不能从组件测试推断现网 fresh forward 加入成功。
 
-先以精确提交部署并为 `control serve` 配置与 descriptor 一致的静态镜像，完成 Bootstrap 外部验证、certified advertise、Nginx 静态激活和一次正常 Enrollment 回读，
-再将正常 UI 创建/恢复/删除入口连接到管理员认证事务。旧公开 claim handler、registry/SSOT
-写回调与旧邀请码生成器已删除；继续按[迁移规则](../protocols/control-plane/migration.md#从当前实现迁移)
-接通 v2 UI 事务、动态 ControlSet 和 fresh forward 生产验收，保留原身份与 floor。这些仍是本次替换的必需工作。
+动态 ControlSet 当前只有组件，没有 daemon 的正常晋升、移除、Joint/Final 激活与故障接续，保持
+暂停并重新确定最小架构后再实施。若继续多成员控制面，必须先明确单一权威状态机、持久边界、
+快照/日志追赶和成员变更事务；不得把全量 CRDT 复制加入每次权威提交的关键路径。旧公开 claim
+handler、registry/SSOT 写回调与旧邀请码生成器继续保持删除；迁移仍按
+[迁移规则](../protocols/control-plane/migration.md#从当前实现迁移)保留原身份与 floor。
 
 以上是已确认的接线缺口，不把其他工作区的组件或命令视作本仓库实现，也不把缺少 KMS/HSM 当作
 外部阻碍；软件密钥方案适用，强化方案见[可选计划](../proposals/key-protection.md)。
