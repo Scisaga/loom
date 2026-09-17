@@ -192,7 +192,9 @@ type RaftHTTPHandler struct {
 
 // RaftCandidateVerifier 必须对 data-bearing record 重放其完整确定性验证；HTTP
 // follower 在调用 RaftStorage fsync 之前执行它，不能只信 leader 的 hash。
-type RaftCandidateVerifier func(context.Context, RaftLogRecordV1) error
+// appendPrefix 是本次 RPC 中从第一条 entry 到 candidate（含）的 exact 前缀，供
+// 空 learner 在单次 catch-up 中验证尚未写入本机 storage 的 parent lineage。
+type RaftCandidateVerifier func(context.Context, RaftLogRecordV1, []RaftLogRecordV1) error
 
 func NewRaftHTTPHandler(storage *RaftStorage, set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1,
 	now func() time.Time, verify RaftCandidateVerifier) (*RaftHTTPHandler, error) {
@@ -380,7 +382,11 @@ func (handler *RaftHTTPHandler) validateAppendCandidates(ctx context.Context,
 		default:
 			return errors.New("[Raft RPC] 未知 Raft record kind")
 		}
-		if err := handler.verify(ctx, cloneRaftRecord(*record)); err != nil {
+		prefix := make([]RaftLogRecordV1, index+1)
+		for prefixIndex := range prefix {
+			prefix[prefixIndex] = cloneRaftRecord(message.Entries[prefixIndex])
+		}
+		if err := handler.verify(ctx, cloneRaftRecord(*record), prefix); err != nil {
 			return errors.New("[Raft RPC] deterministic candidate recompute 失败")
 		}
 	}

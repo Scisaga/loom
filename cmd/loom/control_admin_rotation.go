@@ -463,7 +463,7 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		}
 	}
 	var parent *wire.HeadEntryV2
-	for _, log := range runtime.storage.SnapshotRaft().Log {
+	for _, log := range runtime.controlRaftLog() {
 		if log.Head != nil && log.Head.HeadHash == record.Operation.Body.ParentHeadHash {
 			parent = log.Head
 			break

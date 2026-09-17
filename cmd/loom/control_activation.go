@@ -38,7 +38,7 @@ func (runtime *controlRuntime) verifyActivationRecord(index int) error {
 	}
 	bundle, statement := &activation.Bundle, &activation.Bundle.Proof.Statement
 	var parent *wire.HeadEntryV2
-	for _, log := range runtime.storage.SnapshotRaft().Log {
+	for _, log := range runtime.controlRaftLog() {
 		if log.Head != nil && log.Head.HeadHash == statement.ParentHeadHash {
 			parent = log.Head
 			break
@@ -193,7 +193,7 @@ func (runtime *controlRuntime) activateRuntime(activation controlRuntimeActivati
 		Operation: operation, Leaf: wire.ControlOperationLeafV1{Schema: 1, OperationID: statement.OperationID, ObjectID: statementHash},
 		Candidate: candidate, Activation: &activation, Phases: []controlplane.Phase{controlplane.PhasePending}})
 	index := len(runtime.journal.Records) - 1
-	if err := runtime.verifyCommittedHead(context.Background(), candidate); err != nil {
+	if err := runtime.verifyPendingHead(context.Background(), candidate); err != nil {
 		runtime.journal.Records = runtime.journal.Records[:index]
 		return nil, err
 	}

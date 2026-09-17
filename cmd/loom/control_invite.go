@@ -384,7 +384,7 @@ func (runtime *controlRuntime) commitInviteLocked(ctx context.Context, verified 
 	runtime.journal.Records = append(runtime.journal.Records, controlOperationRecordV1{Schema: 1, Operation: operation,
 		Leaf: leaf, AdditionalLeaves: []wire.ControlOperationLeafV1{inviteLeaf}, Candidate: candidate,
 		Invite: &payload.Invite, Phases: []controlplane.Phase{controlplane.PhasePending}})
-	if err := runtime.verifyCommittedHead(ctx, candidate); err != nil {
+	if err := runtime.verifyPendingHead(ctx, candidate); err != nil {
 		runtime.journal.Records = runtime.journal.Records[:index]
 		return controlplane.CertifiedControlOperationV1{}, err
 	}

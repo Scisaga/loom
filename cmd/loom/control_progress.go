@@ -245,7 +245,7 @@ func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 		if err := runtime.persistJournalLocked(); err != nil {
 			return err
 		}
-		if err := runtime.verifyCommittedHead(context.Background(), candidate); err != nil {
+		if err := runtime.verifyPendingHead(context.Background(), candidate); err != nil {
 			return err
 		}
 		if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, candidate); err != nil {

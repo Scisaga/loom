@@ -205,11 +205,17 @@ type controlRuntime struct {
 	headCollector      *controlplane.HeadAttestationCollector
 	operationPeers     http.Handler
 	operationMaterials *crdt.Store
-	now                func() time.Time
-	progress           atomic.Pointer[controlOperationReadState]
-	enrollmentStore    *enrollmentv2.Store
-	enrollmentKey      ed25519.PrivateKey
-	distribution       publish.Target
+	// verifiedMaterials 只消除同一进程 pre-append→apply 对 exact immutable
+	// bytes 的重复重算；重启后为空，不能替代 durable verification。
+	verifiedMaterials sync.Map
+	// verificationLog 仅用于 follower 在 fsync 前重算同一 AppendEntries 批次；
+	// 正式运行状态始终从 storage 读取，不能把它当作第二份 Raft 状态。
+	verificationLog []controlplane.RaftLogRecordV1
+	now             func() time.Time
+	progress        atomic.Pointer[controlOperationReadState]
+	enrollmentStore *enrollmentv2.Store
+	enrollmentKey   ed25519.PrivateKey
+	distribution    publish.Target
 	// checkpoint 在每个已耐久化阶段之后调用，用于故障注入验证恢复边界（D104）。
 	checkpoint func(controlplane.Phase) error
 }
@@ -1045,34 +1051,34 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 	return runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseApplied)
 }
 
-func (runtime *controlRuntime) verifyCommittedHead(_ context.Context, head wire.HeadEntryV2) error {
-	if head.Body.Payload.HeadKind == "bootstrap" {
-		if head.Body.Payload.RaftIndex != 1 {
-			return errors.New("bootstrap Head index 无效")
-		}
+func (runtime *controlRuntime) verifyCommittedHead(ctx context.Context, head wire.HeadEntryV2) error {
+	if runtime.operationMaterialAlreadyVerified(head) {
 		return nil
+	}
+	return runtime.verifyHeadFromOperationMaterials(ctx, head, nil)
+}
+
+// verifyPendingHead 只供持有 runtime.mu 的本机提交路径在 journal fsync 前使用；
+// 网络 follower 和 post-commit voter 必须只消费 durable operation-material store。
+func (runtime *controlRuntime) verifyPendingHead(ctx context.Context, head wire.HeadEntryV2) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	for index := range runtime.journal.Records {
 		record := &runtime.journal.Records[index]
 		if record.Candidate.EntryHash == head.EntryHash && wire.EqualCanonical(record.Candidate, head) {
-			leaves := runtime.operationLeaves(index + 1)
-			root, err := wire.ControlOperationRoot(leaves)
-			if err != nil || root != head.Body.Payload.OperationRoot {
-				return errors.New("operation journal 与 committed Head root 不匹配")
+			if err := runtime.verifyOperationRecord(index); err != nil {
+				return err
 			}
-			if record.AdminRotation != nil {
-				return runtime.verifyAdminRotationRecord(index)
+			object, err := newControlOperationMaterialObject(*record)
+			if err != nil {
+				return err
 			}
-			if record.Activation != nil {
-				return runtime.verifyActivationRecord(index)
-			}
-			if record.Enrollment != nil {
-				return runtime.verifyEnrollmentRecord(index)
-			}
-			return runtime.verifyAdminOperationRecord(index)
+			runtime.verifiedMaterials.Store(head.EntryHash, object.ObjectID)
+			return nil
 		}
 	}
-	return errors.New("committed ordinary Head 缺 durable operation preimage")
+	return errors.New("pending Head 缺本机 operation preimage")
 }
 
 func (runtime *controlRuntime) finalizeJournalResultLocked(head wire.HeadEntryV2,
@@ -1247,7 +1253,7 @@ func (runtime *controlRuntime) commitOperation(ctx context.Context,
 			return controlplane.CertifiedControlOperationV1{}, err
 		}
 	}
-	if err := runtime.verifyCommittedHead(context.Background(), candidate); err != nil {
+	if err := runtime.verifyPendingHead(context.Background(), candidate); err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
 	if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, candidate); err != nil {
@@ -1322,11 +1328,12 @@ func (runtime *controlRuntime) serve() error {
 	}
 	raftHandler, err := controlplane.NewRaftHTTPHandler(runtime.storage, runtime.config.ControlSet,
 		runtime.config.PeerDirectory, runtime.now,
-		func(ctx context.Context, record controlplane.RaftLogRecordV1) error {
+		func(ctx context.Context, record controlplane.RaftLogRecordV1,
+			appendPrefix []controlplane.RaftLogRecordV1) error {
 			if record.Kind == controlplane.RaftRecordHead && record.Head != nil {
-				return runtime.verifyCommittedHead(ctx, *record.Head)
+				return runtime.verifyRaftHeadCandidate(ctx, *record.Head, appendPrefix)
 			}
-			return nil
+			return errors.New("[Raft RPC] daemon 尚未接通该 data-bearing record")
 		})
 	if err != nil {
 		return err

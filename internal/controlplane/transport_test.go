@@ -69,7 +69,7 @@ func TestRaftHTTPHandlerBindsMessageIdentityToMTLSMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := NewRaftHTTPHandler(storage, set, directory, now,
-		func(context.Context, RaftLogRecordV1) error { return nil })
+		func(context.Context, RaftLogRecordV1, []RaftLogRecordV1) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRaftHTTPRejectsCandidateBeforeFsyncButPersistsHigherTerm(t *testing.T) 
 	}
 	recomputed := 0
 	handler, err := NewRaftHTTPHandler(storage, set, directory, now,
-		func(_ context.Context, _ RaftLogRecordV1) error {
+		func(_ context.Context, _ RaftLogRecordV1, _ []RaftLogRecordV1) error {
 			recomputed++
 			return context.Canceled
 		})
@@ -159,9 +159,12 @@ func TestRaftLearnerHTTPReplicatesButNeverVotes(t *testing.T) {
 	}
 	verified := 0
 	handler, err := NewRaftLearnerHTTPHandler(storage, oldSet, directory, now,
-		func(_ context.Context, record RaftLogRecordV1) error {
+		func(_ context.Context, record RaftLogRecordV1, prefix []RaftLogRecordV1) error {
 			if record.Kind != RaftRecordHead {
 				t.Fatal("learner verifier 收到错误 record kind")
+			}
+			if len(prefix) != 1 || !wire.EqualCanonical(prefix[0], record) {
+				t.Fatalf("learner verifier 未收到 candidate 的 exact append prefix: %#v", prefix)
 			}
 			verified++
 			return nil

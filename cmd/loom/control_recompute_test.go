@@ -39,7 +39,7 @@ func TestControlRecomputeRejectsUnrelatedRootsAndInvalidOperationPreimage(t *tes
 		t.Fatal("未冻结已保存而未提交的 operation")
 	}
 	original := runtime.journal.Records[0]
-	if err := runtime.verifyCommittedHead(context.Background(), original.Candidate); err != nil {
+	if err := runtime.verifyPendingHead(context.Background(), original.Candidate); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*controlOperationRecordV1){
@@ -62,7 +62,7 @@ func TestControlRecomputeRejectsUnrelatedRootsAndInvalidOperationPreimage(t *tes
 			}
 			record.Candidate = candidate
 			runtime.journal.Records[0] = record
-			if err := runtime.verifyCommittedHead(context.Background(), candidate); err == nil {
+			if err := runtime.verifyPendingHead(context.Background(), candidate); err == nil {
 				t.Fatal("操作树保持一致仍可修改无关 authority root 或签名对象")
 			}
 		})

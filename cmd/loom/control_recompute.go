@@ -26,7 +26,7 @@ func (runtime *controlRuntime) verifyAdminOperationRecord(index int) error {
 		return errors.New("[D104] 管理 operation union/leaf 不一致")
 	}
 	var parent *wire.HeadEntryV2
-	for _, log := range runtime.storage.SnapshotRaft().Log {
+	for _, log := range runtime.controlRaftLog() {
 		if log.Head != nil && log.Head.HeadHash == record.Operation.Body.ParentHeadHash {
 			parent = log.Head
 			break

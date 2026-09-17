@@ -294,7 +294,7 @@ func (runtime *controlRuntime) commitBootstrapAdvertisementPayloadLocked(ctx con
 		Operation: operation, Payload: append(json.RawMessage(nil), rawPayload...),
 		Leaf: leaf, Candidate: candidate, BootstrapAdvertisement: advertisement,
 		Phases: []controlplane.Phase{controlplane.PhasePending}})
-	if err := runtime.verifyCommittedHead(ctx, candidate); err != nil {
+	if err := runtime.verifyPendingHead(ctx, candidate); err != nil {
 		runtime.journal.Records = runtime.journal.Records[:index]
 		return controlplane.CertifiedControlOperationV1{}, err
 	}

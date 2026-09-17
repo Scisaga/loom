@@ -329,7 +329,7 @@ func (runtime *controlRuntime) commitDevicePublicationLocked(ctx context.Context
 	index := len(runtime.journal.Records)
 	runtime.journal.Records = append(runtime.journal.Records, controlOperationRecordV1{Schema: 1, Operation: operation,
 		Leaf: leaf, Candidate: candidate, DevicePublication: &payload.Publication, Phases: []controlplane.Phase{controlplane.PhasePending}})
-	if err := runtime.verifyCommittedHead(ctx, candidate); err != nil {
+	if err := runtime.verifyPendingHead(ctx, candidate); err != nil {
 		runtime.journal.Records = runtime.journal.Records[:index]
 		return controlplane.CertifiedControlOperationV1{}, err
 	}

@@ -90,6 +90,17 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 		material.Leaf.OperationID != submitted.Operation.Body.OperationID {
 		t.Fatalf("operation material 未绑定 certified Head: %#v err=%v", material, err)
 	}
+	followerStorage, err := controlplane.OpenRaftStorage(filepath.Join(root, "follower-raft.json"),
+		runtime.config.MemberID, runtime.config.ControlSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	followerVerifier := &controlRuntime{dir: stateDir, config: controlClone(runtime.config),
+		storage: followerStorage, operationMaterials: runtime.operationMaterials, now: clock}
+	if err := followerVerifier.verifyRaftHeadCandidate(context.Background(), result.Head,
+		runtime.storage.SnapshotRaft().Log); err != nil {
+		t.Fatalf("空 follower 未能用同批 Raft prefix 和复制材料重算 Head: %v", err)
+	}
 	t.Run("rejects tampered immutable material", func(t *testing.T) {
 		tamperedObject := materials[0]
 		tamperedObject.ObjectID = "sha256:" + strings.Repeat("0", 64)

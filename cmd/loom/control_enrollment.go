@@ -379,7 +379,7 @@ func (runtime *controlRuntime) verifyEnrollmentRecord(index int) error {
 func (runtime *controlRuntime) enrollmentLineage(from wire.HeadEntryV2, parentHash string) (wire.HeadEntryV2, []wire.HeadEntryV2, error) {
 	found := false
 	heads := []wire.HeadEntryV2{}
-	for _, log := range runtime.storage.SnapshotRaft().Log {
+	for _, log := range runtime.controlRaftLog() {
 		if log.Head == nil {
 			continue
 		}
@@ -495,7 +495,7 @@ func (runtime *controlRuntime) CommitEnrollmentOperation(ctx context.Context, op
 	runtime.journal.Records = append(runtime.journal.Records, controlOperationRecordV1{Schema: 1,
 		Leaf: mutation.OperationLeaf, Candidate: candidate, Phases: []controlplane.Phase{controlplane.PhasePending},
 		Enrollment: &controlEnrollmentOperationV1{Mutation: controlClone(mutation), LineageFrom: *from}})
-	if err := runtime.verifyCommittedHead(ctx, candidate); err != nil {
+	if err := runtime.verifyPendingHead(ctx, candidate); err != nil {
 		runtime.journal.Records = runtime.journal.Records[:index]
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
 	}
