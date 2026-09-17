@@ -58,9 +58,25 @@ func (runtime *controlRuntime) prepareMigrationApplication(input *controlMigrati
 	admin := controlClone(previous)
 	admin.PreviousAuthorizationHash, _ = wire.AdminAuthorizationHash(&previous, &profile)
 	admin.Generation++
-	// 本轮不激活 DNS 操作；原管理员的身份、范围与有效期原样保留。
-	admin.AllowedOperationKinds = []string{controlPingKind, controlCreateInviteKind, controlPublishDeviceKind, controlAdvertiseBootstrapKind}
+	// 本轮不激活 DNS 操作；原管理员身份与有效期保留，同时加入 v2
+	// 规范要求的独立 control-membership kind/scope。
+	admin.AllowedOperationKinds = []string{controlPingKind, controlMembershipKind, controlCreateInviteKind, controlPublishDeviceKind, controlAdvertiseBootstrapKind}
 	sort.Strings(admin.AllowedOperationKinds)
+	membershipScope := wire.AdminResourceScopeV1{ScopeKind: "control_membership", ControlMembership: &struct{}{}}
+	membershipHash, _ := wire.AdminResourceScopeHash(&membershipScope)
+	hasMembershipScope := false
+	for i := range admin.Scopes {
+		hash, _ := wire.AdminResourceScopeHash(&admin.Scopes[i])
+		hasMembershipScope = hasMembershipScope || hash == membershipHash
+	}
+	if !hasMembershipScope {
+		admin.Scopes = append(append([]wire.AdminResourceScopeV1(nil), admin.Scopes...), membershipScope)
+		sort.Slice(admin.Scopes, func(left, right int) bool {
+			leftHash, _ := wire.AdminResourceScopeHash(&admin.Scopes[left])
+			rightHash, _ := wire.AdminResourceScopeHash(&admin.Scopes[right])
+			return leftHash < rightHash
+		})
+	}
 	source, err := os.ReadFile(input.Source)
 	if err != nil {
 		return err

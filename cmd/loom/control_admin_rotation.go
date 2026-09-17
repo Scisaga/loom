@@ -58,6 +58,8 @@ func cmdControlRotateAdmin(args []string) error {
 	reason := fs.String("reason", "", "本机证书轮换的审计理由")
 	enableBootstrapAdvertise := fs.Bool("enable-bootstrap-advertise", false,
 		"为旧迁移 ACL 仅增加 advertise_bootstrap；新迁移无需使用")
+	enableControlMembership := fs.Bool("enable-control-membership", false,
+		"为旧迁移 ACL 增加 exact control-membership kind/scope；新迁移无需使用")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -93,20 +95,22 @@ func cmdControlRotateAdmin(args []string) error {
 	if err != nil {
 		return err
 	}
-	return runtime.rotateAdminCertificate(*adminDir, *out, *reason, *enableBootstrapAdvertise)
+	return runtime.rotateAdminCertificate(*adminDir, *out, *reason,
+		*enableBootstrapAdvertise, *enableControlMembership)
 }
 
 // 本机 root 维护仪式替换自己的证书，要求旧身份签名与新 key PoP。默认权限
-// 完全不变；旧迁移可显式增加唯一的 advertise_bootstrap kind，其他 capability、
-// scope、有效期或任意 operation kind 扩张仍被 reducer 拒绝。
+// 完全不变；旧迁移可显式增加 advertise_bootstrap，或成对增加 exact
+// control-membership kind/scope。其他 capability、scope、有效期或 operation kind 扩张仍被 reducer 拒绝。
 func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason string,
-	enableBootstrapAdvertise ...bool) error {
+	permissionUpgrade ...bool) error {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	enableAdvertise := len(enableBootstrapAdvertise) == 1 && enableBootstrapAdvertise[0]
-	if len(enableBootstrapAdvertise) > 1 {
-		return errors.New("[admin rotation] bootstrap advertise 选项重复")
+	if len(permissionUpgrade) > 2 {
+		return errors.New("[admin rotation] ACL 升级选项重复")
 	}
+	enableAdvertise := len(permissionUpgrade) >= 1 && permissionUpgrade[0]
+	enableMembership := len(permissionUpgrade) == 2 && permissionUpgrade[1]
 	oldAbs, err := filepath.Abs(adminDir)
 	if err != nil {
 		return err
@@ -128,6 +132,9 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 			if enableAdvertise && !containsControlValue(runtime.config.Authorizations[0].AllowedOperationKinds,
 				controlAdvertiseBootstrapKind) {
 				return errors.New("[admin rotation] 已完成的轮换没有请求的 bootstrap advertise 权限")
+			}
+			if enableMembership && !adminAuthorizationHasMembership(runtime.config.Authorizations[0]) {
+				return errors.New("[admin rotation] 已完成的轮换没有请求的 control membership 权限")
 			}
 			if err := exportAdminPKCS12(outDir, runtime.now().UTC()); err != nil {
 				return err
@@ -260,10 +267,25 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	}
 	next.CertificateProfileRef = wire.AdminCertificateProfileRefV1{ProfileID: profile.ProfileID,
 		Generation: profile.Generation, AdminCertificateProfileHash: profileHash}
-	next.AllowedOperationKinds, next.Capabilities, next.Scopes = old.AllowedOperationKinds, old.Capabilities, old.Scopes
+	next.AllowedOperationKinds = append([]string(nil), old.AllowedOperationKinds...)
+	next.Capabilities = append([]string{}, old.Capabilities...)
+	next.Scopes = append([]wire.AdminResourceScopeV1(nil), old.Scopes...)
 	if enableAdvertise && !containsControlValue(next.AllowedOperationKinds, controlAdvertiseBootstrapKind) {
 		next.AllowedOperationKinds = append(append([]string(nil), next.AllowedOperationKinds...), controlAdvertiseBootstrapKind)
 		sort.Strings(next.AllowedOperationKinds)
+	}
+	if enableMembership && !containsControlValue(next.AllowedOperationKinds, controlMembershipKind) {
+		next.AllowedOperationKinds = append(next.AllowedOperationKinds, controlMembershipKind)
+		sort.Strings(next.AllowedOperationKinds)
+	}
+	if enableMembership && !adminAuthorizationHasMembershipScope(next) {
+		next.Scopes = append(next.Scopes,
+			wire.AdminResourceScopeV1{ScopeKind: "control_membership", ControlMembership: &struct{}{}})
+		sort.Slice(next.Scopes, func(left, right int) bool {
+			leftHash, _ := wire.AdminResourceScopeHash(&next.Scopes[left])
+			rightHash, _ := wire.AdminResourceScopeHash(&next.Scopes[right])
+			return leftHash < rightHash
+		})
 	}
 	next.NotAfter = old.NotAfter
 	// 只有尚未进入任何 Raft log 的末尾准备记录可重建；已提交记录由恢复流程继续完成。
@@ -358,8 +380,8 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 		return err
 	}
 	permissionResult := "权限保持原范围"
-	if !wire.EqualCanonical(next.AllowedOperationKinds, old.AllowedOperationKinds) {
-		permissionResult = "旧迁移 ACL 已仅增加 advertise_bootstrap"
+	if enableAdvertise || enableMembership {
+		permissionResult = "旧迁移 ACL 已增加显式请求的受限权限"
 	}
 	fmt.Printf("✓ 管理员 P-256 证书与完整 PKCS#12 已生成；%s，轮换已 Raft commit/apply/QC\n  admin: %s\n", permissionResult, outDir)
 	return nil
@@ -424,12 +446,22 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		p.NextAuthorization.Generation != p.PreviousAuthorization.Generation+1 ||
 		p.NextAuthorization.AdminID != p.PreviousAuthorization.AdminID ||
 		p.NextAuthorization.AuthorizationID != p.PreviousAuthorization.AuthorizationID ||
-		p.NextAuthorization.NotAfter != p.PreviousAuthorization.NotAfter ||
-		!wire.EqualCanonical(p.NextAuthorization.Scopes, p.PreviousAuthorization.Scopes) ||
-		!wire.EqualCanonical(p.NextAuthorization.Capabilities, p.PreviousAuthorization.Capabilities) ||
-		!validAdminRotationOperationKinds(p.PreviousAuthorization.AllowedOperationKinds,
-			p.NextAuthorization.AllowedOperationKinds) {
+		p.NextAuthorization.NotAfter != p.PreviousAuthorization.NotAfter {
 		return errors.New("[admin rotation] 轮换改变了既有管理员权限/有效期或代际")
+	}
+	if !validAdminRotationScopes(p.PreviousAuthorization.Scopes, p.NextAuthorization.Scopes) {
+		return errors.New("[admin rotation] 轮换含未授权的 scope 变化")
+	}
+	if !wire.EqualCanonical(p.NextAuthorization.Capabilities, p.PreviousAuthorization.Capabilities) {
+		return errors.New("[admin rotation] 轮换改变了 capability")
+	}
+	if !validAdminRotationOperationKinds(p.PreviousAuthorization.AllowedOperationKinds,
+		p.NextAuthorization.AllowedOperationKinds) {
+		return errors.New("[admin rotation] 轮换含未授权的 operation kind 变化")
+	}
+	if containsControlValue(p.NextAuthorization.AllowedOperationKinds, controlMembershipKind) !=
+		adminAuthorizationHasMembershipScope(p.NextAuthorization) {
+		return errors.New("[admin rotation] control membership kind/scope 必须成对")
 	}
 	for _, pair := range []struct {
 		a wire.AdminAuthorizationV1
@@ -509,15 +541,61 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 }
 
 func validAdminRotationOperationKinds(previous, next []string) bool {
-	if wire.EqualCanonical(previous, next) {
-		return true
+	previousSet := make(map[string]struct{}, len(previous))
+	for _, kind := range previous {
+		previousSet[kind] = struct{}{}
+		if !containsControlValue(next, kind) {
+			return false
+		}
 	}
-	if containsControlValue(previous, controlAdvertiseBootstrapKind) {
-		return false
+	for _, kind := range next {
+		if _, exists := previousSet[kind]; exists {
+			continue
+		}
+		if kind != controlAdvertiseBootstrapKind && kind != controlMembershipKind {
+			return false
+		}
 	}
-	want := append(append([]string(nil), previous...), controlAdvertiseBootstrapKind)
-	sort.Strings(want)
-	return wire.EqualCanonical(want, next)
+	return true
+}
+
+func validAdminRotationScopes(previous, next []wire.AdminResourceScopeV1) bool {
+	previousSet := make(map[string]struct{}, len(previous))
+	for i := range previous {
+		hash, err := wire.AdminResourceScopeHash(&previous[i])
+		if err != nil {
+			return false
+		}
+		previousSet[hash] = struct{}{}
+	}
+	for i := range next {
+		hash, err := wire.AdminResourceScopeHash(&next[i])
+		if err != nil {
+			return false
+		}
+		if _, exists := previousSet[hash]; exists {
+			delete(previousSet, hash)
+			continue
+		}
+		if next[i].ScopeKind != "control_membership" || next[i].ControlMembership == nil {
+			return false
+		}
+	}
+	return len(previousSet) == 0
+}
+
+func adminAuthorizationHasMembershipScope(authorization wire.AdminAuthorizationV1) bool {
+	for _, scope := range authorization.Scopes {
+		if scope.ScopeKind == "control_membership" && scope.ControlMembership != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func adminAuthorizationHasMembership(authorization wire.AdminAuthorizationV1) bool {
+	return containsControlValue(authorization.AllowedOperationKinds, controlMembershipKind) &&
+		adminAuthorizationHasMembershipScope(authorization)
 }
 
 func (runtime *controlRuntime) projectAdminRotations() error {

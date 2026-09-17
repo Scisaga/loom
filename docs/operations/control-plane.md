@@ -202,8 +202,19 @@ sudo systemctl start loom-control.service
 ```
 
 轮换要求独占锁、listener 已释放及当前管理员材料。旧 key 授权，新 key 证明持有同一内容；
-不扩大原 ID、scope、capability 或授权期限。操作经持久日志、Raft apply 与 QC 后启用新证书，
+默认不扩大原 ID、scope、capability 或授权期限。操作经持久日志、Raft apply 与 QC 后启用新证书，
 旧证书退出 ACL；本机维护操作不在网络 registry 开放。
+
+只有由旧版迁移产生、确实缺少独立 membership ACL 的稳定 N=1 authority，才在同一
+换证仪式显式加入以下选项：
+
+```text
+  -enable-control-membership
+```
+
+该选项只能成对增加 `control_set_transition_intent` kind 与 `control_membership` scope；
+不允许同时增加 recovery/CA scope、capability、其他 kind 或延长有效期。新 bootstrap 和新迁移
+已直接包含该权限，不使用此选项。获得 ACL 不表示 learner/Joint/Final 已发生；成员变更仍须走专用事务。
 
 新目录的 `rotation-receipt.json` 保存 Head/QC/inclusion proof，新 CA 私钥仅在控制状态
 `admin-issuers/`。相同新目录可核验重试；失败先定位，不重新 bootstrap 或改 ACL。

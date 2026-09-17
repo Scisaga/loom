@@ -106,6 +106,10 @@ func TestControlAdminRotationPreservesAuthorityAndSurvivesRestart(t *testing.T) 
 				func(r *controlAdminRotationV1) {
 					r.Payload.NextAuthorization.NotAfter = now.Add(730 * 24 * time.Hour).Format(time.RFC3339)
 				},
+				func(r *controlAdminRotationV1) {
+					r.Payload.NextAuthorization.Scopes = append(r.Payload.NextAuthorization.Scopes,
+						wire.AdminResourceScopeV1{ScopeKind: "recovery_policy", RecoveryPolicy: &struct{}{}})
+				},
 			} {
 				encoded, _ := json.Marshal(rotation.AdminRotation)
 				var copy controlAdminRotationV1
@@ -172,6 +176,37 @@ func TestControlAdminRotationExplicitlyAddsOnlyBootstrapAdvertise(t *testing.T) 
 	reopened, err := openControlRuntime(dir, time.Now)
 	if err != nil || !wire.EqualCanonical(reopened.config.Authorizations[0].AllowedOperationKinds, want) {
 		t.Fatalf("重启丢失显式 ACL 升级: %v", err)
+	}
+}
+
+func TestControlAdminRotationExplicitlyAddsMembershipKindAndScope(t *testing.T) {
+	dir, admin := newAdminRotationWithoutMembershipFixture(t)
+	runtime, err := openControlRuntime(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := runtime.config.Authorizations[0]
+	if adminAuthorizationHasMembership(previous) {
+		t.Fatal("旧迁移夹具意外已有 membership 权限")
+	}
+	out := filepath.Join(t.TempDir(), "admin")
+	if err := runtime.rotateAdminCertificate(admin, out, "enable certified membership", false, true); err != nil {
+		t.Fatal(err)
+	}
+	next := runtime.config.Authorizations[0]
+	if !adminAuthorizationHasMembership(next) ||
+		!validAdminRotationOperationKinds(previous.AllowedOperationKinds, next.AllowedOperationKinds) ||
+		!validAdminRotationScopes(previous.Scopes, next.Scopes) {
+		t.Fatal("未成对增加 exact membership kind/scope")
+	}
+	forgedScopes := append(append([]wire.AdminResourceScopeV1(nil), next.Scopes...),
+		wire.AdminResourceScopeV1{ScopeKind: "recovery_policy", RecoveryPolicy: &struct{}{}})
+	if validAdminRotationScopes(previous.Scopes, forgedScopes) {
+		t.Fatal("管理员轮换接受了 membership 之外的 scope 扩张")
+	}
+	reopened, err := openControlRuntime(dir, time.Now)
+	if err != nil || !adminAuthorizationHasMembership(reopened.config.Authorizations[0]) {
+		t.Fatalf("重启丢失 membership ACL 升级: %v", err)
 	}
 }
 
@@ -288,6 +323,61 @@ func newAdminRotationFixture(t *testing.T, legacy bool) (string, string) {
 		t.Fatal(err)
 	}
 	if err := runtime.commitGenesis(now, aclRoot, directoryHash); err != nil {
+		t.Fatal(err)
+	}
+	return dir, admin
+}
+
+func newAdminRotationWithoutMembershipFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir, admin := newAdminRotationFixture(t, false)
+	var config controlDiskConfigV1
+	if err := readCanonicalFile(filepath.Join(dir, controlConfigName), 8<<20, &config); err != nil {
+		t.Fatal(err)
+	}
+	authorization := &config.Authorizations[0]
+	operationKinds := authorization.AllowedOperationKinds[:0]
+	for _, kind := range authorization.AllowedOperationKinds {
+		if kind != controlMembershipKind {
+			operationKinds = append(operationKinds, kind)
+		}
+	}
+	authorization.AllowedOperationKinds = operationKinds
+	scopes := authorization.Scopes[:0]
+	for _, scope := range authorization.Scopes {
+		if scope.ScopeKind != "control_membership" {
+			scopes = append(scopes, scope)
+		}
+	}
+	authorization.Scopes = scopes
+	aclRoot, err := wire.AdminACLRoot(config.Authorizations, config.AdminProfiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setHash, _ := wire.ControlSetHash(&config.ControlSet)
+	directoryHash, _ := wire.ControlPeerDirectoryHash(&config.ControlSet, &config.PeerDirectory)
+	var endpoint controlAdminEndpointV1
+	if err := readCanonicalFile(filepath.Join(admin, controlEndpointName), 1<<20, &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	internalRoot, _ := base64.RawURLEncoding.DecodeString(endpoint.InternalRootDER)
+	profile := config.AdminProfiles[authorization.CertificateProfileRef.ProfileID]
+	adminRoot, _ := base64.RawURLEncoding.DecodeString(profile.IssuerChainDER[len(profile.IssuerChainDER)-1])
+	config.GenesisEvidence = makeControlGenesisEvidence(config.ClusterID, setHash, directoryHash,
+		aclRoot, internalRoot, adminRoot)
+	if err := writeCanonicalAtomic(filepath.Join(dir, controlConfigName), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{controlRaftName, controlStateName} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime, err := openControlRuntime(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.commitGenesis(time.Now().UTC().Truncate(time.Second), aclRoot, directoryHash); err != nil {
 		t.Fatal(err)
 	}
 	return dir, admin

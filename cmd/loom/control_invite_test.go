@@ -430,7 +430,7 @@ func controlInviteApplication(t *testing.T, runtime *controlRuntime) (controlApp
 	next := controlClone(previous)
 	next.Generation++
 	next.PreviousAuthorizationHash, _ = wire.AdminAuthorizationHash(&previous, &profile)
-	next.AllowedOperationKinds = []string{controlPingKind, controlCreateInviteKind}
+	next.AllowedOperationKinds = []string{controlPingKind, controlMembershipKind, controlCreateInviteKind}
 	policy := wire.InviteIssuancePolicyV2{Schema: 2, ClusterID: runtime.config.ClusterID, PolicyID: "demo-invite-policy", Generation: 1,
 		MinimumTTLSeconds: 300, MaximumTTLSeconds: 1800, MaximumDescriptorBytes: 65536, MaximumIntentOpeningBytes: 65536,
 		MinimumDistributionMirrors: 2, MaximumDistributionMirrors: 3, AllowedBootstrapTransports: []string{"hysteria2", "trojan_tls"},

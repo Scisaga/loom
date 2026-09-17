@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	pathpkg "path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,11 +60,12 @@ const (
 	controlEndpointName     = "endpoint.json"
 	privateControlStatus    = "/private/v2/control/status"
 	controlPingKind         = "control_ping"
+	controlMembershipKind   = "control_set_transition_intent"
 	controlMaxResponseSize  = 8 << 20
 	controlLoopbackIP       = "127.0.0.1"
 )
 
-var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1, controlCreateInviteKind: 1,
+var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1, controlMembershipKind: 1, controlCreateInviteKind: 1,
 	controlPublishDeviceKind: 1, controlAdvertiseBootstrapKind: 1, dnsprovider.BindingOperationKind: 1}
 
 type controlDiskConfigV1 struct {
@@ -1219,6 +1221,11 @@ func (runtime *controlRuntime) resolveScope(ctx context.Context,
 		if _, err := decodeControlBootstrapAdvertisement(controlplane.OperationPayload(ctx), operation); err != nil {
 			return wire.AdminResourceScopeV1{}, err
 		}
+	} else if operation.Body.Kind == controlMembershipKind {
+		if _, err := decodeControlMembershipIntent(controlplane.OperationPayload(ctx), operation); err != nil {
+			return wire.AdminResourceScopeV1{}, err
+		}
+		return wire.AdminResourceScopeV1{ScopeKind: "control_membership", ControlMembership: &struct{}{}}, nil
 	} else if err := validateControlPayload(operation, controlplane.OperationPayload(ctx)); err != nil {
 		return wire.AdminResourceScopeV1{}, err
 	}
@@ -1247,6 +1254,10 @@ func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	}
 	if operation.Body.Kind == controlAdvertiseBootstrapKind {
 		return runtime.commitBootstrapAdvertisementLocked(ctx, verified)
+	}
+	if operation.Body.Kind == controlMembershipKind {
+		return controlplane.CertifiedControlOperationV1{},
+			errors.New("control membership intent 只能进入 learner→Joint→Final 专用事务")
 	}
 	payload := controlplane.OperationPayload(ctx)
 	if err := validateControlPayload(operation, payload); err != nil {
@@ -1346,6 +1357,22 @@ func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	}
 	record := &runtime.journal.Records[len(runtime.journal.Records)-1]
 	return controlplaneResult(record.Result)
+}
+
+func decodeControlMembershipIntent(payload json.RawMessage,
+	operation wire.ControlOperationV1) (wire.ControlSetTransitionIntentV1, error) {
+	var intent wire.ControlSetTransitionIntentV1
+	canonical, err := wire.DecodeStrict(payload, 1<<20, &intent)
+	if err != nil || !bytes.Equal(canonical, payload) {
+		return intent, errors.New("[ControlSet] transition intent 必须是 exact canonical wire")
+	}
+	hash, err := wire.ControlSetTransitionIntentHash(&intent)
+	if err != nil || operation.Body.Kind != controlMembershipKind || operation.Body.PayloadSchema != 1 ||
+		operation.Body.PayloadHash != hash || operation.Body.ClusterID != intent.ClusterID ||
+		operation.Body.OperationID != intent.OperationID || operation.Body.Reason != intent.Reason {
+		return intent, errors.New("[ControlSet] admin operation 未 exact-bind transition intent")
+	}
+	return intent, nil
 }
 
 func controlplaneResult(result *controlCertifiedOperationResultV1) (controlplane.CertifiedControlOperationV1, error) {
@@ -2321,6 +2348,13 @@ func makeAdminAuthority(clusterID string, rootDER, adminDER []byte,
 	}
 	digest, _ := wire.AdminCertificateDigest(adminDER)
 	keyID, _ := wire.AdminKeyID(certificate.RawSubjectPublicKeyInfo)
+	scopes := []wire.AdminResourceScopeV1{{ScopeKind: "cluster", Cluster: &struct{}{}},
+		{ScopeKind: "control_membership", ControlMembership: &struct{}{}}}
+	sort.Slice(scopes, func(left, right int) bool {
+		leftHash, _ := wire.AdminResourceScopeHash(&scopes[left])
+		rightHash, _ := wire.AdminResourceScopeHash(&scopes[right])
+		return leftHash < rightHash
+	})
 	authorization := wire.AdminAuthorizationV1{Schema: 1, ClusterID: clusterID,
 		AuthorizationID: "admin-primary-v1", Generation: 1, AdminID: "admin-primary",
 		AdminCertificateDER: base64.RawURLEncoding.EncodeToString(adminDER), AdminCertificateDigest: digest,
@@ -2328,8 +2362,8 @@ func makeAdminAuthority(clusterID string, rootDER, adminDER []byte,
 			Generation: profile.Generation, AdminCertificateProfileHash: profileHash},
 		NotBefore: now.Add(-5 * time.Minute).Format(time.RFC3339),
 		NotAfter:  now.Add(365 * 24 * time.Hour).Format(time.RFC3339), Status: "active",
-		AllowedOperationKinds: []string{controlPingKind, dnsprovider.BindingOperationKind}, Capabilities: []string{},
-		Scopes: []wire.AdminResourceScopeV1{{ScopeKind: "cluster", Cluster: &struct{}{}}}}
+		AllowedOperationKinds: []string{controlPingKind, controlMembershipKind, dnsprovider.BindingOperationKind}, Capabilities: []string{},
+		Scopes: scopes}
 	if err := wire.ValidateAdminAuthorizationAt(&authorization, &profile, now); err != nil {
 		return profile, authorization, err
 	}
