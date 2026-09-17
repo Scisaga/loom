@@ -86,7 +86,7 @@ func TestVerifiedClientPackageCacheRetainsFailureUntilFilesChange(t *testing.T) 
 	}
 }
 
-func TestInvalidEnrollmentURLDoesNotCreateInvitationState(t *testing.T) {
+func TestLegacyRegistryMutationCallbacksAreNotExposed(t *testing.T) {
 	dir := t.TempDir()
 	ssotPath := filepath.Join(dir, "ssot.yaml")
 	if err := os.WriteFile(ssotPath, []byte("nodes: []\n"), 0o600); err != nil {
@@ -95,13 +95,17 @@ func TestInvalidEnrollmentURLDoesNotCreateInvitationState(t *testing.T) {
 	registryPath := filepath.Join(dir, "registry.json")
 	deps := newClientControlDeps(&Control{
 		SSOTPath: ssotPath, ClientRegistryPath: registryPath,
-		ClientEnrollmentURL: "http://control.example/api/client/enroll?token=bad",
 	}, nil)
-	if _, err := deps.CreateInvite(accessInviteInput("device", "linux-server")); err == nil {
-		t.Fatal("insecure enrollment URL was accepted")
+	if deps == nil {
+		t.Fatal("Device dependencies are unavailable")
+	}
+	if deps.CreateInvite != nil || deps.InviteArtifact != nil || deps.RenewInvite != nil ||
+		deps.ReplaceDevice != nil || deps.DeleteDevice != nil || deps.SetDevicePaused != nil ||
+		deps.PurgeRevoked != nil || deps.DiscardPending != nil {
+		t.Fatal("production dependencies still expose legacy registry mutation callbacks")
 	}
 	if _, err := os.Stat(registryPath); !os.IsNotExist(err) {
-		t.Fatalf("invalid URL left registry state: %v", err)
+		t.Fatalf("constructing read-only dependencies wrote registry state: %v", err)
 	}
 }
 
@@ -128,12 +132,5 @@ func TestPublicClientBaseAndInstallerAreDeploymentConfigured(t *testing.T) {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("public installer contains private/enrollment material %q", forbidden)
 		}
-	}
-}
-
-func accessInviteInput(name, platform string) webui.ClientInviteInput {
-	return webui.ClientInviteInput{
-		Name: name, Platform: platform, Responsibilities: []string{"use_loom"},
-		DestinationGrants: []string{"best-egress"},
 	}
 }

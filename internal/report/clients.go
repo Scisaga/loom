@@ -1,14 +1,8 @@
 package report
 
 import (
-	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,19 +15,9 @@ import (
 	"loom/internal/clientregistry"
 	"loom/internal/clientrelease"
 	"loom/internal/model"
-	"loom/internal/ssotedit"
-	"loom/internal/validate"
 	"loom/internal/version"
 	"loom/internal/webui"
 )
-
-type clientInvitePayload struct {
-	Schema            int    `json:"schema"`
-	Endpoint          string `json:"endpoint"`
-	Token             string `json:"token"`
-	ExpiresAt         string `json:"expires_at"`
-	PlatformKeySHA256 string `json:"platform_key_sha256"`
-}
 
 // verifiedClientPackageCache retains only bytes that already passed the full
 // package verification. The build script publishes every file by atomic rename,
@@ -99,13 +83,9 @@ func sameClientPackageFileState(a, b []os.FileInfo) bool {
 	return true
 }
 
-func newClientControlDeps(c *Control, onChange ...func()) *webui.ClientControlDeps {
+func newClientControlDeps(c *Control, _ ...func()) *webui.ClientControlDeps {
 	if c == nil || strings.TrimSpace(c.ClientRegistryPath) == "" {
 		return nil
-	}
-	changed := func() {}
-	if len(onChange) > 0 && onChange[0] != nil {
-		changed = onChange[0]
 	}
 	store := clientregistry.Store{Path: c.ClientRegistryPath}
 	platformPublicKeyPath := "/etc/loom/trust/platform.pub"
@@ -136,40 +116,6 @@ func newClientControlDeps(c *Control, onChange ...func()) *webui.ClientControlDe
 			view.InstallerURL = base + "install.sh"
 		}
 		return view, published.Archive, nil
-	}
-	inviteURI := func(token, expires string) (string, error) {
-		endpoint, err := validClientEnrollmentURL(c.ClientEnrollmentURL)
-		if err != nil {
-			return "", err
-		}
-		key, err := readClientPlatformPublicKey(filepath.Join(filepath.Dir(c.SSOTPath), "keys", "platform-signing.pub"))
-		if err != nil {
-			return "", err
-		}
-		keyDigest := sha256.Sum256(key)
-		body, err := json.Marshal(clientInvitePayload{
-			Schema: 1, Endpoint: endpoint, Token: token, ExpiresAt: expires,
-			PlatformKeySHA256: hex.EncodeToString(keyDigest[:]),
-		})
-		if err != nil {
-			return "", err
-		}
-		// Fragment material is never sent as an HTTP request target. The client
-		// decodes it locally and sends the bearer token only in the claim POST body.
-		return "loom://enroll#" + base64.RawURLEncoding.EncodeToString(body), nil
-	}
-	inviteView := func(created clientregistry.CreateResult) (webui.ClientInviteView, error) {
-		uri, err := inviteURI(created.Token, created.Invite.ExpiresAt)
-		if err != nil {
-			return webui.ClientInviteView{}, err
-		}
-		return webui.ClientInviteView{
-			InviteID: created.Invite.ID, ClientID: created.Client.ID, ClientName: created.Client.Name,
-			InviteURI: uri, EnrollmentURL: c.ClientEnrollmentURL, ExpiresAt: created.Invite.ExpiresAt,
-			Platform: created.Client.Platform, Direction: created.Client.Direction, Replaces: created.Client.Replaces,
-			Responsibilities:  append([]string(nil), created.Client.Responsibilities...),
-			DestinationGrants: append([]string(nil), created.Client.DestinationGrants...),
-		}, nil
 	}
 	releaseKey, _ := clientrelease.PublicKey(platformPublicKeyPath)
 	deps := &webui.ClientControlDeps{
@@ -279,252 +225,12 @@ func newClientControlDeps(c *Control, onChange ...func()) *webui.ClientControlDe
 			}
 			return inventory, nil
 		},
-		DiscardPending: func(id string) error {
-			err := store.DiscardPending(id)
-			if err == nil {
-				changed()
-			}
-			return err
-		},
-		PurgeRevoked: func(id string) error {
-			id = strings.TrimSpace(id)
-			if !model.ValidNodeID(id) {
-				return &clientregistry.Error{Code: clientregistry.CodeInvalid, Msg: "Device id is malformed"}
-			}
-			err := withSSOTLock(c.SSOTPath, func() error {
-				snapshot, err := readSSOTSnapshot(c.SSOTPath)
-				if err != nil {
-					return err
-				}
-				current, err := model.Load(snapshot.body)
-				if err != nil {
-					return err
-				}
-				if findings := validate.Validate(current); len(findings) > 0 {
-					return fmt.Errorf("current SSOT is invalid: %s", validate.Format(findings))
-				}
-				if current.NodeByID()[id] != nil {
-					return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: "Device is still present in current SSOT"}
-				}
-				return store.PurgeRevoked(id)
-			})
-			if err == nil {
-				changed()
-			}
-			return err
-		},
-		SetDevicePaused: func(id string, paused bool) error {
-			err := setDevicePaused(c, store, id, paused)
-			if err == nil {
-				changed()
-			}
-			return err
-		},
-		DeleteDevice: func(id string) error {
-			id = strings.TrimSpace(id)
-			if !model.ValidNodeID(id) {
-				return &clientregistry.Error{Code: clientregistry.CodeInvalid, Msg: "Device id is malformed"}
-			}
-			err := withSSOTLock(c.SSOTPath, func() error {
-				snapshot, err := readSSOTSnapshot(c.SSOTPath)
-				if err != nil {
-					return err
-				}
-				current, err := model.Load(snapshot.body)
-				if err != nil {
-					return err
-				}
-				if findings := validate.Validate(current); len(findings) > 0 {
-					return fmt.Errorf("current SSOT is invalid: %s", validate.Format(findings))
-				}
-				clients, _, err := store.List()
-				if err != nil {
-					return err
-				}
-				var client *clientregistry.Client
-				for i := range clients {
-					if clients[i].ID == id {
-						client = &clients[i]
-						break
-					}
-				}
-				if client == nil {
-					return &clientregistry.Error{Code: clientregistry.CodeNotFound, Msg: "Device was not found"}
-				}
-				node := current.NodeByID()[id]
-				if client.Status == "revoked" && node == nil {
-					return nil
-				}
-				if client.Status != "ready" || client.IdentitySource != "enrollment" || client.ReplacedBy != "" ||
-					len(client.Responsibilities) != 1 || client.Responsibilities[0] != "use_loom" {
-					return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: "only a joined, access-only enrollment Device can be removed here"}
-				}
-				if err := validateEnrollmentIntent(current, *client); err != nil {
-					return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: err.Error()}
-				}
-				if node != nil {
-					if err := validateProvisionedClient(current, node, *client); err != nil {
-						return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: err.Error()}
-					}
-					plan, err := ssotedit.RemoveLostAccessDevice(snapshot.body, id)
-					if err != nil {
-						return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: err.Error()}
-					}
-					if err := saveSSOTAtomicFromSnapshot(c.SSOTPath, plan.Content, snapshot); err != nil {
-						return err
-					}
-				}
-				_, err = store.Revoke(id)
-				return err
-			})
-			if err == nil {
-				changed()
-			}
-			return err
-		},
-		RenewInvite: func(id string) (webui.ClientInviteView, error) {
-			// 先核对公开签发信息，避免入口配置损坏时先让旧二维码失效。
-			if _, err := inviteURI("", ""); err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			created, err := store.RenewInvitation(id)
-			if err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			changed()
-			return inviteView(created)
-		},
-		ReplaceDevice: func(id string) (webui.ClientInviteView, error) {
-			if _, err := inviteURI("", ""); err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			var created clientregistry.CreateResult
-			err := withSSOTLock(c.SSOTPath, func() error {
-				snapshot, err := readSSOTSnapshot(c.SSOTPath)
-				if err != nil {
-					return err
-				}
-				current, err := model.Load(snapshot.body)
-				if err != nil {
-					return err
-				}
-				if findings := validate.Validate(current); len(findings) > 0 {
-					return fmt.Errorf("current SSOT is invalid: %s", validate.Format(findings))
-				}
-				created, err = store.ReplaceWithInvitation(id, func(previous clientregistry.Client) error {
-					if err := validateEnrollmentIntent(current, previous); err != nil {
-						return err
-					}
-					node := current.NodeByID()[id]
-					if node == nil {
-						// SSOT 已撤销但 registry 落盘失败时，重试只补齐身份事务。
-						return nil
-					}
-					if err := validateProvisionedClient(current, node, previous); err != nil {
-						return err
-					}
-					plan, err := ssotedit.RemoveLostAccessDevice(snapshot.body, id)
-					if err != nil {
-						return err
-					}
-					return saveSSOTAtomicFromSnapshot(c.SSOTPath, plan.Content, snapshot)
-				})
-				return err
-			})
-			if err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			changed()
-			return inviteView(created)
-		},
-		CreateInvite: func(input webui.ClientInviteInput) (webui.ClientInviteView, error) {
-			endpoint, err := validClientEnrollmentURL(c.ClientEnrollmentURL)
-			if err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			if err := validateDeviceInviteInput(c, input); err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			created, err := store.Create(input.Name, clientregistry.EnrollmentIntent{
-				Platform: input.Platform, Responsibilities: append([]string(nil), input.Responsibilities...),
-				DestinationGrants: append([]string(nil), input.DestinationGrants...), Direction: input.Direction,
-			})
-			if err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			changed()
-			uri, err := inviteURI(created.Token, created.Invite.ExpiresAt)
-			if err != nil {
-				return webui.ClientInviteView{}, err
-			}
-			return webui.ClientInviteView{
-				InviteID: created.Invite.ID, ClientID: created.Client.ID,
-				ClientName: created.Client.Name, InviteURI: uri,
-				EnrollmentURL: endpoint, ExpiresAt: created.Invite.ExpiresAt,
-				Platform:          created.Client.Platform,
-				Responsibilities:  append([]string(nil), created.Client.Responsibilities...),
-				DestinationGrants: append([]string(nil), created.Client.DestinationGrants...),
-				Direction:         created.Client.Direction,
-			}, nil
-		},
-		InviteArtifact: func(inviteID string) (webui.ClientInviteArtifact, error) {
-			token, invite, err := store.Artifact(inviteID)
-			if err != nil {
-				return webui.ClientInviteArtifact{}, err
-			}
-			clients, _, err := store.List()
-			if err != nil {
-				return webui.ClientInviteArtifact{}, err
-			}
-			var invitedClient *clientregistry.Client
-			for _, client := range clients {
-				if client.ID == invite.ClientID {
-					copy := client
-					invitedClient = &copy
-					break
-				}
-			}
-			if invitedClient == nil {
-				return webui.ClientInviteArtifact{}, fmt.Errorf("invitation %s references an unknown client", invite.ID)
-			}
-			uri, err := inviteURI(token, invite.ExpiresAt)
-			if err != nil {
-				return webui.ClientInviteArtifact{}, err
-			}
-			return webui.ClientInviteArtifact{
-				ClientID: invite.ClientID, ClientName: invitedClient.Name,
-				InviteURI: uri, ExpiresAt: invite.ExpiresAt,
-				Platform:          invitedClient.Platform,
-				Responsibilities:  append([]string(nil), invitedClient.Responsibilities...),
-				DestinationGrants: append([]string(nil), invitedClient.DestinationGrants...),
-				Direction:         invitedClient.Direction,
-				Replaces:          invitedClient.Replaces,
-			}, nil
-		},
 	}
 	// Pay the full verification cost during control-plane startup instead of on
 	// the first operator request. A missing package is non-fatal and remains a
 	// cached unavailable state until one of its atomic files changes.
 	_, _ = packageCache.load()
 	return deps
-}
-
-func readClientPlatformPublicKey(path string) (ed25519.PublicKey, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, errors.New("deployment platform public key is unavailable")
-	}
-	defer file.Close()
-	body, err := io.ReadAll(io.LimitReader(file, 1025))
-	if err != nil || len(body) == 0 || len(body) > 1024 {
-		return nil, errors.New("deployment platform public key is unavailable")
-	}
-	encoded := strings.TrimSpace(string(body))
-	key, err := base64.StdEncoding.Strict().DecodeString(encoded)
-	if err != nil || len(key) != ed25519.PublicKeySize || base64.StdEncoding.EncodeToString(key) != encoded {
-		return nil, errors.New("deployment platform public key is invalid")
-	}
-	return ed25519.PublicKey(key), nil
 }
 
 func registryMembership(status string) string {
@@ -610,33 +316,6 @@ func deviceEnrollmentOptions(c *Control) (webui.DeviceEnrollmentOptions, error) 
 	return options, nil
 }
 
-func validateDeviceInviteInput(c *Control, input webui.ClientInviteInput) error {
-	options, err := deviceEnrollmentOptions(c)
-	if err != nil {
-		return err
-	}
-	allowed := make(map[string]bool, len(options.DestinationGrants))
-	for _, option := range options.DestinationGrants {
-		allowed[option.ID] = true
-	}
-	for _, grant := range input.DestinationGrants {
-		if !allowed[strings.TrimSpace(grant)] {
-			return fmt.Errorf("destination grant %q is not an available from_request declaration", grant)
-		}
-	}
-	return nil
-}
-
-func validClientEnrollmentURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
-		u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("client_enrollment_url must be an absolute HTTPS URL without credentials, query, or fragment")
-	}
-	return u.String(), nil
-}
-
 func validClientPublicBaseURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	parsed, err := url.ParseRequestURI(raw)
@@ -645,6 +324,14 @@ func validClientPublicBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("client_public_base_url must be an absolute HTTPS URL without credentials, query, or fragment")
 	}
 	return strings.TrimRight(parsed.String(), "/") + "/", nil
+}
+
+func controlNodeID(c *Control) (string, error) {
+	id := strings.TrimSpace(c.Node)
+	if !model.ValidNodeID(id) {
+		return "", fmt.Errorf("report node %q does not identify the control Device", c.Node)
+	}
+	return id, nil
 }
 
 func linuxPublicInstallScript(view webui.LinuxClientPackageView) []byte {
