@@ -200,6 +200,8 @@ type controlRuntime struct {
 	uiReadOnly       http.Handler
 	uiAdmin          http.Handler
 	enrollmentPeers  http.Handler
+	headPeers        http.Handler
+	headCollector    *controlplane.HeadAttestationCollector
 	now              func() time.Time
 	progress         atomic.Pointer[controlOperationReadState]
 	enrollmentStore  *enrollmentv2.Store
@@ -849,6 +851,21 @@ func openControlRuntimeConfigured(dir string, now func() time.Time, distribution
 	runtime := &controlRuntime{dir: dir, config: config, journal: journal, distribution: distribution,
 		configKey: decodedKeys[1], enrollmentKey: decodedKeys[2], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
 		storage: storage, store: store, now: now}
+	headVoter, err := controlplane.NewHeadAttestationVoter(storage, store, config.ControlSet,
+		config.MemberID, decodedKeys[1], runtime.verifyCommittedHead)
+	if err != nil {
+		return nil, err
+	}
+	runtime.headPeers, err = controlplane.NewHeadAttestationHTTPHandler(config.ControlSet,
+		config.PeerDirectory, now, headVoter)
+	if err != nil {
+		return nil, err
+	}
+	runtime.headCollector, err = controlplane.NewHeadAttestationCollector(config.ControlSet,
+		map[string]controlplane.HeadAttestationPeer{config.MemberID: headVoter})
+	if err != nil {
+		return nil, err
+	}
 	runtime.enrollmentStore, err = enrollmentv2.OpenStore(filepath.Join(dir, "enrollment-transactions.json"))
 	if err != nil {
 		return nil, err
@@ -946,8 +963,10 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 			return err
 		}
 	}
-	if err := runtime.store.RecoverCertification(map[string]ed25519.PrivateKey{
-		runtime.config.MemberID: runtime.configKey}); err != nil {
+	if runtime.headCollector == nil {
+		return errors.New("control Head certification collector 未初始化")
+	}
+	if err := runtime.headCollector.CertifyActive(context.Background(), runtime.store); err != nil {
 		return err
 	}
 	state = runtime.store.Snapshot()
@@ -1289,14 +1308,15 @@ func (runtime *controlRuntime) serve() error {
 		return err
 	}
 	controlHandler := runtime.controlHandler()
-	var peerHandler http.Handler = raftHandler
+	peers := http.NewServeMux()
+	peers.Handle(controlplane.HeadAttestationVotePath, runtime.headPeers)
+	peers.Handle(controlplane.HeadCertificationPath, runtime.headPeers)
 	if runtime.enrollmentPeers != nil {
-		peers := http.NewServeMux()
 		peers.Handle(controlplane.EnrollmentAdmissionVotePath, runtime.enrollmentPeers)
 		peers.Handle(controlplane.EnrollmentApprovalVotePath, runtime.enrollmentPeers)
-		peers.Handle("/", raftHandler)
-		peerHandler = peers
 	}
+	peers.Handle("/", raftHandler)
+	var peerHandler http.Handler = peers
 	controlServer := &http.Server{Handler: controlHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	loopbackServer := &http.Server{Handler: controlHandler, ReadHeaderTimeout: 5 * time.Second,

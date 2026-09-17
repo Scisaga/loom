@@ -35,6 +35,9 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if runtime.headCollector == nil || runtime.headPeers == nil {
+		t.Fatal("正式 control daemon 未初始化 Head QC peer/collector")
+	}
 	peer := readAdminTestCertificate(t, filepath.Join(adminDir, controlAdminCertName))
 	status := serveRuntimeStatus(t, runtime, peer)
 	if status.Quorum != 1 || len(status.ControlSet.Members) != 1 ||
