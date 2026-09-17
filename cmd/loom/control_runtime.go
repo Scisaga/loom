@@ -227,7 +227,7 @@ type controlRuntime struct {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("control 需要 bootstrap、enable-loopback、rotate-admin、export-admin、serve、status、create-invite、advertise-bootstrap、migrate 或 request")
+		return errors.New("control 需要 bootstrap、enable-loopback、rotate-admin、export-admin、serve、status、create-invite、advertise-bootstrap、prepare-control-candidate、migrate 或 request")
 	}
 	switch args[0] {
 	case "bootstrap":
@@ -266,6 +266,8 @@ func cmdControl(args []string) error {
 		return cmdControlExportBootstrap(args[1:])
 	case "export-migration":
 		return cmdControlExportMigration(args[1:])
+	case "prepare-control-candidate":
+		return cmdControlPrepareCandidate(args[1:])
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
