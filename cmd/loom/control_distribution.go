@@ -135,20 +135,8 @@ func (runtime *controlRuntime) reconcileEnrollmentDistributionRecordLocked(recor
 	if err := publish.PushImmutable(runtime.distribution, objects); err != nil {
 		return nil, fmt.Errorf("[首次配置] 静态镜像发布失败: %w", err)
 	}
-	paths := make([]string, 0, len(objects))
-	for path := range objects {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		body, found, err := runtime.distribution.ReadFile(path)
-		if err != nil || !found || !bytes.Equal(body, objects[path]) {
-			if err != nil {
-				return nil, fmt.Errorf("[首次配置] 静态镜像回读失败: %w", err)
-			}
-			return nil, errors.New("[首次配置] 静态镜像未返回 exact 配置制品")
-		}
-	}
+	// PushImmutable 的 target 契约已在每个本地/SSH 镜像写入后回读 exact
+	// bytes；这里不再重复打开第二轮 SSH 连接。
 	return evidence, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // NewMirrorSet turns several independent static targets into one reconciliation
@@ -59,15 +60,29 @@ func (m *mirrorSet) Push(tree *Tree) error {
 }
 
 func (m *mirrorSet) pushImmutable(files map[string][]byte) error {
-	var failures []string
-	for _, target := range m.targets {
-		writer, ok := target.(interface{ pushImmutable(map[string][]byte) error })
-		if !ok {
-			failures = append(failures, fmt.Sprintf("%s:不支持不可变对象", target))
-			continue
-		}
-		if err := writer.pushImmutable(files); err != nil {
-			failures = append(failures, fmt.Sprintf("%s:%v", target, err))
+	// 镜像彼此独立；并行发布缩短 Enrollment completion 的外部副作用窗口。
+	// failures 按目标下标写入，最终错误仍保持配置顺序，便于稳定重试和诊断。
+	failuresByTarget := make([]string, len(m.targets))
+	var wait sync.WaitGroup
+	for index, target := range m.targets {
+		wait.Add(1)
+		go func(index int, target Target) {
+			defer wait.Done()
+			writer, ok := target.(interface{ pushImmutable(map[string][]byte) error })
+			if !ok {
+				failuresByTarget[index] = fmt.Sprintf("%s:不支持不可变对象", target)
+				return
+			}
+			if err := writer.pushImmutable(files); err != nil {
+				failuresByTarget[index] = fmt.Sprintf("%s:%v", target, err)
+			}
+		}(index, target)
+	}
+	wait.Wait()
+	failures := make([]string, 0, len(m.targets))
+	for _, failure := range failuresByTarget {
+		if failure != "" {
+			failures = append(failures, failure)
 		}
 	}
 	if len(failures) > 0 {
