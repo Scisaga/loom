@@ -22,12 +22,15 @@
 
 - `internal/webui/static/*` 中的浏览器 SPA、样式、图标和拓扑交互；
 - Releases、Devices、Topology、Live paths、Services、Events 和 SSOT 页面；
+- Android 的主界面、Enrollment 窗口、profile/选路/状态交互、颜色、图标与 launcher 资源；
+- Windows 的 Misaka 界面、profile 管理、选路与路径详情交互、状态图标、manifest 和原生资源；
 - 双环拓扑不因聚焦或当前路径重排，当前路径只作只读叠加；
 - 浏览器 TLS、管理员证书、same-origin 与 read/admin Unix socket 权限边界；
 - 签名 release catalog、逐文件摘要校验和精确制品下载体验。
 
 后端 DTO、旧 SSOT callback、registry 拼接和独立 SSR 页面不在白名单。Web 只消费
-[控制面 Web 投影](web-ui-projection.md)。
+[控制面 Web 投影](web-ui-projection.md)。Android/Windows 保留的是产品界面和交互语义；Enrollment manager、
+route manager、scheduler、probe 与平台 runtime 仍须逐项映射到新模型，不能因 UI 保留而整目录搬回。
 
 ## 可复用的窄能力
 
@@ -82,4 +85,4 @@
 4. 沿正常入口验证一次结果；不能用原 fixture 证明新接线。
 5. 在同一改动中删除被替代旧代码，不保留长期双栈。
 
-控制面 Web 是唯一明确要求整体保全的产品面；即使如此，保留的是页面和交互，不是偶然为其供数的旧权威模型。
+控制面 Web、Android 和 Windows UI 都是明确保全的产品面；保留的是页面、品牌资源与有效交互，不是偶然为其供数的旧权威模型或平台状态机。
