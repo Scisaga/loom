@@ -176,21 +176,36 @@ func productionEnrollmentFixture(t *testing.T) (*controlRuntime, string) {
 }
 
 func TestProductionEnrollmentPublishesBothSidesAndRetainsFirstResult(t *testing.T) {
-	for _, platform := range []string{"linux-server", "windows-desktop", "android", "expired-issuance"} {
-		t.Run(platform, func(t *testing.T) {
-			expiryCase := platform == "expired-issuance"
-			if expiryCase {
-				platform = "linux-server"
-			}
+	tests := []struct {
+		name             string
+		platform         string
+		responsibilities []string
+		useGrant         bool
+		expiryCase       bool
+	}{
+		{name: "linux-use", platform: "linux-server", responsibilities: []string{"use_loom"}, useGrant: true},
+		{name: "windows-use", platform: "windows-desktop", responsibilities: []string{"use_loom"}, useGrant: true},
+		{name: "android-use", platform: "android", responsibilities: []string{"use_loom"}, useGrant: true},
+		{name: "linux-forward-preparing", platform: "linux-server", responsibilities: []string{"forward"}},
+		{name: "linux-use-forward-egress-preparing", platform: "linux-server", responsibilities: []string{"use_loom", "forward", "internet_egress"}, useGrant: true},
+		{name: "expired-issuance", platform: "linux-server", responsibilities: []string{"use_loom"}, useGrant: true, expiryCase: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			platform, expiryCase := test.platform, test.expiryCase
 			runtime, admin := productionEnrollmentFixture(t)
 			endpoint, client, _ := progressTestServer(t, runtime, admin)
 			var options controlInviteContextV1
 			if err := fetchControlInviteJSON(context.Background(), endpoint, client, privateControlInviteContextPath, &options); err != nil {
 				t.Fatal(err)
 			}
-			grant := options.Grants[0].Grant
+			grants := []string{}
+			if test.useGrant {
+				grant := options.Grants[0].Grant
+				grants = append(grants, grant.Kind+":"+grant.TargetID)
+			}
 			out := filepath.Join(t.TempDir(), "invite")
-			if err := createControlInvite(context.Background(), admin, endpoint, client, controlCreateInviteInputV1{Name: "Demo new device", Platform: platform, Responsibilities: []string{"use_loom"}, Grants: []string{grant.Kind + ":" + grant.TargetID}, TTLSeconds: 900}, out, runtime.now); err != nil {
+			if err := createControlInvite(context.Background(), admin, endpoint, client, controlCreateInviteInputV1{Name: "Demo new device", Platform: platform, Responsibilities: test.responsibilities, Grants: grants, TTLSeconds: 900}, out, runtime.now); err != nil {
 				t.Fatal(err)
 			}
 			var descriptor wire.InviteBootstrapDescriptorV2
@@ -327,9 +342,56 @@ func TestProductionEnrollmentPublishesBothSidesAndRetainsFirstResult(t *testing.
 			if len(application.EnrollmentPlans) != 0 {
 				t.Fatal("completion left an unconsumed network plan")
 			}
-			for _, device := range application.Devices {
+			targetID := material.Opening.DeviceEnrollmentIntent.DeviceID
+			targetIndex := -1
+			for index, device := range application.Devices {
+				if device.View.DeviceID == targetID {
+					targetIndex = index
+					if device.View.DeviceGeneration != 1 || device.View.Active == nil ||
+						!wire.EqualCanonical(device.View.Active.Responsibilities.Values, test.responsibilities) ||
+						len(device.View.Active.EndpointBundle.DataIngressSets) != 0 {
+						t.Fatal("new Device did not retain its exact preparing identity and responsibilities")
+					}
+					continue
+				}
 				if device.View.Active != nil && containsControlValue(device.View.Active.Responsibilities.Values, "forward") && device.View.DeviceGeneration != 2 {
 					t.Fatal("server side was not activated atomically")
+				}
+			}
+			if targetIndex < 0 {
+				t.Fatal("completion omitted the new Device")
+			}
+			if containsControlValue(test.responsibilities, "forward") {
+				network, err := model.Load([]byte(application.LegacySSOT))
+				if err != nil {
+					t.Fatal(err)
+				}
+				node := network.NodeByID()[targetID]
+				if test.useGrant {
+					if node == nil || node.Access == nil || node.Server != nil {
+						t.Fatal("combined Device was not kept access-only while public access is preparing")
+					}
+				} else if node != nil {
+					t.Fatal("forward-only Enrollment invented a strict-v1 server declaration")
+				}
+				public, err := application.deviceControlDialerPublicKey(controlClientConfigInputV1{DeviceID: targetID,
+					ControlTunnel: render.ClientControlTunnelV2{PrivateKeyRef: render.LocalWireGuardSecretIDV2}})
+				links := application.deviceControlLinksFor(targetID)
+				if err != nil || len(links) != 1 || public != links[0].Resource.DialerPublicKey {
+					t.Fatal("fresh forward did not retain its claimed WireGuard identity")
+				}
+				views := make(map[string]wire.DeviceViewPayloadV2, len(application.Devices))
+				for _, device := range application.Devices {
+					views[device.View.DeviceID] = device.View
+				}
+				state := runtime.store.Snapshot()
+				qc, _ := wire.MarshalCanonical(state.CertifiedQC)
+				rendered, err := render.RenderLinuxRuntimeV2(render.LinuxRuntimeV2Input{SSOT: network, Views: views,
+					Authority: wire.CertifiedHeadV1{Head: *state.CertifiedHead, QC: qc}, DeviceID: targetID,
+					DeviceGeneration: application.Devices[targetIndex].View.DeviceGeneration + 1, ArtifactGeneration: 2,
+					DeviceControlLinks: links})
+				if err != nil || len(rendered.Links.Content) == 0 || len(rendered.Runtime.Content) == 0 {
+					t.Fatalf("fresh forward cannot consume its next certified control-only config: %v", err)
 				}
 			}
 			if platform == "linux-server" {

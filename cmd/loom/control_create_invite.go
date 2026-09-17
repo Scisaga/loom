@@ -361,6 +361,9 @@ func buildControlInviteRequest(adminDir string, endpoint controlAdminEndpointV1,
 	if containsControlValue(input.Responsibilities, "use_loom") && len(grants) == 0 {
 		return controlOperationRequestV1{}, errors.New("use_loom 必须显式选择目标授权")
 	}
+	if !containsControlValue(input.Responsibilities, "use_loom") && len(grants) != 0 {
+		return controlOperationRequestV1{}, errors.New("只有 use_loom 才能携带目标授权")
+	}
 	var selected *wire.DeviceCertificateProfileStateV1
 	for _, profile := range options.Profiles {
 		if profile.Status != "active" || !containsControlValue(profile.ProfileIntent.AllowedPlatforms, input.Platform) {

@@ -322,6 +322,14 @@ func ValidateEnrollmentIntent(intent *DeviceEnrollmentIntentV1) error {
 	if err := ValidateEnrollmentDestinationGrants(&intent.Grants); err != nil {
 		return err
 	}
+	hasUseLoom := contains(intent.Responsibilities.Values, "use_loom")
+	if !hasUseLoom && len(intent.Grants.Values) != 0 {
+		return errors.New("[Enrollment] 只有 use_loom 才能携带 destination grants")
+	}
+	if intent.Platform != "linux-server" &&
+		(len(intent.Responsibilities.Values) != 1 || !hasUseLoom) {
+		return errors.New("[Enrollment] Windows/Android 只允许 use_loom")
+	}
 	if intent.DeviceCertificateProfileRef.Generation < 1 || !validIdentifier(intent.DeviceCertificateProfileRef.ProfileID, 128) {
 		return errors.New("[Enrollment] Device certificate profile ref 无效")
 	}

@@ -34,12 +34,24 @@ type controlEnrollmentRuntimePlanV1 struct {
 
 func enrollmentNetwork(application *controlApplicationV1, invite controlInviteStateV1) (ssotedit.ClientPlan, error) {
 	intent := invite.Opening.DeviceEnrollmentIntent
-	if !wire.EqualCanonical(intent.Responsibilities.Values, []string{"use_loom"}) {
-		return ssotedit.ClientPlan{}, errors.New("[首次配置] forward 安装需独立的 listener 准备计划，不能降级为 use_loom")
-	}
 	source, err := model.Load([]byte(application.LegacySSOT))
 	if err != nil {
 		return ssotedit.ClientPlan{}, err
+	}
+	useLoom := containsControlValue(intent.Responsibilities.Values, "use_loom")
+	forward := containsControlValue(intent.Responsibilities.Values, "forward")
+	if forward && intent.Platform != "linux-server" {
+		return ssotedit.ClientPlan{}, errors.New("[首次配置] forward 只允许 Linux Device")
+	}
+	if !useLoom {
+		if !forward || len(intent.Grants.Values) != 0 {
+			return ssotedit.ClientPlan{}, errors.New("[首次配置] 非 use_loom Device 不得携带目标授权")
+		}
+		// forward 的身份安装与公网 listener 就绪是两个状态。首次 Enrollment
+		// 只交付正式身份、私有控制链路和 fail-closed 运行配置；FQDN、NAT、
+		// listener 与方向必须由后续认证的 public-access 计划提供，不能猜测后
+		// 写进严格 v1 SSOT。
+		return ssotedit.ClientPlan{Content: []byte(application.LegacySSOT)}, nil
 	}
 	allowed := map[string]bool{}
 	for _, grant := range intent.Grants.Values {

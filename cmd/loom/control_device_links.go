@@ -74,10 +74,20 @@ func (application *controlApplicationV1) deviceControlDialerPublicKey(input cont
 			return "", err
 		}
 		node := source.NodeByID()[input.DeviceID]
-		if node == nil || node.Server == nil || input.ControlTunnel.PrivateKeyRef != render.LocalWireGuardSecretIDV2 {
+		if input.ControlTunnel.PrivateKeyRef != render.LocalWireGuardSecretIDV2 {
 			return "", errors.New("[设备控制链路] Linux 节点必须沿用本机认证 WireGuard 身份")
 		}
-		return node.Server.WGPublicKey, nil
+		if node != nil && node.Server != nil {
+			return node.Server.WGPublicKey, nil
+		}
+		// fresh forward 在 public access preparing 阶段没有 v1 server 块；其
+		// 本机 WG 公钥已由 Enrollment claim 和认证控制链路共同固定。
+		for _, link := range application.DeviceControlLinks {
+			if link.Resource.DialerDeviceID == input.DeviceID {
+				return link.Resource.DialerPublicKey, nil
+			}
+		}
+		return "", errors.New("[设备控制链路] Linux 节点缺已认证 WireGuard 身份")
 	}
 	keyBytes, err := base64.StdEncoding.Strict().DecodeString(input.Credentials[input.ControlTunnel.PrivateKeyRef])
 	if err != nil || len(keyBytes) != 32 {
@@ -116,8 +126,9 @@ func (application *controlApplicationV1) validateDeviceControlLink(link wire.Dev
 	}
 	if carrier := link.Carrier; carrier != nil {
 		dialer := source.NodeByID()[r.DialerDeviceID]
-		if dialer == nil || dialer.Server != nil && dialer.Server.WGPublicKey != r.DialerPublicKey ||
-			dialer.Server == nil && dialer.Access == nil ||
+		dialerMismatch := dialer != nil && (dialer.Server != nil && dialer.Server.WGPublicKey != r.DialerPublicKey ||
+			dialer.Server == nil && dialer.Access == nil)
+		if dialerMismatch || dialer == nil && !containsControlValue(active[r.DialerDeviceID].Responsibilities.Values, "forward") ||
 			server.Server.InboundProtocol.Or() != model.Hysteria2 || carrier.Address != server.PublicEndpoint || carrier.Port != int64(server.Server.InboundPort) || carrier.TLSServerName != server.ID+".node.internal" {
 			return errors.New("[设备控制链路] 专用承载偏离原网络身份或现有 HY2 listener")
 		}

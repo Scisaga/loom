@@ -102,6 +102,14 @@ func renderLinuxRuntimeV2(input LinuxRuntimeV2Input, view wire.DeviceViewPayload
 			scopes[node.ID] = scope
 		}
 	}
+	if source.NodeByID()[input.DeviceID] == nil &&
+		hasLinuxRole(view.Active.Responsibilities.Values, "forward") &&
+		!hasLinuxRole(view.Active.Responsibilities.Values, "use_loom") {
+		// 新 forward Device 的公网 profile/listener 尚在 preparing 时，不得为
+		// 兼容旧 renderer 伪造 v1 server 块。这个只存在于本次纯渲染输入中的
+		// 节点承载私有控制链路；认证 public-access 计划就绪后才会产生数据面。
+		source.Nodes = append(source.Nodes, model.Node{ID: input.DeviceID})
+	}
 	nodes := source.NodeByID()
 	tunnels := source.Tunnels[:0]
 	for _, tunnel := range source.Tunnels {
