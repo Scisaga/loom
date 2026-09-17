@@ -54,9 +54,12 @@ Enrollment、device_config/device_report 已由正式 daemon 启动，`use_loom`
 preparing，后续配置复用原 claim 公钥；仍不能从组件测试推断现网 fresh forward 加入成功。
 
 动态 ControlSet 当前只有组件，没有 daemon 的正常晋升、移除、Joint/Final 激活与故障接续，保持
-暂停并重新确定最小架构后再实施。若继续多成员控制面，必须先明确单一权威状态机、持久边界、
-快照/日志追赶和成员变更事务；不得把全量 CRDT 复制加入每次权威提交的关键路径。旧公开 claim
-handler、registry/SSOT 写回调与旧邀请码生成器继续保持删除；迁移仍按
+暂停并重新确定最小架构后再实施。后续多成员控制面必须同时交付 N>1 certified governance 与
+增量 CRDT 数据同步：CRDT 负责签名对象、操作和投影的增量复制、离线追赶与收敛；成员、权限、
+Enrollment、撤权及外部副作用只有取得当前 ControlSet quorum/QC 后才有权生效。必须先明确单一
+事实来源、持久边界、delta/依赖追赶和成员变更事务；不得在每次写入同步完整 CRDT 快照，也不得让
+Raft、CRDT、journal 和 control state 重复保存同一权威事实。旧公开 claim handler、registry/SSOT
+写回调与旧邀请码生成器继续保持删除；迁移仍按
 [迁移规则](../protocols/control-plane/migration.md#从当前实现迁移)保留原身份与 floor。
 
 以上是已确认的接线缺口，不把其他工作区的组件或命令视作本仓库实现，也不把缺少 KMS/HSM 当作
