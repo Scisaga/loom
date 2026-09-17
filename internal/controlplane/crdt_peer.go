@@ -80,6 +80,24 @@ func NewJointCRDTAntiEntropyHTTPHandler(localMemberID string, store *crdt.Store,
 		}}, nil
 }
 
+// NewLearnerCRDTAntiEntropyHTTPHandler 允许 new-side learner 在 Joint 前从 old
+// stable voter 取得 immutable replication materials，但不会改变任何 authority。
+func NewLearnerCRDTAntiEntropyHTTPHandler(localMemberID string, store *crdt.Store,
+	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryV1,
+	now func() time.Time, verify CRDTObjectVerifier) (*CRDTAntiEntropyHTTPHandler, error) {
+	if localMemberID == "" || store == nil || now == nil || verify == nil ||
+		controlSetContains(&oldSet, localMemberID) || !controlSetContains(&newSet, localMemberID) {
+		return nil, errors.New("[CRDT learner] local member/store/time/verifier 配置不完整")
+	}
+	if err := validateJointPeerDirectories(&oldSet, &newSet, &oldDirectory, &newDirectory, now()); err != nil {
+		return nil, err
+	}
+	return &CRDTAntiEntropyHTTPHandler{localMemberID: localMemberID, store: store, now: now,
+		verify: verify, identify: func(raw []byte, at time.Time) (string, error) {
+			return wire.ControlPeerMemberForCertificate(&oldSet, &oldDirectory, raw, at)
+		}}, nil
+}
+
 func (handler *CRDTAntiEntropyHTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	if request == nil || request.Method != http.MethodPost || request.URL.Path != CRDTAntiEntropyPath ||
 		request.URL.RawPath != "" || request.URL.RawQuery != "" || request.URL.Fragment != "" ||
@@ -215,6 +233,28 @@ func NewJointCRDTAntiEntropyPeerClient(endpointURL, localMemberID, remoteMemberI
 		return nil, errors.New("[control mTLS] Joint CRDT certificate 不属于 local member")
 	}
 	tlsConfig, err := NewJointControlPeerClientTLSConfig(remoteMemberID, certificate,
+		oldSet, newSet, oldDirectory, newDirectory, now)
+	if err != nil {
+		return nil, err
+	}
+	return newCRDTAntiEntropyPeerClient(endpointURL, localMemberID, remoteMemberID,
+		store, verify, tlsConfig), nil
+}
+
+// NewLearnerCRDTAntiEntropyPeerClient 从 old stable voter 主动把材料同步到
+// new-side learner；TLS 身份仍按 old client/new server 两份 exact directory 验证。
+func NewLearnerCRDTAntiEntropyPeerClient(endpointURL, localMemberID, remoteMemberID string,
+	certificate tls.Certificate, oldSet, newSet wire.ControlSetV1,
+	oldDirectory, newDirectory wire.ControlPeerDirectoryV1, store *crdt.Store,
+	now func() time.Time, verify CRDTObjectVerifier) (*CRDTAntiEntropyPeerClient, error) {
+	if store == nil || now == nil || verify == nil || !controlSetContains(&oldSet, localMemberID) ||
+		controlSetContains(&oldSet, remoteMemberID) || !controlSetContains(&newSet, remoteMemberID) {
+		return nil, errors.New("[CRDT learner] client store/member/time/verifier 配置不完整")
+	}
+	if err := validateCRDTPeerEndpoint(endpointURL, remoteMemberID, newDirectory); err != nil {
+		return nil, err
+	}
+	tlsConfig, err := NewLearnerControlPeerClientTLSConfig(remoteMemberID, certificate,
 		oldSet, newSet, oldDirectory, newDirectory, now)
 	if err != nil {
 		return nil, err

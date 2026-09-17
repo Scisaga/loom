@@ -189,6 +189,58 @@ func TestJointCRDTAntiEntropyAcceptsNewSideWithoutShrinkingAuthority(t *testing.
 	}
 }
 
+func TestLearnerCRDTAntiEntropyPushesMaterialsFromOldStableVoter(t *testing.T) {
+	oldSet, _ := testControlSet(t, 1)
+	newSet, _ := testControlSet(t, 3)
+	oldDirectory, oldCertificates := raftDirectoryFixture(t, oldSet)
+	newDirectory, _ := raftDirectoryFixture(t, newSet)
+	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	learnerID := newSet.Members[1].MemberID
+	receiver, _ := crdt.Open(filepath.Join(t.TempDir(), "learner.json"))
+	sender, _ := crdt.Open(filepath.Join(t.TempDir(), "leader.json"))
+	object, _ := crdt.NewObject("head-material", "proposal", []byte(`{"value":1}`))
+	if err := sender.Add(object); err != nil {
+		t.Fatal(err)
+	}
+	verify := func(_ context.Context, object crdt.Object) error {
+		if object.Kind != "proposal" {
+			return errors.New("unknown kind")
+		}
+		return nil
+	}
+	handler, err := NewLearnerCRDTAntiEntropyHTTPHandler(learnerID, receiver,
+		oldSet, newSet, oldDirectory, newDirectory, now, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := newDirectory.Members[1].PeerEndpoints[0].URL
+	client, err := NewLearnerCRDTAntiEntropyPeerClient(endpoint,
+		oldSet.Members[0].MemberID, learnerID, oldCertificates[oldSet.Members[0].MemberID],
+		oldSet, newSet, oldDirectory, newDirectory, sender, now, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.client = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+			PeerCertificates: []*x509.Certificate{oldCertificates[oldSet.Members[0].MemberID].Leaf}}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		response := recorder.Result()
+		response.Request = request
+		return response, nil
+	})}
+	result, err := client.Sync(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderRoot, _ := sender.Root()
+	receiverRoot, _ := receiver.Root()
+	if senderRoot != receiverRoot || result.LocalRoot != receiverRoot || len(receiver.Snapshot()) != 1 {
+		t.Fatalf("learner material 未收敛: sender=%s receiver=%s result=%#v",
+			senderRoot, receiverRoot, result)
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {

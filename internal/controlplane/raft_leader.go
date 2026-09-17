@@ -34,6 +34,39 @@ type StableRaftCommitResult struct {
 	CommitKnownMemberIDs []string
 }
 
+// CatchUpLearner 把当前 leader 已知的完整 committed prefix 复制给一个显式
+// new-side learner。该 peer 不进入 leader.peers，也不参与 election/commit quorum；
+// 返回成功只证明 learner fsync 了 prefix，业务 projection/checkpoint 仍须另行验证。
+func (leader *StableRaftLeader) CatchUpLearner(ctx context.Context,
+	learnerMemberID string, peer RaftPeer) (AppendEntriesResultV1, error) {
+	if leader == nil || leader.storage == nil || learnerMemberID == "" || peer == nil ||
+		controlSetContains(&leader.set, learnerMemberID) {
+		return AppendEntriesResultV1{}, errors.New("[learner Raft] leader/learner peer 无效")
+	}
+	state := leader.storage.SnapshotRaft()
+	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID ||
+		state.CommitIndex != int64(len(state.Log)) || state.LastApplied != state.CommitIndex {
+		return AppendEntriesResultV1{}, errors.New("[learner Raft] leader 尚无完整 applied committed prefix")
+	}
+	request := AppendEntriesRequestV1{Term: leader.term, LeaderID: state.MemberID,
+		PrevLogHash: wire.EmptyHashV1, Entries: cloneRaftState(state).Log,
+		LeaderCommit: state.CommitIndex}
+	result, err := peer.AppendEntries(ctx, request)
+	if err != nil {
+		return result, err
+	}
+	if result.Term > leader.term {
+		if _, observeErr := leader.storage.ObserveTerm(result.Term); observeErr != nil {
+			return result, observeErr
+		}
+		return result, errors.New("[learner Raft] learner 返回更高 term，leader 已失效")
+	}
+	if !result.Success || result.Term != leader.term || result.MatchIndex != int64(len(state.Log)) {
+		return result, errors.New("[learner Raft] learner 未 fsync exact committed prefix")
+	}
+	return result, nil
+}
+
 // IsCurrent 只报告本进程保存的 leadership 是否仍与 durable term/self-vote 一致。
 // 它不提供 lease；真正提交仍必须重新取得多数。
 func (leader *StableRaftLeader) IsCurrent() bool {

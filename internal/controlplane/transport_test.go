@@ -203,7 +203,8 @@ func TestRaftLearnerHTTPReplicatesButNeverVotes(t *testing.T) {
 	newSet, _ := testControlSet(t, 3)
 	directory, certificates := raftDirectoryFixture(t, oldSet)
 	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
-	storage, err := OpenRaftLearnerStorage(filepath.Join(t.TempDir(), "learner.json"),
+	path := filepath.Join(t.TempDir(), "learner.json")
+	storage, err := OpenRaftLearnerStorage(path,
 		newSet.Members[1].MemberID, oldSet)
 	if err != nil {
 		t.Fatal(err)
@@ -252,6 +253,56 @@ func TestRaftLearnerHTTPReplicatesButNeverVotes(t *testing.T) {
 		!state.VotingDisabled {
 		t.Fatalf("learner append response=%d verified=%d state=%#v body=%s",
 			response.Code, verified, state, response.Body.String())
+	}
+	reopened, err := OpenRaftLearnerStorage(path, newSet.Members[1].MemberID, oldSet)
+	if err != nil || !wire.EqualCanonical(reopened.SnapshotRaft(), state) {
+		t.Fatalf("learner 重启未恢复 exact non-voting prefix: state=%#v err=%v",
+			reopened, err)
+	}
+}
+
+func TestLearnerControlPeerTLSIsAsymmetricBeforeJoint(t *testing.T) {
+	oldSet, _ := testControlSet(t, 1)
+	newSet, _ := testControlSet(t, 3)
+	oldDirectory, oldCertificates := raftDirectoryFixture(t, oldSet)
+	newDirectory, newCertificates := raftDirectoryFixture(t, newSet)
+	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	learnerID := newSet.Members[1].MemberID
+	serverConfig, err := NewLearnerControlPeerServerTLSConfig(learnerID,
+		newCertificates[learnerID], oldSet, newSet, oldDirectory, newDirectory, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := serverConfig.VerifyPeerCertificate([][]byte{
+		oldCertificates[oldSet.Members[0].MemberID].Certificate[0],
+	}, nil); err != nil {
+		t.Fatalf("learner listener 拒绝 old stable voter: %v", err)
+	}
+	if err := serverConfig.VerifyPeerCertificate([][]byte{
+		newCertificates[newSet.Members[2].MemberID].Certificate[0],
+	}, nil); err == nil {
+		t.Fatal("learner listener 在 Joint 前接受了 new-side peer")
+	}
+	clientConfig, err := NewLearnerControlPeerClientTLSConfig(learnerID,
+		oldCertificates[oldSet.Members[0].MemberID], oldSet, newSet,
+		oldDirectory, newDirectory, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clientConfig.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{
+		newCertificates[learnerID].Leaf,
+	}}); err != nil {
+		t.Fatalf("old stable voter 拒绝 exact learner server: %v", err)
+	}
+	if err := clientConfig.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{
+		newCertificates[newSet.Members[2].MemberID].Leaf,
+	}}); err == nil {
+		t.Fatal("old stable voter 接受了错误 learner server")
+	}
+	if _, err := NewRaftLearnerPeerClient(newDirectory.Members[1].PeerEndpoints[0].URL,
+		learnerID, oldCertificates[oldSet.Members[0].MemberID], oldSet, newSet,
+		oldDirectory, newDirectory, now); err != nil {
+		t.Fatalf("不能为 exact new-side endpoint 构造 learner Raft client: %v", err)
 	}
 }
 

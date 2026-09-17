@@ -169,6 +169,73 @@ func TestCampaignDoesNotAdvanceTermWithoutPreVoteQuorum(t *testing.T) {
 	}
 }
 
+func TestStableLeaderCatchesUpLearnerWithoutAddingItToQuorum(t *testing.T) {
+	oldSet, configKeys := testControlSet(t, 1)
+	newSet, _ := testControlSet(t, 3)
+	leaderStorage, err := OpenRaftStorage(filepath.Join(t.TempDir(), "leader.json"),
+		oldSet.Members[0].MemberID, oldSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader, err := CampaignStableRaft(context.Background(), leaderStorage, oldSet,
+		map[string]RaftPeer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(filepath.Join(t.TempDir(), "control.json"), oldSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := testControlHead(t, &oldSet)
+	if _, err := leader.ReplicateHead(context.Background(), store, head); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyCommittedPrefix(context.Background(), leaderStorage, store,
+		func(_ context.Context, got wire.HeadEntryV2) error {
+			if !wire.EqualCanonical(got, head) {
+				return errors.New("wrong head")
+			}
+			return nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head),
+		oldSet.Members[0], configKeys[oldSet.Members[0].MemberID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddAttestation(head.EntryHash, signature); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkApplied(head.EntryHash); err != nil {
+		t.Fatal(err)
+	}
+	learnerID := newSet.Members[1].MemberID
+	path := filepath.Join(t.TempDir(), "learner.json")
+	learnerStorage, err := OpenRaftLearnerStorage(path, learnerID, oldSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := leader.CatchUpLearner(context.Background(), learnerID,
+		learnerRaftPeer{learnerStorage})
+	if err != nil || !result.Success || result.MatchIndex != 1 {
+		t.Fatalf("learner catch-up=%#v err=%v", result, err)
+	}
+	state := learnerStorage.SnapshotRaft()
+	if !state.VotingDisabled || state.CommitIndex != 1 || state.LastApplied != 0 ||
+		len(state.Log) != 1 || state.Log[0].EntryHash != head.EntryHash {
+		t.Fatalf("learner catch-up 改变 quorum 或未保存 exact prefix: %#v", state)
+	}
+	if _, err := leader.CatchUpLearner(context.Background(), oldSet.Members[0].MemberID,
+		learnerRaftPeer{learnerStorage}); err == nil {
+		t.Fatal("把 committed voter 当 learner 加入 catch-up")
+	}
+	reopened, err := OpenRaftLearnerStorage(path, learnerID, oldSet)
+	if err != nil || !wire.EqualCanonical(reopened.SnapshotRaft(), state) {
+		t.Fatalf("catch-up 后 learner 不能重启恢复: %#v err=%v", reopened, err)
+	}
+}
+
 func TestStableRaftCampaignAndCommitN1AndN5(t *testing.T) {
 	for _, count := range []int{1, 5} {
 		t.Run(fmt.Sprintf("N%d", count), func(t *testing.T) {

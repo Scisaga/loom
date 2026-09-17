@@ -141,8 +141,8 @@ func OpenRaftStorage(path, memberID string, set wire.ControlSetV1) (*RaftStorage
 	return storage, nil
 }
 
-// OpenRaftLearnerStorage 创建不具投票权的新 member 存储；它只能通过 learner
-// AppendEntries 追平 old stable prefix，直到 committed Joint 激活联合配置。
+// OpenRaftLearnerStorage 创建或恢复不具投票权的新 member 存储；它只能通过
+// learner AppendEntries 追平 old stable prefix，直到 committed Joint 激活联合配置。
 func OpenRaftLearnerStorage(path, memberID string, oldSet wire.ControlSetV1) (*RaftStorage, error) {
 	if path == "" || memberID == "" || controlSetContains(&oldSet, memberID) {
 		return nil, errors.New("[learner Raft] learner path/member 必须位于 old ControlSet 之外")
@@ -150,17 +150,29 @@ func OpenRaftLearnerStorage(path, memberID string, oldSet wire.ControlSetV1) (*R
 	if err := wire.ValidateControlSet(&oldSet); err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		if err == nil {
-			return nil, errors.New("[learner Raft] learner storage 已存在，必须显式恢复")
-		}
-		return nil, err
-	}
 	storage := &RaftStorage{path: path, set: oldSet, state: RaftPersistentStateV1{
 		Schema: 3, ClusterID: oldSet.ClusterID, MemberID: memberID, VotingDisabled: true,
 		Log: []RaftLogRecordV1{},
 	}}
 	storage.state.ControlSetHash, _ = wire.ControlSetHash(&oldSet)
+	body, err := os.ReadFile(path)
+	if err == nil {
+		var state RaftPersistentStateV1
+		if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
+			return nil, fmt.Errorf("[learner Raft] persistent state 解码失败: %w", err)
+		}
+		if state.MemberID != memberID || !state.VotingDisabled || activeJointRecord(&state) != nil {
+			return nil, errors.New("[learner Raft] 磁盘身份或 phase 与启动参数不一致")
+		}
+		if err := validateRaftPersistentState(&state, &oldSet); err != nil {
+			return nil, err
+		}
+		storage.state = state
+		return storage, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if err := storage.persistRaftStateLocked(&storage.state); err != nil {
 		return nil, err
 	}

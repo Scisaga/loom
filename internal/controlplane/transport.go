@@ -82,6 +82,69 @@ func NewControlPeerClientTLSConfig(remoteMemberID string, certificate tls.Certif
 	}, nil
 }
 
+// NewLearnerControlPeerServerTLSConfig 用 candidate 在 new directory 中的 exact
+// 自签 leaf 开 listener，但在 Joint commit 前只接受 old stable voter。两侧身份集合
+// 不对称，不能误用 stable/joint TLS constructor 提前授予 learner 投票资格。
+func NewLearnerControlPeerServerTLSConfig(localMemberID string, certificate tls.Certificate,
+	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryV1,
+	now func() time.Time) (*tls.Config, error) {
+	if now == nil || len(certificate.Certificate) != 1 || controlSetContains(&oldSet, localMemberID) ||
+		!controlSetContains(&newSet, localMemberID) {
+		return nil, errors.New("[learner mTLS] server certificate/member/可信时间源无效")
+	}
+	if err := validateJointPeerDirectories(&oldSet, &newSet, &oldDirectory, &newDirectory, now()); err != nil {
+		return nil, err
+	}
+	memberID, err := wire.ControlPeerMemberForCertificate(&newSet, &newDirectory,
+		certificate.Certificate[0], now())
+	if err != nil || memberID != localMemberID {
+		return nil, errors.New("[learner mTLS] server certificate 不属于 new-side learner")
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAnyClientCert,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) != 1 {
+				return errors.New("[learner mTLS] client 必须只发送 exact 自签 leaf")
+			}
+			_, err := wire.ControlPeerMemberForCertificate(&oldSet, &oldDirectory, rawCerts[0], now())
+			return err
+		}}, nil
+}
+
+// NewLearnerControlPeerClientTLSConfig 供 old stable voter 连接 new-side learner；
+// client 身份必须来自 old directory，server 身份只从 new directory pin。
+func NewLearnerControlPeerClientTLSConfig(remoteMemberID string, certificate tls.Certificate,
+	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryV1,
+	now func() time.Time) (*tls.Config, error) {
+	if now == nil || len(certificate.Certificate) != 1 || controlSetContains(&oldSet, remoteMemberID) ||
+		!controlSetContains(&newSet, remoteMemberID) {
+		return nil, errors.New("[learner mTLS] client certificate/remote member/可信时间源无效")
+	}
+	if err := validateJointPeerDirectories(&oldSet, &newSet, &oldDirectory, &newDirectory, now()); err != nil {
+		return nil, err
+	}
+	if _, err := wire.ControlPeerMemberForCertificate(&oldSet, &oldDirectory,
+		certificate.Certificate[0], now()); err != nil {
+		return nil, errors.New("[learner mTLS] client certificate 不属于 old stable voter")
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		Certificates: []tls.Certificate{certificate}, InsecureSkipVerify: true,
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) != 1 {
+				return errors.New("[learner mTLS] server 必须只发送 exact 自签 leaf")
+			}
+			memberID, err := wire.ControlPeerMemberForCertificate(&newSet, &newDirectory,
+				state.PeerCertificates[0].Raw, now())
+			if err != nil {
+				return err
+			}
+			if memberID != remoteMemberID {
+				return errors.New("[learner mTLS] server certificate 绑定到错误 member")
+			}
+			return nil
+		}}, nil
+}
+
 // NewJointControlPeerServerTLSConfig 在 Joint 期间接受 old/new private directory
 // 并集，但每张证书仍必须唯一映射到同一个 member。
 func NewJointControlPeerServerTLSConfig(localMemberID string, certificate tls.Certificate,
@@ -427,6 +490,25 @@ func NewRaftPeerClient(endpointURL, remoteMemberID string, certificate tls.Certi
 		return nil, errors.New("[control mTLS] endpoint 不属于目标 member 的 private directory")
 	}
 	tlsConfig, err := NewControlPeerClientTLSConfig(remoteMemberID, certificate, set, directory, now)
+	if err != nil {
+		return nil, err
+	}
+	return newRaftPeerClient(endpointURL, tlsConfig), nil
+}
+
+// NewRaftLearnerPeerClient 只用于 Joint 前把 old stable prefix 推给 new-side
+// learner；它不改变 stable peer map，也不让 learner 参与 RequestVote/quorum。
+func NewRaftLearnerPeerClient(endpointURL, remoteMemberID string, certificate tls.Certificate,
+	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryV1,
+	now func() time.Time) (*RaftPeerClient, error) {
+	found := controlPeerDirectoryHasEndpoint(&newDirectory, remoteMemberID, endpointURL)
+	parsed, err := url.ParseRequestURI(endpointURL)
+	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Path != "" ||
+		parsed.RawQuery != "" || !found {
+		return nil, errors.New("[learner mTLS] endpoint 不属于 new-side learner")
+	}
+	tlsConfig, err := NewLearnerControlPeerClientTLSConfig(remoteMemberID, certificate,
+		oldSet, newSet, oldDirectory, newDirectory, now)
 	if err != nil {
 		return nil, err
 	}
