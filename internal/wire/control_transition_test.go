@@ -1,7 +1,10 @@
 package wire
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
 	"sort"
 	"testing"
 )
@@ -54,6 +57,20 @@ func TestControlSetTransitionRequiresMembershipJointAndFinalQuorums(t *testing.T
 		Signatures:    membershipSignatures,
 		OldSignerRefs: []ControlMembershipSignerRefV1{{MemberID: oldSet.Members[0].MemberID, MembershipKeyID: oldSet.Members[0].MembershipKeyID}},
 		NewSignerRefs: []ControlMembershipSignerRefV1{{MemberID: newSet.Members[0].MemberID, MembershipKeyID: newSet.Members[0].MembershipKeyID}},
+	}
+	p256Private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p256Operation, err := NewControlOperation(operation.Body, p256Private,
+		OperationSchemaRegistry{"control_set_transition_intent": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p256Approval := approval
+	p256Approval.AdminIntentOperation = p256Operation
+	if err := VerifyControlMembershipApprovalProof(&p256Approval, &oldSet, &newSet, &parent); err != nil {
+		t.Fatalf("P-256 admin intent 被结构校验拒绝: %v", err)
 	}
 	approvalHash, _ := ControlMembershipApprovalProofHash(&approval)
 	jointBody := JointControlSetEntryBodyV1{

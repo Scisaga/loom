@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ type MembershipLedgerPhase string
 const (
 	MembershipLedgerCandidate                  MembershipLedgerPhase = "candidate"
 	MembershipLedgerLearners                   MembershipLedgerPhase = "learners"
+	MembershipLedgerApproved                   MembershipLedgerPhase = "approved"
 	MembershipLedgerJointCommittedNotCertified MembershipLedgerPhase = "joint_committed_not_certified"
 	MembershipLedgerJointFinalizationOnly      MembershipLedgerPhase = "joint_finalization_only"
 	MembershipLedgerFinalCommittedNotCertified MembershipLedgerPhase = "final_committed_not_certified"
@@ -26,7 +28,7 @@ const (
 )
 
 // CandidateEvidence 是 learner 对已安装 parent/log/private directory 的声明；
-// CreateMembershipLedger 会把它与不透明的 active Device identity 交叉验证后再持久化。
+// InstallLearners 会把它与不透明的 active Device identity 交叉验证后再持久化。
 type CandidateEvidence struct {
 	DeviceID                     string `json:"device_id"`
 	DeviceCertificateHash        string `json:"device_certificate_hash"`
@@ -62,7 +64,9 @@ type MembershipLedgerCandidateV1 struct {
 	NewDirectoryObject       wire.ControlPeerDirectoryPrivateObjectV1 `json:"new_directory_object"`
 	OldDirectoryObjectHash   string                                   `json:"old_directory_object_hash"`
 	NewDirectoryObjectHash   string                                   `json:"new_directory_object_hash"`
-	MembershipApprovalProof  wire.ControlMembershipApprovalProofV1    `json:"membership_approval_proof"`
+	Intent                   wire.ControlSetTransitionIntentV1        `json:"intent"`
+	AdminIntentOperation     wire.ControlOperationV1                  `json:"admin_intent_operation"`
+	MembershipApprovalProof  *wire.ControlMembershipApprovalProofV1   `json:"membership_approval_proof,omitempty"`
 	AdminScopeHash           string                                   `json:"admin_scope_hash"`
 	Learners                 []CertifiedLearnerEvidenceV1             `json:"learners"`
 }
@@ -99,13 +103,12 @@ type MembershipLedger struct {
 	state MembershipLedgerStateV1
 }
 
-// CreateMembershipLedger 只接受 control_api 产生的不透明 admin authorization 和
-// authenticateDeviceIdentity 产生的 active Device identity。new voter 的目录、Device、
-// checkpoint 与 exact certified parent 必须在第一次落盘前全部互相绑定。
+// CreateMembershipLedger 只固定经 control_api 认证的 admin intent 与 exact
+// old/new directory proposal。learner 安装、catch-up 和 membership approval 必须之后
+// 分阶段耐久提交，不得在候选节点尚未同步时提前收集授权。
 func CreateMembershipLedger(path string, parent wire.SignedCurrentV2, parentPreviousSet *wire.ControlSetV1,
 	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryPrivateObjectV1,
-	approval wire.ControlMembershipApprovalProofV1, admin wire.VerifiedAdminOperationV1,
-	evidence map[string]CandidateEvidence, identities map[string]VerifiedDeviceIdentityV1,
+	intent wire.ControlSetTransitionIntentV1, admin wire.VerifiedAdminOperationV1,
 	trustedTime time.Time) (*MembershipLedger, error) {
 	if path == "" || trustedTime.IsZero() {
 		return nil, errors.New("[membership ledger] path/可信时间无效")
@@ -118,8 +121,7 @@ func CreateMembershipLedger(path string, parent wire.SignedCurrentV2, parentPrev
 	}
 	scope := wire.AdminResourceScopeV1{ScopeKind: "control_membership", ControlMembership: &struct{}{}}
 	scopeHash, err := wire.AdminResourceScopeHash(&scope)
-	if err != nil || admin.HeadHash() != parent.Head.HeadHash || admin.ScopeHash() != scopeHash ||
-		!wire.EqualCanonical(admin.Operation(), approval.AdminIntentOperation) {
+	if err != nil || admin.HeadHash() != parent.Head.HeadHash || admin.ScopeHash() != scopeHash {
 		return nil, errors.New("[membership ledger] 缺 exact control-membership admin authorization")
 	}
 	oldObjectHash, err := wire.ControlPeerDirectoryPrivateObjectHash(&oldSet, &oldDirectory)
@@ -130,17 +132,14 @@ func CreateMembershipLedger(path string, parent wire.SignedCurrentV2, parentPrev
 	if err != nil {
 		return nil, err
 	}
-	learners, err := certifyLearners(parent, oldSet, newSet, newDirectory, newObjectHash, evidence, identities)
-	if err != nil {
-		return nil, err
-	}
-	state := MembershipLedgerStateV1{Schema: 2, Phase: MembershipLedgerCandidate,
+	state := MembershipLedgerStateV1{Schema: 3, Phase: MembershipLedgerCandidate,
 		Candidate: MembershipLedgerCandidateV1{
 			Schema: 1, ValidatedAt: trustedTime.UTC().Format(time.RFC3339Nano), ParentCurrent: parent,
 			ParentPreviousControlSet: cloneControlSetPointer(parentPreviousSet), OldControlSet: oldSet,
 			NewControlSet: newSet, OldDirectoryObject: oldDirectory, NewDirectoryObject: newDirectory,
 			OldDirectoryObjectHash: oldObjectHash, NewDirectoryObjectHash: newObjectHash,
-			MembershipApprovalProof: approval, AdminScopeHash: scopeHash, Learners: learners,
+			Intent: intent, AdminIntentOperation: admin.Operation(), AdminScopeHash: scopeHash,
+			Learners: []CertifiedLearnerEvidenceV1{},
 		}}
 	if err := validateMembershipLedgerState(&state); err != nil {
 		return nil, err
@@ -184,11 +183,22 @@ func (ledger *MembershipLedger) Snapshot() MembershipLedgerStateV1 {
 	return cloneMembershipLedgerState(ledger.state)
 }
 
-func (ledger *MembershipLedger) BeginLearners() error {
+// InstallLearners 只在 candidate 已实际安装 exact parent/directory 后接受
+// Device authority reader 生成的证据。这一步仍不让 learner 参与投票。
+func (ledger *MembershipLedger) InstallLearners(evidence map[string]CandidateEvidence,
+	identities map[string]VerifiedDeviceIdentityV1) error {
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Phase != MembershipLedgerCandidate {
-			return errors.New("[learner] 只能从 candidate 进入 learners")
+			return errors.New("[learner] 只能从 candidate 安装 learners")
 		}
+		learners, err := certifyLearners(state.Candidate.ParentCurrent,
+			state.Candidate.OldControlSet, state.Candidate.NewControlSet,
+			state.Candidate.NewDirectoryObject, state.Candidate.NewDirectoryObjectHash,
+			evidence, identities)
+		if err != nil {
+			return err
+		}
+		state.Candidate.Learners = learners
 		state.Phase = MembershipLedgerLearners
 		return nil
 	})
@@ -221,6 +231,34 @@ func (ledger *MembershipLedger) MarkLearnerCaughtUp(memberID, checkpointHash str
 	})
 }
 
+// InstallMembershipApproval 要求所有新 learner 已追平并形成 checkpoint，
+// 然后才固定新 key PoP 及 old/new membership 双多数批准。
+func (ledger *MembershipLedger) InstallMembershipApproval(
+	approval wire.ControlMembershipApprovalProofV1) error {
+	return ledger.update(func(state *MembershipLedgerStateV1) error {
+		if state.Phase != MembershipLedgerLearners || state.Candidate.MembershipApprovalProof != nil {
+			return errors.New("[membership approval] 只能在 learner catch-up 后安装")
+		}
+		for _, learner := range state.Candidate.Learners {
+			if !learner.CaughtUp {
+				return fmt.Errorf("[learner] %s 尚未 catch-up", learner.MemberID)
+			}
+		}
+		if !wire.EqualCanonical(approval.Intent, state.Candidate.Intent) ||
+			!wire.EqualCanonical(approval.AdminIntentOperation, state.Candidate.AdminIntentOperation) {
+			return errors.New("[membership approval] approval 未绑定原 admin intent")
+		}
+		if err := wire.VerifyControlMembershipApprovalProof(&approval,
+			&state.Candidate.OldControlSet, &state.Candidate.NewControlSet,
+			&state.Candidate.ParentCurrent.Head); err != nil {
+			return err
+		}
+		state.Candidate.MembershipApprovalProof = &approval
+		state.Phase = MembershipLedgerApproved
+		return nil
+	})
+}
+
 func (ledger *MembershipLedger) RecordJointCommitFromRaft(storage *RaftStorage,
 	body wire.JointControlSetEntryBodyV1) error {
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
@@ -234,9 +272,8 @@ func (ledger *MembershipLedger) RecordJointCommitFromRaft(storage *RaftStorage,
 			}
 			return errors.New("[joint] 已记录的 Joint commit 不能被改写")
 		}
-		if state.Phase != MembershipLedgerLearners &&
-			!(state.Phase == MembershipLedgerCandidate && len(state.Candidate.Learners) == 0) {
-			return errors.New("[joint] learner gate 尚未完成")
+		if state.Phase != MembershipLedgerApproved || state.Candidate.MembershipApprovalProof == nil {
+			return errors.New("[joint] learner/approval gate 尚未完成")
 		}
 		for _, learner := range state.Candidate.Learners {
 			if !learner.CaughtUp {
@@ -244,7 +281,7 @@ func (ledger *MembershipLedger) RecordJointCommitFromRaft(storage *RaftStorage,
 			}
 		}
 		entryHash, err := wire.VerifyJointControlSetCandidate(&state.Candidate.OldControlSet,
-			&state.Candidate.NewControlSet, &state.Candidate.MembershipApprovalProof, &body,
+			&state.Candidate.NewControlSet, state.Candidate.MembershipApprovalProof, &body,
 			&state.Candidate.ParentCurrent.Head)
 		if err != nil {
 			return err
@@ -307,7 +344,7 @@ func (ledger *MembershipLedger) RecordFinalCommitFromRaft(storage *RaftStorage, 
 			return errors.New("[Final] 只能紧接 certified Joint")
 		}
 		if _, err := wire.VerifyControlSetFinalCandidate(&state.Candidate.OldControlSet,
-			&state.Candidate.NewControlSet, &state.Candidate.MembershipApprovalProof,
+			&state.Candidate.NewControlSet, state.Candidate.MembershipApprovalProof,
 			state.Joint.Proof, &head, &state.Candidate.ParentCurrent.Head); err != nil {
 			return err
 		}
@@ -349,7 +386,7 @@ func (ledger *MembershipLedger) CertifyFinal(signatures []wire.ControlConfigSign
 		return wire.ControlSetTransitionBundleV1{}, err
 	}
 	bundle := wire.ControlSetTransitionBundleV1{Schema: 1, OldControlSet: state.Candidate.OldControlSet,
-		NewControlSet: state.Candidate.NewControlSet, MembershipApprovalProof: state.Candidate.MembershipApprovalProof,
+		NewControlSet: state.Candidate.NewControlSet, MembershipApprovalProof: *state.Candidate.MembershipApprovalProof,
 		JointProof: *state.Joint.Proof, Final: wire.FinalControlSetHeadV1{Schema: 1,
 			Head: state.Final.Head, FinalJointReplicationQC: qc}}
 	if _, err := wire.VerifyControlSetTransitionBundle(&bundle, &state.Candidate.ParentCurrent.Head); err != nil {
@@ -420,16 +457,42 @@ func certifyLearners(parent wire.SignedCurrentV2, oldSet, newSet wire.ControlSet
 }
 
 func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
-	if state == nil || state.Schema != 2 || !validMembershipLedgerPhase(state.Phase) {
+	if state == nil || state.Schema != 3 || !validMembershipLedgerPhase(state.Phase) {
 		return errors.New("[membership ledger] state header/phase 无效")
 	}
 	if err := validateMembershipLedgerCandidate(&state.Candidate); err != nil {
 		return err
 	}
+	wantLearners := membershipLearnerCount(&state.Candidate.OldControlSet, &state.Candidate.NewControlSet)
+	if state.Phase != MembershipLedgerCandidate && len(state.Candidate.Learners) != wantLearners {
+		return errors.New("[learner] durable phase 缺 exact learner 安装结果")
+	}
+	if state.Phase == MembershipLedgerApproved || state.Phase == MembershipLedgerJointCommittedNotCertified ||
+		state.Phase == MembershipLedgerJointFinalizationOnly || state.Phase == MembershipLedgerFinalCommittedNotCertified ||
+		state.Phase == MembershipLedgerFinal {
+		if err := validateMembershipApproval(&state.Candidate); err != nil {
+			return err
+		}
+		for _, learner := range state.Candidate.Learners {
+			if !learner.CaughtUp {
+				return fmt.Errorf("[learner] approved phase 含未 catch-up member %s", learner.MemberID)
+			}
+		}
+	}
 	switch state.Phase {
-	case MembershipLedgerCandidate, MembershipLedgerLearners:
+	case MembershipLedgerCandidate, MembershipLedgerLearners, MembershipLedgerApproved:
 		if state.Joint != nil || state.Final != nil || state.CertifiedBundle != nil {
 			return errors.New("[membership ledger] pre-Joint state 含未来结果")
+		}
+		if state.Phase == MembershipLedgerCandidate &&
+			(len(state.Candidate.Learners) != 0 || state.Candidate.MembershipApprovalProof != nil) {
+			return errors.New("[membership ledger] candidate 阶段含 learner/approval 结果")
+		}
+		if state.Phase == MembershipLedgerLearners && state.Candidate.MembershipApprovalProof != nil {
+			return errors.New("[membership ledger] learner 阶段提前含 approval")
+		}
+		if state.Phase == MembershipLedgerApproved && state.Candidate.MembershipApprovalProof == nil {
+			return errors.New("[membership ledger] approved 阶段缺 approval")
 		}
 	case MembershipLedgerJointCommittedNotCertified, MembershipLedgerJointFinalizationOnly,
 		MembershipLedgerFinalCommittedNotCertified, MembershipLedgerFinal:
@@ -468,7 +531,7 @@ func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
 			return errors.New("[Final QC] Final state 缺 QC/bundle")
 		}
 		want := wire.ControlSetTransitionBundleV1{Schema: 1, OldControlSet: state.Candidate.OldControlSet,
-			NewControlSet: state.Candidate.NewControlSet, MembershipApprovalProof: state.Candidate.MembershipApprovalProof,
+			NewControlSet: state.Candidate.NewControlSet, MembershipApprovalProof: *state.Candidate.MembershipApprovalProof,
 			JointProof: *state.Joint.Proof, Final: wire.FinalControlSetHeadV1{Schema: 1,
 				Head: state.Final.Head, FinalJointReplicationQC: *state.Final.QC}}
 		if !wire.EqualCanonical(*state.CertifiedBundle, want) {
@@ -478,6 +541,30 @@ func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
 		return err
 	}
 	return nil
+}
+
+func membershipLearnerCount(oldSet, newSet *wire.ControlSetV1) int {
+	oldMembers := make(map[string]struct{}, len(oldSet.Members))
+	for _, member := range oldSet.Members {
+		oldMembers[member.MemberID] = struct{}{}
+	}
+	count := 0
+	for _, member := range newSet.Members {
+		if _, exists := oldMembers[member.MemberID]; !exists {
+			count++
+		}
+	}
+	return count
+}
+
+func validateMembershipApproval(candidate *MembershipLedgerCandidateV1) error {
+	approval := candidate.MembershipApprovalProof
+	if approval == nil || !wire.EqualCanonical(approval.Intent, candidate.Intent) ||
+		!wire.EqualCanonical(approval.AdminIntentOperation, candidate.AdminIntentOperation) {
+		return errors.New("[membership approval] durable proof 未绑定原 admin intent")
+	}
+	return wire.VerifyControlMembershipApprovalProof(approval, &candidate.OldControlSet,
+		&candidate.NewControlSet, &candidate.ParentCurrent.Head)
 }
 
 func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) error {
@@ -496,8 +583,7 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 		parent, &candidate.OldControlSet, candidate.ParentPreviousControlSet); err != nil {
 		return err
 	}
-	if err := wire.VerifyControlMembershipApprovalProof(&candidate.MembershipApprovalProof,
-		&candidate.OldControlSet, &candidate.NewControlSet, parent); err != nil {
+	if err := validateMembershipCandidateIntent(candidate, parent); err != nil {
 		return err
 	}
 	if err := validateMembershipDirectory(&candidate.OldControlSet, &candidate.OldDirectoryObject,
@@ -511,7 +597,7 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 	oldDirectory := &candidate.OldDirectoryObject.Directory
 	newDirectory := &candidate.NewDirectoryObject.Directory
 	if candidate.OldDirectoryObject.ControlPeerDirectoryHash != parent.Body.Payload.ControlPeerDirectoryHash ||
-		candidate.NewDirectoryObject.ControlPeerDirectoryHash != candidate.MembershipApprovalProof.Intent.NewControlPeerDirectoryHash ||
+		candidate.NewDirectoryObject.ControlPeerDirectoryHash != candidate.Intent.NewControlPeerDirectoryHash ||
 		oldDirectory.DirectoryGeneration == int64(^uint64(0)>>1) ||
 		newDirectory.DirectoryGeneration != oldDirectory.DirectoryGeneration+1 ||
 		newDirectory.HidingNonce == oldDirectory.HidingNonce {
@@ -532,7 +618,7 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 			wantLearners = append(wantLearners, member.MemberID)
 		}
 	}
-	if len(candidate.Learners) != len(wantLearners) {
+	if len(candidate.Learners) != 0 && len(candidate.Learners) != len(wantLearners) {
 		return errors.New("[learner] learner 集合未 exact-match 新增 members")
 	}
 	directoryMembers := make(map[string]wire.ControlPeerDirectoryMemberV1, len(newDirectory.Members))
@@ -566,6 +652,57 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 	return nil
 }
 
+func validateMembershipCandidateIntent(candidate *MembershipLedgerCandidateV1,
+	parent *wire.HeadEntryV2) error {
+	if err := wire.ValidateControlSetSuccessorKeySeparation(&candidate.OldControlSet,
+		&candidate.NewControlSet); err != nil {
+		return err
+	}
+	intent := &candidate.Intent
+	intentHash, err := wire.ControlSetTransitionIntentHash(intent)
+	if err != nil {
+		return err
+	}
+	oldSetHash, _ := wire.ControlSetHash(&candidate.OldControlSet)
+	newSetHash, _ := wire.ControlSetHash(&candidate.NewControlSet)
+	p := &parent.Body.Payload
+	if intent.ClusterID != candidate.OldControlSet.ClusterID ||
+		candidate.NewControlSet.ClusterID != intent.ClusterID || intent.RecoveryEpoch != p.RecoveryEpoch ||
+		intent.RecoveryStatementHash != p.RecoveryStatementHash || intent.RecoveryPolicyHash != p.RecoveryPolicyHash ||
+		intent.OldControlEpoch != p.ControlEpoch || intent.OldControlSetHash != oldSetHash ||
+		intent.OldControlPeerDirectoryHash != candidate.OldDirectoryObject.ControlPeerDirectoryHash ||
+		intent.NewControlSetHash != newSetHash ||
+		intent.NewControlPeerDirectoryHash != candidate.NewDirectoryObject.ControlPeerDirectoryHash ||
+		intent.ParentCertifiedHeadHash != parent.HeadHash {
+		return errors.New("[membership ledger] intent 未 exact-bind parent/set/directory")
+	}
+	op := &candidate.AdminIntentOperation
+	if err := wire.ValidateControlOperationBody(&op.Body,
+		wire.OperationSchemaRegistry{"control_set_transition_intent": 1}); err != nil {
+		return err
+	}
+	body := &op.Body
+	if body.ClusterID != intent.ClusterID || body.OperationID != intent.OperationID ||
+		body.Kind != "control_set_transition_intent" || body.PayloadSchema != 1 ||
+		body.PayloadHash != intentHash || body.BaseRecoveryEpoch != intent.RecoveryEpoch ||
+		body.BaseRecoveryStatementHash != intent.RecoveryStatementHash ||
+		body.BaseRecoveryPolicyHash != intent.RecoveryPolicyHash || body.BaseControlEpoch != intent.OldControlEpoch ||
+		body.BaseControlSetHash != intent.OldControlSetHash || body.BaseControlRevision != p.ControlRevision ||
+		body.ParentHeadHash != parent.HeadHash || body.Reason != intent.Reason ||
+		(op.AuthorSignature.Algorithm != "ed25519" && op.AuthorSignature.Algorithm != "ecdsa-p256-sha256") {
+		return errors.New("[membership ledger] admin operation 未 exact-bind intent")
+	}
+	if _, err := wire.ParseHash(op.AuthorSignature.AdminKeyID); err != nil {
+		return err
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(op.AuthorSignature.Signature)
+	if err != nil || len(signature) != 64 ||
+		base64.RawURLEncoding.EncodeToString(signature) != op.AuthorSignature.Signature {
+		return errors.New("[membership ledger] admin signature 编码无效")
+	}
+	return nil
+}
+
 func validateMembershipDirectory(set *wire.ControlSetV1, object *wire.ControlPeerDirectoryPrivateObjectV1,
 	wantObjectHash string, trustedTime time.Time) error {
 	if err := wire.ValidateControlPeerDirectoryPrivateObject(set, object); err != nil {
@@ -586,7 +723,7 @@ func validateMembershipJoint(state *MembershipLedgerStateV1) error {
 		return errors.New("[joint] ledger 缺 Joint commit")
 	}
 	entryHash, err := wire.VerifyJointControlSetCandidate(&state.Candidate.OldControlSet,
-		&state.Candidate.NewControlSet, &state.Candidate.MembershipApprovalProof, &state.Joint.Body,
+		&state.Candidate.NewControlSet, state.Candidate.MembershipApprovalProof, &state.Joint.Body,
 		&state.Candidate.ParentCurrent.Head)
 	if err != nil || entryHash != state.Joint.EntryHash {
 		return errors.New("[joint] ledger Joint entry/hash 无效")
@@ -612,7 +749,7 @@ func validateMembershipFinal(state *MembershipLedgerStateV1) error {
 		return errors.New("[Final] ledger 缺 Final commit")
 	}
 	if _, err := wire.VerifyControlSetFinalCandidate(&state.Candidate.OldControlSet,
-		&state.Candidate.NewControlSet, &state.Candidate.MembershipApprovalProof, state.Joint.Proof,
+		&state.Candidate.NewControlSet, state.Candidate.MembershipApprovalProof, state.Joint.Proof,
 		&state.Final.Head, &state.Candidate.ParentCurrent.Head); err != nil {
 		return err
 	}
@@ -695,7 +832,7 @@ func canonicalJointMembers(candidate *MembershipLedgerCandidateV1, memberIDs []s
 
 func validMembershipLedgerPhase(phase MembershipLedgerPhase) bool {
 	switch phase {
-	case MembershipLedgerCandidate, MembershipLedgerLearners, MembershipLedgerJointCommittedNotCertified,
+	case MembershipLedgerCandidate, MembershipLedgerLearners, MembershipLedgerApproved, MembershipLedgerJointCommittedNotCertified,
 		MembershipLedgerJointFinalizationOnly, MembershipLedgerFinalCommittedNotCertified, MembershipLedgerFinal:
 		return true
 	default:

@@ -250,7 +250,7 @@ func VerifyControlMembershipApprovalProof(proof *ControlMembershipApprovalProofV
 		op.Body.BaseRecoveryPolicyHash != intent.RecoveryPolicyHash || op.Body.BaseControlEpoch != intent.OldControlEpoch ||
 		op.Body.BaseControlSetHash != intent.OldControlSetHash || op.Body.BaseControlRevision != p.ControlRevision ||
 		op.Body.ParentHeadHash != intent.ParentCertifiedHeadHash || op.Body.Reason != intent.Reason ||
-		op.AuthorSignature.Algorithm != "ed25519" {
+		(op.AuthorSignature.Algorithm != "ed25519" && op.AuthorSignature.Algorithm != "ecdsa-p256-sha256") {
 		return errors.New("[joint] admin intent operation 未 exact-bind transition")
 	}
 	if _, err := ParseHash(op.AuthorSignature.AdminKeyID); err != nil {

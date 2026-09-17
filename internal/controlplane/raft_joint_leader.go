@@ -35,8 +35,8 @@ func (leader *StableRaftLeader) ReplicateJointControlSet(ctx context.Context, le
 	state := leader.storage.SnapshotRaft()
 	ledgerState := ledger.Snapshot()
 	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID ||
-		state.LastApplied != state.CommitIndex || ledgerState.Phase != MembershipLedgerLearners &&
-		!(ledgerState.Phase == MembershipLedgerCandidate && len(ledgerState.Candidate.Learners) == 0) {
+		state.LastApplied != state.CommitIndex || ledgerState.Phase != MembershipLedgerApproved ||
+		ledgerState.Candidate.MembershipApprovalProof == nil {
 		return nil, StableRaftCommitResult{}, errors.New("[joint Raft] stable leader/ledger 尚未到 Joint append 边界")
 	}
 	for _, learner := range ledgerState.Candidate.Learners {
@@ -52,7 +52,7 @@ func (leader *StableRaftLeader) ReplicateJointControlSet(ctx context.Context, le
 		return nil, StableRaftCommitResult{}, errors.New("[joint Raft] leader/ledger old/new ControlSet 不一致")
 	}
 	if err := leader.storage.AppendLocalJointControlSet(body, &leader.set, &newSet,
-		&ledgerState.Candidate.MembershipApprovalProof, &ledgerState.Candidate.ParentCurrent.Head); err != nil {
+		ledgerState.Candidate.MembershipApprovalProof, &ledgerState.Candidate.ParentCurrent.Head); err != nil {
 		return nil, StableRaftCommitResult{}, err
 	}
 	result, replicateErr := replicateThroughJoint(ctx, leader.storage, leader.term, leader.set,
@@ -138,7 +138,8 @@ func (leader *JointRaftLeader) ReplicateFinalControlSet(ctx context.Context, led
 	ledgerState := ledger.Snapshot()
 	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID ||
 		state.LastApplied != state.CommitIndex || ledgerState.Phase != MembershipLedgerJointFinalizationOnly ||
-		ledgerState.Joint == nil || ledgerState.Joint.Proof == nil {
+		ledgerState.Joint == nil || ledgerState.Joint.Proof == nil ||
+		ledgerState.Candidate.MembershipApprovalProof == nil {
 		return StableRaftCommitResult{}, errors.New("[joint Raft] 尚未到 certified Joint→Final 边界")
 	}
 	snapshotHash, effectiveSSOTHash, err := materialize(ctx, head)
@@ -146,7 +147,7 @@ func (leader *JointRaftLeader) ReplicateFinalControlSet(ctx context.Context, led
 		return StableRaftCommitResult{}, err
 	}
 	if _, err := wire.VerifyControlSetFinalCandidate(&leader.oldSet, &leader.newSet,
-		&ledgerState.Candidate.MembershipApprovalProof, ledgerState.Joint.Proof, &head,
+		ledgerState.Candidate.MembershipApprovalProof, ledgerState.Joint.Proof, &head,
 		&ledgerState.Candidate.ParentCurrent.Head); err != nil {
 		return StableRaftCommitResult{}, err
 	}

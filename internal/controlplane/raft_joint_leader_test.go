@@ -42,7 +42,7 @@ func (peer learnerRaftPeer) AppendEntries(_ context.Context,
 
 func TestJointRaftLeaderRecoversElectionAndCommitsFinalWithDualMajority(t *testing.T) {
 	fixture := newMembershipLedgerFixture(t)
-	if err := fixture.ledger.BeginLearners(); err != nil {
+	if err := fixture.ledger.InstallLearners(fixture.evidence, fixture.identities); err != nil {
 		t.Fatal(err)
 	}
 	for _, learner := range fixture.ledger.Snapshot().Candidate.Learners {
@@ -50,6 +50,9 @@ func TestJointRaftLeaderRecoversElectionAndCommitsFinalWithDualMajority(t *testi
 			wire.HashRaw("joint-leader-test", []byte("checkpoint-"+learner.MemberID)), 1); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := fixture.ledger.InstallMembershipApproval(fixture.approval); err != nil {
+		t.Fatal(err)
 	}
 
 	leaderStorage, err := OpenRaftStorage(filepath.Join(t.TempDir(), "old-leader.json"),

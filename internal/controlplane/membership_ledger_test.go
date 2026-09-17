@@ -22,6 +22,8 @@ type membershipLedgerFixture struct {
 	oldConfigKeys map[string]ed25519.PrivateKey
 	newConfigKeys map[string]ed25519.PrivateKey
 	approval      wire.ControlMembershipApprovalProofV1
+	evidence      map[string]CandidateEvidence
+	identities    map[string]VerifiedDeviceIdentityV1
 }
 
 func TestMembershipLedgerRecoversJointAndFinalCommitBeforeQC(t *testing.T) {
@@ -30,14 +32,23 @@ func TestMembershipLedgerRecoversJointAndFinalCommitBeforeQC(t *testing.T) {
 	if err := fixture.ledger.RecordJointCommitFromRaft(nil, jointBody); err == nil {
 		t.Fatal("learners 尚未 catch-up 就提交了 Joint")
 	}
-	if err := fixture.ledger.BeginLearners(); err != nil {
+	if err := fixture.ledger.InstallLearners(fixture.evidence, fixture.identities); err != nil {
 		t.Fatal(err)
+	}
+	if err := fixture.ledger.InstallMembershipApproval(fixture.approval); err == nil {
+		t.Fatal("learner 尚未 catch-up 就安装了 membership approval")
 	}
 	for _, learner := range fixture.ledger.Snapshot().Candidate.Learners {
 		if err := fixture.ledger.MarkLearnerCaughtUp(learner.MemberID,
 			wire.HashRaw("membership-ledger-test", []byte("checkpoint-"+learner.MemberID)), 1); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := fixture.ledger.RecordJointCommitFromRaft(nil, jointBody); err == nil {
+		t.Fatal("未安装 membership approval 就提交了 Joint")
+	}
+	if err := fixture.ledger.InstallMembershipApproval(fixture.approval); err != nil {
+		t.Fatal(err)
 	}
 	raft, err := OpenRaftStorage(filepath.Join(t.TempDir(), "raft.json"),
 		fixture.oldSet.Members[0].MemberID, fixture.oldSet)
@@ -205,18 +216,25 @@ func TestMembershipLedgerRejectsForgedLearnerDirectoryBinding(t *testing.T) {
 	broken := inputs.evidence[memberID]
 	broken.InstalledDirectoryObjectHash = wire.HashRaw("membership-ledger-test", []byte("other-directory"))
 	inputs.evidence[memberID] = broken
-	if _, err := CreateMembershipLedger(filepath.Join(t.TempDir(), "membership.json"), inputs.parent, nil,
-		inputs.oldSet, inputs.newSet, inputs.oldDirectory, inputs.newDirectory, inputs.approval, inputs.admin,
-		inputs.evidence, inputs.identities, inputs.trustedTime); err == nil {
+	ledger, err := CreateMembershipLedger(filepath.Join(t.TempDir(), "membership.json"), inputs.parent, nil,
+		inputs.oldSet, inputs.newSet, inputs.oldDirectory, inputs.newDirectory, inputs.approval.Intent,
+		inputs.admin, inputs.trustedTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.InstallLearners(inputs.evidence, inputs.identities); err == nil {
 		t.Fatal("接受了未安装 exact private directory 的 learner")
+	}
+	if ledger.Snapshot().Phase != MembershipLedgerCandidate {
+		t.Fatal("失败的 learner 安装改变了 durable phase")
 	}
 }
 
 func TestMembershipLedgerRejectsExpiredPeerDirectoryAtPreparation(t *testing.T) {
 	inputs := membershipLedgerInputs(t)
 	if _, err := CreateMembershipLedger(filepath.Join(t.TempDir(), "membership.json"), inputs.parent, nil,
-		inputs.oldSet, inputs.newSet, inputs.oldDirectory, inputs.newDirectory, inputs.approval, inputs.admin,
-		inputs.evidence, inputs.identities, inputs.trustedTime.Add(48*time.Hour)); err == nil {
+		inputs.oldSet, inputs.newSet, inputs.oldDirectory, inputs.newDirectory, inputs.approval.Intent,
+		inputs.admin, inputs.trustedTime.Add(48*time.Hour)); err == nil {
 		t.Fatal("接受了在认证逻辑时间已经过期的 control-peer directory")
 	}
 }
@@ -258,14 +276,14 @@ func newMembershipLedgerFixture(t *testing.T) membershipLedgerFixture {
 	inputs := membershipLedgerInputs(t)
 	path := filepath.Join(t.TempDir(), "membership.json")
 	ledger, err := CreateMembershipLedger(path, inputs.parent, nil, inputs.oldSet, inputs.newSet,
-		inputs.oldDirectory, inputs.newDirectory, inputs.approval, inputs.admin, inputs.evidence,
-		inputs.identities, inputs.trustedTime)
+		inputs.oldDirectory, inputs.newDirectory, inputs.approval.Intent, inputs.admin, inputs.trustedTime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return membershipLedgerFixture{path: path, ledger: ledger, parent: inputs.parent,
 		oldSet: inputs.oldSet, newSet: inputs.newSet, oldConfigKeys: inputs.oldConfigKeys,
-		newConfigKeys: inputs.newConfigKeys, approval: inputs.approval}
+		newConfigKeys: inputs.newConfigKeys, approval: inputs.approval,
+		evidence: inputs.evidence, identities: inputs.identities}
 }
 
 func membershipLedgerInputs(t *testing.T) membershipLedgerInputSet {
