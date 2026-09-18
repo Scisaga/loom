@@ -1,32 +1,31 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientdist"
-	"loom/internal/clientenroll"
-	"loom/internal/netx"
 	"loom/internal/publish"
 )
 
 const clientUsage = `loom client —— 客户端交付
 
 用法:
+	loom client enroll {-invite-file <文件>|-stdin} [-state <文件>]
+	                                             经受限 tunnel claim/resume 并原子保存 LKG
+	loom client sync [-state <文件>]              经认证设备通道读取并保存最新 DeviceView
+	loom client report -observations <JSON> [-selection <候选>] [-state <文件>]
+	                                             提交签名运行观测
+	loom client inspect [-state <文件>]           回读本机身份与认证 LKG（不显示秘密）
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
@@ -37,56 +36,19 @@ const clientUsage = `loom client —— 客户端交付
                                                验签并检查 Windows 数据面包
 `
 
-const installLocalWireGuardToolsScript = `set -eu
-set -f
-
-installed=0
-if [ ! -x /usr/bin/wg ]; then
-    if [ "$(id -u)" = 0 ]; then
-        privilege=root
-    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-        privilege=sudo-nopasswd
-    else
-        echo 'root or passwordless sudo is required to install wireguard-tools' >&2
-        exit 43
-    fi
-
-    run_privileged() {
-        if [ "$privilege" = root ]; then
-            "$@"
-        else
-            sudo -n "$@"
-        fi
-    }
-
-    if command -v apt-get >/dev/null 2>&1; then
-        run_privileged env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 -o Acquire::Retries=2 update >/dev/null
-        run_privileged env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 -y --no-install-recommends install wireguard-tools >/dev/null
-    elif command -v dnf >/dev/null 2>&1; then
-        run_privileged dnf -y install wireguard-tools >/dev/null
-    elif command -v yum >/dev/null 2>&1; then
-        run_privileged yum -y install wireguard-tools >/dev/null
-    elif command -v apk >/dev/null 2>&1; then
-        run_privileged apk add --no-cache wireguard-tools >/dev/null
-    elif command -v zypper >/dev/null 2>&1; then
-        run_privileged zypper --non-interactive install wireguard-tools >/dev/null
-    else
-        echo 'no supported package manager found (apt-get, dnf, yum, apk or zypper)' >&2
-        exit 44
-    fi
-    [ -x /usr/bin/wg ] || { echo 'wireguard-tools installation completed without providing /usr/bin/wg' >&2; exit 45; }
-    installed=1
-fi
-
-printf '%s\n' 'LOOM_WG_TOOLS_V1'
-printf 'installed=%s\n' "$installed"
-`
-
 func cmdClient(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%s", clientUsage)
 	}
 	switch args[0] {
+	case "enroll":
+		return cmdClientEnrollMinimal(args[1:])
+	case "sync":
+		return cmdClientSync(args[1:])
+	case "report":
+		return cmdClientReportMinimal(args[1:])
+	case "inspect":
+		return cmdClientInspect(args[1:])
 	case "package":
 		return cmdClientPackage(args[1:])
 	case "verify":
@@ -197,206 +159,6 @@ func cmdClientVerifyWindows(args []string) error {
 	fmt.Printf("  Wintun       %s(要求 Windows Authenticode)\n", verified.Manifest.Wintun.Version)
 	fmt.Printf("  槽 ID        %s\n", verified.ID)
 	return nil
-}
-
-func cmdClientEnroll(args []string) error {
-	fs := flag.NewFlagSet("client enroll", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	inviteFile := fs.String("invite-file", "", "从 .loom-invite 文件读取；- 表示 stdin(推荐)")
-	inviteText := fs.String("invite", "", "直接给加入链接；可能进入 shell history，不推荐")
-	fromStdin := fs.Bool("stdin", false, "从 stdin 读取加入链接")
-	stateDir := fs.String("state-dir", "/etc/loom/client", "设备 identity 与加入状态目录")
-	deviceConfig := fs.String("device-config", "/etc/loom/device.yaml", "可选服务器职责声明")
-	wgKey := fs.String("wg-key", "/etc/wireguard/node.key", "服务器 WireGuard 私钥落点")
-	tlsKey := fs.String("tls-key", "/etc/loom/tls/node.key", "节点 TLS 私钥落点")
-	tlsCert := fs.String("tls-cert", "/etc/loom/tls/node.crt", "节点 TLS 证书落点")
-	caCert := fs.String("ca-cert", "/etc/loom/tls/ca.crt", "内部 CA 证书落点")
-	pubKey := fs.String("pubkey", "/etc/loom/trust/platform.pub", "平台签名公钥落点")
-	secrets := fs.String("secrets", "/etc/loom/secrets/node.env", "本设备秘密层落点")
-	nodeID := fs.String("node-id", "/etc/loom/node-id", "节点 id 落点")
-	expectedCurrent := fs.String("expected-current", "", "首次 pull 用的带外 signed current；默认 <state-dir>/expected-current.json")
-	pullState := fs.String("pull-state", "/var/lib/loom/applied", "pull 安装状态")
-	releaseFloor := fs.String("release-floor", "/var/lib/loom/release-floor.json", "signed current 防回退 floor")
-	deployLock := fs.String("deploy-lock", "/var/lib/loom/deploy.lock", "pull/apply 部署锁")
-	binPath := fs.String("bin", managedBinary, "首次 pull 可更新的 Loom 二进制")
-	dnsServer := fs.String("dns", "", "解析设备加入 HTTPS 端点使用的 DNS")
-	wait := fs.Duration("wait", 5*time.Minute, "等待中控完成 provisioning 的最长时间；0 只提交一次")
-	retry := fs.Duration("retry", 3*time.Second, "provisioning 期间的重试间隔")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("用法:loom client enroll {-invite-file <文件>|-stdin|-invite <URI>}:%w", err)
-	}
-	if fs.NArg() != 0 || *wait < 0 || *retry <= 0 {
-		return fmt.Errorf("用法:loom client enroll {-invite-file <文件>|-stdin|-invite <URI>}")
-	}
-	sources := 0
-	if *inviteFile != "" {
-		sources++
-	}
-	if *inviteText != "" {
-		sources++
-	}
-	if *fromStdin {
-		sources++
-	}
-	if sources != 1 {
-		return fmt.Errorf("必须且只能选择 -invite-file、-invite 或 -stdin 之一")
-	}
-	var invite clientenroll.Invite
-	var err error
-	switch {
-	case *inviteFile != "":
-		invite, err = clientenroll.ReadInviteFile(*inviteFile, os.Stdin)
-	case *fromStdin:
-		invite, err = clientenroll.ReadInviteFile("-", os.Stdin)
-	default:
-		fmt.Fprintln(os.Stderr, "! -invite 可能已进入 shell history；下次请用 -invite-file 或 stdin。")
-		invite, err = clientenroll.ParseInvite(*inviteText)
-	}
-	if err != nil {
-		return err
-	}
-	server, err := clientenroll.PrepareServerEnrollment(*deviceConfig, *wgKey, nil)
-	if err != nil {
-		return err
-	}
-	if err := ensureLocalServerPrerequisites(server); err != nil {
-		return err
-	}
-	if *expectedCurrent == "" {
-		*expectedCurrent = filepath.Join(*stateDir, "expected-current.json")
-	}
-	paths := clientenroll.Paths{
-		StateDir: *stateDir, TLSKey: *tlsKey, TLSCert: *tlsCert, CACert: *caCert,
-		PlatformPublicKey: *pubKey, Secrets: *secrets, NodeID: *nodeID,
-		ExpectedCurrent: *expectedCurrent,
-	}
-	httpClient := netx.Client(*dnsServer, 35*time.Second)
-	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		// 307/308 会重发包含 token 的 POST；加入端点必须直达(§11)。
-		return fmt.Errorf("设备加入 HTTPS 端点不允许重定向")
-	}
-	deadline := time.Now().Add(*wait)
-	first := true
-	temporaryReported := false
-	var response clientenroll.Response
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		response, err = clientenroll.ClaimWithServer(ctx, httpClient, invite, *stateDir, server, nil)
-		cancel()
-		if err != nil {
-			if !clientenroll.IsTransient(err) || *wait == 0 || time.Now().Add(*retry).After(deadline) {
-				return err
-			}
-			if !temporaryReported {
-				fmt.Fprintln(os.Stderr, "! 设备加入端点暂时不可用；将复用同一 key/request_id/CSR 重试。")
-				temporaryReported = true
-			}
-			time.Sleep(*retry)
-			continue
-		}
-		if response.Configuration == "ready" {
-			break
-		}
-		if first {
-			fmt.Printf("✓ 设备 identity 已绑定(client %s)，中控正在生成本设备配置。\n", response.ClientID)
-			first = false
-		}
-		if *wait == 0 || time.Now().Add(*retry).After(deadline) {
-			return fmt.Errorf("[§9.2 加入流程] 设备仍在 provisioning；identity 已安全保存，请用同一加入码重试，不要重置私钥")
-		}
-		time.Sleep(*retry)
-	}
-	if err := clientenroll.InstallReady(paths, response); err != nil {
-		return err
-	}
-	bootstrap := response.Bootstrap
-	pullArgs := make([]string, 0, 20)
-	for _, mirror := range bootstrap.DistributionURLs {
-		pullArgs = append(pullArgs, "-url", mirror)
-	}
-	pullArgs = append(pullArgs,
-		"-node", bootstrap.NodeID, "-pubkey", *pubKey, "-secrets", *secrets,
-		"-expected-current", *expectedCurrent, "-state", *pullState,
-		"-release-floor", *releaseFloor, "-deploy-lock", *deployLock, "-bin", *binPath,
-	)
-	if len(bootstrap.DNS) > 0 {
-		pullArgs = append(pullArgs, "-dns", bootstrap.DNS[0])
-	}
-	fmt.Printf("✓ bootstrap 已验签并落盘，开始首次 signed pull(节点 %s)。\n", bootstrap.NodeID)
-	if err := cmdPull(pullArgs); err != nil {
-		return fmt.Errorf("首次 signed pull 未完成；bootstrap 与 identity 已保留，重试会复用它们:%w", err)
-	}
-	if err := removeClientExpectedCurrent(*expectedCurrent); err != nil {
-		return err
-	}
-	fmt.Printf("✓ Linux 客户端已加入网络，并完成验签配置安装与首次状态收敛。\n")
-	return nil
-}
-
-func ensureLocalServerPrerequisites(server *clientenroll.ServerEnrollment) error {
-	return ensureServerWireGuardTools(server, executableRegularFile, func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-		command := exec.CommandContext(ctx, "/bin/sh", "-s")
-		command.Stdin = strings.NewReader(installLocalWireGuardToolsScript)
-		command.Stdout = io.Discard
-		var stderr bytes.Buffer
-		command.Stderr = &stderr
-		if err := command.Run(); err != nil {
-			detail := strings.TrimSpace(stderr.String())
-			if len(detail) > 2048 {
-				detail = detail[:2048] + "…"
-			}
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return errors.New("安装 wireguard-tools 超时")
-			}
-			if detail != "" {
-				return fmt.Errorf("安装 wireguard-tools: %w: %s", err, detail)
-			}
-			return fmt.Errorf("安装 wireguard-tools: %w", err)
-		}
-		return nil
-	})
-}
-
-func ensureServerWireGuardTools(server *clientenroll.ServerEnrollment, executable func(string) bool, install func() error) error {
-	if server == nil {
-		return nil
-	}
-	if executable == nil || install == nil {
-		return errors.New("服务器 Device 的 wireguard-tools 前置检查未配置")
-	}
-	wgOK := executable("/usr/bin/wg")
-	wgQuickOK := executable("/usr/bin/wg-quick")
-	if wgOK && wgQuickOK {
-		return nil
-	}
-	// This happens before the invitation is claimed. Failure can leave only a
-	// local, unreferenced WireGuard key; it cannot create Identity or SSOT state.
-	if err := install(); err != nil {
-		return fmt.Errorf("服务器 Device 需要 wireguard-tools，加入码尚未消费: %w", err)
-	}
-	if !executable("/usr/bin/wg") || !executable("/usr/bin/wg-quick") {
-		return errors.New("wireguard-tools 安装完成但 /usr/bin/wg 或 /usr/bin/wg-quick 仍不可执行；加入码尚未消费")
-	}
-	return nil
-}
-
-func executableRegularFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
-}
-
-func removeClientExpectedCurrent(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("首次 pull 完成，但删除临时 expected-current 失败:%w", err)
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
 }
 
 func cmdClientPackage(args []string) error {

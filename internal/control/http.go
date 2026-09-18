@@ -36,6 +36,9 @@ type Server struct {
 	ReleaseRoot string
 	ReleaseKey  string
 	AdminSocket string
+	Now         func() time.Time
+	Endpoints   *EndpointRuntime
+	Reports     *ObservationStore
 	mu          sync.Mutex
 }
 
@@ -55,17 +58,25 @@ func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) err
 	if err := os.Chmod(server.AdminSocket, 0o600); err != nil {
 		return err
 	}
+	endpoints, err := NewEndpointRuntime(server.Runtime.Authority, server.Config.Node, func() time.Time { return server.now() })
+	if err != nil {
+		return err
+	}
+	server.Endpoints = endpoints
+	defer endpoints.Close()
 
 	handler := server.Handler()
 	servers := []*http.Server{
 		{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 		{Handler: reportHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 		{Handler: server.AdminHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
+		{Handler: server.DeviceHandler(), ConnContext: endpointConnContext, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 	}
-	errorsOut := make(chan error, 3)
+	errorsOut := make(chan error, 4)
 	go func() { errorsOut <- servers[0].Serve(server.Channel.ControlListener()) }()
 	go func() { errorsOut <- servers[1].Serve(server.Channel.ReportListener()) }()
 	go func() { errorsOut <- servers[2].Serve(admin) }()
+	go func() { errorsOut <- servers[3].Serve(endpoints) }()
 	select {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -141,7 +152,19 @@ func (server *Server) Handler() http.Handler {
 
 func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
 	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection.Web
+	projectionBody, err := canonical(certified.Projection.Web)
+	if err != nil {
+		http.Error(writer, "control projection unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var projection WebProjection
+	if err := json.Unmarshal(projectionBody, &projection); err != nil {
+		http.Error(writer, "control projection unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if server.Reports != nil {
+		server.Reports.Project(&projection, certified.Projection, server.now())
+	}
 	catalog, err := server.catalog()
 	if err != nil {
 		projection.UIState.Warnings = append(projection.UIState.Warnings, "Verified release catalog is unavailable.")
@@ -154,7 +177,11 @@ func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request
 				Size: artifact.Size, Signing: artifact.Signing, URL: "/api/control/ui/releases/files/" + artifact.Path})
 		}
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"capabilities": map[string]bool{"admin": server.admin(request)}, "projection": projection})
+	response := map[string]any{"capabilities": map[string]bool{"admin": server.admin(request)}, "projection": projection}
+	if server.Reports != nil {
+		response["reports"] = server.Reports.Verified(certified.Projection)
+	}
+	writeJSON(writer, http.StatusOK, response)
 }
 
 func (server *Server) events(writer http.ResponseWriter, _ *http.Request) {
@@ -273,6 +300,7 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	var result CertifiedState
+	extra := map[string]any{}
 	switch envelope.Kind {
 	case "service.put":
 		var service Service
@@ -295,6 +323,33 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		result, err = server.Runtime.ReplaceMembers(request.Context(), envelope.RequestID, envelope.BaseHead, payload.Members)
+	case "endpoint.put":
+		var generation EndpointGeneration
+		if err := decodeRawStrict(envelope.Payload, &generation); err != nil {
+			http.Error(writer, "invalid endpoint generation", http.StatusBadRequest)
+			return
+		}
+		result, err = server.putEndpoint(request.Context(), envelope.RequestID, envelope.BaseHead, generation)
+	case "enrollment.create":
+		var payload enrollmentCreatePayload
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid enrollment", http.StatusBadRequest)
+			return
+		}
+		var invite string
+		result, invite, err = server.createEnrollment(request.Context(), envelope.RequestID, envelope.BaseHead, payload)
+		if err == nil {
+			extra["invite"] = invite
+		}
+	case "enrollment.approve":
+		var payload struct {
+			TransactionID string `json:"transaction_id"`
+		}
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid enrollment approval", http.StatusBadRequest)
+			return
+		}
+		result, err = server.approveEnrollment(request.Context(), envelope.RequestID, envelope.BaseHead, payload.TransactionID)
 	default:
 		http.Error(writer, "unknown operation", http.StatusBadRequest)
 		return
@@ -307,7 +362,11 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 		http.Error(writer, err.Error(), status)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"head": result.Head, "projection": result.Projection.Web})
+	response := map[string]any{"head": result.Head, "projection": result.Projection.Web}
+	for key, value := range extra {
+		response[key] = value
+	}
+	writeJSON(writer, http.StatusOK, response)
 }
 
 func decodeRawStrict(body []byte, value any) error {

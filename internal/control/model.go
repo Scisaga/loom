@@ -49,13 +49,18 @@ type Genesis struct {
 }
 
 type Material struct {
-	Schema        int            `json:"schema"`
-	Kind          string         `json:"kind"`
-	RequestID     string         `json:"request_id"`
-	BaseHead      string         `json:"base_head"`
-	Genesis       *Genesis       `json:"genesis,omitempty"`
-	Service       *Service       `json:"service,omitempty"`
-	ControlConfig *ControlConfig `json:"control_config,omitempty"`
+	Schema             int                 `json:"schema"`
+	Kind               string              `json:"kind"`
+	RequestID          string              `json:"request_id"`
+	BaseHead           string              `json:"base_head"`
+	Genesis            *Genesis            `json:"genesis,omitempty"`
+	Service            *Service            `json:"service,omitempty"`
+	ControlConfig      *ControlConfig      `json:"control_config,omitempty"`
+	EndpointGeneration *EndpointGeneration `json:"endpoint_generation,omitempty"`
+	EnrollmentOpen     *EnrollmentOpen     `json:"enrollment_open,omitempty"`
+	EnrollmentBind     *EnrollmentBind     `json:"enrollment_bind,omitempty"`
+	EnrollmentApprove  *EnrollmentApprove  `json:"enrollment_approve,omitempty"`
+	EnrollmentComplete *EnrollmentComplete `json:"enrollment_complete,omitempty"`
 }
 
 type ConsensusEntry struct {
@@ -71,11 +76,14 @@ type ConsensusState struct {
 }
 
 type Projection struct {
-	Schema         int           `json:"schema"`
-	Config         ControlConfig `json:"control_config"`
-	ConfigMaterial string        `json:"control_config_material"`
-	Applied        []string      `json:"applied_requests"`
-	Web            WebProjection `json:"web"`
+	Schema               int                     `json:"schema"`
+	Config               ControlConfig           `json:"control_config"`
+	ConfigMaterial       string                  `json:"control_config_material"`
+	Applied              []string                `json:"applied_requests"`
+	EndpointGenerations  []EndpointGeneration    `json:"endpoint_generations,omitempty"`
+	Enrollments          []EnrollmentTransaction `json:"enrollments,omitempty"`
+	DeviceAuthorizations []DeviceAuthorization   `json:"device_authorizations,omitempty"`
+	Web                  WebProjection           `json:"web"`
 }
 
 type HeadSignature struct {
@@ -84,12 +92,13 @@ type HeadSignature struct {
 }
 
 type GovernanceHead struct {
-	Schema           int             `json:"schema"`
-	Index            uint64          `json:"index"`
-	LogDigest        string          `json:"log_digest"`
-	ProjectionDigest string          `json:"projection_digest"`
-	ConfigMaterial   string          `json:"control_config_material"`
-	Signatures       []HeadSignature `json:"signatures"`
+	Schema            int             `json:"schema"`
+	Index             uint64          `json:"index"`
+	LogDigest         string          `json:"log_digest"`
+	ProjectionDigest  string          `json:"projection_digest"`
+	DeviceViewsDigest string          `json:"device_views_digest,omitempty"`
+	ConfigMaterial    string          `json:"control_config_material"`
+	Signatures        []HeadSignature `json:"signatures"`
 }
 
 type CertifiedState struct {
@@ -160,6 +169,21 @@ func (material Material) Validate() error {
 	if material.ControlConfig != nil {
 		count++
 	}
+	if material.EndpointGeneration != nil {
+		count++
+	}
+	if material.EnrollmentOpen != nil {
+		count++
+	}
+	if material.EnrollmentBind != nil {
+		count++
+	}
+	if material.EnrollmentApprove != nil {
+		count++
+	}
+	if material.EnrollmentComplete != nil {
+		count++
+	}
 	if count != 1 {
 		return errors.New("material must contain exactly one payload")
 	}
@@ -200,6 +224,41 @@ func (material Material) Validate() error {
 					return errors.New("new control config contains legacy member addresses")
 				}
 			}
+		}
+	case "endpoint.put":
+		if material.EndpointGeneration == nil || material.BaseHead == "" {
+			return errors.New("endpoint generation material is invalid")
+		}
+		if err := material.EndpointGeneration.Validate(); err != nil {
+			return err
+		}
+	case "enrollment.open":
+		if material.EnrollmentOpen == nil || material.BaseHead == "" {
+			return errors.New("enrollment open material is invalid")
+		}
+		if err := material.EnrollmentOpen.Validate(); err != nil {
+			return err
+		}
+	case "enrollment.bind":
+		if material.EnrollmentBind == nil || material.BaseHead == "" {
+			return errors.New("enrollment bind material is invalid")
+		}
+		if err := material.EnrollmentBind.Validate(); err != nil {
+			return err
+		}
+	case "enrollment.approve":
+		if material.EnrollmentApprove == nil || material.BaseHead == "" {
+			return errors.New("enrollment approve material is invalid")
+		}
+		if err := material.EnrollmentApprove.Validate(); err != nil {
+			return err
+		}
+	case "enrollment.complete":
+		if material.EnrollmentComplete == nil || material.BaseHead == "" {
+			return errors.New("enrollment complete material is invalid")
+		}
+		if err := material.EnrollmentComplete.Validate(); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unknown material kind %q", material.Kind)
@@ -347,9 +406,50 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 		}
 		next.Config = *material.ControlConfig
 		next.ConfigMaterial = materialID
+	case "endpoint.put":
+		if err := reduceEndpointGeneration(&next, *material.EndpointGeneration); err != nil {
+			return Projection{}, err
+		}
+	case "enrollment.open":
+		if material.EnrollmentOpen.Capability.IssuedHead != material.BaseHead ||
+			material.EnrollmentOpen.Capability.ConfigMaterial != previous.ConfigMaterial ||
+			!sameControlConfig(material.EnrollmentOpen.Capability.ControlConfig, previous.Config) {
+			return Projection{}, errors.New("enrollment capability does not match current certified boundary")
+		}
+		available := make([]EndpointReference, 0, len(previous.EndpointGenerations))
+		for _, generation := range previous.EndpointGenerations {
+			if generation.State == "serving" {
+				available = append(available, generation.Reference())
+			}
+		}
+		sort.Slice(available, func(i, j int) bool { return endpointReferenceLess(available[i], available[j]) })
+		left, _ := canonical(available)
+		right, _ := canonical(material.EnrollmentOpen.Capability.Endpoints)
+		if !bytes.Equal(left, right) {
+			return Projection{}, errors.New("enrollment capability endpoints do not match serving generations")
+		}
+		if err := reduceEnrollmentOpen(&next, *material.EnrollmentOpen); err != nil {
+			return Projection{}, err
+		}
+	case "enrollment.bind":
+		if err := reduceEnrollmentBind(&next, *material.EnrollmentBind); err != nil {
+			return Projection{}, err
+		}
+	case "enrollment.approve":
+		if err := reduceEnrollmentApprove(&next, *material.EnrollmentApprove); err != nil {
+			return Projection{}, err
+		}
+	case "enrollment.complete":
+		if material.EnrollmentComplete.Authorization.Floor != uint64(len(previous.Applied)+1) {
+			return Projection{}, errors.New("device authorization floor does not match completion index")
+		}
+		if err := reduceEnrollmentComplete(&next, *material.EnrollmentComplete); err != nil {
+			return Projection{}, err
+		}
 	}
 	next.Applied = append(next.Applied, material.RequestID)
 	sort.Strings(next.Applied)
+	projectEnrollmentWeb(&next)
 	return next, nil
 }
 
@@ -410,6 +510,10 @@ func VerifyHead(head GovernanceHead, projection Projection, entries []ConsensusE
 	projectionHash, err := projectionDigest(projection)
 	if err != nil || projectionHash != head.ProjectionDigest {
 		return errors.New("certified head projection digest is invalid")
+	}
+	viewsDigest, err := deviceViewsDigest(projection)
+	if err != nil || viewsDigest != head.DeviceViewsDigest {
+		return errors.New("certified head device views digest is invalid")
 	}
 	message, err := headSigningBytes(head)
 	if err != nil {

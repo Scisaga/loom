@@ -266,6 +266,10 @@ func (runtime *Runtime) submit(ctx context.Context, body []byte, forwarded bool)
 	}
 	consensus, projection, certified := runtime.Authority.Snapshot()
 	if contains(projection.Applied, material.RequestID) {
+		existingID, _, lookupErr := runtime.Authority.MaterialForRequest(material.RequestID)
+		if lookupErr != nil || existingID != id {
+			return CertifiedState{}, errors.New("request ID is already bound to different material")
+		}
 		if certified.Head.Index == uint64(len(consensus.Entries)) && len(uniqueMembers(projection.Config)) == 1 {
 			return certified, nil
 		}

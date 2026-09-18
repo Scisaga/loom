@@ -133,6 +133,20 @@ Endpoint generation、允许的直连/转发约束、所需的通用 Artifact �
 | DeviceView | 私有认证的完整 view | 服务端为可重建缓存；客户端保存完整 LKG | 候选、配置和 selector 输入 | 设备实际获得的版本与授权摘要 |
 | Observation | 私有认证报告或本地规范记录 | 可过期的观测记录，不进入治理状态 | 可用性与选择输入 | available/unavailable/unknown 和证据时间 |
 
+首个实现投影中，`EndpointGeneration` 的 wire/persistent 字段是 `endpoint_id`、单调
+`generation`、承载 listener 的 `node`、`tls_tunnel` transport、本地 `listen`、客户端
+`address`、`server_name`、已有 TLS 证书/私钥文件引用、证书 SPKI SHA-256、领域状态和
+`preference`。除状态与 serving 期间的偏好外，同一 generation 的其他字段不可变。listener
+只从已认证 Projection 投影；进入 serving 前必须在所声明节点实际读取证书，核对
+SPKI 和有效期，并成功绑定 listener。
+
+`tls_tunnel` 仅提供 TLS 1.3 且使用独立 ALPN。bootstrap 模式在握手中校验完整
+`BootstrapCapability`；device 模式对随机挑战做设备 Ed25519 签名。claim、resume、DeviceView
+与 report 的 HTTP 路由认证后的连接内部承载，不注册到公网或控制 listener。客户端把
+设备私钥、稳定 claim request ID、capability 信任边界、防回退 floor 和完整 DeviceView LKG
+作为一个 owner-only 文件原子替换；服务端 Observation 与签名 report 保存在独立可过期
+运行时记录中，不进入 Raft/QC Projection。
+
 线格式必须规范化并可逆：
 
 ```text

@@ -156,6 +156,83 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 	}
 }
 
+func TestEnrollmentApprovalRequiresControlQuorum(t *testing.T) {
+	_, _, runtimes, serverCancels, cancel := testCluster(t, 3)
+	defer cancel()
+	leader := waitLeader(t, runtimes)
+	_, _, initial := leader.Authority.Snapshot()
+	members := []Member{runtimes[0].Config.Member(), runtimes[1].Config.Member(), runtimes[2].Config.Member()}
+	joined, err := leader.ReplaceMembers(context.Background(), "enrollment-quorum-join", HeadID(initial.Head), members)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	submit := func(runtime *Runtime, material Material) CertifiedState {
+		t.Helper()
+		body, _, err := EncodeMaterial(material)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := runtime.Submit(context.Background(), body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	digest := strings.Repeat("1", 64)
+	generation := EndpointGeneration{Schema: 1, EndpointID: "demo-entry", Generation: 1, Node: leader.Config.Node,
+		Transport: "tls_tunnel", Listen: "127.0.0.1:443", Address: "192.0.2.10:443", ServerName: "demo.example",
+		TLSCertificateFile: "/etc/loom/demo.crt", TLSPrivateKeyFile: "/etc/loom/demo.key", SPKISHA256: digest,
+		State: "prepared"}
+	current := submit(leader, Material{Schema: MaterialSchema, Kind: "endpoint.put", RequestID: "quorum-endpoint-prepared",
+		BaseHead: HeadID(joined.Head), EndpointGeneration: &generation})
+	generation.State = "serving"
+	current = submit(leader, Material{Schema: MaterialSchema, Kind: "endpoint.put", RequestID: "quorum-endpoint-serving",
+		BaseHead: HeadID(current.Head), EndpointGeneration: &generation})
+	intent := EnrollmentIntent{DeviceID: "demo-quorum-device", Name: "Demo quorum device", Platform: "linux", Roles: []string{"access"}, Routes: []RouteCandidate{}}
+	constraint, _ := intentDigest(intent)
+	capability, err := SignBootstrapCapability(BootstrapCapability{Schema: 1, TransactionID: "demo-quorum-transaction",
+		IssuedHead: HeadID(current.Head), ConfigMaterial: current.Projection.ConfigMaterial, ControlConfig: current.Projection.Config,
+		ExpiresAt: "2030-01-01T00:00:00Z", Actions: []string{"claim", "resume"}, Endpoints: []EndpointReference{generation.Reference()},
+		ConstraintDigest: constraint, IssuerMemberID: leader.Config.MemberID}, leader.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := EnrollmentOpen{TransactionID: capability.TransactionID, Intent: intent, Capability: capability}
+	current = submit(leader, Material{Schema: MaterialSchema, Kind: "enrollment.open", RequestID: "quorum-enrollment-open",
+		BaseHead: HeadID(current.Head), EnrollmentOpen: &open})
+	devicePublic, _, _ := ed25519.GenerateKey(rand.Reader)
+	bind := EnrollmentBind{TransactionID: capability.TransactionID, ClaimRequestID: "demo-quorum-claim",
+		DevicePublicKey: base64.RawURLEncoding.EncodeToString(devicePublic), ClaimedAt: "2026-09-18T00:00:00Z"}
+	current = submit(leader, Material{Schema: MaterialSchema, Kind: "enrollment.bind", RequestID: "quorum-enrollment-bind",
+		BaseHead: HeadID(current.Head), EnrollmentBind: &bind})
+	for _, runtime := range runtimes {
+		waitHead(t, runtime.Authority, HeadID(current.Head))
+	}
+
+	minority := runtimes[2]
+	for index := 0; index < 2; index++ {
+		serverCancels[index]()
+		if err := runtimes[index].Close(); err != nil {
+			t.Fatal(err)
+		}
+		_ = runtimes[index].Channel.Close()
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 3*time.Second)
+	defer stop()
+	server := &Server{Runtime: minority, Config: minority.Config, Now: func() time.Time {
+		return time.Date(2026, 9, 18, 1, 0, 0, 0, time.UTC)
+	}}
+	if _, err := server.approveEnrollment(ctx, "quorum-approval", HeadID(current.Head), capability.TransactionID); err == nil {
+		t.Fatal("minority approved a new device authorization")
+	}
+	_, projection, certified := minority.Authority.Snapshot()
+	_, transaction := findEnrollment(&projection, capability.TransactionID)
+	if transaction == nil || transaction.State != "bound" || HeadID(certified.Head) != HeadID(current.Head) {
+		t.Fatalf("failed approval changed certified LKG: transaction=%+v", transaction)
+	}
+}
+
 func TestMaterialDeltaIsIdempotentAndCommittedReferenceMustExist(t *testing.T) {
 	_, root := testActivated(t)
 	authority, err := OpenAuthority(root)

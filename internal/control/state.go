@@ -80,6 +80,9 @@ type Device struct {
 	Roles        []string `json:"roles"`
 	Authorized   bool     `json:"authorized"`
 	Availability string   `json:"availability"`
+	EnrollmentID string   `json:"enrollment_id,omitempty"`
+	Enrollment   string   `json:"enrollment,omitempty"`
+	ViewDigest   string   `json:"view_digest,omitempty"`
 }
 
 type Link struct {
@@ -91,6 +94,7 @@ type Link struct {
 }
 
 type Path struct {
+	CandidateID  string   `json:"candidate_id,omitempty"`
 	Device       string   `json:"device"`
 	FinalExit    string   `json:"final_exit"`
 	Chain        []string `json:"chain"`

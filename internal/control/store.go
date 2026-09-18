@@ -181,6 +181,24 @@ func (authority *Authority) MaterialIDs() ([]string, error) {
 	return ids, nil
 }
 
+func (authority *Authority) MaterialForRequest(requestID string) (string, Material, error) {
+	consensus, _, _ := authority.Snapshot()
+	for _, entry := range consensus.Entries {
+		body, err := authority.Material(entry.MaterialID)
+		if err != nil {
+			return "", Material{}, err
+		}
+		material, err := DecodeMaterial(body)
+		if err != nil {
+			return "", Material{}, err
+		}
+		if material.RequestID == requestID {
+			return entry.MaterialID, material, nil
+		}
+	}
+	return "", Material{}, os.ErrNotExist
+}
+
 func (authority *Authority) Append(materialID string, term uint64) (Projection, error) {
 	authority.mu.Lock()
 	defer authority.mu.Unlock()
@@ -279,8 +297,13 @@ func (authority *Authority) CandidateHead() (GovernanceHead, Projection, error) 
 	if err != nil {
 		return GovernanceHead{}, Projection{}, err
 	}
+	viewsHash, err := deviceViewsDigest(authority.projection)
+	if err != nil {
+		return GovernanceHead{}, Projection{}, err
+	}
 	head := GovernanceHead{Schema: HeadSchema, Index: uint64(len(authority.consensus.Entries)), LogDigest: logHash,
-		ProjectionDigest: projectionHash, ConfigMaterial: authority.projection.ConfigMaterial, Signatures: []HeadSignature{}}
+		ProjectionDigest: projectionHash, DeviceViewsDigest: viewsHash,
+		ConfigMaterial: authority.projection.ConfigMaterial, Signatures: []HeadSignature{}}
 	return head, authority.projection, nil
 }
 

@@ -208,8 +208,12 @@ func cmdControlServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	reports, err := control.OpenObservationStore(*stateDir)
+	if err != nil {
+		return err
+	}
 	err = (&control.Server{Runtime: runtime, Channel: channel, Config: runtime.Config, ReleaseRoot: *releaseRoot,
-		ReleaseKey: *releaseKey, AdminSocket: *adminSocket}).Serve(ctx, reportRuntime.Handler())
+		ReleaseKey: *releaseKey, AdminSocket: *adminSocket, Reports: reports}).Serve(ctx, reportRuntime.Handler())
 	stop()
 	if reportErr := reportRuntime.Wait(); err == nil {
 		err = reportErr
@@ -261,11 +265,16 @@ func cmdControlInspect(args []string) error {
 		V2Latch       bool                   `json:"v2_latch"`
 		Members       int                    `json:"members"`
 		Devices       int                    `json:"devices"`
+		Endpoints     int                    `json:"endpoint_generations"`
+		Enrollments   int                    `json:"enrollments"`
+		DeviceViews   int                    `json:"device_views"`
 		Services      int                    `json:"services"`
 		AdminBindings int                    `json:"admin_bindings"`
 		Entries       int                    `json:"consensus_entries"`
 	}{certified.Head, config.Recovery.ReleaseFloor.Generation, config.Recovery.V2Latch,
-		len(controlMembers(projection.Config)), len(certified.Projection.Web.Devices), len(certified.Projection.Web.Services), len(config.AdminCertDER), len(consensus.Entries)})
+		len(controlMembers(projection.Config)), len(certified.Projection.Web.Devices), len(certified.Projection.EndpointGenerations),
+		len(certified.Projection.Enrollments), len(certified.Projection.DeviceAuthorizations), len(certified.Projection.Web.Services),
+		len(config.AdminCertDER), len(consensus.Entries)})
 }
 
 func controlMembers(config control.ControlConfig) []control.Member {
@@ -282,7 +291,7 @@ func cmdControlWrite(args []string) error {
 	certPath := fs.String("cert", "", "管理员客户端证书")
 	keyPath := fs.String("key", "", "管理员客户端私钥")
 	caPath := fs.String("ca", "", "control TLS 根证书")
-	kind := fs.String("kind", "", "service.put 或 members.replace")
+	kind := fs.String("kind", "", "service.put、members.replace、endpoint.put、enrollment.create 或 enrollment.approve")
 	payloadPath := fs.String("payload", "", "operation payload JSON")
 	requestID := fs.String("request-id", "", "稳定幂等请求 ID")
 	baseHead := fs.String("base-head", "", "读取到的 certified head")
