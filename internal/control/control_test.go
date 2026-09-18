@@ -42,7 +42,9 @@ func testState() State {
 func testRuntimeServer(t *testing.T, state State) *Server {
 	t.Helper()
 	root := t.TempDir()
-	config, err := ActivateLegacy(root, state, "demo-control", "127.0.0.1:19001")
+	state.BrowserTLS = testTLS(t)
+	address := state.Listen
+	config, err := ActivateLegacy(root, state, "demo-control", "demo-node", []string{address})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +52,8 @@ func testRuntimeServer(t *testing.T, state State) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{Runtime: &Runtime{Config: config, Authority: authority}, Config: config}
+	channel := &PrivateChannel{config: PrivateChannelConfig{Node: "demo-node", Listen: []string{address}}}
+	return &Server{Runtime: &Runtime{Config: config, Authority: authority}, Channel: channel, Config: config}
 }
 
 func TestStateSurvivesRestartExactly(t *testing.T) {

@@ -38,6 +38,7 @@ type Runtime struct {
 	Config    NodeConfig
 	Authority *Authority
 	Raft      *raft.Raft
+	Channel   *PrivateChannel
 	transport *raft.NetworkTransport
 	store     io.Closer
 	mu        sync.Mutex
@@ -81,7 +82,10 @@ func (store guardedLogStore) StoreLogs(logs []*raft.Log) error {
 	return store.LogStore.StoreLogs(logs)
 }
 
-func OpenRuntime(root string) (*Runtime, error) {
+func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
+	if channel == nil {
+		return nil, errors.New("private control channel is required")
+	}
 	config, err := LoadNodeConfig(root)
 	if err != nil {
 		return nil, err
@@ -109,10 +113,9 @@ func OpenRuntime(root string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport, err := raft.NewTCPTransport(config.RaftAddress, nil, 4, 10*time.Second, io.Discard)
-	if err != nil {
-		return nil, err
-	}
+	channel.AttachAuthority(authority)
+	transport := raft.NewNetworkTransportWithConfig(&raft.NetworkTransportConfig{Stream: channel.RaftStream(), MaxPool: 4,
+		Timeout: 10 * time.Second, Logger: nil, ServerAddressProvider: memberAddressProvider{authority: authority, local: config}})
 	raftConfig := raft.DefaultConfig()
 	raftConfig.LocalID = raft.ServerID(config.MemberID)
 	raftConfig.SnapshotThreshold = math.MaxUint64
@@ -125,7 +128,7 @@ func OpenRuntime(root string) (*Runtime, error) {
 		return nil, err
 	}
 	if !hasState && config.Bootstrap {
-		bootstrap := raft.Configuration{Servers: []raft.Server{{ID: raft.ServerID(config.MemberID), Address: raft.ServerAddress(config.RaftAddress), Suffrage: raft.Voter}}}
+		bootstrap := raft.Configuration{Servers: []raft.Server{{ID: raft.ServerID(config.MemberID), Address: raft.ServerAddress(config.Node), Suffrage: raft.Voter}}}
 		if err := raft.BootstrapCluster(raftConfig, logs, bolt, raft.NewInmemSnapshotStore(), transport, bootstrap); err != nil {
 			transport.Close()
 			return nil, err
@@ -136,9 +139,31 @@ func OpenRuntime(root string) (*Runtime, error) {
 		transport.Close()
 		return nil, err
 	}
-	runtime := &Runtime{Config: config, Authority: authority, Raft: instance, transport: transport, store: bolt, stop: make(chan struct{}), done: make(chan struct{})}
+	runtime := &Runtime{Config: config, Authority: authority, Raft: instance, Channel: channel, transport: transport, store: bolt, stop: make(chan struct{}), done: make(chan struct{})}
 	go runtime.reconcileLoop()
 	return runtime, nil
+}
+
+type memberAddressProvider struct {
+	authority *Authority
+	local     NodeConfig
+}
+
+func (provider memberAddressProvider) ServerAddr(id raft.ServerID) (raft.ServerAddress, error) {
+	_, projection, _ := provider.authority.Snapshot()
+	for _, member := range uniqueMembers(projection.Config) {
+		if member.ID != string(id) {
+			continue
+		}
+		if member.Node != "" {
+			return raft.ServerAddress(member.Node), nil
+		}
+		if member.ID == provider.local.MemberID {
+			return raft.ServerAddress(provider.local.Node), nil
+		}
+		return "", errors.New("legacy control member has no private channel node")
+	}
+	return "", errors.New("raft member is absent from ControlConfig")
 }
 
 func (runtime *Runtime) Close() error {
@@ -227,6 +252,14 @@ func (runtime *Runtime) LeaderMember() (Member, bool) {
 }
 
 func (runtime *Runtime) Submit(ctx context.Context, body []byte) (CertifiedState, error) {
+	return runtime.submit(ctx, body, false)
+}
+
+func (runtime *Runtime) SubmitForwarded(ctx context.Context, body []byte) (CertifiedState, error) {
+	return runtime.submit(ctx, body, true)
+}
+
+func (runtime *Runtime) submit(ctx context.Context, body []byte, forwarded bool) (CertifiedState, error) {
 	material, id, err := EncodeMaterialFromBytes(body)
 	if err != nil {
 		return CertifiedState{}, err
@@ -237,15 +270,7 @@ func (runtime *Runtime) Submit(ctx context.Context, body []byte) (CertifiedState
 			return certified, nil
 		}
 		if runtime.Raft.State() != raft.Leader {
-			leader, ok := runtime.LeaderMember()
-			if !ok {
-				return CertifiedState{}, errors.New("write quorum is unavailable")
-			}
-			var result CertifiedState
-			if err := runtime.peerJSON(ctx, leader, http.MethodPost, "/internal/submit", body, &result); err != nil {
-				return CertifiedState{}, err
-			}
-			return result, nil
+			return runtime.forwardSubmit(ctx, body, forwarded)
 		}
 		runtime.mu.Lock()
 		defer runtime.mu.Unlock()
@@ -272,19 +297,36 @@ func (runtime *Runtime) Submit(ctx context.Context, body []byte) (CertifiedState
 		return CertifiedState{}, err
 	}
 	if runtime.Raft.State() != raft.Leader {
-		leader, ok := runtime.LeaderMember()
-		if !ok {
-			return CertifiedState{}, errors.New("write quorum is unavailable")
-		}
-		var result CertifiedState
-		if err := runtime.peerJSON(ctx, leader, http.MethodPost, "/internal/submit", body, &result); err != nil {
-			return CertifiedState{}, err
-		}
-		return result, nil
+		return runtime.forwardSubmit(ctx, body, forwarded)
 	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	return runtime.submitLeader(ctx, material, id, body)
+}
+
+func (runtime *Runtime) forwardSubmit(ctx context.Context, body []byte, forwarded bool) (CertifiedState, error) {
+	leader, ok := runtime.LeaderMember()
+	if !ok {
+		return CertifiedState{}, errors.New("write quorum is unavailable")
+	}
+	var result CertifiedState
+	leaderErr := runtime.peerJSON(ctx, leader, http.MethodPost, "/internal/submit", body, &result)
+	if leaderErr == nil {
+		return result, nil
+	}
+	if forwarded {
+		return CertifiedState{}, leaderErr
+	}
+	_, projection, _ := runtime.Authority.Snapshot()
+	for _, relay := range uniqueMembers(projection.Config) {
+		if relay.ID == runtime.Config.MemberID || relay.ID == leader.ID || relay.Node == "" {
+			continue
+		}
+		if err := runtime.peerJSON(ctx, relay, http.MethodPost, "/internal/submit", body, &result); err == nil {
+			return result, nil
+		}
+	}
+	return CertifiedState{}, leaderErr
 }
 
 func (runtime *Runtime) submitLeader(ctx context.Context, material Material, id string, body []byte) (CertifiedState, error) {
@@ -332,8 +374,13 @@ func (runtime *Runtime) ReplaceMembers(ctx context.Context, requestID, baseHead 
 	if projection.Config.Mode != "stable" {
 		return CertifiedState{}, errors.New("member replacement requires a stable current config")
 	}
+	for _, member := range members {
+		if !member.current() {
+			return CertifiedState{}, errors.New("replacement members must use the existing private channel")
+		}
+	}
 	joint := JointConfig(projection.Config.Members, members)
-	jointMaterial := Material{Schema: 1, Kind: "control.config", RequestID: requestID + ":joint", BaseHead: baseHead, ControlConfig: &joint}
+	jointMaterial := Material{Schema: MaterialSchema, Kind: "control.config", RequestID: requestID + ":joint", BaseHead: baseHead, ControlConfig: &joint}
 	body, _, err := EncodeMaterial(jointMaterial)
 	if err != nil {
 		return CertifiedState{}, err
@@ -343,7 +390,7 @@ func (runtime *Runtime) ReplaceMembers(ctx context.Context, requestID, baseHead 
 		return CertifiedState{}, err
 	}
 	stable := StableConfig(members)
-	stableMaterial := Material{Schema: 1, Kind: "control.config", RequestID: requestID + ":stable", BaseHead: HeadID(jointResult.Head), ControlConfig: &stable}
+	stableMaterial := Material{Schema: MaterialSchema, Kind: "control.config", RequestID: requestID + ":stable", BaseHead: HeadID(jointResult.Head), ControlConfig: &stable}
 	body, _, err = EncodeMaterial(stableMaterial)
 	if err != nil {
 		return CertifiedState{}, err
@@ -388,7 +435,7 @@ func (runtime *Runtime) applyRaftMembership(members []Member) error {
 		if present[member.ID] {
 			continue
 		}
-		if err := runtime.Raft.AddVoter(raft.ServerID(member.ID), raft.ServerAddress(member.RaftAddress), 0, 30*time.Second).Error(); err != nil {
+		if err := runtime.Raft.AddVoter(raft.ServerID(member.ID), raft.ServerAddress(member.Node), 0, 30*time.Second).Error(); err != nil {
 			return fmt.Errorf("add raft voter %s: %w", member.ID, err)
 		}
 	}
@@ -507,35 +554,44 @@ func uniqueMembers(config ControlConfig) []Member {
 func mustJSON(value any) []byte { body, _ := json.Marshal(value); return body }
 
 func (runtime *Runtime) peerJSON(ctx context.Context, member Member, method, path string, body []byte, result any) error {
-	certificate, err := tls.X509KeyPair([]byte(runtime.Config.BrowserTLS.CertificateChainPEM), []byte(runtime.Config.BrowserTLS.PrivateKeyPKCS8PEM))
-	if err != nil {
+	if member.Node == "" {
+		return errors.New("control member has no private channel node")
+	}
+	var failures []error
+	for _, endpoint := range runtime.Channel.endpoints(member.Node) {
+		client, err := runtime.Channel.peerClient(endpoint)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		request, err := http.NewRequestWithContext(ctx, method, "https://"+endpoint+path, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		runtime.signRequest(request, body)
+		response, err := client.Do(request)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if response.StatusCode != http.StatusOK {
+			message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+			response.Body.Close()
+			failures = append(failures, fmt.Errorf("peer %s: %s: %s", member.ID, response.Status, strings.TrimSpace(string(message))))
+			continue
+		}
+		if result != nil {
+			decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
+			decoder.DisallowUnknownFields()
+			err = decoder.Decode(result)
+		}
+		response.Body.Close()
 		return err
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM([]byte(runtime.Config.BrowserTLS.CertificateChainPEM)) {
-		return errors.New("control TLS trust chain is invalid")
+	if len(failures) == 0 {
+		return fmt.Errorf("control member %s is not a direct private neighbor", member.ID)
 	}
-	client := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, RootCAs: pool}}}
-	request, err := http.NewRequestWithContext(ctx, method, "https://"+member.APIAddress+path, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	runtime.signRequest(request, body)
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
-		return fmt.Errorf("peer %s: %s: %s", member.ID, response.Status, strings.TrimSpace(string(message)))
-	}
-	if result != nil {
-		decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(result)
-	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func requestBytes(method, path string, body []byte) []byte {
@@ -562,11 +618,14 @@ func TLSConfig(config NodeConfig) (*tls.Config, error) {
 		return nil, err
 	}
 	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM([]byte(config.BrowserTLS.CertificateChainPEM))
-	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, ClientCAs: pool, ClientAuth: tls.RequireAnyClientCert}, nil
+	if !pool.AppendCertsFromPEM([]byte(config.BrowserTLS.CertificateChainPEM)) {
+		return nil, errors.New("control TLS trust chain is invalid")
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate},
+		ClientCAs: pool, RootCAs: pool, ClientAuth: tls.RequireAnyClientCert}, nil
 }
 
-func PrepareMember(root, sourceRoot, memberID, listen, raftAddress string) (NodeConfig, error) {
+func PrepareMember(root, sourceRoot, memberID, node string, listen []string) (NodeConfig, error) {
 	source, err := LoadNodeConfig(sourceRoot)
 	if err != nil {
 		return NodeConfig{}, err
@@ -581,11 +640,10 @@ func PrepareMember(root, sourceRoot, memberID, listen, raftAddress string) (Node
 	}
 	config := source
 	config.MemberID = memberID
-	config.Listen = listen
-	config.RaftAddress = raftAddress
+	config.Node = node
 	config.Bootstrap = false
 	config.IdentityPrivateKey = base64.RawURLEncoding.EncodeToString(private)
-	config.BrowserTLS, err = issueNodeTLS(source.BrowserTLS, memberID, listen)
+	config.BrowserTLS, err = issueNodeTLS(source.BrowserTLS, memberID, listen, private)
 	if err != nil {
 		return NodeConfig{}, err
 	}
@@ -621,7 +679,7 @@ func PrepareMember(root, sourceRoot, memberID, listen, raftAddress string) (Node
 	return config, nil
 }
 
-func issueNodeTLS(source BrowserTLS, memberID, listen string) (BrowserTLS, error) {
+func issueNodeTLS(source BrowserTLS, memberID string, listen []string, private ed25519.PrivateKey) (BrowserTLS, error) {
 	block, _ := pem.Decode([]byte(source.RootPrivateKeyPKCS8PEM))
 	if block == nil || block.Type != "PRIVATE KEY" {
 		return BrowserTLS{}, errors.New("browser root private key is invalid")
@@ -662,24 +720,28 @@ func issueNodeTLS(source BrowserTLS, memberID, listen string) (BrowserTLS, error
 	if authority == nil {
 		return BrowserTLS{}, errors.New("browser root certificate does not match retained root key")
 	}
-	public, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return BrowserTLS{}, err
+	if len(listen) == 0 || len(private) != ed25519.PrivateKeySize {
+		return BrowserTLS{}, errors.New("private channel listeners or identity key are invalid")
 	}
-	host, _, err := net.SplitHostPort(listen)
-	if err != nil {
-		return BrowserTLS{}, errors.New("browser listen address is invalid")
-	}
-	serialSeed := sha256.Sum256([]byte("loom-control-browser-leaf-v1\n" + memberID + "\n" + listen))
+	addresses := append([]string(nil), listen...)
+	sort.Strings(addresses)
+	serialSeed := sha256.Sum256([]byte("loom-control-browser-leaf-v2\n" + memberID + "\n" + strings.Join(addresses, "\n")))
 	serial := new(big.Int).SetBytes(serialSeed[:20])
 	serial.SetBit(serial, 159, 0)
 	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: memberID}, NotBefore: authority.NotBefore,
 		NotAfter: authority.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}
-	if ip := net.ParseIP(host); ip != nil {
-		template.IPAddresses = []net.IP{ip}
-	} else {
-		template.DNSNames = []string{host}
+	for _, address := range addresses {
+		host, _, splitErr := net.SplitHostPort(address)
+		if splitErr != nil {
+			return BrowserTLS{}, errors.New("private channel listen address is invalid")
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else {
+			template.DNSNames = append(template.DNSNames, host)
+		}
 	}
+	public := private.Public().(ed25519.PublicKey)
 	leafDER, err := x509.CreateCertificate(rand.Reader, template, authority, public, signer)
 	if err != nil {
 		return BrowserTLS{}, err

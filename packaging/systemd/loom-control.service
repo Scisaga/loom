@@ -3,10 +3,11 @@ Description=Loom private v2 control authority
 Documentation=file:/opt/loom/docs/rebuild/control-model.md
 After=network-online.target
 Wants=network-online.target
+Conflicts=loom-client-v2-report.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/libexec/loom-control-minimal control serve -state-dir /var/lib/loom-minimal -release-root /var/lib/loom/client-dist/releases -release-key /etc/loom/trust/platform.pub
+ExecStart=/usr/local/libexec/loom-control-minimal control serve -state-dir /var/lib/loom-minimal -network-config /etc/loom/report/v2/config.json -release-root /var/lib/loom/client-dist/releases -release-key /etc/loom/trust/platform.pub
 Restart=on-failure
 RestartSec=3s
 TimeoutStopSec=20s
@@ -16,7 +17,7 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/loom-minimal
-ReadOnlyPaths=/var/lib/loom/client-dist/releases /etc/loom/trust/platform.pub
+ReadOnlyPaths=/var/lib/loom/client-dist/releases /etc/loom/trust/platform.pub /etc/loom/report/v2/config.json
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

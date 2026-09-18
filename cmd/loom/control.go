@@ -21,6 +21,7 @@ import (
 
 	"loom/internal/control"
 	"loom/internal/localconfig"
+	"loom/internal/report"
 )
 
 const minimalStateName = "state.json"
@@ -56,7 +57,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <import|activate|prepare|serve|inspect|write>")
+		return errors.New("用法: loom control <import|activate|rebind|prepare|serve|inspect|write>")
 	}
 	switch args[0] {
 	case "import":
@@ -65,6 +66,8 @@ func cmdControl(args []string) error {
 		return cmdControlServe(args[1:])
 	case "activate":
 		return cmdControlActivate(args[1:])
+	case "rebind":
+		return cmdControlRebind(args[1:])
 	case "prepare":
 		return cmdControlPrepare(args[1:])
 	case "inspect":
@@ -80,19 +83,23 @@ func cmdControlActivate(args []string) error {
 	fs := flag.NewFlagSet("control activate", flag.ContinueOnError)
 	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "控制状态目录")
 	memberID := fs.String("member-id", "", "稳定 control 成员 ID")
-	raftAddress := fs.String("raft-address", "", "私有 Raft 监听地址")
+	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *memberID == "" || *raftAddress == "" {
-		return errors.New("control activate 需要 -member-id 和 -raft-address")
+	if fs.NArg() != 0 || *memberID == "" {
+		return errors.New("control activate 需要 -member-id")
+	}
+	private, _, err := loadPrivateChannelConfig(*networkConfig)
+	if err != nil {
+		return err
 	}
 	legacyPath := filepath.Join(*stateDir, minimalStateName)
 	legacy, err := control.LoadState(legacyPath)
 	if err != nil {
 		return err
 	}
-	config, err := control.ActivateLegacy(*stateDir, legacy, *memberID, *raftAddress)
+	config, err := control.ActivateLegacy(*stateDir, legacy, *memberID, private.Node, private.Listen)
 	if err != nil {
 		return err
 	}
@@ -105,20 +112,44 @@ func cmdControlActivate(args []string) error {
 	return json.NewEncoder(os.Stdout).Encode(config.Member())
 }
 
+func cmdControlRebind(args []string) error {
+	fs := flag.NewFlagSet("control rebind", flag.ContinueOnError)
+	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "控制状态目录")
+	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("control rebind 不接受位置参数")
+	}
+	private, _, err := loadPrivateChannelConfig(*networkConfig)
+	if err != nil {
+		return err
+	}
+	config, err := control.MigrateNodePrivateChannel(*stateDir, private.Node, private.Listen)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(config.Member())
+}
+
 func cmdControlPrepare(args []string) error {
 	fs := flag.NewFlagSet("control prepare", flag.ContinueOnError)
 	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "新成员控制状态目录")
 	sourceDir := fs.String("source-state-dir", "", "已认证源控制状态目录")
 	memberID := fs.String("member-id", "", "稳定 control 成员 ID")
-	listen := fs.String("listen", "", "私有管理监听地址")
-	raftAddress := fs.String("raft-address", "", "私有 Raft 监听地址")
+	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "新成员既有私有通道配置")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *sourceDir == "" || *memberID == "" || *listen == "" || *raftAddress == "" {
-		return errors.New("control prepare 缺少 source/member/listen/raft 参数")
+	if fs.NArg() != 0 || *sourceDir == "" || *memberID == "" {
+		return errors.New("control prepare 缺少 source/member 参数")
 	}
-	config, err := control.PrepareMember(*stateDir, *sourceDir, *memberID, *listen, *raftAddress)
+	private, _, err := loadPrivateChannelConfig(*networkConfig)
+	if err != nil {
+		return err
+	}
+	config, err := control.PrepareMember(*stateDir, *sourceDir, *memberID, private.Node, private.Listen)
 	if err != nil {
 		return err
 	}
@@ -167,20 +198,63 @@ func cmdControlServe(args []string) error {
 	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "最小控制状态目录")
 	releaseRoot := fs.String("release-root", "/var/lib/loom/client-dist/releases", "客户端 release 根目录")
 	releaseKey := fs.String("release-key", "/etc/loom/trust/platform.pub", "catalog 验签公钥")
+	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("control serve 不接受位置参数")
 	}
-	runtime, err := control.OpenRuntime(*stateDir)
+	private, reportConfig, err := loadPrivateChannelConfig(*networkConfig)
+	if err != nil {
+		return err
+	}
+	node, err := control.LoadNodeConfig(*stateDir)
+	if err != nil {
+		return err
+	}
+	channel, err := control.OpenPrivateChannel(private, node)
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	runtime, err := control.OpenRuntime(*stateDir, channel)
 	if err != nil {
 		return err
 	}
 	defer runtime.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return (&control.Server{Runtime: runtime, Config: runtime.Config, ReleaseRoot: *releaseRoot, ReleaseKey: *releaseKey}).Serve(ctx)
+	reportRuntime, err := report.Start(ctx, reportConfig, func() time.Time { return time.Now() }, os.Stdout)
+	if err != nil {
+		return err
+	}
+	err = (&control.Server{Runtime: runtime, Channel: channel, Config: runtime.Config, ReleaseRoot: *releaseRoot, ReleaseKey: *releaseKey}).Serve(ctx, reportRuntime.Handler())
+	stop()
+	if reportErr := reportRuntime.Wait(); err == nil {
+		err = reportErr
+	}
+	return err
+}
+
+func loadPrivateChannelConfig(path string) (control.PrivateChannelConfig, *report.Config, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return control.PrivateChannelConfig{}, nil, err
+	}
+	reportConfig, err := report.Load(body)
+	if err != nil {
+		return control.PrivateChannelConfig{}, nil, err
+	}
+	peers := map[string][]string{}
+	for _, neighbor := range reportConfig.Neighbors {
+		peers[neighbor.Node] = append(peers[neighbor.Node], neighbor.Addr)
+	}
+	private := control.PrivateChannelConfig{Node: reportConfig.Node, Listen: append([]string(nil), reportConfig.Listen...), Peers: peers}
+	if err := private.Validate(); err != nil {
+		return control.PrivateChannelConfig{}, nil, err
+	}
+	return private, reportConfig, nil
 }
 
 func cmdControlInspect(args []string) error {

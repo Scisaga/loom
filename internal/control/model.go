@@ -14,17 +14,22 @@ import (
 )
 
 const (
-	MaterialSchema = 1
-	HeadSchema     = 1
-	materialDomain = "loom-material-v1\n"
-	headDomain     = "loom-certified-head-v1\n"
+	LegacyMaterialSchema = 1
+	MaterialSchema       = 2
+	HeadSchema           = 1
+	materialDomain       = "loom-material-v1\n"
+	headDomain           = "loom-certified-head-v1\n"
 )
 
 type Member struct {
-	ID          string `json:"id"`
-	RaftAddress string `json:"raft_address"`
-	APIAddress  string `json:"api_address"`
-	PublicKey   string `json:"public_key"`
+	ID string `json:"id"`
+	// These two fields only decode already-committed schema-1 material. New
+	// material identifies the existing private channel by node instead of
+	// making two socket addresses part of membership authority.
+	LegacyRaftAddress string `json:"raft_address,omitempty"`
+	LegacyAPIAddress  string `json:"api_address,omitempty"`
+	PublicKey         string `json:"public_key"`
+	Node              string `json:"node,omitempty"`
 }
 
 type ControlConfig struct {
@@ -142,7 +147,7 @@ func DecodeMaterial(body []byte) (Material, error) {
 }
 
 func (material Material) Validate() error {
-	if material.Schema != MaterialSchema || material.RequestID == "" {
+	if material.Schema != LegacyMaterialSchema && material.Schema != MaterialSchema || material.RequestID == "" {
 		return errors.New("material identity is incomplete")
 	}
 	count := 0
@@ -166,6 +171,9 @@ func (material Material) Validate() error {
 		if err := material.Genesis.ControlConfig.Validate(); err != nil {
 			return err
 		}
+		if material.Schema == MaterialSchema && !currentMembers(material.Genesis.ControlConfig) {
+			return errors.New("current genesis contains legacy member addresses")
+		}
 	case "service.put":
 		if material.Service == nil || material.BaseHead == "" || material.Service.ID == "" || material.Service.Name == "" {
 			return errors.New("service material is invalid")
@@ -182,6 +190,17 @@ func (material Material) Validate() error {
 		if err := material.ControlConfig.Validate(); err != nil {
 			return err
 		}
+		if material.Schema == MaterialSchema {
+			members := material.ControlConfig.Members
+			if material.ControlConfig.Mode == "joint" {
+				members = material.ControlConfig.New
+			}
+			for _, member := range members {
+				if !member.current() {
+					return errors.New("new control config contains legacy member addresses")
+				}
+			}
+		}
 	default:
 		return fmt.Errorf("unknown material kind %q", material.Kind)
 	}
@@ -193,10 +212,15 @@ func (config ControlConfig) Validate() error {
 		if len(members) == 0 || quorum != len(members)/2+1 {
 			return errors.New("control quorum is not canonical")
 		}
+		nodes := map[string]bool{}
 		for index, member := range members {
-			if member.ID == "" || member.RaftAddress == "" || member.APIAddress == "" {
+			if member.ID == "" || !member.validTransport() {
 				return errors.New("control member is incomplete")
 			}
+			if member.current() && nodes[member.Node] {
+				return errors.New("control member nodes are not unique")
+			}
+			nodes[member.Node] = member.current()
 			key, err := base64.RawURLEncoding.DecodeString(member.PublicKey)
 			if err != nil || len(key) != ed25519.PublicKeySize {
 				return errors.New("control member key is invalid")
@@ -224,6 +248,39 @@ func (config ControlConfig) Validate() error {
 	default:
 		return errors.New("unknown control config mode")
 	}
+}
+
+func (member Member) current() bool {
+	return member.Node != "" && member.LegacyRaftAddress == "" && member.LegacyAPIAddress == ""
+}
+
+func (member Member) validTransport() bool {
+	legacy := member.Node == "" && member.LegacyRaftAddress != "" && member.LegacyAPIAddress != ""
+	return legacy || member.current()
+}
+
+func currentMembers(config ControlConfig) bool {
+	for _, member := range uniqueConfigMembers(config) {
+		if !member.current() {
+			return false
+		}
+	}
+	return true
+}
+
+func uniqueConfigMembers(config ControlConfig) []Member {
+	if config.Mode == "stable" {
+		return config.Members
+	}
+	byID := map[string]Member{}
+	for _, member := range append(append([]Member{}, config.Old...), config.New...) {
+		byID[member.ID] = member
+	}
+	result := make([]Member, 0, len(byID))
+	for _, member := range byID {
+		result = append(result, member)
+	}
+	return result
 }
 
 func StableConfig(members []Member) ControlConfig {

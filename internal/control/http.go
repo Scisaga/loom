@@ -13,7 +13,6 @@ import (
 	"io"
 	"io/fs"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -30,44 +29,30 @@ var staticFiles embed.FS
 
 type Server struct {
 	Runtime     *Runtime
+	Channel     *PrivateChannel
 	Config      NodeConfig
 	ReleaseRoot string
 	ReleaseKey  string
 	mu          sync.Mutex
 }
 
-func (server *Server) Serve(ctx context.Context) error {
-	if server.Runtime == nil {
-		return errors.New("control runtime is required")
+func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) error {
+	if server.Runtime == nil || server.Channel == nil || reportHandler == nil {
+		return errors.New("control runtime, private channel, and report handler are required")
 	}
 	if err := server.Config.Validate(); err != nil {
 		return err
 	}
-	tlsConfig, err := TLSConfig(server.Config)
-	if err != nil {
-		return err
-	}
-	overlay, err := net.Listen("tcp", server.Config.Listen)
-	if err != nil {
-		return fmt.Errorf("listen private control UI: %w", err)
-	}
-	defer overlay.Close()
-	_, port, _ := net.SplitHostPort(server.Config.Listen)
-	loopbackAddress := net.JoinHostPort("127.0.0.1", port)
-	loopback, err := net.Listen("tcp4", loopbackAddress)
-	if err != nil {
-		return fmt.Errorf("listen loopback control UI: %w", err)
-	}
-	defer loopback.Close()
+	defer server.Channel.Close()
 
 	handler := server.Handler()
 	servers := []*http.Server{
 		{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
-		{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
+		{Handler: reportHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 	}
 	errorsOut := make(chan error, 2)
-	go func() { errorsOut <- servers[0].Serve(tls.NewListener(overlay, tlsConfig.Clone())) }()
-	go func() { errorsOut <- servers[1].Serve(tls.NewListener(loopback, tlsConfig.Clone())) }()
+	go func() { errorsOut <- servers[0].Serve(server.Channel.ControlListener()) }()
+	go func() { errorsOut <- servers[1].Serve(server.Channel.ReportListener()) }()
 	select {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -212,11 +197,12 @@ func (server *Server) catalog() (clientrelease.Catalog, error) {
 }
 
 func (server *Server) exactHost(host string) bool {
-	address, port, err := net.SplitHostPort(server.Config.Listen)
-	if err != nil {
-		return false
+	for _, address := range server.Channel.ListenAddresses() {
+		if host == address {
+			return true
+		}
 	}
-	return host == net.JoinHostPort(address, port) || host == net.JoinHostPort("127.0.0.1", port)
+	return false
 }
 
 func (server *Server) admin(request *http.Request) bool {
@@ -264,7 +250,7 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		sort.Strings(service.Matchers)
-		material := Material{Schema: 1, Kind: envelope.Kind, RequestID: envelope.RequestID, BaseHead: envelope.BaseHead, Service: &service}
+		material := Material{Schema: MaterialSchema, Kind: envelope.Kind, RequestID: envelope.RequestID, BaseHead: envelope.BaseHead, Service: &service}
 		materialBody, _, err := EncodeMaterial(material)
 		if err == nil {
 			result, err = server.Runtime.Submit(request.Context(), materialBody)
@@ -377,7 +363,7 @@ func (server *Server) internalSubmit(writer http.ResponseWriter, request *http.R
 	if !ok {
 		return
 	}
-	result, err := server.Runtime.Submit(request.Context(), body)
+	result, err := server.Runtime.SubmitForwarded(request.Context(), body)
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusServiceUnavailable)
 		return

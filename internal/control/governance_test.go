@@ -1,19 +1,23 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -25,7 +29,7 @@ import (
 
 func TestCanonicalMaterialAndDeterministicReducer(t *testing.T) {
 	config, _ := testActivated(t)
-	genesis := Material{Schema: 1, Kind: "genesis", RequestID: "demo-genesis",
+	genesis := Material{Schema: MaterialSchema, Kind: "genesis", RequestID: "demo-genesis",
 		Genesis: &Genesis{LegacyHead: "sha256:" + strings.Repeat("1", 64), ControlConfig: StableConfig([]Member{config.Member()}), Projection: testState().Projection}}
 	body, id, err := EncodeMaterial(genesis)
 	if err != nil {
@@ -51,9 +55,58 @@ func TestCanonicalMaterialAndDeterministicReducer(t *testing.T) {
 	}
 }
 
+func TestLegacyCommittedMaterialRemainsCanonical(t *testing.T) {
+	_, private, _ := ed25519.GenerateKey(rand.Reader)
+	legacy := Material{Schema: LegacyMaterialSchema, Kind: "genesis", RequestID: "demo-legacy-genesis",
+		Genesis: &Genesis{LegacyHead: "sha256:" + strings.Repeat("1", 64), ControlConfig: StableConfig([]Member{{
+			ID: "demo-control", LegacyRaftAddress: "192.0.2.10:7001", LegacyAPIAddress: "192.0.2.10:7002",
+			PublicKey: base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey)),
+		}}), Projection: testState().Projection}}
+	body, _, err := EncodeMaterial(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeMaterial(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := EncodeMaterial(decoded)
+	if err != nil || !bytes.Equal(body, again) {
+		t.Fatal("legacy committed material did not retain canonical bytes")
+	}
+}
+
+func TestNodePrivateChannelMigrationIsOneWay(t *testing.T) {
+	config, root := testActivated(t)
+	legacy := legacyNodeConfig{Schema: LegacyMaterialSchema, ClusterID: config.ClusterID, MemberID: config.MemberID,
+		Listen: "192.0.2.20:7002", RaftAddress: "192.0.2.20:7001", IdentityPrivateKey: config.IdentityPrivateKey,
+		Bootstrap: config.Bootstrap, Recovery: config.Recovery, BrowserTLS: config.BrowserTLS,
+		ReadCertDER: config.ReadCertDER, AdminCertDER: config.AdminCertDER}
+	if err := atomicJSON(filepath.Join(root, "node.json"), legacy); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := MigrateNodePrivateChannel(root, "demo-node-1", []string{"127.0.0.1:61802"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.Schema != NodeSchema || migrated.Node != "demo-node-1" || migrated.IdentityPrivateKey != config.IdentityPrivateKey {
+		t.Fatal("node identity was not preserved by private-channel migration")
+	}
+	body, err := os.ReadFile(filepath.Join(root, "node.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(body, []byte("raft_address")) || bytes.Contains(body, []byte(`"listen"`)) {
+		t.Fatal("replaced dual-port fields survived node migration")
+	}
+}
+
 func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
-	roots, runtimes, serverCancels, cancel := testCluster(t, 3)
+	roots, networks, runtimes, serverCancels, cancel := testCluster(t, 3)
 	defer cancel()
+	if len(networks[1].Peers[networks[2].Node]) != 0 || len(networks[2].Peers[networks[1].Node]) != 0 {
+		t.Fatal("test topology unexpectedly has a leaf-to-leaf path")
+	}
 	leader := waitLeader(t, runtimes)
 	_, _, initial := leader.Authority.Snapshot()
 	members := []Member{runtimes[0].Config.Member(), runtimes[1].Config.Member(), runtimes[2].Config.Member()}
@@ -70,7 +123,7 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 		follower = runtimes[1]
 	}
 	service := Service{ID: "demo-service", Name: "Demo", Matchers: []string{"demo.example"}, Policy: "direct"}
-	material := Material{Schema: 1, Kind: "service.put", RequestID: "demo-write", BaseHead: HeadID(joined.Head), Service: &service}
+	material := Material{Schema: MaterialSchema, Kind: "service.put", RequestID: "demo-write", BaseHead: HeadID(joined.Head), Service: &service}
 	body, _, _ := EncodeMaterial(material)
 	written, err := follower.Submit(context.Background(), body)
 	if err != nil {
@@ -89,10 +142,11 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 	if err := minority.Close(); err != nil {
 		t.Fatal(err)
 	}
+	_ = minority.Channel.Close()
 	active := []*Runtime{runtimes[0], runtimes[1]}
 	leader = waitLeader(t, active)
 	service.Name = "Demo majority"
-	material = Material{Schema: 1, Kind: "service.put", RequestID: "demo-majority", BaseHead: minorityHead, Service: &service}
+	material = Material{Schema: MaterialSchema, Kind: "service.put", RequestID: "demo-majority", BaseHead: minorityHead, Service: &service}
 	body, _, _ = EncodeMaterial(material)
 	majority, err := leader.Submit(context.Background(), body)
 	if err != nil {
@@ -103,7 +157,11 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 		t.Fatal("minority did not retain its certified LKG")
 	}
 
-	restarted, err := OpenRuntime(roots[2])
+	channel, err := OpenPrivateChannel(networks[2], runtimes[2].Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := OpenRuntime(roots[2], channel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +190,7 @@ func TestMaterialDeltaIsIdempotentAndCommittedReferenceMustExist(t *testing.T) {
 	}
 	_, _, certified := authority.Snapshot()
 	service := Service{ID: "demo", Name: "Demo", Matchers: []string{}, Policy: "direct"}
-	material := Material{Schema: 1, Kind: "service.put", RequestID: "demo-idempotent", BaseHead: HeadID(certified.Head), Service: &service}
+	material := Material{Schema: MaterialSchema, Kind: "service.put", RequestID: "demo-idempotent", BaseHead: HeadID(certified.Head), Service: &service}
 	body, id, _ := EncodeMaterial(material)
 	first, err := authority.PutMaterial(body)
 	if err != nil {
@@ -152,22 +210,28 @@ func TestAuthenticatedOperationCommitsAndReadsBack(t *testing.T) {
 	root := t.TempDir()
 	state := testState()
 	state.BrowserTLS = testTLS(t)
-	config, err := ActivateLegacy(root, state, "demo-control", freeAddress(t, "127.0.0.1"))
+	address := freeAddress(t, "127.0.0.1")
+	config, err := ActivateLegacy(root, state, "demo-control", "demo-node", []string{address})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := OpenRuntime(root)
+	channel, err := OpenPrivateChannel(PrivateChannelConfig{Node: "demo-node", Listen: []string{address}, Peers: map[string][]string{}}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer channel.Close()
+	runtime, err := OpenRuntime(root, channel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer runtime.Close()
 	waitLeader(t, []*Runtime{runtime})
-	server := &Server{Runtime: runtime, Config: config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}
+	server := &Server{Runtime: runtime, Channel: channel, Config: config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}
 	_, _, before := runtime.Authority.Snapshot()
 	payload, _ := json.Marshal(map[string]any{"kind": "service.put", "payload": map[string]any{"id": "demo-api", "name": "Demo API", "matchers": []string{"api.example"}, "policy": "direct"}, "request_id": "demo-api-write", "base_head": HeadID(before.Head)})
-	request := httptest.NewRequest(http.MethodPost, "https://10.0.0.1:8443/api/control/operations", strings.NewReader(string(payload)))
-	request.Host = "10.0.0.1:8443"
-	request.Header.Set("Origin", "https://10.0.0.1:8443")
+	request := httptest.NewRequest(http.MethodPost, "https://"+address+"/api/control/operations", strings.NewReader(string(payload)))
+	request.Host = address
+	request.Header.Set("Origin", "https://"+address)
 	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{{Raw: []byte("admin")}}}
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -179,8 +243,8 @@ func TestAuthenticatedOperationCommitsAndReadsBack(t *testing.T) {
 		t.Fatal("operation did not commit and read back")
 	}
 
-	request = httptest.NewRequest(http.MethodPost, "https://10.0.0.1:8443/api/control/operations", strings.NewReader(string(payload)))
-	request.Host = "10.0.0.1:8443"
+	request = httptest.NewRequest(http.MethodPost, "https://"+address+"/api/control/operations", strings.NewReader(string(payload)))
+	request.Host = address
 	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{{Raw: []byte("reader")}}}
 	response = httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -202,32 +266,63 @@ func testActivated(t *testing.T) (NodeConfig, string) {
 	t.Helper()
 	root := t.TempDir()
 	state := testState()
-	state.Listen = freeAddress(t, "127.0.0.2")
 	state.BrowserTLS = testTLS(t)
-	config, err := ActivateLegacy(root, state, "demo-control-1", freeAddress(t, "127.0.0.1"))
+	address := freeAddress(t, "127.0.0.1")
+	config, err := ActivateLegacy(root, state, "demo-control-1", "demo-node-1", []string{address})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return config, root
 }
 
-func testCluster(t *testing.T, count int) ([]string, []*Runtime, []context.CancelFunc, context.CancelFunc) {
+func testCluster(t *testing.T, count int) ([]string, []PrivateChannelConfig, []*Runtime, []context.CancelFunc, context.CancelFunc) {
 	t.Helper()
-	_, first := testActivated(t)
+	addresses := make([]string, count)
+	for index := range addresses {
+		addresses[index] = freeAddress(t, "127.0.0.1")
+	}
+	first := t.TempDir()
+	state := testState()
+	state.BrowserTLS = testTLS(t)
+	if _, err := ActivateLegacy(first, state, "demo-control-1", "demo-node-1", []string{addresses[0]}); err != nil {
+		t.Fatal(err)
+	}
 	roots := []string{first}
 	for index := 1; index < count; index++ {
 		root := t.TempDir()
-		_, err := PrepareMember(root, first, "demo-control-"+string(rune('1'+index)), freeAddress(t, "127.0.0.2"), freeAddress(t, "127.0.0.1"))
+		_, err := PrepareMember(root, first, "demo-control-"+string(rune('1'+index)), "demo-node-"+string(rune('1'+index)), []string{addresses[index]})
 		if err != nil {
 			t.Fatal(err)
 		}
 		roots = append(roots, root)
 	}
+	networks := make([]PrivateChannelConfig, count)
+	for index := range networks {
+		peers := map[string][]string{}
+		if index == 0 {
+			for peer := 1; peer < count; peer++ {
+				peers["demo-node-"+string(rune('1'+peer))] = []string{addresses[peer]}
+			}
+		} else {
+			peers["demo-node-1"] = []string{addresses[0]}
+		}
+		networks[index] = PrivateChannelConfig{Node: "demo-node-" + string(rune('1'+index)), Listen: []string{addresses[index]}, Peers: peers}
+	}
 	runtimes := make([]*Runtime, 0, count)
 	serverCancels := make([]context.CancelFunc, 0, count)
 	allCtx, cancel := context.WithCancel(context.Background())
-	for _, root := range roots {
-		runtime, err := OpenRuntime(root)
+	for index, root := range roots {
+		node, err := LoadNodeConfig(root)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		channel, err := OpenPrivateChannel(networks[index], node)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		runtime, err := OpenRuntime(root, channel)
 		if err != nil {
 			cancel()
 			t.Fatal(err)
@@ -236,7 +331,7 @@ func testCluster(t *testing.T, count int) ([]string, []*Runtime, []context.Cance
 		serverCtx, serverCancel := context.WithCancel(allCtx)
 		serverCancels = append(serverCancels, serverCancel)
 		go func(runtime *Runtime) {
-			_ = (&Server{Runtime: runtime, Config: runtime.Config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}).Serve(serverCtx)
+			_ = (&Server{Runtime: runtime, Channel: runtime.Channel, Config: runtime.Config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}).Serve(serverCtx, http.NotFoundHandler())
 		}(runtime)
 	}
 	t.Cleanup(func() {
@@ -245,14 +340,14 @@ func testCluster(t *testing.T, count int) ([]string, []*Runtime, []context.Cance
 			_ = runtime.Close()
 		}
 	})
-	return roots, runtimes, serverCancels, cancel
+	return roots, networks, runtimes, serverCancels, cancel
 }
 
 func serveTestRuntime(t *testing.T, runtime *Runtime) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		_ = (&Server{Runtime: runtime, Config: runtime.Config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}).Serve(ctx)
+		_ = (&Server{Runtime: runtime, Channel: runtime.Channel, Config: runtime.Config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}).Serve(ctx, http.NotFoundHandler())
 	}()
 	return cancel
 }

@@ -151,8 +151,9 @@ WG prefix 都不进入长期 `.env`：
 
 - bundle、custody/key ref 和一次性 request ID 由对应命令参数或受保护输入文件提供；事务开始后写入其
   正式 store，resume 读取同一事务；
-- control tunnel、Enrollment、config/report 端口和 prefix 来自认证的 ControlConfig 或
-  EndpointGeneration；
+- control 成员资格与验证键来自认证的 ControlConfig；本机 control 复用已渲染的私有 report
+  listener 与邻居地址，不另配管理/Raft 端口。Enrollment、设备 config/report 端口和 prefix
+  仍由后续 EndpointGeneration 提供；
 - DNS/ACME 当前不属于核心重建。`GANDI_PAT_TOKEN` 只为保留既有操作者配置而常驻；以后启用时仅由获授权的
   隔离 executor 按需读取。它的存在不表示当前允许修改 DNS、签发或续期证书；
 - 某阶段尚未实现时，其 parser 和 key 都不存在。实现、正常入口和清理规则一起交付后才激活该输入。

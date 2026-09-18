@@ -62,6 +62,11 @@ material_id = Hash(domain_separator || CanonicalEncode(material))
 quorum 事实来源。它通过一种 `Material` 内容进入 `ConsensusLog`；不得另设 membership
 registry、成员 ledger 或密钥目录与它并行决定成员资格。
 
+成员的稳定 ID 同时关联现有私有 transport 中的节点 ID。监听地址、端口、直接邻居和连接方向是
+本机 transport 输入，不是成员资格；它们不得写进 `ControlConfig`，也不得用“所有成员两两 TCP
+可达”替代 quorum。实现复用节点已有的私有认证 listener，在同一 TLS listener 上区分管理 HTTP 与
+Raft 流；不能为两者分别发明新的公网或 overlay 端口。
+
 `ControlConfig` 有稳定和联合两种取值形态：
 
 - 稳定配置包含一个成员集合及其 quorum 规则；
@@ -149,7 +154,7 @@ Raft 任期、投票记录和传输重试是 Consensus store 的协议元数据�
 当前文件绑定保持这三个逻辑边界：`materials/<digest>.json` 是 Material store；
 `consensus.json` 与同目录的 `consensus-raft.db` 共同组成 Consensus store，前者保存领域日志，后者只保存
 Raft 任期、投票、复制日志和成员协议元数据；`certified.json` 是 Certified store，并可携带同摘要的
-Projection 缓存。`node.json` 只保存本节点监听、TLS、签名私钥内容和恢复 floor，是
+Projection 缓存。`node.json` 只保存本节点身份、TLS、签名私钥内容和恢复 floor，是
 [本机部署配置模型](configuration-model.md)所述运行输入，不是第四份控制权威。初始实现关闭 Raft snapshot；
 重启从完整日志重放。
 
@@ -169,6 +174,8 @@ Projection 缓存。`node.json` 只保存本节点监听、TLS、签名私钥内
 
 - wire 与持久层复用同一份规范编码，禁止为数据库再发明语义不同的 DTO。
 - runtime wrapper 可以持有缓存和连接，但不得拥有领域层没有的持久状态机。
+- 私有 listener、邻居地址和连接方向由既有 transport adapter 提供；成员 ID 只用于把当前
+  `ControlConfig` 与本机邻居解析结果连接起来。地址变化不改写成员资格，缺少直连只表现为本次连接失败。
 - UI 的写操作表达用户意图，由服务端生成、鉴权并提交 `Material`；UI 返回对象不得成为新权威。
 - UI 读取必须带所依据的 `CertifiedHead`，避免把不同头部的卡片拼成一个不存在的状态。
 
@@ -311,6 +318,8 @@ head，而不是轮询多个影子 store。
 - 两侧仍可交换或暂存 `Material`；这不会让少数派的内容生效。
 - 网络恢复后先按 ID 补齐 Material 差集，再由 Raft 补齐权威顺序，重建投影并验证最新 head。
 - 不存在“最后写入者胜出”的状态合并，也不需要人工选择两份业务数据库。
+- quorum 通信不要求成员图是完全图。入口无法直达 leader 时可以经一个已认证 control 转交同一幂等
+  请求；转交不持久化路由状态，也不改变 Raft、Material 或 QC 的权威边界。
 
 ### 9.4 成员增加或删除
 

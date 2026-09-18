@@ -17,14 +17,13 @@ import (
 	"sync"
 )
 
-const NodeSchema = 1
+const NodeSchema = 2
 
 type NodeConfig struct {
 	Schema             int              `json:"schema"`
 	ClusterID          string           `json:"cluster_id"`
 	MemberID           string           `json:"member_id"`
-	Listen             string           `json:"listen"`
-	RaftAddress        string           `json:"raft_address"`
+	Node               string           `json:"node"`
 	IdentityPrivateKey string           `json:"identity_private_key"`
 	Bootstrap          bool             `json:"bootstrap"`
 	Recovery           RecoveryEvidence `json:"recovery"`
@@ -35,7 +34,7 @@ type NodeConfig struct {
 
 func (config NodeConfig) Validate() error {
 	key, err := base64.RawURLEncoding.DecodeString(config.IdentityPrivateKey)
-	if config.Schema != NodeSchema || config.ClusterID == "" || config.MemberID == "" || config.Listen == "" || config.RaftAddress == "" || err != nil || len(key) != ed25519.PrivateKeySize {
+	if config.Schema != NodeSchema || config.ClusterID == "" || config.MemberID == "" || config.Node == "" || err != nil || len(key) != ed25519.PrivateKeySize {
 		return errors.New("control node config is incomplete")
 	}
 	if !config.Recovery.V2Latch || config.BrowserTLS.CertificateChainPEM == "" || config.BrowserTLS.PrivateKeyPKCS8PEM == "" || len(config.ReadCertDER) == 0 || len(config.AdminCertDER) == 0 {
@@ -51,8 +50,7 @@ func (config NodeConfig) PrivateKey() ed25519.PrivateKey {
 
 func (config NodeConfig) Member() Member {
 	public := config.PrivateKey().Public().(ed25519.PublicKey)
-	return Member{ID: config.MemberID, RaftAddress: config.RaftAddress, APIAddress: config.Listen,
-		PublicKey: base64.RawURLEncoding.EncodeToString(public)}
+	return Member{ID: config.MemberID, Node: config.Node, PublicKey: base64.RawURLEncoding.EncodeToString(public)}
 }
 
 type Authority struct {
@@ -336,7 +334,7 @@ func (authority *Authority) SignCandidate(config NodeConfig, head GovernanceHead
 	return HeadSignature{MemberID: config.MemberID, Value: base64.RawURLEncoding.EncodeToString(ed25519.Sign(config.PrivateKey(), right))}, nil
 }
 
-func ActivateLegacy(root string, legacy State, memberID, raftAddress string) (NodeConfig, error) {
+func ActivateLegacy(root string, legacy State, memberID, node string, listen []string) (NodeConfig, error) {
 	if err := legacy.Validate(); err != nil {
 		return NodeConfig{}, err
 	}
@@ -347,16 +345,20 @@ func ActivateLegacy(root string, legacy State, memberID, raftAddress string) (No
 	if err != nil {
 		return NodeConfig{}, err
 	}
-	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: memberID, Listen: legacy.Listen,
-		RaftAddress: raftAddress, IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(private), Bootstrap: true,
+	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: memberID, Node: node,
+		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(private), Bootstrap: true,
 		Recovery: legacy.Recovery, BrowserTLS: legacy.BrowserTLS, ReadCertDER: legacy.ReadCertDER, AdminCertDER: legacy.AdminCertDER}
+	config.BrowserTLS, err = issueNodeTLS(config.BrowserTLS, memberID, listen, private)
+	if err != nil {
+		return NodeConfig{}, err
+	}
 	if err := config.Validate(); err != nil {
 		return NodeConfig{}, err
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return NodeConfig{}, err
 	}
-	genesis := Material{Schema: 1, Kind: "genesis", RequestID: "genesis:" + legacy.Head.Hash,
+	genesis := Material{Schema: MaterialSchema, Kind: "genesis", RequestID: "genesis:" + legacy.Head.Hash,
 		Genesis: &Genesis{LegacyHead: legacy.Head.Hash, ControlConfig: StableConfig([]Member{config.Member()}), Projection: legacy.Projection}}
 	body, id, err := EncodeMaterial(genesis)
 	if err != nil {
@@ -382,6 +384,69 @@ func ActivateLegacy(root string, legacy State, memberID, raftAddress string) (No
 	}
 	head.Signatures = []HeadSignature{signature}
 	if err := authority.InstallCertified(head); err != nil {
+		return NodeConfig{}, err
+	}
+	if err := atomicJSON(filepath.Join(root, "node.json"), config); err != nil {
+		return NodeConfig{}, err
+	}
+	return config, nil
+}
+
+// legacyNodeConfig exists only to perform the one-way production migration
+// from the first control build. Normal startup never accepts this shape.
+type legacyNodeConfig struct {
+	Schema             int              `json:"schema"`
+	ClusterID          string           `json:"cluster_id"`
+	MemberID           string           `json:"member_id"`
+	Listen             string           `json:"listen"`
+	RaftAddress        string           `json:"raft_address"`
+	IdentityPrivateKey string           `json:"identity_private_key"`
+	Bootstrap          bool             `json:"bootstrap"`
+	Recovery           RecoveryEvidence `json:"recovery"`
+	BrowserTLS         BrowserTLS       `json:"browser_tls"`
+	ReadCertDER        []string         `json:"read_cert_der"`
+	AdminCertDER       []string         `json:"admin_cert_der"`
+}
+
+func MigrateNodePrivateChannel(root, node string, listen []string) (NodeConfig, error) {
+	if current, err := LoadNodeConfig(root); err == nil {
+		if current.Node != node {
+			return NodeConfig{}, errors.New("control node does not match private channel config")
+		}
+		return current, nil
+	}
+	var legacy legacyNodeConfig
+	if err := readStrict(filepath.Join(root, "node.json"), &legacy); err != nil {
+		return NodeConfig{}, err
+	}
+	key, err := base64.RawURLEncoding.DecodeString(legacy.IdentityPrivateKey)
+	if legacy.Schema != LegacyMaterialSchema || legacy.ClusterID == "" || legacy.MemberID == "" ||
+		legacy.Listen == "" || legacy.RaftAddress == "" || err != nil || len(key) != ed25519.PrivateKeySize {
+		return NodeConfig{}, errors.New("legacy control node config is invalid")
+	}
+	authority, err := OpenAuthority(root)
+	if err != nil {
+		return NodeConfig{}, err
+	}
+	_, projection, _ := authority.Snapshot()
+	legacyPublic := base64.RawURLEncoding.EncodeToString(ed25519.PrivateKey(key).Public().(ed25519.PublicKey))
+	found := false
+	for _, member := range uniqueConfigMembers(projection.Config) {
+		if member.ID == legacy.MemberID && member.PublicKey == legacyPublic {
+			found = true
+		}
+	}
+	if !found {
+		return NodeConfig{}, errors.New("legacy control identity is not in the certified config")
+	}
+	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: legacy.MemberID, Node: node,
+		IdentityPrivateKey: legacy.IdentityPrivateKey, Bootstrap: legacy.Bootstrap, Recovery: legacy.Recovery,
+		BrowserTLS: legacy.BrowserTLS, ReadCertDER: legacy.ReadCertDER, AdminCertDER: legacy.AdminCertDER}
+	config.BrowserTLS, err = issueNodeTLS(config.BrowserTLS, config.MemberID, listen, ed25519.PrivateKey(key))
+	if err != nil {
+		return NodeConfig{}, err
+	}
+	if err := config.Validate(); err != nil {
 		return NodeConfig{}, err
 	}
 	if err := atomicJSON(filepath.Join(root, "node.json"), config); err != nil {
