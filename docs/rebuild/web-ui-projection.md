@@ -32,8 +32,9 @@ state.json               -> private TLS runtime -> snapshot/release readback -> 
 
 该状态文件的 domain、wire 和 persistent 表达是一一对应的严格 JSON；保存后重新加载必须得到相同值。
 `WebProjection` 仍只是由认证 LKG 得到的单向缓存，不得倒写或被当成新的 authority。恢复证据保存输入摘要、
-anti-rollback floor 与 v2 latch，删除任何一项都会使重启后无法证明没有降级或重新 bootstrap。后续 quorum
-写入必须直接接管核心控制模型，不能扩展这条恢复桥成为第二套提交状态机。
+anti-rollback floor 与 v2 latch，删除任何一项都会使重启后无法证明没有降级或重新 bootstrap。quorum
+写入激活时，一次性 importer 将恢复投影写成 genesis Material，随后删除 `state.json`；运行 daemon
+只读三份核心逻辑存储，恢复桥不再作为 fallback 或第二套提交状态机。
 
 ## 七个展示概念
 

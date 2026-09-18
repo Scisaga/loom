@@ -165,6 +165,7 @@ def main() -> int:
                 failures.append((relative, line_number(data, match.start()), category))
 
         text = data.decode("utf-8", errors="ignore")
+        dependency_metadata = relative in {"go.mod", "go.sum"}
         for line_no, line in enumerate(text.splitlines(), 1):
             # Manifest assembly versions have four parts but are not endpoints.
             ip_line = line
@@ -178,6 +179,8 @@ def main() -> int:
             # literals cannot be part of these declarations, so skipping the
             # whole declaration does not weaken the endpoint boundary.
             domain_line = line
+            if dependency_metadata:
+                domain_line = ""
             if re.match(r"^\s*(?:package|import)\s+[A-Za-z0-9_.*]+\s*;?\s*$", line):
                 domain_line = ""
             for match in DOMAIN.finditer(domain_line):
@@ -196,6 +199,8 @@ def main() -> int:
                 if not approved_domain(value):
                     failures.append((relative, line_no, "unapproved public domain"))
             network_spans = broad_ipv6_network_spans(line)
+            if dependency_metadata:
+                continue
             for match in SITE_LIKE_ID.finditer(line):
                 in_network = any(start <= match.start() and match.end() <= end
                                  for start, end in network_spans)

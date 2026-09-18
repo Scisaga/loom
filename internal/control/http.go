@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
@@ -9,12 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,28 +29,30 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
-	State       State
+	Runtime     *Runtime
+	Config      NodeConfig
 	ReleaseRoot string
 	ReleaseKey  string
 	mu          sync.Mutex
 }
 
 func (server *Server) Serve(ctx context.Context) error {
-	if err := server.State.Validate(); err != nil {
+	if server.Runtime == nil {
+		return errors.New("control runtime is required")
+	}
+	if err := server.Config.Validate(); err != nil {
 		return err
 	}
-	certificate, err := tls.X509KeyPair([]byte(server.State.BrowserTLS.CertificateChainPEM), []byte(server.State.BrowserTLS.PrivateKeyPKCS8PEM))
+	tlsConfig, err := TLSConfig(server.Config)
 	if err != nil {
 		return err
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
-		Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAnyClientCert}
-	overlay, err := net.Listen("tcp", server.State.Listen)
+	overlay, err := net.Listen("tcp", server.Config.Listen)
 	if err != nil {
 		return fmt.Errorf("listen private control UI: %w", err)
 	}
 	defer overlay.Close()
-	_, port, _ := net.SplitHostPort(server.State.Listen)
+	_, port, _ := net.SplitHostPort(server.Config.Listen)
 	loopbackAddress := net.JoinHostPort("127.0.0.1", port)
 	loopback, err := net.Listen("tcp4", loopbackAddress)
 	if err != nil {
@@ -90,6 +95,12 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/snapshot", server.snapshot)
 	mux.HandleFunc("GET /api/control/ui/events", server.events)
 	mux.HandleFunc("GET /api/control/ui/releases/files/", server.download)
+	mux.HandleFunc("POST /api/control/operations", server.operation)
+	mux.HandleFunc("PUT /internal/materials/{digest}", server.internalMaterial)
+	mux.HandleFunc("GET /internal/materials", server.internalMaterialIDs)
+	mux.HandleFunc("POST /internal/head/sign", server.internalSign)
+	mux.HandleFunc("PUT /internal/certified", server.internalCertified)
+	mux.HandleFunc("POST /internal/submit", server.internalSubmit)
 	mux.HandleFunc("/", server.page)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
@@ -98,6 +109,10 @@ func (server *Server) Handler() http.Handler {
 		if request.URL.RawPath != "" || path.Clean(request.URL.Path) != request.URL.Path || request.TLS == nil ||
 			!request.TLS.HandshakeComplete || request.TLS.Version != tls.VersionTLS13 || !server.exactHost(request.Host) {
 			http.NotFound(writer, request)
+			return
+		}
+		if strings.HasPrefix(request.URL.Path, "/internal/") {
+			mux.ServeHTTP(writer, request)
 			return
 		}
 		if !server.authorized(request) {
@@ -109,7 +124,8 @@ func (server *Server) Handler() http.Handler {
 }
 
 func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
-	projection := server.State.Projection
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection.Web
 	catalog, err := server.catalog()
 	if err != nil {
 		projection.UIState.Warnings = append(projection.UIState.Warnings, "Verified release catalog is unavailable.")
@@ -126,7 +142,8 @@ func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request
 }
 
 func (server *Server) events(writer http.ResponseWriter, _ *http.Request) {
-	writeJSON(writer, http.StatusOK, map[string]any{"events": server.State.Projection.Events})
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	writeJSON(writer, http.StatusOK, map[string]any{"events": certified.Projection.Web.Events})
 }
 
 func (server *Server) download(writer http.ResponseWriter, request *http.Request) {
@@ -195,7 +212,7 @@ func (server *Server) catalog() (clientrelease.Catalog, error) {
 }
 
 func (server *Server) exactHost(host string) bool {
-	address, port, err := net.SplitHostPort(server.State.Listen)
+	address, port, err := net.SplitHostPort(server.Config.Listen)
 	if err != nil {
 		return false
 	}
@@ -203,11 +220,169 @@ func (server *Server) exactHost(host string) bool {
 }
 
 func (server *Server) admin(request *http.Request) bool {
-	return exactCertificate(request, server.State.AdminCertDER)
+	return exactCertificate(request, server.Config.AdminCertDER)
 }
 
 func (server *Server) authorized(request *http.Request) bool {
-	return exactCertificate(request, server.State.ReadCertDER)
+	return exactCertificate(request, server.Config.ReadCertDER)
+}
+
+type operationEnvelope struct {
+	Kind      string          `json:"kind"`
+	Payload   json.RawMessage `json:"payload"`
+	RequestID string          `json:"request_id"`
+	BaseHead  string          `json:"base_head"`
+}
+
+func (server *Server) operation(writer http.ResponseWriter, request *http.Request) {
+	if !server.admin(request) {
+		http.Error(writer, "administrator certificate required", http.StatusForbidden)
+		return
+	}
+	if origin := request.Header.Get("Origin"); origin != "" && origin != "https://"+request.Host {
+		http.Error(writer, "same-origin request required", http.StatusForbidden)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(request.Body, 1<<20))
+	if err != nil {
+		http.Error(writer, "invalid operation", http.StatusBadRequest)
+		return
+	}
+	var envelope operationEnvelope
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil || envelope.RequestID == "" || envelope.BaseHead == "" {
+		http.Error(writer, "invalid operation", http.StatusBadRequest)
+		return
+	}
+	var result CertifiedState
+	switch envelope.Kind {
+	case "service.put":
+		var service Service
+		if err := decodeRawStrict(envelope.Payload, &service); err != nil {
+			http.Error(writer, "invalid service", http.StatusBadRequest)
+			return
+		}
+		sort.Strings(service.Matchers)
+		material := Material{Schema: 1, Kind: envelope.Kind, RequestID: envelope.RequestID, BaseHead: envelope.BaseHead, Service: &service}
+		materialBody, _, err := EncodeMaterial(material)
+		if err == nil {
+			result, err = server.Runtime.Submit(request.Context(), materialBody)
+		}
+	case "members.replace":
+		var payload struct {
+			Members []Member `json:"members"`
+		}
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid members", http.StatusBadRequest)
+			return
+		}
+		result, err = server.Runtime.ReplaceMembers(request.Context(), envelope.RequestID, envelope.BaseHead, payload.Members)
+	default:
+		http.Error(writer, "unknown operation", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if strings.Contains(err.Error(), "stale") {
+			status = http.StatusConflict
+		}
+		http.Error(writer, err.Error(), status)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"head": result.Head, "projection": result.Projection.Web})
+}
+
+func decodeRawStrict(body []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("trailing content")
+	}
+	return nil
+}
+
+func (server *Server) internalBody(writer http.ResponseWriter, request *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(io.LimitReader(request.Body, 4<<20))
+	if err != nil || !server.Runtime.verifyRequest(request, body) {
+		http.Error(writer, "authenticated control member required", http.StatusForbidden)
+		return nil, false
+	}
+	return body, true
+}
+
+func (server *Server) internalMaterial(writer http.ResponseWriter, request *http.Request) {
+	body, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	id, err := server.Runtime.Authority.PutMaterial(body)
+	if err != nil || strings.TrimPrefix(id, "sha256:") != request.PathValue("digest") {
+		http.Error(writer, "material mismatch", http.StatusBadRequest)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"material_id": id})
+}
+
+func (server *Server) internalMaterialIDs(writer http.ResponseWriter, request *http.Request) {
+	_, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	ids, err := server.Runtime.Authority.MaterialIDs()
+	if err != nil {
+		http.Error(writer, "material store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(writer, http.StatusOK, ids)
+}
+
+func (server *Server) internalSign(writer http.ResponseWriter, request *http.Request) {
+	body, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	var head GovernanceHead
+	if err := decodeRawStrict(body, &head); err != nil {
+		http.Error(writer, "invalid head", http.StatusBadRequest)
+		return
+	}
+	signature, err := server.Runtime.Authority.SignCandidate(server.Config, head)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(writer, http.StatusOK, signature)
+}
+
+func (server *Server) internalCertified(writer http.ResponseWriter, request *http.Request) {
+	body, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	var head GovernanceHead
+	if err := decodeRawStrict(body, &head); err != nil || server.Runtime.Authority.InstallCertified(head) != nil {
+		http.Error(writer, "invalid certified head", http.StatusConflict)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"installed": true})
+}
+
+func (server *Server) internalSubmit(writer http.ResponseWriter, request *http.Request) {
+	body, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	result, err := server.Runtime.Submit(request.Context(), body)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
 }
 
 func exactCertificate(request *http.Request, allowed []string) bool {

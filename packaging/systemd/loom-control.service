@@ -1,0 +1,28 @@
+[Unit]
+Description=Loom private v2 control authority
+Documentation=file:/opt/loom/docs/rebuild/control-model.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/loom-control-minimal control serve -state-dir /var/lib/loom-minimal -release-root /var/lib/loom/client-dist/releases -release-key /etc/loom/trust/platform.pub
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/loom-minimal
+ReadOnlyPaths=/var/lib/loom/client-dist/releases /etc/loom/trust/platform.pub
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

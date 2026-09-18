@@ -77,7 +77,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          生成或核验客户端交付制品
   loom config   <check|migrate> [-env .env]
                                          严格校验或一次性规范化本机六项部署输入
-  loom control  <import|serve|inspect>     最小只读控制守护进程
+  loom control  <import|activate|prepare|serve|inspect|write>
+                                         最小权威治理守护进程
 
 `
 

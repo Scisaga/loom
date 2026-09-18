@@ -39,6 +39,20 @@ func testState() State {
 	}
 }
 
+func testRuntimeServer(t *testing.T, state State) *Server {
+	t.Helper()
+	root := t.TempDir()
+	config, err := ActivateLegacy(root, state, "demo-control", "127.0.0.1:19001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := OpenAuthority(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Server{Runtime: &Runtime{Config: config, Authority: authority}, Config: config}
+}
+
 func TestStateSurvivesRestartExactly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	want := testState()
@@ -61,7 +75,9 @@ func TestStateSurvivesRestartExactly(t *testing.T) {
 func TestPrivateProjectionAndRetiredRoutes(t *testing.T) {
 	state := testState()
 	state.ReadCertDER = append(state.ReadCertDER, base64.RawURLEncoding.EncodeToString([]byte("reader")))
-	server := &Server{State: state, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}
+	server := testRuntimeServer(t, state)
+	server.ReleaseRoot = t.TempDir()
+	server.ReleaseKey = filepath.Join(t.TempDir(), "missing")
 	for _, test := range []struct {
 		method string
 		path   string
@@ -143,7 +159,9 @@ func TestReleaseDownloadReturnsOnlyVerifiedExactBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := &Server{State: testState(), ReleaseRoot: root, ReleaseKey: keyPath}
+	server := testRuntimeServer(t, testState())
+	server.ReleaseRoot = root
+	server.ReleaseKey = keyPath
 	request := httptest.NewRequest(http.MethodGet, "https://10.0.0.1:8443/api/control/ui/releases/files/"+file.Path, nil)
 	request.Host = "10.0.0.1:8443"
 	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,

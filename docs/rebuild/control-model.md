@@ -146,6 +146,13 @@ Raft 任期、投票记录和传输重试是 Consensus store 的协议元数据�
 初始实现不增加独立 snapshot、checkpoint、journal 或 GC ledger。确有测量证据表明完整重建成本不可接受时，
 再为现有 `Projection` 增加可验证缓存策略，而不是增加新的领域真相。
 
+当前文件绑定保持这三个逻辑边界：`materials/<digest>.json` 是 Material store；
+`consensus.json` 与同目录的 `consensus-raft.db` 共同组成 Consensus store，前者保存领域日志，后者只保存
+Raft 任期、投票、复制日志和成员协议元数据；`certified.json` 是 Certified store，并可携带同摘要的
+Projection 缓存。`node.json` 只保存本节点监听、TLS、签名私钥内容和恢复 floor，是
+[本机部署配置模型](configuration-model.md)所述运行输入，不是第四份控制权威。初始实现关闭 Raft snapshot；
+重启从完整日志重放。
+
 ## 5. 同构映射
 
 “同构”要求同一概念跨层只换表示，不改变语义，也不在中间层复制一套影子状态。

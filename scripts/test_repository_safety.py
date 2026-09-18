@@ -67,6 +67,11 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("unapproved public domain", output)
 
+    def test_go_dependency_metadata_is_not_treated_as_deployment_data(self):
+        module = "go.etcd" + ".io/bbolt"
+        result, _ = self.scan("go.mod", f"require {module} v1.3.5\n")
+        self.assertEqual(result, 0)
+
     def test_uppercase_string_endpoint_is_still_rejected(self):
         value = 'private val endpoint = "HTTPS://PRIVATE-DEPLOYMENT' + '.NET/api"'
         result, output = self.scan("Client.kt", value)

@@ -1,6 +1,6 @@
-// Package control implements the minimal, read-only control daemon used while
-// the v2 authority is rebuilt. It imports a verified certified head once and
-// never falls back to the retired store at runtime.
+// Package control implements the five-concept v2 control authority. State is
+// the one-time verified recovery input; the running daemon reads only the
+// Material, Consensus, and Certified stores created from it.
 package control
 
 import (
