@@ -118,6 +118,11 @@ func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
 		Timeout: 10 * time.Second, Logger: nil, ServerAddressProvider: memberAddressProvider{authority: authority, local: config}})
 	raftConfig := raft.DefaultConfig()
 	raftConfig.LocalID = raft.ServerID(config.MemberID)
+	// Control members use the existing authenticated private transport, which
+	// can cross regions. Its leader lease must cover a real inter-region RTT.
+	raftConfig.HeartbeatTimeout = 2 * time.Second
+	raftConfig.ElectionTimeout = 2 * time.Second
+	raftConfig.LeaderLeaseTimeout = 2 * time.Second
 	raftConfig.SnapshotThreshold = math.MaxUint64
 	raftConfig.SnapshotInterval = 24 * time.Hour
 	raftConfig.LogOutput = io.Discard

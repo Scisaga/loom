@@ -205,6 +205,10 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun fail(prefix: String, error: Throwable) {
+        store.loadCurrent()?.let {
+            ready(it, "$prefix，继续沿用最后可用 LKG：${error.message ?: error.javaClass.simpleName}")
+            return
+        }
         mutableStatus.value = EnrollmentStatus(
             EnrollmentPhase.ERROR,
             "$prefix：${error.message ?: error.javaClass.simpleName}",
