@@ -287,7 +287,7 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 		http.Error(writer, "same-origin request required", http.StatusForbidden)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(request.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(request.Body, 8<<20))
 	if err != nil {
 		http.Error(writer, "invalid operation", http.StatusBadRequest)
 		return
@@ -330,6 +330,13 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		result, err = server.putEndpoint(request.Context(), envelope.RequestID, envelope.BaseHead, generation)
+	case "device.put":
+		var payload deviceUpdatePayload
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid device update", http.StatusBadRequest)
+			return
+		}
+		result, err = server.putDevice(request.Context(), envelope.RequestID, envelope.BaseHead, payload)
 	case "enrollment.create":
 		var payload enrollmentCreatePayload
 		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {

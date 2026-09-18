@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"loom/internal/clientmodel"
 )
 
 type enrollmentCreatePayload struct {
@@ -19,6 +21,13 @@ type enrollmentCreatePayload struct {
 	Platform      string           `json:"platform"`
 	Roles         []string         `json:"roles"`
 	Routes        []RouteCandidate `json:"routes"`
+	Runtime       *RuntimeProfile  `json:"runtime_profile,omitempty"`
+}
+
+type deviceUpdatePayload struct {
+	DeviceID string           `json:"device_id"`
+	Routes   []RouteCandidate `json:"routes"`
+	Runtime  *RuntimeProfile  `json:"runtime_profile"`
 }
 
 type tunnelIdentityKey struct{}
@@ -69,13 +78,20 @@ func servingEndpointReferences(projection Projection) []EndpointReference {
 
 func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead string, payload enrollmentCreatePayload) (CertifiedState, string, error) {
 	_, projection, certified := server.Runtime.Authority.Snapshot()
+	if payload.Runtime != nil {
+		canonical, canonicalErr := clientmodel.CanonicalizeRuntimeConfig([]byte(payload.Runtime.Config))
+		if canonicalErr != nil {
+			return CertifiedState{}, "", canonicalErr
+		}
+		payload.Runtime.Config = canonical
+	}
 	if _, transaction := findEnrollment(&projection, payload.TransactionID); transaction != nil {
 		open, err := server.Runtime.Authority.EnrollmentOpen(payload.TransactionID)
 		if err != nil {
 			return CertifiedState{}, "", err
 		}
 		intent := EnrollmentIntent{DeviceID: payload.DeviceID, Name: payload.Name, Platform: payload.Platform,
-			Roles: payload.Roles, Routes: payload.Routes}
+			Roles: payload.Roles, Routes: payload.Routes, Runtime: payload.Runtime}
 		if !equalEnrollmentIntent(open.Intent, intent) || open.Capability.ExpiresAt != payload.ExpiresAt {
 			return CertifiedState{}, "", errors.New("enrollment transaction ID is already bound to different intent")
 		}
@@ -90,7 +106,8 @@ func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead 
 		return CertifiedState{}, "", errors.New("enrollment expiry is invalid")
 	}
 	intent := EnrollmentIntent{DeviceID: payload.DeviceID, Name: payload.Name, Platform: payload.Platform,
-		Roles: append([]string(nil), payload.Roles...), Routes: append([]RouteCandidate(nil), payload.Routes...)}
+		Roles: append([]string(nil), payload.Roles...), Routes: append([]RouteCandidate(nil), payload.Routes...),
+		Runtime: cloneRuntimeProfile(payload.Runtime)}
 	if err := intent.Validate(); err != nil {
 		return CertifiedState{}, "", err
 	}
@@ -173,8 +190,9 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 	}
 	authorization := DeviceAuthorization{Schema: enrollmentSchema, DeviceID: transaction.Intent.DeviceID,
 		Name: transaction.Intent.Name, Platform: transaction.Intent.Platform, Roles: append([]string(nil), transaction.Intent.Roles...),
-		Routes: append([]RouteCandidate(nil), transaction.Intent.Routes...), DevicePublicKey: transaction.DevicePublicKey,
-		Floor: certified.Head.Index + 1}
+		Routes: append([]RouteCandidate(nil), transaction.Intent.Routes...), Runtime: cloneRuntimeProfile(transaction.Intent.Runtime),
+		DevicePublicKey: transaction.DevicePublicKey,
+		Floor:           certified.Head.Index + 1}
 	projected, err := cloneProjection(projection)
 	if err != nil {
 		return CertifiedState{}, err
@@ -253,6 +271,38 @@ func (server *Server) putEndpoint(ctx context.Context, requestID, baseHead strin
 		return CertifiedState{}, errors.New("endpoint generation still has protected sessions")
 	}
 	material := Material{Schema: MaterialSchema, Kind: "endpoint.put", RequestID: requestID, BaseHead: baseHead, EndpointGeneration: &generation}
+	body, _, err := EncodeMaterial(material)
+	if err != nil {
+		return CertifiedState{}, err
+	}
+	return server.Runtime.Submit(ctx, body)
+}
+
+func (server *Server) putDevice(ctx context.Context, requestID, baseHead string, payload deviceUpdatePayload) (CertifiedState, error) {
+	_, projection, certified := server.Runtime.Authority.Snapshot()
+	if baseHead != HeadID(certified.Head) {
+		return CertifiedState{}, errors.New("base head is stale")
+	}
+	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
+		return projection.DeviceAuthorizations[index].DeviceID >= payload.DeviceID
+	})
+	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != payload.DeviceID {
+		return CertifiedState{}, errors.New("device authorization does not exist")
+	}
+	if payload.Runtime == nil {
+		return CertifiedState{}, errors.New("device runtime profile is required")
+	}
+	canonicalConfig, err := clientmodel.CanonicalizeRuntimeConfig([]byte(payload.Runtime.Config))
+	if err != nil {
+		return CertifiedState{}, err
+	}
+	payload.Runtime.Config = canonicalConfig
+	authorization := projection.DeviceAuthorizations[index]
+	authorization.Routes = append([]RouteCandidate(nil), payload.Routes...)
+	authorization.Runtime = cloneRuntimeProfile(payload.Runtime)
+	authorization.Floor = certified.Head.Index + 1
+	material := Material{Schema: MaterialSchema, Kind: "device.put", RequestID: requestID, BaseHead: baseHead,
+		DeviceAuthorization: &authorization}
 	body, _, err := EncodeMaterial(material)
 	if err != nil {
 		return CertifiedState{}, err

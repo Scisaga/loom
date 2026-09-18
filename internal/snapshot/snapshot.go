@@ -19,8 +19,6 @@ import (
 	"sort"
 	"strings"
 
-	"loom/mobile/loomcore"
-
 	"loom/internal/model"
 	"loom/internal/render"
 )
@@ -218,7 +216,13 @@ func VerifySignature(manifestBytes, sig []byte, pub ed25519.PublicKey) error {
 	if len(sig) == 0 {
 		return ErrNoSignature
 	}
-	return loomcore.VerifySignedConfig(manifestBytes, sig, pub)
+	if len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("签名公钥长度不对:%d", len(pub))
+	}
+	if !ed25519.Verify(pub, manifestBytes, sig) {
+		return errors.New("快照签名校验失败")
+	}
+	return nil
 }
 
 // VerifyBundles 比对 manifest 里记录的哈希与实际渲染出的内容。

@@ -49,18 +49,19 @@ type Genesis struct {
 }
 
 type Material struct {
-	Schema             int                 `json:"schema"`
-	Kind               string              `json:"kind"`
-	RequestID          string              `json:"request_id"`
-	BaseHead           string              `json:"base_head"`
-	Genesis            *Genesis            `json:"genesis,omitempty"`
-	Service            *Service            `json:"service,omitempty"`
-	ControlConfig      *ControlConfig      `json:"control_config,omitempty"`
-	EndpointGeneration *EndpointGeneration `json:"endpoint_generation,omitempty"`
-	EnrollmentOpen     *EnrollmentOpen     `json:"enrollment_open,omitempty"`
-	EnrollmentBind     *EnrollmentBind     `json:"enrollment_bind,omitempty"`
-	EnrollmentApprove  *EnrollmentApprove  `json:"enrollment_approve,omitempty"`
-	EnrollmentComplete *EnrollmentComplete `json:"enrollment_complete,omitempty"`
+	Schema              int                  `json:"schema"`
+	Kind                string               `json:"kind"`
+	RequestID           string               `json:"request_id"`
+	BaseHead            string               `json:"base_head"`
+	Genesis             *Genesis             `json:"genesis,omitempty"`
+	Service             *Service             `json:"service,omitempty"`
+	ControlConfig       *ControlConfig       `json:"control_config,omitempty"`
+	EndpointGeneration  *EndpointGeneration  `json:"endpoint_generation,omitempty"`
+	EnrollmentOpen      *EnrollmentOpen      `json:"enrollment_open,omitempty"`
+	EnrollmentBind      *EnrollmentBind      `json:"enrollment_bind,omitempty"`
+	EnrollmentApprove   *EnrollmentApprove   `json:"enrollment_approve,omitempty"`
+	EnrollmentComplete  *EnrollmentComplete  `json:"enrollment_complete,omitempty"`
+	DeviceAuthorization *DeviceAuthorization `json:"device_authorization,omitempty"`
 }
 
 type ConsensusEntry struct {
@@ -184,6 +185,9 @@ func (material Material) Validate() error {
 	if material.EnrollmentComplete != nil {
 		count++
 	}
+	if material.DeviceAuthorization != nil {
+		count++
+	}
 	if count != 1 {
 		return errors.New("material must contain exactly one payload")
 	}
@@ -258,6 +262,13 @@ func (material Material) Validate() error {
 			return errors.New("enrollment complete material is invalid")
 		}
 		if err := material.EnrollmentComplete.Validate(); err != nil {
+			return err
+		}
+	case "device.put":
+		if material.DeviceAuthorization == nil || material.BaseHead == "" {
+			return errors.New("device authorization material is invalid")
+		}
+		if err := material.DeviceAuthorization.Validate(); err != nil {
 			return err
 		}
 	default:
@@ -444,6 +455,13 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 			return Projection{}, errors.New("device authorization floor does not match completion index")
 		}
 		if err := reduceEnrollmentComplete(&next, *material.EnrollmentComplete); err != nil {
+			return Projection{}, err
+		}
+	case "device.put":
+		if material.DeviceAuthorization.Floor != uint64(len(previous.Applied)+1) {
+			return Projection{}, errors.New("device authorization floor does not match update index")
+		}
+		if err := reduceDeviceAuthorization(&next, *material.DeviceAuthorization); err != nil {
 			return Projection{}, err
 		}
 	}

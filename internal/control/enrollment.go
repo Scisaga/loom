@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"loom/internal/clientmodel"
 )
 
 const (
@@ -57,12 +59,8 @@ type EndpointReference struct {
 	Preference int    `json:"preference"`
 }
 
-type RouteCandidate struct {
-	ID        string   `json:"id"`
-	FinalExit string   `json:"final_exit"`
-	Chain     []string `json:"chain"`
-	Scope     string   `json:"scope"`
-}
+type RouteCandidate = clientmodel.RouteCandidate
+type RuntimeProfile = clientmodel.RuntimeProfile
 
 type EnrollmentIntent struct {
 	DeviceID string           `json:"device_id"`
@@ -70,6 +68,7 @@ type EnrollmentIntent struct {
 	Platform string           `json:"platform"`
 	Roles    []string         `json:"roles"`
 	Routes   []RouteCandidate `json:"routes"`
+	Runtime  *RuntimeProfile  `json:"runtime_profile,omitempty"`
 }
 
 type BootstrapCapability struct {
@@ -134,6 +133,7 @@ type DeviceAuthorization struct {
 	Platform        string           `json:"platform"`
 	Roles           []string         `json:"roles"`
 	Routes          []RouteCandidate `json:"routes"`
+	Runtime         *RuntimeProfile  `json:"runtime_profile,omitempty"`
 	DevicePublicKey string           `json:"device_public_key"`
 	Floor           uint64           `json:"floor"`
 }
@@ -148,6 +148,7 @@ type DeviceView struct {
 	Floor           uint64              `json:"floor"`
 	Endpoints       []EndpointReference `json:"endpoint_generations"`
 	Routes          []RouteCandidate    `json:"route_candidates"`
+	Runtime         *RuntimeProfile     `json:"runtime_profile,omitempty"`
 }
 
 type DeviceViewProof struct {
@@ -240,23 +241,6 @@ func (endpoint EndpointReference) Validate() error {
 	}
 }
 
-func (candidate RouteCandidate) Validate() error {
-	if !validName(candidate.ID) || !validName(candidate.FinalExit) || !validName(candidate.Scope) {
-		return errors.New("route candidate is incomplete")
-	}
-	seen := map[string]bool{}
-	for _, node := range candidate.Chain {
-		if !validName(node) || seen[node] {
-			return errors.New("route candidate chain is invalid")
-		}
-		seen[node] = true
-	}
-	if len(candidate.Chain) > 0 && candidate.Chain[len(candidate.Chain)-1] != candidate.FinalExit {
-		return errors.New("route candidate final exit does not match its chain")
-	}
-	return nil
-}
-
 func (intent EnrollmentIntent) Validate() error {
 	if !validName(intent.DeviceID) || !validName(intent.Name) {
 		return errors.New("enrollment intent device is invalid")
@@ -275,6 +259,13 @@ func (intent EnrollmentIntent) Validate() error {
 		if err := candidate.Validate(); err != nil || index > 0 && intent.Routes[index-1].ID >= candidate.ID {
 			return errors.New("route candidates are not uniquely sorted")
 		}
+	}
+	if intent.Platform == "android" {
+		if intent.Runtime == nil || intent.Runtime.Validate(intent.Routes) != nil {
+			return errors.New("android enrollment runtime profile is invalid")
+		}
+	} else if intent.Runtime != nil && intent.Runtime.Validate(intent.Routes) != nil {
+		return errors.New("enrollment runtime profile is invalid")
 	}
 	return nil
 }
@@ -421,7 +412,7 @@ func (approve EnrollmentApprove) Validate() error {
 
 func (authorization DeviceAuthorization) Validate() error {
 	intent := EnrollmentIntent{DeviceID: authorization.DeviceID, Name: authorization.Name, Platform: authorization.Platform,
-		Roles: authorization.Roles, Routes: authorization.Routes}
+		Roles: authorization.Roles, Routes: authorization.Routes, Runtime: authorization.Runtime}
 	if authorization.Schema != enrollmentSchema || intent.Validate() != nil || !validRawKey(authorization.DevicePublicKey) || authorization.Floor == 0 {
 		return errors.New("device authorization is invalid")
 	}
@@ -553,8 +544,11 @@ func reduceEnrollmentComplete(projection *Projection, complete EnrollmentComplet
 	}
 	intent := transaction.Intent
 	authorization := complete.Authorization
+	leftRuntime, _ := canonical(authorization.Runtime)
+	rightRuntime, _ := canonical(intent.Runtime)
 	if authorization.DeviceID != intent.DeviceID || authorization.Name != intent.Name || authorization.Platform != intent.Platform ||
-		authorization.DevicePublicKey != transaction.DevicePublicKey || !equalStrings(authorization.Roles, intent.Roles) || !equalRoutes(authorization.Routes, intent.Routes) {
+		authorization.DevicePublicKey != transaction.DevicePublicKey || !equalStrings(authorization.Roles, intent.Roles) ||
+		!equalRoutes(authorization.Routes, intent.Routes) || !bytes.Equal(leftRuntime, rightRuntime) {
 		return errors.New("device authorization does not match enrollment")
 	}
 	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
@@ -576,6 +570,34 @@ func reduceEnrollmentComplete(projection *Projection, complete EnrollmentComplet
 	}
 	transaction.State = "completed"
 	transaction.ResultDigest = digest
+	return nil
+}
+
+func reduceDeviceAuthorization(projection *Projection, authorization DeviceAuthorization) error {
+	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
+		return projection.DeviceAuthorizations[index].DeviceID >= authorization.DeviceID
+	})
+	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != authorization.DeviceID {
+		return errors.New("device authorization does not exist")
+	}
+	previous := projection.DeviceAuthorizations[index]
+	if authorization.Name != previous.Name || authorization.Platform != previous.Platform ||
+		authorization.DevicePublicKey != previous.DevicePublicKey || !equalStrings(authorization.Roles, previous.Roles) ||
+		authorization.Floor <= previous.Floor {
+		return errors.New("device update changes stable identity or does not advance floor")
+	}
+	projection.DeviceAuthorizations[index] = authorization
+	view, _ := projectDeviceView(*projection, authorization.DeviceID)
+	digest, err := DeviceViewDigest(view)
+	if err != nil {
+		return err
+	}
+	for transactionIndex := range projection.Enrollments {
+		transaction := &projection.Enrollments[transactionIndex]
+		if transaction.Intent.DeviceID == authorization.DeviceID && transaction.State == "completed" {
+			transaction.ResultDigest = digest
+		}
+	}
 	return nil
 }
 
@@ -602,7 +624,7 @@ func projectDeviceView(projection Projection, deviceID string) (DeviceView, bool
 	view := DeviceView{Schema: deviceViewSchema, DeviceID: authorization.DeviceID, Name: authorization.Name,
 		Platform: authorization.Platform, Roles: append([]string(nil), authorization.Roles...),
 		DevicePublicKey: authorization.DevicePublicKey, Floor: authorization.Floor,
-		Routes: append([]RouteCandidate(nil), authorization.Routes...)}
+		Routes: append([]RouteCandidate(nil), authorization.Routes...), Runtime: cloneRuntimeProfile(authorization.Runtime)}
 	for _, generation := range projection.EndpointGenerations {
 		if generation.State == "serving" || generation.State == "draining" {
 			view.Endpoints = append(view.Endpoints, generation.Reference())
@@ -614,7 +636,8 @@ func projectDeviceView(projection Projection, deviceID string) (DeviceView, bool
 
 func (view DeviceView) Validate() error {
 	authorization := DeviceAuthorization{Schema: enrollmentSchema, DeviceID: view.DeviceID, Name: view.Name,
-		Platform: view.Platform, Roles: view.Roles, Routes: view.Routes, DevicePublicKey: view.DevicePublicKey, Floor: view.Floor}
+		Platform: view.Platform, Roles: view.Roles, Routes: view.Routes, Runtime: view.Runtime,
+		DevicePublicKey: view.DevicePublicKey, Floor: view.Floor}
 	if view.Schema != deviceViewSchema || authorization.Validate() != nil || len(view.Endpoints) == 0 {
 		return errors.New("device view is invalid")
 	}
@@ -624,6 +647,14 @@ func (view DeviceView) Validate() error {
 		}
 	}
 	return nil
+}
+
+func cloneRuntimeProfile(profile *RuntimeProfile) *RuntimeProfile {
+	if profile == nil {
+		return nil
+	}
+	copy := *profile
+	return &copy
 }
 
 func DeviceViewDigest(view DeviceView) (string, error) {

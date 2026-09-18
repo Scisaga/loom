@@ -10,12 +10,12 @@ import java.net.Socket
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-internal class SelectorClient(routePlan: String) {
-    private val root = JSONObject(routePlan)
-    private val controller = root.getString("api").also {
+internal class SelectorClient(config: String) {
+    private val root = JSONObject(config).getJSONObject("experimental").getJSONObject("clash_api")
+    private val controller = root.getString("external_controller").also {
         check(it == "127.0.0.1:61800") { "移动 selector 控制端点不是固定回环地址" }
     }
-    private val secret = root.getString("api_secret").also {
+    private val secret = root.getString("secret").also {
         check(it.isNotBlank() && it.length <= MAX_SECRET && it.all { char -> char.code in 0x21..0x7e }) {
             "移动 selector 控制口令无效"
         }

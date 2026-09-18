@@ -79,6 +79,23 @@ Direct:                    device → target
 
 候选顺序不构成身份。所有派生结果必须确定性排序，不能依赖 map 遍历、时钟或随机数。
 
+Android 实现中，`DeviceView` 还携带一份规范 `RuntimeProfile` 值。它不是新的领域实体，
+而是把该 view 已授权的候选投影成宿主可执行配置所需的私有材料：`kind` 固定为 `sing_box`，`config`
+是规范 JSON。每条 `RouteCandidate.ID` 必须逐一对应 config 中同名 outbound，`RouteCandidate.Scope`
+必须对应包含该 outbound 的 selector；config 不得增加 view 未授权的 selector 成员。服务器把
+`RuntimeProfile` 与 route authorization 一起认证，客户端只从完整 LKG 解出它，不另取公开配置、
+不拼接旧 bundle，也不把 hydrate 后副本持久成第二权威。
+
+`RuntimeCandidate` 因而是纯投影：
+
+```text
+RuntimeCandidate = project(RouteCandidate, DeviceView.RuntimeProfile)
+```
+
+Android 与 Linux 可以把同一候选落成不同宿主进程参数，但候选 ID、scope、服务器链和最终出口保持
+不变。若 profile 缺失、不是规范 JSON、候选映射不全或多出未授权成员，整个新 LKG 失败关闭；旧的
+已运行 LKG 保持可用。
+
 ## Observation 与可用性
 
 每条 `Observation` 至少绑定：候选身份、底层网络代、观测范围、结果、可比较的实际指标
@@ -170,6 +187,9 @@ scheduler、probe budget 或一次性 registry。入口之后复用已有的有�
 - `CertifiedLKG` 的原始认证字节；
 - 用户明确设置的 `Preference`。
 
+`RuntimeProfile` 随完整 `CertifiedLKG` 一同保存，不建立独立 current、bundle 或配置数据库；表中
+`RuntimeCandidate`“不持久化”是指不把投影后的候选再保存一份，而不是丢弃 LKG 内受认证的执行材料。
+
 其余均从当前输入或宿主回读获得：
 
 - `RouteCandidate` 与 `RuntimeCandidate` 每次启动重新派生；
@@ -256,8 +276,10 @@ Windows 由另一台机器独立实现和验收，不属于本次重建范围；
    不把 Preference 显示为当前路径。
 8. **平台契约**：Android/Linux adapter 各用一个成功 outcome、一个失败 outcome、一次 apply/readback
    验证接口；真实验收各选一条可工作的正常路径和一条同出口 fallback 即可。
+9. **运行投影**：一份规范 RuntimeProfile 与 routes 逐项映射；缺候选、多余 selector 成员、非规范
+   JSON 或 libbox preflight 失败均不得替换旧可运行 LKG。
 
-扩展测试只能在这八项通过后进行，并且发现新场景时优先把它表达为新的候选或观测数据，
+扩展测试只能在这九项通过后进行，并且发现新场景时优先把它表达为新的候选或观测数据，
 而不是新增路由分支。
 
 ## 明确禁止

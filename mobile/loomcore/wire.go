@@ -43,6 +43,20 @@ func decodeStrictJSON(body []byte, maximum int, target any) error {
 	return nil
 }
 
+func decodeCanonical(body []byte, target any) error {
+	if err := decodeStrictJSON(body, 8<<20, target); err != nil {
+		return err
+	}
+	want, err := json.Marshal(target)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(body, want) {
+		return errors.New("non-canonical JSON")
+	}
+	return nil
+}
+
 func rejectDuplicateJSONKeys(body []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()

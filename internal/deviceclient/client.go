@@ -40,7 +40,7 @@ func postJSON(ctx context.Context, connection net.Conn, path string, requestValu
 		return 0, err
 	}
 	defer response.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
 	if err != nil {
 		return response.StatusCode, err
 	}

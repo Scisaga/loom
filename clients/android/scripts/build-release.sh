@@ -35,6 +35,20 @@ if [[ -z "$android_sdk" ]]; then
     echo "ANDROID_HOME or ANDROID_SDK_ROOT is required" >&2
     exit 1
 fi
+
+source_commit=$(git -C "$repo_root" rev-parse HEAD)
+if ! git -C "$repo_root" diff --quiet -- mobile/loomcore clients/android internal/clientmodel; then
+    echo "Android release inputs differ from source commit $source_commit" >&2
+    exit 1
+fi
+if [[ -n "$(git -C "$repo_root" ls-files --others --exclude-standard -- mobile/loomcore clients/android internal/clientmodel)" ]]; then
+    echo "Android release inputs contain untracked files" >&2
+    exit 1
+fi
+
+"$script_dir/build-mobile-aar.sh"
+aar="$android_root/app/libs/loom-box.aar"
+aar_sha256=$(sha256sum "$aar" | cut -d' ' -f1)
 apksigner="$android_sdk/build-tools/35.0.1/apksigner"
 if [[ ! -x "$apksigner" ]]; then
     echo "pinned apksigner is unavailable: $apksigner" >&2
@@ -48,9 +62,21 @@ if [[ ! "$workers" =~ ^[1-4]$ ]]; then
 fi
 
 cd -- "$android_root"
-./gradlew --no-daemon --max-workers="$workers" testDebugUnitTest lintRelease assembleRelease
+./gradlew --no-daemon --max-workers="$workers" \
+    -PloomSourceCommit="$source_commit" -PloomAarSha256="$aar_sha256" \
+    testDebugUnitTest lintRelease assembleRelease
 
 apk="$android_root/app/build/outputs/apk/release/app-release.apk"
 [[ -f "$apk" ]] || { echo "signed release APK was not produced" >&2; exit 1; }
 "$apksigner" verify --verbose --print-certs "$apk"
+for abi in arm64-v8a x86_64; do
+    aar_library=$(unzip -p "$aar" "jni/$abi/libbox.so" | sha256sum | cut -d' ' -f1)
+    apk_library=$(unzip -p "$apk" "lib/$abi/libbox.so" | sha256sum | cut -d' ' -f1)
+    if [[ "$aar_library" != "$apk_library" ]]; then
+        echo "APK $abi libbox.so does not match the audited AAR" >&2
+        exit 1
+    fi
+done
+echo "source $source_commit"
+echo "aar $aar_sha256"
 sha256sum "$apk"

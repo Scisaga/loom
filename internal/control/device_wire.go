@@ -4,8 +4,9 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
-	"sort"
 	"time"
+
+	"loom/internal/clientmodel"
 )
 
 const (
@@ -36,16 +37,7 @@ type EnrollmentResponse struct {
 	DeviceView  *DeviceViewEnvelope   `json:"device_view,omitempty"`
 }
 
-type Observation struct {
-	CandidateID       string `json:"candidate_id"`
-	NetworkGeneration string `json:"network_generation"`
-	Scope             string `json:"scope"`
-	Result            string `json:"result"`
-	Action            string `json:"action"`
-	ObservedAt        string `json:"observed_at"`
-	ValidUntil        string `json:"valid_until"`
-	MetricMillis      int64  `json:"metric_millis,omitempty"`
-}
+type Observation = clientmodel.Observation
 
 type DeviceReport struct {
 	Schema       int           `json:"schema"`
@@ -137,27 +129,6 @@ func (request EnrollmentResumeRequest) validate(requireSignature bool) error {
 
 func (request EnrollmentResumeRequest) Validate() error { return request.validate(true) }
 
-func (observation Observation) Validate() error {
-	if !validName(observation.CandidateID) || !validName(observation.NetworkGeneration) || !validName(observation.Scope) ||
-		!validName(observation.Action) || observation.MetricMillis < 0 {
-		return errors.New("device observation is incomplete")
-	}
-	switch observation.Result {
-	case "available", "unavailable", "unknown":
-	default:
-		return errors.New("device observation result is invalid")
-	}
-	observed, err := time.Parse(time.RFC3339, observation.ObservedAt)
-	if err != nil {
-		return errors.New("device observation time is invalid")
-	}
-	until, err := time.Parse(time.RFC3339, observation.ValidUntil)
-	if err != nil || !until.After(observed) {
-		return errors.New("device observation validity is invalid")
-	}
-	return nil
-}
-
 func (report DeviceReport) signingBytes() ([]byte, error) {
 	copy := report
 	copy.Signature = ""
@@ -209,50 +180,16 @@ func (report DeviceReport) validate(requireSignature bool, publicKey string) err
 func (report DeviceReport) Verify(publicKey string) error { return report.validate(true, publicKey) }
 
 func SelectRoute(routes []RouteCandidate, observations []Observation, finalExit, current string, now time.Time) (string, error) {
-	byID := map[string]Observation{}
-	for _, observation := range observations {
-		if err := observation.Validate(); err != nil {
-			return "", err
-		}
-		until, _ := time.Parse(time.RFC3339, observation.ValidUntil)
-		if now.Before(until) {
-			byID[observation.CandidateID] = observation
-		}
+	preference := clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}
+	if finalExit == "direct" {
+		preference.Mode = clientmodel.ModeDirect
+	} else if finalExit != "" && finalExit != "auto" {
+		preference.Mode, preference.Exit = clientmodel.ModeFixed, finalExit
 	}
-	allowed := make([]RouteCandidate, 0, len(routes))
-	for _, route := range routes {
-		if err := route.Validate(); err != nil {
-			return "", err
-		}
-		if finalExit == "direct" && len(route.Chain) != 0 || finalExit != "" && finalExit != "auto" && finalExit != "direct" && route.FinalExit != finalExit {
-			continue
-		}
-		if observation, found := byID[route.ID]; found && observation.Result == "unavailable" {
-			continue
-		}
-		allowed = append(allowed, route)
+	generation := "unknown"
+	if len(observations) > 0 {
+		generation = observations[0].NetworkGeneration
 	}
-	if len(allowed) == 0 {
-		return "", errors.New("no authorized route candidate is usable")
-	}
-	rank := func(candidate RouteCandidate) int {
-		if observation, found := byID[candidate.ID]; found && observation.Result == "available" {
-			return 0
-		}
-		return 1
-	}
-	sort.SliceStable(allowed, func(i, j int) bool {
-		left, right := rank(allowed[i]), rank(allowed[j])
-		if left != right {
-			return left < right
-		}
-		if allowed[i].ID == current {
-			return true
-		}
-		if allowed[j].ID == current {
-			return false
-		}
-		return allowed[i].ID < allowed[j].ID
-	})
-	return allowed[0].ID, nil
+	selection, err := clientmodel.Select(routes, observations, preference, current, generation, now)
+	return selection.CandidateID, err
 }

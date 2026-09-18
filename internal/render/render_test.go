@@ -1,7 +1,6 @@
 package render
 
 import (
-	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 	"loom/internal/report"
 	"loom/internal/secret"
 	"loom/internal/validate"
-	loomcore "loom/mobile/loomcore"
 )
 
 var update = flag.Bool("update", false, "重写 golden 文件")
@@ -276,27 +274,6 @@ func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
 			bootstrap := report.AndroidBundleSecretRefs(tc.ssot, node)
 			if !slices.Equal(actual, tc.want) || !slices.Equal(bootstrap, actual) {
 				t.Fatalf("rendered refs=%v bootstrap refs=%v want=%v", actual, bootstrap, tc.want)
-			}
-			bundleJSON, err := json.Marshal(struct {
-				Owner string            `json:"owner"`
-				Files map[string]string `json:"files"`
-			}{Owner: tc.node, Files: map[string]string{
-				"agent/config.json": agentContent, "sing-box/config.json": content,
-			}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			vault := make(map[string]string, len(bootstrap))
-			for _, ref := range bootstrap {
-				vault[ref] = "test-secret"
-			}
-			if _, err := loomcore.HydrateSingBoxConfig(bundleJSON, secret.Encode(vault, "")); err != nil {
-				t.Fatalf("strict Android hydration rejected exact bootstrap refs: %v", err)
-			}
-			vault["telemetry/"+tc.node] = "unused-secret"
-			if _, err := loomcore.HydrateSingBoxConfig(bundleJSON, secret.Encode(vault, "")); err == nil ||
-				!strings.Contains(err.Error(), "unused refs") {
-				t.Fatalf("strict Android hydration accepted a secret superset: %v", err)
 			}
 		})
 	}

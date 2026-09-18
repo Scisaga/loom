@@ -54,7 +54,7 @@ fi
 git -C "$source_dir" show "$sing_box_commit:go.mod" >"$source_dir/go.mod"
 git -C "$source_dir" show "$sing_box_commit:go.sum" >"$source_dir/go.sum"
 
-# §14.1：从精确共享信任/选路源码生成依赖收敛视图。若直接替换整个根模块，
+# 从精确的 v2 客户端模型生成依赖收敛视图。若直接替换整个根模块，
 # 无关的新 x/* 版本会经 MVS 覆盖 sing-box 1.11.4 的依赖并破坏钉住的数据面。
 case "$shared_dir" in
     "$android_dir"/.build/*) ;;
@@ -62,8 +62,7 @@ case "$shared_dir" in
 esac
 rm -rf -- "$shared_dir"
 mkdir -p "$shared_dir/internal"
-cp -a "$repo_dir/internal/attest" "$repo_dir/internal/clientroute" \
-    "$repo_dir/internal/observation" "$repo_dir/internal/version" "$shared_dir/internal/"
+cp -a "$repo_dir/internal/clientmodel" "$shared_dir/internal/"
 printf 'module loom\n\ngo 1.27.0\n' >"$shared_dir/go.mod"
 
 env GOTOOLCHAIN="$go_toolchain" GOBIN="$go_bin" GOPATH="$go_path" GOCACHE="$go_cache" \
@@ -78,8 +77,7 @@ GOWORK=off GOTOOLCHAIN="$go_toolchain" go -C "$source_dir" mod tidy
 )
 
 # 两个 Go package 在同一次 bind 中生成，APK 内因此只有一份 libbox.so
-# 和一个 Go runtime。共享核心复用仓库内 canonical v5 verifier 与客户端
-# 分段选路包，因此两个临时 replace 都必须固定到当前 checkout。
+# 和一个 Go runtime。共享核心只复用仓库内的无 I/O 客户端模型。
 GOWORK=off GOTOOLCHAIN="$go_toolchain" go -C "$source_dir" mod edit \
     -replace="loom/mobile/loomcore=$repo_dir/mobile/loomcore" \
     -replace="loom=$shared_dir"

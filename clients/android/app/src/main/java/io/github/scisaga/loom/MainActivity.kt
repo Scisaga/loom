@@ -60,11 +60,9 @@ import io.github.scisaga.loom.enrollment.EnrollmentPhase
 import io.github.scisaga.loom.enrollment.EnrollmentStatus
 import io.github.scisaga.loom.enrollment.InviteScanner
 import io.github.scisaga.libbox.Libbox
-import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.route.RouteStatus
-import io.github.scisaga.loom.stage1.Stage1Config
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.LoomVpnService
 import io.github.scisaga.loom.vpn.VpnRuntime
@@ -200,9 +198,7 @@ private fun LoomHome(
     LaunchedEffect(Unit) {
         diagnostics = withContext(Dispatchers.IO) {
             runCatching {
-                Stage1Config.load(context)
-                val key = DeviceKeyStore().proveBinding()
-                "libbox ${Libbox.version()} · core ${Loomcore.version()}\nKeystore $key"
+                "libbox ${Libbox.version()} · core ${Loomcore.version()}"
             }.getOrElse { "自检失败：${it.message}" }
         }
     }
@@ -229,7 +225,7 @@ private fun LoomHome(
                 Text("移动网络入口", color = Ink, fontSize = 30.sp, fontWeight = FontWeight.Bold)
                 Text(
                     when {
-                        join.phase == EnrollmentPhase.READY -> "已加入 · signed snapshot ${join.snapshot}"
+                        join.phase == EnrollmentPhase.READY -> "已加入 · certified head ${join.snapshot}"
                         join.snapshot.isNotEmpty() -> "候选已验签 · 连接后完成激活"
                         else -> "等待扫码完成正式入网"
                     },
@@ -312,10 +308,6 @@ private fun LoomHome(
                     }
                 }
 
-                if (BuildConfig.DEBUG && !hasManagedProfile) {
-                    DebugDirectCard(status = status, onToggle = onToggle)
-                }
-
                 if (!notificationsAllowed) {
                     NotificationPermissionCard(onOpenNotificationSettings)
                 }
@@ -354,7 +346,7 @@ private fun LoomHome(
                 InfoCard(
                     "网络诊断",
                     "DNS/HTTPS 激活门禁：${status.dnsProbe} / ${status.httpsProbe}\n" +
-                        "可信上报：${status.trustedReport}\n服务器观测：${route.observationDetail}",
+                        "可信上报：${status.trustedReport}\n业务观测：${route.observationDetail}",
                 )
                 InfoCard("信任边界", diagnostics)
                 Spacer(Modifier.height(6.dp))
@@ -387,42 +379,6 @@ private fun NotificationPermissionCard(onOpenSettings: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().testTag("open-notification-settings"),
             ) {
                 Text("打开通知设置")
-            }
-        }
-    }
-}
-
-@Composable
-private fun DebugDirectCard(
-    status: VpnStatus,
-    onToggle: (ConnectionPhase) -> Unit,
-) {
-    val active = status.phase in setOf(ConnectionPhase.STARTING, ConnectionPhase.CONNECTED)
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E8)),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().testTag("debug-direct-card"),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("开发诊断", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text("Debug Direct TUN", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text(
-                "只验证本机 TUN、DNS 和 HTTPS；不代表已加入中控，也不会产生可信健康上报。",
-                color = Muted,
-                fontSize = 13.sp,
-            )
-            OutlinedButton(
-                onClick = { onToggle(status.phase) },
-                enabled = status.phase != ConnectionPhase.STOPPING && !(active && status.alwaysOn),
-                modifier = Modifier.fillMaxWidth().testTag("debug-direct-toggle"),
-            ) {
-                Text(
-                    when {
-                        active && status.alwaysOn -> "由系统保持连接"
-                        active -> "断开 Debug Direct"
-                        else -> "测试 Debug Direct"
-                    },
-                )
             }
         }
     }

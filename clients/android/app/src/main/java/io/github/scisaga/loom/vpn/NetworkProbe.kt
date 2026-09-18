@@ -3,7 +3,6 @@ package io.github.scisaga.loom.vpn
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -87,34 +86,21 @@ object NetworkProbe {
     }
 
     private suspend fun probeHTTPS(session: ProbeSession): String {
-        var failures = emptyList<String>()
-        repeat(HTTPS_ROUNDS) { round ->
-            failures = buildList {
-                for (target in HTTPS_TARGETS) {
-                    if (session.isCancelled()) throw CancellationException("网络探测已取消")
-                    val attempt = runCatching {
-                        val connection = URL(target).openConnection() as HttpURLConnection
-                        check(session.attach(connection)) { "探测已取消" }
-                        connection.connectTimeout = HTTPS_TIMEOUT_MS
-                        connection.readTimeout = HTTPS_TIMEOUT_MS
-                        connection.instanceFollowRedirects = false
-                        connection.useCaches = false
-                        try {
-                            val status = connection.responseCode
-                            check(status in 200..399) { "HTTP $status" }
-                            "成功（${connection.url.host} HTTP $status）"
-                        } finally {
-                            session.detach(connection)
-                            connection.disconnect()
-                        }
-                    }
-                    attempt.getOrNull()?.let { return it }
-                    add("${URL(target).host}: ${attempt.exceptionOrNull()?.message ?: "未知错误"}")
-                }
-            }
-            if (round + 1 < HTTPS_ROUNDS) delay(HTTPS_RETRY_DELAY_MS)
+        if (session.isCancelled()) throw CancellationException("网络探测已取消")
+        val connection = URL(HTTPS_TARGET).openConnection() as HttpURLConnection
+        check(session.attach(connection)) { "探测已取消" }
+        connection.connectTimeout = HTTPS_TIMEOUT_MS
+        connection.readTimeout = HTTPS_TIMEOUT_MS
+        connection.instanceFollowRedirects = false
+        connection.useCaches = false
+        try {
+            val status = connection.responseCode
+            check(status in 200..399) { "HTTP $status" }
+            return "成功（${connection.url.host} HTTP $status）"
+        } finally {
+            session.detach(connection)
+            connection.disconnect()
         }
-        error(failures.joinToString("；"))
     }
 
     private fun resolveDNS(session: ProbeSession): String {
@@ -175,13 +161,6 @@ object NetworkProbe {
     // resolving it through the signed configuration's DNS transport.
     private const val PUBLIC_DNS = "1.1.1.1"
 
-    // One public provider can be regionally filtered even when the VPN is
-    // otherwise healthy. Prefer a DNS-backed endpoint that is reachable from
-    // the device's current region, then retain the IP-literal probe as a
-    // DNS-independent fallback. Either valid TLS response proves HTTPS through
-    // the TUN; all failures remain visible when neither endpoint works.
-    private val HTTPS_TARGETS = listOf("https://www.baidu.com/", "https://www.qq.com/", "https://1.1.1.1/")
+    private const val HTTPS_TARGET = "https://www.baidu.com/"
     private const val HTTPS_TIMEOUT_MS = 7_000
-    private const val HTTPS_ROUNDS = 2
-    private const val HTTPS_RETRY_DELAY_MS = 750L
 }

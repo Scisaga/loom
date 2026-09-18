@@ -1,34 +1,15 @@
-import java.util.Base64 as JvmBase64
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val platformPublicKeyFile = rootProject.file("../../deploy/keys/platform-signing.pub")
-val platformPublicKeyB64 = sequenceOf(
-    providers.gradleProperty("loomPlatformPublicKey").orNull,
-    providers.environmentVariable("LOOM_PLATFORM_PUBLIC_KEY").orNull,
-    platformPublicKeyFile.takeIf { it.isFile }?.readText(),
-).filterNotNull().map(String::trim).firstOrNull(String::isNotEmpty).orEmpty()
-
-if (platformPublicKeyB64.isNotEmpty()) {
-    val decoded = runCatching { JvmBase64.getDecoder().decode(platformPublicKeyB64) }
-        .getOrElse { throw GradleException("Loom platform public key is not canonical base64", it) }
-    require(decoded.size == 32 && JvmBase64.getEncoder().encodeToString(decoded) == platformPublicKeyB64) {
-        "Loom platform public key must be one canonical base64 Ed25519 public key"
-    }
-}
-
-val requirePinnedTrustAnchor = tasks.register("requirePinnedTrustAnchor") {
+val sourceCommit = providers.gradleProperty("loomSourceCommit").orNull.orEmpty()
+val aarSha256 = providers.gradleProperty("loomAarSha256").orNull.orEmpty()
+val requireProvenance = tasks.register("requireProvenance") {
     doLast {
-        if (platformPublicKeyB64.isEmpty()) {
-            throw GradleException(
-                "Release builds require -PloomPlatformPublicKey, LOOM_PLATFORM_PUBLIC_KEY, " +
-                    "or ../../deploy/keys/platform-signing.pub",
-            )
-        }
+        require(sourceCommit.matches(Regex("[0-9a-f]{40}"))) { "Release requires canonical -PloomSourceCommit" }
+        require(aarSha256.matches(Regex("[0-9a-f]{64}"))) { "Release requires canonical -PloomAarSha256" }
     }
 }
 
@@ -53,7 +34,7 @@ val requireSigningInputs = tasks.register("requireSigningInputs") {
 }
 
 tasks.configureEach {
-    if (name.contains("Release")) dependsOn(requirePinnedTrustAnchor, requireSigningInputs)
+    if (name.contains("Release")) dependsOn(requireProvenance, requireSigningInputs)
 }
 
 android {
@@ -65,10 +46,11 @@ android {
         applicationId = "io.github.scisaga.loom"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.4.0-rc2"
+        versionCode = 7
+        versionName = "0.5.0"
 
-        buildConfigField("String", "LOOM_PLATFORM_PUBLIC_KEY_B64", "\"$platformPublicKeyB64\"")
+        buildConfigField("String", "LOOM_SOURCE_COMMIT", "\"$sourceCommit\"")
+        buildConfigField("String", "LOOM_AAR_SHA256", "\"$aarSha256\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }

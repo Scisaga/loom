@@ -32,11 +32,9 @@ import io.github.scisaga.libbox.WIFIState
 import io.github.scisaga.loom.MainActivity
 import io.github.scisaga.loom.R
 import io.github.scisaga.loom.enrollment.EnrollmentManager
-import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
-import io.github.scisaga.loom.security.DeviceKeyStore
+import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.route.RouteManager
-import io.github.scisaga.loom.stage1.Stage1Config
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -106,9 +104,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
     private var reportJob: Job? = null
-    private var routeJob: Job? = null
     @Volatile private var sessionID = 0L
-    private var lastUseEmulatorProxy = false
     @Volatile private var desiredConnected = false
     @Volatile private var activeProbe: ProbeSession? = null
     @Volatile private var selectedUnderlyingNetwork: Network? = null
@@ -126,16 +122,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
             null, SERVICE_INTERFACE -> {
                 // §8.3：sticky 重建与系统 always-on 启动都没有应用自定义 action。
                 desiredConnected = true
-                scope.launch { startTunnel(useEmulatorProxy = false, startId) }
+                scope.launch { startTunnel(startId) }
             }
             ACTION_CONNECT -> {
                 desiredConnected = true
                 VpnConnectionPreference(this).setDesiredConnected(true)
-                val useEmulatorProxy = intent?.getBooleanExtra(EXTRA_EMULATOR_PROXY, false) == true
-                check(!useEmulatorProxy || applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-                    "emulator proxy fixture is debug-only"
-                }
-                scope.launch { startTunnel(useEmulatorProxy, startId) }
+                scope.launch { startTunnel(startId) }
             }
             ACTION_RELOAD -> {
                 val candidateID = intent?.getStringExtra(EXTRA_CANDIDATE_ID).orEmpty()
@@ -162,7 +154,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     VpnConnectionPreference(this).setDesiredConnected(true)
                     VpnRuntime.transform { it.copy(alwaysOn = true) }
                     updateNotification("始终开启 · ${VpnRuntime.status.value.detail}")
-                    if (boxService == null) scope.launch { startTunnel(useEmulatorProxy = false, startId) }
+                    if (boxService == null) scope.launch { startTunnel(startId) }
                 } else {
                     desiredConnected = false
                     VpnConnectionPreference(this).setDesiredConnected(false)
@@ -196,11 +188,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
         super.onDestroy()
     }
 
-    private suspend fun startTunnel(useEmulatorProxy: Boolean, startId: Int) = lifecycle.withLock {
+    private suspend fun startTunnel(startId: Int) = lifecycle.withLock {
         if (!desiredConnected) return@withLock
         if (boxService != null) return@withLock
-        lastUseEmulatorProxy = useEmulatorProxy
-        startTunnelLocked(useEmulatorProxy, startId)
+        startTunnelLocked(startId)
     }
 
     private suspend fun reloadTunnel(candidateID: String, startId: Int) = lifecycle.withLock {
@@ -214,10 +205,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
             return@withLock
         }
         closeResources()
-        if (desiredConnected) startTunnelLocked(lastUseEmulatorProxy, startId)
+        if (desiredConnected) startTunnelLocked(startId)
     }
 
-    private suspend fun startTunnelLocked(useEmulatorProxy: Boolean, startId: Int) {
+    private suspend fun startTunnelLocked(startId: Int) {
         // A queued disconnect may have removed foreground state while a newer
         // connect command was waiting for the lifecycle mutex.
         startForeground(NOTIFICATION_ID, foregroundNotification("正在准备…"))
@@ -230,7 +221,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         )
         updateNotification("正在连接…")
         try {
-            DeviceKeyStore().proveBinding()
             val manager = EnrollmentManager.get(this)
             val candidate = manager.candidateProfile()
             if (candidate != null) {
@@ -249,9 +239,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     ensureConnectionWanted()
                     val fallback = manager.candidateRejected(candidate, "真实 DNS/HTTPS 未通过")
                     if (fallback != null) {
-                        val (restored, probe) = activateManagedWithFallback(fallback, manager)
+                        val probe = activateAndProbe(fallback)
                         ensureConnectionWanted()
-                        connected(restored, probe, "候选失败，沿用 snapshot ${restored.snapshot}")
+                        connected(fallback, probe, "候选失败，沿用 LKG ${fallback.snapshot}")
                         return
                     }
                     throw candidateError
@@ -260,20 +250,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
             val current = manager.currentProfile()
             if (current != null) {
-                val (active, probe) = activateManagedWithFallback(current, manager)
+                val probe = activateAndProbe(current)
                 ensureConnectionWanted()
-                connected(active, probe, "已激活验签配置 · snapshot ${active.snapshot}")
+                connected(current, probe, "已激活认证 LKG · ${current.snapshot}")
                 return
             }
-
-            check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-                "请先扫描中控二维码完成正式入网"
-            }
-            val config = Stage1Config.load(this, useEmulatorProxy).content
-            val probe = activateAndProbe(config)
-            ensureConnectionWanted()
-            val route = if (useEmulatorProxy) "Debug Emulator 数据面" else "Debug Direct 数据面"
-            connected(null, probe, route)
+            error("请先通过私有 Enrollment 完成正式入网")
         } catch (error: Throwable) {
             Log.e(TAG, "start tunnel", error)
             closeResources()
@@ -292,44 +274,25 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private suspend fun activateManagedWithFallback(
-        current: ManagedProfile,
-        manager: EnrollmentManager,
-    ): Pair<ManagedProfile, ProbeResult> {
-        try {
-            return current to activateAndProbe(current)
-        } catch (cancelled: CancellationException) {
-            closeResources()
-            throw cancelled
-        } catch (currentError: Throwable) {
-            Log.e(TAG, "active profile rejected", currentError)
-            closeResources()
-            ensureConnectionWanted()
-            val previous = runCatching { manager.previousProfile() }
-                .getOrNull()
-                ?.takeIf { it.recordID != current.recordID }
-                ?: throw currentError
-            return try {
-                val probe = activateAndProbe(previous)
-                val promoted = checkNotNull(manager.promotePrevious()) { "previous 配置在恢复时消失" }
-                promoted to probe
-            } catch (cancelled: CancellationException) {
-                closeResources()
-                throw cancelled
-            } catch (previousError: Throwable) {
-                closeResources()
-                currentError.addSuppressed(previousError)
-                throw currentError
+    private suspend fun activateAndProbe(profile: ManagedProfile): ProbeResult {
+        activate(profile.config)
+        val routing = RouteManager.get(this)
+        routing.beginNetworkGeneration()
+        val before = routing.applyToRunning(profile)
+        var probe = runBusinessProbe()
+        val after = routing.recordBusinessOutcome(profile, probe)
+        if (!probe.healthy) {
+            check(after.selectors.map { it.candidate } != before.selectors.map { it.candidate }) {
+                "真实 DNS/HTTPS 失败且没有可用 fallback"
             }
+            probe = runBusinessProbe()
+            routing.recordBusinessOutcome(profile, probe)
         }
+        check(probe.healthy) { "TUN 已启动，但真实 DNS/HTTPS 端到端结果不可用" }
+        return probe
     }
 
-    private suspend fun activateAndProbe(profile: ManagedProfile): ProbeResult =
-        activateAndProbe(profile.config, profile)
-
-    private suspend fun activateAndProbe(config: String, profile: ManagedProfile? = null): ProbeResult {
-        activate(config)
-        profile?.let { RouteManager.get(this).applyToRunning(it) }
+    private suspend fun runBusinessProbe(): ProbeResult {
         val probeSession = ProbeSession()
         activeProbe = probeSession
         val probe = try {
@@ -339,7 +302,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
         ensureConnectionWanted()
         VpnRuntime.transform { it.copy(dnsProbe = probe.dns, httpsProbe = probe.https) }
-        check(probe.healthy) { "TUN 已启动，但真实 DNS/HTTPS 端到端探测未通过" }
         return probe
     }
 
@@ -361,8 +323,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         updateNotification("已连接 · $detail")
         profile?.let {
             activeManagedProfile = it
-            startRouteSession(it)
-            startReporter(it, probe)
+            startReporter()
         }
     }
 
@@ -376,7 +337,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         candidate.start()
     }
 
-    private fun startReporter(profile: ManagedProfile, initialProbe: ProbeResult) {
+    private fun startReporter() {
         reportJob?.cancel()
         val reporterSession = sessionID
         reportJob = scope.launch {
@@ -384,47 +345,14 @@ class LoomVpnService : VpnService(), PlatformInterface {
             while (isActive && reporterSession == sessionID) {
                 val status = VpnRuntime.status.value
                 if (status.phase != ConnectionPhase.CONNECTED) return@launch
-                val report = runCatching { reporter.send(profile, initialProbe.problems()) }
+                val report = runCatching { reporter.send() }
                 if (!isActive || reporterSession != sessionID) return@launch
                 if (report.isSuccess) {
-                    val result = report.getOrThrow()
-                    VpnRuntime.transform { it.copy(trustedReport = "成功（HTTP ${result.status}）") }
-                    runCatching {
-                        RouteManager.get(this@LoomVpnService).consumeObservations(
-                            profile,
-                            result.observations,
-                            result.observationError,
-                        )
-                    }.onFailure { error ->
-                        if (error !is CancellationException) {
-                            Log.w(TAG, "Android server observation update failed", error)
-                            RouteManager.get(this@LoomVpnService).routeUpdateFailed(error)
-                        }
-                    }
+                    VpnRuntime.transform { it.copy(trustedReport = "签名上报成功") }
                 } else {
                     VpnRuntime.transform { it.copy(trustedReport = "失败；将重试") }
                 }
                 delay(REPORT_INTERVAL_MS)
-            }
-        }
-    }
-
-    private fun startRouteSession(profile: ManagedProfile, sourceOverride: String? = null) {
-        routeJob?.cancel()
-        val routeSession = sessionID
-        routeJob = scope.launch {
-            val manager = RouteManager.get(this@LoomVpnService)
-            val source = sourceOverride ?: selectedUnderlyingNetwork?.let {
-                connectivity.getLinkProperties(it)?.interfaceName
-            }.orEmpty()
-            try {
-                manager.beginRouteSession(profile, source)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                if (!isActive || routeSession != sessionID || !desiredConnected) return@launch
-                Log.w(TAG, "Android entry route round failed", error)
-                manager.routeUpdateFailed(error)
             }
         }
     }
@@ -453,8 +381,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         activeProbe = null
         reportJob?.cancel()
         reportJob = null
-        routeJob?.cancel()
-        routeJob = null
         activeManagedProfile = null
         monitors.entries.toList().forEach { (listener, monitor) ->
             removeUnderlyingMonitor(listener, monitor)
@@ -724,7 +650,15 @@ class LoomVpnService : VpnService(), PlatformInterface {
         monitor.lastSelection = selected
         if (!selectionChanged) return@synchronized
         if (selected != null) {
-            activeManagedProfile?.let { profile -> startRouteSession(profile, selected.name) }
+            activeManagedProfile?.let { profile ->
+                scope.launch {
+                    runCatching {
+                        val routing = RouteManager.get(this@LoomVpnService)
+                        routing.beginNetworkGeneration(changed = true)
+                        routing.applyToRunning(profile)
+                    }.onFailure { Log.w(TAG, "network-generation route apply failed", it) }
+                }
+            }
         }
         if (selected == null) {
             listener.updateDefaultInterface("", -1, false, false)
@@ -924,7 +858,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
         const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
-        const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"
     }
 }
 
