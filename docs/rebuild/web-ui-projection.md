@@ -18,6 +18,23 @@ SPA write ─► {kind, payload, request_id, base_head} ─► private authentic
 浏览器入口只允许私有 overlay 或 `127.0.0.1` TLS listener。服务端验证 TLS 1.3、管理员证书、
 exact listener、Origin 和 read/admin capability，再交给同一个 SPA。公网 Nginx 永远不能到达该页面或 API。
 
+## 最小重建恢复桥
+
+完整控制写入重新启用之前，守护进程只拥有一个可删除重建的只读恢复投影。一次性 importer 同时验证旧
+ControlSet、CertifiedHead、稳定 QC、浏览器 TLS 身份、管理员证书、release floor 与 v2 reader floor，
+再把认证 LKG 投影成下表七个概念。导入成功后运行时只读新状态文件，不再回退读取旧 operation、registry、
+report 或 SSOT store；写能力明确为 false。
+
+```text
+verified recovery inputs -> CertifiedHead + recovery evidence + WebProjection cache
+state.json               -> private TLS runtime -> snapshot/release readback -> SPA
+```
+
+该状态文件的 domain、wire 和 persistent 表达是一一对应的严格 JSON；保存后重新加载必须得到相同值。
+`WebProjection` 仍只是由认证 LKG 得到的单向缓存，不得倒写或被当成新的 authority。恢复证据保存输入摘要、
+anti-rollback floor 与 v2 latch，删除任何一项都会使重启后无法证明没有降级或重新 bootstrap。后续 quorum
+写入必须直接接管核心控制模型，不能扩展这条恢复桥成为第二套提交状态机。
+
 ## 七个展示概念
 
 | 概念 | 来源 | 用途 |

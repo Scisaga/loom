@@ -433,10 +433,6 @@ func TestCollectCountsMissingAgentHealthOnce(t *testing.T) {
 	if len(st.Components) != 1 || !st.Components[0].OK() {
 		t.Fatalf("Agent protocol should remain independently healthy: %+v", st.Components)
 	}
-	node := nodeView("demo-d", true, true, st, nil, nil, "", now)
-	if len(node.Problems) != 1 || !strings.Contains(node.Problems[0], "未上报候选健康") {
-		t.Fatalf("one logical Agent problem became %d drift findings: %v", len(node.Problems), node.Problems)
-	}
 }
 
 func TestCollectCarriesAgentProtocolMismatchIntoStatusHealth(t *testing.T) {

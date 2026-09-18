@@ -79,20 +79,8 @@ func TestV5ObservationSurvivesJSONGossipVerificationAndView(t *testing.T) {
 	if len(learned) != 1 {
 		t.Fatalf("gossip 快照丢失观测:%+v", learned)
 	}
-	trusted, err := VerifyObservationAtLeast(&learned[0], caPEM, now, 10*time.Minute, 5)
-	if err != nil {
+	if _, err := VerifyObservationAtLeast(&learned[0], caPEM, now, 10*time.Minute, 5); err != nil {
 		t.Fatalf("JSON/gossip 后无法重新验签:%v", err)
-	}
-	node := nodeView("demo-b", false, false, nil, &learned[0], trusted, "", now)
-	if node.Source != "签名转述" || node.Applied != "snapshot-v5" || len(node.Edges) != 1 {
-		t.Fatalf("签名身份/测量没有进入 UI:%+v", node)
-	}
-	if len(node.Components) != 1 || !node.Components[0].OK || node.Components[0].Actual != "1.11.4" {
-		t.Fatalf("组件状态没有进入 UI:%+v", node.Components)
-	}
-	if node.Agent == nil || len(node.Agent.Selections) != 1 || node.Agent.Selections[0].Health == nil ||
-		node.Agent.Selections[0].Health.SelectedState != "success" {
-		t.Fatalf("Agent 候选健康没有进入 UI:%+v", node.Agent)
 	}
 }
 

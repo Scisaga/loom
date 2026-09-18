@@ -26,7 +26,10 @@ import (
 // 上不了面板 —— 因为播种时它就是坏的,没有"变化"。这跟当初多个接口
 // 同时 failed、
 // 存在多久没人知道"是同一个形状的盲区,只是换了一层。
-const StatePath = "/var/lib/loom/state.json"
+const (
+	StatePath  = "/var/lib/loom/state.json"
+	EventsPath = "/var/lib/loom/events.jsonl"
+)
 
 // Tracked 是一个受跟踪状态的当前值,以及**已知从什么时候起是这个值**。
 type Tracked struct {
@@ -104,6 +107,20 @@ func UnresolvedNow(st *TrackedState, evs []events.Event, now time.Time) []Unreso
 		out = append(out, u)
 	}
 	return out
+}
+
+func splitKey(key string) (node, kind, subject string) {
+	parts := [3]string{}
+	index, start := 0, 0
+	for offset := 0; offset < len(key) && index < 2; offset++ {
+		if key[offset] == '|' {
+			parts[index] = key[start:offset]
+			index++
+			start = offset + 1
+		}
+	}
+	parts[2] = key[start:]
+	return parts[0], parts[1], parts[2]
 }
 
 // enteredAt 找这个 Key 最近一次进入 state 是什么时候。

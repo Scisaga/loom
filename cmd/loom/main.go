@@ -73,9 +73,11 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom backup   -o <文件> {-passphrase-file <文件> | -plaintext}
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
-  loom client   <enroll|package|verify>     Linux 加入兼容命令与客户端交付
-  loom device   <decommission|remove|purge-revoked>
-                                         回收 access-only Enrollment Device
+  loom client   <package|verify|package-windows|verify-windows>
+                                         生成或核验客户端交付制品
+  loom config   <check|migrate> [-env .env]
+                                         严格校验或一次性规范化本机六项部署输入
+  loom control  <import|serve|inspect>     最小只读控制守护进程
 
 `
 
@@ -152,8 +154,10 @@ func main() {
 		err = cmdRestore(args)
 	case "client":
 		err = cmdClient(args)
-	case "device":
-		err = cmdDevice(args)
+	case "config":
+		err = cmdConfig(args)
+	case "control":
+		err = cmdControl(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

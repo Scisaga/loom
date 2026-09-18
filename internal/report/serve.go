@@ -9,9 +9,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	trafficstore "loom/internal/traffic"
-	"loom/internal/webui"
 )
 
 const (
@@ -43,123 +40,14 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		return err
 	}
 	tbl := newTable(cfg.AttestationMinVersion)
-	var trafficStore *trafficstore.Store
-	trafficHistoryStatus := "not_supported"
-	trafficHistoryError := ""
 
 	mux := http.NewServeMux()
 
-	// 界面挂在根路径,/status 仍然是同一份数据的 JSON 形式。
-	//
-	// **它们必须同源** —— 界面自己去采一遍的话,"页面上说的"和"接口返回的"
-	// 会在某个时刻不一致,而那种不一致极难查。
-	deps := webui.Deps{Node: cfg.Node, Now: now}
-	decorateView := func(v *webui.View, at time.Time) {
-		if v == nil {
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.NotFound(w, r)
 			return
 		}
-		if deps.Control != nil && deps.Control.Enrich != nil {
-			if err := deps.Control.Enrich(v); err != nil {
-				v.Warnings = append(v.Warnings, "中控 SSOT 元数据不可用:"+err.Error())
-			}
-		}
-		v.TrafficHistoryStatus = trafficHistoryStatus
-		v.TrafficHistoryError = trafficHistoryError
-		if trafficStore != nil {
-			history, err := trafficHistoryFromStore(trafficStore, at)
-			if err != nil {
-				v.TrafficHistoryStatus = "unavailable"
-				v.TrafficHistoryError = err.Error()
-				v.Warnings = append(v.Warnings, "中控流量历史不可用:"+err.Error())
-			} else {
-				v.TrafficHistoryStatus = "available"
-				v.TrafficHistory = history
-			}
-			if err := enrichTopologyLinkMetrics(trafficStore, at, v.Links); err != nil {
-				v.Warnings = append(v.Warnings, "中控拓扑链路指标不可用:"+err.Error())
-			}
-		}
-	}
-	buildSnapshot := func() webui.View {
-		at := now()
-		st := Collect(cfg, at)
-		// 和 /status 走完全同一条路 —— 界面自己再采一遍的话,
-		// "页面上说的"和"接口返回的"会在某个时刻不一致。
-		attachObservationState(cfg, tbl, st, at, maxAge)
-		v := buildView(cfg, st, at)
-		decorateView(&v, at)
-		return v
-	}
-	deps.Snapshot = buildSnapshot
-	var trafficCacheMu sync.RWMutex
-	var trafficCache webui.View
-	trafficCacheReady := false
-	deps.TrafficSnapshot = func() webui.View {
-		trafficCacheMu.RLock()
-		ready, cached := trafficCacheReady, trafficCache
-		trafficCacheMu.RUnlock()
-		if ready {
-			return cached
-		}
-		// Only startup can reach this path. The first gossip round immediately
-		// installs the immutable cache used by subsequent scraper requests.
-		return buildSnapshot()
-	}
-	var det *detector
-
-	// 中控角色是本机 bootstrap 配置,不是渲染产物 —— 绝大多数节点没有它。
-	ctl, pw, controlErr := LoadControl(ControlPath)
-	if ctl != nil {
-		trafficHistoryStatus = "unavailable"
-		cfg.PublisherHealth = PublisherHealthPath
-		if controlErr != nil {
-			// 声明了中控角色却配不全,必须看得见。悄悄退化成只读的话,
-			// 人会以为是自己没登录。
-			fmt.Fprintf(logw, "! 中控配置有问题,写操作关闭:%v\n", controlErr)
-		}
-		deps.Operator = pw
-		deps.Control = controlDeps(ctl)
-		// 事件只在中控记。每个节点都有同样的视图(靠转述),记 N 份只会
-		// 让人不知道该看哪份 —— 但代价是**中控停了就不记事件**。
-		det = newDetector(EventsPath, 30*24*time.Hour)
-		det.statePath = StatePath
-		// 把上一次的"已知起点"接回来 —— 否则每次重启,面板上所有问题的
-		// 时长都归零,而那正是它最该说话的时候。读不到就从头开始,不报错。
-		if prev, err := LoadTrackedState(StatePath); err == nil {
-			det.restore(prev)
-		}
-		deps.Events = func(limit int) []webui.EventView { return recentEvents(EventsPath, now(), limit, det.current) }
-		deps.Unresolved = func() []webui.UnresolvedView {
-			return unresolvedNow(EventsPath, now(), det.trackedState(now()))
-		}
-		trafficStore, err = trafficstore.NewStore(TrafficPath, trafficRetention, trafficMaximumGap)
-		if err != nil {
-			trafficHistoryError = err.Error()
-			fmt.Fprintf(logw, "! 初始化中控流量历史失败:%v\n", err)
-		} else if err := trafficStore.Compact(now()); err != nil {
-			// A corrupt or unsafe existing history must not be appended to. Current
-			// status remains available while the operator repairs the local file.
-			fmt.Fprintf(logw, "! 读取中控流量历史失败，历史记录关闭:%v\n", err)
-			trafficHistoryError = err.Error()
-			_ = trafficStore.Close()
-			trafficStore = nil
-		} else {
-			trafficHistoryStatus = "available"
-			trafficHistoryError = ""
-		}
-		fmt.Fprintf(logw, "中控角色:%s(事件 %s,现状 %s,流量历史 %s)\n", ctl.SSOTPath, EventsPath, StatePath, TrafficPath)
-	} else if controlErr != nil {
-		fmt.Fprintf(logw, "! 读 %s 失败:%v\n", ControlPath, controlErr)
-	}
-	if trafficStore != nil {
-		defer trafficStore.Close()
-	}
-	if ctl != nil {
-		mux.Handle("/api/client/report", newClientReportReceiver(tbl, ctl, now, maxAge, logw))
-	}
-	mux.Handle("/", webui.Handler(deps))
-
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		// 隧道健康和配置自检是**当场**算的,便宜。观测不是 —— 量一遍目标
 		// 要好几秒,每次被拉都重量会让拉取方超时,也会把探测流量放大成
 		// 拉取次数的倍数。所以观测走后台节奏,这里只交出最近一份。
@@ -168,6 +56,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		attachObservationState(cfg, tbl, st, at, maxAge)
 		writeStatus(w, st, at)
 	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 
 	srv := &http.Server{
 		Handler:           mux,
@@ -181,46 +70,8 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		defer wg.Done()
 		ticker := time.NewTicker(gp)
 		defer ticker.Stop()
-		lastTrafficCompact := now().UTC()
 		for {
-			st := gossip(cfg, tbl, now, maxAge)
-			// 每轮转述之后比一次:这一轮和上一轮有什么不同。
-			// **只有变化才写下来** —— 状态本身已经在 /status 里了。
-			{
-				at := now()
-				attachObservationState(cfg, tbl, st, at, maxAge)
-				view := buildView(cfg, st, at)
-				if trafficStore != nil {
-					frame := trafficFrameFromView(view, at)
-					if len(frame.Counters) > 0 || len(frame.Edges) > 0 {
-						if err := trafficStore.Append(frame); err != nil {
-							fmt.Fprintf(logw, "! 记流量历史失败:%v\n", err)
-						}
-					}
-					if at.UTC().Sub(lastTrafficCompact) >= 6*time.Hour {
-						if err := trafficStore.Compact(at); err != nil {
-							fmt.Fprintf(logw, "! 压缩流量历史失败:%v\n", err)
-						} else {
-							lastTrafficCompact = at.UTC()
-						}
-					}
-				}
-				decorateView(&view, at)
-				trafficCacheMu.Lock()
-				trafficCache = view
-				trafficCacheReady = true
-				trafficCacheMu.Unlock()
-				if det != nil {
-					evs, err := det.observe(view, at)
-					if err != nil {
-						fmt.Fprintf(logw, "! 记事件失败:%v\n", err)
-					}
-					for i := range evs {
-						fmt.Fprintf(logw, "· %s %s %s:%s → %s\n",
-							evs[i].Node, evs[i].Kind, evs[i].Subject, evs[i].From, evs[i].To)
-					}
-				}
-			}
+			_ = gossip(cfg, tbl, now, maxAge)
 			select {
 			case <-ctx.Done():
 				return

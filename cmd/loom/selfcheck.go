@@ -54,7 +54,6 @@ func cmdSelfcheck(args []string) error {
 		path string
 		load func([]byte) error
 	}{
-		{report.ControlPath, func(b []byte) error { return nil }}, // 存在即可,内容由 LoadControl 管
 		{"/etc/loom/report/config.json", func(b []byte) error { _, err := report.Load(b); return err }},
 		{"/etc/loom/agent/config.json", func(b []byte) error { _, err := agent.Load(b); return err }},
 	} {
