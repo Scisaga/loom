@@ -17,7 +17,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -73,31 +72,6 @@ func TestLegacyCommittedMaterialRemainsCanonical(t *testing.T) {
 	again, _, err := EncodeMaterial(decoded)
 	if err != nil || !bytes.Equal(body, again) {
 		t.Fatal("legacy committed material did not retain canonical bytes")
-	}
-}
-
-func TestNodePrivateChannelMigrationIsOneWay(t *testing.T) {
-	config, root := testActivated(t)
-	legacy := legacyNodeConfig{Schema: LegacyMaterialSchema, ClusterID: config.ClusterID, MemberID: config.MemberID,
-		Listen: "192.0.2.20:7002", RaftAddress: "192.0.2.20:7001", IdentityPrivateKey: config.IdentityPrivateKey,
-		Bootstrap: config.Bootstrap, Recovery: config.Recovery, BrowserTLS: config.BrowserTLS,
-		ReadCertDER: config.ReadCertDER, AdminCertDER: config.AdminCertDER}
-	if err := atomicJSON(filepath.Join(root, "node.json"), legacy); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := MigrateNodePrivateChannel(root, "demo-node-1", []string{"127.0.0.1:61802"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if migrated.Schema != NodeSchema || migrated.Node != "demo-node-1" || migrated.IdentityPrivateKey != config.IdentityPrivateKey {
-		t.Fatal("node identity was not preserved by private-channel migration")
-	}
-	body, err := os.ReadFile(filepath.Join(root, "node.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(body, []byte("raft_address")) || bytes.Contains(body, []byte(`"listen"`)) {
-		t.Fatal("replaced dual-port fields survived node migration")
 	}
 }
 

@@ -58,7 +58,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <import|activate|rebind|prepare|serve|inspect|write>")
+		return errors.New("用法: loom control <import|activate|prepare|serve|inspect|write>")
 	}
 	switch args[0] {
 	case "import":
@@ -67,8 +67,6 @@ func cmdControl(args []string) error {
 		return cmdControlServe(args[1:])
 	case "activate":
 		return cmdControlActivate(args[1:])
-	case "rebind":
-		return cmdControlRebind(args[1:])
 	case "prepare":
 		return cmdControlPrepare(args[1:])
 	case "inspect":
@@ -109,27 +107,6 @@ func cmdControlActivate(args []string) error {
 	}
 	if err := os.Remove(legacyPath); err != nil {
 		return fmt.Errorf("删除已被 genesis Material 取代的恢复缓存: %w", err)
-	}
-	return json.NewEncoder(os.Stdout).Encode(config.Member())
-}
-
-func cmdControlRebind(args []string) error {
-	fs := flag.NewFlagSet("control rebind", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "控制状态目录")
-	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("control rebind 不接受位置参数")
-	}
-	private, _, err := loadPrivateChannelConfig(*networkConfig)
-	if err != nil {
-		return err
-	}
-	config, err := control.MigrateNodePrivateChannel(*stateDir, private.Node, private.Listen)
-	if err != nil {
-		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(config.Member())
 }

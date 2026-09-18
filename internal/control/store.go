@@ -392,69 +392,6 @@ func ActivateLegacy(root string, legacy State, memberID, node string, listen []s
 	return config, nil
 }
 
-// legacyNodeConfig exists only to perform the one-way production migration
-// from the first control build. Normal startup never accepts this shape.
-type legacyNodeConfig struct {
-	Schema             int              `json:"schema"`
-	ClusterID          string           `json:"cluster_id"`
-	MemberID           string           `json:"member_id"`
-	Listen             string           `json:"listen"`
-	RaftAddress        string           `json:"raft_address"`
-	IdentityPrivateKey string           `json:"identity_private_key"`
-	Bootstrap          bool             `json:"bootstrap"`
-	Recovery           RecoveryEvidence `json:"recovery"`
-	BrowserTLS         BrowserTLS       `json:"browser_tls"`
-	ReadCertDER        []string         `json:"read_cert_der"`
-	AdminCertDER       []string         `json:"admin_cert_der"`
-}
-
-func MigrateNodePrivateChannel(root, node string, listen []string) (NodeConfig, error) {
-	if current, err := LoadNodeConfig(root); err == nil {
-		if current.Node != node {
-			return NodeConfig{}, errors.New("control node does not match private channel config")
-		}
-		return current, nil
-	}
-	var legacy legacyNodeConfig
-	if err := readStrict(filepath.Join(root, "node.json"), &legacy); err != nil {
-		return NodeConfig{}, err
-	}
-	key, err := base64.RawURLEncoding.DecodeString(legacy.IdentityPrivateKey)
-	if legacy.Schema != LegacyMaterialSchema || legacy.ClusterID == "" || legacy.MemberID == "" ||
-		legacy.Listen == "" || legacy.RaftAddress == "" || err != nil || len(key) != ed25519.PrivateKeySize {
-		return NodeConfig{}, errors.New("legacy control node config is invalid")
-	}
-	authority, err := OpenAuthority(root)
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	_, projection, _ := authority.Snapshot()
-	legacyPublic := base64.RawURLEncoding.EncodeToString(ed25519.PrivateKey(key).Public().(ed25519.PublicKey))
-	found := false
-	for _, member := range uniqueConfigMembers(projection.Config) {
-		if member.ID == legacy.MemberID && member.PublicKey == legacyPublic {
-			found = true
-		}
-	}
-	if !found {
-		return NodeConfig{}, errors.New("legacy control identity is not in the certified config")
-	}
-	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: legacy.MemberID, Node: node,
-		IdentityPrivateKey: legacy.IdentityPrivateKey, Bootstrap: legacy.Bootstrap, Recovery: legacy.Recovery,
-		BrowserTLS: legacy.BrowserTLS, ReadCertDER: legacy.ReadCertDER, AdminCertDER: legacy.AdminCertDER}
-	config.BrowserTLS, err = issueNodeTLS(config.BrowserTLS, config.MemberID, listen, ed25519.PrivateKey(key))
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	if err := config.Validate(); err != nil {
-		return NodeConfig{}, err
-	}
-	if err := atomicJSON(filepath.Join(root, "node.json"), config); err != nil {
-		return NodeConfig{}, err
-	}
-	return config, nil
-}
-
 func LoadNodeConfig(root string) (NodeConfig, error) {
 	var config NodeConfig
 	if err := readStrict(filepath.Join(root, "node.json"), &config); err != nil {
