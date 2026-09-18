@@ -15,6 +15,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.provider.Settings
 import android.system.OsConstants
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -75,6 +76,8 @@ internal fun underlyingNetworkRank(
     require(transportPriority in 1..4) { "underlying transport priority is invalid" }
     return (if (validated) 1_000 else 0) + (if (unmetered) 10 else 0) + transportPriority
 }
+
+internal fun networkGenerationIdentity(bootCount: Int, networkHandle: Long): String = "$bootCount:$networkHandle"
 
 internal class UnderlyingPublicationTracker<T> {
     private var published: T? = null
@@ -275,9 +278,14 @@ class LoomVpnService : VpnService(), PlatformInterface {
     }
 
     private suspend fun activateAndProbe(profile: ManagedProfile): ProbeResult {
-        activate(profile.config)
         val routing = RouteManager.get(this)
-        routing.beginNetworkGeneration()
+        val active = connectivity.activeNetwork
+        val activeCapabilities = active?.let(connectivity::getNetworkCapabilities)
+        routing.beginNetworkGeneration(
+            active?.takeIf { activeCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == true }
+                ?.let(::networkGenerationIdentity),
+        )
+        activate(profile.config)
         val before = routing.applyToRunning(profile)
         var probe = runBusinessProbe()
         val after = routing.recordBusinessOutcome(profile, probe)
@@ -654,8 +662,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 scope.launch {
                     runCatching {
                         val routing = RouteManager.get(this@LoomVpnService)
-                        routing.beginNetworkGeneration(changed = true)
-                        routing.applyToRunning(profile)
+                        if (routing.beginNetworkGeneration(networkGenerationIdentity(selected.network))) {
+                            routing.applyToRunning(profile)
+                        }
                     }.onFailure { Log.w(TAG, "network-generation route apply failed", it) }
                 }
             }
@@ -665,6 +674,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
         } else {
             listener.updateDefaultInterface(selected.name, selected.index, selected.metered, false)
         }
+    }
+
+    private fun networkGenerationIdentity(network: Network): String {
+        val boot = Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1)
+        return networkGenerationIdentity(boot, network.networkHandle)
     }
 
     @Suppress("DEPRECATION")

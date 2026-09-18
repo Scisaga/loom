@@ -76,12 +76,14 @@ class RouteManager private constructor(context: Context) {
     @Volatile private var availableProfile: ManagedProfile? = null
     @Volatile private var runningProfile: ManagedProfile? = null
     @Volatile private var generation = ""
+    @Volatile private var networkIdentity = ""
     private var actual = linkedMapOf<String, String>()
     private var application: AppliedRoute? = null
 
     fun profileAvailable(profile: ManagedProfile) {
         scope.launch {
             operation.withLock {
+                ensureNetworkGeneration()
                 availableProfile = profile
                 val projected = evaluate(profile, emptyMap())
                 publish(projected, running = runningProfile?.recordID == profile.recordID)
@@ -89,24 +91,22 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    fun beginNetworkGeneration(changed: Boolean = false): String {
-        val saved = protected.get(NETWORK_GENERATION)?.decodeToString().orEmpty()
-        if (!changed && generation.isBlank() && saved.isNotBlank()) {
-            generation = saved
-            return saved
-        }
-        if (!changed && generation.isNotBlank()) return generation
-        val next = UUID.randomUUID().toString()
-        generation = next
+    suspend fun beginNetworkGeneration(identity: String? = null): Boolean = operation.withLock {
+        ensureNetworkGeneration()
+        if (identity == null || identity == networkIdentity) return@withLock false
+        require(identity.isNotBlank()) { "底层网络身份不能为空" }
+        generation = UUID.randomUUID().toString()
+        networkIdentity = identity
         actual = linkedMapOf()
         application = null
-        protected.put(NETWORK_GENERATION, next.encodeToByteArray())
+        protected.put(NETWORK_GENERATION, generation.encodeToByteArray())
+        protected.put(NETWORK_IDENTITY, identity.encodeToByteArray())
         protected.put(OBSERVATIONS, "[]".encodeToByteArray())
-        return next
+        true
     }
 
     internal suspend fun applyToRunning(profile: ManagedProfile): AppliedRoute = operation.withLock {
-        if (generation.isBlank()) beginNetworkGeneration()
+        ensureNetworkGeneration()
         mutableStatus.value = mutableStatus.value.copy(busy = true, detail = "正在应用候选并读回 selector…")
         val initial = evaluate(profile, actual)
         val client = SelectorClient(profile.config)
@@ -223,6 +223,15 @@ class RouteManager private constructor(context: Context) {
         runCatching { JSONArray(it.decodeToString()) }.getOrNull()
     } ?: JSONArray()
 
+    private fun ensureNetworkGeneration() {
+        if (generation.isNotBlank()) return
+        generation = protected.get(NETWORK_GENERATION)?.decodeToString().orEmpty()
+        networkIdentity = protected.get(NETWORK_IDENTITY)?.decodeToString().orEmpty()
+        if (generation.isNotBlank()) return
+        generation = UUID.randomUUID().toString()
+        protected.put(NETWORK_GENERATION, generation.encodeToByteArray())
+    }
+
     private fun publish(route: AppliedRoute, running: Boolean, observation: String = mutableStatus.value.observationDetail) {
         val label = when (route.mode) {
             RouteMode.DIRECT -> "Direct"
@@ -256,6 +265,7 @@ class RouteManager private constructor(context: Context) {
         private const val PREFERENCE = "route-preference-v2"
         private const val OBSERVATIONS = "route-observations-v2"
         private const val NETWORK_GENERATION = "network-generation-v2"
+        private const val NETWORK_IDENTITY = "network-identity-v2"
         @Volatile private var instance: RouteManager? = null
 
         fun get(context: Context): RouteManager = instance ?: synchronized(this) {

@@ -49,6 +49,12 @@ class UnderlyingNetworkSelectionTest {
     }
 
     @Test
+    fun networkGenerationSurvivesProcessRestartButNotDeviceRestart() {
+        assertEquals(networkGenerationIdentity(7, 123), networkGenerationIdentity(7, 123))
+        assertTrue(networkGenerationIdentity(7, 123) != networkGenerationIdentity(8, 123))
+    }
+
+    @Test
     fun builderBindingSuppressesDuplicateRuntimePublishAndTracksRemoval() {
         val tracker = UnderlyingPublicationTracker<String>()
         tracker.builderBound("wifi")
