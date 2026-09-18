@@ -17,6 +17,8 @@ SPA write ─► {kind, payload, request_id, base_head} ─► private authentic
 
 浏览器入口只允许私有 overlay 或 `127.0.0.1` TLS listener。服务端验证 TLS 1.3、管理员证书、
 exact listener、Origin 和 read/admin capability，再交给同一个 SPA。公网 Nginx 永远不能到达该页面或 API。
+本机 CLI 可通过 root-only admin Unix socket 提交同一 operation envelope；socket 只改变传输认证，仍调用
+同一个 handler、Raft 提交、reducer 和 QC 链，不能形成旁路写入。
 
 ## 最小重建恢复桥
 

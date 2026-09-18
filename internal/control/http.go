@@ -13,8 +13,10 @@ import (
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -33,26 +35,37 @@ type Server struct {
 	Config      NodeConfig
 	ReleaseRoot string
 	ReleaseKey  string
+	AdminSocket string
 	mu          sync.Mutex
 }
 
 func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) error {
-	if server.Runtime == nil || server.Channel == nil || reportHandler == nil {
-		return errors.New("control runtime, private channel, and report handler are required")
+	if server.Runtime == nil || server.Channel == nil || reportHandler == nil || server.AdminSocket == "" {
+		return errors.New("control runtime, private channel, report handler, and admin socket are required")
 	}
 	if err := server.Config.Validate(); err != nil {
 		return err
 	}
 	defer server.Channel.Close()
+	admin, err := net.Listen("unix", server.AdminSocket)
+	if err != nil {
+		return fmt.Errorf("listen local control admin socket: %w", err)
+	}
+	defer admin.Close()
+	if err := os.Chmod(server.AdminSocket, 0o600); err != nil {
+		return err
+	}
 
 	handler := server.Handler()
 	servers := []*http.Server{
 		{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 		{Handler: reportHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
+		{Handler: server.AdminHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 	}
-	errorsOut := make(chan error, 2)
+	errorsOut := make(chan error, 3)
 	go func() { errorsOut <- servers[0].Serve(server.Channel.ControlListener()) }()
 	go func() { errorsOut <- servers[1].Serve(server.Channel.ReportListener()) }()
+	go func() { errorsOut <- servers[2].Serve(admin) }()
 	select {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -67,6 +80,23 @@ func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) err
 		}
 		return err
 	}
+}
+
+type adminContextKey struct{}
+
+func (server *Server) AdminHandler() http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if strings.HasPrefix(request.URL.Path, "/internal/") {
+			http.NotFound(writer, request)
+			return
+		}
+		server.Handler().ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), adminContextKey{}, true)))
+	})
+}
+
+func localAdmin(request *http.Request) bool {
+	value, _ := request.Context().Value(adminContextKey{}).(bool)
+	return value
 }
 
 func (server *Server) Handler() http.Handler {
@@ -91,8 +121,9 @@ func (server *Server) Handler() http.Handler {
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		writer.Header().Set("Referrer-Policy", "same-origin")
 		writer.Header().Set("Cache-Control", "no-store")
-		if request.URL.RawPath != "" || path.Clean(request.URL.Path) != request.URL.Path || request.TLS == nil ||
-			!request.TLS.HandshakeComplete || request.TLS.Version != tls.VersionTLS13 || !server.exactHost(request.Host) {
+		local := localAdmin(request)
+		if request.URL.RawPath != "" || path.Clean(request.URL.Path) != request.URL.Path || !local && (request.TLS == nil ||
+			!request.TLS.HandshakeComplete || request.TLS.Version != tls.VersionTLS13 || !server.exactHost(request.Host)) {
 			http.NotFound(writer, request)
 			return
 		}
@@ -206,11 +237,11 @@ func (server *Server) exactHost(host string) bool {
 }
 
 func (server *Server) admin(request *http.Request) bool {
-	return exactCertificate(request, server.Config.AdminCertDER)
+	return localAdmin(request) || exactCertificate(request, server.Config.AdminCertDER)
 }
 
 func (server *Server) authorized(request *http.Request) bool {
-	return exactCertificate(request, server.Config.ReadCertDER)
+	return localAdmin(request) || exactCertificate(request, server.Config.ReadCertDER)
 }
 
 type operationEnvelope struct {
@@ -225,7 +256,7 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 		http.Error(writer, "administrator certificate required", http.StatusForbidden)
 		return
 	}
-	if origin := request.Header.Get("Origin"); origin != "" && origin != "https://"+request.Host {
+	if origin := request.Header.Get("Origin"); !localAdmin(request) && origin != "" && origin != "https://"+request.Host {
 		http.Error(writer, "same-origin request required", http.StatusForbidden)
 		return
 	}

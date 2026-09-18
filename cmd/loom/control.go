@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -199,6 +200,7 @@ func cmdControlServe(args []string) error {
 	releaseRoot := fs.String("release-root", "/var/lib/loom/client-dist/releases", "客户端 release 根目录")
 	releaseKey := fs.String("release-key", "/etc/loom/trust/platform.pub", "catalog 验签公钥")
 	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
+	adminSocket := fs.String("admin-socket", "/run/loom-control/admin.sock", "本机管理员 Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -229,7 +231,8 @@ func cmdControlServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	err = (&control.Server{Runtime: runtime, Channel: channel, Config: runtime.Config, ReleaseRoot: *releaseRoot, ReleaseKey: *releaseKey}).Serve(ctx, reportRuntime.Handler())
+	err = (&control.Server{Runtime: runtime, Channel: channel, Config: runtime.Config, ReleaseRoot: *releaseRoot,
+		ReleaseKey: *releaseKey, AdminSocket: *adminSocket}).Serve(ctx, reportRuntime.Handler())
 	stop()
 	if reportErr := reportRuntime.Wait(); err == nil {
 		err = reportErr
@@ -298,6 +301,7 @@ func controlMembers(config control.ControlConfig) []control.Member {
 func cmdControlWrite(args []string) error {
 	fs := flag.NewFlagSet("control write", flag.ContinueOnError)
 	endpoint := fs.String("url", "", "私有 control HTTPS origin")
+	socket := fs.String("socket", "", "本机管理员 Unix socket")
 	certPath := fs.String("cert", "", "管理员客户端证书")
 	keyPath := fs.String("key", "", "管理员客户端私钥")
 	caPath := fs.String("ca", "", "control TLS 根证书")
@@ -308,8 +312,13 @@ func cmdControlWrite(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *endpoint == "" || *certPath == "" || *keyPath == "" || *caPath == "" || *kind == "" || *payloadPath == "" || *requestID == "" || *baseHead == "" {
-		return errors.New("control write 缺少 url/cert/key/ca/kind/payload/request-id/base-head 参数")
+	if fs.NArg() != 0 || *kind == "" || *payloadPath == "" || *requestID == "" || *baseHead == "" {
+		return errors.New("control write 缺少 kind/payload/request-id/base-head 参数")
+	}
+	local := *socket != ""
+	remote := *endpoint != "" && *certPath != "" && *keyPath != "" && *caPath != ""
+	if local == remote || local && (*endpoint != "" || *certPath != "" || *keyPath != "" || *caPath != "") {
+		return errors.New("control write 必须选择 socket，或完整的 url/cert/key/ca")
 	}
 	payload, err := os.ReadFile(*payloadPath)
 	if err != nil {
@@ -325,25 +334,35 @@ func cmdControlWrite(args []string) error {
 	if err != nil {
 		return err
 	}
-	certificate, err := tls.LoadX509KeyPair(*certPath, *keyPath)
-	if err != nil {
-		return err
+	var client *http.Client
+	origin := strings.TrimRight(*endpoint, "/")
+	if local {
+		origin = "http://loom.local"
+		client = &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", *socket)
+		}}}
+	} else {
+		certificate, loadErr := tls.LoadX509KeyPair(*certPath, *keyPath)
+		if loadErr != nil {
+			return loadErr
+		}
+		caBody, readErr := os.ReadFile(*caPath)
+		if readErr != nil {
+			return readErr
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caBody) {
+			return errors.New("control CA 无有效证书")
+		}
+		client = &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, RootCAs: pool}}}
 	}
-	caBody, err := os.ReadFile(*caPath)
-	if err != nil {
-		return err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caBody) {
-		return errors.New("control CA 无有效证书")
-	}
-	client := &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, RootCAs: pool}}}
-	request, err := http.NewRequest(http.MethodPost, strings.TrimRight(*endpoint, "/")+"/api/control/operations", bytes.NewReader(body))
+	request, err := http.NewRequest(http.MethodPost, origin+"/api/control/operations", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Origin", strings.TrimRight(*endpoint, "/"))
+	request.Header.Set("Origin", origin)
 	response, err := client.Do(request)
 	if err != nil {
 		return err

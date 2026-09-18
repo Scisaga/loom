@@ -251,6 +251,15 @@ func TestAuthenticatedOperationCommitsAndReadsBack(t *testing.T) {
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("read credential write status=%d", response.Code)
 	}
+	_, _, localBefore := runtime.Authority.Snapshot()
+	localPayload, _ := json.Marshal(map[string]any{"kind": "service.put", "payload": map[string]any{"id": "demo-local-api", "name": "Demo Local API", "matchers": []string{"local.example"}, "policy": "direct"}, "request_id": "demo-local-api-write", "base_head": HeadID(localBefore.Head)})
+	request = httptest.NewRequest(http.MethodPost, "http://loom.local/api/control/operations", strings.NewReader(string(localPayload)))
+	request.Header.Set("Origin", "http://loom.local")
+	response = httptest.NewRecorder()
+	server.AdminHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("local admin operation status=%d body=%s", response.Code, response.Body.String())
+	}
 }
 
 type raftMemoryLogStore struct{}
@@ -331,7 +340,8 @@ func testCluster(t *testing.T, count int) ([]string, []PrivateChannelConfig, []*
 		serverCtx, serverCancel := context.WithCancel(allCtx)
 		serverCancels = append(serverCancels, serverCancel)
 		go func(runtime *Runtime) {
-			_ = (&Server{Runtime: runtime, Channel: runtime.Channel, Config: runtime.Config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}).Serve(serverCtx, http.NotFoundHandler())
+			_ = (&Server{Runtime: runtime, Channel: runtime.Channel, Config: runtime.Config, ReleaseRoot: t.TempDir(),
+				ReleaseKey: filepath.Join(t.TempDir(), "missing"), AdminSocket: filepath.Join(t.TempDir(), "admin.sock")}).Serve(serverCtx, http.NotFoundHandler())
 		}(runtime)
 	}
 	t.Cleanup(func() {
@@ -347,7 +357,8 @@ func serveTestRuntime(t *testing.T, runtime *Runtime) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		_ = (&Server{Runtime: runtime, Channel: runtime.Channel, Config: runtime.Config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}).Serve(ctx, http.NotFoundHandler())
+		_ = (&Server{Runtime: runtime, Channel: runtime.Channel, Config: runtime.Config, ReleaseRoot: t.TempDir(),
+			ReleaseKey: filepath.Join(t.TempDir(), "missing"), AdminSocket: filepath.Join(t.TempDir(), "admin.sock")}).Serve(ctx, http.NotFoundHandler())
 	}()
 	return cancel
 }
