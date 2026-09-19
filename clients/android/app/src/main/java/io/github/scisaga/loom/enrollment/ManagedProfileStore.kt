@@ -11,6 +11,7 @@ internal fun libboxWorkingDirectory(filesDir: File): File = filesDir.resolve("li
 
 data class ManagedProfile(
     val nodeID: String,
+    val profileName: String,
     val snapshot: String,
     val generation: Long,
     val viewDigest: String,
@@ -81,6 +82,7 @@ internal class ManagedProfileStore(context: Context) {
         Libbox.checkConfig(config)
         return ManagedProfile(
             nodeID = root.getString("node_id"),
+            profileName = root.getString("name"),
             snapshot = root.getString("head"),
             generation = root.getLong("generation"),
             viewDigest = root.getString("view_digest"),

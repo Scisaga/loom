@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from assets/loom-logo-v4.svg by scripts/generate_android_launcher_icons.py. -->
 <resources>
-    <color name="loom_titanium">#5B6166</color>
+    <color name="loom_launcher_gradient_start">#667EEA</color>
+    <color name="loom_launcher_gradient_end">#764BA2</color>
+    <color name="loom_launcher_foreground">#FAFAF7</color>
 </resources>

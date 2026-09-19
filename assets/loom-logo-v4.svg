@@ -5,11 +5,26 @@
  width="1254" height="1254" viewBox="0 0 1254.000000 1254.000000"
  preserveAspectRatio="xMidYMid meet">
 <title>Loom logo</title>
-<desc>A smooth six-petal woven knot in ivory white on titanium gray.</desc>
+<desc>A smooth six-petal woven knot in ivory white on a violet gradient.</desc>
 <metadata>
 Created by potrace 1.16, written by Peter Selinger 2001-2019
 </metadata>
-<rect width="1254" height="1254" fill="#5B6166"/>
+<defs>
+<linearGradient id="background-gradient" x1="0" y1="0" x2="1254" y2="1254"
+ gradientUnits="userSpaceOnUse">
+<stop offset="0%" stop-color="#667eea"/>
+<stop offset="100%" stop-color="#764ba2"/>
+</linearGradient>
+<linearGradient id="background-gradient-cutout" x1="0" y1="1254" x2="1254" y2="0"
+ gradientUnits="userSpaceOnUse">
+<stop offset="0%" stop-color="#667eea"/>
+<stop offset="100%" stop-color="#764ba2"/>
+</linearGradient>
+<style>
+path[fill="#5b6166"] { fill: url(#background-gradient-cutout); }
+</style>
+</defs>
+<rect width="1254" height="1254" fill="url(#background-gradient)"/>
 <g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"
 fill="#fafaf7" stroke="none">
 <path fill="#fafaf7" stroke="none" d="M616 1108 c-67 -49 -118 -133 -129

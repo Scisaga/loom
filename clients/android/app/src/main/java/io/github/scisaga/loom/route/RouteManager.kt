@@ -42,13 +42,10 @@ data class RouteStatus(
 data class RoutePathStatus(
     val service: String,
     val candidate: String,
-    val chain: String,
-    val links: List<RouteLinkStatus>,
-    val reason: String,
+    val serverChain: List<String>,
+    val state: String,
     val updatedAt: String,
 )
-
-data class RouteLinkStatus(val from: String, val to: String, val label: String, val detail: String)
 
 internal data class AppliedRoute(
     val mode: RouteMode,
@@ -251,9 +248,8 @@ class RouteManager private constructor(context: Context) {
                 RoutePathStatus(
                     service = selected.selector,
                     candidate = selected.candidate,
-                    chain = if (selected.chain.isEmpty()) "Direct" else selected.chain.joinToString(" → "),
-                    links = emptyList(),
-                    reason = "${selected.state} · 来自认证候选与当前网络代业务结果",
+                    serverChain = selected.chain,
+                    state = selected.state,
                     updatedAt = now,
                 )
             },

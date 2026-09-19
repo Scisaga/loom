@@ -30,6 +30,7 @@ data class EnrollmentStatus(
     val phase: EnrollmentPhase = EnrollmentPhase.CHECKING,
     val detail: String = "正在读取设备身份…",
     val nodeID: String = "",
+    val profileName: String = "",
     val snapshot: String = "",
     val generation: Long = 0,
     val canAbandonPending: Boolean = false,
@@ -160,11 +161,12 @@ class EnrollmentManager private constructor(context: Context) {
 
     private fun awaitingActivation(profile: ManagedProfile) {
         mutableStatus.value = EnrollmentStatus(
-            EnrollmentPhase.PULLING,
-            "认证 LKG 与 libbox 预检通过；连接后用真实 DNS/HTTPS 验证",
-            profile.nodeID,
-            profile.snapshot,
-            profile.generation,
+            phase = EnrollmentPhase.PULLING,
+            detail = "认证 LKG 与 libbox 预检通过；连接后用真实 DNS/HTTPS 验证",
+            nodeID = profile.nodeID,
+            profileName = profile.profileName,
+            snapshot = profile.snapshot,
+            generation = profile.generation,
         )
     }
 
@@ -181,11 +183,12 @@ class EnrollmentManager private constructor(context: Context) {
     private fun ready(profile: ManagedProfile, detail: String) {
         RouteManager.get(appContext).profileAvailable(profile)
         mutableStatus.value = EnrollmentStatus(
-            EnrollmentPhase.READY,
-            detail,
-            profile.nodeID,
-            profile.snapshot,
-            profile.generation,
+            phase = EnrollmentPhase.READY,
+            detail = detail,
+            nodeID = profile.nodeID,
+            profileName = profile.profileName,
+            snapshot = profile.snapshot,
+            generation = profile.generation,
         )
     }
 

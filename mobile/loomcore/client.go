@@ -36,6 +36,7 @@ type deviceState struct {
 type androidProfile struct {
 	Schema     int                          `json:"schema"`
 	NodeID     string                       `json:"node_id"`
+	Name       string                       `json:"name"`
 	Head       string                       `json:"head"`
 	Generation uint64                       `json:"generation"`
 	ViewDigest string                       `json:"view_digest"`
@@ -112,7 +113,7 @@ func AndroidDeviceProfile(body []byte) ([]byte, error) {
 		return nil, errors.New("device has no certified runtime profile")
 	}
 	digest, _ := viewDigest(state.LKG.View)
-	return canonical(androidProfile{Schema: 1, NodeID: state.LKG.View.DeviceID, Head: headID(state.LKG.Head),
+	return canonical(androidProfile{Schema: 1, NodeID: state.LKG.View.DeviceID, Name: state.LKG.View.Name, Head: headID(state.LKG.Head),
 		Generation: state.LKG.Head.Index, ViewDigest: digest, Config: state.LKG.View.Runtime.Config,
 		Routes: state.LKG.View.Routes, RecordID: recordID(body)})
 }

@@ -231,7 +231,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     val probe = activateAndProbe(candidate)
                     ensureConnectionWanted()
                     val committed = manager.candidateActivated(candidate)
-                    connected(committed, probe, "已验证并激活 snapshot ${committed.snapshot}")
+                    connected(committed, probe, "已验证并激活配置 ${committed.profileName}")
                     return
                 } catch (cancelled: CancellationException) {
                     closeResources()
@@ -244,7 +244,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     if (fallback != null) {
                         val probe = activateAndProbe(fallback)
                         ensureConnectionWanted()
-                        connected(fallback, probe, "候选失败，沿用 LKG ${fallback.snapshot}")
+                        connected(fallback, probe, "新配置验证失败，继续使用 ${fallback.profileName}")
                         return
                     }
                     throw candidateError
@@ -255,7 +255,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             if (current != null) {
                 val probe = activateAndProbe(current)
                 ensureConnectionWanted()
-                connected(current, probe, "已激活认证 LKG · ${current.snapshot}")
+                connected(current, probe, "已激活配置 ${current.profileName}")
                 return
             }
             error("请先通过私有 Enrollment 完成正式入网")
