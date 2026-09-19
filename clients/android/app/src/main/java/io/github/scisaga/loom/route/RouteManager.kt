@@ -2,6 +2,8 @@ package io.github.scisaga.loom.route
 
 import android.content.Context
 import io.github.scisaga.loom.enrollment.ManagedProfile
+import io.github.scisaga.loom.profiles.ProfileCatalog
+import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loom.vpn.ProbeResult
 import io.github.scisaga.loomcore.Loomcore
@@ -9,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -65,94 +68,100 @@ internal data class AppliedSelector(
 /** Applies the shared pure selection and only publishes selector readback. */
 class RouteManager private constructor(context: Context) {
     private val protected = EncryptedStore(context.applicationContext)
+    private val catalog = ProfileCatalog.get(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val operation = Mutex()
-    private val mutableStatus = MutableStateFlow(RouteStatus())
-    val status = mutableStatus.asStateFlow()
+    private val profiles = mutableMapOf<String, ProfileRuntime>()
 
-    @Volatile private var availableProfile: ManagedProfile? = null
-    @Volatile private var runningProfile: ManagedProfile? = null
-    @Volatile private var generation = ""
-    @Volatile private var networkIdentity = ""
-    private var actual = linkedMapOf<String, String>()
-    private var application: AppliedRoute? = null
+    fun status(profileId: String): StateFlow<RouteStatus> = runtime(profileId).mutableStatus.asStateFlow()
 
-    fun profileAvailable(profile: ManagedProfile) {
+    fun profileAvailable(profileId: String, profile: ManagedProfile) {
+        val runtime = runtime(profileId)
         scope.launch {
             operation.withLock {
-                ensureNetworkGeneration()
-                availableProfile = profile
-                val projected = evaluate(profile, emptyMap())
-                publish(projected, running = runningProfile?.recordID == profile.recordID)
+                if (!catalog.contains(profileId)) return@withLock
+                ensureNetworkGeneration(profileId, runtime)
+                runtime.availableProfile = profile
+                val projected = evaluate(profileId, runtime, profile, emptyMap())
+                publish(runtime, projected, running = runtime.runningProfile?.recordID == profile.recordID)
             }
         }
     }
 
-    suspend fun beginNetworkGeneration(identity: String? = null): Boolean = operation.withLock {
-        ensureNetworkGeneration()
-        if (identity == null || identity == networkIdentity) return@withLock false
+    suspend fun beginNetworkGeneration(profileId: String, identity: String? = null): Boolean = operation.withLock {
+        val runtime = runtime(profileId)
+        ensureNetworkGeneration(profileId, runtime)
+        if (identity == null || identity == runtime.networkIdentity) return@withLock false
         require(identity.isNotBlank()) { "底层网络身份不能为空" }
-        generation = UUID.randomUUID().toString()
-        networkIdentity = identity
-        actual = linkedMapOf()
-        application = null
-        protected.put(NETWORK_GENERATION, generation.encodeToByteArray())
-        protected.put(NETWORK_IDENTITY, identity.encodeToByteArray())
-        protected.put(OBSERVATIONS, "[]".encodeToByteArray())
+        runtime.generation = UUID.randomUUID().toString()
+        runtime.networkIdentity = identity
+        runtime.actual = linkedMapOf()
+        runtime.application = null
+        protected.put(ProfileStorage.networkGeneration(profileId), runtime.generation.encodeToByteArray())
+        protected.put(ProfileStorage.networkIdentity(profileId), identity.encodeToByteArray())
+        protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
         true
     }
 
-    internal suspend fun applyToRunning(profile: ManagedProfile): AppliedRoute = operation.withLock {
-        ensureNetworkGeneration()
-        mutableStatus.value = mutableStatus.value.copy(busy = true, detail = "正在应用候选并读回 selector…")
-        val initial = evaluate(profile, actual)
+    internal suspend fun applyToRunning(profileId: String, profile: ManagedProfile): AppliedRoute = operation.withLock {
+        val runtime = runtime(profileId)
+        ensureNetworkGeneration(profileId, runtime)
+        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(busy = true, detail = "正在应用候选并读回 selector…")
+        val initial = evaluate(profileId, runtime, profile, runtime.actual)
         val client = SelectorClient(profile.config)
         val current = client.readCurrent(initial.selectors)
-        val desired = evaluate(profile, current)
+        val desired = evaluate(profileId, runtime, profile, current)
         client.apply(desired.selectors)
         val readback = client.readCurrent(desired.selectors)
         check(desired.selectors.all { readback[it.selector] == it.candidate }) { "selector 回读与选择不一致" }
-        actual = LinkedHashMap(readback)
-        application = desired
-        runningProfile = profile
-        publish(desired, running = true)
+        runtime.actual = LinkedHashMap(readback)
+        runtime.application = desired
+        runtime.runningProfile = profile
+        publish(runtime, desired, running = true)
         desired
     }
 
-    fun select(mode: RouteMode, exit: String = "") {
+    fun select(profileId: String, mode: RouteMode, exit: String = "") {
+        val runtime = runtime(profileId)
         scope.launch {
             operation.withLock {
+                if (!catalog.contains(profileId)) return@withLock
                 val preference = JSONObject().put("schema", 1).put("mode", mode.wire)
                     .apply { if (mode == RouteMode.FIXED_EXIT) put("exit", exit) }
                     .toString().encodeToByteArray()
-                protected.put(PREFERENCE, preference)
-                val profile = runningProfile ?: availableProfile ?: return@withLock
-                if (runningProfile != null) {
-                    val desired = evaluate(profile, actual)
-                    SelectorClient(profile.config).apply(desired.selectors)
-                    actual = LinkedHashMap(SelectorClient(profile.config).readCurrent(desired.selectors))
-                    application = desired
-                    publish(desired, running = true)
+                protected.put(ProfileStorage.routePreference(profileId), preference)
+                val available = runtime.runningProfile ?: runtime.availableProfile ?: return@withLock
+                if (runtime.runningProfile != null) {
+                    val desired = evaluate(profileId, runtime, available, runtime.actual)
+                    SelectorClient(available.config).apply(desired.selectors)
+                    runtime.actual = LinkedHashMap(SelectorClient(available.config).readCurrent(desired.selectors))
+                    runtime.application = desired
+                    publish(runtime, desired, running = true)
                 } else {
-                    publish(evaluate(profile, emptyMap()), running = false)
+                    publish(runtime, evaluate(profileId, runtime, available, emptyMap()), running = false)
                 }
             }
         }
     }
 
     /** Records at most one business result for each selected candidate in this network generation. */
-    internal suspend fun recordBusinessOutcome(profile: ManagedProfile, probe: ProbeResult): AppliedRoute = operation.withLock {
-        val currentApplication = checkNotNull(application) { "尚未应用候选" }
-        val observations = observations()
+    internal suspend fun recordBusinessOutcome(
+        profileId: String,
+        profile: ManagedProfile,
+        probe: ProbeResult,
+    ): AppliedRoute = operation.withLock {
+        val runtime = runtime(profileId)
+        val currentApplication = checkNotNull(runtime.application) { "尚未应用候选" }
+        val observations = observations(profileId)
         val now = Instant.now().truncatedTo(ChronoUnit.SECONDS)
         val existing = observations.objects().map { it.getString("candidate_id") to it.getString("network_generation") }.toSet()
         currentApplication.selectors.distinctBy(AppliedSelector::candidate).forEach { selected ->
             // Direct participates in selection without a synthetic latency measurement.
-            if (selected.chain.isEmpty() || selected.candidate to generation in existing) return@forEach
+            if (selected.chain.isEmpty() || selected.candidate to runtime.generation in existing) return@forEach
             observations.put(
                 JSONObject()
                     .put("candidate_id", selected.candidate)
-                    .put("network_generation", generation)
+                    .put("network_generation", runtime.generation)
                     .put("scope", selected.selector)
                     .put("result", if (probe.healthy) "available" else "unavailable")
                     .put("action", "dns_https")
@@ -161,42 +170,69 @@ class RouteManager private constructor(context: Context) {
             )
         }
         val sorted = observations.objects().sortedBy { it.getString("candidate_id") }
-        protected.put(OBSERVATIONS, JSONArray(sorted).toString().encodeToByteArray())
-        val next = evaluate(profile, actual)
+        protected.put(ProfileStorage.observations(profileId), JSONArray(sorted).toString().encodeToByteArray())
+        val next = evaluate(profileId, runtime, profile, runtime.actual)
         if (next.selectors != currentApplication.selectors) {
             val client = SelectorClient(profile.config)
             client.apply(next.selectors)
-            actual = LinkedHashMap(client.readCurrent(next.selectors))
+            runtime.actual = LinkedHashMap(client.readCurrent(next.selectors))
         }
-        application = next
-        publish(next, running = true, observation = if (probe.healthy) "真实 DNS/HTTPS 可用" else "真实 DNS/HTTPS 不可用；已切换候选")
+        runtime.application = next
+        publish(
+            runtime,
+            next,
+            running = true,
+            observation = if (probe.healthy) "真实 DNS/HTTPS 可用" else "真实 DNS/HTTPS 不可用；已切换候选",
+        )
         next
     }
 
-    fun reportObservations(): ByteArray = synchronized(this) {
-        val currentGeneration = generation
-        val values = observations().objects().filter { it.getString("network_generation") == currentGeneration }
-            .sortedBy { it.getString("candidate_id") }
-        JSONArray(values).toString().encodeToByteArray()
+    fun reportObservations(profileId: String): ByteArray {
+        val runtime = runtime(profileId)
+        return synchronized(runtime) {
+            val currentGeneration = runtime.generation
+            val values = observations(profileId).objects().filter { it.getString("network_generation") == currentGeneration }
+                .sortedBy { it.getString("candidate_id") }
+            JSONArray(values).toString().encodeToByteArray()
+        }
     }
 
-    fun selectedCandidate(): String = application?.selectors?.firstOrNull()?.candidate.orEmpty()
+    fun selectedCandidate(profileId: String): String =
+        runtime(profileId).application?.selectors?.firstOrNull()?.candidate.orEmpty()
 
-    fun tunnelStopped() {
-        runningProfile = null
-        application = null
-        actual = linkedMapOf()
-        mutableStatus.value = mutableStatus.value.copy(running = false, busy = false)
+    suspend fun tunnelStopped(profileId: String) = operation.withLock {
+        val runtime = runtime(profileId)
+        runtime.runningProfile = null
+        runtime.application = null
+        runtime.actual = linkedMapOf()
+        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(running = false, busy = false)
     }
 
-    private fun evaluate(profile: ManagedProfile, current: Map<String, String>): AppliedRoute {
+    suspend fun removeProfile(profileId: String) = operation.withLock {
+        require(ProfileStorage.validId(profileId)) { "配置标识无效" }
+        synchronized(profiles) {
+            check(profiles[profileId]?.runningProfile == null) { "运行中的配置不能删除" }
+            profiles.remove(profileId)
+        }
+        protected.remove(ProfileStorage.routePreference(profileId))
+        protected.remove(ProfileStorage.observations(profileId))
+        protected.remove(ProfileStorage.networkGeneration(profileId))
+        protected.remove(ProfileStorage.networkIdentity(profileId))
+    }
+
+    private fun evaluate(
+        profileId: String,
+        runtime: ProfileRuntime,
+        profile: ManagedProfile,
+        current: Map<String, String>,
+    ): AppliedRoute {
         val currentBody = JSONObject(current).toString().encodeToByteArray()
         val body = Loomcore.evaluateAndroidRoutes(
             profile.routes.encodeToByteArray(),
-            observations().toString().encodeToByteArray(),
-            protected.get(PREFERENCE) ?: ByteArray(0),
+            observations(profileId).toString().encodeToByteArray(),
+            protected.get(ProfileStorage.routePreference(profileId)) ?: ByteArray(0),
             currentBody,
-            generation.ifBlank { "startup" },
+            runtime.generation.ifBlank { "startup" },
             Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
         )
         val root = JSONObject(body.decodeToString())
@@ -216,27 +252,32 @@ class RouteManager private constructor(context: Context) {
         )
     }
 
-    private fun observations(): JSONArray = protected.get(OBSERVATIONS)?.let {
+    private fun observations(profileId: String): JSONArray = protected.get(ProfileStorage.observations(profileId))?.let {
         runCatching { JSONArray(it.decodeToString()) }.getOrNull()
     } ?: JSONArray()
 
-    private fun ensureNetworkGeneration() {
-        if (generation.isNotBlank()) return
-        generation = protected.get(NETWORK_GENERATION)?.decodeToString().orEmpty()
-        networkIdentity = protected.get(NETWORK_IDENTITY)?.decodeToString().orEmpty()
-        if (generation.isNotBlank()) return
-        generation = UUID.randomUUID().toString()
-        protected.put(NETWORK_GENERATION, generation.encodeToByteArray())
+    private fun ensureNetworkGeneration(profileId: String, runtime: ProfileRuntime) {
+        if (runtime.generation.isNotBlank()) return
+        runtime.generation = protected.get(ProfileStorage.networkGeneration(profileId))?.decodeToString().orEmpty()
+        runtime.networkIdentity = protected.get(ProfileStorage.networkIdentity(profileId))?.decodeToString().orEmpty()
+        if (runtime.generation.isNotBlank()) return
+        runtime.generation = UUID.randomUUID().toString()
+        protected.put(ProfileStorage.networkGeneration(profileId), runtime.generation.encodeToByteArray())
     }
 
-    private fun publish(route: AppliedRoute, running: Boolean, observation: String = mutableStatus.value.observationDetail) {
+    private fun publish(
+        runtime: ProfileRuntime,
+        route: AppliedRoute,
+        running: Boolean,
+        observation: String = runtime.mutableStatus.value.observationDetail,
+    ) {
         val label = when (route.mode) {
             RouteMode.DIRECT -> "Direct"
             RouteMode.AUTO -> "Auto"
             RouteMode.FIXED_EXIT -> "指定出口 ${route.exit}"
         }
         val now = Instant.now().truncatedTo(ChronoUnit.SECONDS).toString()
-        mutableStatus.value = RouteStatus(
+        runtime.mutableStatus.value = RouteStatus(
             available = route.selectors.isNotEmpty(),
             mode = route.mode,
             exit = route.exit,
@@ -257,11 +298,22 @@ class RouteManager private constructor(context: Context) {
         )
     }
 
+    private fun runtime(profileId: String): ProfileRuntime {
+        require(ProfileStorage.validId(profileId)) { "配置标识无效" }
+        return synchronized(profiles) { profiles.getOrPut(profileId, ::ProfileRuntime) }
+    }
+
+    private class ProfileRuntime {
+        val mutableStatus = MutableStateFlow(RouteStatus())
+        @Volatile var availableProfile: ManagedProfile? = null
+        @Volatile var runningProfile: ManagedProfile? = null
+        @Volatile var generation: String = ""
+        @Volatile var networkIdentity: String = ""
+        @Volatile var actual = linkedMapOf<String, String>()
+        @Volatile var application: AppliedRoute? = null
+    }
+
     companion object {
-        private const val PREFERENCE = "route-preference-v2"
-        private const val OBSERVATIONS = "route-observations-v2"
-        private const val NETWORK_GENERATION = "network-generation-v2"
-        private const val NETWORK_IDENTITY = "network-identity-v2"
         @Volatile private var instance: RouteManager? = null
 
         fun get(context: Context): RouteManager = instance ?: synchronized(this) {

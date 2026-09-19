@@ -2,6 +2,7 @@ package io.github.scisaga.loom.enrollment
 
 import android.content.Context
 import io.github.scisaga.libbox.Libbox
+import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONObject
@@ -11,7 +12,7 @@ internal fun libboxWorkingDirectory(filesDir: File): File = filesDir.resolve("li
 
 data class ManagedProfile(
     val nodeID: String,
-    val profileName: String,
+    val deviceName: String,
     val snapshot: String,
     val generation: Long,
     val viewDigest: String,
@@ -20,59 +21,67 @@ data class ManagedProfile(
     internal val recordID: String,
 )
 
-/** Stores one protected identity/LKG and at most one certified candidate. */
-internal class ManagedProfileStore(context: Context) {
-    private val protected = EncryptedStore(context)
+/** Stores one profile's protected identity/LKG and at most one certified candidate. */
+internal class ManagedProfileStore(context: Context, profileId: String) {
+    private val protected = EncryptedStore(context.applicationContext)
+    private val stateKey = ProfileStorage.state(profileId)
+    private val candidateKey = ProfileStorage.candidate(profileId)
 
     @Synchronized
-    fun state(): ByteArray? = protected.get(DEVICE_STATE)?.also(Loomcore::validateAndroidDeviceState)
+    fun state(): ByteArray? = protected.get(stateKey)?.also(Loomcore::validateAndroidDeviceState)
 
     @Synchronized
     fun saveState(body: ByteArray) {
         Loomcore.validateAndroidDeviceState(body)
-        protected.put(DEVICE_STATE, body)
-        check(protected.get(DEVICE_STATE)?.contentEquals(body) == true) { "设备状态持久化回读不一致" }
+        protected.put(stateKey, body)
+        check(protected.get(stateKey)?.contentEquals(body) == true) { "设备状态持久化回读不一致" }
     }
 
     @Synchronized
     fun loadCurrent(): ManagedProfile? = state()?.let(::decodeProfileOrNull)
 
     @Synchronized
-    fun loadCandidate(): ManagedProfile? = protected.get(CANDIDATE)?.let(::decodeProfile)
+    fun loadCandidate(): ManagedProfile? = protected.get(candidateKey)?.let(::decodeProfile)
 
     @Synchronized
     fun stageCandidate(body: ByteArray): ManagedProfile {
         Loomcore.validateAndroidDeviceState(body)
         val profile = decodeProfile(body)
-        protected.put(CANDIDATE, body)
-        check(protected.get(CANDIDATE)?.contentEquals(body) == true) { "候选 LKG 持久化回读不一致" }
+        protected.put(candidateKey, body)
+        check(protected.get(candidateKey)?.contentEquals(body) == true) { "候选 LKG 持久化回读不一致" }
         return profile
     }
 
     @Synchronized
     fun commitCandidate(recordID: String): ManagedProfile {
-        val body = checkNotNull(protected.get(CANDIDATE)) { "待激活候选已不存在" }
+        val body = checkNotNull(protected.get(candidateKey)) { "待激活候选已不存在" }
         val profile = decodeProfile(body)
         check(profile.recordID == recordID) { "待激活候选在验证期间发生变化" }
-        protected.put(DEVICE_STATE, body)
-        check(protected.get(DEVICE_STATE)?.contentEquals(body) == true) { "LKG 提交回读不一致" }
-        protected.remove(CANDIDATE)
+        protected.put(stateKey, body)
+        check(protected.get(stateKey)?.contentEquals(body) == true) { "LKG 提交回读不一致" }
+        protected.remove(candidateKey)
         return profile
     }
 
     @Synchronized
     fun discardCandidate(recordID: String): Boolean {
-        val body = protected.get(CANDIDATE) ?: return true
+        val body = protected.get(candidateKey) ?: return true
         if (decodeProfile(body).recordID != recordID) return false
-        protected.remove(CANDIDATE)
+        protected.remove(candidateKey)
         return true
     }
 
     @Synchronized
     fun clearUncompletedIdentity() {
         check(loadCurrent() == null) { "设备已有正式 LKG，不会删除身份" }
-        protected.remove(CANDIDATE)
-        protected.remove(DEVICE_STATE)
+        protected.remove(candidateKey)
+        protected.remove(stateKey)
+    }
+
+    @Synchronized
+    fun clear() {
+        protected.remove(candidateKey)
+        protected.remove(stateKey)
     }
 
     fun decodeProfile(body: ByteArray): ManagedProfile {
@@ -82,7 +91,7 @@ internal class ManagedProfileStore(context: Context) {
         Libbox.checkConfig(config)
         return ManagedProfile(
             nodeID = root.getString("node_id"),
-            profileName = root.getString("name"),
+            deviceName = root.getString("device_name"),
             snapshot = root.getString("head"),
             generation = root.getLong("generation"),
             viewDigest = root.getString("view_digest"),
@@ -93,9 +102,4 @@ internal class ManagedProfileStore(context: Context) {
     }
 
     private fun decodeProfileOrNull(body: ByteArray): ManagedProfile? = runCatching { decodeProfile(body) }.getOrNull()
-
-    companion object {
-        private const val DEVICE_STATE = "device-state-v2"
-        private const val CANDIDATE = "device-candidate-v2"
-    }
 }

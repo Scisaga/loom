@@ -38,6 +38,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -64,6 +65,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
@@ -75,12 +77,16 @@ import io.github.scisaga.loom.enrollment.EnrollmentPhase
 import io.github.scisaga.loom.enrollment.EnrollmentStatus
 import io.github.scisaga.loom.enrollment.InviteScanner
 import io.github.scisaga.libbox.Libbox
+import io.github.scisaga.loom.profiles.ConnectionProfile
+import io.github.scisaga.loom.profiles.ProfileCatalog
+import io.github.scisaga.loom.profiles.checkedProfileName
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.route.RoutePathStatus
 import io.github.scisaga.loom.route.RouteStatus
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.LoomVpnService
+import io.github.scisaga.loom.vpn.VpnConnectionPreference
 import io.github.scisaga.loom.vpn.VpnRuntime
 import io.github.scisaga.loom.vpn.VpnStatus
 import io.github.scisaga.loomcore.Loomcore
@@ -103,17 +109,24 @@ private enum class HomeTab(val label: String) {
 }
 
 class MainActivity : ComponentActivity() {
+    private val catalog by lazy { ProfileCatalog.get(this) }
     private val enrollment by lazy { EnrollmentManager.get(this) }
     private var notificationsAllowed by mutableStateOf(true)
+    private var pendingConnectProfileId = ""
+    private var pendingImportProfileId = ""
+    private var profileError by mutableStateOf<String?>(null)
 
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val profileId = pendingConnectProfileId
+        pendingConnectProfileId = ""
         if (it.resultCode == RESULT_OK) {
-            connect()
+            if (catalog.contains(profileId)) connect(profileId) else profileError = "原连接配置已不存在"
         } else {
             VpnRuntime.update(
                 VpnStatus(
                     phase = ConnectionPhase.ERROR,
                     detail = "未获得 Android VPN 权限；请在系统确认页允许 Loom 建立 VPN",
+                    requestedProfileId = profileId,
                 ),
             )
         }
@@ -124,36 +137,58 @@ class MainActivity : ComponentActivity() {
     }
 
     private val inviteFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val profileId = pendingImportProfileId
+        pendingImportProfileId = ""
         if (uri == null) return@registerForActivityResult
+        if (!catalog.contains(profileId)) {
+            profileError = "原导入配置已不存在"
+            return@registerForActivityResult
+        }
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val body = contentResolver.openInputStream(uri)?.use { stream ->
                     readBounded(stream, MAX_INVITE_BYTES)
                 } ?: error("无法读取加入文件")
                 require(body.isNotEmpty() && body.size <= MAX_INVITE_BYTES) { "加入文件必须小于 16 KiB" }
-                enrollment.importInvite(body.decodeToString())
-            }.onFailure(enrollment::reportImportError)
+                enrollment.importInvite(profileId, body.decodeToString())
+            }.onFailure { enrollment.reportImportError(profileId, it) }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingConnectProfileId = savedInstanceState?.getString(STATE_PENDING_CONNECT).orEmpty()
+        pendingImportProfileId = savedInstanceState?.getString(STATE_PENDING_IMPORT).orEmpty()
         notificationsAllowed = notificationPermissionGranted()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !notificationsAllowed
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        enrollment.initialize()
+        enrollment.initialize(catalog.state.value.viewedProfileId)
         setContent {
             LoomHome(
+                catalog = catalog,
                 enrollment = enrollment,
-                onToggle = ::toggle,
-                onImportFile = { inviteFile.launch(arrayOf("*/*")) },
+                onConnect = ::requestConnection,
+                onDisconnect = ::disconnect,
+                onImportFile = {
+                    pendingImportProfileId = it
+                    inviteFile.launch(arrayOf("*/*"))
+                },
+                onDeleteProfile = ::deleteProfile,
                 notificationsAllowed = notificationsAllowed,
                 onOpenNotificationSettings = ::openNotificationSettings,
+                profileError = profileError,
+                onDismissProfileError = { profileError = null },
             )
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_PENDING_CONNECT, pendingConnectProfileId)
+        outState.putString(STATE_PENDING_IMPORT, pendingImportProfileId)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
@@ -167,23 +202,64 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun toggle(phase: ConnectionPhase) {
-        if (phase == ConnectionPhase.CONNECTED || phase == ConnectionPhase.STARTING) {
-            ContextCompat.startForegroundService(
-                this,
-                Intent(this, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_DISCONNECT),
-            )
-            return
-        }
+    private fun requestConnection(profileId: String) {
+        check(catalog.contains(profileId)) { "连接配置不存在" }
+        pendingConnectProfileId = profileId
         val permission = VpnService.prepare(this)
-        if (permission != null) vpnPermission.launch(permission) else connect()
+        if (permission != null) vpnPermission.launch(permission) else connect(profileId)
     }
 
-    private fun connect() {
+    private fun connect(profileId: String) {
         ContextCompat.startForegroundService(
             this,
-            Intent(this, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_CONNECT),
+            Intent(this, LoomVpnService::class.java)
+                .setAction(LoomVpnService.ACTION_CONNECT)
+                .putExtra(LoomVpnService.EXTRA_PROFILE_ID, profileId),
         )
+    }
+
+    private fun disconnect() {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_DISCONNECT),
+        )
+    }
+
+    private fun deleteProfile(profileId: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                val runtime = VpnRuntime.status.value
+                check(
+                    runtime.phase !in setOf(
+                        ConnectionPhase.STARTING,
+                        ConnectionPhase.CONNECTED,
+                        ConnectionPhase.STOPPING,
+                    ) ||
+                        profileId !in setOf(runtime.requestedProfileId, runtime.activeProfileId),
+                ) { "当前连接配置必须先断开" }
+                enrollment.quiesceProfile(profileId)
+                val next = runCatching { catalog.removeIndex(profileId) }.getOrElse { error ->
+                    enrollment.initialize(profileId)
+                    throw error
+                }
+                val preference = VpnConnectionPreference(this@MainActivity)
+                if (preference.profileId() == profileId) preference.save(false, next.viewedProfileId)
+                VpnRuntime.transform { current ->
+                    if (profileId in setOf(current.requestedProfileId, current.activeProfileId)) {
+                        VpnStatus(alwaysOn = current.alwaysOn)
+                    } else {
+                        current
+                    }
+                }
+                enrollment.removeProfile(profileId)
+                RouteManager.get(this@MainActivity).removeProfile(profileId)
+                enrollment.initialize(next.viewedProfileId)
+            }.onFailure {
+                withContext(Dispatchers.Main) {
+                    profileError = it.message ?: it.javaClass.simpleName
+                }
+            }
+        }
     }
 
     private fun notificationPermissionGranted(): Boolean =
@@ -198,29 +274,53 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val MAX_INVITE_BYTES = 16 * 1024
+        private const val STATE_PENDING_CONNECT = "pending-connect-profile-id"
+        private const val STATE_PENDING_IMPORT = "pending-import-profile-id"
     }
 }
 
 @Composable
 private fun LoomHome(
+    catalog: ProfileCatalog,
     enrollment: EnrollmentManager,
-    onToggle: (ConnectionPhase) -> Unit,
-    onImportFile: () -> Unit,
+    onConnect: (String) -> Unit,
+    onDisconnect: () -> Unit,
+    onImportFile: (String) -> Unit,
+    onDeleteProfile: (String) -> Unit,
     notificationsAllowed: Boolean,
     onOpenNotificationSettings: () -> Unit,
+    profileError: String?,
+    onDismissProfileError: () -> Unit,
 ) {
     val status by VpnRuntime.status.collectAsStateWithLifecycle()
-    val join by enrollment.status.collectAsStateWithLifecycle()
+    val profiles by catalog.state.collectAsStateWithLifecycle()
+    val viewedProfile = profiles.viewed
+    val enrollmentStatus = remember(viewedProfile.id) { enrollment.status(viewedProfile.id) }
+    val join by enrollmentStatus.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val routeManager = remember(context) { RouteManager.get(context) }
-    val route by routeManager.status.collectAsStateWithLifecycle()
+    val viewedRouteStatus = remember(viewedProfile.id) { routeManager.status(viewedProfile.id) }
+    val route by viewedRouteStatus.collectAsStateWithLifecycle()
+    val activeProfile = profiles.profiles.firstOrNull { it.id == status.activeProfileId }
+    val requestedProfile = profiles.profiles.firstOrNull { it.id == status.requestedProfileId }
+    val headerProfile = activeProfile ?: requestedProfile ?: viewedProfile
+    val activeRouteId = status.activeProfileId.ifBlank { viewedProfile.id }
+    val activeRouteStatus = remember(activeRouteId) { routeManager.status(activeRouteId) }
+    val activeRoute by activeRouteStatus.collectAsStateWithLifecycle()
     val hasManagedProfile = join.snapshot.isNotEmpty()
     var diagnostics by remember { mutableStateOf("正在检查…") }
     var scanning by remember { mutableStateOf(false) }
+    var profileSheet by remember { mutableStateOf(false) }
+    var addingProfile by remember { mutableStateOf(false) }
+    var addName by remember { mutableStateOf(suggestedProfileName(profiles.profiles)) }
+    var renaming by remember { mutableStateOf<ConnectionProfile?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var deleting by remember { mutableStateOf<ConnectionProfile?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(HomeTab.CONNECTION) }
     val connectionScroll = rememberScrollState()
     val configurationScroll = rememberScrollState()
     val diagnosticsScroll = rememberScrollState()
+    LaunchedEffect(viewedProfile.id) { enrollment.initialize(viewedProfile.id) }
     LaunchedEffect(Unit) {
         diagnostics = withContext(Dispatchers.IO) {
             runCatching {
@@ -248,7 +348,7 @@ private fun LoomHome(
             },
         ) { contentPadding ->
             Column(Modifier.fillMaxSize().padding(contentPadding)) {
-                LoomHeader()
+                LoomHeader(headerProfile.name, status)
                 when (selectedTab) {
                     HomeTab.CONNECTION -> HomePage(
                         title = "连接",
@@ -256,7 +356,16 @@ private fun LoomHome(
                         scrollState = connectionScroll,
                         modifier = Modifier.weight(1f),
                     ) {
-                        ConnectionCard(status, join, hasManagedProfile, onToggle)
+                        ConnectionCard(
+                            status = status,
+                            viewedProfile = viewedProfile,
+                            activeProfile = activeProfile,
+                            requestedProfile = requestedProfile,
+                            hasManagedProfile = hasManagedProfile,
+                            onChoose = { profileSheet = true },
+                            onConnect = { onConnect(viewedProfile.id) },
+                            onDisconnect = onDisconnect,
+                        )
                         if (!hasManagedProfile) {
                             OutlinedButton(
                                 onClick = { selectedTab = HomeTab.CONFIGURATION },
@@ -266,9 +375,9 @@ private fun LoomHome(
                             }
                         }
                         CurrentPathCard(
-                            paths = route.currentPaths,
-                            running = route.running && status.phase == ConnectionPhase.CONNECTED,
-                            profileName = join.profileName,
+                            paths = activeRoute.currentPaths,
+                            running = activeRoute.running && status.phase == ConnectionPhase.CONNECTED,
+                            profileName = activeProfile?.name.orEmpty(),
                         )
                     }
 
@@ -278,27 +387,44 @@ private fun LoomHome(
                         scrollState = configurationScroll,
                         modifier = Modifier.weight(1f),
                     ) {
+                        ProfilesCard(
+                            index = profiles,
+                            vpn = status,
+                            onView = catalog::view,
+                            onAdd = {
+                                addName = suggestedProfileName(profiles.profiles)
+                                addingProfile = true
+                            },
+                            onRename = {
+                                renameText = it.name
+                                renaming = it
+                            },
+                            onDelete = { deleting = it },
+                        )
                         if (scanning) {
                             InviteScanner(
                                 onScanned = {
                                     scanning = false
-                                    enrollment.importInvite(it)
+                                    enrollment.importInvite(viewedProfile.id, it)
                                 },
                                 onCancel = { scanning = false },
                             )
                         } else if (join.phase == EnrollmentPhase.READY) {
-                            JoinedDeviceCard(join, enrollment::refreshConfiguration)
+                            JoinedDeviceCard(viewedProfile, join) {
+                                enrollment.refreshConfiguration(viewedProfile.id)
+                            }
                         } else {
                             EnrollmentCard(
+                                profile = viewedProfile,
                                 status = join,
                                 onScan = { scanning = true },
-                                onImportFile = onImportFile,
-                                onRetry = enrollment::retry,
-                                onRefresh = enrollment::refreshConfiguration,
-                                onAbandonPending = enrollment::abandonPending,
+                                onImportFile = { onImportFile(viewedProfile.id) },
+                                onRetry = { enrollment.retry(viewedProfile.id) },
+                                onRefresh = { enrollment.refreshConfiguration(viewedProfile.id) },
+                                onAbandonPending = { enrollment.abandonPending(viewedProfile.id) },
                             )
                         }
-                        RouteModeCard(route, routeManager::select)
+                        RouteModeCard(route) { mode, exit -> routeManager.select(viewedProfile.id, mode, exit) }
                         Text(
                             "配置身份、签名运行配置与连接模式均保存在本机受保护存储中。",
                             color = Muted,
@@ -313,16 +439,111 @@ private fun LoomHome(
                         scrollState = diagnosticsScroll,
                         modifier = Modifier.weight(1f),
                     ) {
-                        NetworkEvidenceCard(status, route, join.profileName, diagnostics)
+                        NetworkEvidenceCard(
+                            status,
+                            if (status.activeProfileId.isNotBlank()) activeRoute else route,
+                            activeProfile?.name ?: viewedProfile.name,
+                            status.deviceName.ifBlank { join.deviceName },
+                            diagnostics,
+                        )
                     }
                 }
             }
+        }
+
+        if (profileSheet) {
+            ProfilePickerSheet(
+                index = profiles,
+                activeProfileId = status.activeProfileId,
+                onSelect = catalog::view,
+                onDismiss = { profileSheet = false },
+            )
+        }
+        if (addingProfile) {
+            ProfileNameDialog(
+                title = "添加配置",
+                value = addName,
+                onValueChange = { addName = it.take(64) },
+                onDismiss = { addingProfile = false },
+                onConfirm = {
+                    val created = catalog.create(addName)
+                    enrollment.initialize(created.id)
+                    addingProfile = false
+                },
+            )
+        }
+        renaming?.let { profile ->
+            ProfileNameDialog(
+                title = "重命名配置",
+                value = renameText,
+                onValueChange = { renameText = it.take(64) },
+                onDismiss = { renaming = null },
+                onConfirm = {
+                    catalog.rename(profile.id, renameText)
+                    if (status.phase in setOf(ConnectionPhase.STARTING, ConnectionPhase.CONNECTED)) {
+                        ContextCompat.startForegroundService(
+                            context,
+                            Intent(context, LoomVpnService::class.java)
+                                .setAction(LoomVpnService.ACTION_SYNC_SYSTEM_POLICY),
+                        )
+                    }
+                    renaming = null
+                },
+            )
+        }
+        deleting?.let { profile ->
+            AlertDialog(
+                onDismissRequest = { deleting = null },
+                title = { Text("删除“${profile.name}”？") },
+                text = { Text("这会删除该配置在本机保存的身份、认证配置和连接偏好，不影响其他配置。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        deleting = null
+                        onDeleteProfile(profile.id)
+                    }) { Text("删除") }
+                },
+                dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } },
+            )
+        }
+        profileError?.let { error ->
+            AlertDialog(
+                onDismissRequest = onDismissProfileError,
+                title = { Text("配置操作失败") },
+                text = { Text(error) },
+                confirmButton = { TextButton(onClick = onDismissProfileError) { Text("确定") } },
+            )
         }
     }
 }
 
 @Composable
-private fun LoomHeader() {
+private fun ProfileNameDialog(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val valid = runCatching { checkedProfileName(value) }.isSuccess
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                label = { Text("配置名称") },
+                modifier = Modifier.testTag("profile-name-input"),
+            )
+        },
+        confirmButton = { TextButton(enabled = valid, onClick = onConfirm) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun LoomHeader(profileName: String, status: VpnStatus) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp),
         verticalAlignment = Alignment.Top,
@@ -333,18 +554,25 @@ private fun LoomHeader() {
             colorFilter = ColorFilter.tint(Ink),
             modifier = Modifier.size(32.dp).testTag("loom-mark"),
         )
-        Column(Modifier.padding(start = 9.dp).offset(y = (-4).dp)) {
+        Column(Modifier.padding(start = 9.dp).offset(y = (-4).dp).weight(1f)) {
             Text(
-                "LOOM",
+                "LOOM · $profileName",
                 color = Ink,
                 fontSize = 18.sp,
                 lineHeight = 20.sp,
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 2.sp,
                 modifier = Modifier.testTag("loom-wordmark"),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "ANDROID",
+                buildString {
+                    append("ANDROID · ")
+                    append(phaseText(status.phase))
+                    if (status.deviceName.isNotBlank()) append(" · ${status.deviceName}")
+                    if (status.generation > 0) append(" · 第 ${status.generation} 版")
+                },
                 color = Muted,
                 fontSize = 9.sp,
                 lineHeight = 12.sp,
@@ -461,11 +689,17 @@ internal fun enrollmentSummary(join: EnrollmentStatus): String = when {
 @Composable
 private fun ConnectionCard(
     status: VpnStatus,
-    join: EnrollmentStatus,
+    viewedProfile: ConnectionProfile,
+    activeProfile: ConnectionProfile?,
+    requestedProfile: ConnectionProfile?,
     hasManagedProfile: Boolean,
-    onToggle: (ConnectionPhase) -> Unit,
+    onChoose: () -> Unit,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
 ) {
     val running = status.phase in setOf(ConnectionPhase.STARTING, ConnectionPhase.CONNECTED)
+    val viewedIsRuntime = status.activeProfileId == viewedProfile.id ||
+        (status.phase == ConnectionPhase.STARTING && status.requestedProfileId == viewedProfile.id)
     Card(
         colors = CardDefaults.cardColors(containerColor = CardTint),
         shape = RoundedCornerShape(20.dp),
@@ -483,11 +717,23 @@ private fun ConnectionCard(
                 )
             }
             Text(
-                if (hasManagedProfile) join.profileName.ifBlank { "认证配置" } else "尚未加入网络",
+                when {
+                    status.phase == ConnectionPhase.CONNECTED && activeProfile != null ->
+                        "当前连接 · ${activeProfile.name}"
+                    status.phase == ConnectionPhase.STARTING && requestedProfile != null ->
+                        "正在连接 · ${requestedProfile.name}"
+                    status.phase == ConnectionPhase.ERROR && requestedProfile != null ->
+                        "连接失败 · ${requestedProfile.name}"
+                    hasManagedProfile -> "待连接 · ${viewedProfile.name}"
+                    else -> "${viewedProfile.name} · 尚未加入网络"
+                },
                 color = Muted,
                 fontSize = 13.sp,
                 modifier = Modifier.testTag("connection-profile-name"),
             )
+            TextButton(onClick = onChoose, modifier = Modifier.testTag("choose-profile")) {
+                Text(if (running && !viewedIsRuntime) "已选择 ${viewedProfile.name}" else "选择配置")
+            }
             if (status.detail.isNotBlank()) {
                 Text(
                     status.detail,
@@ -504,19 +750,20 @@ private fun ConnectionCard(
                 )
             }
             Button(
-                onClick = { onToggle(status.phase) },
+                onClick = { if (running && viewedIsRuntime) onDisconnect() else onConnect() },
                 enabled = status.phase != ConnectionPhase.STOPPING &&
-                    !(status.alwaysOn && running) &&
-                    (hasManagedProfile || running),
+                    !(status.alwaysOn && running && viewedIsRuntime) &&
+                    (hasManagedProfile || (running && viewedIsRuntime)),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("connection-toggle"),
                 colors = ButtonDefaults.buttonColors(containerColor = LoomGreen),
                 shape = RoundedCornerShape(14.dp),
             ) {
                 Text(
                     when {
-                        status.alwaysOn && running -> "由系统保持连接"
-                        running -> "断开"
-                        hasManagedProfile -> "连接"
+                        status.alwaysOn && running && viewedIsRuntime -> "由系统保持连接"
+                        running && viewedIsRuntime -> "断开"
+                        running -> "切换到 ${viewedProfile.name}"
+                        hasManagedProfile -> "连接 ${viewedProfile.name}"
                         else -> "请先加入网络"
                     },
                 )
@@ -525,8 +772,16 @@ private fun ConnectionCard(
     }
 }
 
+private fun suggestedProfileName(profiles: List<ConnectionProfile>): String {
+    val names = profiles.map(ConnectionProfile::name).toSet()
+    ('A'..'Z').firstOrNull { "Loom $it" !in names }?.let { return "Loom $it" }
+    var number = profiles.size + 1
+    while ("Loom $number" in names) number++
+    return "Loom $number"
+}
+
 @Composable
-private fun JoinedDeviceCard(status: EnrollmentStatus, onRefresh: () -> Unit) {
+private fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStatus, onRefresh: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -541,14 +796,18 @@ private fun JoinedDeviceCard(status: EnrollmentStatus, onRefresh: () -> Unit) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text("连接配置", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        status.profileName.ifBlank { "认证配置" },
+                        profile.name,
                         color = Ink,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.testTag("profile-name"),
                     )
                     Text(
-                        if (status.generation > 0) "第 ${status.generation} 版 · 配置签名已验证" else "配置签名已验证",
+                        buildString {
+                            if (status.deviceName.isNotBlank()) append("设备 ${status.deviceName} · ")
+                            if (status.generation > 0) append("第 ${status.generation} 版 · ")
+                            append("配置签名已验证")
+                        },
                         color = Muted,
                         fontSize = 12.sp,
                     )
@@ -682,6 +941,7 @@ private fun NetworkEvidenceCard(
     status: VpnStatus,
     route: RouteStatus,
     profileName: String,
+    deviceName: String,
     diagnostics: String,
 ) {
     Card(
@@ -691,7 +951,8 @@ private fun NetworkEvidenceCard(
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("网络诊断", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            if (profileName.isNotBlank()) Text(profileName, color = Muted, fontSize = 13.sp)
+            Text("配置：$profileName", color = Muted, fontSize = 13.sp)
+            if (deviceName.isNotBlank()) Text("设备：$deviceName", color = Muted, fontSize = 13.sp)
             Text(
                 "业务 DNS/HTTPS\n${status.dnsProbe} / ${status.httpsProbe}\n" +
                     "可信上报：${status.trustedReport}\n服务器观测：${route.observationDetail}",
@@ -737,6 +998,7 @@ private fun NotificationPermissionCard(onOpenSettings: () -> Unit) {
 
 @Composable
 private fun EnrollmentCard(
+    profile: ConnectionProfile,
     status: EnrollmentStatus,
     onScan: () -> Unit,
     onImportFile: () -> Unit,
@@ -772,13 +1034,19 @@ private fun EnrollmentCard(
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("加入网络", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text(enrollmentTitle(status.phase), color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "${profile.name} · ${enrollmentTitle(status.phase)}",
+                color = Ink,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+            )
             Text(status.detail, color = Muted, fontSize = 13.sp, modifier = Modifier.testTag("enrollment-status"))
-            if (status.profileName.isNotEmpty()) {
+            if (status.deviceName.isNotEmpty()) {
                 Text(
                     buildString {
-                        append(status.profileName)
+                        append(profile.name)
                         if (status.generation > 0) append(" · 第 ${status.generation} 版")
+                        append(" · 设备 ${status.deviceName}")
                     },
                     color = Ink,
                     fontSize = 12.sp,

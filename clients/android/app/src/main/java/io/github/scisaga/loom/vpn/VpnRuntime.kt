@@ -8,6 +8,10 @@ enum class ConnectionPhase { DISCONNECTED, STARTING, CONNECTED, STOPPING, ERROR 
 data class VpnStatus(
     val phase: ConnectionPhase = ConnectionPhase.DISCONNECTED,
     val detail: String = "未连接",
+    val requestedProfileId: String = "",
+    val activeProfileId: String = "",
+    val deviceName: String = "",
+    val generation: Long = 0,
     val dnsProbe: String = "未检查",
     val httpsProbe: String = "未检查",
     val trustedReport: String = "未上报",

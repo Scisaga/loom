@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.core.content.ContextCompat
 import io.github.scisaga.loom.BuildConfig
 import io.github.scisaga.loom.enrollment.EnrollmentManager
+import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.readBounded
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.RouteMode
@@ -17,20 +18,21 @@ import java.io.File
 class DebugVpnControlReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         check(BuildConfig.DEBUG) { "debug VPN control is unavailable in release builds" }
+        val viewedProfileId = ProfileCatalog.get(context).state.value.viewedProfileId
         if (intent.action == ACTION_IMPORT_INVITE) {
-            importPendingInvite(context)
+            importPendingInvite(context, viewedProfileId)
             return
         }
         if (intent.action == ACTION_RETRY_ENROLLMENT) {
-            EnrollmentManager.get(context).retry()
+            EnrollmentManager.get(context).retry(viewedProfileId)
             return
         }
         if (intent.action == ACTION_ABANDON_PENDING) {
-            EnrollmentManager.get(context).abandonPending()
+            EnrollmentManager.get(context).abandonPending(viewedProfileId)
             return
         }
         if (intent.action == ACTION_ENROLLMENT_STATUS) {
-            val status = EnrollmentManager.get(context).status.value
+            val status = EnrollmentManager.get(context).status(viewedProfileId).value
             resultData = buildString {
                 append("phase=").append(status.phase.name)
                 append(";abandonable=").append(status.canAbandonPending)
@@ -41,7 +43,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
             return
         }
         if (intent.action == ACTION_ROUTE_STATUS) {
-            val status = RouteManager.get(context).status.value
+            val status = RouteManager.get(context).status(viewedProfileId).value
             resultData = buildString {
                 append("available=").append(status.available)
                 append(";running=").append(status.running)
@@ -66,23 +68,25 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         }
         if (intent.action == ACTION_ROUTE_DIRECT || intent.action == ACTION_ROUTE_AUTO) {
             RouteManager.get(context).select(
+                viewedProfileId,
                 if (intent.action == ACTION_ROUTE_DIRECT) RouteMode.DIRECT else RouteMode.AUTO,
             )
             return
         }
         val serviceAction = when (intent.action) {
             ACTION_CONNECT -> LoomVpnService.ACTION_CONNECT
-            ACTION_ENROLLMENT_KEEPALIVE -> LoomVpnService.ACTION_ENROLLMENT_KEEPALIVE
             ACTION_DISCONNECT -> LoomVpnService.ACTION_DISCONNECT
             else -> return
         }
         ContextCompat.startForegroundService(
             context,
-            Intent(context, LoomVpnService::class.java).setAction(serviceAction),
+            Intent(context, LoomVpnService::class.java)
+                .setAction(serviceAction)
+                .putExtra(LoomVpnService.EXTRA_PROFILE_ID, viewedProfileId),
         )
     }
 
-    private fun importPendingInvite(context: Context) {
+    private fun importPendingInvite(context: Context, profileId: String) {
         val manager = EnrollmentManager.get(context)
         var pending: File? = null
         val result = runCatching {
@@ -101,12 +105,13 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
             raw
         }
         if (result.isFailure) pending?.delete()
-        result.onSuccess(manager::importInvite).onFailure(manager::reportImportError)
+        result
+            .onSuccess { manager.importInvite(profileId, it) }
+            .onFailure { manager.reportImportError(profileId, it) }
     }
 
     companion object {
         const val ACTION_CONNECT = "io.github.scisaga.loom.debug.CONNECT"
-        const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.debug.ENROLLMENT_KEEPALIVE"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.debug.DISCONNECT"
         const val ACTION_IMPORT_INVITE = "io.github.scisaga.loom.debug.IMPORT_INVITE"
         const val ACTION_RETRY_ENROLLMENT = "io.github.scisaga.loom.debug.RETRY_ENROLLMENT"

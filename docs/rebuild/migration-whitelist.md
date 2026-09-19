@@ -22,7 +22,8 @@
 
 - `internal/webui/static/*` 中的浏览器 SPA、样式、图标和拓扑交互；
 - Releases、Devices、Topology、Live paths、Services、Events 和 SSOT 页面；
-- Android 的主界面、Enrollment 窗口、profile/选路/状态交互、颜色、图标与 launcher 资源；
+- Android 的主界面、Enrollment 窗口、[本机 profile 命名与切换](android-profile-model.md)、
+  选路/状态交互、颜色、图标与 launcher 资源；
 - Windows 的 Misaka 界面、profile 管理、选路与路径详情交互、状态图标、manifest 和原生资源；
 - 双环拓扑不因聚焦或当前路径重排，当前路径只作只读叠加；
 - 浏览器 TLS、管理员证书、same-origin 与 read/admin Unix socket 权限边界；

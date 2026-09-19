@@ -11,7 +11,7 @@ import (
 	"loom/internal/clientmodel"
 )
 
-func TestAndroidDeviceProfileProjectsCertifiedName(t *testing.T) {
+func TestAndroidDeviceProfileProjectsCertifiedDeviceName(t *testing.T) {
 	controlPublic, controlPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestAndroidDeviceProfileProjectsCertifiedName(t *testing.T) {
 	if err := decodeStrictJSON(profileBody, 8<<20, &profile); err != nil {
 		t.Fatal(err)
 	}
-	if profile.Name != "Loom A" {
-		t.Fatalf("certified display name was not projected: %q", profile.Name)
+	if profile.DeviceName != "Loom A" {
+		t.Fatalf("certified device name was not projected: %q", profile.DeviceName)
 	}
 }
