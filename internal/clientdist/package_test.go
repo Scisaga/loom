@@ -112,7 +112,7 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 			t.Fatalf("legacy runtime entry remains: %q", forbidden)
 		}
 	}
-	for _, required := range []string{"client run", "client preflight", "--upgrade", "previous runnable release was restored"} {
+	for _, required := range []string{"client run", "client preflight", "--upgrade", "WorkingDirectory=/var/lib/loom-device", "previous runnable release was restored"} {
 		if !strings.Contains(installScript+systemdService, required) {
 			t.Fatalf("installer is missing %q", required)
 		}

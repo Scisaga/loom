@@ -488,6 +488,7 @@ Conflicts=loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sin
 
 [Service]
 Type=simple
+WorkingDirectory=/var/lib/loom-device
 ExecStartPre=/usr/bin/rm -f /run/loom-client/status.json
 ExecStart=/usr/local/lib/loom-client/current/loom client run
 ExecReload=/bin/kill -HUP $MAINPID
