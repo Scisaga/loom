@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -332,7 +333,7 @@ private fun LoomHeader() {
             colorFilter = ColorFilter.tint(Ink),
             modifier = Modifier.size(32.dp).testTag("loom-mark"),
         )
-        Column(Modifier.padding(start = 9.dp)) {
+        Column(Modifier.padding(start = 9.dp).offset(y = (-4).dp)) {
             Text(
                 "LOOM",
                 color = Ink,
