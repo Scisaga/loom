@@ -9,7 +9,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"loom/internal/clientcore"
+	"loom/internal/clientmodel"
 )
 
 const misakaWMRouteAcknowledged = 0x8005
@@ -20,7 +20,7 @@ type misakaRouteUI struct {
 	profileID    string
 	sequence     uintptr
 	picker       bool
-	pending      *clientcore.Preference
+	pending      *clientmodel.Preference
 	acknowledged bool
 	options      []portableRouteOption
 }
@@ -72,9 +72,9 @@ func (app *portableGUI) misakaRouteVisible(snapshot portableGUISnapshot) bool {
 	}
 	route := &app.skin.route
 	if route.pending != nil {
-		return route.pending.Mode == clientcore.FixedExit
+		return route.pending.Mode == clientmodel.ModeFixed
 	}
-	return route.picker || misakaSelectedMode(snapshot) == clientcore.FixedExit
+	return route.picker || misakaSelectedMode(snapshot) == clientmodel.ModeFixed
 }
 
 func (app *portableGUI) misakaRouteSelectable(snapshot portableGUISnapshot) bool {
@@ -116,7 +116,7 @@ func (app *portableGUI) reconcileMisakaRoute(snapshot portableGUISnapshot) bool 
 		route.pending, route.acknowledged, route.picker = nil, false, false
 		changed = true
 	}
-	hasFixed := slices.ContainsFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == clientcore.FixedExit })
+	hasFixed := slices.ContainsFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == clientmodel.ModeFixed })
 	if route.picker && (!app.misakaRouteSelectable(snapshot) || !hasFixed) {
 		route.picker = false
 		app.closeMisakaRouteDropDown()
@@ -173,18 +173,18 @@ func (app *portableGUI) misakaRouteCommand(id uint16) bool {
 	if !app.misakaRouteSelectable(snapshot) {
 		return true
 	}
-	mode := clientcore.Auto
+	mode := clientmodel.ModeAuto
 	if id == misakaControlFixed {
-		mode = clientcore.FixedExit
+		mode = clientmodel.ModeFixed
 	} else if id == misakaControlDirect {
-		mode = clientcore.Direct
+		mode = clientmodel.ModeDirect
 	}
 	index := slices.IndexFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == mode })
 	if index < 0 {
 		return true
 	}
 	app.closeMisakaRouteDropDown()
-	if mode == clientcore.FixedExit {
+	if mode == clientmodel.ModeFixed {
 		app.skin.route.picker = true
 		app.renderRouteCombo(snapshot)
 		app.syncMisakaRouteLayout(snapshot)
@@ -221,13 +221,13 @@ func (app *portableGUI) commitMisakaRouteSelection() {
 		return
 	}
 	index := app.routeVisible[selection]
-	if index < 0 || index >= len(snapshot.routeOptions) || snapshot.routeOptions[index].Preference.Mode != clientcore.FixedExit {
+	if index < 0 || index >= len(snapshot.routeOptions) || snapshot.routeOptions[index].Preference.Mode != clientmodel.ModeFixed {
 		return
 	}
 	app.submitMisakaRoutePreference(snapshot, snapshot.routeOptions[index].Preference)
 }
 
-func (app *portableGUI) submitMisakaRoutePreference(snapshot portableGUISnapshot, preference clientcore.Preference) {
+func (app *portableGUI) submitMisakaRoutePreference(snapshot portableGUISnapshot, preference clientmodel.Preference) {
 	if !app.misakaRouteSelectable(snapshot) || routeOptionIndex(snapshot.routeOptions, preference) < 0 {
 		return
 	}
@@ -289,8 +289,8 @@ func (app *portableGUI) renderMisakaRoutes(snapshot portableGUISnapshot, previou
 	}
 	for _, pair := range []struct {
 		hwnd uintptr
-		mode clientcore.Mode
-	}{{app.controls.modeAuto, clientcore.Auto}, {app.controls.modeFixed, clientcore.FixedExit}, {app.controls.modeDirect, clientcore.Direct}} {
+		mode clientmodel.Mode
+	}{{app.controls.modeAuto, clientmodel.ModeAuto}, {app.controls.modeFixed, clientmodel.ModeFixed}, {app.controls.modeDirect, clientmodel.ModeDirect}} {
 		available := slices.ContainsFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == pair.mode })
 		enablePortableControl(pair.hwnd, selectable && available)
 		if previous == nil || previous.routeSelected != snapshot.routeSelected || previous.routeBusy != snapshot.routeBusy {
@@ -307,7 +307,7 @@ func (app *portableGUI) renderMisakaRouteCombo(snapshot portableGUISnapshot) {
 	var visible []int
 	query := strings.ToLower(app.routeFilter)
 	for index, option := range snapshot.routeOptions {
-		if option.Preference.Mode == clientcore.FixedExit && (!app.routeFiltering || strings.Contains(strings.ToLower(option.Label), query)) {
+		if option.Preference.Mode == clientmodel.ModeFixed && (!app.routeFiltering || strings.Contains(strings.ToLower(option.Label), query)) {
 			visible = append(visible, index)
 		}
 	}

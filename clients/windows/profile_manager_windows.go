@@ -13,11 +13,9 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"loom/internal/clientcore"
-	"loom/internal/clientenroll"
-	"loom/internal/clientruntime"
-	"loom/internal/clientsecret"
-	"loom/internal/clientupdate"
+	"loom/internal/clientmodel"
+	"loom/internal/control"
+	"loom/internal/deviceclient"
 )
 
 type windowsProfileDisplay struct {
@@ -43,7 +41,8 @@ type windowsProfileManager struct {
 	closing          bool
 	start            func(*portableGUI)
 	resume           func(*portableGUI) (windowsJoinResult, error)
-	joinDraft        func(*portableGUI, *clientenroll.Invite) (windowsJoinResult, error)
+	joinDraft        func(*portableGUI, *control.BootstrapInvite) (windowsJoinResult, error)
+	setPreference    func(*portableGUI, clientmodel.Preference) error
 	draft            *windowsProfileDraft
 	draftVisible     bool
 	workers          sync.WaitGroup
@@ -85,7 +84,10 @@ func newWindowsProfileManager(owner *portableGUI) (*windowsProfileManager, error
 	}
 	m := &windowsProfileManager{store: store, owner: owner, children: make(map[string]*portableGUI), start: (*portableGUI).startRuntime,
 		resume: func(child *portableGUI) (windowsJoinResult, error) { return child.joinInput("", nil) },
-		joinDraft: func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
+		setPreference: func(child *portableGUI, preference clientmodel.Preference) error {
+			return child.setRoutePreference(preference)
+		},
+		joinDraft: func(child *portableGUI, invite *control.BootstrapInvite) (windowsJoinResult, error) {
 			return child.joinInput("", invite)
 		}}
 	for _, p := range store.Snapshot().Profiles {
@@ -117,9 +119,14 @@ func (m *windowsProfileManager) makeProfileChild(root string) *portableGUI {
 	ctx, cancel := context.WithCancel(m.owner.ctx)
 	child := &portableGUI{edition: m.owner.edition, root: root, ctx: ctx, cancel: cancel,
 		state: guiNeedsJoin, routeSelected: -1, profileChild: true, hostname: m.owner.hostname}
-	config, err := clientupdate.ReadConfig(filepath.Join(root, "config", "client.json"))
+	store, err := deviceclient.LoadProtected(windowsProfileStatePath(root), child.protector())
 	if err == nil {
-		child.joined, child.deviceID, child.state = true, config.NodeID, guiStopped
+		lkg := store.LKG()
+		if lkg == nil {
+			child.state, child.detail = guiNeedsJoin, "加入事务已保存；等待中控审批。"
+			return child
+		}
+		child.joined, child.deviceID, child.state = true, lkg.View.DeviceID, guiStopped
 		child.detail = "已保存加入身份；尚未连接。"
 		child.loadOfflineProfileRoutes()
 	} else if !os.IsNotExist(err) {
@@ -129,42 +136,17 @@ func (m *windowsProfileManager) makeProfileChild(root string) *portableGUI {
 }
 
 func (app *portableGUI) loadOfflineProfileRoutes() {
-	plan, err := readWindowsLocalSelectorPlan(app.root, app.protector(), app.edition)
-	if err != nil {
+	store, err := deviceclient.LoadProtected(windowsProfileStatePath(app.root), app.protector())
+	if err != nil || store.LKG() == nil {
 		return
 	}
-	options, err := portableRouteOptions(plan)
-	if err != nil {
-		return
-	}
-	pref, err := clientcore.ReadPreference(filepath.Join(app.root, "state", "preference.json"))
+	options, err := routeOptions(store.LKG().View.Routes)
 	if err != nil {
 		return
 	}
 	app.mu.Lock()
-	app.routeOptions, app.routeSelected = options, routeOptionIndex(options, pref)
+	app.routeOptions, app.routeSelected = options, routeOptionIndex(options, store.Preference())
 	app.mu.Unlock()
-}
-
-func readWindowsLocalSelectorPlan(root string, protector clientsecret.Protector, edition clientEdition) (*clientruntime.WindowsSelectorPlan, error) {
-	files, _, err := clientruntime.ReadCandidateBundle(root, protector)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := runtimeProfile(edition)
-	if err != nil {
-		return nil, err
-	}
-	caPath := filepath.Join(root, "tls", "ca.crt")
-	source, agentBody := []byte(files["sing-box/config.json"]), []byte(files["agent/config.json"])
-	defer clear(source)
-	defer clear(agentBody)
-	runtimeBody, err := clientruntime.DeriveWindowsRuntimeConfig(source, profile, caPath)
-	if err != nil {
-		return nil, err
-	}
-	defer clear(runtimeBody)
-	return clientruntime.BuildWindowsSelectorPlan(runtimeBody, agentBody, profile, caPath)
 }
 
 func (m *windowsProfileManager) snapshot() portableGUISnapshot {
@@ -545,7 +527,7 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 		if child == nil || req.Preference == nil {
 			return errors.New("请选择连接配置")
 		}
-		return child.setRoutePreference(*req.Preference)
+		return m.setPreference(child, *req.Preference)
 	case "delete":
 		if child == nil {
 			// §13.5：目录校验失败的条目只能移出索引，不能沿无效路径清理磁盘。
@@ -783,12 +765,6 @@ func (m *windowsProfileManager) resumePendingProfiles() {
 	m.mu.Unlock()
 	for _, child := range children {
 		if child.snapshot().joined {
-			// §13.5：已提交 client.json 的事务仍要清掉旧 bearer，保留原身份密钥。
-			if err := clearWindowsPendingInvite(child.root, child.protector()); err != nil {
-				child.update(guiError, false, "", "读取已保存加入身份失败："+err.Error())
-			} else {
-				_ = os.Remove(windowsJoinReadyPath(child.root))
-			}
 			continue
 		}
 		pending, err := windowsProfileHasJoinRecovery(child)
@@ -803,7 +779,7 @@ func (m *windowsProfileManager) resumePendingProfiles() {
 }
 
 func windowsProfileHasJoinRecovery(child *portableGUI) (bool, error) {
-	path := windowsJoinReadyPath(child.root)
+	path := windowsProfileStatePath(child.root)
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() {
 			return false, errors.New("加入恢复材料必须是普通文件")
@@ -815,12 +791,7 @@ func windowsProfileHasJoinRecovery(child *portableGUI) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	invite, err := readWindowsPendingInvite(child.root, child.protector())
-	invite.Token = ""
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return err == nil, err
+	return false, nil
 }
 
 func (app *portableGUI) profileError(err error) {

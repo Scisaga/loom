@@ -724,7 +724,7 @@ func readProtected(path string, maximum int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() < 1 || info.Size() > maximum {
+	if !controlPrivateRegular(info) || info.Size() < 1 || info.Size() > maximum {
 		return nil, errors.New("protected input must be a non-empty owner-only regular file")
 	}
 	return os.ReadFile(path)

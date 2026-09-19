@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"loom/internal/clientcore"
+	"loom/internal/clientmodel"
 )
 
 func (app *portableGUI) paintMisaka(dc uintptr) {
@@ -105,7 +105,7 @@ func (app *portableGUI) paintMisakaContent(c *misakaCanvas, snapshot portableGUI
 		modeGroup.right--
 		modeGroup.bottom--
 		c.Fill(modeGroup, 0xF1F3F1, s(5))
-		if misakaSelectedMode(snapshot) == clientcore.FixedExit && end-s(689) >= s(120) {
+		if misakaSelectedMode(snapshot) == clientmodel.ModeFixed && end-s(689) >= s(120) {
 			c.Text("前置路径自动选择", misakaRect(s(689), s(220), end-s(689), s(34)), s(10), 400, misakaMuted, 2)
 		}
 		c.Text("当前选路", misakaRect(main, s(269), s(140), s(25)), s(15), 600, misakaText, 0)
@@ -115,12 +115,14 @@ func (app *portableGUI) paintMisakaContent(c *misakaCanvas, snapshot portableGUI
 func (app *portableGUI) drawMisakaBrand(dc uintptr, large bool) {
 	instance, _, _ := procGetModuleHandle.Call(0)
 	s := app.scale
-	icon := loadPortableAppIcon(instance, portableSMCXSmallIcon, portableSMCYSmallIcon, app.dpi())
-	iconWidth := portableSystemMetricForDPI(portableSMCXSmallIcon, app.dpi())
-	iconHeight := portableSystemMetricForDPI(portableSMCYSmallIcon, app.dpi())
-	procDrawIconEx.Call(dc, uintptr(s(15)), uintptr((s(misakaTitleHeight)-iconHeight)/2), icon, uintptr(iconWidth), uintptr(iconHeight), 0, 0, portableDrawIconNormal)
+	iconSize := s(misakaTitleIconSize)
+	icon, _, _ := procLoadImage.Call(instance, portableIconApp, portableImageIcon, uintptr(iconSize), uintptr(iconSize), portableLRShared)
+	if icon == 0 {
+		icon = loadPortableAppIcon(instance, portableSMCXSmallIcon, portableSMCYSmallIcon, app.dpi())
+	}
+	procDrawIconEx.Call(dc, uintptr(s(15)), uintptr((s(misakaTitleHeight)-iconSize)/2), icon, uintptr(iconSize), uintptr(iconSize), 0, 0, portableDrawIconNormal)
 	if large {
-		// §7.2：窗口内品牌区沿用完整版标志，系统小图标继续使用 favicon 原图。
+		// §7.2：窗口内品牌区沿用完整版标志，标题栏继续使用 favicon 原图。
 		brand, _, _ := procLoadImage.Call(instance, portableIconBrand, portableImageIcon, uintptr(s(40)), uintptr(s(40)), portableLRShared)
 		procDrawIconEx.Call(dc, uintptr(s(16)), uintptr(s(misakaTitleHeight+18)), brand, uintptr(s(40)), uintptr(s(40)), 0, 0, portableDrawIconNormal)
 	}
@@ -246,13 +248,13 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 		c.Fill(r, parent, 0)
 	}
 	if item.hwndItem == app.controls.modeAuto {
-		selected = mode == clientcore.Auto
+		selected = mode == clientmodel.ModeAuto
 	}
 	if item.hwndItem == app.controls.modeFixed {
-		selected = mode == clientcore.FixedExit
+		selected = mode == clientmodel.ModeFixed
 	}
 	if item.hwndItem == app.controls.modeDirect {
-		selected = mode == clientcore.Direct
+		selected = mode == clientmodel.ModeDirect
 	}
 	primary := item.hwndItem == app.controls.draftSubmit || item.hwndItem == app.controls.primaryButton && snapshot.state != guiConnected && !portableStatusAnimated(snapshot.state)
 	if primary {
@@ -591,15 +593,15 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		c.Fill(misakaRect(r.left, r.bottom-s(1), r.right-r.left, s(1)), misakaBorder, 0)
 	}
 	color := uint32(misakaMuted)
-	if row.Health == "部分失败" || row.Health == "测量过期" {
+	if row.Health == "部分失败" || row.Health == "测量过期" || row.Health == "未知" {
 		color = misakaAmber
 	}
-	if row.Health == "探测失败" {
+	if row.Health == "探测失败" || row.Health == "不可用" {
 		color = misakaRed
 	}
 	serviceWidth := min(s(200), (r.right-r.left-s(110))/3)
 	serviceLabel := row.Service
-	if misakaSelectedMode(app.snapshot()) == clientcore.FixedExit {
+	if misakaSelectedMode(app.snapshot()) == clientmodel.ModeFixed {
 		serviceLabel = "统一上网路径"
 	}
 	c.Text(serviceLabel, misakaRect(r.left+s(18), r.top+s(8), serviceWidth, s(24)), s(13), 600, misakaText, 0)
@@ -660,7 +662,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 					}
 				}
 			}
-			fixed := start+index == len(nodes)-2 && misakaSelectedMode(app.snapshot()) == clientcore.FixedExit
+			fixed := start+index == len(nodes)-2 && misakaSelectedMode(app.snapshot()) == clientmodel.ModeFixed
 			paintMisakaPathNode(c, x, y, start+index, len(nodes), s, fixed)
 			// §7.2：两端标签按可用对称宽度收窄，不将文字挤离节点的中心轴。
 			labelWidth := min(s(120), step-s(6), (x-r.left-s(10))*2, (r.right-s(10)-x)*2)

@@ -4,26 +4,32 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 
+	"loom/internal/clientadapter"
 	"loom/internal/clientcomponent"
-	"loom/internal/clientcore"
+	"loom/internal/clientmodel"
 	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
-	"loom/internal/clientupdate"
-	"loom/internal/netx"
+	"loom/internal/control"
+	"loom/internal/deviceclient"
 	"loom/internal/version"
 )
 
@@ -153,139 +159,72 @@ func preparePortableClient(edition clientEdition) (func(context.Context) error, 
 	return prepareClientAt(root, clientsecret.UserProtector{}, edition)
 }
 
-func prepareClientAt(root string, protector clientsecret.Protector, edition clientEdition, reportClients ...*http.Client) (func(context.Context) error, error) {
+func prepareClientAt(root string, protector clientsecret.Protector, edition clientEdition, _ ...*http.Client) (func(context.Context) error, error) {
 	profile, err := runtimeProfile(edition)
 	if err != nil {
 		return nil, err
 	}
 	caPath := windowsClientCAPath(root, edition)
-	preferencePath := filepath.Join(root, "state", "preference.json")
-	if _, err := clientcore.EnsurePreference(preferencePath); err != nil {
-		return nil, fmt.Errorf("initialize local route preference: %w", err)
-	}
-
-	configPath := filepath.Join(root, "config", "client.json")
-	config, err := clientupdate.ReadConfig(configPath)
-	if os.IsNotExist(err) {
+	store, err := deviceclient.LoadProtected(windowsProfileStatePath(root), protector)
+	if errors.Is(err, os.ErrNotExist) {
 		log.Printf("client has not joined a Loom network: waiting for QR import")
 		return waitForJoinedClient(root, protector, edition), nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	publicKey, err := clientupdate.ReadPublicKey(filepath.Join(root, "trust", "platform.pub"))
+	lkg := store.LKG()
+	if lkg == nil || lkg.View.Platform != "windows" || lkg.View.Runtime == nil {
+		return nil, errors.New("Windows profile has no complete certified LKG")
+	}
+	if _, err := clientmodel.ProjectRuntimeCandidates(lkg.View.Routes, *lkg.View.Runtime); err != nil {
+		return nil, fmt.Errorf("project certified Windows candidates: %w", err)
+	}
+	publicKey, err := embeddedWindowsPlatformKey()
 	if err != nil {
-		return nil, fmt.Errorf("load pinned platform key: %w", err)
+		return nil, err
 	}
-	// Refuse to run over corrupt local coordinates. Network reconciliation may
-	// add a newer package, but it must never erase evidence of local corruption.
-	verifiedState, err := clientupdate.ReadVerifiedState(root)
+	componentState, err := clientcomponent.ReadState(root)
 	if err != nil {
-		return nil, fmt.Errorf("validate local verified state: %w", err)
+		return nil, fmt.Errorf("read signed component state: %w", err)
 	}
-	vaultPath := filepath.Join(root, "secrets", "vault.json.dpapi")
-	prepareActivation := func() (*clientActivation, error) {
-		candidate, err := clientruntime.PrepareWindowsCandidate(root, config.NodeID, publicKey, vaultPath, protector)
-		if err != nil {
-			return nil, err
-		}
-		if candidate.Components.SingBox == "" {
-			return nil, errors.New("signed snapshot does not declare the Windows sing-box version")
-		}
-		components, err := clientcomponent.LoadWindows(root, publicKey, runtime.GOARCH, candidate.Components.SingBox)
-		if err != nil {
-			return nil, fmt.Errorf("select signed Windows data plane: %w", err)
-		}
-		files, candidateState, err := clientruntime.ReadCandidateBundle(root, protector)
-		if err != nil {
-			return nil, fmt.Errorf("load protected Windows candidate: %w", err)
-		}
-		sourceConfig := []byte(files["sing-box/config.json"])
-		defer clear(sourceConfig)
-		if candidateState.Current != candidate.Version {
-			return nil, errors.New("prepared candidate does not match the protected current pointer")
-		}
-		runtimeConfig, err := clientruntime.DeriveWindowsRuntimeConfig(sourceConfig, profile, caPath)
-		if err != nil {
-			return nil, err
-		}
-		health, err := clientruntime.BuildWindowsHealthPlan(runtimeConfig, profile, caPath)
-		if err != nil {
-			clear(runtimeConfig)
-			return nil, err
-		}
-		plan, err := clientruntime.BuildWindowsSelectorPlan(runtimeConfig, []byte(files["agent/config.json"]), profile, caPath)
-		if err != nil {
-			clear(runtimeConfig)
-			return nil, err
-		}
-		preference, err := clientcore.ReadPreference(preferencePath)
-		if err != nil {
-			clear(runtimeConfig)
-			return nil, err
-		}
-		filtered, agentConfig, err := plan.Derive(runtimeConfig, preference)
-		if err != nil {
-			clear(runtimeConfig)
-			return nil, err
-		}
-		return &clientActivation{
-			BaseConfig: runtimeConfig, Policy: plan, Preference: preference, AgentConfig: agentConfig,
-			Version: candidate.Version, SlotID: components.SlotID, Executable: components.SingBox,
-			Config: filtered, RuntimeDir: filepath.Join(root, "runtime"), Profile: profile, CAPath: caPath, WaitForStart: true,
-			Health: health,
-		}, nil
+	if componentState == nil {
+		return nil, errors.New("signed Windows component is not installed")
 	}
-	var initial *clientActivation
-	if verifiedState != nil {
-		initial, err = prepareActivation()
-		if err != nil {
-			return nil, fmt.Errorf("restore protected Windows candidate: %w", err)
+	components, err := clientcomponent.LoadWindows(root, publicKey, runtime.GOARCH, componentState.Current.SingBoxVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load signed Windows component: %w", err)
+	}
+	preflight := func(ctx context.Context, envelope control.DeviceViewEnvelope) error {
+		if envelope.View.Runtime == nil {
+			return errors.New("certified Windows view has no runtime profile")
 		}
-		log.Printf("restored protected Windows candidate snapshot=%s", initial.Version.Snapshot)
-	} else {
-		// Joining is a complete transaction: config, trust root, and the
-		// protected vault must all be usable before the Service reports Running.
-		secrets, err := clientsecret.ReadVault(vaultPath, protector)
+		derived, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(envelope.View.Runtime.Config), profile, caPath)
 		if err != nil {
-			return nil, fmt.Errorf("validate protected joined-device vault: %w", err)
+			return err
 		}
-		clear(secrets)
+		defer clear(derived)
+		return clientruntime.PreflightWindowsRuntime(ctx, components.SingBox, derived,
+			filepath.Join(root, "runtime"), profile, caPath)
 	}
-	dnsServer := ""
-	if len(config.DNS) > 0 {
-		dnsServer = config.DNS[0]
+	checkContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err = preflight(checkContext, *lkg)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("preflight certified Windows LKG: %w", err)
 	}
-	updater := &clientupdate.Updater{
-		Client:              netx.Client(dnsServer, 60*time.Second),
-		Config:              config,
-		PublicKey:           publicKey,
-		StateRoot:           root,
-		ExpectedCurrentPath: filepath.Join(root, "state", "expected-current.json"),
-	}
+	store.SetLKGPreflight(func(envelope control.DeviceViewEnvelope) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return preflight(ctx, envelope)
+	})
 	return func(ctx context.Context) error {
 		dataPlaneLock, err := acquireWindowsDataPlaneLock()
 		if err != nil {
 			return err
 		}
 		defer dataPlaneLock.close()
-		var reportClient *http.Client
-		if len(reportClients) > 0 {
-			reportClient = reportClients[0]
-		}
-		reporter, err := startWindowsReporter(root, protector, config, reportClient)
-		if err != nil {
-			if initial != nil {
-				initial.clear()
-			}
-			return err
-		}
-		defer reporter.stop()
-		control := &routeControl{requests: make(chan routeRequest), done: make(chan struct{}), persist: func(p clientcore.Preference) error { return clientcore.WritePreference(preferencePath, p) }}
-		routeControls.Store(root, control)
-		defer func() { routeControls.Delete(root); close(control.done) }()
-		return runControlledUpdateLoop(ctx, updater, config.PullInterval(), initial, prepareActivation,
-			preflightClientActivation, runClientActivation, dataPlaneStartupGrace, control, reporter.update)
+		return runWindowsCertifiedProfile(ctx, root, store, components, profile, caPath)
 	}, nil
 }
 
@@ -307,29 +246,21 @@ func windowsClientCAPath(root string, edition clientEdition) string {
 	return filepath.Join(root, "tls", "ca.crt")
 }
 
-func preflightClientActivation(ctx context.Context, activation *clientActivation) error {
-	return clientruntime.PreflightWindowsRuntime(ctx, activation.Executable, activation.Config,
-		activation.RuntimeDir, activation.Profile, activation.CAPath)
-}
-
-func runClientActivation(ctx context.Context, activation *clientActivation) error {
-	return runWindowsAgentActivation(ctx, activation)
-}
-
 func waitForJoinedClient(root string, protector clientsecret.Protector, edition clientEdition) func(context.Context) error {
 	return func(ctx context.Context) error {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		configPath := filepath.Join(root, "config", "client.json")
 		for {
 			select {
 			case <-ctx.Done():
 				return nil
 			case <-ticker.C:
-				if _, err := clientupdate.ReadConfig(configPath); errors.Is(err, os.ErrNotExist) {
+				if store, err := deviceclient.LoadProtected(windowsProfileStatePath(root), protector); errors.Is(err, os.ErrNotExist) {
 					continue
 				} else if err != nil {
 					return fmt.Errorf("load joined-device state: %w", err)
+				} else if store.LKG() == nil {
+					continue
 				}
 				workload, err := prepareClientAt(root, protector, edition)
 				if err != nil {
@@ -338,6 +269,131 @@ func waitForJoinedClient(root string, protector clientsecret.Protector, edition 
 				return workload(ctx)
 			}
 		}
+	}
+}
+
+type windowsRuntimeStatus struct {
+	Schema       int                             `json:"schema"`
+	DeviceID     string                          `json:"device_id"`
+	Head         string                          `json:"head"`
+	Preference   clientmodel.Preference          `json:"preference"`
+	Selections   []clientadapter.SelectionStatus `json:"selections"`
+	Observations []clientmodel.Observation       `json:"observations"`
+	Reported     bool                            `json:"reported"`
+}
+
+func windowsRuntimeStatusPath(root string) string {
+	return filepath.Join(root, "runtime", "status.json")
+}
+
+func windowsNetworkGeneration() (string, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	parts := make([]string, 0, len(interfaces))
+	for _, current := range interfaces {
+		addresses, err := current.Addrs()
+		if err != nil {
+			return "", err
+		}
+		values := make([]string, 0, len(addresses))
+		for _, address := range addresses {
+			values = append(values, address.String())
+		}
+		sort.Strings(values)
+		parts = append(parts, fmt.Sprintf("%d\x00%s\x00%s\x00%v", current.Index, current.Name, current.HardwareAddr, values))
+	}
+	sort.Strings(parts)
+	digest := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func runWindowsCertifiedProfile(ctx context.Context, root string, store *deviceclient.ProtectedStore,
+	components clientcomponent.RuntimePaths, profile clientruntime.WindowsRuntimeProfile, caPath string) error {
+	statusPath := windowsRuntimeStatusPath(root)
+	_ = os.Remove(statusPath)
+	defer os.Remove(statusPath) //nolint:errcheck
+	syncContext, cancel := context.WithTimeout(ctx, 20*time.Second)
+	if _, err := deviceclient.Sync(syncContext, store); err != nil {
+		log.Printf("private device sync unavailable; using certified LKG: %v", err)
+	}
+	cancel()
+	lkg := store.LKG()
+	if lkg == nil || lkg.View.Runtime == nil {
+		return errors.New("Windows profile lost its certified LKG")
+	}
+	if _, err := clientmodel.ProjectRuntimeCandidates(lkg.View.Routes, *lkg.View.Runtime); err != nil {
+		return err
+	}
+	config, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(lkg.View.Runtime.Config), profile, caPath)
+	if err != nil {
+		return err
+	}
+	defer clear(config)
+	planeDone := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		planeDone <- clientruntime.RunWindowsDataPlaneProfileStarted(ctx, components.SingBox, config,
+			filepath.Join(root, "runtime"), profile, caPath, func() { close(started) })
+	}()
+	select {
+	case <-ctx.Done():
+		return <-planeDone
+	case err := <-planeDone:
+		return err
+	case <-started:
+	}
+	selector, err := clientadapter.NewHTTPSelector(string(config))
+	if err != nil {
+		return err
+	}
+	scopes, _, err := clientadapter.Scopes(lkg.View.Routes)
+	if err != nil {
+		return err
+	}
+	if err := clientadapter.WaitSelector(ctx, selector, scopes); err != nil {
+		return err
+	}
+	generation, err := windowsNetworkGeneration()
+	if err != nil {
+		return err
+	}
+	activation, activationErr := clientadapter.Activate(ctx, selector, lkg.View.Routes, clientadapter.State{
+		Preference: store.Preference(), NetworkGeneration: generation}, clientadapter.BusinessProbe, time.Now)
+	if activation.State.NetworkGeneration == "" {
+		return activationErr
+	}
+	selected := ""
+	if len(activation.Selections) > 0 {
+		selected = activation.Selections[0].CandidateID
+	}
+	report := control.DeviceReport{Selection: selected, ReportedAt: time.Now().UTC().Truncate(time.Second).Format(time.RFC3339),
+		Observations: append([]control.Observation(nil), activation.State.Observations...)}
+	reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
+	reportErr := deviceclient.Report(reportContext, store, report)
+	reportCancel()
+	status := windowsRuntimeStatus{Schema: 1, DeviceID: lkg.View.DeviceID, Head: control.HeadID(lkg.Head),
+		Preference: activation.State.Preference, Selections: activation.Selections,
+		Observations: activation.State.Observations, Reported: reportErr == nil}
+	body, err := json.MarshalIndent(status, "", "  ")
+	if err == nil {
+		err = writeWindowsJoinFile(statusPath, append(body, '\n'))
+	}
+	if err != nil {
+		return err
+	}
+	if reportErr != nil {
+		log.Printf("private signed report unavailable: %v", reportErr)
+	}
+	if activationErr != nil {
+		log.Printf("Windows candidate activation completed with unavailable outcome: %v", activationErr)
+	}
+	select {
+	case <-ctx.Done():
+		return <-planeDone
+	case err := <-planeDone:
+		return err
 	}
 }
 

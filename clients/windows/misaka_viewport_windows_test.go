@@ -9,7 +9,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"loom/internal/clientcore"
+	"loom/internal/clientmodel"
 )
 
 // §7.2：只使用合成窗口和演示路径，验证原生视口、键盘和组合框的实际行为。
@@ -133,7 +133,7 @@ func TestGUIMisakaViewportComboCentersAndOpensMultipleRows(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	for index := 0; index < 7; index++ {
 		name := fmt.Sprintf("demo-exit-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "固定出口 · " + name, Preference: clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: name}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "固定出口 · " + name, Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: name}})
 	}
 	app.routeSelected = 1
 	app.renderControls()
@@ -264,7 +264,10 @@ func TestGUIMisakaViewportPassesCoveredResizeEdgesToRoot(t *testing.T) {
 			}
 		}
 		// §7.2：只有缩放边缘穿透；滚动条的可操作区域继续保留原生命中。
-		point := portablePoint{x: client.right - app.scale(10), y: app.scale(110)}
+		scrollWidth, _, _ := procGetSystemMetrics.Call(2) // SM_CXVSCROLL follows the active thread DPI context.
+		edge := app.scale(6)
+		inset := edge + max(1, (int32(scrollWidth)-edge)/2)
+		point := portablePoint{x: client.right - inset, y: app.scale(110)}
 		procMisakaMapPoints.Call(app.hwnd, 0, uintptr(unsafe.Pointer(&point)), 1)
 		packed := uintptr(uint32(uint16(point.x)) | uint32(uint16(point.y))<<16)
 		if hit, _, _ := procSendMessage.Call(app.skin.pane, 0x0084, 0, packed); hit != 7 {
@@ -275,7 +278,7 @@ func TestGUIMisakaViewportPassesCoveredResizeEdgesToRoot(t *testing.T) {
 
 func TestGUIMisakaViewportFixedTUNActualHintCapture(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "直连", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.Direct}})
+	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}})
 	app.routeSelected = 1
 	app.paths = app.paths[:1]
 	app.detail = "系统 TUN 已启用；本地 HTTP/SOCKS 代理：127.0.0.1:1080。"

@@ -15,7 +15,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"loom/internal/clientcore"
+	"loom/internal/clientmodel"
 )
 
 const (
@@ -40,13 +40,14 @@ func newProfileGUITestWindow(t *testing.T) *portableGUI {
 			{ID: profileGUIFixtureB, Name: "演示网络乙", DeviceID: "demo-device-b", State: guiStopped},
 		},
 		routeSelected: 0, routeOptions: []portableRouteOption{
-			{Label: "自动选择", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.Auto}},
-			{Label: "固定出口 · demo-exit", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}},
+			{Label: "自动选择", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}},
+			{Label: "固定出口 · demo-exit", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}},
 		},
 		paths: []windowsPathDisplay{
-			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", LinkLabels: "ping 12 ms\n38 ms · Δ3 ms · 6.4 Mb/s\n57 ms",
-				LinkDetails: "本机 → demo-prefix-a：ping 12 ms；客户端连接时单次 ping；测量于 2026-01-02T03:04:05Z\ndemo-prefix-a → demo-exit：38 ms · Δ3 ms · 6.4 Mb/s；服务器 Hy2 单跳观测；测量于 2026-01-02T03:04:06Z\ndemo-exit → https://demo.example/：57 ms；服务器直连目标的首次响应耗时；测量于 2026-01-02T03:04:07Z", Reason: "根据入口与服务器观测选择当前路径"},
-			{Service: "demo-api", Candidate: "demo-candidate-b", Chain: "本机 → demo-prefix-b → demo-exit → 目标", LinkLabels: "ping 12 ms\n170 ms\n—", LinkDetails: "demo-prefix-b → demo-exit：170 ms；服务器 WireGuard 邻居 RTT", Reason: "保留当前出口"},
+			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", Health: "可用",
+				MeasurementSummary: "TCP/TLS 与 UDP/DNS 已验证", SelectedQuality: "真实业务成功", BestQuality: "当前 selector 候选", Reason: "selector 回读为当前候选", UpdatedAt: "2026-01-02T03:04:05Z"},
+			{Service: "demo-api", Candidate: "demo-candidate-b", Chain: "本机 → demo-prefix-b → demo-exit → 目标", Health: "未知",
+				MeasurementSummary: "尚无真实业务结果", SelectedQuality: "未知", BestQuality: "当前 selector 候选", Reason: "等待真实业务结果", UpdatedAt: "2026-01-02T03:04:06Z"},
 		},
 	}
 	hwnd, err := createPortableWindow(app)
@@ -179,7 +180,7 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	}
 
 	for _, row := range app.paths {
-		for _, field := range []string{row.Service, row.Chain, row.LinkDetails, row.Reason} {
+		for _, field := range []string{row.Service, row.Chain, row.Candidate, row.Health, row.Reason, row.UpdatedAt} {
 			if !strings.Contains(expanded, field) {
 				t.Fatalf("expanded native path view lost %q: %q", field, expanded)
 			}

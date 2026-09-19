@@ -86,10 +86,9 @@ func TestTreeContainsNoPlaintextSecrets(t *testing.T) {
 	}
 }
 
-// Windows 调度计划不走新端点或旁路协议：它和 sing-box 一起进入节点
-// bundle，bundle hash 再进入已签名 manifest。Windows 宿主必须原子消费这个
-// 双文件契约；缺少 Agent 计划的单文件包不属于这个版本的有效输入。
-func TestWindowsAgentPlanIsCoveredBySignedBundle(t *testing.T) {
+// Windows RuntimeProfile 的源配置仍由已签名 bundle 覆盖；旧 Agent 计划
+// 不再随包交付，实际选择和观测由 DeviceView 客户端模型承担。
+func TestWindowsRuntimeSourceIsCoveredBySignedBundle(t *testing.T) {
 	raw, err := os.ReadFile("../../testdata/matrix/ssot.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +123,7 @@ func TestWindowsAgentPlanIsCoveredBySignedBundle(t *testing.T) {
 	if err := json.Unmarshal(tree.Files[tree.Snapshot+"/nodes/workstation.json"], &bundle); err != nil {
 		t.Fatal(err)
 	}
-	wantFiles := []string{"agent/config.json", "sing-box/config.json"}
+	wantFiles := []string{"sing-box/config.json"}
 	for _, name := range wantFiles {
 		if bundle.Files[name] == "" {
 			t.Fatalf("Windows 已签名同包缺少 %s", name)
@@ -140,9 +139,9 @@ func TestWindowsAgentPlanIsCoveredBySignedBundle(t *testing.T) {
 	for name, content := range bundle.Files {
 		tampered[name] = content
 	}
-	tampered["agent/config.json"] += " "
+	tampered["sing-box/config.json"] += " "
 	if got := servedBundleHash(tampered); got == wantHash {
-		t.Fatal("篡改 agent/config.json 没有改变已签名 bundle hash")
+		t.Fatal("篡改 sing-box/config.json 没有改变已签名 bundle hash")
 	}
 }
 

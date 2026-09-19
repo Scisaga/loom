@@ -173,7 +173,7 @@ func TestGUIMisakaPathLabelsStayUnderTheirNodesAtBothEdges(t *testing.T) {
 	}
 }
 
-func TestGUIMisakaBrandUsesExistingFullMark(t *testing.T) {
+func TestGUIMisakaBrandUsesRoundedFullMark(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	const width, height int32 = 360, 240
 	dc, pixels := misakaCanvasTestDC(t, width, height)
@@ -199,6 +199,89 @@ func TestGUIMisakaBrandUsesExistingFullMark(t *testing.T) {
 					t.Fatalf("[§7.2] DPI %d 品牌区与既有完整版图标不一致", dpi)
 				}
 			}
+		}
+		left, top, edge := s(16), s(misakaTitleHeight+18), s(40)-1
+		for _, corner := range []portablePoint{{left, top}, {left + edge, top}, {left, top + edge}, {left + edge, top + edge}} {
+			if got := misakaCanvasTestPixel(pixels, width, corner.x, corner.y); got != misakaSidebar {
+				t.Fatalf("DPI %d 品牌图圆角没有露出侧栏背景：位置=%+v 像素=%06x", dpi, corner, got)
+			}
+		}
+		if got := misakaCanvasTestPixel(pixels, width, left+s(20), top+s(20)); got == misakaSidebar {
+			t.Fatalf("DPI %d 品牌图中心意外透明", dpi)
+		}
+		violet := 0
+		for y := top; y < top+s(40); y++ {
+			for x := left; x < left+s(40); x++ {
+				pixel := misakaCanvasTestPixel(pixels, width, x, y)
+				red, blue := int(pixel>>16&255), int(pixel&255)
+				if blue > red+20 && blue > 100 {
+					violet++
+				}
+			}
+		}
+		if violet < int(s(40)*s(40)/8) {
+			t.Fatalf("DPI %d 品牌区没有保留新版紫色背景：紫色像素=%d", dpi, violet)
+		}
+	}
+}
+
+func TestGUIProgramFaviconUsesApprovedVioletMark(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	const size int32 = 64
+	dc, pixels := misakaCanvasTestDC(t, size, size)
+	instance, _, _ := procGetModuleHandle.Call(0)
+	icon, _, err := procLoadImage.Call(instance, portableIconApp, portableImageIcon, uintptr(size), uintptr(size), portableLRShared)
+	if icon == 0 {
+		t.Fatal(err)
+	}
+	background := portableRect{right: size, bottom: size}
+	procFillRect.Call(dc, uintptr(unsafe.Pointer(&background)), app.misakaBrush(misakaWhite))
+	procDrawIconEx.Call(dc, 0, 0, icon, uintptr(size), uintptr(size), 0, 0, portableDrawIconNormal)
+	portableGDI32.NewProc("GdiFlush").Call()
+	violet := 0
+	for y := int32(0); y < size; y++ {
+		for x := int32(0); x < size; x++ {
+			pixel := misakaCanvasTestPixel(pixels, size, x, y)
+			red, blue := int(pixel>>16&255), int(pixel&255)
+			if blue > red+20 && blue > 100 {
+				violet++
+			}
+		}
+	}
+	if violet < 100 {
+		t.Fatalf("程序 favicon 没有保留新版紫色边：紫色像素=%d", violet)
+	}
+}
+
+func TestGUIMisakaTitleFaviconUsesTwentyDIPWithoutRightClipping(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	const width, height int32 = 180, 80
+	dc, pixels := misakaCanvasTestDC(t, width, height)
+	for _, dpi := range []int32{96, 120, 144, 168, 192} {
+		app.windowDPI = dpi
+		s := app.scale
+		background := portableRect{right: width, bottom: height}
+		procFillRect.Call(dc, uintptr(unsafe.Pointer(&background)), app.misakaBrush(misakaWhite))
+		app.drawMisakaBrand(dc, false)
+		portableGDI32.NewProc("GdiFlush").Call()
+
+		size := s(misakaTitleIconSize)
+		area := misakaRect(s(15), (s(misakaTitleHeight)-size)/2, size, size)
+		ink := misakaAlignmentInk(pixels, width, area, func(rgb uint32) bool {
+			red, green, blue := int(rgb>>16&255), int(rgb>>8&255), int(rgb&255)
+			return blue > red+10 && blue > green+5 && blue > 100
+		})
+		if ink.right <= ink.left || ink.bottom <= ink.top {
+			t.Fatalf("DPI %d 标题栏 favicon 没有紫色图形", dpi)
+		}
+		if ink.right >= area.right || ink.left <= area.left {
+			t.Fatalf("DPI %d 标题栏 favicon 横向触边：图形=%+v 绘制框=%+v", dpi, ink, area)
+		}
+		if ink.right-ink.left < s(16) {
+			t.Fatalf("DPI %d 标题栏 favicon 可见宽度仍偏小：图形=%+v", dpi, ink)
+		}
+		if area.right > s(42) {
+			t.Fatalf("DPI %d 标题栏 favicon 覆盖标题起点：图标右侧=%d 标题左侧=%d", dpi, area.right, s(42))
 		}
 	}
 }

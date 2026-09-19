@@ -17,16 +17,16 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
-	"loom/internal/clientcore"
-	"loom/internal/clientenroll"
+	"loom/internal/clientmodel"
+	"loom/internal/control"
 )
 
 type brokerRequest struct {
-	Operation  string                 `json:"operation"`
-	Invite     *clientenroll.Invite   `json:"invite,omitempty"`
-	Preference *clientcore.Preference `json:"preference,omitempty"`
-	ProfileID  string                 `json:"profile_id,omitempty"`
-	Name       string                 `json:"name,omitempty"`
+	Operation  string                   `json:"operation"`
+	Invite     *control.BootstrapInvite `json:"invite,omitempty"`
+	Preference *clientmodel.Preference  `json:"preference,omitempty"`
+	ProfileID  string                   `json:"profile_id,omitempty"`
+	Name       string                   `json:"name,omitempty"`
 }
 
 // §13.5：界面只收到显示状态和已授权出口，不传送配置正文、文件路径、API 密码或私钥。
@@ -61,7 +61,10 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	// §13.5：encoding/json 忽略字段大小写；同一字段的不同拼写也不能覆盖操作或邀请。
-	if err := rejectConnectionProfileDuplicateFields(decoder, 0); err != nil {
+	// BootstrapInvite 的最深规范路径是
+	// request → invite → capability → control_config → members → member → field。
+	// 连接配置索引的四层限制不能套到这个不同的 wire 模型上。
+	if err := rejectJSONDuplicateFields(decoder, 0, 6); err != nil {
 		return req, errors.New("服务请求字段重复或结构无效")
 	}
 	decoder = json.NewDecoder(bytes.NewReader(body))
@@ -84,7 +87,7 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 			return req, errors.New("关闭加入面板不接受附加参数")
 		}
 	case "join_profile":
-		if req.ProfileID != "" || req.Preference != nil || (req.Invite != nil && clientenroll.ValidateInvite(*req.Invite) != nil) {
+		if req.ProfileID != "" || req.Preference != nil || (req.Invite != nil && (req.Invite.Schema != 1 || req.Invite.Capability.Validate() != nil)) {
 			return req, errors.New("新增连接配置的加入参数无效")
 		}
 	case "status", "connect", "disconnect", "delete", "select_profile":
@@ -92,7 +95,7 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 			return req, errors.New("服务操作不接受附加参数")
 		}
 	case "join":
-		if req.Invite == nil || req.Preference != nil || req.Name != "" || clientenroll.ValidateInvite(*req.Invite) != nil {
+		if req.Invite == nil || req.Preference != nil || req.Name != "" || req.Invite.Schema != 1 || req.Invite.Capability.Validate() != nil {
 			return req, errors.New("加入二维码无效")
 		}
 	case "preference":

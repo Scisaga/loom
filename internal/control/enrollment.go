@@ -267,9 +267,9 @@ func (intent EnrollmentIntent) Validate() error {
 			return errors.New("route candidates are not uniquely sorted")
 		}
 	}
-	if intent.Platform == "android" {
+	if intent.Platform == "android" || intent.Platform == "windows" {
 		if intent.Runtime == nil || intent.Runtime.Validate(intent.Routes) != nil {
-			return errors.New("android enrollment runtime profile is invalid")
+			return fmt.Errorf("%s enrollment runtime profile is invalid", intent.Platform)
 		}
 	} else if intent.Runtime != nil && intent.Runtime.Validate(intent.Routes) != nil {
 		return errors.New("enrollment runtime profile is invalid")

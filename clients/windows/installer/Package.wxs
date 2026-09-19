@@ -1,5 +1,5 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="Loom" Manufacturer="Loom" Version="$(var.Version)" Language="1033"
+  <Package Name="Loom" Manufacturer="Loom" Version="$(var.Version)" ProductCode="$(var.ProductCode)" Language="1033"
            UpgradeCode="A2C983CA-D7B2-4ED0-A4F1-7D399513F2B4" Scope="perMachine" InstallerVersion="500">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Loom is already installed." Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />

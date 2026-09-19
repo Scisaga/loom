@@ -6,6 +6,11 @@ output_root="$repo_root/out"
 component_root="${LOOM_WINDOWS_COMPONENT_DIR:-$repo_root/deploy/staging}"
 platform_public_key="${PLATFORM_SIGNING_PUB:-$repo_root/deploy/keys/platform-signing.pub}"
 cd "$repo_root"
+source_date_epoch="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}"
+if [[ ! $source_date_epoch =~ ^[0-9]+$ ]] || (( source_date_epoch < 315532800 )); then
+  echo "SOURCE_DATE_EPOCH must be a Unix timestamp representable by ZIP" >&2
+  exit 1
+fi
 if [[ -n "${LOOM_WINDOWS_SIGN_CERT:-}" || -n "${LOOM_WINDOWS_TIMESTAMP_URL:-}" || "${LOOM_WINDOWS_REQUIRE_SIGNED:-0}" == 1 ]]; then
   if [[ -z "${LOOM_WINDOWS_SIGN_CERT:-}" || -z "${LOOM_WINDOWS_TIMESTAMP_URL:-}" ]]; then
     echo "signed builds require LOOM_WINDOWS_SIGN_CERT and LOOM_WINDOWS_TIMESTAMP_URL" >&2
@@ -58,9 +63,12 @@ archive_bundle() {
     licenses/golang-x-xerrors-PATENTS
     licenses/yaml-v3-LICENSE
   )
+  # ZIP stores local-time timestamps even with -X. Normalize every entry to the
+  # source commit time under UTC so identical inputs produce identical bytes.
+  (cd "$source_dir" && TZ=UTC touch -d "@$source_date_epoch" -- "${files[@]}")
   rm -f "$archive"
   if command -v zip >/dev/null 2>&1; then
-    (cd "$source_dir" && zip -q -X "$archive" "${files[@]}")
+    (cd "$source_dir" && TZ=UTC zip -q -X "$archive" "${files[@]}")
     return
   fi
   if command -v bsdtar >/dev/null 2>&1; then

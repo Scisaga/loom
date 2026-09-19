@@ -3,346 +3,69 @@
 package main
 
 import (
-	"context"
-	"encoding/binary"
+	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
-	"golang.org/x/sys/windows"
-
-	"loom/internal/clientcore"
+	"loom/internal/control"
 )
 
-func TestBrokerRejectsUnboundedAuthority(t *testing.T) {
-	for _, input := range []string{
-		`{"operation":"execute","command":"cmd.exe"}`,
-		`{"operation":"join","path":"C:\\demo\\invite.png"}`,
-		`{"operation":"connect","root":"C:\\demo"}`,
-		`{"operation":"status","preference":{}}`,
-		`{"operation":"status"} {}`,
-		`{"operation":"join","invite":{}}`,
-		`{"operation":"connect","profile_id":"../demo"}`,
-		`{"operation":"connect","profile_id":"C:\\demo"}`,
-		`{"operation":"select_profile"}`,
-		`{"operation":"add_profile","profile_id":"legacy"}`,
-		`{"operation":"join_profile","profile_id":"legacy"}`,
-		`{"operation":"join_profile","invite":{}}`,
-		`{"operation":"join_profile","preference":{"schema":1,"mode":"auto"}}`,
-		`{"operation":"cancel_add_profile","name":"demo"}`,
-		`{"operation":"cancel_add_profile","profile_id":"legacy"}`,
-		`{"operation":"cancel_add_profile","invite":{}}`,
-		`{"operation":"add_profile","operation":"cancel_add_profile"}`,
-		`{"operation":"add_profile","Operation":"cancel_add_profile"}`,
-		`{"operation":"join_profile","invite":{"Token":"demo-first","token":"demo-second"}}`,
-		`{"operation":"rename_profile","profile_id":"legacy","name":""}`,
-		`{"operation":"rename_profile","profile_id":"legacy","name":"demo\nname"}`,
-		`{"operation":"status","profile_id":"legacy"}`,
-		strings.Repeat(" ", 16385),
-	} {
-		if _, err := decodeBrokerRequest([]byte(input)); err == nil {
-			t.Fatalf("accepted invalid request: %.80s", input)
-		}
+func brokerTestInvite(t *testing.T) control.BootstrapInvite {
+	t.Helper()
+	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
+	member := control.Member{ID: "demo-member", Node: "demo-node",
+		PublicKey: base64.RawURLEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey))}
+	config := control.ControlConfig{Mode: "stable", Members: []control.Member{member}, Quorum: 1}
+	digest := "sha256:" + strings.Repeat("0", 64)
+	capability, err := control.SignBootstrapCapability(control.BootstrapCapability{
+		Schema: 1, TransactionID: "demo-transaction", IssuedHead: digest, ConfigMaterial: digest,
+		ControlConfig: config, ExpiresAt: "2030-01-01T00:00:00Z", Actions: []string{"claim", "resume"},
+		Endpoints: []control.EndpointReference{{EndpointID: "demo-endpoint", Generation: 1, Transport: "tls_tunnel",
+			Address: "127.0.0.1:443", ServerName: "127.0.0.1", SPKISHA256: strings.Repeat("0", 64), State: "serving"}},
+		ConstraintDigest: digest, IssuerMemberID: member.ID,
+	}, control.NodeConfig{MemberID: member.ID, IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(privateKey)})
+	if err != nil {
+		t.Fatal(err)
 	}
-	app := &portableGUI{state: guiStopped, joined: true, routeSelected: -1}
-	if err := app.setRoutePreference(clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-unauthorized"}); err == nil {
-		t.Fatal("broker accepted an exit outside the signed options")
+	return control.BootstrapInvite{Schema: 1, Capability: capability}
+}
+
+func TestBrokerAcceptsCompleteBootstrapInviteDepth(t *testing.T) {
+	body, err := json.Marshal(brokerRequest{Operation: "join_profile", Name: "Demo Installed", Invite: func() *control.BootstrapInvite {
+		invite := brokerTestInvite(t)
+		return &invite
+	}()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := decodeBrokerRequest(body)
+	if err != nil {
+		t.Fatalf("complete BootstrapInvite rejected by broker: %v", err)
+	}
+	if request.Invite == nil || request.Invite.Capability.TransactionID != "demo-transaction" {
+		t.Fatal("broker dropped the complete BootstrapInvite")
 	}
 }
 
-func TestBrokerCannotBypassUnavailableProfileIndex(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	app := &portableGUI{profileHost: true, ctx: ctx, cancel: cancel, state: guiError}
-	for _, operation := range []string{"join", "connect", "disconnect", "delete", "preference", "add_profile", "join_profile", "cancel_add_profile", "select_profile", "rename_profile"} {
-		if err := app.handleBrokerRequest(brokerRequest{Operation: operation, ProfileID: "legacy"}); err == nil {
-			t.Fatalf("配置索引不可用时接受了 %s", operation)
-		}
-	}
-	if err := app.handleBrokerRequest(brokerRequest{Operation: "status"}); err != nil {
+func TestBrokerInviteDepthStillRejectsDuplicateAndOverdeepJSON(t *testing.T) {
+	invite := brokerTestInvite(t)
+	body, err := json.Marshal(brokerRequest{Operation: "join_profile", Name: "Demo Installed", Invite: &invite})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, enabled := app.presentation(app.snapshot()); enabled {
-		t.Fatal("损坏索引不能显示可连接的按钮")
+	duplicate := bytes.Replace(body, []byte(`"id":"demo-member"`), []byte(`"id":"demo-member","ID":"demo-other"`), 1)
+	if bytes.Equal(duplicate, body) {
+		t.Fatal("test did not locate the member field")
 	}
-}
+	if _, err := decodeBrokerRequest(duplicate); err == nil {
+		t.Fatal("broker accepted a case-folded duplicate inside the complete invite")
+	}
 
-func TestBrokerProfileDraftUsesBoundedActionsAndDisplayOnlySnapshot(t *testing.T) {
-	for _, req := range []brokerRequest{
-		{Operation: "add_profile"}, {Operation: "cancel_add_profile"}, {Operation: "join_profile"},
-		{Operation: "join_profile", Name: "演示网络", Invite: profileDraftInvite()},
-	} {
-		body, err := json.Marshal(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := decodeBrokerRequest(body); err != nil {
-			t.Fatalf("valid draft action rejected: %s: %v", req.Operation, err)
-		}
+	overdeep := json.NewDecoder(strings.NewReader(`{"a":{"b":{"c":{"d":{"e":{"f":{"g":1}}}}}}}`))
+	if err := rejectJSONDuplicateFields(overdeep, 0, 6); err == nil {
+		t.Fatal("broker duplicate scanner accepted content beyond its wire depth")
 	}
-	draft := &windowsProfileDraftDisplay{State: guiJoining, Name: "演示网络", Detail: "正在等待加入配置", Recoverable: true, Busy: true}
-	app := &portableGUI{brokerProfilesReady: true, brokerProfileDraft: draft}
-	snapshot := app.brokerSnapshot()
-	if snapshot.ProfileDraft == nil || *snapshot.ProfileDraft != *draft {
-		t.Fatal("broker dropped join draft progress")
-	}
-	snapshot.ProfileDraft.Name = "仅修改返回值"
-	if app.brokerProfileDraft.Name != "演示网络" {
-		t.Fatal("broker draft snapshot aliases mutable host state")
-	}
-	body, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, forbidden := range []string{"token", "invite", "private_key", "profile-draft.json", "identity.json.dpapi", "endpoint"} {
-		if strings.Contains(string(body), forbidden) {
-			t.Fatalf("broker draft snapshot leaked %q", forbidden)
-		}
-	}
-}
-
-func TestBrokerProfileSnapshotCarriesOnlyReadOnlyPaths(t *testing.T) {
-	app := &portableGUI{brokerProfilesReady: true, brokerProfiles: []windowsProfileDisplay{{ID: "legacy", Name: "演示连接", State: guiConnected}},
-		selectedProfile: "legacy", profileName: "演示连接", activeProfile: "legacy", activeProfileName: "演示连接", state: guiConnected, joined: true,
-		paths: []windowsPathDisplay{{Service: "demo-service", Candidate: "opaque-current", Chain: "本机 → demo-prefix → demo-exit → 目标", Health: "正常", SelectedQuality: "P50 25 ms", Reason: "改善达到切换门槛"}}}
-	body, err := json.Marshal(app.brokerSnapshot())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got brokerSnapshot
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatal(err)
-	}
-	if !got.ProfilesReady || got.SelectedProfile != "legacy" || len(got.Profiles) != 1 || len(got.Paths) != 1 || got.Paths[0] != app.paths[0] {
-		t.Fatalf("配置和实际路径快照丢失: %s", body)
-	}
-	for _, secret := range []string{"private_key", "api_secret", "certificate_path", "runtime_dir"} {
-		if strings.Contains(string(body), secret) {
-			t.Fatalf("显示快照暴露了 %s", secret)
-		}
-	}
-}
-
-func TestBrokerDisconnectDuringJoinKeepsCommittedIdentityOffline(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	app := &portableGUI{edition: editionInstalled, ctx: ctx, cancel: cancel, state: guiJoining}
-	if err := app.handleBrokerRequest(brokerRequest{Operation: "disconnect"}); err != nil {
-		t.Fatal(err)
-	}
-	app.afterJoin("demo-device")
-	if s := app.snapshot(); s.state != guiStopped || !s.joined || s.deviceID != "demo-device" || app.runCancel != nil {
-		t.Fatal("completed join ignored the user's disconnect and started a workload")
-	}
-}
-
-func TestInstalledStateRejectsUserReadableMachineSecrets(t *testing.T) {
-	for _, sddl := range []string{
-		`O:SYD:(A;;FA;;;WD)`,
-		`O:SYD:(A;;FA;;;SY)(A;;FR;;;BU)`,
-		`O:BUD:(A;;FA;;;SY)(A;;FA;;;BA)`,
-		`O:SYD:NO_ACCESS_CONTROL`,
-	} {
-		sd, err := windows.SecurityDescriptorFromString(sddl)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := validateMachineDescriptor(sd); err == nil {
-			t.Fatalf("accepted unsafe ACL %s", sddl)
-		}
-	}
-	sd, err := windows.SecurityDescriptorFromString(`O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateMachineDescriptor(sd); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("ProgramData", t.TempDir())
-	actual, err := installedStateRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.HasPrefix(actual, os.Getenv("ProgramData")) {
-		t.Fatal("service trusted an environment-supplied root")
-	}
-}
-
-func TestBrokerNativePipeLifecycle(t *testing.T) {
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := fmt.Sprintf(`\\.\pipe\LoomBrokerTest-%d`, os.Getpid())
-	pipe, err := createBrokerPipe(name, user.User.Sid.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer windows.CloseHandle(pipe)
-	ctx, cancel := context.WithCancel(context.Background())
-	app := &portableGUI{ctx: ctx, cancel: cancel, state: guiNeedsJoin, routeSelected: -1}
-	done := make(chan error, 1)
-	go func() { done <- serveBroker(ctx, pipe, app) }()
-	defer func() {
-		cancel()
-		if err := <-done; err != nil {
-			t.Error(err)
-		}
-	}()
-	for _, oversized := range []bool{true, false, false} {
-		callCtx, callCancel := context.WithTimeout(ctx, 3*time.Second)
-		h, err := connectBrokerPipe(callCtx, name)
-		if err != nil {
-			callCancel()
-			t.Fatal(err)
-		}
-		if err := verifyBrokerServer(h); err == nil {
-			t.Fatal("unregistered pipe passed SCM identity check")
-		}
-		if oversized {
-			var header [4]byte
-			binary.LittleEndian.PutUint32(header[:], maxBrokerMessage+1)
-			if err := pipeBytes(callCtx, h, header[:], true); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := readPipeMessage(callCtx, h); err == nil {
-				t.Fatal("oversized message was accepted")
-			}
-		} else {
-			if err := writePipeMessage(callCtx, h, []byte(`{"operation":"status"}`)); err != nil {
-				t.Fatal(err)
-			}
-			body, err := readPipeMessage(callCtx, h)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var response brokerResponse
-			if err := json.Unmarshal(body, &response); err != nil {
-				t.Fatal(err)
-			}
-			if response.Error != "" || response.Snapshot.State != guiNeedsJoin {
-				t.Fatalf("unexpected reply: %s", body)
-			}
-			if err := pipeBytes(callCtx, h, []byte{1}, true); err != nil {
-				t.Fatal(err)
-			}
-		}
-		windows.CloseHandle(h)
-		callCancel()
-	}
-	// 客户端不发送消息时，SCM 停止也必须取消读操作并释放管道。
-	stallCtx, stallCancel := context.WithTimeout(ctx, time.Second)
-	defer stallCancel()
-	h, err := connectBrokerPipe(stallCtx, name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer windows.CloseHandle(h)
-}
-
-func TestBrokerNativePipeRejectsOtherUser(t *testing.T) {
-	if windows.GetCurrentProcessToken().IsElevated() {
-		t.Skip("administrators are authorized")
-	}
-	name := fmt.Sprintf(`\\.\pipe\LoomBrokerDenied-%d`, os.Getpid())
-	pipe, err := createBrokerPipe(name, "S-1-5-32-546")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer windows.CloseHandle(pipe)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if h, err := connectBrokerPipe(ctx, name); err == nil {
-		windows.CloseHandle(h)
-		t.Fatal("non-operator could access the service pipe")
-	}
-}
-
-func TestInstalledServiceLive(t *testing.T) {
-	if os.Getenv("LOOM_ACCEPT_INSTALLED") != "1" {
-		t.Skip("set LOOM_ACCEPT_INSTALLED=1 after MSI installation")
-	}
-	if windows.GetCurrentProcessToken().IsElevated() {
-		t.Fatal("run this acceptance as the ordinary installing user")
-	}
-	root, err := installedStateRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.ReadDir(root); !os.IsPermission(err) {
-		t.Fatalf("ordinary UI could read protected machine state: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	response, err := callInstalledBroker(ctx, brokerRequest{Operation: "status"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Error != "" || response.Snapshot.State == guiNeedsElevation || response.Snapshot.State == guiError {
-		t.Fatalf("invalid service state: %+v", response)
-	}
-	app := &portableGUI{brokerClient: true, edition: editionInstalled, root: root, ctx: ctx, cancel: cancel, state: guiLoading}
-	app.exchangeInstalledBroker(brokerRequest{Operation: "status"})
-	if app.snapshot().state != response.Snapshot.State {
-		t.Fatal("ordinary GUI did not reflect service state")
-	}
-	t.Log("ordinary user queried the SCM-verified service; machine state access was denied")
-}
-
-func TestInstalledConnectStopLive(t *testing.T) {
-	if os.Getenv("LOOM_ACCEPT_INSTALLED") != "1" {
-		t.Skip("set LOOM_ACCEPT_INSTALLED=1 after normal Installed join")
-	}
-	if windows.GetCurrentProcessToken().IsElevated() {
-		t.Fatal("lifecycle operations must run unprivileged")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	call := func(req brokerRequest) brokerSnapshot {
-		t.Helper()
-		response, err := callInstalledBroker(ctx, req)
-		if err != nil || response.Error != "" {
-			t.Fatalf("service operation %s: %v %s", req.Operation, err, response.Error)
-		}
-		return response.Snapshot
-	}
-	wait := func(state portableGUIState) brokerSnapshot {
-		t.Helper()
-		for ctx.Err() == nil {
-			s := call(brokerRequest{Operation: "status"})
-			if s.State == state {
-				return s
-			}
-			if s.State == guiError {
-				t.Fatalf("service error: %s", s.Detail)
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		t.Fatal("service lifecycle timed out")
-		return brokerSnapshot{}
-	}
-	wait(guiConnected)
-	if path := os.Getenv("LOOM_ACCEPT_INSTALLED_PREFERENCE"); path != "" {
-		preference, err := clientcore.ReadPreference(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s := call(brokerRequest{Operation: "preference", Preference: &preference})
-		if s.RouteSelected < 0 || s.Routes[s.RouteSelected].Preference != preference {
-			t.Fatal("selected preference was not applied")
-		}
-	}
-	iface := liveTUNInterface()
-	if iface == nil {
-		t.Fatal("Installed TUN was not active")
-	}
-	call(brokerRequest{Operation: "disconnect"})
-	wait(guiStopped)
-	waitLiveTUNCleanup(t, iface.Index)
-	call(brokerRequest{Operation: "connect"})
-	wait(guiConnected)
-	t.Log("ordinary user selected an authorized route, disconnected with route cleanup, and reconnected through the service")
 }

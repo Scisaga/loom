@@ -130,7 +130,7 @@ Endpoint generation、允许的直连/转发约束、所需的通用 Artifact �
 | Artifact | manifest 与摘要寻址字节 | 不可变内容存储及同一 manifest | 下载、校验后使用的字节 | 版本、摘要、签名和发布位置 |
 | BootstrapCapability | 自包含的规范签名编码 | 不建可变 capability store；事务仅保存约束摘要 | 对请求做一次验证的值 | 仅显示摘要、作用域和失效状态，不显示秘密 |
 | EnrollmentTransaction | claim/resume 请求和同一事务响应 | 唯一事务记录，原子更新状态 | 当前请求处理上下文 | 一行事务及其领域状态 |
-| DeviceView | 私有认证的完整 view | 服务端为可重建缓存；客户端保存完整 LKG | 候选、配置和 selector 输入 | 设备实际获得的版本与授权摘要 |
+| DeviceView | 私有认证的完整 view | 服务端为可重建缓存；客户端保存完整 LKG；Windows 随 profile 进入 DPAPI envelope | 候选、配置和 selector 输入 | 设备实际获得的版本与授权摘要 |
 | Observation | 私有认证报告或本地规范记录 | 可过期的观测记录，不进入治理状态 | 可用性与选择输入 | available/unavailable/unknown 和证据时间 |
 
 首个实现投影中，`EndpointGeneration` 的 wire/persistent 字段是 `endpoint_id`、单调
@@ -142,10 +142,18 @@ SPKI 和有效期，并成功绑定 listener。
 
 `tls_tunnel` 仅提供 TLS 1.3 且使用独立 ALPN。bootstrap 模式在握手中校验完整
 `BootstrapCapability`；device 模式对随机挑战做设备 Ed25519 签名。claim、resume、DeviceView
-与 report 的 HTTP 路由认证后的连接内部承载，不注册到公网或控制 listener。客户端把
+与 report 的 HTTP 路由认证后的连接内部承载，不注册到公网或控制 listener。Linux 客户端把
 设备私钥、稳定 claim request ID、capability 信任边界、防回退 floor 和完整 DeviceView LKG
-作为一个 owner-only 文件原子替换；服务端 Observation 与签名 report 保存在独立可过期
+作为一个 owner-only 文件原子替换；Windows 对每个 profile 保存同一语义，但必须使用对应 Edition 的
+machine-scope 或 current-user DPAPI envelope，并把 `v2_latch=true` 与 floor、Ed25519 身份、完整 LKG 和
+Preference 一起原子替换，不能落盘明文私钥。服务端 Observation 与签名 report 保存在独立可过期
 运行时记录中，不进入 Raft/QC Projection。
+
+`platform=windows` 的 EnrollmentIntent 和设备更新都必须携带 RuntimeProfile。服务端先对整个请求做严格
+JSON 解码，再要求外层字段完整且无未知/多余值、内部 config 是唯一规范 JSON、每条 RouteCandidate 有且仅有
+一个同名可执行 outbound、每个 scope 有且仅有一个包含精确授权成员的 selector，并满足 Windows HostAdapter
+控制端点约束。任何缺失、重复、非规范或未经授权的成员使整笔 Material 在提交前失败；服务端不得规范化后
+悄悄接受原本非规范的 Windows 输入，也不得依赖客户端补默认值。
 
 线格式必须规范化并可逆：
 
@@ -221,6 +229,10 @@ UI = Present(CertifiedHead, Projection, Transactions, DeviceViews, Observations)
 6. 既有证书匹配时 generation 可进入 serving；不匹配或失效时失败关闭，并确认没有 DNS/ACME 行为。
 7. 控制多数派中断时新审批失败关闭，已完成设备仍能从 LKG 启动；恢复后 bound 事务从原状态继续。
 8. UI 的状态、标识和转换与领域对象一致；Observation 以运行事实展示，不提供伪装成期望态修改的操作。
+9. Windows RuntimeProfile 对有效规范值完成 wire 往返；缺失 profile、未知/多余字段、重复键、非规范 JSON、
+   缺候选或多出 selector 成员分别归入同一拒绝等价类，均在治理写入前失败且不改变旧 DeviceView。
+10. Windows 每个 profile 用 DPAPI 原子保存 Ed25519 身份、floor、latch、完整 LKG 与 Preference；claim 响应丢失、
+    进程/SCM 重启继续同一 EnrollmentTransaction，坏新值不能覆盖旧 LKG，profile 索引不能重建网络事实。
 
 扩展测试只能在最小集合通过后增加，并且必须对应新的风险等价类，不能为每个服务器、每种协议或
 每个中间阶段复制同一测试。
@@ -240,6 +252,8 @@ UI = Present(CertifiedHead, Projection, Transactions, DeviceViews, Observations)
 - 不把 Artifact manifest、签名、catalog proof 各自升级成业务实体；摘要与签名是 Artifact 的完整性属性。
 - 不为“可能可达”建立健康事实，不从静态声明填充 available，不用 ICMP 结果冒充实际传输成功。
 - 不保留公网 per-device 配置、公开 claim/report handler、对应反代、客户端 fallback 或兼容状态机。
+- 不为 Windows 建立第二套 claim/resume/config/report wire；平台只增加 DPAPI 与 HostAdapter 实现。
+- 不让 Windows profile 索引、UI 元数据、旧 P-256 证书或旧公开 endpoint 成为 DeviceView/DeviceIdentity fallback。
 - 不把 DNS、ACME、证书续期、全路径扫描、重复采样或全组合验收以可靠性名义重新带入本模型。
 
 删除上述重复逻辑后，如果某个响应、表或后台任务无法映射回五个自有概念或共享的 Observation，它不属于核心模型；只有

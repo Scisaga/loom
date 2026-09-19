@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"loom/internal/clientenroll"
 	"loom/internal/clientjoin"
+	"loom/internal/control"
 )
 
 const (
@@ -73,9 +73,9 @@ var (
 // readWindowsClipboardInvite accepts the image produced by copying the QR in
 // a browser, or the equivalent loom:// text. Clipboard bytes are decoded in
 // memory and are never written to a temporary file.
-func readWindowsClipboardInvite(owner uintptr) (clientenroll.Invite, error) {
+func readWindowsClipboardInvite(owner uintptr) (control.BootstrapInvite, error) {
 	if err := openWindowsClipboard(owner); err != nil {
-		return clientenroll.Invite{}, err
+		return control.BootstrapInvite{}, err
 	}
 	defer procCloseClipboard.Call()
 
@@ -85,7 +85,7 @@ func readWindowsClipboardInvite(owner uintptr) (clientenroll.Invite, error) {
 	if available, _, _ := procIsClipboardFormatAvailable.Call(windowsClipboardUnicodeText); available != 0 {
 		return readWindowsClipboardText()
 	}
-	return clientenroll.Invite{}, errors.New("剪贴板中没有二维码图片；请先在中控页面复制二维码，再按 Ctrl+V")
+	return control.BootstrapInvite{}, errors.New("剪贴板中没有二维码图片；请先在中控页面复制二维码，再按 Ctrl+V")
 }
 
 func openWindowsClipboard(owner uintptr) error {
@@ -101,24 +101,24 @@ func openWindowsClipboard(owner uintptr) error {
 	return fmt.Errorf("无法读取 Windows 剪贴板: %w", lastErr)
 }
 
-func readWindowsClipboardBitmap() (clientenroll.Invite, error) {
+func readWindowsClipboardBitmap() (control.BootstrapInvite, error) {
 	handle, _, callErr := procGetClipboardData.Call(windowsClipboardBitmap)
 	if handle == 0 {
-		return clientenroll.Invite{}, fmt.Errorf("读取剪贴板二维码失败: %w", callErr)
+		return control.BootstrapInvite{}, fmt.Errorf("读取剪贴板二维码失败: %w", callErr)
 	}
 	var bitmap windowsBitmap
 	written, _, callErr := procGetObject.Call(
 		handle, unsafe.Sizeof(bitmap), uintptr(unsafe.Pointer(&bitmap)),
 	)
 	if written != unsafe.Sizeof(bitmap) || bitmap.width <= 0 || bitmap.height == 0 {
-		return clientenroll.Invite{}, fmt.Errorf("读取剪贴板图片信息失败: %w", callErr)
+		return control.BootstrapInvite{}, fmt.Errorf("读取剪贴板图片信息失败: %w", callErr)
 	}
 	height := bitmap.height
 	if height < 0 {
 		height = -height
 	}
 	if bitmap.width > 2048 || height > 2048 || int64(bitmap.width)*int64(height) > 4<<20 {
-		return clientenroll.Invite{}, errors.New("剪贴板二维码图片过大；最大支持 2048×2048")
+		return control.BootstrapInvite{}, errors.New("剪贴板二维码图片过大；最大支持 2048×2048")
 	}
 	stride := int(bitmap.width) * 4
 	pixels := make([]byte, stride*int(height))
@@ -130,7 +130,7 @@ func readWindowsClipboardBitmap() (clientenroll.Invite, error) {
 	}}
 	dc, _, dcErr := procGetDC.Call(0)
 	if dc == 0 {
-		return clientenroll.Invite{}, fmt.Errorf("读取剪贴板图片失败: %w", dcErr)
+		return control.BootstrapInvite{}, fmt.Errorf("读取剪贴板图片失败: %w", dcErr)
 	}
 	defer procReleaseDC.Call(0, dc)
 	rows, _, dibErr := procGetDIBits.Call(
@@ -138,7 +138,7 @@ func readWindowsClipboardBitmap() (clientenroll.Invite, error) {
 		uintptr(unsafe.Pointer(&info)), windowsDIBRGBColors,
 	)
 	if rows != uintptr(height) {
-		return clientenroll.Invite{}, fmt.Errorf("转换剪贴板二维码失败: %w", dibErr)
+		return control.BootstrapInvite{}, fmt.Errorf("转换剪贴板二维码失败: %w", dibErr)
 	}
 
 	decoded := image.NewNRGBA(image.Rect(0, 0, int(bitmap.width), int(height)))
@@ -156,18 +156,18 @@ func readWindowsClipboardBitmap() (clientenroll.Invite, error) {
 	return clientjoin.ReadImage(decoded)
 }
 
-func readWindowsClipboardText() (clientenroll.Invite, error) {
+func readWindowsClipboardText() (control.BootstrapInvite, error) {
 	handle, _, callErr := procGetClipboardData.Call(windowsClipboardUnicodeText)
 	if handle == 0 {
-		return clientenroll.Invite{}, fmt.Errorf("读取剪贴板文本失败: %w", callErr)
+		return control.BootstrapInvite{}, fmt.Errorf("读取剪贴板文本失败: %w", callErr)
 	}
 	size, _, sizeErr := procGlobalSize.Call(handle)
 	if size < 2 || size > windowsMaxClipboardText {
-		return clientenroll.Invite{}, fmt.Errorf("剪贴板加入内容大小无效: %w", sizeErr)
+		return control.BootstrapInvite{}, fmt.Errorf("剪贴板加入内容大小无效: %w", sizeErr)
 	}
 	address, _, lockErr := procGlobalLock.Call(handle)
 	if address == 0 {
-		return clientenroll.Invite{}, fmt.Errorf("锁定剪贴板文本失败: %w", lockErr)
+		return control.BootstrapInvite{}, fmt.Errorf("锁定剪贴板文本失败: %w", lockErr)
 	}
 	defer procGlobalUnlock.Call(handle)
 	units := unsafe.Slice((*uint16)(unsafe.Pointer(address)), int(size/2))
@@ -176,7 +176,7 @@ func readWindowsClipboardText() (clientenroll.Invite, error) {
 		end++
 	}
 	if end == 0 || end == len(units) {
-		return clientenroll.Invite{}, errors.New("剪贴板中的加入内容无效")
+		return control.BootstrapInvite{}, errors.New("剪贴板中的加入内容无效")
 	}
 	text := windows.UTF16ToString(units[:end])
 	runtime.KeepAlive(units)

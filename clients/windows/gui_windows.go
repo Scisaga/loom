@@ -19,12 +19,14 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"loom/internal/clientenroll"
 	"loom/internal/clientjoin"
 	"loom/internal/clientsecret"
+	"loom/internal/control"
 )
 
 type portableGUIState uint8
+
+const dataPlaneStartupGrace = 1500 * time.Millisecond
 
 const (
 	guiLoading portableGUIState = iota
@@ -281,7 +283,7 @@ func (app *portableGUI) importJoinArtifact(source string) {
 	})
 }
 
-func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
+func (app *portableGUI) importJoinInvite(invite control.BootstrapInvite) {
 	if app.skin != nil && app.snapshot().profileDraft != nil {
 		app.acceptMisakaInvite(invite, nil)
 		return
@@ -302,7 +304,7 @@ func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
 	})
 }
 
-func (app *portableGUI) joinInput(source string, invite *clientenroll.Invite) (windowsJoinResult, error) {
+func (app *portableGUI) joinInput(source string, invite *control.BootstrapInvite) (windowsJoinResult, error) {
 	// §13.5：网络请求期间也刷新等待时长；仅重绘，不增加请求或更改加入状态。
 	ctx, cancel := context.WithCancel(app.ctx)
 	done := make(chan struct{})

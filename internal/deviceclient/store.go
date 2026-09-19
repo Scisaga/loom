@@ -163,15 +163,10 @@ func (store *Store) save(next State) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, store.path); err != nil {
+	if err := replaceProtectedFile(temporary, store.path); err != nil {
 		return err
 	}
-	dir, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil {
+	if err := syncProtectedDirectory(directory); err != nil {
 		return err
 	}
 	store.state = next

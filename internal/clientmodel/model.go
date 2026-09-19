@@ -1,5 +1,5 @@
 // Package clientmodel implements the I/O-free client runtime model shared by
-// Android and Linux. Platform adapters apply its choice and report readback;
+// Android, Linux, and Windows. Platform adapters apply its choice and report readback;
 // this package never performs network, clock, storage, or selector I/O.
 package clientmodel
 
@@ -16,10 +16,12 @@ import (
 )
 
 const (
-	ModeDirect = "direct"
-	ModeAuto   = "auto"
-	ModeFixed  = "fixed_exit"
+	ModeDirect Mode = "direct"
+	ModeAuto   Mode = "auto"
+	ModeFixed  Mode = "fixed_exit"
 )
+
+type Mode string
 
 type RouteCandidate struct {
 	ID        string   `json:"id"`
@@ -31,6 +33,17 @@ type RouteCandidate struct {
 type RuntimeProfile struct {
 	Kind   string `json:"kind"`
 	Config string `json:"config"`
+}
+
+// RuntimeCandidate is the deterministic executable projection of one
+// authorized RouteCandidate through a certified RuntimeProfile. It contains no
+// host state and is rebuilt rather than persisted.
+type RuntimeCandidate struct {
+	ID        string   `json:"id"`
+	FinalExit string   `json:"final_exit"`
+	Chain     []string `json:"chain"`
+	Scope     string   `json:"scope"`
+	Transport string   `json:"transport"`
 }
 
 type Observation struct {
@@ -46,7 +59,7 @@ type Observation struct {
 
 type Preference struct {
 	Schema int    `json:"schema"`
-	Mode   string `json:"mode"`
+	Mode   Mode   `json:"mode"`
 	Exit   string `json:"exit,omitempty"`
 }
 
@@ -360,4 +373,33 @@ func (profile RuntimeProfile) Validate(routes []RouteCandidate) error {
 		}
 	}
 	return nil
+}
+
+// ProjectRuntimeCandidates validates the complete route/profile mapping and
+// returns a stable, I/O-free projection. Platform adapters may add ephemeral
+// process handles, but must not change these identities or route semantics.
+func ProjectRuntimeCandidates(routes []RouteCandidate, profile RuntimeProfile) ([]RuntimeCandidate, error) {
+	if err := profile.Validate(routes); err != nil {
+		return nil, err
+	}
+	var document runtimeDocument
+	if err := json.Unmarshal([]byte(profile.Config), &document); err != nil {
+		return nil, err
+	}
+	transport := make(map[string]string, len(document.Outbounds))
+	for _, outbound := range document.Outbounds {
+		transport[outbound.Tag] = outbound.Type
+	}
+	result := make([]RuntimeCandidate, 0, len(routes))
+	for _, route := range routes {
+		result = append(result, RuntimeCandidate{ID: route.ID, FinalExit: route.FinalExit,
+			Chain: append([]string(nil), route.Chain...), Scope: route.Scope, Transport: transport[route.ID]})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Scope != result[j].Scope {
+			return result[i].Scope < result[j].Scope
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result, nil
 }

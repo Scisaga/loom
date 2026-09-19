@@ -8,6 +8,62 @@
     [switch]$RequireSigned
 )
 $ErrorActionPreference = 'Stop'
+
+function Get-DeterministicGuid([string]$Identity) {
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { $hash = $algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($Identity)) } finally { $algorithm.Dispose() }
+    $hex = (($hash[0..15] | ForEach-Object { $_.ToString('x2') }) -join '')
+    return ('{' + $hex.Substring(0,8) + '-' + $hex.Substring(8,4) + '-' + $hex.Substring(12,4) + '-' +
+        $hex.Substring(16,4) + '-' + $hex.Substring(20,12) + '}').ToUpperInvariant()
+}
+
+function Set-DeterministicMsiSummary([string]$Path, [string]$PackageCode) {
+    $installer = $null
+    $summary = $null
+    try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $summary = $installer.SummaryInformation($Path, 20)
+        $summary.Property(9) = $PackageCode
+        $fixed = [DateTime]::SpecifyKind([DateTime]'1980-01-01T00:00:00', [DateTimeKind]::Utc)
+        $summary.Property(12) = $fixed
+        $summary.Property(13) = $fixed
+        $summary.Persist()
+    } finally {
+        if ($summary) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($summary) }
+        if ($installer) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer) }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+    }
+}
+
+function Set-DeterministicCompoundFileTime([string]$Path) {
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $header = New-Object byte[] 512
+        if ($stream.Read($header, 0, $header.Length) -ne $header.Length -or
+            (($header[0..7] | ForEach-Object { $_.ToString('x2') }) -join '') -ne 'd0cf11e0a1b11ae1') {
+            throw 'WiX output is not a canonical compound file.'
+        }
+        $sectorShift = [BitConverter]::ToUInt16($header, 30)
+        $firstDirectorySector = [BitConverter]::ToUInt32($header, 48)
+        if ($sectorShift -notin @(9,12) -or $firstDirectorySector -eq [uint32]::MaxValue) {
+            throw 'WiX output compound-file directory is invalid.'
+        }
+        $sectorSize = [int64]1 -shl $sectorShift
+        $rootEntry = ([int64]$firstDirectorySector + 1) * $sectorSize
+        if ($rootEntry + 128 -gt $stream.Length) { throw 'WiX output root storage is out of range.' }
+        $stream.Position = $rootEntry + 66
+        if ($stream.ReadByte() -ne 5) { throw 'WiX output has no compound-file root storage.' }
+        $fixed = [DateTime]::SpecifyKind([DateTime]'1980-01-01T00:00:00', [DateTimeKind]::Utc).ToFileTimeUtc()
+        $timeBytes = [BitConverter]::GetBytes($fixed)
+        $stream.Position = $rootEntry + 108
+        $stream.Write($timeBytes, 0, $timeBytes.Length)
+        $stream.Flush($true)
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '..\out' }
 $output = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $source = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\clients\windows\installer\Package.wxs')).Path
@@ -30,6 +86,7 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $output $name) -Algorithm SHA256).Hash -ne $hashes[$name]) { throw "ZIP hash mismatch: $name" }
     }
     if ($hashes.Count -ne 6) { throw 'The complete six-ZIP build is required.' }
+    $zipManifestHash = (Get-FileHash -LiteralPath (Join-Path $output 'windows-clients-SHA256SUMS') -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest = @()
     foreach ($arch in @('amd64','arm64')) {
         $name = "loom-client-windows-installed-$arch"
@@ -47,11 +104,15 @@ try {
             & (Join-Path $PSScriptRoot 'sign-windows-artifact.ps1') -Path (Join-Path $bundle 'loom-client.exe') -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -SignTool $SignTool
         }
         $wixArch = if ($arch -eq 'amd64') { 'x64' } else { 'arm64' }
+        $productCode = Get-DeterministicGuid "loom/windows/product/$Version/$arch"
+        $packageCode = Get-DeterministicGuid "loom/windows/package/$Version/$arch/$zipManifestHash"
         $msi = Join-Path $stage "$name.msi"
-        $wixArgs = @('build', ('"' + $source + '"'), '-arch', $wixArch, '-d', "Version=$Version", '-d', ('"SourceDir=' + $bundle + '"'), '-intermediateFolder', ('"' + (Join-Path $stage "obj-$arch") + '"'), '-o', ('"' + $msi + '"'))
+        $wixArgs = @('build', ('"' + $source + '"'), '-arch', $wixArch, '-d', "Version=$Version", '-d', "ProductCode=$productCode", '-d', ('"SourceDir=' + $bundle + '"'), '-intermediateFolder', ('"' + (Join-Path $stage "obj-$arch") + '"'), '-o', ('"' + $msi + '"'))
         $process = Start-Process -FilePath $Wix -ArgumentList $wixArgs -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $stage 'wix.log') -RedirectStandardError (Join-Path $stage 'wix.err')
         Get-Content -LiteralPath (Join-Path $stage 'wix.log'),(Join-Path $stage 'wix.err')
         if ($process.ExitCode -ne 0) { throw "WiX build failed: $arch" }
+        Set-DeterministicMsiSummary $msi $packageCode
+        Set-DeterministicCompoundFileTime $msi
         & (Join-Path $PSScriptRoot 'verify-windows-installer.ps1') -Path $msi -IconPath $stagedIcon
         if ($CertificateThumbprint) {
             & (Join-Path $PSScriptRoot 'sign-windows-artifact.ps1') -Path $msi -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -SignTool $SignTool

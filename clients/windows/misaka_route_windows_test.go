@@ -3,12 +3,11 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
+	"errors"
 	"sync"
 	"testing"
 
-	"loom/internal/clientcore"
+	"loom/internal/clientmodel"
 )
 
 func lockMisakaRouteWorker(t *testing.T, child *portableGUI) func() {
@@ -30,9 +29,9 @@ func newMisakaRouteGUITestWindow(t *testing.T) (*portableGUI, *windowsProfileMan
 	child.mu.Lock()
 	child.joined, child.state, child.routeSelected = true, guiStopped, 0
 	child.routeOptions = []portableRouteOption{
-		{Label: "自动", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.Auto}},
-		{Label: "固定出口 · demo-exit", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}},
-		{Label: "直连", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.Direct}},
+		{Label: "自动", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}},
+		{Label: "固定出口 · demo-exit", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}},
+		{Label: "直连", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}},
 	}
 	child.mu.Unlock()
 	app.renderControls()
@@ -59,23 +58,23 @@ func finishMisakaRouteTestRequest(t *testing.T, app *portableGUI, m *windowsProf
 }
 
 func TestGUIMisakaRouteFixedNavigationAndEscapeDoNotPersist(t *testing.T) {
-	app, m, child := newMisakaRouteGUITestWindow(t)
+	app, m, _ := newMisakaRouteGUITestWindow(t)
 	procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed, app.controls.modeFixed)
 	assertMisakaRoutePickerVisible(t, app, true)
-	if len(app.routeVisible) != 1 || app.snapshot().routeOptions[app.routeVisible[0]].Preference.Mode != clientcore.FixedExit {
+	if len(app.routeVisible) != 1 || app.snapshot().routeOptions[app.routeVisible[0]].Preference.Mode != clientmodel.ModeFixed {
 		t.Fatal("[§7.2] Fixed 下拉混入了非签名出口选项")
 	}
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetCurSel, 0, 0)
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRoute|portableCBNSelChange<<16, app.controls.routeCombo)
 	m.workers.Wait()
-	if _, err := os.Stat(filepath.Join(child.root, "state", "preference.json")); !os.IsNotExist(err) {
-		t.Fatal("[§7.2] 导航候选提前写入了偏好")
+	if app.snapshot().routeSelected != 0 {
+		t.Fatal("[§7.2] 导航候选提前改变了权威偏好投影")
 	}
 	if !handlePortableRouteFilter(portableMSG{hwnd: app.controls.routeCombo, msg: portableWMKeyDown, wParam: portableVKEscape}) {
 		t.Fatal("[§7.2] 未输入过滤文字时 Esc 没有取消 Fixed 编辑")
 	}
 	assertMisakaRoutePickerVisible(t, app, false)
-	if app.skin.route.pending != nil || misakaSelectedMode(app.snapshot()) != clientcore.Auto {
+	if app.skin.route.pending != nil || misakaSelectedMode(app.snapshot()) != clientmodel.ModeAuto {
 		t.Fatal("[§7.2] 取消 Fixed 改变了实际偏好")
 	}
 }
@@ -93,7 +92,7 @@ func TestGUIMisakaRouteFixedDirectAutoHasOneCommitAndStablePolling(t *testing.T)
 		}
 		finishMisakaRouteTestRequest(t, app, m)
 		assertMisakaRoutePickerVisible(t, app, true)
-		if misakaSelectedMode(app.snapshot()) != clientcore.FixedExit {
+		if misakaSelectedMode(app.snapshot()) != clientmodel.ModeFixed {
 			t.Fatal("[§7.2] Fixed 的真实偏好未保存")
 		}
 		release := lockMisakaRouteWorker(t, child)
@@ -111,13 +110,13 @@ func TestGUIMisakaRouteFixedDirectAutoHasOneCommitAndStablePolling(t *testing.T)
 		release()
 		finishMisakaRouteTestRequest(t, app, m)
 		assertMisakaRoutePickerVisible(t, app, false)
-		if misakaSelectedMode(app.snapshot()) != clientcore.Direct {
+		if misakaSelectedMode(app.snapshot()) != clientmodel.ModeDirect {
 			t.Fatal("[§7.2] Direct 的真实偏好未保存")
 		}
 		procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlAuto, app.controls.modeAuto)
 		finishMisakaRouteTestRequest(t, app, m)
 		assertMisakaRoutePickerVisible(t, app, false)
-		if misakaSelectedMode(app.snapshot()) != clientcore.Auto {
+		if misakaSelectedMode(app.snapshot()) != clientmodel.ModeAuto {
 			t.Fatal("[§7.2] Auto 的真实偏好未保存")
 		}
 	}
@@ -131,14 +130,14 @@ func TestGUIMisakaRouteFixedDirectAutoHasOneCommitAndStablePolling(t *testing.T)
 }
 
 func TestGUIMisakaRouteFailedSaveRestoresActualSelection(t *testing.T) {
-	app, m, child := newMisakaRouteGUITestWindow(t)
-	if err := os.MkdirAll(filepath.Join(child.root, "state", "preference.json"), 0o700); err != nil {
-		t.Fatal(err)
+	app, m, _ := newMisakaRouteGUITestWindow(t)
+	m.setPreference = func(*portableGUI, clientmodel.Preference) error {
+		return errors.New("injected protected preference failure")
 	}
 	procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlDirect, app.controls.modeDirect)
 	finishMisakaRouteTestRequest(t, app, m)
 	assertMisakaRoutePickerVisible(t, app, false)
-	if misakaSelectedMode(app.snapshot()) != clientcore.Auto || app.snapshot().detail == "" {
+	if misakaSelectedMode(app.snapshot()) != clientmodel.ModeAuto || app.snapshot().detail == "" {
 		t.Fatal("[§7.2] 写入失败被显示为已选 Direct，或缺少失败原因")
 	}
 	for _, control := range []uintptr{app.controls.modeAuto, app.controls.modeFixed, app.controls.modeDirect} {
@@ -152,7 +151,7 @@ func TestGUIMisakaRouteFocusLossRestoresUnconfirmedExit(t *testing.T) {
 	app, m, child := newMisakaRouteGUITestWindow(t)
 	child.mu.Lock()
 	child.routeOptions = append(child.routeOptions, portableRouteOption{
-		Label: "固定出口 · demo-other", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-other"},
+		Label: "固定出口 · demo-other", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: "demo-other"},
 	})
 	child.routeSelected = 1
 	child.mu.Unlock()
@@ -192,7 +191,7 @@ func TestGUIMisakaRouteLateCompletionCannotModifyAnotherProfile(t *testing.T) {
 	m.workers.Wait()
 	procSendMessage.Call(app.hwnd, misakaWMRouteAcknowledged, oldSequence, 0)
 	app.renderControls()
-	if snapshot := app.snapshot(); snapshot.selectedProfile != otherID || misakaSelectedMode(snapshot) != clientcore.Auto || app.skin.route.pending != nil {
+	if snapshot := app.snapshot(); snapshot.selectedProfile != otherID || misakaSelectedMode(snapshot) != clientmodel.ModeAuto || app.skin.route.pending != nil {
 		t.Fatal("[§7.2] 迟到完成通知改变了另一份配置")
 	}
 	assertMisakaRoutePickerVisible(t, app, false)
@@ -218,7 +217,7 @@ func TestGUIMisakaRouteRevokedFixedOptionsCloseTheEditor(t *testing.T) {
 func TestWindowsProfilePreferenceBusyCoversTheWholeWorker(t *testing.T) {
 	m := newProfileManagerFixture(t)
 	child := m.children[legacyConnectionProfile]
-	preference := clientcore.Preference{Schema: 1, Mode: clientcore.Direct}
+	preference := clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}
 	child.joined, child.state = true, guiStopped
 	child.routeOptions = []portableRouteOption{{Label: "直连", Preference: preference}}
 	child.routeSelected = -1
@@ -249,7 +248,7 @@ func TestWindowsProfilePreferenceBusyCoversTheWholeWorker(t *testing.T) {
 	release()
 	waitProfileSignal(t, done)
 	m.workers.Wait()
-	if snapshot := m.snapshot(); snapshot.routeBusy || misakaSelectedMode(snapshot) != clientcore.Direct {
+	if snapshot := m.snapshot(); snapshot.routeBusy || misakaSelectedMode(snapshot) != clientmodel.ModeDirect {
 		t.Fatal("[§7.2] 最终完成没有发布真实偏好并清除忙状态")
 	}
 }
@@ -273,7 +272,7 @@ func TestGUIMisakaRouteUnchangedGeometryDoesNotRelayoutOnClickOrAck(t *testing.T
 			t.Fatal("[§7.2] Auto 到 Direct 的等待或 ACK 在几何不变时仍移动了控件")
 		}
 	}
-	if misakaSelectedMode(app.snapshot()) != clientcore.Direct {
+	if misakaSelectedMode(app.snapshot()) != clientmodel.ModeDirect {
 		t.Fatal("[§7.2] 减少重绘丢失了实际模式确认")
 	}
 }

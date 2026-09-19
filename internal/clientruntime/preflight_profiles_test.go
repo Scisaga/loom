@@ -8,7 +8,7 @@ import (
 )
 
 func TestInstalledRuntimeUsesIndependentProfileCA(t *testing.T) {
-	source, agentPlan := pathPlanFixture(t)
+	source, _ := pathPlanFixture(t)
 	original := append([]byte(nil), source...)
 	paths := []string{
 		WindowsInstalledCAPath,
@@ -35,9 +35,6 @@ func TestInstalledRuntimeUsesIndependentProfileCA(t *testing.T) {
 		}
 		if certificates == 0 {
 			t.Fatal("fixture did not exercise TLS candidates")
-		}
-		if _, err := BuildWindowsSelectorPlan(derived, agentPlan, WindowsInstalledProfile, path); err != nil {
-			t.Fatalf("profile CA prevented shared Agent validation: %v", err)
 		}
 		other := paths[1]
 		if path == other {

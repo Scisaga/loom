@@ -2,8 +2,9 @@ package clientjoin
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"image"
 	"image/png"
 	"os"
@@ -12,16 +13,18 @@ import (
 	"testing"
 
 	qrcodeencoder "github.com/skip2/go-qrcode"
+
+	"loom/internal/control"
 )
 
 func TestReadEquivalentJoinInputs(t *testing.T) {
-	raw, token := testJoinURI(t)
+	raw, transactionID := testJoinURI(t)
 	dir := t.TempDir()
 	textPath := filepath.Join(dir, "device.loom-invite")
 	if err := os.WriteFile(textPath, []byte(raw+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pngBody, err := qrcodeencoder.Encode(raw, qrcodeencoder.Medium, 320)
+	pngBody, err := qrcodeencoder.Encode(raw, qrcodeencoder.Medium, 1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +53,7 @@ func TestReadEquivalentJoinInputs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if invite.Token != token || invite.Endpoint != "https://control.example/api/client/enroll" {
+			if invite.Capability.TransactionID != transactionID {
 				t.Fatalf("invite=%+v", invite)
 			}
 		})
@@ -59,7 +62,7 @@ func TestReadEquivalentJoinInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invite.Token != token || invite.Endpoint != "https://control.example/api/client/enroll" {
+	if invite.Capability.TransactionID != transactionID {
 		t.Fatalf("clipboard invite=%+v", invite)
 	}
 }
@@ -115,15 +118,24 @@ func TestReadRejectsOversizedPNGDimensions(t *testing.T) {
 
 func testJoinURI(t *testing.T) (string, string) {
 	t.Helper()
-	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
-	body, err := json.Marshal(struct {
-		Schema    int    `json:"schema"`
-		Endpoint  string `json:"endpoint"`
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expires_at"`
-	}{Schema: 1, Endpoint: "https://control.example/api/client/enroll", Token: token, ExpiresAt: "2030-01-01T00:00:00Z"})
+	public, private, _ := ed25519.GenerateKey(rand.Reader)
+	memberID := "demo-control"
+	digest := "sha256:" + strings.Repeat("0", 64)
+	config := control.StableConfig([]control.Member{{ID: memberID, Node: "demo-node",
+		PublicKey: base64.RawURLEncoding.EncodeToString(public)}})
+	capability, err := control.SignBootstrapCapability(control.BootstrapCapability{Schema: 1,
+		TransactionID: "demo-windows-enrollment", IssuedHead: digest, ConfigMaterial: digest,
+		ControlConfig: config, ExpiresAt: "2030-01-01T00:00:00Z", Actions: []string{"claim", "resume"},
+		Endpoints: []control.EndpointReference{{EndpointID: "demo-entry", Generation: 1, Transport: "tls_tunnel",
+			Address: "192.0.2.1:443", ServerName: "demo.example", SPKISHA256: strings.Repeat("1", 64), State: "serving"}},
+		ConstraintDigest: digest, IssuerMemberID: memberID}, control.NodeConfig{MemberID: memberID,
+		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(private)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return "loom://enroll#" + base64.RawURLEncoding.EncodeToString(body), token
+	raw, err := control.EncodeInvite(control.BootstrapInvite{Schema: 1, Capability: capability})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw, capability.TransactionID
 }

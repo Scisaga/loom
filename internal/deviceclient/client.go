@@ -3,6 +3,7 @@ package deviceclient
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,6 +14,18 @@ import (
 
 	"loom/internal/control"
 )
+
+// IdentityStore is the private device wire boundary. Linux owner-only storage
+// and Windows DPAPI profiles implement the same claim/resume/sync/report state
+// machine without copying protocol logic.
+type IdentityStore interface {
+	Capability() control.BootstrapCapability
+	ClaimRequestID() string
+	PublicKey() string
+	PrivateKey() ed25519.PrivateKey
+	LKG() *control.DeviceViewEnvelope
+	SaveLKG(control.DeviceViewEnvelope) error
+}
 
 func tunnelHTTPClient(connection net.Conn) *http.Client {
 	used := false
@@ -73,7 +86,7 @@ func endpointOrder(endpoints []control.EndpointReference) []control.EndpointRefe
 	return result
 }
 
-func Claim(ctx context.Context, store *Store) (control.EnrollmentResponse, error) {
+func Claim(ctx context.Context, store IdentityStore) (control.EnrollmentResponse, error) {
 	capability := store.Capability()
 	claim, err := control.SignEnrollmentClaim(control.EnrollmentClaimRequest{Schema: 1, Capability: capability,
 		RequestID: store.ClaimRequestID(), DevicePublicKey: store.PublicKey()}, store.PrivateKey())
@@ -109,7 +122,7 @@ func Claim(ctx context.Context, store *Store) (control.EnrollmentResponse, error
 	return control.EnrollmentResponse{}, errors.Join(failures...)
 }
 
-func Resume(ctx context.Context, store *Store) (control.EnrollmentResponse, error) {
+func Resume(ctx context.Context, store IdentityStore) (control.EnrollmentResponse, error) {
 	capability := store.Capability()
 	resume, err := control.SignEnrollmentResume(control.EnrollmentResumeRequest{Schema: 1,
 		TransactionID: capability.TransactionID, RequestID: store.ClaimRequestID(), DevicePublicKey: store.PublicKey()}, store.PrivateKey())
@@ -145,7 +158,7 @@ func Resume(ctx context.Context, store *Store) (control.EnrollmentResponse, erro
 	return control.EnrollmentResponse{}, errors.Join(failures...)
 }
 
-func deviceConnection(ctx context.Context, store *Store) (net.Conn, error) {
+func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error) {
 	lkg := store.LKG()
 	if lkg == nil {
 		return nil, errors.New("device has no certified LKG")
@@ -169,7 +182,7 @@ func deviceConnection(ctx context.Context, store *Store) (net.Conn, error) {
 	return nil, errors.Join(failures...)
 }
 
-func Sync(ctx context.Context, store *Store) (control.DeviceViewEnvelope, error) {
+func Sync(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
 	connection, err := deviceConnection(ctx, store)
 	if err != nil {
 		return control.DeviceViewEnvelope{}, err
@@ -185,7 +198,7 @@ func Sync(ctx context.Context, store *Store) (control.DeviceViewEnvelope, error)
 	return envelope, nil
 }
 
-func Report(ctx context.Context, store *Store, report control.DeviceReport) error {
+func Report(ctx context.Context, store IdentityStore, report control.DeviceReport) error {
 	lkg := store.LKG()
 	if lkg == nil {
 		return errors.New("device has no certified LKG")

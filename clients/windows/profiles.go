@@ -461,7 +461,11 @@ func decodeConnectionProfileIndex(body []byte) (connectionProfileIndex, error) {
 }
 
 func rejectConnectionProfileDuplicateFields(decoder *json.Decoder, depth int) error {
-	if depth > 4 {
+	return rejectJSONDuplicateFields(decoder, depth, 4)
+}
+
+func rejectJSONDuplicateFields(decoder *json.Decoder, depth, maximumDepth int) error {
+	if depth > maximumDepth {
 		return errors.New("[§13.5 连接配置] 索引嵌套过深")
 	}
 	token, err := decoder.Token()
@@ -486,7 +490,7 @@ func rejectConnectionProfileDuplicateFields(decoder *json.Decoder, depth int) er
 			}
 			seen[key] = true
 		}
-		if err := rejectConnectionProfileDuplicateFields(decoder, depth+1); err != nil {
+		if err := rejectJSONDuplicateFields(decoder, depth+1, maximumDepth); err != nil {
 			return err
 		}
 	}

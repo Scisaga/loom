@@ -103,8 +103,8 @@ func TestMatrixShape(t *testing.T) {
 	if units != serverWorkloads {
 		t.Errorf("渲染出 %d 个 sing-box systemd unit,期望 %d(server workload)", units, serverWorkloads)
 	}
-	if platformPlans != 2 {
-		t.Errorf("渲染出 %d 份非 Linux 平台计划,期望 2", platformPlans)
+	if platformPlans != 0 {
+		t.Errorf("渲染恢复了 %d 份已删除的 Agent 平台计划", platformPlans)
 	}
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
@@ -183,10 +183,8 @@ func TestSkipsAreExpected(t *testing.T) {
 		}
 	}
 	want := []string{
-		"cost 需要价格数据源",
-		"ttft 只能由 L7 观测点产出",
-		"platform=android 保留同一签名 bundle",
-		"platform=windows-desktop 保留同一签名 bundle",
+		"platform=android 只消费私有 DeviceView RuntimeProfile",
+		"platform=windows-desktop 只消费私有 DeviceView RuntimeProfile",
 	}
 	for _, fragment := range want {
 		found := false

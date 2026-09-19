@@ -86,6 +86,9 @@ func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead 
 		if canonicalErr != nil {
 			return CertifiedState{}, "", canonicalErr
 		}
+		if payload.Platform == "windows" && canonical != payload.Runtime.Config {
+			return CertifiedState{}, "", errors.New("Windows runtime profile config is not canonical")
+		}
 		payload.Runtime.Config = canonical
 	}
 	if _, transaction := findEnrollment(&projection, payload.TransactionID); transaction != nil {
@@ -299,8 +302,11 @@ func (server *Server) putDevice(ctx context.Context, requestID, baseHead string,
 	if err != nil {
 		return CertifiedState{}, err
 	}
-	payload.Runtime.Config = canonicalConfig
 	authorization := projection.DeviceAuthorizations[index]
+	if authorization.Platform == "windows" && canonicalConfig != payload.Runtime.Config {
+		return CertifiedState{}, errors.New("Windows runtime profile config is not canonical")
+	}
+	payload.Runtime.Config = canonicalConfig
 	authorization.Routes = append([]RouteCandidate(nil), payload.Routes...)
 	authorization.Runtime = cloneRuntimeProfile(payload.Runtime)
 	authorization.Floor = certified.Head.Index + 1

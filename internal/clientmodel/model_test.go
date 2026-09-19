@@ -1,6 +1,7 @@
 package clientmodel
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -44,5 +45,33 @@ func TestRuntimeProfileRequiresExactRouteMapping(t *testing.T) {
 	if canonical, err := CanonicalizeRuntimeConfig([]byte(bad)); err == nil &&
 		(RuntimeProfile{Kind: "sing_box", Config: canonical}).Validate(routes) == nil {
 		t.Fatal("unauthorized selector member accepted")
+	}
+}
+
+func TestRuntimeCandidatesArePureStableProjection(t *testing.T) {
+	raw := `{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],"outbounds":[{"type":"selector","tag":"service","outbounds":["relay","direct"]},{"type":"hysteria2","tag":"relay"},{"type":"direct","tag":"direct"}],"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}`
+	config, err := CanonicalizeRuntimeConfig([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := RuntimeProfile{Kind: "sing_box", Config: config}
+	routes := []RouteCandidate{
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service"},
+		{ID: "direct", FinalExit: "direct", Scope: "service"},
+	}
+	want := []RuntimeCandidate{
+		{ID: "direct", FinalExit: "direct", Scope: "service", Transport: "direct"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service", Transport: "hysteria2"},
+	}
+	first, err := ProjectRuntimeCandidates(routes, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ProjectRuntimeCandidates([]RouteCandidate{routes[1], routes[0]}, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, want) || !reflect.DeepEqual(second, want) {
+		t.Fatalf("runtime projection is not stable:\nfirst=%+v\nsecond=%+v", first, second)
 	}
 }

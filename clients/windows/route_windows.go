@@ -6,92 +6,49 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"sort"
 	"time"
 
-	"loom/internal/clientcore"
-	"loom/internal/clientruntime"
+	"loom/internal/clientadapter"
+	"loom/internal/clientmodel"
+	"loom/internal/deviceclient"
 )
 
 type portableRouteOption struct {
 	Label      string
-	Preference clientcore.Preference
+	Preference clientmodel.Preference
 }
 
-func (app *portableGUI) watchRoutePreference(ctx context.Context, sequence uint64) {
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	lastConfig := ""
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			path, err := app.refreshRoutePreference(ctx, sequence, lastConfig)
-			if err != nil {
-				app.routeFailure(sequence, err)
-			} else {
-				lastConfig = path
-			}
+func routeOptions(routes []clientmodel.RouteCandidate) ([]portableRouteOption, error) {
+	exits := map[string]bool{}
+	direct := false
+	for _, route := range routes {
+		if err := route.Validate(); err != nil {
+			return nil, err
+		}
+		if len(route.Chain) == 0 {
+			direct = true
+		} else {
+			exits[route.FinalExit] = true
 		}
 	}
-}
-
-// §7.2：配置切换时恢复偏好与用户切换串行，避免旧偏好覆盖新选择。
-func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uint64, lastConfig string) (string, error) {
-	app.routeMu.Lock()
-	defer app.routeMu.Unlock()
-	control, err := activeRouteControl(app.root)
-	if err != nil {
-		return lastConfig, err
+	options := []portableRouteOption{{Label: "自动选择", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}}}
+	if direct {
+		options = append(options, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}})
 	}
-	state := control.snapshot()
-	if !state.active() || state.Policy == nil {
-		return lastConfig, errors.New("本地数据面正在切换")
+	ids := make([]string, 0, len(exits))
+	for id := range exits {
+		ids = append(ids, id)
 	}
-	if err := ctx.Err(); err != nil {
-		return lastConfig, err
-	}
-	app.routeReady(sequence, state.Policy, state.Preference)
-	return state.Applied, nil
-}
-
-func mustRuntimeProfile(edition clientEdition) clientruntime.WindowsRuntimeProfile {
-	profile, err := runtimeProfile(edition)
-	if err != nil {
-		panic(err)
-	}
-	return profile
-}
-
-func portableRouteOptions(plan *clientruntime.WindowsSelectorPlan) ([]portableRouteOption, error) {
-	policy := plan.Policy()
-	exits, err := clientcore.SortedExits(policy)
-	if err != nil {
-		return nil, err
-	}
-	options := []portableRouteOption{{
-		Label: "自动选择", Preference: clientcore.Preference{Schema: clientcore.PreferenceSchema, Mode: clientcore.Auto},
-	}}
-	if plan.DirectAvailable() {
-		options = append(options, portableRouteOption{
-			Label: "直连", Preference: clientcore.Preference{Schema: clientcore.PreferenceSchema, Mode: clientcore.Direct},
-		})
-	}
-	for _, exit := range exits {
-		label := exit.ID
-		if exit.Name != "" {
-			label = exit.Name + " (" + exit.ID + ")"
-		}
-		options = append(options, portableRouteOption{
-			Label:      "固定出口 · " + label,
-			Preference: clientcore.Preference{Schema: clientcore.PreferenceSchema, Mode: clientcore.FixedExit, Exit: exit.ID},
-		})
+	sort.Strings(ids)
+	for _, id := range ids {
+		options = append(options, portableRouteOption{Label: "固定出口 · " + id,
+			Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: id}})
 	}
 	return options, nil
 }
 
-func routeOptionIndex(options []portableRouteOption, preference clientcore.Preference) int {
+func routeOptionIndex(options []portableRouteOption, preference clientmodel.Preference) int {
 	for index, option := range options {
 		if option.Preference == preference {
 			return index
@@ -100,22 +57,43 @@ func routeOptionIndex(options []portableRouteOption, preference clientcore.Prefe
 	return -1
 }
 
-func (app *portableGUI) routeReady(sequence uint64, plan *clientruntime.WindowsSelectorPlan, preference clientcore.Preference) {
-	options, err := portableRouteOptions(plan)
-	if err != nil {
-		app.routeFailure(sequence, err)
-		return
+func (app *portableGUI) watchRoutePreference(ctx context.Context, sequence uint64) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := app.refreshRoutePreference(ctx, sequence); err != nil {
+			app.routeFailure(sequence, err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
-	index := routeOptionIndex(options, preference)
+}
+
+func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uint64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	store, err := deviceclient.LoadProtected(windowsProfileStatePath(app.root), app.protector())
+	if err != nil || store.LKG() == nil {
+		return errors.New("DPAPI profile 暂不可读")
+	}
+	options, err := routeOptions(store.LKG().View.Routes)
+	if err != nil {
+		return err
+	}
 	app.mu.Lock()
 	if sequence == app.runSequence && app.runCancel != nil {
 		app.routeOptions = options
-		app.routeSelected = index
+		app.routeSelected = routeOptionIndex(options, store.Preference())
 		app.routeBusy = false
 		app.routeDetail = ""
 	}
 	app.mu.Unlock()
 	app.repaint()
+	return nil
 }
 
 func (app *portableGUI) routeFailure(sequence uint64, err error) {
@@ -135,125 +113,88 @@ func (app *portableGUI) routeSelectionChanged() {
 	}
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
 	if selection == ^uintptr(0) {
-		if app.routeFiltering {
-			app.cancelRouteFilter(app.snapshot())
-		}
 		return
 	}
 	visibleIndex := int(selection)
 	if visibleIndex < 0 || visibleIndex >= len(app.routeVisible) {
-		if app.routeFiltering {
-			app.cancelRouteFilter(app.snapshot())
-		}
 		return
 	}
 	index := app.routeVisible[visibleIndex]
-	if snapshot := app.snapshot(); snapshot.profilesReady {
-		if index < 0 || index >= len(snapshot.routeOptions) || index == snapshot.routeSelected || snapshot.routeBusy {
-			return
-		}
-		preference := snapshot.routeOptions[index].Preference
-		if app.routeFiltering {
-			app.cancelRouteFilter(snapshot)
-		}
+	snapshot := app.snapshot()
+	if index < 0 || index >= len(snapshot.routeOptions) || index == snapshot.routeSelected || snapshot.routeBusy {
+		return
+	}
+	preference := snapshot.routeOptions[index].Preference
+	if snapshot.profilesReady {
 		app.profileCommand(brokerRequest{Operation: "preference", ProfileID: snapshot.selectedProfile, Preference: &preference})
 		return
 	}
-	wasFiltering := app.routeFiltering
-	app.mu.Lock()
-	online := app.state == guiConnected && (app.runCancel != nil || app.brokerClient)
-	offline := app.state == guiStopped || app.state == guiError || app.state == guiNeedsElevation
-	if (!online && !offline) || app.routeBusy || index < 0 || index >= len(app.routeOptions) || index == app.routeSelected {
-		app.mu.Unlock()
-		if wasFiltering {
-			app.cancelRouteFilter(app.snapshot())
-		}
-		return
-	}
-	preference := app.routeOptions[index].Preference
-	previous := app.routeSelected
-	sequence := app.runSequence
-	app.routeBusy = true
-	if online {
-		app.routeDetail = "正在切换出口…"
-	} else {
-		app.routeDetail = "正在保存出口选择…"
-	}
-	app.mu.Unlock()
-	if wasFiltering {
-		app.routeFiltering = false
-		app.routeFilter = ""
-		app.routeUpdating = true
-		procSendMessage.Call(app.controls.routeCombo, portableCBShowDropDown, 0, 0)
-		app.routeUpdating = false
-	}
-	app.repaint()
-
 	app.workers.Add(1)
 	go func() {
 		defer app.workers.Done()
-		var err error
-		if app.brokerClient {
-			app.exchangeInstalledBroker(brokerRequest{Operation: "preference", Preference: &preference})
-			return
+		if err := app.setRoutePreference(preference); err != nil {
+			app.routeFailure(app.runSequence, fmt.Errorf("出口切换失败: %w", err))
 		}
-		err = app.setRoutePreference(preference)
-		app.mu.Lock()
-		if sequence == app.runSequence {
-			app.routeBusy = false
-			if err == nil {
-				app.routeSelected = index
-				if online {
-					app.routeDetail = "出口已切换为“" + app.routeOptions[index].Label + "”。"
-				} else {
-					app.routeDetail = "出口已设为“" + app.routeOptions[index].Label + "”，下次连接生效。"
-				}
-			} else {
-				app.routeSelected = previous
-				app.routeDetail = fmt.Sprintf("出口切换失败：%v", err)
-			}
-		}
-		app.mu.Unlock()
-		app.repaint()
 	}()
 }
 
-// §7.2：IPC 与本地 GUI 共用签名出口授权；只接受现有三态偏好。
-func (app *portableGUI) setRoutePreference(preference clientcore.Preference) error {
+func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) error {
 	app.routeMu.Lock()
 	defer app.routeMu.Unlock()
+	store, err := deviceclient.LoadProtected(windowsProfileStatePath(app.root), app.protector())
+	if err != nil || store.LKG() == nil {
+		return errors.New("无法读取 DPAPI profile")
+	}
+	options, err := routeOptions(store.LKG().View.Routes)
+	if err != nil || routeOptionIndex(options, preference) < 0 {
+		return errors.New("出口未获当前 LKG 授权")
+	}
+	previous := store.Preference()
+	if err := store.SetPreference(preference); err != nil {
+		return err
+	}
 	app.mu.RLock()
-	index := routeOptionIndex(app.routeOptions, preference)
 	online := app.state == guiConnected && app.runCancel != nil
-	offline := app.joined && (app.state == guiStopped || app.state == guiError || app.state == guiNeedsElevation)
 	app.mu.RUnlock()
-	if index < 0 || (!online && !offline) {
-		return errors.New("出口未获当前签名配置授权，或数据面正在切换")
+	if online {
+		lkg := store.LKG()
+		selector, selectErr := clientadapter.NewHTTPSelector(lkg.View.Runtime.Config)
+		if selectErr == nil {
+			scopes, byScope, scopeErr := clientadapter.Scopes(lkg.View.Routes)
+			if scopeErr != nil {
+				selectErr = scopeErr
+			} else {
+				desired := map[string]string{}
+				for _, scope := range scopes {
+					current, readErr := selector.Read(app.ctx, scope)
+					if readErr != nil {
+						selectErr = readErr
+						break
+					}
+					choice, chooseErr := clientmodel.Select(byScope[scope], nil, preference, current, "windows-live", time.Now())
+					if chooseErr != nil {
+						selectErr = chooseErr
+						break
+					}
+					desired[scope] = choice.CandidateID
+				}
+				if selectErr == nil {
+					_, selectErr = clientadapter.ApplySelections(app.ctx, selector, desired)
+				}
+			}
+		}
+		if selectErr != nil {
+			_ = store.SetPreference(previous)
+			return selectErr
+		}
 	}
 	app.mu.Lock()
-	app.routeBusy = true
+	app.routeOptions = options
+	app.routeSelected = routeOptionIndex(options, preference)
+	app.routeBusy = false
+	app.routeDetail = ""
 	app.paths = nil
 	app.mu.Unlock()
 	app.repaint()
-	defer func() { app.mu.Lock(); app.routeBusy = false; app.mu.Unlock(); app.repaint() }()
-	path := filepath.Join(app.root, "state", "preference.json")
-	if online {
-		control, err := activeRouteControl(app.root)
-		if err != nil {
-			return err
-		}
-		if err := control.apply(app.ctx, preference); err != nil {
-			return err
-		}
-	} else {
-		if err := clientcore.WritePreference(path, preference); err != nil {
-			return err
-		}
-	}
-
-	app.mu.Lock()
-	app.routeSelected = index
-	app.routeDetail = ""
-	app.mu.Unlock()
 	return nil
 }

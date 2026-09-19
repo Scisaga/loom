@@ -1,6 +1,6 @@
 # 客户端运行时最小模型
 
-本文定义重建后的 Android / Linux 客户端运行时模型。它是实现、持久化、wire、
+本文定义重建后的 Android / Linux / Windows 客户端运行时模型。它是实现、持久化、wire、
 运行时和 UI 的共同契约；读者不需要阅读代码才能判断一个行为是否符合设计。
 
 这里的“同构”不是要求各层拥有相同结构体，而是要求同一个事实只有一个来源，
@@ -21,7 +21,7 @@
 | `Observation` | 记录特定底层网络代中实际 transport / business outcome 及有限提示 | 授权、期望状态或为了填满评分而生成的样本 |
 | `Preference` | 表达 Direct、Auto 或指定最终出口的用户意图 | 对当前可用性的断言 |
 | `Selection` | 记录宿主 selector 回读确认的当前实际选择 | 仅由决策函数算出的期望值 |
-| `HostAdapter` | 连接纯核心与 Android / Linux 的安全存储、VPN、transport 和 selector | 平台各自实现的一套选路规则 |
+| `HostAdapter` | 连接纯核心与 Android / Linux / Windows 的安全存储、VPN、transport 和 selector | 平台各自实现的一套选路规则 |
 
 八者的关系只有一条主线：
 
@@ -74,12 +74,12 @@ Direct:                    device → target
 
 `RouteCandidate` 的稳定身份由规范化后的服务器链、最终出口和服务范围确定；
 `RuntimeCandidate` 保留这个身份，并补充实际 transport、入口和宿主执行所需引用。
-相同路径在 Android 与 Linux 上必须对应相同的路径身份，即使两个平台生成的底层
+相同路径在 Android、Linux 与 Windows 上必须对应相同的路径身份，即使三个平台生成的底层
 配置文本不同。
 
 候选顺序不构成身份。所有派生结果必须确定性排序，不能依赖 map 遍历、时钟或随机数。
 
-Android 实现中，`DeviceView` 还携带一份规范 `RuntimeProfile` 值。它不是新的领域实体，
+客户端 `DeviceView` 还携带一份规范 `RuntimeProfile` 值。它不是新的领域实体，
 而是把该 view 已授权的候选投影成宿主可执行配置所需的私有材料：`kind` 固定为 `sing_box`，`config`
 是规范 JSON。每条 `RouteCandidate.ID` 必须逐一对应 config 中同名 outbound，`RouteCandidate.Scope`
 必须对应包含该 outbound 的 selector；config 不得增加 view 未授权的 selector 成员。服务器把
@@ -92,9 +92,14 @@ Android 实现中，`DeviceView` 还携带一份规范 `RuntimeProfile` 值。�
 RuntimeCandidate = project(RouteCandidate, DeviceView.RuntimeProfile)
 ```
 
-Android 与 Linux 可以把同一候选落成不同宿主进程参数，但候选 ID、scope、服务器链和最终出口保持
+Android、Linux 与 Windows 可以把同一候选落成不同宿主进程参数，但候选 ID、scope、服务器链和最终出口保持
 不变。若 profile 缺失、不是规范 JSON、候选映射不全或多出未授权成员，整个新 LKG 失败关闭；旧的
 已运行 LKG 保持可用。
+
+Windows 的 `RuntimeProfile` 不另设 wire 类型。服务端只接受 `platform=windows` 且带完整
+`sing_box` profile 的 Enrollment 或设备更新；外层未知/缺失/多余字段、非规范 JSON、重复键、缺少候选、
+多出未授权 selector 成员或候选 scope 映射不全均失败关闭，不能先接收再由 Windows 补默认值。Windows
+HostAdapter 可以按交付形态投影本机 capture 配置，但不得增加、删除或重排被认证 selector 的候选语义。
 
 ## Observation 与可用性
 
@@ -176,7 +181,7 @@ scheduler、probe budget 或一次性 registry。入口之后复用已有的有�
 3. wire 或持久层没有 `RouteCandidate` / `RuntimeCandidate` 的第二份可编辑清单；
    重启后从同一 LKG 得到相同结果。
 4. 平台脱敏可以删去私钥和 transport 秘密，但不能改变路径、最终出口、状态或版本语义。
-5. Android 与 Linux 对相同输入得到逐项相同的候选身份和选择结果；平台差异只发生在
+5. Android、Linux 与 Windows 对相同输入得到逐项相同的候选身份和选择结果；平台差异只发生在
    `HostAdapter` 执行阶段。
 
 ## 持久与派生边界
@@ -250,7 +255,7 @@ scheduler、probe budget 或一次性 registry。入口之后复用已有的有�
 
 ## 纯核心与平台边界
 
-Android 与 Linux 必须复用同一个无 I/O 纯核心。纯核心只做：
+Android、Linux 与 Windows 必须复用同一个无 I/O 纯核心。纯核心只做：
 
 1. 验证后输入的规范化；
 2. 候选确定性派生和身份计算；
@@ -260,7 +265,7 @@ Android 与 Linux 必须复用同一个无 I/O 纯核心。纯核心只做：
 时钟、当前网络代、平台能力和 selector 回读都由调用方作为值传入。纯核心不访问文件、
 网络、VPN 服务、系统代理或全局单例。
 
-Android 与 Linux 各自只实现 `HostAdapter`：安全存储、配置安装、真实 transport / business
+Android、Linux 与 Windows 各自只实现 `HostAdapter`：安全存储、配置安装、真实 transport / business
 结果采集、selector apply 和 readback。适配器不得自行排名、增加 fallback 分支或重解释
 `public_data_ingress`。
 
@@ -282,17 +287,50 @@ Linux 客户端制品同时为 amd64/arm64 生成、签名和逐文件验证。a
 LKG 执行 sing-box preflight；切换后若 service/selector 回读未成功，恢复先前 `current` 和 unit。升级失败
 不覆盖旧的可运行制品。
 
-Windows 不属于本次重建范围。未来接入时，源码和构建仍以当前 Linux 工作树为唯一开发
-环境，原生执行使用同机受限的 [Windows 11 测试虚拟机](../windows-test-vm.md)，并服从同一
-八概念契约，而不是复制平台规则。Linux 交叉构建或虚拟机结果不能抵扣 ARM64、真实睡眠、
-物理网络切换和显示硬件等实体机验收。
+### Windows profile 与 HostAdapter
+
+Windows 的一个 profile 恰好绑定一组 `DeviceIdentity + CertifiedLKG + Preference`。这只是八概念在
+本机的聚合保存，不是第九个领域实体。profile 索引只保存不透明本机 ID、显示名称和当前浏览行；它不保存
+设备公钥、floor、候选、当前连接、健康或 selector 值，删除后不能据此重建网络状态。当前连接必须从正式
+runtime 和 selector 回读；显示名称、列表顺序和被选中行不能改变 Device、授权或实际 Selection。
+
+每个 profile 使用一个严格 schema 的 DPAPI envelope 原子保存 Ed25519 私钥及公钥绑定、稳定 claim request
+ID、BootstrapCapability 约束、不可回退 floor、`v2_latch=true`、完整原始 `DeviceViewEnvelope` LKG 和唯一
+Preference。Installed 使用 machine-scope DPAPI，并由 MSI 建立 SYSTEM/Administrators DACL；Portable TUN 与
+Portable Mixed 使用 current-user DPAPI。磁盘上不得出现明文私钥、拆出的运行配置、hydrate 后候选或第二份
+LKG。写入使用同目录临时文件、落盘、原子替换和替换后独立回读；任一步失败都保留旧 envelope。新 LKG 只有
+在 wire 规范、Ed25519 设备绑定、QC/证明、RuntimeProfile、floor 和宿主 preflight 全部通过后，才能与提升后
+floor 一起替换旧值；不能拼接新旧字段。
+
+首次导入时先生成 Ed25519 身份并把 `v2_latch=true`、floor 0、capability 绑定和默认 Auto Preference 原子
+保护，再经受限 bootstrap tunnel claim/resume。同一事务恢复复用同一 identity/request ID；不同邀请不得接管。
+完成后保存完整 LKG 并推进 floor。进程、SCM 服务或系统重启从同一 envelope 验证恢复；DPAPI 解密失败、schema
+未知、latch 缺失、floor 回退、LKG 无效或 Preference 非规范时整个 profile 失败关闭，不回退 P-256、公开配置、
+旧 bundle 或 v1 路径。未完成事务不是可连接 profile，UI 只能显示可继续恢复的加入状态。
+
+Windows HostAdapter 从 LKG 每次纯派生 `RouteCandidate` 与 `RuntimeCandidate`，启动签名包中的正式 sing-box，
+应用纯核心提出的候选后读取 Clash selector 的真实值。只有逐 scope 回读均映射到当前 LKG 的同名候选时才形成
+Selection；apply 成功但回读缺失、不一致或指向未授权 outbound 时不更新 Selection。TCP connect/TLS 成功、
+TCP 业务失败、UDP/DNS 成功或失败分别产生保留 action/scope 的真实 Observation；本机 listener、自检、ICMP、
+授权声明和 UI 颜色都不能产生 `available`。
+
+Installed、Portable TUN 与 Portable Mixed 只是 HostAdapter/交付差异：Installed 由 SCM 服务持有 machine DPAPI
+和 TUN，Portable TUN 由提权前台进程持有 user DPAPI 和 TUN，Portable Mixed 只提供同一 runtime 的 mixed
+入口且不改路由。三者消费同一个 profile envelope、候选派生、选择函数、selector 回读和报告 wire；不得各自
+复制选路规则、候选 store 或健康状态机。源码、构建与制品判断只在 Linux 工作树；同机受限 VM 只做 x64 原生
+执行，不能抵扣 ARM64、真实睡眠、物理网络切换和显示硬件终验。
+
+旧 Windows P-256/证书状态不属于新 decoder 的兼容输入。若只读审计发现真实旧身份，必须由正式 Rejoin/rekey
+把同一稳定 Device 语义前向绑定到新的 Ed25519 公钥，并保持或提高服务端 floor 与 v2 latch；成功前保留旧字节，
+成功后删除旧运行 fallback。若审计确认没有对象，只保存脱敏计数证据，不增加空 importer、长期双读或 P-256
+fallback。
 
 ## 最小必要测试集
 
 测试验证模型边界，不枚举平台、服务器、协议和故障的笛卡尔积。
 
 1. **认证与恢复**：有效 LKG 可离线恢复；错误签名和 floor 回退被拒绝；失败不覆盖旧 LKG。
-2. **确定性派生**：相同 LKG 在 Android/Linux 纯核心得到相同候选身份和顺序，重启结果不变。
+2. **确定性派生**：相同 LKG 在 Android/Linux/Windows 纯核心得到相同候选身份和顺序，重启结果不变。
 3. **Direct 语义**：Direct 的服务器链为空，不产生代理入口检查；一跳直达包含最终出口，二者不混淆。
 4. **同出口双路径**：同一最终出口同时产生一跳直达和境内 WG 中继；关闭
    `public_data_ingress` 只删除前者，开启它不会自动得到 `available`。
@@ -302,12 +340,21 @@ Windows 不属于本次重建范围。未来接入时，源码和构建仍以当
    同一最终出口的中继；后续成功可恢复，无需配置变化。
 7. **运行事实**：adapter apply 成功但 readback 不匹配时不更新 Selection；UI 显示回读实际值，
    不把 Preference 显示为当前路径。
-8. **平台契约**：Android/Linux adapter 各用一个成功 outcome、一个失败 outcome、一次 apply/readback
+8. **平台契约**：Android/Linux/Windows adapter 各用一个成功 outcome、一个失败 outcome、一次 apply/readback
    验证接口；真实验收各选一条可工作的正常路径和一条同出口 fallback 即可。
 9. **运行投影**：一份规范 RuntimeProfile 与 routes 逐项映射；缺候选、多余 selector 成员、非规范
    JSON 或 libbox preflight 失败均不得替换旧可运行 LKG。
+10. **Windows DPAPI 与 profile 隔离**：machine/user scope 不能互换；每个 profile 的 Ed25519 身份、floor、
+    latch、完整 LKG 与 Preference 往返相等，原子替换失败保留旧值；索引损坏不能制造或覆盖网络权威。
+11. **Windows 严格 wire 与恢复**：`platform=windows` 缺 RuntimeProfile，或含未知/缺失/多余字段、重复键、
+    非规范 JSON、错误候选映射时服务端拒绝；重启从同一 DPAPI LKG 派生相同候选，Selection 仍只来自 readback。
+12. **Windows 最小原生闭环**：Installed x64 用一个 profile 完成 UI invite → claim/resume → DPAPI → runtime →
+    selector readback → TCP 与 UDP/DNS → 一个 unavailable 候选 → 同出口 fallback → 签名 report/readback；再按同一
+    adapter 契约抽样 Portable TUN/Mixed 的 capture、清理和持久差异，不建立 Edition × 模式 × 协议矩阵。
+13. **旧身份等价类**：审计若发现 P-256/证书身份，只测一条正式 Rejoin/rekey 与失败保留；若没有对象，只验证
+    脱敏零计数和新 decoder 拒绝旧格式，不为不存在的数据制造迁移状态机。
 
-扩展测试只能在这九项通过后进行，并且发现新场景时优先把它表达为新的候选或观测数据，
+扩展测试只能在这十三项通过后进行，并且发现新场景时优先把它表达为新的候选或观测数据，
 而不是新增路由分支。
 
 ## 明确禁止
@@ -317,6 +364,8 @@ Windows 不属于本次重建范围。未来接入时，源码和构建仍以当
 - 不为未知状态补样本，不用 ICMP 或单段 RTT 伪造端到端健康与 P50/P95。
 - 不把 `public_data_ingress`、认证配置或服务端声明解释为当前可用。
 - 不因一跳直达存在而删除同出口中继，也不因 `reverse_only` 删除合法公开入口。
-- 不把 Android/Linux 平台差异写进纯选择规则；不在本机顺手实现或验收 Windows。
+- 不把 Android/Linux/Windows 平台差异写进纯选择规则；Windows Edition 差异只进入 HostAdapter。
 - 不持久化派生候选或期望选择来绕过重建与 selector readback。
 - 不新增与上述八个概念重复的 manager、store、ledger、gate、phase、receipt 或后台循环。
+- 不让 profile 索引、显示名称、UI 选中行、SCM 状态或本机 listener 成为第二网络权威。
+- 不读取 P-256/证书旧状态作为运行 fallback；不存在迁移对象时不保留空兼容 decoder。

@@ -11,9 +11,9 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"loom/internal/clientcore"
-	"loom/internal/clientenroll"
 	"loom/internal/clientjoin"
+	"loom/internal/clientmodel"
+	"loom/internal/control"
 )
 
 const (
@@ -31,6 +31,7 @@ const (
 // §7.2：标题栏为 36 DIP；正文保留原绘制坐标原点，由视口整体上移。
 const (
 	misakaTitleHeight    int32 = 36
+	misakaTitleIconSize  int32 = 20
 	misakaContentOriginY int32 = 40
 )
 
@@ -58,7 +59,7 @@ type misakaUI struct {
 	rename                                    bool
 	renameID                                  string
 	route                                     misakaRouteUI
-	draftInvite                               *clientenroll.Invite
+	draftInvite                               *control.BootstrapInvite
 	draftError                                string
 	inviteLabel                               string
 	hoverCaption                              int
@@ -266,7 +267,7 @@ func (app *portableGUI) misakaDraftBounds() (int32, int32, int32) {
 	return x, app.scale(118), w
 }
 
-func misakaSelectedMode(snapshot portableGUISnapshot) clientcore.Mode {
+func misakaSelectedMode(snapshot portableGUISnapshot) clientmodel.Mode {
 	if snapshot.routeSelected >= 0 && snapshot.routeSelected < len(snapshot.routeOptions) {
 		return snapshot.routeOptions[snapshot.routeSelected].Preference.Mode
 	}
@@ -478,7 +479,7 @@ func (app *portableGUI) finishMisakaRename(save bool) bool {
 }
 
 func (app *portableGUI) chooseMisakaInvite(paste bool) {
-	var invite clientenroll.Invite
+	var invite control.BootstrapInvite
 	var err error
 	if paste {
 		invite, err = readWindowsClipboardInvite(app.hwnd)
@@ -495,7 +496,7 @@ func (app *portableGUI) chooseMisakaInvite(paste bool) {
 	app.acceptMisakaInvite(invite, err)
 }
 
-func (app *portableGUI) acceptMisakaInvite(invite clientenroll.Invite, err error) {
+func (app *portableGUI) acceptMisakaInvite(invite control.BootstrapInvite, err error) {
 	draft := app.snapshot().profileDraft
 	if draft == nil || draft.Busy || draft.Recoverable {
 		return

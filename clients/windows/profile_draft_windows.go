@@ -7,12 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"loom/internal/clientenroll"
-	"loom/internal/clientupdate"
+	"loom/internal/control"
+	"loom/internal/deviceclient"
 )
 
 // §13.5：草稿快照只给 UI 阶段与可恢复提示，不返回二维码、路径或秘密材料。
@@ -103,7 +102,7 @@ func (m *windowsProfileManager) cancelProfileDraft() {
 	}
 }
 
-func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected *windowsProfileDraft, epoch uint64) (child *portableGUI, invite *clientenroll.Invite, retErr error) {
+func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected *windowsProfileDraft, epoch uint64) (child *portableGUI, invite *control.BootstrapInvite, retErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closing || m.owner.ctx.Err() != nil {
@@ -128,7 +127,7 @@ func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected 
 		name = m.draft.display.Name
 	}
 	if req.Invite != nil {
-		if err := clientenroll.ValidateInvite(*req.Invite); err != nil {
+		if req.Invite.Schema != 1 || req.Invite.Capability.Validate() != nil {
 			return nil, nil, errors.New("加入二维码无效；请导入中控生成的二维码")
 		}
 	} else if !m.draft.display.Recoverable {
@@ -183,9 +182,9 @@ func (m *windowsProfileManager) joinProfileDraftFor(req brokerRequest, draft *wi
 	}
 	result, err := m.joinDraft(child, invite)
 	if err == nil {
-		var config clientupdate.Config
-		config, err = clientupdate.ReadConfig(filepath.Join(child.root, "config", "client.json"))
-		if err == nil && config.NodeID != result.NodeID {
+		var store *deviceclient.ProtectedStore
+		store, err = deviceclient.LoadProtected(windowsProfileStatePath(child.root), child.protector())
+		if err == nil && (store.LKG() == nil || store.LKG().View.DeviceID != result.NodeID) {
 			err = errors.New("[§13.5] 已完成加入的身份与配置不一致")
 		}
 	}
@@ -202,7 +201,7 @@ func (m *windowsProfileManager) joinProfileDraftFor(req brokerRequest, draft *wi
 		if commitErr == nil {
 			m.children[profile.ID] = child
 			m.draft, m.draftVisible = nil, false
-			// §7.2：加入只新增已断开的宿主，不触碰旧连接、Agent 或 LastConnected。
+			// §7.2：加入只新增已断开的宿主，不触碰当前运行时或 LastConnected。
 			return nil
 		}
 		err = commitErr
@@ -218,7 +217,7 @@ func (m *windowsProfileManager) joinProfileDraftFor(req brokerRequest, draft *wi
 }
 
 func windowsProfileDraftHasIdentity(root string) (bool, error) {
-	for _, path := range []string{windowsJoinIdentityPath(root), windowsJoinReadyPath(root), filepath.Join(root, "config", "client.json")} {
+	for _, path := range []string{windowsProfileStatePath(root)} {
 		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

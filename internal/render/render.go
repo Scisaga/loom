@@ -123,8 +123,8 @@ func Render(s *model.SSOT) (*Result, error) {
 	}
 
 	// 保留纯 sing-box 配置渲染，供服务器数据面与 DeviceView profile 的
-	// 构造入口复用。Windows/Android 继续得到现有的平台数据计划；Linux
-	// 接入设备不再得到 Agent 配置或 systemd/pull/report 生命周期。
+	// 构造入口复用。客户端只消费 DeviceView RuntimeProfile，不再交付旧
+	// Agent 调度计划。
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
 		if decommissioned[n.ID] {
@@ -142,11 +142,8 @@ func Render(s *model.SSOT) (*Result, error) {
 		if n.IsServer() && n.Server.InboundPort > 0 {
 			byNode[n.ID] = append(byNode[n.ID], renderSingBoxUnit(s, n))
 		} else if n.IsAccess() && !n.Access.Platform.UsesLinuxLifecycle() {
-			plan, planSkips := renderAgentPlan(s, n)
-			byNode[n.ID] = append(byNode[n.ID], plan...)
-			skipped = append(skipped, planSkips...)
 			reason := "platform=" + string(n.Access.Platform) +
-				" 保留同一签名 bundle 的平台无关调度计划；平台宿主负责运行，禁止安装 Linux Agent/service"
+				" 只消费私有 DeviceView RuntimeProfile；不安装旧 Agent/service"
 			skipped = append(skipped, Skip{Where: "lifecycle:" + n.ID, Reason: reason})
 		}
 	}

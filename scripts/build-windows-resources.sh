@@ -27,7 +27,7 @@ brand_pngs=()
 for size in "${icon_sizes[@]}"; do
   favicon_png="$stage_dir/favicon-${size}.png"
   brand_png="$stage_dir/brand-v4-${size}.png"
-  ffmpeg -loglevel error -i "$repo_root/internal/webui/favicon.svg" \
+  ffmpeg -loglevel error -i "$repo_root/internal/control/static/favicon.svg" \
     -vf "scale=1060:1060:flags=lanczos,crop=1000:1000:30:30,scale=${size}:${size}:flags=lanczos" \
     -frames:v 1 "$favicon_png"
   ffmpeg -loglevel error -i "$repo_root/assets/loom-logo-v4.svg" \
@@ -36,7 +36,7 @@ for size in "${icon_sizes[@]}"; do
   brand_pngs+=("$brand_png")
 done
 go run "$repo_root/scripts/windows-ico" "$stage_dir/favicon.ico" "${favicon_pngs[@]}"
-go run "$repo_root/scripts/windows-ico" "$stage_dir/brand-v4.ico" "${brand_pngs[@]}"
+go run "$repo_root/scripts/windows-ico" -corner-radius 0.125 "$stage_dir/brand-v4.ico" "${brand_pngs[@]}"
 
 install -m 0644 "$stage_dir/favicon.ico" "$resource_dir/favicon.ico"
 install -m 0644 "$stage_dir/brand-v4.ico" "$resource_dir/loom-brand-v4.ico"

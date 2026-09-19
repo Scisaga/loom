@@ -186,7 +186,7 @@ func LoadState(path string) (State, error) {
 	if err != nil {
 		return state, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if !controlPrivateRegular(info) {
 		return state, errors.New("control state must be an owner-only regular file")
 	}
 	body, err := os.ReadFile(path)
@@ -240,15 +240,10 @@ func SaveState(path string, state State) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, path); err != nil {
+	if err := replaceControlFile(temporary, path); err != nil {
 		return err
 	}
-	directory, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return syncControlDirectory(dir)
 }
 
 func (state State) Validate() error {

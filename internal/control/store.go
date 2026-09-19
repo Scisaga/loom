@@ -428,7 +428,7 @@ func readStrict(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if !controlPrivateRegular(info) {
 		return fmt.Errorf("%s must be an owner-only regular file", filepath.Base(path))
 	}
 	body, err := os.ReadFile(path)
@@ -486,13 +486,8 @@ func atomicWrite(path string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, path); err != nil {
+	if err := replaceControlFile(temporary, path); err != nil {
 		return err
 	}
-	directory, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return syncControlDirectory(dir)
 }
