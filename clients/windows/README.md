@@ -194,6 +194,11 @@ It accepts no file paths, commands or configuration bodies from the GUI.
 
 ## Build and run
 
+Windows 原生回归可以使用 Linux 工作站上的受限
+[Windows 11 测试虚拟机](../../docs/windows-test-vm.md)。该 VM 只执行从 Linux 工作树
+构建的精确制品，不保存第二份源码、平台签名密钥或控制面凭据，也不能替代 ARM64、
+真实网络切换和物理显示配置的终验。
+
 ### GitHub Actions
 
 Pushes to all branches (including `main`) and pull requests run CI checks. Windows builds and GitHub Releases are triggered manually.

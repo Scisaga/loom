@@ -656,9 +656,11 @@ Android Emulator 本身就是专用虚拟机。它应直接运行在 Windows 实
 确需在独立 Linux builder 建一台临时 Windows 开发 VM 时，最小栈为 QEMU/KVM + Q35
 + OVMF UEFI + swtpm 2.0 + qcow2。初期使用 QEMU user-mode NAT，安装画面和 RDP 只
 绑定 `127.0.0.1` 并经 SSH 转发；不要先引入 libvirt bridge 去改动已有 Docker、
-WireGuard 和 nftables。Windows 介质只能使用用户提供的合法 ISO 或微软正式
-Evaluation ISO。该 VM 足以做 Service、UI、安装器与基本 TUN 集成，但真实睡眠、
-Wi-Fi/有线切换和长期桌面行为仍由实体 Windows 终验。
+WireGuard 和 nftables。Windows 介质只能使用用户提供的合法 ISO 或微软正式下载页
+提供的 ISO。该 VM 足以做 Service、UI、安装器与基本 TUN 集成，但真实睡眠、
+Wi-Fi/有线切换和长期桌面行为仍由实体 Windows 终验。经操作者明确授权在现有 Linux
+工作站建立执行器时，权限、网络、身份、证据和操作入口遵守
+[Windows 11 原生测试虚拟机](windows-test-vm.md)，不能把 VM 扩张成第二开发环境。
 
 若没有 Windows 工作站、只需 Android CI，则在**独立** Linux builder 安装 OpenJDK、
 Android command-line tools、SDK、platform-tools、Emulator 和 x86_64 system image，

@@ -1,0 +1,5 @@
+# Allow only the dedicated Loom Windows test VM's TPM state and control socket.
+owner /var/lib/loom/windows-test-vm/tpm/ rw,
+owner /var/lib/loom/windows-test-vm/tpm/** rwk,
+owner /var/lib/loom/windows-test-vm/runtime/ rw,
+owner /var/lib/loom/windows-test-vm/runtime/*.sock rwk,

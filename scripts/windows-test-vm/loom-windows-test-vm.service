@@ -1,0 +1,42 @@
+[Unit]
+Description=Loom Windows 11 native test VM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=loomvm
+Group=loomvm
+SupplementaryGroups=kvm
+ExecStart=/usr/local/bin/loom-windows-test-vm-run
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=120s
+KillMode=control-group
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+PrivateIPC=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/loom/windows-test-vm
+DevicePolicy=closed
+DeviceAllow=/dev/kvm rw
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+UMask=0077
+MemoryMax=7G
+OOMPolicy=stop
+
+[Install]
+WantedBy=multi-user.target

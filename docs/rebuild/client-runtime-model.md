@@ -256,8 +256,10 @@ Android 与 Linux 各自只实现 `HostAdapter`：安全存储、配置安装、
 结果采集、selector apply 和 readback。适配器不得自行排名、增加 fallback 分支或重解释
 `public_data_ingress`。
 
-Windows 由另一台机器独立实现和验收，不属于本次重建范围；本仓库不以 Linux 交叉构建
-或模拟结果抵扣 Windows 验收。未来接入时也应服从同一八概念契约，而不是复制平台规则。
+Windows 不属于本次重建范围。未来接入时，源码和构建仍以当前 Linux 工作树为唯一开发
+环境，原生执行使用同机受限的 [Windows 11 测试虚拟机](../windows-test-vm.md)，并服从同一
+八概念契约，而不是复制平台规则。Linux 交叉构建或虚拟机结果不能抵扣 ARM64、真实睡眠、
+物理网络切换和显示硬件等实体机验收。
 
 ## 最小必要测试集
 
