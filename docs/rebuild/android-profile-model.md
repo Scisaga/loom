@@ -33,15 +33,16 @@ requested。active 只能由真实 VPN 结果单向产生，不能由 catalog �
 ## 关系、转换与不变量
 
 1. 创建生成一个本机不透明 `id` 和规范名称，然后把它设为 viewed；新行没有身份或 LKG。
-2. 重命名只替换 catalog 中该 `id` 的 `name`，不替换设备身份、LKG、路由或 VPN。
+2. 名称去除首尾空格后必须非空且在 catalog 内唯一；重命名只替换该 `id` 的
+   `name`，不替换设备身份、LKG、路由或 VPN。
 3. 选中只替换 viewed。用户点击连接后，requested 才指向该 `id`。
 4. 当且仅当该 `id` 的认证 LKG、libbox/TUN 和真实 DNS/HTTPS 结果成功时，active 才指向它。
-5. 切换先取消旧 requested 的未完成工作并停止旧运行时，再使用新 `id` 走同一连接链；
-   不建立多 VPN manager 或切换状态机。
-6. 正在 requested/active 的行必须先断开才能删除。删除先取消并等待该行的本机工作，
+5. 切换先停止旧运行时，再使用新 `id` 走同一连接链；失败停留在新配置的错误状态，
+   不跨配置自动恢复旧连接，也不建立多 VPN manager 或切换状态机。
+6. 正在 requested/active 的行必须先断开才能删除，最后一行不能删除。删除先取消并等待该行的本机工作，
    再原子提交不再可见的 catalog，
    再删除该 `id` 命名空间中的身份、候选 LKG、偏好和观测；崩溃残留不得再被加载。
-7. catalog 不为空；`viewed_profile_id` 必须引用其中唯一行；ID 不重复；
+7. catalog 不为空；`viewed_profile_id` 必须引用其中唯一行；ID 和名称都不重复；
    名称是 1–64 个字符的规范 Unicode 且不含控制字符。
 
 ## 跨层对应
@@ -53,7 +54,7 @@ requested。active 只能由真实 VPN 结果单向产生，不能由 catalog �
 | 配置内容 | 该 `id` 关联的现有身份/LKG/Preference | 仍使用私有 Enrollment/config/report wire，不传 catalog 名称 | `p.<id>.*` 受保护槽 | 按 `id` 显式加载 | 加入、配置版本和选路偏好 |
 | requested | 用户想运行的 catalog `id` | 内部 VPN Intent 中的 `profile_id` | 与 `desired_connected` 原子保存 | 启动/恢复调用的显式输入 | “正在连接 <name>” |
 | active | 已被宿主真实消费的 catalog `id` | 无权威 wire | 不持久化为运行事实 | VPN 成功后的只读投影 | 标题和“当前连接 <name>” |
-| 设备名称 | 认证 `DeviceView.name` 的设备属性 | 原有 DeviceView wire 不变；本机 Android host DTO 投影为 `device_name` | 随 LKG 保存 | active 的辅助信息 | 可显示为辅助信息，绝不替代 profile name |
+| 设备名称 | 认证 `DeviceView.name` 的设备属性 | 原有 DeviceView 与 Android host DTO 的 `name` 不变 | 随 LKG 保存 | active 的辅助信息 | 可显示为辅助信息，绝不替代 profile name |
 
 catalog 是本机值，没有网络 wire 编码。它的规范持久编码必须满足：
 
@@ -86,10 +87,9 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 
 最小测试集只覆盖风险等价类：
 
-1. catalog 规范编解码往返及未知、重复、悬空、非规范值拒绝；
+1. catalog 规范编解码往返及重复、悬空、非规范值拒绝；
 2. 旧单槽在 catalog 提交前完整复制回读，提交后不再读旧键；
-3. A/B 命名空间隔离，浏览 B 不修改已连接 A 的 active 与标题；
-4. 连接、重启恢复和安全删除沿正式 UI/VPN 入口回读人类可识别名称，不回读哈希。
+3. 真机沿正式入口验证 A/B 隔离、显式切换、重启回读和安全删除，不回读哈希。
 
 ## 禁止恢复
 

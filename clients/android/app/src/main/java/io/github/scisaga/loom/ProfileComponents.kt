@@ -66,6 +66,8 @@ internal fun ProfilesCard(
                 val stopping = vpn.phase == ConnectionPhase.STOPPING &&
                     profile.id in setOf(vpn.requestedProfileId, vpn.activeProfileId)
                 val failed = vpn.phase == ConnectionPhase.ERROR && profile.id == vpn.requestedProfileId
+                val deleteBlockedByConnection = active || requested || stopping
+                val canDelete = index.profiles.size > 1 && !deleteBlockedByConnection
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -113,8 +115,16 @@ internal fun ProfilesCard(
                                 onClick = { menu = false; onRename(profile) },
                             )
                             DropdownMenuItem(
-                                text = { Text("删除") },
-                                enabled = !active && !requested && !stopping,
+                                text = {
+                                    Text(
+                                        when {
+                                            index.profiles.size == 1 -> "删除（至少保留一个）"
+                                            deleteBlockedByConnection -> "删除（请先断开）"
+                                            else -> "删除"
+                                        },
+                                    )
+                                },
+                                enabled = canDelete,
                                 onClick = { menu = false; onDelete(profile) },
                             )
                         }

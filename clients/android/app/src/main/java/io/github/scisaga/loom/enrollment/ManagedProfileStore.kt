@@ -91,7 +91,7 @@ internal class ManagedProfileStore(context: Context, profileId: String) {
         Libbox.checkConfig(config)
         return ManagedProfile(
             nodeID = root.getString("node_id"),
-            deviceName = root.getString("device_name"),
+            deviceName = root.getString("name"),
             snapshot = root.getString("head"),
             generation = root.getLong("generation"),
             viewDigest = root.getString("view_digest"),

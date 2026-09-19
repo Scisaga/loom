@@ -25,6 +25,7 @@ data class ProfileIndex(
     init {
         require(profiles.isNotEmpty()) { "配置目录不能为空" }
         require(profiles.map(ConnectionProfile::id).distinct().size == profiles.size) { "配置标识重复" }
+        require(profiles.map(ConnectionProfile::name).distinct().size == profiles.size) { "配置名称重复" }
         require(profiles.any { it.id == viewedProfileId }) { "当前查看的配置不存在" }
     }
 
@@ -75,7 +76,9 @@ class ProfileCatalog private constructor(context: Context) {
 
     @Synchronized
     fun create(name: String): ConnectionProfile {
-        val profile = ConnectionProfile(newID(), normalizeProfileName(name))
+        val normalized = normalizeProfileName(name)
+        require(mutableState.value.profiles.none { it.name == normalized }) { "配置名称已存在" }
+        val profile = ConnectionProfile(newID(), normalized)
         publish(ProfileIndex(mutableState.value.profiles + profile, profile.id))
         return profile
     }
@@ -90,6 +93,7 @@ class ProfileCatalog private constructor(context: Context) {
     fun rename(id: String, name: String) {
         requireContains(id)
         val normalized = normalizeProfileName(name)
+        require(mutableState.value.profiles.none { it.id != id && it.name == normalized }) { "配置名称已存在" }
         publish(
             mutableState.value.copy(
                 profiles = mutableState.value.profiles.map { profile ->
@@ -103,10 +107,8 @@ class ProfileCatalog private constructor(context: Context) {
     @Synchronized
     fun removeIndex(id: String): ProfileIndex {
         requireContains(id)
-        var remaining = mutableState.value.profiles.filterNot { it.id == id }
-        if (remaining.isEmpty()) {
-            remaining = listOf(ConnectionProfile(newID(), DEFAULT_PROFILE_NAME))
-        }
+        check(mutableState.value.profiles.size > 1) { "至少保留一个连接配置" }
+        val remaining = mutableState.value.profiles.filterNot { it.id == id }
         val viewed = mutableState.value.viewedProfileId.takeIf { selected ->
             remaining.any { it.id == selected }
         } ?: remaining.first().id
@@ -209,26 +211,10 @@ internal fun loadOrMigrateProfileIndex(
 }
 
 private fun persistProfileIndex(storage: ProfileByteStore, index: ProfileIndex) {
-    val previous = storage.get(PROFILE_INDEX_KEY)
     val body = encodeProfileIndex(index)
-    try {
-        storage.put(PROFILE_INDEX_KEY, body)
-        val replay = checkNotNull(storage.get(PROFILE_INDEX_KEY)) { "配置目录未能持久保存" }
-        check(replay.contentEquals(body)) { "配置目录持久化回读不一致" }
-        check(decodeProfileIndex(replay) == index) { "配置目录持久化语义不一致" }
-    } catch (error: Throwable) {
-        runCatching {
-            if (previous == null) {
-                storage.remove(PROFILE_INDEX_KEY)
-            } else {
-                storage.put(PROFILE_INDEX_KEY, previous)
-                check(storage.get(PROFILE_INDEX_KEY)?.contentEquals(previous) == true) {
-                    "配置目录回滚回读不一致"
-                }
-            }
-        }.onFailure(error::addSuppressed)
-        throw error
-    }
+    storage.put(PROFILE_INDEX_KEY, body)
+    val replay = checkNotNull(storage.get(PROFILE_INDEX_KEY)) { "配置目录未能持久保存" }
+    check(decodeProfileIndex(replay) == index) { "配置目录持久化回读不一致" }
 }
 
 private fun normalizeProfileName(raw: String): String = raw.trim().also { name ->
@@ -275,21 +261,7 @@ internal fun decodeProfileIndex(body: ByteArray): ProfileIndex {
     } catch (error: CharacterCodingException) {
         throw IllegalArgumentException("配置目录 UTF-8 无效", error)
     }
-    val root = StrictJSONParser(text).parse().asObject("配置目录")
-    root.requireKeys(setOf("schema", "viewed_profile_id", "profiles"), "配置目录")
-    require(root.values.getValue("schema").asInteger("schema") == 1L) { "配置目录 schema 无效" }
-    val profiles = root.values.getValue("profiles").asArray("profiles").values.map { value ->
-        val row = value.asObject("profile")
-        row.requireKeys(setOf("id", "name"), "profile")
-        ConnectionProfile(
-            id = row.values.getValue("id").asString("profile.id"),
-            name = row.values.getValue("name").asString("profile.name"),
-        )
-    }
-    val decoded = ProfileIndex(
-        profiles = profiles,
-        viewedProfileId = root.values.getValue("viewed_profile_id").asString("viewed_profile_id"),
-    )
+    val decoded = ProfileIndexReader(text).read()
     require(encodeProfileIndex(decoded).contentEquals(body)) { "配置目录不是规范 JSON" }
     return decoded
 }
@@ -316,99 +288,39 @@ private fun encodeJSONString(value: String): String = buildString(value.length +
     append('"')
 }
 
-private sealed interface JSONValue
-private data class JSONObjectValue(val values: LinkedHashMap<String, JSONValue>) : JSONValue
-private data class JSONArrayValue(val values: List<JSONValue>) : JSONValue
-private data class JSONStringValue(val value: String) : JSONValue
-private data class JSONNumberValue(val value: String) : JSONValue
-private data class JSONLiteralValue(val value: String) : JSONValue
-
-private fun JSONValue.asObject(label: String): JSONObjectValue = this as? JSONObjectValue
-    ?: throw IllegalArgumentException("$label 必须是 object")
-
-private fun JSONValue.asArray(label: String): JSONArrayValue = this as? JSONArrayValue
-    ?: throw IllegalArgumentException("$label 必须是 array")
-
-private fun JSONValue.asString(label: String): String = (this as? JSONStringValue)?.value
-    ?: throw IllegalArgumentException("$label 必须是 string")
-
-private fun JSONValue.asInteger(label: String): Long = (this as? JSONNumberValue)?.value
-    ?.takeIf { it.matches(Regex("-?(0|[1-9][0-9]*)")) }
-    ?.toLongOrNull()
-    ?: throw IllegalArgumentException("$label 必须是 integer")
-
-private fun JSONObjectValue.requireKeys(expected: Set<String>, label: String) {
-    require(values.keys == expected) { "$label 含未知或缺失字段" }
-}
-
-/** A deliberately small strict parser for the protected profile-index JSON value. */
-private class StrictJSONParser(private val source: String) {
+/** Reads only the catalog's canonical fixed shape; this is not a general JSON layer. */
+private class ProfileIndexReader(private val source: String) {
     private var offset = 0
 
-    fun parse(): JSONValue {
-        skipWhitespace()
-        val value = parseValue()
-        skipWhitespace()
+    fun read(): ProfileIndex {
+        expect("{\"schema\":1,\"viewed_profile_id\":")
+        val viewed = readString()
+        expect(",\"profiles\":[")
+        val profiles = mutableListOf<ConnectionProfile>()
+        if (!consume(']')) {
+            do {
+                expect("{\"id\":")
+                val id = readString()
+                expect(",\"name\":")
+                val name = readString()
+                expect("}")
+                profiles += ConnectionProfile(id, name)
+            } while (consume(','))
+            expect("]")
+        }
+        expect("}")
         require(offset == source.length) { "配置目录含尾随内容" }
-        return value
+        return ProfileIndex(profiles, viewed)
     }
 
-    private fun parseValue(): JSONValue {
-        require(offset < source.length) { "配置目录 JSON 被截断" }
-        return when (source[offset]) {
-            '{' -> parseObject()
-            '[' -> parseArray()
-            '"' -> JSONStringValue(parseString())
-            't' -> parseLiteral("true")
-            'f' -> parseLiteral("false")
-            'n' -> parseLiteral("null")
-            '-', in '0'..'9' -> parseNumber()
-            else -> throw IllegalArgumentException("配置目录 JSON token 无效")
-        }
-    }
-
-    private fun parseObject(): JSONObjectValue {
-        expect('{')
-        skipWhitespace()
-        val values = linkedMapOf<String, JSONValue>()
-        if (consume('}')) return JSONObjectValue(values)
-        while (true) {
-            require(offset < source.length && source[offset] == '"') { "object key 必须是 string" }
-            val key = parseString()
-            require(key !in values) { "object key 重复" }
-            skipWhitespace()
-            expect(':')
-            skipWhitespace()
-            values[key] = parseValue()
-            skipWhitespace()
-            if (consume('}')) return JSONObjectValue(values)
-            expect(',')
-            skipWhitespace()
-        }
-    }
-
-    private fun parseArray(): JSONArrayValue {
-        expect('[')
-        skipWhitespace()
-        val values = mutableListOf<JSONValue>()
-        if (consume(']')) return JSONArrayValue(values)
-        while (true) {
-            values += parseValue()
-            skipWhitespace()
-            if (consume(']')) return JSONArrayValue(values)
-            expect(',')
-            skipWhitespace()
-        }
-    }
-
-    private fun parseString(): String {
-        expect('"')
+    private fun readString(): String {
+        expect("\"")
         val value = StringBuilder()
         while (offset < source.length) {
             val character = source[offset++]
             when {
                 character == '"' -> return value.toString()
-                character == '\\' -> value.append(parseEscape())
+                character == '\\' -> value.append(readEscape())
                 character.code < 0x20 -> throw IllegalArgumentException("string 含未转义控制字符")
                 else -> value.append(character)
             }
@@ -416,7 +328,7 @@ private class StrictJSONParser(private val source: String) {
         throw IllegalArgumentException("string 未闭合")
     }
 
-    private fun parseEscape(): Char = when (requireCharacter("escape 被截断")) {
+    private fun readEscape(): Char = when (readCharacter("escape 被截断")) {
         '"' -> '"'
         '\\' -> '\\'
         '/' -> '/'
@@ -437,53 +349,19 @@ private class StrictJSONParser(private val source: String) {
         else -> throw IllegalArgumentException("string escape 无效")
     }
 
-    private fun parseNumber(): JSONNumberValue {
-        val start = offset
-        if (source[offset] == '-') offset++
-        require(offset < source.length) { "number 被截断" }
-        if (source[offset] == '0') {
-            offset++
-        } else {
-            require(source[offset] in '1'..'9') { "number 无效" }
-            while (offset < source.length && source[offset].isDigit()) offset++
-        }
-        if (offset < source.length && source[offset] == '.') {
-            offset++
-            require(offset < source.length && source[offset].isDigit()) { "number fraction 无效" }
-            while (offset < source.length && source[offset].isDigit()) offset++
-        }
-        if (offset < source.length && source[offset] in setOf('e', 'E')) {
-            offset++
-            if (offset < source.length && source[offset] in setOf('+', '-')) offset++
-            require(offset < source.length && source[offset].isDigit()) { "number exponent 无效" }
-            while (offset < source.length && source[offset].isDigit()) offset++
-        }
-        return JSONNumberValue(source.substring(start, offset))
-    }
-
-    private fun parseLiteral(expected: String): JSONLiteralValue {
-        require(source.startsWith(expected, offset)) { "literal 无效" }
-        offset += expected.length
-        return JSONLiteralValue(expected)
-    }
-
-    private fun requireCharacter(message: String): Char {
+    private fun readCharacter(message: String): Char {
         require(offset < source.length) { message }
         return source[offset++]
     }
 
-    private fun expect(character: Char) {
-        require(offset < source.length && source[offset] == character) { "期望 '$character'" }
-        offset++
+    private fun expect(value: String) {
+        require(source.startsWith(value, offset)) { "配置目录结构无效" }
+        offset += value.length
     }
 
     private fun consume(character: Char): Boolean {
         if (offset >= source.length || source[offset] != character) return false
         offset++
         return true
-    }
-
-    private fun skipWhitespace() {
-        while (offset < source.length && source[offset] in setOf(' ', '\n', '\r', '\t')) offset++
     }
 }

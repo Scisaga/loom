@@ -228,6 +228,7 @@ class MainActivity : ComponentActivity() {
     private fun deleteProfile(profileId: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
+                check(catalog.state.value.profiles.size > 1) { "至少保留一个连接配置" }
                 val runtime = VpnRuntime.status.value
                 check(
                     runtime.phase !in setOf(
@@ -463,6 +464,7 @@ private fun LoomHome(
             ProfileNameDialog(
                 title = "添加配置",
                 value = addName,
+                valid = profileNameAvailable(addName, profiles.profiles),
                 onValueChange = { addName = it.take(64) },
                 onDismiss = { addingProfile = false },
                 onConfirm = {
@@ -476,6 +478,7 @@ private fun LoomHome(
             ProfileNameDialog(
                 title = "重命名配置",
                 value = renameText,
+                valid = profileNameAvailable(renameText, profiles.profiles, profile.id),
                 onValueChange = { renameText = it.take(64) },
                 onDismiss = { renaming = null },
                 onConfirm = {
@@ -520,11 +523,11 @@ private fun LoomHome(
 private fun ProfileNameDialog(
     title: String,
     value: String,
+    valid: Boolean,
     onValueChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val valid = runCatching { checkedProfileName(value) }.isSuccess
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -540,6 +543,15 @@ private fun ProfileNameDialog(
         confirmButton = { TextButton(enabled = valid, onClick = onConfirm) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+private fun profileNameAvailable(
+    value: String,
+    profiles: List<ConnectionProfile>,
+    renamedProfileId: String = "",
+): Boolean {
+    val normalized = runCatching { checkedProfileName(value) }.getOrNull() ?: return false
+    return profiles.none { it.id != renamedProfileId && it.name == normalized }
 }
 
 @Composable

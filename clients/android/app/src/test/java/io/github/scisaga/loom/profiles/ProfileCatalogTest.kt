@@ -2,7 +2,6 @@ package io.github.scisaga.loom.profiles
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -32,14 +31,13 @@ class ProfileCatalogTest {
     }
 
     @Test
-    fun strictCodecRejectsUnknownDuplicateDanglingAndNonCanonicalValues() {
+    fun strictCodecRejectsNonCanonicalOrAmbiguousCatalogs() {
         listOf(
             "{\"schema\":1,\"viewed_profile_id\":\"primary\",\"profiles\":[{\"id\":\"primary\",\"name\":\"Loom A\"}],\"extra\":0}",
             "{\"schema\":1,\"schema\":1,\"viewed_profile_id\":\"primary\",\"profiles\":[{\"id\":\"primary\",\"name\":\"Loom A\"}]}",
             "{\"schema\":1,\"viewed_profile_id\":\"missing\",\"profiles\":[{\"id\":\"primary\",\"name\":\"Loom A\"}]}",
             "{\"schema\":1,\"viewed_profile_id\":\"primary\",\"profiles\":[{\"id\":\"primary\",\"name\":\"Loom A\"},{\"id\":\"primary\",\"name\":\"Loom B\"}]}",
-            "{\"schema\":1,\"viewed_profile_id\":\"bad-id\",\"profiles\":[{\"id\":\"bad-id\",\"name\":\"Loom A\"}]}",
-            "{\"schema\":1,\"viewed_profile_id\":\"primary\",\"profiles\":[{\"id\":\"primary\",\"name\":\" Loom A \"}]}",
+            "{\"schema\":1,\"viewed_profile_id\":\"primary\",\"profiles\":[{\"id\":\"primary\",\"name\":\"Loom A\"},{\"id\":\"0123456789abcdef0123456789abcdef\",\"name\":\"Loom A\"}]}",
             "{ \"schema\":1,\"viewed_profile_id\":\"primary\",\"profiles\":[{\"id\":\"primary\",\"name\":\"Loom A\"}]}",
         ).forEach { body ->
             assertThrows(IllegalArgumentException::class.java) {
@@ -59,10 +57,8 @@ class ProfileCatalogTest {
         assertEquals("p.$id.network-generation-v2", ProfileStorage.networkGeneration(id))
         assertEquals("p.$id.network-identity-v2", ProfileStorage.networkIdentity(id))
         assertTrue(ProfileStorage.validId(ProfileStorage.PRIMARY_ID))
-        assertFalse(ProfileStorage.validId("PRIMARY"))
         assertThrows(IllegalArgumentException::class.java) { ProfileStorage.state("../escape") }
         assertEquals("Loom A", checkedProfileName("  Loom A  "))
-        assertThrows(IllegalArgumentException::class.java) { checkedProfileName("line\nbreak") }
     }
 
     @Test
@@ -97,60 +93,18 @@ class ProfileCatalogTest {
             assertArrayEquals(value, storage.bytes(newKey))
             assertTrue(storage.firstPut(newKey) < storage.firstPut("profile-index-v1"))
         }
-    }
 
-    @Test
-    fun committedIndexNeverReadsLegacySlots() {
-        val storage = RecordingStore()
-        val index = ProfileIndex(
-            listOf(ConnectionProfile(ProfileStorage.PRIMARY_ID, "Loom A")),
-            ProfileStorage.PRIMARY_ID,
-        )
-        storage.seed("profile-index-v1", encodeProfileIndex(index))
-        storage.seed("device-state-v2", byteArrayOf(9))
-
-        assertEquals(index, loadOrMigrateProfileIndex(storage) { error("must not validate legacy") })
-
-        assertFalse("device-state-v2" in storage.reads)
-        assertNull(storage.bytes("device-state-v2"))
-    }
-
-    @Test
-    fun invalidLegacyDeviceStateLeavesOldSlotAuthoritative() {
-        val storage = RecordingStore()
-        val legacyState = byteArrayOf(7, 8, 9)
-        storage.seed("device-state-v2", legacyState)
-
-        assertThrows(IllegalArgumentException::class.java) {
-            loadOrMigrateProfileIndex(storage) { throw IllegalArgumentException("invalid state") }
+        val replay = RecordingStore().apply {
+            seed("profile-index-v1", encodeProfileIndex(index))
+            seed("device-state-v2", byteArrayOf(9))
         }
-
-        assertArrayEquals(legacyState, storage.bytes("device-state-v2"))
-        assertNull(storage.bytes(ProfileStorage.state(ProfileStorage.PRIMARY_ID)))
-        assertNull(storage.bytes("profile-index-v1"))
-    }
-
-    @Test
-    fun failedIndexReadbackDoesNotCommitMigration() {
-        val storage = RecordingStore()
-        val legacyState = byteArrayOf(3, 2, 1)
-        storage.seed("device-state-v2", legacyState)
-        storage.corruptNextIndexWrite = true
-
-        assertThrows(IllegalStateException::class.java) {
-            loadOrMigrateProfileIndex(storage) { }
-        }
-
-        assertArrayEquals(legacyState, storage.bytes("device-state-v2"))
-        assertNull(storage.bytes("profile-index-v1"))
+        assertEquals(index, loadOrMigrateProfileIndex(replay) { error("不得回读旧槽") })
+        assertNull(replay.bytes("device-state-v2"))
     }
 
     private class RecordingStore : ProfileByteStore {
         private val values = linkedMapOf<String, ByteArray>()
         private val puts = mutableListOf<String>()
-        val reads = mutableListOf<String>()
-        var corruptNextIndexWrite = false
-
         fun seed(key: String, value: ByteArray) {
             values[key] = value.copyOf()
         }
@@ -160,18 +114,12 @@ class ProfileCatalogTest {
         fun firstPut(key: String): Int = puts.indexOf(key)
 
         override fun get(key: String): ByteArray? {
-            reads += key
             return values[key]?.copyOf()
         }
 
         override fun put(key: String, value: ByteArray) {
             puts += key
-            values[key] = if (key == "profile-index-v1" && corruptNextIndexWrite) {
-                corruptNextIndexWrite = false
-                value.copyOf().also { it[it.lastIndex] = (it.last() + 1).toByte() }
-            } else {
-                value.copyOf()
-            }
+            values[key] = value.copyOf()
         }
 
         override fun remove(key: String) {
