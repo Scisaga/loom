@@ -232,6 +232,14 @@ scheduler、probe budget 或一次性 registry。入口之后复用已有的有�
 - 新候选为 `unknown`，可以在没有可用候选时被立即尝试；
 - selector 回读确认后才更新 `Selection`。
 
+### 撤权边界
+
+控制面撤销设备时，从认证 `Projection` 删除该设备的授权；此后新的私有 device tunnel、配置读取和报告
+必须在握手处拒绝，Web 也不再投影其授权候选。撤权不会改写已经交付到离线设备的历史 LKG 字节：设备在
+尚未取得更新认证状态时仍可按该 LKG 的既有数据面能力继续运行，这一能力边界必须由被引用 transport 的
+密钥或服务端授权寿命进一步限制，不能谎报为“客户端已经获知撤权”。一旦客户端取得不含旧候选的新 LKG，
+旧候选立即停止承接新连接；不得以 v1 fallback 或缓存 DeviceView 重新扩权。
+
 ### 切网、故障与恢复
 
 - 切换底层网络代：旧观测不参与决策，启动不等待新探测。
@@ -255,6 +263,24 @@ Android 与 Linux 必须复用同一个无 I/O 纯核心。纯核心只做：
 Android 与 Linux 各自只实现 `HostAdapter`：安全存储、配置安装、真实 transport / business
 结果采集、selector apply 和 readback。适配器不得自行排名、增加 fallback 分支或重解释
 `public_data_ingress`。
+
+Linux 的具体映射不增加领域概念：`/var/lib/loom-device/state.json` 是 `DeviceIdentity + CertifiedLKG`
+的 owner-only 原子文件，并把已部署 schema 1 一次性前向迁移为带 `v2_latch` 的 schema 2，保留原身份、
+认证 floor 与完整 LKG；`/var/lib/loom-device/runtime.json` 只保存一份 `Preference` 和当前底层网络代的有限
+`Observation`；`/run/loom-client/config.json` 与 `status.json` 分别是可删除重建的
+`RuntimeCandidate` 配置和 selector 回读投影。唯一正式 unit `loom-client.service` 运行
+`loom client run`，由它启动精确签名包中的 sing-box、应用共享纯核心给出的候选、逐项回读 selector，
+再以一次真实 TCP/TLS 与 UDP/DNS 业务结果形成 Observation。第一次失败只触发一次由相同纯函数得出的
+必要 fallback；同一网络代已有有效结果时重启不重复采样。
+
+`loom client route direct|auto|exit <ID>` 是 Linux 唯一偏好写入口；写入后重载同一 service。
+`loom client status` 只读取 `/run` 中的实际 Selection，不把偏好冒充为运行事实。service 启动时可以尝试
+私有配置同步；控制面离线或报告暂不可达时继续使用已验证 LKG，不能改走公开配置或旧 pull。
+
+Linux 客户端制品同时为 amd64/arm64 生成、签名和逐文件验证。amd64 在原生宿主做业务验收；arm64
+只交叉构建和静态检查。installer 先把精确制品放入内容标识 release 目录，并在切换 `current` 前对现有
+LKG 执行 sing-box preflight；切换后若 service/selector 回读未成功，恢复先前 `current` 和 unit。升级失败
+不覆盖旧的可运行制品。
 
 Windows 不属于本次重建范围。未来接入时，源码和构建仍以当前 Linux 工作树为唯一开发
 环境，原生执行使用同机受限的 [Windows 11 测试虚拟机](../windows-test-vm.md)，并服从同一

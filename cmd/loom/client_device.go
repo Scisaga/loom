@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"sort"
 	"time"
 
 	"loom/internal/control"
@@ -125,47 +124,6 @@ func cmdClientSync(args []string) error {
 	}
 	fmt.Printf("device view synchronized: device=%s head=%s floor=%d endpoints=%d routes=%d\n",
 		envelope.View.DeviceID, control.HeadID(envelope.Head), envelope.Head.Index, len(envelope.View.Endpoints), len(envelope.View.Routes))
-	return nil
-}
-
-func cmdClientReportMinimal(args []string) error {
-	fs := flag.NewFlagSet("client report", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	statePath := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
-	observationsPath := fs.String("observations", "", "strict JSON observation array")
-	selection := fs.String("selection", "", "selector readback candidate ID")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 || *observationsPath == "" {
-		return errors.New("client report requires -observations")
-	}
-	body, err := readBoundedRegular(*observationsPath, 1<<20, false)
-	if err != nil {
-		return err
-	}
-	var observations []control.Observation
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&observations); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("observations have trailing content")
-	}
-	sort.Slice(observations, func(i, j int) bool { return observations[i].CandidateID < observations[j].CandidateID })
-	store, err := deviceclient.Load(*statePath)
-	if err != nil {
-		return err
-	}
-	report := control.DeviceReport{Selection: *selection, ReportedAt: time.Now().UTC().Format(time.RFC3339), Observations: observations}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := deviceclient.Report(ctx, store, report); err != nil {
-		return err
-	}
-	fmt.Printf("signed device report accepted: observations=%d\n", len(observations))
 	return nil
 }
 

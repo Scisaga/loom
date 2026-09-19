@@ -4,19 +4,12 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
 
-client_arch=${GOARCH:-$(go env GOARCH)}
-sing_box=${SING_BOX_BINARY:-/usr/local/bin/sing-box}
 signing_key=${PLATFORM_SIGNING_KEY:-deploy/keys/platform-signing.key}
-staged=deploy/staging/loom
-archive="deploy/staging/loom-client-linux-${client_arch}.tar.gz"
-client_dist_dir=${CLIENT_DIST_DIR:-/var/lib/loom/client-dist}
+signing_pub=${PLATFORM_SIGNING_PUB:-deploy/keys/platform-signing.pub}
+client_release_root=${CLIENT_RELEASE_ROOT:-/var/lib/loom/client-dist/releases}
 
 [ "${GOOS:-linux}" = linux ] || {
     echo "GOOS must be linux for the Linux client package" >&2
-    exit 1
-}
-[ -x "$sing_box" ] || {
-    echo "real sing-box binary is missing or not executable: $sing_box" >&2
     exit 1
 }
 [ -f "$signing_key" ] || {
@@ -25,40 +18,50 @@ client_dist_dir=${CLIENT_DIST_DIR:-/var/lib/loom/client-dist}
 }
 
 mkdir -p deploy/staging
-tmp=$(mktemp deploy/staging/.loom-client-build.XXXXXX)
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
-CGO_ENABLED=0 GOOS=linux GOARCH="$client_arch" go build -trimpath -o "$tmp" ./cmd/loom
-chmod 0755 "$tmp"
-mv -f "$tmp" "$staged"
-trap - EXIT HUP INT TERM
+packager=$(mktemp deploy/staging/.loom-client-packager.XXXXXX)
+trap 'rm -f "$packager"' EXIT HUP INT TERM
+CGO_ENABLED=0 go build -trimpath -o "$packager" ./cmd/loom
 
-set -- client package -loom "$staged" -sing-box "$sing_box" -key "$signing_key" -o "$archive"
-if [ "${ALLOW_DIRTY:-0}" = 1 ]; then
-    set -- "$@" -allow-dirty
-fi
-"$staged" "$@"
+build_arch() {
+    arch=$1
+    case "$arch" in
+        amd64) sing_box=${SING_BOX_AMD64:-${SING_BOX_BINARY:-/usr/local/bin/sing-box}} ;;
+        arm64) sing_box=${SING_BOX_ARM64:-deploy/staging/sing-box-linux-arm64} ;;
+        *) echo "unsupported Linux client architecture: $arch" >&2; exit 1 ;;
+    esac
+    [ -x "$sing_box" ] || {
+        echo "real sing-box binary is missing or not executable for $arch: $sing_box" >&2
+        exit 1
+    }
 
-"$staged" client verify -archive "$archive" -pubkey "${PLATFORM_SIGNING_PUB:-deploy/keys/platform-signing.pub}"
+    staged="deploy/staging/loom-linux-$arch"
+    archive="deploy/staging/loom-client-linux-$arch.tar.gz"
+    temporary=$(mktemp "deploy/staging/.loom-linux-$arch.XXXXXX")
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$temporary" ./cmd/loom
+    chmod 0755 "$temporary"
+    mv -f "$temporary" "$staged"
 
-[ ! -L "$client_dist_dir" ] || {
-    echo "client distribution directory must not be a symlink: $client_dist_dir" >&2
+    set -- client package -loom "$staged" -sing-box "$sing_box" -key "$signing_key" -o "$archive"
+    if [ "${ALLOW_DIRTY:-0}" = 1 ]; then set -- "$@" -allow-dirty; fi
+    "$packager" "$@"
+    "$packager" client verify -archive "$archive" -pubkey "$signing_pub" -arch "$arch"
+
+}
+
+[ ! -L "$client_release_root" ] || {
+    echo "client release root must not be a symlink: $client_release_root" >&2
     exit 1
 }
-install -d -m 0755 "$client_dist_dir"
-publish_file() {
-    source_file=$1
-    destination="$client_dist_dir/$(basename -- "$source_file")"
-    temporary=$(mktemp "$client_dist_dir/.client-dist.XXXXXX")
-    trap 'rm -f "$temporary"' EXIT HUP INT TERM
-    install -m 0644 "$source_file" "$temporary"
-    mv -f "$temporary" "$destination"
-    trap - EXIT HUP INT TERM
-}
 
-# The archive is the commit marker: verification sidecars become visible first,
-# then the fully-written body replaces the previously downloadable generation.
-publish_file "$archive.sha256"
-publish_file "$archive.sig"
-publish_file "$archive.pub"
-publish_file "$archive"
-echo "Published Linux client package to $client_dist_dir/$(basename -- "$archive")"
+if [ -n "${GOARCH:-}" ]; then
+    build_arch "$GOARCH"
+    echo "Built and verified Linux $GOARCH package without changing the two-architecture catalog."
+else
+    build_arch amd64
+    build_arch arm64
+    "$packager" client publish-linux \
+        -archive deploy/staging/loom-client-linux-amd64.tar.gz \
+        -archive deploy/staging/loom-client-linux-arm64.tar.gz \
+        -root "$client_release_root" -key "$signing_key"
+    echo "Published signed Linux client packages to $client_release_root"
+fi

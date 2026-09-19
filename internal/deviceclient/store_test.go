@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -69,12 +70,27 @@ func TestCertifiedLKGIsAtomicRestartableAndCannotRollBack(t *testing.T) {
 	if err := store.SaveLKG(envelope); err != nil {
 		t.Fatal(err)
 	}
+	// The deployed schema-1 store is forward-migrated in place without changing
+	// identity, floor or certified LKG.
+	legacy := store.state
+	legacy.Schema, legacy.V2Latch = 1, false
+	body, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	reopened, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(reopened.LKG(), &envelope) {
 		t.Fatal("certified LKG changed across restart")
+	}
+	if reopened.state.Schema != stateSchema || !reopened.state.V2Latch || reopened.state.Floor != envelope.Head.Index ||
+		reopened.PublicKey() != store.PublicKey() {
+		t.Fatal("schema-1 forward migration did not preserve the v2 identity boundary")
 	}
 	rollback := envelope
 	rollback.Head.Index = 6

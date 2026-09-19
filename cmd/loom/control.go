@@ -291,7 +291,7 @@ func cmdControlWrite(args []string) error {
 	certPath := fs.String("cert", "", "管理员客户端证书")
 	keyPath := fs.String("key", "", "管理员客户端私钥")
 	caPath := fs.String("ca", "", "control TLS 根证书")
-	kind := fs.String("kind", "", "service.put、members.replace、endpoint.put、enrollment.create 或 enrollment.approve")
+	kind := fs.String("kind", "", "service.put、members.replace、endpoint.put、enrollment.create、enrollment.approve、device.put 或 device.revoke")
 	payloadPath := fs.String("payload", "", "operation payload JSON")
 	requestID := fs.String("request-id", "", "稳定幂等请求 ID")
 	baseHead := fs.String("base-head", "", "读取到的 certified head")

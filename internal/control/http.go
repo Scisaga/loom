@@ -337,6 +337,15 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		result, err = server.putDevice(request.Context(), envelope.RequestID, envelope.BaseHead, payload)
+	case "device.revoke":
+		var payload struct {
+			DeviceID string `json:"device_id"`
+		}
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid device revocation", http.StatusBadRequest)
+			return
+		}
+		result, err = server.revokeDevice(request.Context(), envelope.RequestID, envelope.BaseHead, payload.DeviceID)
 	case "enrollment.create":
 		var payload enrollmentCreatePayload
 		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {

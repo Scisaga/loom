@@ -1,8 +1,8 @@
 // Package clientdist builds and verifies the reproducible Linux client archive.
 //
-// The archive is bootstrap material, not a node configuration bundle.  Exact
-// systemd units and data-plane secrets still arrive through the signed pull
-// transaction described by design.md §14.2.
+// The archive is bootstrap material, not a node configuration bundle. The
+// generic service is shipped here; device-specific runtime bytes only arrive
+// inside the private certified LKG.
 package clientdist
 
 import (
@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	Schema          = 1
-	signatureDomain = "loom:linux-client-package:v1"
+	Schema          = 2
+	signatureDomain = "loom:linux-client-package:v2"
 	maxArchiveBytes = 256 << 20
 )
 
@@ -121,12 +121,13 @@ func Build(in BuildInput) (Artifact, error) {
 		{path: "platform.pub", mode: 0o644, body: publicBody},
 		{path: "sing-box", mode: 0o755, body: append([]byte(nil), in.SingBox...)},
 		{path: "systemd/README.md", mode: 0o644, body: []byte(systemdReadme)},
+		{path: "systemd/loom-client.service", mode: 0o644, body: []byte(systemdService)},
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 
 	manifest := Manifest{
 		Schema: Schema, Kind: "linux-client-bootstrap", OS: osName, Arch: arch,
-		Lifecycle: "signed-node-bundle", SignatureDomain: signatureDomain,
+		Lifecycle: "certified-lkg-runtime", SignatureDomain: signatureDomain,
 		PlatformKeySHA256: sha256Hex(publicKey), Loom: loom, SingBox: singBox,
 	}
 	for _, f := range files {
@@ -374,7 +375,7 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		total += h.Size
 		files[rel], modes[rel] = content, h.Mode&0o777
 	}
-	required := []string{"README.md", "checksums.txt", "install.sh", "loom", "manifest.json", "platform.pub", "sing-box", "systemd/README.md"}
+	required := []string{"README.md", "checksums.txt", "install.sh", "loom", "manifest.json", "platform.pub", "sing-box", "systemd/README.md", "systemd/loom-client.service"}
 	if len(files) != len(required) {
 		return zero, fmt.Errorf("客户端包文件数是 %d，期望 %d", len(files), len(required))
 	}
@@ -389,7 +390,7 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 	if err := dec.Decode(&manifest); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 		return zero, fmt.Errorf("解析 manifest.json 失败:%v", err)
 	}
-	if manifest.Schema != Schema || manifest.Kind != "linux-client-bootstrap" || manifest.OS != "linux" || manifest.SignatureDomain != signatureDomain || manifest.Lifecycle != "signed-node-bundle" {
+	if manifest.Schema != Schema || manifest.Kind != "linux-client-bootstrap" || manifest.OS != "linux" || manifest.SignatureDomain != signatureDomain || manifest.Lifecycle != "certified-lkg-runtime" {
 		return zero, fmt.Errorf("[§10.2 渲染目标必须显式] manifest 语义无效")
 	}
 	if root != "loom-client-linux-"+manifest.Arch {
@@ -444,7 +445,7 @@ func verifyChecksums(files map[string][]byte) error {
 	return nil
 }
 
-const readme = `# Loom Linux Server client
+const readme = `# Loom Linux client
 
 This archive is a signed bootstrap package for Linux Server. It contains real
 Loom and sing-box executables, an installer, and a manifest. It does not contain
@@ -462,77 +463,104 @@ token in shell history:
     cd loom-client-linux-amd64
     sudo ./install.sh --invite-file ../client.loom-invite
 
-If the invitation pins a forwarding/server purpose, declare the real public
-endpoint before running the installer:
-
-    sudo install -d -m 0755 /etc/loom
-    sudoedit /etc/loom/device.yaml
-
-    server:
-      public_endpoint: edge.example.net
-      inbound_port: 61698
-      direction: bidirectional
-
-This is the server's reachability declaration, not a client route selection.
-Enrollment creates or reuses /etc/wireguard/node.key locally, sends only its
-public key, and installs wireguard-tools through a supported package manager
-before consuming the invitation when the tools are absent.
-
-The installer binds a locally generated P-256 CSR identity to the Device that
-the control plane already created (the private key never leaves the machine), installs
-the bootstrap response, and starts the first signed pull when the control plane
-returned a complete provisioning envelope. It never changes global proxy
-environment variables.
+The installer creates one Ed25519 device identity, completes private
+Enrollment, validates the certified RuntimeProfile with the packaged sing-box,
+and starts loom-client.service. The service derives candidates from the full
+LKG, applies the shared Direct/Auto/fixed-exit selector, reads the actual
+selector back, and submits signed observations through the private device
+channel. It never uses the public website for device config or reports.
 `
 
 const systemdReadme = `# systemd lifecycle boundary
 
-The exact sing-box, pull, Agent, and reporter units depend on the enrolled node
-ID and its signed configuration. They are intentionally not generic files in
-this bootstrap archive. A successful first signed pull installs the units from
-the node-bound bundle and uses the existing transactional apply/rollback path.
+loom-client.service is the only Linux client runtime unit. It owns the packaged
+sing-box process and projects its ephemeral config from the certified LKG on
+every start. Preference and bounded observations are the only additional local
+persistent values; actual Selection is always selector readback under /run.
+`
 
-If enrollment returns no complete provisioning envelope, no service is enabled
-or started. That state is provisioning, not online.
+const systemdService = `[Unit]
+Description=Loom certified Linux client runtime
+Documentation=file:/opt/loom/docs/rebuild/client-runtime-model.md
+After=network-online.target
+Wants=network-online.target
+Conflicts=loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/rm -f /run/loom-client/status.json
+ExecStart=/usr/local/lib/loom-client/current/loom client run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3s
+TimeoutStopSec=20s
+KillMode=mixed
+UMask=0077
+RuntimeDirectory=loom-client
+RuntimeDirectoryMode=0700
+StateDirectory=loom-device
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/loom-device /run/loom-client
+DeviceAllow=/dev/net/tun rw
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target
 `
 
 const installScript = `#!/bin/sh
 set -eu
 
 usage() {
-    echo "usage: sudo ./install.sh --invite-file PATH [--state-dir PATH]" >&2
+    echo "usage: sudo ./install.sh --invite-file PATH [--state PATH]" >&2
+    echo "       sudo ./install.sh --upgrade [--state PATH]" >&2
     echo "       sudo ./install.sh --no-enroll" >&2
     exit 2
 }
 
 invite_file=
-state_dir=/etc/loom/client
+state=/var/lib/loom-device/state.json
 no_enroll=0
+upgrade=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --invite-file) [ "$#" -ge 2 ] || usage; invite_file=$2; shift 2 ;;
-        --state-dir) [ "$#" -ge 2 ] || usage; state_dir=$2; shift 2 ;;
+        --state) [ "$#" -ge 2 ] || usage; state=$2; shift 2 ;;
         --no-enroll) no_enroll=1; shift ;;
+        --upgrade) upgrade=1; shift ;;
         -h|--help) usage ;;
         *) usage ;;
     esac
 done
 
 [ "$(id -u)" -eq 0 ] || { echo "install.sh must run as root" >&2; exit 1; }
-[ "$no_enroll" -eq 1 ] || [ -n "$invite_file" ] || usage
-[ "$no_enroll" -eq 0 ] || [ -z "$invite_file" ] || usage
+modes=$no_enroll
+[ "$upgrade" -eq 0 ] || modes=$((modes + 1))
+[ -z "$invite_file" ] || modes=$((modes + 1))
+[ "$modes" -eq 1 ] || usage
 
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 (cd "$base" && sha256sum -c checksums.txt)
-for file in loom sing-box platform.pub; do
+for file in loom sing-box platform.pub manifest.json systemd/loom-client.service; do
     [ -f "$base/$file" ] && [ ! -L "$base/$file" ] || {
         echo "unsafe or missing package file: $file" >&2
         exit 1
     }
 done
 
-install -d -m 0755 /usr/local/bin /etc/loom/trust
-install -d -m 0700 /etc/loom/secrets "$state_dir" /var/lib/loom
+install -d -m 0755 /usr/local/bin /usr/local/lib/loom-client/releases /etc/loom/trust
+install -d -m 0700 "$(dirname -- "$state")" /var/lib/loom-device
 
 install_atomic() {
     src=$1
@@ -545,14 +573,120 @@ install_atomic() {
     trap - EXIT HUP INT TERM
 }
 
-install_atomic "$base/loom" /usr/local/bin/loom 0755
-install_atomic "$base/sing-box" /usr/local/bin/sing-box 0755
 install_atomic "$base/platform.pub" /etc/loom/trust/platform.pub 0644
 
+release_id=$(sha256sum "$base/manifest.json" | cut -d' ' -f1)
+release=/usr/local/lib/loom-client/releases/$release_id
+if [ ! -d "$release" ]; then
+    staging=$(mktemp -d /usr/local/lib/loom-client/releases/.staging.XXXXXX)
+    trap 'rm -rf "$staging"' EXIT HUP INT TERM
+    install -m 0755 "$base/loom" "$staging/loom"
+    install -m 0755 "$base/sing-box" "$staging/sing-box"
+    install -m 0644 "$base/manifest.json" "$staging/manifest.json"
+    mv "$staging" "$release"
+    trap - EXIT HUP INT TERM
+else
+    cmp -s "$base/manifest.json" "$release/manifest.json" || {
+        echo "existing release directory does not match its content ID" >&2
+        exit 1
+    }
+fi
+
 if [ "$no_enroll" -eq 1 ]; then
-    echo "Installed binaries only; no Device identity was bound and no service was started."
+    echo "Installed the verified release without binding a Device or starting a service."
     exit 0
 fi
 
-/usr/local/bin/loom client enroll -invite-file "$invite_file" -state-dir "$state_dir"
+if [ "$upgrade" -eq 0 ]; then
+    "$release/loom" client enroll -invite-file "$invite_file" -state "$state" -wait 5m
+fi
+"$release/loom" client preflight -state "$state" -sing-box "$release/sing-box"
+
+unit=/etc/systemd/system/loom-client.service
+unit_backup=
+if [ -f "$unit" ]; then
+    unit_backup=$(mktemp /etc/systemd/system/.loom-client.service.XXXXXX)
+    cp -p "$unit" "$unit_backup"
+fi
+previous=
+if [ -L /usr/local/lib/loom-client/current ]; then
+    previous=$(readlink /usr/local/lib/loom-client/current)
+fi
+old_active=
+for old in loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service; do
+    if systemctl is-active --quiet "$old"; then old_active="$old_active $old"; fi
+done
+systemctl stop loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service 2>/dev/null || true
+
+link_tmp=/usr/local/lib/loom-client/.current.$$
+ready=0
+activation_ok=1
+if ! ln -s "$release" "$link_tmp" || ! mv -Tf "$link_tmp" /usr/local/lib/loom-client/current; then
+    activation_ok=0
+    rm -f "$link_tmp"
+fi
+if ! install_atomic "$base/systemd/loom-client.service" "$unit" 0644; then activation_ok=0; fi
+if ! systemctl daemon-reload; then activation_ok=0; fi
+if ! systemctl enable loom-client.service >/dev/null; then activation_ok=0; fi
+if [ "$activation_ok" -eq 1 ] && ! systemctl restart loom-client.service; then activation_ok=0; fi
+
+if [ "$activation_ok" -eq 1 ]; then
+    attempt=0
+    while [ "$attempt" -lt 30 ]; do
+        if systemctl is-active --quiet loom-client.service && "$release/loom" client status >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+fi
+
+if [ "$ready" -ne 1 ]; then
+    systemctl disable --now loom-client.service >/dev/null 2>&1 || true
+    if [ -n "$previous" ]; then
+        rollback_tmp=/usr/local/lib/loom-client/.current.rollback.$$
+        ln -s "$previous" "$rollback_tmp"
+        mv -Tf "$rollback_tmp" /usr/local/lib/loom-client/current
+    else
+        rm -f /usr/local/lib/loom-client/current
+    fi
+    if [ -n "$unit_backup" ]; then
+        mv -f "$unit_backup" "$unit"
+        unit_backup=
+    else
+        rm -f "$unit"
+    fi
+    systemctl daemon-reload
+    if [ -n "$previous" ]; then systemctl enable --now loom-client.service >/dev/null 2>&1 || true; fi
+    for old in $old_active; do systemctl enable --now "$old" >/dev/null 2>&1 || true; done
+    echo "new runtime failed readback; previous runnable release was restored" >&2
+    exit 1
+fi
+
+[ -z "$unit_backup" ] || rm -f "$unit_backup"
+for old in loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service; do
+    systemctl disable "$old" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/$old"
+done
+systemctl daemon-reload
+
+install -d -m 0700 /var/lib/loom-retired /etc/loom/retired-v2 /usr/local/lib/loom-client/retired
+if [ -d /var/lib/loom/client-v2 ] && [ ! -e /var/lib/loom-retired/client-v2 ]; then
+    mv /var/lib/loom/client-v2 /var/lib/loom-retired/client-v2
+fi
+for old_config in /etc/loom/agent/v2 /etc/loom/sing-box/v2; do
+    name=$(basename "$(dirname "$old_config")")-$(basename "$old_config")
+    if [ -d "$old_config" ] && [ ! -e "/etc/loom/retired-v2/$name" ]; then
+        mv "$old_config" "/etc/loom/retired-v2/$name"
+    fi
+done
+if [ -e /usr/local/bin/loom ] && [ ! -L /usr/local/bin/loom ] && [ ! -e /usr/local/lib/loom-client/retired/loom ]; then
+    mv /usr/local/bin/loom /usr/local/lib/loom-client/retired/loom
+fi
+cli_tmp=/usr/local/bin/.loom.$$
+ln -s /usr/local/lib/loom-client/current/loom "$cli_tmp"
+mv -Tf "$cli_tmp" /usr/local/bin/loom
+
+echo "Loom Linux client is enrolled, running, and confirmed by selector readback."
 `

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"loom/internal/clientmodel"
 )
 
 func tunnelPost(t *testing.T, connection net.Conn, path string, requestValue, responseValue any) int {
@@ -149,9 +151,14 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "internet"},
 		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "internet"},
 	}
+	runtimeConfig, err := clientmodel.CanonicalizeRuntimeConfig([]byte(`{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],"outbounds":[{"type":"hysteria2","tag":"one-hop"},{"type":"hysteria2","tag":"relay"},{"type":"selector","tag":"internet","outbounds":["one-hop","relay"]}],"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeProfile := &RuntimeProfile{Kind: "sing_box", Config: runtimeConfig}
 	created, inviteText, err := server.createEnrollment(ctx, "invite-create", currentHead(runtime), enrollmentCreatePayload{
 		TransactionID: "demo-transaction", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339), DeviceID: "demo-device",
-		Name: "Demo device", Platform: "linux", Roles: []string{"access"}, Routes: routes})
+		Name: "Demo device", Platform: "linux", Roles: []string{"access"}, Routes: routes, Runtime: runtimeProfile})
 	if err != nil || created.Head.Index == 0 {
 		t.Fatalf("create enrollment: %v", err)
 	}
@@ -261,7 +268,7 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	}
 	_, _, err = server.createEnrollment(ctx, "protected-invite", currentHead(runtime), enrollmentCreatePayload{
 		TransactionID: "protected-transaction", ExpiresAt: now.Add(time.Minute).Format(time.RFC3339), DeviceID: "protected-device",
-		Name: "Protected device", Platform: "linux", Roles: []string{"access"}, Routes: routes})
+		Name: "Protected device", Platform: "linux", Roles: []string{"access"}, Routes: routes, Runtime: runtimeProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,6 +312,36 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	mismatch.State = "serving"
 	if _, err := server.putEndpoint(ctx, "endpoint-3-serving", currentHead(runtime), mismatch); err == nil {
 		t.Fatal("SPKI-mismatched generation entered serving")
+	}
+
+	// Revocation is one control Material removing the existing authorization.
+	// The already-verified LKG remains locally verifiable for the documented
+	// offline boundary, but it cannot open a new private device connection or
+	// submit another report.
+	if _, err := server.revokeDevice(ctx, "device-revoke", currentHead(runtime), "demo-device"); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyDeviceViewEnvelope(*completed.DeviceView, invite.Capability); err != nil {
+		t.Fatalf("revocation rewrote the existing LKG: %v", err)
+	}
+	if connection, err = DialEndpoint(ctx, generation2.Reference(), TunnelHello{Schema: 1, Mode: "device",
+		EndpointID: generation2.EndpointID, Generation: generation2.Generation, DeviceID: "demo-device"}, private); err == nil {
+		_ = connection.Close()
+		t.Fatal("revoked device opened a new private connection")
+	}
+	_, revokedProjection, _ := runtime.Authority.Snapshot()
+	if _, found := authorizationFor(revokedProjection, "demo-device"); found || len(reports.Verified(revokedProjection)) != 0 {
+		t.Fatal("revoked authorization or report remained externally consumable")
+	}
+	for _, device := range revokedProjection.Web.Devices {
+		if device.ID == "demo-device" && device.Authorized {
+			t.Fatal("Web projection still presents the revoked device as authorized")
+		}
+	}
+	for _, path := range revokedProjection.Web.Paths {
+		if path.Device == "demo-device" {
+			t.Fatal("Web projection retained revoked route candidates")
+		}
 	}
 
 	now = time.Unix(4102444800, 0).UTC()

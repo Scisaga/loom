@@ -109,39 +109,12 @@ func Render(s *model.SSOT) (*Result, error) {
 		byNode[t.Initiator.ID] = append(byNode[t.Initiator.ID], bf)
 	}
 
-	// 上报者装在**每个**节点上,服务器也要 —— DDNS 重解析、隧道断连、
-	// 有人手工改配置,这些只有节点自己知道(§16.1)。
-	for i := range s.Nodes {
-		if decommissioned[s.Nodes[i].ID] {
-			continue
-		}
-		if !usesLinuxLifecycle(&s.Nodes[i]) {
-			continue
-		}
-		f, sk := renderReport(s, &s.Nodes[i])
-		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
-		skipped = append(skipped, sk...)
-	}
-
-	// 节点侧的控制通道:自己去分发点取配置(§14.2)。
-	for i := range s.Nodes {
-		if decommissioned[s.Nodes[i].ID] {
-			continue
-		}
-		if !usesLinuxLifecycle(&s.Nodes[i]) {
-			continue
-		}
-		f, sk := renderPull(s, &s.Nodes[i])
-		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
-		skipped = append(skipped, sk...)
-	}
-
 	// 对端走 DDNS 的发起方需要定时重解析(§12:这也是渲染产物,不该手写)。
 	for i := range s.Nodes {
 		if decommissioned[s.Nodes[i].ID] {
 			continue
 		}
-		if !usesLinuxLifecycle(&s.Nodes[i]) {
+		if !s.Nodes[i].IsServer() {
 			continue
 		}
 		if fs := renderReresolve(s, &s.Nodes[i]); fs != nil {
@@ -149,8 +122,9 @@ func Render(s *model.SSOT) (*Result, error) {
 		}
 	}
 
-	// sing-box:一台机器一份配置。同时持有两种能力的机器合并渲染 ——
-	// 分成两份会让后写的静默覆盖先写的(§1.3)。
+	// 保留纯 sing-box 配置渲染，供服务器数据面与 DeviceView profile 的
+	// 构造入口复用。Windows/Android 继续得到现有的平台数据计划；Linux
+	// 接入设备不再得到 Agent 配置或 systemd/pull/report 生命周期。
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
 		if decommissioned[n.ID] {
@@ -165,40 +139,15 @@ func Render(s *model.SSOT) (*Result, error) {
 		}
 		skipped = append(skipped, sk...)
 		byNode[n.ID] = append(byNode[n.ID], f)
-		if usesLinuxLifecycle(n) {
+		if n.IsServer() && n.Server.InboundPort > 0 {
 			byNode[n.ID] = append(byNode[n.ID], renderSingBoxUnit(s, n))
-
-			// Agent 的配置与 sing-box 的配置必须同源:两边枚举出的声明和候选
-			// 一旦分叉,Agent 会去切一个不存在的 selector。
-			af, ask := renderAgent(s, n)
-			byNode[n.ID] = append(byNode[n.ID], af...)
-			skipped = append(skipped, ask...)
-		} else {
-			if n.Access.Platform == model.WindowsDesktop || n.Access.Platform == model.Android {
-				// Windows 不消费 Linux 的 systemd 生命周期，但仍必须从同一个
-				// 签名 bundle 得到与 sing-box 同源的调度计划。这会把 Windows
-				// bundle 明确定义为 sing-box 配置与 Agent 计划两个文件；Windows
-				// 宿主必须完整消费这个版本化契约，不提供单文件降级分支。
-				af, ask := renderAgentPlan(s, n)
-				byNode[n.ID] = append(byNode[n.ID], af...)
-				skipped = append(skipped, ask...)
-			}
-			reason := fmt.Sprintf("platform=%s 只渲染平台无关的 sing-box 配置；"+
-				"Windows Service/Android VpnService、配置 pull、Agent 与 report 由平台宿主交付，"+
-				"禁止回退为 systemd 或 /etc/loom 安装", n.Access.Platform)
-			if n.Access.Platform == model.WindowsDesktop {
-				reason = "platform=windows-desktop 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 调度计划；" +
-					"Service、配置 pull、Agent 执行与 report 由 Windows 宿主交付，" +
-					"禁止回退为 systemd 或 /etc/loom 安装"
-			} else if n.Access.Platform == model.Android {
-				reason = "platform=android 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 移动调度计划；" +
-					"VpnService、配置 pull、移动端调度与 report 由 Android 宿主交付，" +
-					"禁止回退为 systemd、Agent 二进制或 /etc/loom 安装"
-			}
-			skipped = append(skipped, Skip{
-				Where:  "lifecycle:" + n.ID,
-				Reason: reason,
-			})
+		} else if n.IsAccess() && !n.Access.Platform.UsesLinuxLifecycle() {
+			plan, planSkips := renderAgentPlan(s, n)
+			byNode[n.ID] = append(byNode[n.ID], plan...)
+			skipped = append(skipped, planSkips...)
+			reason := "platform=" + string(n.Access.Platform) +
+				" 保留同一签名 bundle 的平台无关调度计划；平台宿主负责运行，禁止安装 Linux Agent/service"
+			skipped = append(skipped, Skip{Where: "lifecycle:" + n.ID, Reason: reason})
 		}
 	}
 
@@ -226,17 +175,10 @@ func Render(s *model.SSOT) (*Result, error) {
 	return res, nil
 }
 
-// runsSingBox 是“这个节点是否实际得到 sing-box workload”的唯一判据。
-// report 的组件版本期望必须复用它；仅有 server 角色但 inbound_port=0 的
-// 隧道端点不会安装 sing-box，不能被版本检查误报为缺组件。
+// runsSingBox 描述纯配置是否存在；只有服务器会同时获得 systemd unit。
+// 客户端配置必须作为 DeviceView RuntimeProfile 的输入消费，不能直接安装。
 func runsSingBox(n *model.Node) bool {
 	return n != nil && (n.IsAccess() || (n.IsServer() && n.Server.InboundPort > 0))
-}
-
-// usesLinuxLifecycle 是渲染层对平台安装产物的唯一分流点。
-// 纯服务器节点当前都是 Linux；接入节点则必须由显式 platform 决定。
-func usesLinuxLifecycle(n *model.Node) bool {
-	return n != nil && (!n.IsAccess() || n.Access.Platform.UsesLinuxLifecycle())
 }
 
 // Diff 逐文件比较两次渲染,返回人可读的变更摘要。

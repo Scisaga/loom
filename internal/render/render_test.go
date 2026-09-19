@@ -4,13 +4,10 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"loom/internal/model"
-	"loom/internal/report"
-	"loom/internal/secret"
 	"loom/internal/validate"
 )
 
@@ -73,7 +70,7 @@ func TestMatrixShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg, sb, units, agents, agentUnits, reports, reportUnits, pulls := 0, 0, 0, 0, 0, 0, 0, 0
+	wg, sb, units, platformPlans := 0, 0, 0, 0
 	for _, b := range res.Bundles {
 		for _, f := range b.Files {
 			switch {
@@ -83,16 +80,8 @@ func TestMatrixShape(t *testing.T) {
 				sb++
 			case f.Path == "systemd/sing-box.service":
 				units++
-			case strings.HasPrefix(f.Path, "systemd/loom-pull."):
-				pulls++
-			case f.Path == "report/config.json":
-				reports++
-			case f.Path == "systemd/loom-report.service":
-				reportUnits++
 			case f.Path == "agent/config.json":
-				agents++
-			case f.Path == "systemd/loom-agent.service":
-				agentUnits++
+				platformPlans++
 			case strings.HasPrefix(f.Path, "systemd/loom-wg-reresolve."):
 				// 只给有 DDNS 对端的节点渲染
 			default:
@@ -100,60 +89,30 @@ func TestMatrixShape(t *testing.T) {
 			}
 		}
 	}
-	linuxNodes, linuxSingBox, linuxAccess, managedClientAccess := 0, 0, 0, 0
+	serverWorkloads := 0
+	renderedConfigs := 0
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
-		if n.IsAccess() && (n.Access.Platform == model.WindowsDesktop || n.Access.Platform == model.Android) {
-			managedClientAccess++
-		}
-		if !usesLinuxLifecycle(n) {
-			continue
-		}
-		linuxNodes++
 		if runsSingBox(n) {
-			linuxSingBox++
+			renderedConfigs++
 		}
-		if n.IsAccess() {
-			linuxAccess++
+		if n.IsServer() && n.Server.InboundPort > 0 {
+			serverWorkloads++
 		}
 	}
-	// systemd 只属于 Linux 生命周期；Windows/Android 配置由各自宿主启动。
-	if units != linuxSingBox {
-		t.Errorf("渲染出 %d 个 sing-box systemd unit,期望 %d(Linux workload)", units, linuxSingBox)
+	if units != serverWorkloads {
+		t.Errorf("渲染出 %d 个 sing-box systemd unit,期望 %d(server workload)", units, serverWorkloads)
 	}
-	// Linux 节点自己取配置(§14.2):一个 service + 一个 timer。
-	if want := linuxNodes * 2; pulls != want {
-		t.Errorf("渲染出 %d 个 pull 单元,期望 %d(每个 Linux 节点一个 service + 一个 timer)", pulls, want)
-	}
-	if reportUnits != reports {
-		t.Errorf("%d 份上报者配置却只有 %d 个 systemd unit", reports, reportUnits)
-	}
-	// Linux 上报者仍覆盖服务器与 Linux 接入节点；非 Linux 由平台宿主上报。
-	if reports != linuxNodes {
-		t.Errorf("渲染出 %d 份 Linux 上报者配置,期望 %d", reports, linuxNodes)
-	}
-	if agentUnits != linuxAccess {
-		t.Errorf("渲染出 %d 个 Agent systemd unit,期望 %d(Linux access)", agentUnits, linuxAccess)
-	}
-	// Windows/Android 与 Linux 复用同一 agent.Config 调度协议；只有 Linux 获得 unit。
-	if want := linuxAccess + managedClientAccess; agents != want {
-		t.Errorf("渲染出 %d 份 Agent 调度计划,期望 %d(Linux + managed clients)", agents, want)
+	if platformPlans != 2 {
+		t.Errorf("渲染出 %d 份非 Linux 平台计划,期望 2", platformPlans)
 	}
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
 	}
 
-	// 每台服务器一份 sing-box,每个接入节点一份。目标地址不产生任何
-	// 产物 —— 它不是节点(§1、§9)。
-	servers := 0
-	for i := range s.Nodes {
-		if s.Nodes[i].IsServer() {
-			servers++
-		}
-	}
-	if want := servers + len(s.AccessNodes()); sb != want {
-		t.Errorf("渲染出 %d 份 sing-box 配置,期望 %d(%d 台服务器 + %d 个接入节点)",
-			sb, want, servers, len(s.AccessNodes()))
+	// 接入设备的纯配置只用于构造 DeviceView；只有服务器获得 lifecycle unit。
+	if sb != renderedConfigs {
+		t.Errorf("渲染出 %d 份 sing-box 配置,期望 %d", sb, renderedConfigs)
 	}
 
 	// 所有隧道两端都必须是进不了 mesh 的那一侧参与。
@@ -163,119 +122,6 @@ func TestMatrixShape(t *testing.T) {
 		if nodes[t2.From].MeshEligible() && nodes[t2.To].MeshEligible() {
 			t.Errorf("隧道 %s 两端都能进 mesh —— 该交给 Headscale(§6.3)", t2.Pair())
 		}
-	}
-}
-
-// Windows 和 Android 消费平台无关的 sing-box 配置和同包数据化调度计划；
-// 两者都不得夹带 systemd、Agent 二进制或 /etc/loom 绝对路径。
-func TestNonLinuxBundlesExcludeLinuxLifecycle(t *testing.T) {
-	res, err := Render(load(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	byOwner := map[string]Bundle{}
-	for _, b := range res.Bundles {
-		byOwner[b.Owner] = b
-	}
-
-	for _, tc := range []struct {
-		owner      string
-		wantCAPath string
-		wantFiles  []string
-	}{
-		{owner: "phone", wantCAPath: `"certificate_path": "tls/ca.crt"`,
-			wantFiles: []string{"agent/config.json", "sing-box/config.json"}},
-		{owner: "workstation", wantCAPath: `"certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt"`,
-			wantFiles: []string{"agent/config.json", "sing-box/config.json"}},
-	} {
-		b, ok := byOwner[tc.owner]
-		if !ok {
-			t.Fatalf("缺少 %s 配置包", tc.owner)
-		}
-		var gotFiles []string
-		byPath := map[string]string{}
-		for _, f := range b.Files {
-			gotFiles = append(gotFiles, f.Path)
-			byPath[f.Path] = f.Content
-			if strings.HasPrefix(f.Path, "systemd/") || strings.Contains(f.Content, "/etc/loom") {
-				t.Errorf("%s 的非 Linux bundle 泄漏了 Linux lifecycle 产物:%s", tc.owner, f.Path)
-			}
-		}
-		if !slices.Equal(gotFiles, tc.wantFiles) {
-			t.Errorf("%s bundle 文件 = %v,期望 %v", tc.owner, gotFiles, tc.wantFiles)
-			continue
-		}
-		if !strings.Contains(byPath["sing-box/config.json"], tc.wantCAPath) {
-			t.Errorf("%s 没有使用平台 CA 路径 %s", tc.owner, tc.wantCAPath)
-		}
-	}
-}
-
-func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
-	tests := []struct {
-		name string
-		ssot *model.SSOT
-		node string
-		want []string
-	}{
-		{
-			name: "matrix routed access", ssot: load(t), node: "phone",
-			want: []string{"api/phone", "probe/phone", "vault:cred/phone"},
-		},
-		{
-			name: "zero-hop direct does not consume credential",
-			ssot: &model.SSOT{
-				Nodes: []model.Node{{
-					ID: "android-direct", Access: &model.AccessRole{
-						Platform: model.Android, Credentials: []string{"cred-direct"},
-						DefaultDeclaration: "direct",
-					},
-				}},
-				Declarations: []model.AccessDeclaration{{
-					ID: "direct", AddressAxis: model.FromRequest, EgressAxis: model.EgressAny,
-				}},
-				Credentials: []model.Credential{{
-					ID: "cred-direct", Declaration: "direct", SecretRef: "cred/android-direct/direct",
-				}},
-			},
-			node: "android-direct", want: []string{"api/android-direct", "probe/android-direct"},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := Render(tc.ssot)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var content, agentContent string
-			for _, bundle := range result.Bundles {
-				if bundle.Owner != tc.node {
-					continue
-				}
-				if len(bundle.Files) != 2 || bundle.Files[0].Path != "agent/config.json" ||
-					bundle.Files[1].Path != "sing-box/config.json" {
-					t.Fatalf("Android bundle files=%+v", bundle.Files)
-				}
-				for _, file := range bundle.Files {
-					if file.Path == "sing-box/config.json" {
-						content = file.Content
-					} else if file.Path == "agent/config.json" {
-						agentContent = file.Content
-					}
-				}
-			}
-			if content == "" || agentContent == "" {
-				t.Fatalf("missing Android runtime bundle for %q", tc.node)
-			}
-			actual := append(secret.Refs(content), secret.Refs(agentContent)...)
-			slices.Sort(actual)
-			actual = slices.Compact(actual)
-			node := tc.ssot.NodeByID()[tc.node]
-			bootstrap := report.AndroidBundleSecretRefs(tc.ssot, node)
-			if !slices.Equal(actual, tc.want) || !slices.Equal(bootstrap, actual) {
-				t.Fatalf("rendered refs=%v bootstrap refs=%v want=%v", actual, bootstrap, tc.want)
-			}
-		})
 	}
 }
 
@@ -324,74 +170,35 @@ credentials:
 	}
 }
 
-// TestAccessNodesGetControlAPI:接入节点必须带本地控制端点。
-//
-// selector 是手动开关,自己不会切(D11)。没有这个端点,渲染出的候选集
-// 永远停在 default 上 —— 调度层做完了也落不了地。
-func TestAccessNodesGetControlAPI(t *testing.T) {
-	s := load(t)
-	res, err := Render(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	byOwner := map[string]string{}
-	for _, b := range res.Bundles {
-		for _, f := range b.Files {
-			if f.Path == "sing-box/config.json" {
-				byOwner[b.Owner] = f.Content
-			}
-		}
-	}
-	for _, n := range s.AccessNodes() {
-		c, ok := byOwner[n.ID]
-		if !ok {
-			t.Fatalf("接入节点 %s 没有配置", n.ID)
-		}
-		if !strings.Contains(c, "clash_api") {
-			t.Errorf("接入节点 %s 缺少控制端点 —— selector 将永远停在 default", n.ID)
-		}
-		if !strings.Contains(c, "${secret:api/"+n.ID+"}") {
-			t.Errorf("接入节点 %s 的控制端点没有口令引用", n.ID)
-		}
-	}
-}
-
-// TestSkipsAreExpected 把"哪些东西没被渲染"钉死。
-//
-// 跳过项是本项目对"静默截断"的防线(见 CLAUDE.md)。不钉住它,新增一个
-// 静默跳过不会让任何测试变红。
+// TestSkipsAreExpected 把服务器静态渲染的未实现项钉死。接入设备已经不属于
+// 这个渲染入口，因此不把“未渲染客户端”伪装成 skip。
 func TestSkipsAreExpected(t *testing.T) {
 	res, err := Render(load(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]int{
-		"platform=android 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 移动调度计划":       1,
-		"platform=windows-desktop 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 调度计划": 1,
-		"ttft 只能由 L7 观测点产出": 1,
-		"cost 需要价格数据源":      1,
-		// 没有隧道的 Linux 接入节点只绑回环 —— 自检可用,远端拉不到。
-		"上报接口只绑回环": 1,
-	}
-	got := map[string]int{}
 	for _, sk := range res.Skipped {
 		if sk.Reason == "" {
 			t.Errorf("跳过项 %s 没有说明原因", sk.Where)
 		}
-		for k := range want {
-			if strings.Contains(sk.Reason, k) {
-				got[k]++
-			}
+	}
+	want := []string{
+		"cost 需要价格数据源",
+		"ttft 只能由 L7 观测点产出",
+		"platform=android 保留同一签名 bundle",
+		"platform=windows-desktop 保留同一签名 bundle",
+	}
+	for _, fragment := range want {
+		found := false
+		for _, skipped := range res.Skipped {
+			found = found || strings.Contains(skipped.Reason, fragment)
+		}
+		if !found {
+			t.Errorf("缺少预期 skip %q", fragment)
 		}
 	}
-	for k, n := range want {
-		if got[k] != n {
-			t.Errorf("跳过原因 %q 出现 %d 次,期望 %d 次", k, got[k], n)
-		}
-	}
-	if len(res.Skipped) != 5 {
-		t.Errorf("共 %d 条跳过,期望 5 条 —— 有新的静默跳过被引入:\n%+v",
-			len(res.Skipped), res.Skipped)
+	if len(res.Skipped) != len(want) {
+		t.Errorf("skip 数量=%d,期望 %d:\n%+v", len(res.Skipped), len(want), res.Skipped)
 	}
 }
 

@@ -138,6 +138,13 @@ type DeviceAuthorization struct {
 	Floor           uint64           `json:"floor"`
 }
 
+// DeviceRevoke is a Material payload, not a new lifecycle entity. Applying it
+// removes the existing DeviceAuthorization from Projection while immutable
+// enrollment history remains in the consensus log.
+type DeviceRevoke struct {
+	DeviceID string `json:"device_id"`
+}
+
 type DeviceView struct {
 	Schema          int                 `json:"schema"`
 	DeviceID        string              `json:"device_id"`
@@ -419,6 +426,13 @@ func (authorization DeviceAuthorization) Validate() error {
 	return nil
 }
 
+func (revoke DeviceRevoke) Validate() error {
+	if !validName(revoke.DeviceID) {
+		return errors.New("device revocation is invalid")
+	}
+	return nil
+}
+
 func (complete EnrollmentComplete) Validate() error {
 	if !validName(complete.TransactionID) || complete.Authorization.Validate() != nil || !validDigest(complete.ResultDigest) {
 		return errors.New("enrollment completion is invalid")
@@ -598,6 +612,17 @@ func reduceDeviceAuthorization(projection *Projection, authorization DeviceAutho
 			transaction.ResultDigest = digest
 		}
 	}
+	return nil
+}
+
+func reduceDeviceRevoke(projection *Projection, revoke DeviceRevoke) error {
+	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
+		return projection.DeviceAuthorizations[index].DeviceID >= revoke.DeviceID
+	})
+	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != revoke.DeviceID {
+		return errors.New("device authorization does not exist")
+	}
+	projection.DeviceAuthorizations = append(projection.DeviceAuthorizations[:index], projection.DeviceAuthorizations[index+1:]...)
 	return nil
 }
 
@@ -862,12 +887,17 @@ func verifyHeadSignatures(head GovernanceHead, config ControlConfig) error {
 }
 
 func projectEnrollmentWeb(projection *Projection) {
+	authorizations := map[string]DeviceAuthorization{}
+	for _, authorization := range projection.DeviceAuthorizations {
+		authorizations[authorization.DeviceID] = authorization
+	}
 	for _, transaction := range projection.Enrollments {
 		index := sort.Search(len(projection.Web.Devices), func(index int) bool {
 			return projection.Web.Devices[index].ID >= transaction.Intent.DeviceID
 		})
+		authorization, authorized := authorizations[transaction.Intent.DeviceID]
 		device := Device{ID: transaction.Intent.DeviceID, Name: transaction.Intent.Name, Platform: transaction.Intent.Platform,
-			Roles: append([]string(nil), transaction.Intent.Roles...), Authorized: transaction.State == "completed",
+			Roles: append([]string(nil), transaction.Intent.Roles...), Authorized: authorized,
 			Availability: "unknown", EnrollmentID: transaction.ID, Enrollment: transaction.State, ViewDigest: transaction.ResultDigest}
 		if index < len(projection.Web.Devices) && projection.Web.Devices[index].ID == device.ID {
 			projection.Web.Devices[index] = device
@@ -883,7 +913,10 @@ func projectEnrollmentWeb(projection *Projection) {
 			}
 		}
 		projection.Web.Paths = filtered
-		for _, candidate := range transaction.Intent.Routes {
+		if !authorized {
+			continue
+		}
+		for _, candidate := range authorization.Routes {
 			projection.Web.Paths = append(projection.Web.Paths, Path{CandidateID: candidate.ID, Device: transaction.Intent.DeviceID,
 				FinalExit: candidate.FinalExit, Chain: append([]string(nil), candidate.Chain...), Availability: "unknown"})
 		}

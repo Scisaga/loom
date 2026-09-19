@@ -78,6 +78,9 @@ func servingEndpointReferences(projection Projection) []EndpointReference {
 
 func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead string, payload enrollmentCreatePayload) (CertifiedState, string, error) {
 	_, projection, certified := server.Runtime.Authority.Snapshot()
+	if payload.Platform == "linux" && payload.Runtime == nil {
+		return CertifiedState{}, "", errors.New("Linux enrollment requires a certified runtime profile")
+	}
 	if payload.Runtime != nil {
 		canonical, canonicalErr := clientmodel.CanonicalizeRuntimeConfig([]byte(payload.Runtime.Config))
 		if canonicalErr != nil {
@@ -303,6 +306,27 @@ func (server *Server) putDevice(ctx context.Context, requestID, baseHead string,
 	authorization.Floor = certified.Head.Index + 1
 	material := Material{Schema: MaterialSchema, Kind: "device.put", RequestID: requestID, BaseHead: baseHead,
 		DeviceAuthorization: &authorization}
+	body, _, err := EncodeMaterial(material)
+	if err != nil {
+		return CertifiedState{}, err
+	}
+	return server.Runtime.Submit(ctx, body)
+}
+
+func (server *Server) revokeDevice(ctx context.Context, requestID, baseHead, deviceID string) (CertifiedState, error) {
+	if !validName(deviceID) {
+		return CertifiedState{}, errors.New("device ID is invalid")
+	}
+	_, projection, certified := server.Runtime.Authority.Snapshot()
+	if baseHead != HeadID(certified.Head) {
+		return CertifiedState{}, errors.New("base head is stale")
+	}
+	if _, found := authorizationFor(projection, deviceID); !found {
+		return CertifiedState{}, errors.New("device authorization does not exist")
+	}
+	revoke := DeviceRevoke{DeviceID: deviceID}
+	material := Material{Schema: MaterialSchema, Kind: "device.revoke", RequestID: requestID, BaseHead: baseHead,
+		DeviceRevoke: &revoke}
 	body, _, err := EncodeMaterial(material)
 	if err != nil {
 		return CertifiedState{}, err

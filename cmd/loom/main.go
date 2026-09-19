@@ -38,10 +38,6 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom hydrate  -in <目录> -o <目录> -secrets <文件>
                                          把 ${secret:...} 占位符替换成真实值
 
-  loom probe    <ssot.yaml> -node <id> -secrets <文件>
-                                         逐条探测候选,追加度量数据(L2)
-  loom agent    -c <agent/config.json>   调参回路:周期探测、排序、带阻尼切换(L3)
-  loom report   [-serve]                上报者:隧道健康与配置自检。每个节点都跑
   loom selfcheck                         这个二进制在本机能不能用、读不读得懂现有配置
   loom version  [-short|-json]           这个二进制是哪个 commit、哪个二进制哈希
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
@@ -57,8 +53,6 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          中控守护进程:盯 SSOT,变了就发布
   loom publish  <ssot.yaml> -o <目标> [-o <镜像>] -key <私钥>
                                          手动发一次(目标可以是本地目录或 ssh://)
-  loom pull     -url <分发点> [-url <镜像>] -pubkey <公钥>
-                                         节点自己拉:验签 → 本地填秘密 → 安装 → 验证
   loom secrets  split  <ssot.yaml> -secrets <总表> -o <目录>
                                          把总表拆成每节点一份(只给它用得到的)
   loom secrets  ensure-derived <ssot.yaml> -secrets <总表>
@@ -115,16 +109,10 @@ func main() {
 		err = cmdFirewall(args)
 	case "hydrate":
 		err = cmdHydrate(args)
-	case "probe":
-		err = cmdProbe(args)
-	case "agent":
-		err = cmdAgent(args)
 	case "selfcheck":
 		err = cmdSelfcheck(args)
 	case "version":
 		err = cmdVersion(args)
-	case "report":
-		err = cmdReport(args)
 	case "status":
 		err = cmdStatus(args)
 	case "apply":
@@ -147,8 +135,6 @@ func main() {
 		err = cmdPublish(args)
 	case "publisher":
 		err = cmdPublisher(args)
-	case "pull":
-		err = cmdPull(args)
 	case "backup":
 		err = cmdBackup(args)
 	case "restore":

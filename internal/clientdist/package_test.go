@@ -36,7 +36,7 @@ func TestBuildIsReproducibleAndVerifiable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Lifecycle != "signed-node-bundle" || manifest.SingBox.Version != "v1.11.4" {
+	if manifest.Lifecycle != "certified-lkg-runtime" || manifest.SingBox.Version != "v1.11.4" {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
 	dir := t.TempDir()
@@ -98,6 +98,24 @@ func TestVerifyRejectsTamperAndWrongTrustRoot(t *testing.T) {
 func TestBuildRejectsFakeSingBox(t *testing.T) {
 	if _, err := inspectSingBox([]byte("#!/bin/sh\nexit 0\n"), "amd64"); err == nil || !strings.Contains(err.Error(), "Linux ELF") {
 		t.Fatalf("fake sing-box error=%v", err)
+	}
+}
+
+func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
+	command := exec.Command("sh", "-n")
+	command.Stdin = strings.NewReader(installScript)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("installer syntax: %v\n%s", err, output)
+	}
+	for _, forbidden := range []string{" client serve-v2", " loom agent ", " loom pull ", " loom report "} {
+		if strings.Contains(installScript, forbidden) || strings.Contains(systemdService, forbidden) {
+			t.Fatalf("legacy runtime entry remains: %q", forbidden)
+		}
+	}
+	for _, required := range []string{"client run", "client preflight", "--upgrade", "previous runnable release was restored"} {
+		if !strings.Contains(installScript+systemdService, required) {
+			t.Fatalf("installer is missing %q", required)
+		}
 	}
 }
 

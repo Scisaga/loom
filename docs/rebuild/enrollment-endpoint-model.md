@@ -201,6 +201,9 @@ UI = Present(CertifiedHead, Projection, Transactions, DeviceViews, Observations)
 - **轮换失败**：新代保持 prepared 或 serving，旧代保持原可用阶段；未满足退出条件不得退休旧代。
 - **证书不匹配或失效**：阻止 generation 进入 serving；只报告需要替换既有材料，不启动 DNS/ACME。
 - **观测过期**：回到 unknown；不得伪造健康样本，也不得阻塞客户端读取 LKG 后启动。
+- **设备撤权**：控制 Material 从 Projection 删除既有设备授权；新的 device tunnel、配置读取和报告立即拒绝，
+  Web 不再展示其授权路径。已经离线保存的 LKG 字节不被远程改写，保留的既有数据面能力按客户端运行时模型
+  的撤权边界处理；不能用“服务端已删除”假装离线客户端已经获知。
 
 ## 最小必要测试
 

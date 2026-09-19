@@ -210,6 +210,11 @@ func Report(ctx context.Context, store *Store, report control.DeviceReport) erro
 		DeviceID   string `json:"device_id"`
 		ReportedAt string `json:"reported_at"`
 	}
-	_, err = postJSON(ctx, connection, "/v2/device/report", report, &response)
-	return err
+	if _, err = postJSON(ctx, connection, "/v2/device/report", report, &response); err != nil {
+		return err
+	}
+	if response.DeviceID != report.DeviceID || response.ReportedAt != report.ReportedAt {
+		return errors.New("device report acknowledgement mismatch")
+	}
+	return nil
 }

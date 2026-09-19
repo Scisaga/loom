@@ -7,11 +7,11 @@ import (
 	"loom/internal/report"
 )
 
-// LinkMetricReflectorPort is the isolated report reflector.  Unlike 61802 it
+// LinkMetricReflectorPort is the isolated report reflector. Unlike 61802 it
 // serves no status/UI route and is reachable through telemetry auth only.
 const LinkMetricReflectorPort = 61804
 
-// Hy2LinkProbePortBase is a loopback-only mixed-listener range.  It is outside
+// Hy2LinkProbePortBase is a loopback-only mixed-listener range. It is outside
 // the public UDP allocation range and the existing 61800..61804 control ports.
 const Hy2LinkProbePortBase = 61820
 

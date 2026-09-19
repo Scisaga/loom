@@ -4,16 +4,19 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientdist"
+	"loom/internal/clientrelease"
 	"loom/internal/publish"
 )
 
@@ -23,12 +26,16 @@ const clientUsage = `loom client —— 客户端交付
 	loom client enroll {-invite-file <文件>|-stdin} [-state <文件>]
 	                                             经受限 tunnel claim/resume 并原子保存 LKG
 	loom client sync [-state <文件>]              经认证设备通道读取并保存最新 DeviceView
-	loom client report -observations <JSON> [-selection <候选>] [-state <文件>]
-	                                             提交签名运行观测
 	loom client inspect [-state <文件>]           回读本机身份与认证 LKG（不显示秘密）
+	loom client run                              正式 Linux service：启动统一 runtime
+	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
+	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service
+	loom client status                           回读 selector 已确认的实际路径与观测
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
+  loom client publish-linux -archive <amd64> -archive <arm64>
+                                               原子更新现有签名 release catalog
   loom client package-windows -arch <amd64|arm64>
       -sing-box-archive <官方 ZIP> -wintun-archive <官方 ZIP>
                                                生成已签名的 Windows 数据面包
@@ -45,14 +52,22 @@ func cmdClient(args []string) error {
 		return cmdClientEnrollMinimal(args[1:])
 	case "sync":
 		return cmdClientSync(args[1:])
-	case "report":
-		return cmdClientReportMinimal(args[1:])
 	case "inspect":
 		return cmdClientInspect(args[1:])
+	case "run":
+		return cmdClientRun(args[1:])
+	case "preflight":
+		return cmdClientPreflight(args[1:])
+	case "route":
+		return cmdClientRoute(args[1:])
+	case "status":
+		return cmdClientStatus(args[1:])
 	case "package":
 		return cmdClientPackage(args[1:])
 	case "verify":
 		return cmdClientVerify(args[1:])
+	case "publish-linux":
+		return cmdClientPublishLinux(args[1:])
 	case "package-windows":
 		return cmdClientPackageWindows(args[1:])
 	case "verify-windows":
@@ -63,6 +78,31 @@ func cmdClient(args []string) error {
 	default:
 		return fmt.Errorf("未知 client 子命令 %q\n\n%s", args[0], clientUsage)
 	}
+}
+
+func cmdClientPublishLinux(args []string) error {
+	fs := flag.NewFlagSet("client publish-linux", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var archives repeatedFlag
+	fs.Var(&archives, "archive", "已签名 Linux 包；必须各提供 amd64、arm64 一份")
+	root := fs.String("root", "/var/lib/loom/client-dist/releases", "现有签名 release catalog 根目录")
+	keyPath := fs.String("key", "deploy/keys/platform-signing.key", "平台 Ed25519 签名私钥")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || len(archives) != 2 {
+		return errors.New("用法: loom client publish-linux -archive <amd64.tar.gz> -archive <arm64.tar.gz> [-root <目录>] [-key <私钥>]")
+	}
+	privateKey, err := readKey(*keyPath, ed25519.PrivateKeySize)
+	if err != nil {
+		return fmt.Errorf("读平台签名私钥:%w", err)
+	}
+	catalog, err := clientrelease.PublishLinux(*root, archives, ed25519.PrivateKey(privateKey))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ Linux amd64/arm64 已原子写入签名 release catalog；当前共 %d 个制品\n", len(catalog.Artifacts))
+	return nil
 }
 
 func cmdClientPackageWindows(args []string) error {
@@ -199,8 +239,10 @@ func cmdClientPackage(args []string) error {
 	if filepath.Base(*outPath) != artifact.Name {
 		return fmt.Errorf("[§10.2 渲染目标必须显式] 输出文件必须名为 %s，得到 %s", artifact.Name, filepath.Base(*outPath))
 	}
-	if err := checkPackagedLoom(filepath.Dir(*outPath), loomBody); err != nil {
-		return err
+	if artifact.Manifest.OS == runtime.GOOS && artifact.Manifest.Arch == runtime.GOARCH {
+		if err := checkPackagedLoom(filepath.Dir(*outPath), loomBody); err != nil {
+			return err
+		}
 	}
 	publicKey := ed25519.PrivateKey(privateKey).Public().(ed25519.PublicKey)
 	outputs := []struct {
@@ -235,10 +277,12 @@ func cmdClientVerify(args []string) error {
 	checksumPath := fs.String("checksum", "", "SHA-256 附件；默认 <archive>.sha256")
 	signaturePath := fs.String("signature", "", "Ed25519 附件；默认 <archive>.sig")
 	pubPath := fs.String("pubkey", "", "通过带外通道取得的平台公钥(必需)")
+	expectedArch := fs.String("arch", "", "可选的预期架构:amd64 或 arm64")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("用法:loom client verify -archive <tar.gz> -pubkey <可信公钥>:%w", err)
 	}
-	if fs.NArg() != 0 || *archivePath == "" || *pubPath == "" {
+	if fs.NArg() != 0 || *archivePath == "" || *pubPath == "" ||
+		(*expectedArch != "" && *expectedArch != "amd64" && *expectedArch != "arm64") {
 		return fmt.Errorf("用法:loom client verify -archive <tar.gz> -pubkey <可信公钥>")
 	}
 	if *checksumPath == "" {
@@ -266,6 +310,9 @@ func cmdClientVerify(args []string) error {
 	manifest, err := clientdist.Verify(archive, checksum, signature, ed25519.PublicKey(pub))
 	if err != nil {
 		return err
+	}
+	if *expectedArch != "" && manifest.Arch != *expectedArch {
+		return fmt.Errorf("Linux 客户端包架构为 %s，预期 %s", manifest.Arch, *expectedArch)
 	}
 	if fields := strings.Fields(string(checksum)); len(fields) != 2 || fields[1] != filepath.Base(*archivePath) {
 		return fmt.Errorf("校验附件声明的文件名与 %s 不一致", filepath.Base(*archivePath))

@@ -794,7 +794,9 @@ func TestPublisherRestartFirstLoopKeepsEquivalentCurrentAndUpdatesHealth(t *test
 
 func TestPublishOnceDoesNotKeepCurrentWhenRuntimeContentChanges(t *testing.T) {
 	oldBody := []byte(goodSSOT)
-	newBody := []byte(strings.Replace(goodSSOT, "https://x/loom/", "https://new.example/loom/", 1))
+	// distribution_url only fed the deleted Linux pull producer. Change a real
+	// server data-plane input so this continues to test runtime-content drift.
+	newBody := []byte(strings.Replace(goodSSOT, "1.1.1.1", "192.0.2.10", 1))
 	priv := key(t)
 	oldTree, err := Build(oldBody, priv, Meta{CreatedAt: "2026-08-25T20:00:00Z"})
 	if err != nil {

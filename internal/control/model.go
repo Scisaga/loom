@@ -62,6 +62,7 @@ type Material struct {
 	EnrollmentApprove   *EnrollmentApprove   `json:"enrollment_approve,omitempty"`
 	EnrollmentComplete  *EnrollmentComplete  `json:"enrollment_complete,omitempty"`
 	DeviceAuthorization *DeviceAuthorization `json:"device_authorization,omitempty"`
+	DeviceRevoke        *DeviceRevoke        `json:"device_revoke,omitempty"`
 }
 
 type ConsensusEntry struct {
@@ -188,6 +189,9 @@ func (material Material) Validate() error {
 	if material.DeviceAuthorization != nil {
 		count++
 	}
+	if material.DeviceRevoke != nil {
+		count++
+	}
 	if count != 1 {
 		return errors.New("material must contain exactly one payload")
 	}
@@ -270,6 +274,10 @@ func (material Material) Validate() error {
 		}
 		if err := material.DeviceAuthorization.Validate(); err != nil {
 			return err
+		}
+	case "device.revoke":
+		if material.DeviceRevoke == nil || material.BaseHead == "" || material.DeviceRevoke.Validate() != nil {
+			return errors.New("device revocation material is invalid")
 		}
 	default:
 		return fmt.Errorf("unknown material kind %q", material.Kind)
@@ -462,6 +470,10 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 			return Projection{}, errors.New("device authorization floor does not match update index")
 		}
 		if err := reduceDeviceAuthorization(&next, *material.DeviceAuthorization); err != nil {
+			return Projection{}, err
+		}
+	case "device.revoke":
+		if err := reduceDeviceRevoke(&next, *material.DeviceRevoke); err != nil {
 			return Projection{}, err
 		}
 	}

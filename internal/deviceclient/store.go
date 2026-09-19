@@ -17,8 +17,11 @@ import (
 	"loom/internal/control"
 )
 
+const stateSchema = 2
+
 type State struct {
 	Schema         int                         `json:"schema"`
+	V2Latch        bool                        `json:"v2_latch"`
 	PrivateKey     string                      `json:"private_key"`
 	PublicKey      string                      `json:"public_key"`
 	ClaimRequestID string                      `json:"claim_request_id"`
@@ -55,7 +58,7 @@ func Open(path string, invite control.BootstrapInvite) (*Store, error) {
 	if _, err := io.ReadFull(rand.Reader, request); err != nil {
 		return nil, err
 	}
-	store.state = State{Schema: 1, PrivateKey: base64.RawURLEncoding.EncodeToString(private),
+	store.state = State{Schema: stateSchema, V2Latch: true, PrivateKey: base64.RawURLEncoding.EncodeToString(private),
 		PublicKey: base64.RawURLEncoding.EncodeToString(public), ClaimRequestID: hex.EncodeToString(request),
 		Capability: invite.Capability}
 	if err := store.save(store.state); err != nil {
@@ -96,13 +99,24 @@ func (store *Store) load() error {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return errors.New("device state has trailing content")
 	}
+	// Schema 1 was the already-deployed certified LKG store. Migrate it once,
+	// after full validation, so identity, rollback floor and exact LKG survive
+	// while a stripped latch on schema 2 remains a hard failure.
+	if store.state.Schema == 1 && !store.state.V2Latch {
+		store.state.Schema = stateSchema
+		store.state.V2Latch = true
+		if err := store.validate(); err != nil {
+			return fmt.Errorf("migrate legacy device state: %w", err)
+		}
+		return store.save(store.state)
+	}
 	return store.validate()
 }
 
 func (store *Store) validate() error {
 	private, err := base64.RawURLEncoding.DecodeString(store.state.PrivateKey)
 	public, publicErr := base64.RawURLEncoding.DecodeString(store.state.PublicKey)
-	if store.state.Schema != 1 || err != nil || publicErr != nil || len(private) != ed25519.PrivateKeySize || len(public) != ed25519.PublicKeySize ||
+	if store.state.Schema != stateSchema || !store.state.V2Latch || err != nil || publicErr != nil || len(private) != ed25519.PrivateKeySize || len(public) != ed25519.PublicKeySize ||
 		!ed25519.PrivateKey(private).Public().(ed25519.PublicKey).Equal(ed25519.PublicKey(public)) ||
 		store.state.ClaimRequestID == "" || store.state.Capability.Validate() != nil {
 		return errors.New("device identity state is invalid")
