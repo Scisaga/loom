@@ -47,3 +47,18 @@ func TestCurrentEventsExposeUnknownAndUnavailableWithoutInventingHealth(t *testi
 		}
 	}
 }
+
+func TestRevokedCompletedDeviceIsNotCurrentInventory(t *testing.T) {
+	projection := WebProjection{Schema: 1, Devices: []Device{
+		{ID: "demo-active", Enrollment: "completed", Authorized: true},
+		{ID: "demo-pending", Enrollment: "bound", Authorized: false},
+		{ID: "demo-revoked", Enrollment: "completed", Authorized: false},
+	}, Paths: []Path{{Device: "demo-active"}, {Device: "demo-revoked"}}}
+	hideRevokedDevices(&projection)
+	if len(projection.Devices) != 2 || projection.Devices[0].ID != "demo-active" || projection.Devices[1].ID != "demo-pending" {
+		t.Fatalf("visible devices=%+v", projection.Devices)
+	}
+	if len(projection.Paths) != 1 || projection.Paths[0].Device != "demo-active" {
+		t.Fatalf("visible paths=%+v", projection.Paths)
+	}
+}

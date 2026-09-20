@@ -181,6 +181,7 @@ func (server *Server) snapshotValue(request *http.Request) (map[string]any, erro
 		projection.UIState.Warnings = append(projection.UIState.Warnings,
 			restoreReservedDeviceCollisions(&projection, certified.Projection, initial)...)
 	}
+	hideRevokedDevices(&projection)
 	verifiedReports := []DeviceReport{}
 	if server.Reports != nil {
 		server.Reports.Project(&projection, certified.Projection, server.now())

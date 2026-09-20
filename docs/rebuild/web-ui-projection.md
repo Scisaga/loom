@@ -77,6 +77,7 @@ rebuild_ui(core_inputs)             = WebProjection
 
 - Overview、Devices、Topology、Live paths、Services、Releases、Events 和 SSOT 页面保留；
 - Device 只出现一次，不再并存 Client/Node 两份身份事实；
+- 已完成后被撤权的 Enrollment 保留在不可变控制历史中，但不再作为当前 Device/Topology 投影；尚未完成的 Enrollment 仍显示其真实状态；
 - topology 从当前 Projection 生成，当前 Path 仅作颜色叠加，不参与排序；
 - 授权与观测分开显示，缺失或过期观测保持 unknown；
 - 同一控制集的成员通过私有认证通道合并每台设备最新的有效观测；成员短暂失联时允许暂时 unknown，恢复后收敛，不能把本地缺失补成 available；

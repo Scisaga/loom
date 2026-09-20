@@ -95,3 +95,24 @@ func restoreReservedDeviceCollisions(web *WebProjection, authority Projection, i
 	sort.Strings(warnings)
 	return warnings
 }
+
+func hideRevokedDevices(web *WebProjection) {
+	if web == nil {
+		return
+	}
+	visible := web.Devices[:0]
+	for _, device := range web.Devices {
+		if device.Enrollment == "completed" && !device.Authorized {
+			continue
+		}
+		visible = append(visible, device)
+	}
+	web.Devices = visible
+	paths := web.Paths[:0]
+	for _, path := range web.Paths {
+		if index := sort.Search(len(web.Devices), func(index int) bool { return web.Devices[index].ID >= path.Device }); index < len(web.Devices) && web.Devices[index].ID == path.Device {
+			paths = append(paths, path)
+		}
+	}
+	web.Paths = paths
+}
