@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,7 +17,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"loom/internal/clientrelease"
 	"loom/internal/releasefloor"
 )
@@ -199,4 +203,58 @@ func writeReleaseFile(t *testing.T, root, name string, body []byte) clientreleas
 		t.Fatal(err)
 	}
 	return clientrelease.File{Name: name, Path: "bin/" + hexDigest, SHA256: hexDigest, Size: int64(len(body))}
+}
+
+func TestPreservedWebUIShellUsesCurrentProjection(t *testing.T) {
+	server := testRuntimeServer(t, testState())
+	for _, test := range []struct {
+		path       string
+		contains   []string
+		notContain []string
+	}{
+		{path: "/", contains: []string{"/assets/network.css", ">Topology<", ">Live paths<", ">Events<"}},
+		{path: "/assets/app.js", contains: []string{"/api/control/ui/snapshot", "/api/control/ui/live", "Certified network"},
+			notContain: []string{"device-inventory/live", "/api/control/ui/ssot"}},
+	} {
+		response := httptest.NewRecorder()
+		server.AdminHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status=%d", test.path, response.Code)
+		}
+		body := response.Body.String()
+		for _, value := range test.contains {
+			if !strings.Contains(body, value) {
+				t.Fatalf("%s does not contain %q", test.path, value)
+			}
+		}
+		for _, value := range test.notContain {
+			if strings.Contains(body, value) {
+				t.Fatalf("%s retained obsolete API %q", test.path, value)
+			}
+		}
+	}
+}
+
+func TestWebSocketStartsWithCurrentSnapshot(t *testing.T) {
+	server := testRuntimeServer(t, testState())
+	server.ReleaseRoot = t.TempDir()
+	server.ReleaseKey = filepath.Join(t.TempDir(), "missing")
+	httpServer := httptest.NewServer(http.HandlerFunc(server.live))
+	defer httpServer.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/api/control/ui/live", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	var snapshot struct {
+		Projection WebProjection `json:"projection"`
+	}
+	if err := wsjson.Read(ctx, connection, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Projection.UIState.Head == "" || snapshot.Projection.UIState.Revision == 0 {
+		t.Fatalf("live snapshot head=%q", snapshot.Projection.UIState.Head)
+	}
 }

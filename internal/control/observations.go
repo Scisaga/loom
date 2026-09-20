@@ -75,6 +75,55 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 	return nil
 }
 
+// Merge accepts the latest still-current report for each device from another
+// control member. Replays are harmless: an equal or older report is ignored.
+func (store *ObservationStore) Merge(reports []DeviceReport, projection Projection) (int, error) {
+	if store == nil {
+		return 0, errors.New("observation store is unavailable")
+	}
+	for index, report := range reports {
+		if index > 0 && reports[index-1].DeviceID >= report.DeviceID {
+			return 0, errors.New("device reports are not uniquely sorted")
+		}
+		if err := verifyCurrentReport(report, projection); err != nil {
+			return 0, err
+		}
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	nextState := store.state
+	nextState.Reports = append([]DeviceReport(nil), store.state.Reports...)
+	merged := 0
+	for _, report := range reports {
+		index := sort.Search(len(nextState.Reports), func(index int) bool {
+			return nextState.Reports[index].DeviceID >= report.DeviceID
+		})
+		if index < len(nextState.Reports) && nextState.Reports[index].DeviceID == report.DeviceID {
+			previous, _ := time.Parse(time.RFC3339, nextState.Reports[index].ReportedAt)
+			next, _ := time.Parse(time.RFC3339, report.ReportedAt)
+			if !next.After(previous) {
+				continue
+			}
+			nextState.Reports[index] = report
+			merged++
+			continue
+		}
+		nextState.Reports = append(nextState.Reports, DeviceReport{})
+		copy(nextState.Reports[index+1:], nextState.Reports[index:])
+		nextState.Reports[index] = report
+		merged++
+	}
+	if merged == 0 {
+		return 0, nil
+	}
+	if err := atomicJSON(store.path, nextState); err != nil {
+		return 0, err
+	}
+	store.state = nextState
+	return merged, nil
+}
+
 func (store *ObservationStore) All() []DeviceReport {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
@@ -87,12 +136,27 @@ func (store *ObservationStore) Verified(projection Projection) []DeviceReport {
 	}
 	verified := []DeviceReport{}
 	for _, report := range store.All() {
-		authorization, found := authorizationFor(projection, report.DeviceID)
-		if found && report.Verify(authorization.DevicePublicKey) == nil {
+		if verifyCurrentReport(report, projection) == nil {
 			verified = append(verified, report)
 		}
 	}
 	return verified
+}
+
+func verifyCurrentReport(report DeviceReport, projection Projection) error {
+	authorization, found := authorizationFor(projection, report.DeviceID)
+	if !found || report.Verify(authorization.DevicePublicKey) != nil {
+		return errors.New("device report signature rejected")
+	}
+	view, found := projectDeviceView(projection, report.DeviceID)
+	if !found {
+		return errors.New("device report view is unavailable")
+	}
+	digest, err := DeviceViewDigest(view)
+	if err != nil || report.ViewDigest != digest {
+		return errors.New("device report view is stale")
+	}
+	return nil
 }
 
 func (store *ObservationStore) Project(projection *WebProjection, authority Projection, now time.Time) {

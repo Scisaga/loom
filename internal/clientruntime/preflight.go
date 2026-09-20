@@ -199,6 +199,46 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, ca
 	return validateWindowsSingBox(body, profile, caPath, true)
 }
 
+// HasServerInbound reports whether an already-installed sing-box configuration
+// owns a server-facing listener.  Linux client installation uses this before it
+// retires the old units: a client-only RuntimeProfile is not a replacement for
+// a server data-plane listener on the same host.
+//
+// The inspection is deliberately narrow. TUN and mixed are the two local
+// capture shapes used by clients. Hysteria2 and Trojan are server listeners.
+// An unknown inbound fails closed instead of being guessed to be disposable.
+func HasServerInbound(body []byte) (bool, error) {
+	if len(body) == 0 || len(body) > maxSingBoxBytes {
+		return false, errors.New("sing-box config has invalid size")
+	}
+	if err := rejectDuplicateJSONKeys(body); err != nil {
+		return false, err
+	}
+	var config struct {
+		Inbounds []struct {
+			Type string `json:"type"`
+		} `json:"inbounds"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(&config); err != nil {
+		return false, fmt.Errorf("decode sing-box config: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return false, errors.New("sing-box config has trailing content")
+	}
+	for _, inbound := range config.Inbounds {
+		switch inbound.Type {
+		case "tun", "mixed":
+		case "hysteria2", "trojan":
+			return true, nil
+		default:
+			return false, fmt.Errorf("cannot prove ownership of inbound type %q", inbound.Type)
+		}
+	}
+	return false, nil
+}
+
 func windowsTUNDNSRule() singBoxRule {
 	return singBoxRule{Inbound: []string{"tun-in"}, Port: []int{53}, Action: "hijack-dns"}
 }

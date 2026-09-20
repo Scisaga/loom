@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"loom/internal/clientrelease"
 )
 
@@ -30,16 +32,17 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
-	Runtime     *Runtime
-	Channel     *PrivateChannel
-	Config      NodeConfig
-	ReleaseRoot string
-	ReleaseKey  string
-	AdminSocket string
-	Now         func() time.Time
-	Endpoints   *EndpointRuntime
-	Reports     *ObservationStore
-	mu          sync.Mutex
+	Runtime            *Runtime
+	Channel            *PrivateChannel
+	Config             NodeConfig
+	ReleaseRoot        string
+	ReleaseKey         string
+	AdminSocket        string
+	Now                func() time.Time
+	Endpoints          *EndpointRuntime
+	Reports            *ObservationStore
+	ReportSyncInterval time.Duration
+	mu                 sync.Mutex
 }
 
 func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) error {
@@ -77,6 +80,9 @@ func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) err
 	go func() { errorsOut <- servers[1].Serve(server.Channel.ReportListener()) }()
 	go func() { errorsOut <- servers[2].Serve(admin) }()
 	go func() { errorsOut <- servers[3].Serve(endpoints) }()
+	if server.Reports != nil {
+		go server.syncReports(ctx)
+	}
 	select {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -120,6 +126,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui", server.snapshot)
 	mux.HandleFunc("GET /api/control/ui/snapshot", server.snapshot)
 	mux.HandleFunc("GET /api/control/ui/events", server.events)
+	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("GET /api/control/ui/releases/files/", server.download)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
 	mux.HandleFunc("PUT /internal/materials/{digest}", server.internalMaterial)
@@ -127,6 +134,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/head/sign", server.internalSign)
 	mux.HandleFunc("PUT /internal/certified", server.internalCertified)
 	mux.HandleFunc("POST /internal/submit", server.internalSubmit)
+	mux.HandleFunc("PUT /internal/reports", server.internalReports)
 	mux.HandleFunc("/", server.page)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
@@ -151,20 +159,34 @@ func (server *Server) Handler() http.Handler {
 }
 
 func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projectionBody, err := canonical(certified.Projection.Web)
+	response, err := server.snapshotValue(request)
 	if err != nil {
 		http.Error(writer, "control projection unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
+func (server *Server) snapshotValue(request *http.Request) (map[string]any, error) {
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projectionBody, err := canonical(certified.Projection.Web)
+	if err != nil {
+		return nil, err
+	}
 	var projection WebProjection
 	if err := json.Unmarshal(projectionBody, &projection); err != nil {
-		http.Error(writer, "control projection unavailable", http.StatusServiceUnavailable)
-		return
+		return nil, err
 	}
+	if initial, err := server.Runtime.Authority.initialWebProjection(); err == nil {
+		projection.UIState.Warnings = append(projection.UIState.Warnings,
+			restoreReservedDeviceCollisions(&projection, certified.Projection, initial)...)
+	}
+	verifiedReports := []DeviceReport{}
 	if server.Reports != nil {
 		server.Reports.Project(&projection, certified.Projection, server.now())
+		verifiedReports = server.Reports.Verified(certified.Projection)
 	}
+	projection.Events = projectCurrentEvents(projection, verifiedReports, server.now())
 	catalog, err := server.catalog()
 	if err != nil {
 		projection.UIState.Warnings = append(projection.UIState.Warnings, "Verified release catalog is unavailable.")
@@ -179,14 +201,53 @@ func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request
 	}
 	response := map[string]any{"capabilities": map[string]bool{"admin": server.admin(request)}, "projection": projection}
 	if server.Reports != nil {
-		response["reports"] = server.Reports.Verified(certified.Projection)
+		response["reports"] = verifiedReports
 	}
-	writeJSON(writer, http.StatusOK, response)
+	return response, nil
 }
 
-func (server *Server) events(writer http.ResponseWriter, _ *http.Request) {
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	writeJSON(writer, http.StatusOK, map[string]any{"events": certified.Projection.Web.Events})
+func (server *Server) live(writer http.ResponseWriter, request *http.Request) {
+	connection, err := websocket.Accept(writer, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+	if err != nil {
+		return
+	}
+	defer connection.Close(websocket.StatusNormalClosure, "")
+	connection.SetReadLimit(1024)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	previous := ""
+	for {
+		response, err := server.snapshotValue(request)
+		if err != nil {
+			_ = connection.Close(websocket.StatusInternalError, "control projection unavailable")
+			return
+		}
+		body, err := canonical(response)
+		if err != nil {
+			return
+		}
+		if string(body) != previous {
+			if err := wsjson.Write(request.Context(), connection, response); err != nil {
+				return
+			}
+			previous = string(body)
+		}
+		select {
+		case <-request.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (server *Server) events(writer http.ResponseWriter, request *http.Request) {
+	response, err := server.snapshotValue(request)
+	if err != nil {
+		http.Error(writer, "control projection unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	projection, _ := response["projection"].(WebProjection)
+	writeJSON(writer, http.StatusOK, map[string]any{"events": projection.Events})
 }
 
 func (server *Server) download(writer http.ResponseWriter, request *http.Request) {
@@ -475,6 +536,65 @@ func (server *Server) internalSubmit(writer http.ResponseWriter, request *http.R
 		return
 	}
 	writeJSON(writer, http.StatusOK, result)
+}
+
+func (server *Server) internalReports(writer http.ResponseWriter, request *http.Request) {
+	body, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	if server.Reports == nil {
+		http.Error(writer, "observation store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var reports []DeviceReport
+	if err := decodeRawStrict(body, &reports); err != nil {
+		http.Error(writer, "invalid device reports", http.StatusBadRequest)
+		return
+	}
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	merged, err := server.Reports.Merge(reports, certified.Projection)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]int{"merged": merged})
+}
+
+func (server *Server) syncReports(ctx context.Context) {
+	interval := server.ReportSyncInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			server.syncReportsOnce(ctx)
+		}
+	}
+}
+
+func (server *Server) syncReportsOnce(ctx context.Context) {
+	if server.Reports == nil || server.Runtime == nil || server.Runtime.Channel == nil {
+		return
+	}
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	body, err := canonical(server.Reports.Verified(certified.Projection))
+	if err != nil {
+		return
+	}
+	for _, member := range uniqueMembers(certified.Projection.Config) {
+		if member.ID == server.Config.MemberID {
+			continue
+		}
+		peerContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = server.Runtime.peerJSON(peerContext, member, http.MethodPut, "/internal/reports", body, nil)
+		cancel()
+	}
 }
 
 func exactCertificate(request *http.Request, allowed []string) bool {

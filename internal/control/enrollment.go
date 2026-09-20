@@ -527,6 +527,20 @@ func reduceEnrollmentOpen(projection *Projection, open EnrollmentOpen) error {
 	return nil
 }
 
+func validateNewEnrollmentIdentity(projection Projection, deviceID string) error {
+	for _, device := range projection.Web.Devices {
+		if device.ID == deviceID {
+			return errors.New("device id is already reserved by the certified projection")
+		}
+	}
+	for _, member := range uniqueConfigMembers(projection.Config) {
+		if member.ID == deviceID || member.Node == deviceID {
+			return errors.New("device id is already reserved by the control configuration")
+		}
+	}
+	return nil
+}
+
 func reduceEnrollmentBind(projection *Projection, bind EnrollmentBind) error {
 	_, transaction := findEnrollment(projection, bind.TransactionID)
 	if transaction == nil {

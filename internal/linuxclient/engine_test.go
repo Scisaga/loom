@@ -86,6 +86,25 @@ func TestActivateReusesCurrentGenerationObservationWithoutProbe(t *testing.T) {
 	}
 }
 
+func TestActivationFreshExpiresSelectedObservation(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	activation := Activation{State: defaultState("network-a"),
+		Selections: []SelectionStatus{{Scope: "service", CandidateID: "relay"}}}
+	activation.State.Observations = []clientmodel.Observation{{CandidateID: "relay", NetworkGeneration: "network-a",
+		Scope: "service", Result: "available", Action: "tcp_udp_dns", ObservedAt: now.Add(-time.Minute).Format(time.RFC3339),
+		ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}
+	if !activationFresh(activation, now) {
+		t.Fatal("current selected observation was treated as stale")
+	}
+	if activationFresh(activation, now.Add(time.Minute)) {
+		t.Fatal("expired selected observation was treated as current")
+	}
+	activation.State.NetworkGeneration = "network-b"
+	if activationFresh(activation, now) {
+		t.Fatal("another network generation observation was treated as current")
+	}
+}
+
 func TestApplySelectionsRollsBackOnFailure(t *testing.T) {
 	selector := &fakeSelector{current: map[string]string{"a": "old-a", "b": "old-b"}, failSet: "new-b"}
 	if _, err := applySelections(context.Background(), selector, map[string]string{"a": "new-a", "b": "new-b"}); err == nil {

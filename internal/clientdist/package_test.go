@@ -117,6 +117,9 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 			t.Fatalf("installer is missing %q", required)
 		}
 	}
+	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl stop loom-client-v2.service") {
+		t.Fatal("installer stops the previous runtime before the ownership preflight")
+	}
 }
 
 func buildClientFixtures(t *testing.T) ([]byte, []byte) {

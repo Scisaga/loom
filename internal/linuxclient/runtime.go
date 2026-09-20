@@ -11,9 +11,12 @@ import (
 	"sort"
 	"time"
 
+	"loom/internal/clientruntime"
 	"loom/internal/control"
 	"loom/internal/deviceclient"
 )
+
+const legacySingBoxConfig = "/etc/loom/sing-box/v2/config.json"
 
 type Options struct {
 	DeviceState string
@@ -25,6 +28,7 @@ type Options struct {
 	Now         func() time.Time
 	Generation  func() (string, error)
 	Probe       Probe
+	RefreshPoll time.Duration
 }
 
 func (options *Options) defaults() {
@@ -39,6 +43,9 @@ func (options *Options) defaults() {
 	}
 	if options.Probe == nil {
 		options.Probe = BusinessProbe
+	}
+	if options.RefreshPoll <= 0 {
+		options.RefreshPoll = 30 * time.Second
 	}
 }
 
@@ -108,6 +115,9 @@ func Preflight(deviceState, singBox string) error {
 	if err != nil {
 		return err
 	}
+	if err := protectLegacyServerRuntime(legacySingBoxConfig); err != nil {
+		return err
+	}
 	directory, err := os.MkdirTemp("", "loom-linux-preflight-*")
 	if err != nil {
 		return err
@@ -118,6 +128,31 @@ func Preflight(deviceState, singBox string) error {
 		return err
 	}
 	return checkRuntime(singBox, path)
+}
+
+func protectLegacyServerRuntime(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect existing server runtime: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Size() > 16<<20 {
+		return errors.New("existing sing-box config is not a bounded regular file")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read existing server runtime: %w", err)
+	}
+	server, err := clientruntime.HasServerInbound(body)
+	if err != nil {
+		return fmt.Errorf("inspect existing server runtime: %w", err)
+	}
+	if server {
+		return errors.New("refusing to replace a server data-plane with the client-only runtime")
+	}
+	return nil
 }
 
 func trySync(store *deviceclient.Store, log io.Writer) {
@@ -154,6 +189,22 @@ func stopProcess(command *exec.Cmd, done <-chan error) error {
 		}
 		return <-done
 	}
+}
+
+func activationFresh(activation Activation, now time.Time) bool {
+	for _, selection := range activation.Selections {
+		if observationState(activation.State.Observations, selection.CandidateID,
+			activation.State.NetworkGeneration, now) == "unknown" {
+			return false
+		}
+	}
+	return len(activation.Selections) > 0
+}
+
+func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool) Status {
+	return Status{Schema: 1, DeviceID: lkg.View.DeviceID, Head: control.HeadID(lkg.Head), Floor: lkg.Head.Index,
+		Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration,
+		Selections: activation.Selections, Observations: activation.State.Observations, Runtime: "running", Reported: reported}
 }
 
 // Run owns the real sing-box child for the lifetime of the formal Linux
@@ -233,25 +284,66 @@ func Run(ctx context.Context, options Options) error {
 		reported = true
 	}
 	cancel()
-	status := Status{Schema: 1, DeviceID: lkg.View.DeviceID, Head: control.HeadID(lkg.Head), Floor: lkg.Head.Index,
-		Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration,
-		Selections: activation.Selections, Observations: activation.State.Observations, Runtime: "running", Reported: reported}
-	if err := WriteStatus(options.Status, status); err != nil {
+	if err := WriteStatus(options.Status, runtimeStatus(lkg, activation, reported)); err != nil {
 		return err
 	}
 	if activateErr != nil {
 		fmt.Fprintf(options.Log, "all currently eligible candidates are unavailable: %v\n", activateErr)
 	}
-	select {
-	case <-ctx.Done():
-		stopped = true
-		_ = stopProcess(command, done)
-		return nil
-	case err := <-done:
-		stopped = true
-		if err == nil {
-			return errors.New("sing-box exited unexpectedly")
+	ticker := time.NewTicker(options.RefreshPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			stopped = true
+			_ = stopProcess(command, done)
+			return nil
+		case err := <-done:
+			stopped = true
+			if err == nil {
+				return errors.New("sing-box exited unexpectedly")
+			}
+			return fmt.Errorf("sing-box exited: %w", err)
+		case <-ticker.C:
+			generation, generationErr := options.Generation()
+			if generationErr != nil {
+				fmt.Fprintf(options.Log, "network generation refresh unavailable: %v\n", generationErr)
+				continue
+			}
+			at := options.Now().UTC().Truncate(time.Second)
+			if reported && generation == activation.State.NetworkGeneration && activationFresh(activation, at) {
+				continue
+			}
+			local, loadErr := LoadLocalState(options.LocalState, generation)
+			if loadErr != nil {
+				fmt.Fprintf(options.Log, "runtime refresh state unavailable: %v\n", loadErr)
+				continue
+			}
+			next, nextErr := Activate(ctx, selector, lkg.View.Routes, local, options.Probe, options.Now)
+			if next.State.Schema == 0 {
+				fmt.Fprintf(options.Log, "runtime refresh unavailable: %v\n", nextErr)
+				continue
+			}
+			saved, saveErr := SaveObservations(options.LocalState, next.State)
+			if saveErr != nil {
+				fmt.Fprintf(options.Log, "runtime refresh was not saved: %v\n", saveErr)
+				continue
+			}
+			next.State = saved
+			reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
+			reportErr := reportSelection(reportContext, store, next, options.Now())
+			reportCancel()
+			reported = reportErr == nil
+			if reportErr != nil {
+				fmt.Fprintf(options.Log, "private report unavailable; data plane remains on certified LKG: %v\n", reportErr)
+			}
+			activation = next
+			if err := WriteStatus(options.Status, runtimeStatus(lkg, activation, reported)); err != nil {
+				return err
+			}
+			if nextErr != nil {
+				fmt.Fprintf(options.Log, "all currently eligible candidates are unavailable: %v\n", nextErr)
+			}
 		}
-		return fmt.Errorf("sing-box exited: %w", err)
 	}
 }

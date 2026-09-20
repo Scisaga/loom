@@ -107,6 +107,9 @@ func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead 
 	if baseHead != HeadID(certified.Head) {
 		return CertifiedState{}, "", errors.New("base head is stale")
 	}
+	if err := validateNewEnrollmentIdentity(certified.Projection, payload.DeviceID); err != nil {
+		return CertifiedState{}, "", err
+	}
 	expires, err := time.Parse(time.RFC3339, payload.ExpiresAt)
 	if err != nil || payload.ExpiresAt != expires.UTC().Format(time.RFC3339) || !expires.After(server.now()) {
 		return CertifiedState{}, "", errors.New("enrollment expiry is invalid")
@@ -492,19 +495,21 @@ func (server *Server) deviceReport(writer http.ResponseWriter, request *http.Req
 		http.Error(writer, "invalid device report", http.StatusBadRequest)
 		return
 	}
-	_, projection, _ := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
 		return projection.DeviceAuthorizations[index].DeviceID >= report.DeviceID
 	})
-	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != report.DeviceID ||
-		report.Verify(projection.DeviceAuthorizations[index].DevicePublicKey) != nil {
+	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != report.DeviceID {
 		http.Error(writer, "device report signature rejected", http.StatusForbidden)
 		return
 	}
-	view, _ := projectDeviceView(projection, report.DeviceID)
-	digest, _ := DeviceViewDigest(view)
-	if report.ViewDigest != digest {
-		http.Error(writer, "device report view is stale", http.StatusConflict)
+	if err := verifyCurrentReport(report, projection); err != nil {
+		status := http.StatusForbidden
+		if err.Error() == "device report view is stale" {
+			status = http.StatusConflict
+		}
+		http.Error(writer, err.Error(), status)
 		return
 	}
 	if err := server.Reports.Put(report, projection.DeviceAuthorizations[index].DevicePublicKey); err != nil {

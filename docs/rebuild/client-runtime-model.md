@@ -129,6 +129,10 @@ ICMP 结果只能作为地址 RTT 提示：
 transport 检查。这个约束由现有 `Observation` 的键和进行中状态自然表达，不新增
 scheduler、probe budget 或一次性 registry。入口之后复用已有的有效服务器观测。
 
+“至多一次”约束一个尚未过期的观测窗口，而不是允许进程永远重发启动时结果。当前实际选择的观测
+到期后，adapter 可以做一次新的最小真实业务检查并产生下一条有限期 Observation；有效期内不得为刷新
+计分重复采样。底层网络代或 selector 回读变化时立即失效相应旧结果并执行同一最小检查。
+
 底层网络代变化后，上一代观测不再决定当前状态，候选先回到 `unknown`。启动和切网
 都不得等待观测齐全；缺失观测保持未知，也不得通过补样本制造健康状态。
 
@@ -282,10 +286,20 @@ Linux 的具体映射不增加领域概念：`/var/lib/loom-device/state.json` �
 `loom client status` 只读取 `/run` 中的实际 Selection，不把偏好冒充为运行事实。service 启动时可以尝试
 私有配置同步；控制面离线或报告暂不可达时继续使用已验证 LKG，不能改走公开配置或旧 pull。
 
+设备把签名报告交给任一可达控制成员即算上传成功。接收成员先按当前 certified DeviceView 验证设备身份和
+`view_digest`，再通过已有的控制成员私有认证通道定期把每台设备最新的一份报告合并到其他成员；时间相同或
+更旧的重放不覆盖新结果。报告不是 Raft/QC 权威，成员暂时不可达只会令该成员展示缺少观测；连通恢复后从
+其他成员重新合并即可。设备授权或 DeviceView 改变后，旧 `view_digest` 的报告即使签名正确也不得继续投影。
+
 Linux 客户端制品同时为 amd64/arm64 生成、签名和逐文件验证。amd64 在原生宿主做业务验收；arm64
 只交叉构建和静态检查。installer 先把精确制品放入内容标识 release 目录，并在切换 `current` 前对现有
 LKG 执行 sing-box preflight；切换后若 service/selector 回读未成功，恢复先前 `current` 和 unit。升级失败
 不覆盖旧的可运行制品。
+
+installer 在停止任何既有 unit 前还必须检查现有 sing-box 入站的所有权。发现 Hysteria2、Trojan 或无法
+证明属于本地客户端接管的入站时，客户端安装失败关闭；它不能把“新客户端自身可运行”解释为同机服务器
+职责已被替代。服务器运行时只有在同一认证投影明确提供替代入站、报告和回读，并完成真实业务验收后才能
+被退休。
 
 ### Windows profile 与 HostAdapter
 

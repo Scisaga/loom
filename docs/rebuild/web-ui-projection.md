@@ -79,6 +79,7 @@ rebuild_ui(core_inputs)             = WebProjection
 - Device 只出现一次，不再并存 Client/Node 两份身份事实；
 - topology 从当前 Projection 生成，当前 Path 仅作颜色叠加，不参与排序；
 - 授权与观测分开显示，缺失或过期观测保持 unknown；
+- 同一控制集的成员通过私有认证通道合并每台设备最新的有效观测；成员短暂失联时允许暂时 unknown，恢复后收敛，不能把本地缺失补成 available；
 - 只读状态不使用 Apply/切换等写动作措辞；
 - release 下载只返回 catalog 精确引用且摘要/签名验证通过的 bytes；
 - WebSocket 首帧是当前 snapshot，后续只因输入事实变化发送，不触发额外网络测量。

@@ -3,6 +3,7 @@ module loom
 go 1.27.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/makiuchi-d/gozxing v0.1.1
