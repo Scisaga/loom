@@ -154,7 +154,8 @@ Raft 任期、投票记录和传输重试是 Consensus store 的协议元数据�
 当前文件绑定保持这三个逻辑边界：`materials/<digest>.json` 是 Material store；
 `consensus.json` 与同目录的 `consensus-raft.db` 共同组成 Consensus store，前者保存领域日志，后者只保存
 Raft 任期、投票、复制日志和成员协议元数据；`certified.json` 是 Certified store，并可携带同摘要的
-Projection 缓存。`node.json` 只保存本节点身份、TLS、签名私钥内容和恢复 floor，是
+Projection 缓存。`node.json` 只保存本节点身份、浏览器兼容的 P-256 TLS leaf/key、独立的成员 TLS
+leaf/key、签名私钥内容和恢复 floor，是
 [本机部署配置模型](configuration-model.md)所述运行输入，不是第四份控制权威。初始实现关闭 Raft snapshot；
 重启从完整日志重放。
 
@@ -183,6 +184,8 @@ Projection 缓存。`node.json` 只保存本节点身份、TLS、签名私钥内
   可消费认证头可沿同一非全互连拓扑收敛；转送不能形成日志顺序或认证候选 head。
 - UI 的写操作表达用户意图，由服务端生成、鉴权并提交 `Material`；UI 返回对象不得成为新权威。
 - UI 读取必须带所依据的 `CertifiedHead`，避免把不同头部的卡片拼成一个不存在的状态。
+- TLS 客户端证书请求列出的签发者名称从本机保存的 read/admin exact leaf 的 `RawIssuer` 派生，只用于
+  浏览器选证书；最终 read/admin 权限仍由 exact leaf DER 决定，不能把签发者名称提升为授权事实。
 
 ## 6. 编码、解码与重建等式
 

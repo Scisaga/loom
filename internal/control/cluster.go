@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -621,14 +623,60 @@ func (runtime *Runtime) verifyRequest(request *http.Request, body []byte) bool {
 	return err == nil && ed25519.Verify(key, requestBytes(request.Method, request.URL.Path, body), signature)
 }
 
-func TLSConfig(config NodeConfig) (*tls.Config, error) {
+func browserTLSConfig(config NodeConfig) (*tls.Config, error) {
 	certificate, err := tls.X509KeyPair([]byte(config.BrowserTLS.CertificateChainPEM), []byte(config.BrowserTLS.PrivateKeyPKCS8PEM))
 	if err != nil {
 		return nil, err
 	}
+	if len(certificate.Certificate) < 2 {
+		return nil, errors.New("browser TLS identity is not a leaf/root chain")
+	}
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil {
+		return nil, err
+	}
+	public, ok := leaf.PublicKey.(*ecdsa.PublicKey)
+	if !ok || public.Curve != elliptic.P256() {
+		return nil, errors.New("browser TLS leaf is not P-256; run control migrate-browser-tls")
+	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM([]byte(config.BrowserTLS.CertificateChainPEM)) {
 		return nil, errors.New("control TLS trust chain is invalid")
+	}
+	for _, encoded := range append(append([]string(nil), config.ReadCertDER...), config.AdminCertDER...) {
+		raw, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
+		authorized, parseErr := x509.ParseCertificate(raw)
+		if decodeErr != nil || parseErr != nil || len(authorized.RawIssuer) == 0 {
+			return nil, errors.New("authorized browser certificate is invalid")
+		}
+		// ClientAuth is RequireAnyClientCert, so this pool is an issuer-name hint,
+		// not the read/admin authority. HTTP still matches the exact leaf DER.
+		pool.AddCert(&x509.Certificate{Raw: append([]byte("loom-client-issuer-hint\x00"), authorized.RawIssuer...),
+			RawSubject: append([]byte(nil), authorized.RawIssuer...)})
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate},
+		ClientCAs: pool, RootCAs: pool, ClientAuth: tls.RequireAnyClientCert}, nil
+}
+
+func peerTLSConfig(config NodeConfig) (*tls.Config, error) {
+	certificate, err := tls.X509KeyPair([]byte(config.PeerTLS.CertificateChainPEM), []byte(config.PeerTLS.PrivateKeyPKCS8PEM))
+	if err != nil {
+		return nil, err
+	}
+	if len(certificate.Certificate) < 2 {
+		return nil, errors.New("control peer TLS identity is not a leaf/root chain")
+	}
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil {
+		return nil, err
+	}
+	public, ok := leaf.PublicKey.(ed25519.PublicKey)
+	if !ok || !config.PrivateKey().Public().(ed25519.PublicKey).Equal(public) || leaf.Subject.CommonName != config.MemberID {
+		return nil, errors.New("control peer TLS identity does not match the member identity")
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(config.PeerTLS.CertificateChainPEM)) {
+		return nil, errors.New("control peer TLS trust chain is invalid")
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate},
 		ClientCAs: pool, RootCAs: pool, ClientAuth: tls.RequireAnyClientCert}, nil
@@ -652,7 +700,10 @@ func PrepareMember(root, sourceRoot, memberID, node string, listen []string) (No
 	config.Node = node
 	config.Bootstrap = false
 	config.IdentityPrivateKey = base64.RawURLEncoding.EncodeToString(private)
-	config.BrowserTLS, err = issueNodeTLS(source.BrowserTLS, memberID, listen, private)
+	config.PeerTLS, err = issuePeerTLS(source.BrowserTLS, memberID, listen, private)
+	if err == nil {
+		config.BrowserTLS, err = issueBrowserTLS(source.BrowserTLS, memberID, listen)
+	}
 	if err != nil {
 		return NodeConfig{}, err
 	}
@@ -688,22 +739,22 @@ func PrepareMember(root, sourceRoot, memberID, node string, listen []string) (No
 	return config, nil
 }
 
-func issueNodeTLS(source BrowserTLS, memberID string, listen []string, private ed25519.PrivateKey) (BrowserTLS, error) {
+func browserTLSAuthority(source BrowserTLS) (crypto.Signer, *x509.Certificate, []byte, error) {
 	block, _ := pem.Decode([]byte(source.RootPrivateKeyPKCS8PEM))
 	if block == nil || block.Type != "PRIVATE KEY" {
-		return BrowserTLS{}, errors.New("browser root private key is invalid")
+		return nil, nil, nil, errors.New("browser root private key is invalid")
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return BrowserTLS{}, err
+		return nil, nil, nil, err
 	}
 	signer, ok := parsed.(crypto.Signer)
 	if !ok {
-		return BrowserTLS{}, errors.New("browser root key cannot sign")
+		return nil, nil, nil, errors.New("browser root key cannot sign")
 	}
 	wantPublic, err := x509.MarshalPKIXPublicKey(signer.Public())
 	if err != nil {
-		return BrowserTLS{}, err
+		return nil, nil, nil, err
 	}
 	remaining := []byte(source.CertificateChainPEM)
 	var authority *x509.Certificate
@@ -716,7 +767,7 @@ func issueNodeTLS(source BrowserTLS, memberID string, listen []string, private e
 		remaining = rest
 		certificate, parseErr := x509.ParseCertificate(certificateBlock.Bytes)
 		if parseErr != nil {
-			return BrowserTLS{}, parseErr
+			return nil, nil, nil, parseErr
 		}
 		if certificate.IsCA {
 			caPEM = append(caPEM, pem.EncodeToMemory(certificateBlock)...)
@@ -727,14 +778,24 @@ func issueNodeTLS(source BrowserTLS, memberID string, listen []string, private e
 		}
 	}
 	if authority == nil {
-		return BrowserTLS{}, errors.New("browser root certificate does not match retained root key")
+		return nil, nil, nil, errors.New("browser root certificate does not match retained root key")
 	}
-	if len(listen) == 0 || len(private) != ed25519.PrivateKeySize {
-		return BrowserTLS{}, errors.New("private channel listeners or identity key are invalid")
+	return signer, authority, caPEM, nil
+}
+
+func nodeTLSLeaf(purpose, memberID string, listen []string, authority *x509.Certificate, signer crypto.Signer,
+	public crypto.PublicKey) ([]byte, error) {
+	if purpose == "" || len(listen) == 0 || public == nil {
+		return nil, errors.New("private channel listeners or TLS key are invalid")
 	}
 	addresses := append([]string(nil), listen...)
 	sort.Strings(addresses)
-	serialSeed := sha256.Sum256([]byte("loom-control-browser-leaf-v2\n" + memberID + "\n" + strings.Join(addresses, "\n")))
+	publicDER, err := x509.MarshalPKIXPublicKey(public)
+	if err != nil {
+		return nil, err
+	}
+	serialInput := append([]byte("loom-control-"+purpose+"-leaf-v3\n"+memberID+"\n"+strings.Join(addresses, "\n")+"\n"), publicDER...)
+	serialSeed := sha256.Sum256(serialInput)
 	serial := new(big.Int).SetBytes(serialSeed[:20])
 	serial.SetBit(serial, 159, 0)
 	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: memberID}, NotBefore: authority.NotBefore,
@@ -742,7 +803,7 @@ func issueNodeTLS(source BrowserTLS, memberID string, listen []string, private e
 	for _, address := range addresses {
 		host, _, splitErr := net.SplitHostPort(address)
 		if splitErr != nil {
-			return BrowserTLS{}, errors.New("private channel listen address is invalid")
+			return nil, errors.New("private channel listen address is invalid")
 		}
 		if ip := net.ParseIP(host); ip != nil {
 			template.IPAddresses = append(template.IPAddresses, ip)
@@ -750,8 +811,43 @@ func issueNodeTLS(source BrowserTLS, memberID string, listen []string, private e
 			template.DNSNames = append(template.DNSNames, host)
 		}
 	}
-	public := private.Public().(ed25519.PublicKey)
 	leafDER, err := x509.CreateCertificate(rand.Reader, template, authority, public, signer)
+	if err != nil {
+		return nil, err
+	}
+	return leafDER, nil
+}
+
+func issuePeerTLS(source BrowserTLS, memberID string, listen []string, private ed25519.PrivateKey) (TLSIdentity, error) {
+	signer, authority, caPEM, err := browserTLSAuthority(source)
+	if err != nil {
+		return TLSIdentity{}, err
+	}
+	if len(private) != ed25519.PrivateKeySize {
+		return TLSIdentity{}, errors.New("control peer identity key is invalid")
+	}
+	leafDER, err := nodeTLSLeaf("peer", memberID, listen, authority, signer, private.Public())
+	if err != nil {
+		return TLSIdentity{}, err
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		return TLSIdentity{}, err
+	}
+	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), caPEM...)
+	return TLSIdentity{CertificateChainPEM: string(chain), PrivateKeyPKCS8PEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}))}, nil
+}
+
+func issueBrowserTLS(source BrowserTLS, memberID string, listen []string) (BrowserTLS, error) {
+	signer, authority, caPEM, err := browserTLSAuthority(source)
+	if err != nil {
+		return BrowserTLS{}, err
+	}
+	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return BrowserTLS{}, err
+	}
+	leafDER, err := nodeTLSLeaf("browser", memberID, listen, authority, signer, private.Public())
 	if err != nil {
 		return BrowserTLS{}, err
 	}

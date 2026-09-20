@@ -305,7 +305,7 @@ func TestAuthenticatedOperationCommitsAndReadsBack(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://"+address+"/api/control/operations", strings.NewReader(string(payload)))
 	request.Host = address
 	request.Header.Set("Origin", "https://"+address)
-	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{{Raw: []byte("admin")}}}
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{{Raw: testAdminCertificateDER}}}
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -318,7 +318,7 @@ func TestAuthenticatedOperationCommitsAndReadsBack(t *testing.T) {
 
 	request = httptest.NewRequest(http.MethodPost, "https://"+address+"/api/control/operations", strings.NewReader(string(payload)))
 	request.Host = address
-	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{{Raw: []byte("reader")}}}
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{{Raw: testReadCertificateDER}}}
 	response = httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {

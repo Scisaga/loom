@@ -58,7 +58,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <import|activate|prepare|serve|inspect|write>")
+		return errors.New("用法: loom control <import|activate|prepare|migrate-browser-tls|serve|inspect|write>")
 	}
 	switch args[0] {
 	case "import":
@@ -69,6 +69,8 @@ func cmdControl(args []string) error {
 		return cmdControlActivate(args[1:])
 	case "prepare":
 		return cmdControlPrepare(args[1:])
+	case "migrate-browser-tls":
+		return cmdControlMigrateBrowserTLS(args[1:])
 	case "inspect":
 		return cmdControlInspect(args[1:])
 	case "write":
@@ -76,6 +78,32 @@ func cmdControl(args []string) error {
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
+}
+
+func cmdControlMigrateBrowserTLS(args []string) error {
+	fs := flag.NewFlagSet("control migrate-browser-tls", flag.ContinueOnError)
+	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "控制状态目录")
+	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("control migrate-browser-tls 不接受位置参数")
+	}
+	private, _, err := loadPrivateChannelConfig(*networkConfig)
+	if err != nil {
+		return err
+	}
+	changed, err := control.MigrateBrowserTLS(*stateDir, private.Listen)
+	if err != nil {
+		return err
+	}
+	if changed {
+		fmt.Println("browser TLS identity separated from the control member identity")
+	} else {
+		fmt.Println("browser TLS identity already uses the separated P-256 profile")
+	}
+	return nil
 }
 
 func cmdControlActivate(args []string) error {

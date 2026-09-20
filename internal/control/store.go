@@ -4,12 +4,15 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,9 +20,23 @@ import (
 	"sync"
 )
 
-const NodeSchema = 2
+const NodeSchema = 3
 
 type NodeConfig struct {
+	Schema             int              `json:"schema"`
+	ClusterID          string           `json:"cluster_id"`
+	MemberID           string           `json:"member_id"`
+	Node               string           `json:"node"`
+	IdentityPrivateKey string           `json:"identity_private_key"`
+	Bootstrap          bool             `json:"bootstrap"`
+	Recovery           RecoveryEvidence `json:"recovery"`
+	BrowserTLS         BrowserTLS       `json:"browser_tls"`
+	PeerTLS            TLSIdentity      `json:"peer_tls"`
+	ReadCertDER        []string         `json:"read_cert_der"`
+	AdminCertDER       []string         `json:"admin_cert_der"`
+}
+
+type legacyNodeConfigV2 struct {
 	Schema             int              `json:"schema"`
 	ClusterID          string           `json:"cluster_id"`
 	MemberID           string           `json:"member_id"`
@@ -37,7 +54,9 @@ func (config NodeConfig) Validate() error {
 	if config.Schema != NodeSchema || config.ClusterID == "" || config.MemberID == "" || config.Node == "" || err != nil || len(key) != ed25519.PrivateKeySize {
 		return errors.New("control node config is incomplete")
 	}
-	if !config.Recovery.V2Latch || config.BrowserTLS.CertificateChainPEM == "" || config.BrowserTLS.PrivateKeyPKCS8PEM == "" || len(config.ReadCertDER) == 0 || len(config.AdminCertDER) == 0 {
+	if !config.Recovery.V2Latch || config.BrowserTLS.CertificateChainPEM == "" || config.BrowserTLS.PrivateKeyPKCS8PEM == "" ||
+		config.PeerTLS.CertificateChainPEM == "" || config.PeerTLS.PrivateKeyPKCS8PEM == "" ||
+		len(config.ReadCertDER) == 0 || len(config.AdminCertDER) == 0 {
 		return errors.New("control node recovery boundary is incomplete")
 	}
 	return nil
@@ -371,7 +390,10 @@ func ActivateLegacy(root string, legacy State, memberID, node string, listen []s
 	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: memberID, Node: node,
 		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(private), Bootstrap: true,
 		Recovery: legacy.Recovery, BrowserTLS: legacy.BrowserTLS, ReadCertDER: legacy.ReadCertDER, AdminCertDER: legacy.AdminCertDER}
-	config.BrowserTLS, err = issueNodeTLS(config.BrowserTLS, memberID, listen, private)
+	config.PeerTLS, err = issuePeerTLS(config.BrowserTLS, memberID, listen, private)
+	if err == nil {
+		config.BrowserTLS, err = issueBrowserTLS(config.BrowserTLS, memberID, listen)
+	}
 	if err != nil {
 		return NodeConfig{}, err
 	}
@@ -421,6 +443,107 @@ func LoadNodeConfig(root string) (NodeConfig, error) {
 		return config, err
 	}
 	return config, config.Validate()
+}
+
+// MigrateBrowserTLS separates the browser-compatible P-256 server identity
+// from the Ed25519 member identity used by Raft. It preserves the retained
+// browser root, certified authority, member key, and exact read/admin leaves.
+func MigrateBrowserTLS(root string, listen []string) (bool, error) {
+	path := filepath.Join(root, "node.json")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	if !controlPrivateRegular(info) {
+		return false, errors.New("node.json must be an owner-only regular file")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var header struct {
+		Schema int `json:"schema"`
+	}
+	if err := json.Unmarshal(body, &header); err != nil {
+		return false, err
+	}
+	if header.Schema == NodeSchema {
+		config, loadErr := LoadNodeConfig(root)
+		if loadErr != nil {
+			return false, loadErr
+		}
+		if _, configErr := browserTLSConfig(config); configErr != nil {
+			return false, configErr
+		}
+		if _, configErr := peerTLSConfig(config); configErr != nil {
+			return false, configErr
+		}
+		if err := verifyTLSListeners(config.BrowserTLS.CertificateChainPEM, listen); err != nil {
+			return false, err
+		}
+		if err := verifyTLSListeners(config.PeerTLS.CertificateChainPEM, listen); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if header.Schema != 2 {
+		return false, errors.New("control node schema cannot be migrated")
+	}
+	var legacy legacyNodeConfigV2
+	if err := readStrict(path, &legacy); err != nil {
+		return false, err
+	}
+	key, err := base64.RawURLEncoding.DecodeString(legacy.IdentityPrivateKey)
+	if err != nil || len(key) != ed25519.PrivateKeySize || legacy.ClusterID == "" || legacy.MemberID == "" || legacy.Node == "" ||
+		!legacy.Recovery.V2Latch || len(legacy.ReadCertDER) == 0 || len(legacy.AdminCertDER) == 0 {
+		return false, errors.New("legacy control node is incomplete")
+	}
+	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: legacy.MemberID, Node: legacy.Node,
+		IdentityPrivateKey: legacy.IdentityPrivateKey, Bootstrap: legacy.Bootstrap, Recovery: legacy.Recovery,
+		PeerTLS: TLSIdentity{CertificateChainPEM: legacy.BrowserTLS.CertificateChainPEM,
+			PrivateKeyPKCS8PEM: legacy.BrowserTLS.PrivateKeyPKCS8PEM},
+		ReadCertDER: append([]string(nil), legacy.ReadCertDER...), AdminCertDER: append([]string(nil), legacy.AdminCertDER...)}
+	config.BrowserTLS, err = issueBrowserTLS(legacy.BrowserTLS, legacy.MemberID, listen)
+	if err != nil {
+		return false, err
+	}
+	if err := config.Validate(); err != nil {
+		return false, err
+	}
+	if _, err := browserTLSConfig(config); err != nil {
+		return false, err
+	}
+	if _, err := peerTLSConfig(config); err != nil {
+		return false, err
+	}
+	if err := verifyTLSListeners(config.BrowserTLS.CertificateChainPEM, listen); err != nil {
+		return false, err
+	}
+	if err := verifyTLSListeners(config.PeerTLS.CertificateChainPEM, listen); err != nil {
+		return false, err
+	}
+	if err := atomicJSON(path, config); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func verifyTLSListeners(chain string, listen []string) error {
+	block, _ := pem.Decode([]byte(chain))
+	if block == nil {
+		return errors.New("control TLS leaf is missing")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return err
+	}
+	for _, address := range listen {
+		host, _, splitErr := net.SplitHostPort(address)
+		if splitErr != nil || leaf.VerifyHostname(host) != nil {
+			return errors.New("control TLS leaf does not cover a private listener")
+		}
+	}
+	return nil
 }
 
 func readStrict(path string, value any) error {

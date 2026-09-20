@@ -15,8 +15,11 @@ ReleaseStore + Events ──────┘
 SPA write ─► {kind, payload, request_id, base_head} ─► private authenticated control API
 ```
 
-浏览器入口只允许私有 overlay 或 `127.0.0.1` TLS listener。服务端验证 TLS 1.3、管理员证书、
-exact listener、Origin 和 read/admin capability，再交给同一个 SPA。公网 Nginx 永远不能到达该页面或 API。
+浏览器入口只允许私有 overlay 或 `127.0.0.1` TLS listener。服务端使用浏览器兼容的 P-256
+服务端 leaf，验证 TLS 1.3、管理员证书、exact listener、Origin 和 read/admin capability，再交给同一个
+SPA。TLS `CertificateRequest` 的可接受签发者名称由当前 read/admin exact leaf 的 `RawIssuer` 单向派生；
+它只帮助浏览器选择已经安装的客户端证书，不授予权限，也不替代 HTTP 层的 exact leaf 匹配。公网 Nginx
+永远不能到达该页面或 API。
 本机 CLI 可通过 root-only admin Unix socket 提交同一 operation envelope；socket 只改变传输认证，仍调用
 同一个 handler、Raft 提交、reducer 和 QC 链，不能形成旁路写入。
 
@@ -99,7 +102,8 @@ effective 配置。
 
 ## 最小测试
 
-1. 私有/回环 TLS 经 read/admin capability 到达同一 SPA，公网入口不可达；
+1. 私有/回环 TLS 使用 P-256 服务端 leaf；模拟 Chrome 按 `CertificateRequest` 签发者选择客户端证书后，
+   read/admin capability 到达同一 SPA，无证书握手失败且公网入口不可达；
 2. 一个 Device intent 加一组观测在 Devices、Topology、Path 中只产生同一身份，unknown 不被补绿；
 3. 一个代表性管理员操作从表单提交到 certified 回读，stale head 与无权限分别拒绝；
 4. WebSocket 先发一次当前 snapshot，一次输入变化只发一次新 snapshot；

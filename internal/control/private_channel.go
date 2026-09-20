@@ -73,7 +73,8 @@ func (config PrivateChannelConfig) Validate() error {
 type PrivateChannel struct {
 	config     PrivateChannelConfig
 	tlsConfig  *tls.Config
-	nodeTLS    BrowserTLS
+	peerTLS    *tls.Config
+	nodeTLS    TLSIdentity
 	control    *connectionListener
 	report     *connectionListener
 	raft       *raftStreamLayer
@@ -94,12 +95,25 @@ func OpenPrivateChannel(config PrivateChannelConfig, node NodeConfig) (*PrivateC
 	if node.Node != config.Node {
 		return nil, errors.New("control identity does not match private channel node")
 	}
-	tlsConfig, err := TLSConfig(node)
+	tlsConfig, err := browserTLSConfig(node)
+	if err != nil {
+		return nil, err
+	}
+	peerConfig, err := peerTLSConfig(node)
 	if err != nil {
 		return nil, err
 	}
 	tlsConfig.NextProtos = []string{raftALPN, raftRelayALPN, "http/1.1"}
-	channel := &PrivateChannel{config: config, tlsConfig: tlsConfig, nodeTLS: node.BrowserTLS, control: newConnectionListener(),
+	peerConfig.NextProtos = []string{raftALPN, raftRelayALPN, "http/1.1"}
+	tlsConfig.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+		for _, protocol := range hello.SupportedProtos {
+			if protocol == raftALPN || protocol == raftRelayALPN {
+				return peerConfig, nil
+			}
+		}
+		return nil, nil
+	}
+	channel := &PrivateChannel{config: config, tlsConfig: tlsConfig, peerTLS: peerConfig, nodeTLS: node.PeerTLS, control: newConnectionListener(),
 		report: newConnectionListener(), done: make(chan struct{})}
 	channel.raft = &raftStreamLayer{channel: channel, incoming: newConnectionListener()}
 	for _, address := range config.Listen {
@@ -132,7 +146,7 @@ func (channel *PrivateChannel) authorizeRaft(certificates []*x509.Certificate) b
 	for _, intermediate := range certificates[1:] {
 		intermediates.AddCert(intermediate)
 	}
-	if _, err := certificate.Verify(x509.VerifyOptions{Roots: channel.tlsConfig.ClientCAs, Intermediates: intermediates,
+	if _, err := certificate.Verify(x509.VerifyOptions{Roots: channel.peerTLS.ClientCAs, Intermediates: intermediates,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
 		return false
 	}
@@ -450,7 +464,7 @@ func (channel *PrivateChannel) dialTLS(endpoint, protocol string, timeout time.D
 		return nil, err
 	}
 	host, _, _ := net.SplitHostPort(endpoint)
-	config := channel.tlsConfig.Clone()
+	config := channel.peerTLS.Clone()
 	config.ServerName = host
 	config.NextProtos = []string{protocol}
 	connection := tls.Client(raw, config)
@@ -466,7 +480,7 @@ func (channel *PrivateChannel) dialTLS(endpoint, protocol string, timeout time.D
 func (channel *PrivateChannel) relayTargetTLS(node string) *tls.Config {
 	member, _ := channel.raftMember(node)
 	want, _ := decodePublicKey(member.PublicKey)
-	config := channel.tlsConfig.Clone()
+	config := channel.peerTLS.Clone()
 	config.NextProtos = []string{raftALPN}
 	config.ServerName = ""
 	config.InsecureSkipVerify = true // VerifyConnection binds CA, member ID, and member key below.

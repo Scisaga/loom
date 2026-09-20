@@ -2,14 +2,18 @@ package control
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +29,41 @@ import (
 	"loom/internal/releasefloor"
 )
 
+var testAdminCertificateDER, testReadCertificateDER = testBrowserAuthorizationCertificates()
+
+func testBrowserAuthorizationCertificates() ([]byte, []byte) {
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	root := &x509.Certificate{SerialNumber: big.NewInt(101), Subject: pkix.Name{CommonName: "demo-admin-ca"},
+		NotBefore: time.Unix(1, 0), NotAfter: time.Unix(4102444800, 0), IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	rootDER, err := x509.CreateCertificate(rand.Reader, root, root, &rootKey.PublicKey, rootKey)
+	if err != nil {
+		panic(err)
+	}
+	root, err = x509.ParseCertificate(rootDER)
+	if err != nil {
+		panic(err)
+	}
+	issue := func(serial int64, name string) []byte {
+		key, keyErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if keyErr != nil {
+			panic(keyErr)
+		}
+		leaf := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: name},
+			NotBefore: root.NotBefore, NotAfter: root.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature,
+			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+		der, createErr := x509.CreateCertificate(rand.Reader, leaf, root, &key.PublicKey, rootKey)
+		if createErr != nil {
+			panic(createErr)
+		}
+		return der
+	}
+	return issue(102, "demo-admin"), issue(103, "demo-reader")
+}
+
 func testState() State {
 	digest := strings.Repeat("0", 64)
 	return State{
@@ -35,8 +74,8 @@ func testState() State {
 				PayloadSHA256: digest, SelectedSnapshot: "000000000000"}, V2Latch: true},
 		BrowserTLS: BrowserTLS{CertificateChainPEM: "present", PrivateKeyPKCS8PEM: "present",
 			RootPrivateKeyPKCS8PEM: "present"},
-		ReadCertDER:  []string{base64.RawURLEncoding.EncodeToString([]byte("admin"))},
-		AdminCertDER: []string{base64.RawURLEncoding.EncodeToString([]byte("admin"))},
+		ReadCertDER:  []string{base64.RawURLEncoding.EncodeToString(testAdminCertificateDER)},
+		AdminCertDER: []string{base64.RawURLEncoding.EncodeToString(testAdminCertificateDER)},
 		Projection: WebProjection{Schema: 1, UIState: UIState{Head: "sha256:" + digest, Revision: 7,
 			Writable: false, Warnings: []string{}}, Devices: []Device{}, Links: []Link{}, Paths: []Path{},
 			Services: []Service{}, Releases: []Release{}, Events: []Event{}},
@@ -81,7 +120,7 @@ func TestStateSurvivesRestartExactly(t *testing.T) {
 
 func TestPrivateProjectionAndRetiredRoutes(t *testing.T) {
 	state := testState()
-	state.ReadCertDER = append(state.ReadCertDER, base64.RawURLEncoding.EncodeToString([]byte("reader")))
+	state.ReadCertDER = append(state.ReadCertDER, base64.RawURLEncoding.EncodeToString(testReadCertificateDER))
 	server := testRuntimeServer(t, state)
 	server.ReleaseRoot = t.TempDir()
 	server.ReleaseKey = filepath.Join(t.TempDir(), "missing")
@@ -105,7 +144,7 @@ func TestPrivateProjectionAndRetiredRoutes(t *testing.T) {
 			request := httptest.NewRequest(test.method, "https://10.0.0.1:8443"+test.path, nil)
 			request.Host = "10.0.0.1:8443"
 			request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
-				PeerCertificates: []*x509.Certificate{{Raw: []byte("admin")}}}
+				PeerCertificates: []*x509.Certificate{{Raw: testAdminCertificateDER}}}
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
 			if response.Code != test.status {
@@ -124,7 +163,7 @@ func TestPrivateProjectionAndRetiredRoutes(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, "https://10.0.0.1:8443/api/control/ui/snapshot", nil)
 	request.Host = "10.0.0.1:8443"
 	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
-		PeerCertificates: []*x509.Certificate{{Raw: []byte("reader")}}}
+		PeerCertificates: []*x509.Certificate{{Raw: testReadCertificateDER}}}
 	response = httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"admin":true`) {
@@ -176,7 +215,7 @@ func TestReleaseDownloadReturnsOnlyVerifiedExactBytes(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "https://10.0.0.1:8443/api/control/ui/releases/files/"+file.Path, nil)
 	request.Host = "10.0.0.1:8443"
 	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
-		PeerCertificates: []*x509.Certificate{{Raw: []byte("admin")}}}
+		PeerCertificates: []*x509.Certificate{{Raw: testAdminCertificateDER}}}
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !reflect.DeepEqual(response.Body.Bytes(), artifactBody) {

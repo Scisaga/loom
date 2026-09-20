@@ -55,6 +55,13 @@ type BrowserTLS struct {
 	RootPrivateKeyPKCS8PEM string `json:"root_private_key_pkcs8_pem"`
 }
 
+// TLSIdentity is a node-local leaf and key. The browser authority private key
+// remains only in BrowserTLS; the member identity never needs a second copy.
+type TLSIdentity struct {
+	CertificateChainPEM string `json:"certificate_chain_pem"`
+	PrivateKeyPKCS8PEM  string `json:"private_key_pkcs8_pem"`
+}
+
 type WebProjection struct {
 	Schema   int       `json:"schema"`
 	UIState  UIState   `json:"ui_state"`
