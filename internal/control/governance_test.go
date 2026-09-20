@@ -91,7 +91,29 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 	if joined.Projection.Config.Mode != "stable" || len(joined.Projection.Config.Members) != 3 {
 		t.Fatalf("join result: %#v", joined.Projection.Config)
 	}
-
+	// Put leadership on a leaf. Raft must use the authenticated private relay
+	// through the center member to keep the other leaf in the same log.
+	leafLeader := runtimes[1]
+	if leader == leafLeader {
+		leafLeader = runtimes[2]
+	}
+	if err := leader.Raft.LeadershipTransferToServer(raft.ServerID(leafLeader.Config.MemberID),
+		raft.ServerAddress(leafLeader.Config.Node)).Error(); err != nil {
+		t.Fatal(err)
+	}
+	leader = waitLeader(t, runtimes)
+	if leader != leafLeader {
+		t.Fatalf("leadership did not transfer to a leaf: got %s want %s", leader.Config.MemberID, leafLeader.Config.MemberID)
+	}
+	otherLeaf := runtimes[2]
+	if leafLeader == otherLeaf {
+		otherLeaf = runtimes[1]
+	}
+	relayConnection, err := leafLeader.Channel.RaftStream().Dial(raft.ServerAddress(otherLeaf.Config.Node), 3*time.Second)
+	if err != nil {
+		t.Fatalf("leaf-to-leaf private Raft relay: %v", err)
+	}
+	_ = relayConnection.Close()
 	follower := runtimes[0]
 	if follower == leader {
 		follower = runtimes[1]

@@ -7,8 +7,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -18,7 +20,10 @@ import (
 	"github.com/hashicorp/raft"
 )
 
-const raftALPN = "loom-raft/1"
+const (
+	raftALPN      = "loom-raft/1"
+	raftRelayALPN = "loom-raft-relay/1"
+)
 
 // PrivateChannelConfig is local transport input derived from the already
 // deployed private report listener. It does not grant control membership.
@@ -93,7 +98,7 @@ func OpenPrivateChannel(config PrivateChannelConfig, node NodeConfig) (*PrivateC
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig.NextProtos = []string{raftALPN, "http/1.1"}
+	tlsConfig.NextProtos = []string{raftALPN, raftRelayALPN, "http/1.1"}
 	channel := &PrivateChannel{config: config, tlsConfig: tlsConfig, nodeTLS: node.BrowserTLS, control: newConnectionListener(),
 		report: newConnectionListener(), done: make(chan struct{})}
 	channel.raft = &raftStreamLayer{channel: channel, incoming: newConnectionListener()}
@@ -192,6 +197,14 @@ func (channel *PrivateChannel) classify(connection net.Conn) {
 	}
 	_ = tlsConnection.SetDeadline(time.Time{})
 	state := tlsConnection.ConnectionState()
+	if state.NegotiatedProtocol == raftRelayALPN {
+		if !channel.authorizeRaft(state.PeerCertificates) {
+			_ = tlsConnection.Close()
+			return
+		}
+		channel.relayRaft(tlsConnection)
+		return
+	}
 	if state.NegotiatedProtocol == raftALPN {
 		if !channel.authorizeRaft(state.PeerCertificates) || !channel.raft.incoming.deliver(tlsConnection) {
 			_ = tlsConnection.Close()
@@ -201,6 +214,70 @@ func (channel *PrivateChannel) classify(connection net.Conn) {
 	if state.NegotiatedProtocol != "" && state.NegotiatedProtocol != "http/1.1" || !channel.control.deliver(tlsConnection) {
 		_ = tlsConnection.Close()
 	}
+}
+
+func (channel *PrivateChannel) raftMember(node string) (Member, bool) {
+	channel.authorityM.RLock()
+	authority := channel.authority
+	channel.authorityM.RUnlock()
+	if authority == nil {
+		return Member{}, false
+	}
+	_, projection, _ := authority.Snapshot()
+	for _, member := range uniqueMembers(projection.Config) {
+		if member.Node == node {
+			return member, true
+		}
+	}
+	return Member{}, false
+}
+
+func (channel *PrivateChannel) relayRaft(connection *tls.Conn) {
+	defer connection.Close()
+	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
+	var length uint16
+	if err := binary.Read(connection, binary.BigEndian, &length); err != nil || length == 0 || length > 1024 {
+		return
+	}
+	body := make([]byte, int(length))
+	if _, err := io.ReadFull(connection, body); err != nil {
+		return
+	}
+	target := string(body)
+	if _, ok := channel.raftMember(target); !ok {
+		_, _ = connection.Write([]byte{1})
+		return
+	}
+	var targetConnection net.Conn
+	for _, endpoint := range channel.endpoints(target) {
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		candidate, err := dialer.Dial("tcp", endpoint)
+		if err == nil {
+			targetConnection = candidate
+			break
+		}
+	}
+	if targetConnection == nil {
+		_, _ = connection.Write([]byte{1})
+		return
+	}
+	defer targetConnection.Close()
+	if _, err := connection.Write([]byte{0}); err != nil {
+		return
+	}
+	_ = connection.SetDeadline(time.Time{})
+	_ = targetConnection.SetDeadline(time.Time{})
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(targetConnection, connection)
+		if tcp, ok := targetConnection.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+		close(done)
+	}()
+	_, _ = io.Copy(connection, targetConnection)
+	_ = connection.Close()
+	<-done
 }
 
 func (channel *PrivateChannel) ControlListener() net.Listener { return channel.control }
@@ -309,28 +386,108 @@ func (stream *raftStreamLayer) Addr() net.Addr            { return channelAddres
 func (stream *raftStreamLayer) Dial(address raft.ServerAddress, timeout time.Duration) (net.Conn, error) {
 	var failures []error
 	for _, endpoint := range stream.channel.endpoints(string(address)) {
-		dialer := &net.Dialer{Timeout: timeout}
-		raw, err := dialer.Dial("tcp", endpoint)
-		if err != nil {
-			failures = append(failures, err)
-			continue
+		connection, err := stream.channel.dialTLS(endpoint, raftALPN, timeout)
+		if err == nil {
+			return connection, nil
 		}
-		host, _, _ := net.SplitHostPort(endpoint)
-		config := stream.channel.tlsConfig.Clone()
-		config.ServerName = host
-		config.NextProtos = []string{raftALPN}
-		connection := tls.Client(raw, config)
-		_ = connection.SetDeadline(time.Now().Add(timeout))
-		if err := connection.HandshakeContext(context.Background()); err != nil {
-			_ = raw.Close()
-			failures = append(failures, err)
-			continue
+		failures = append(failures, err)
+	}
+	if _, ok := stream.channel.raftMember(string(address)); ok {
+		relayNodes := make([]string, 0, len(stream.channel.config.Peers))
+		for relayNode := range stream.channel.config.Peers {
+			relayNodes = append(relayNodes, relayNode)
 		}
-		_ = connection.SetDeadline(time.Time{})
-		return connection, nil
+		sort.Strings(relayNodes)
+		for _, relayNode := range relayNodes {
+			if relayNode == string(address) {
+				continue
+			}
+			endpoints := stream.channel.endpoints(relayNode)
+			for _, endpoint := range endpoints {
+				outer, err := stream.channel.dialTLS(endpoint, raftRelayALPN, timeout)
+				if err != nil {
+					failures = append(failures, err)
+					continue
+				}
+				target := []byte(address)
+				if len(target) > 1024 || binary.Write(outer, binary.BigEndian, uint16(len(target))) != nil {
+					_ = outer.Close()
+					continue
+				}
+				if _, err := outer.Write(target); err != nil {
+					_ = outer.Close()
+					failures = append(failures, err)
+					continue
+				}
+				var status [1]byte
+				if _, err := io.ReadFull(outer, status[:]); err != nil || status[0] != 0 {
+					_ = outer.Close()
+					failures = append(failures, errors.New("raft relay rejected target"))
+					continue
+				}
+				connection := tls.Client(outer, stream.channel.relayTargetTLS(string(address)))
+				_ = connection.SetDeadline(time.Now().Add(timeout))
+				if err := connection.HandshakeContext(context.Background()); err != nil {
+					_ = connection.Close()
+					failures = append(failures, err)
+					continue
+				}
+				_ = connection.SetDeadline(time.Time{})
+				return connection, nil
+			}
+		}
 	}
 	if len(failures) == 0 {
-		return nil, fmt.Errorf("private control node %s is not a direct neighbor", address)
+		return nil, fmt.Errorf("private control node %s has no private route", address)
 	}
 	return nil, errors.Join(failures...)
+}
+
+func (channel *PrivateChannel) dialTLS(endpoint, protocol string, timeout time.Duration) (*tls.Conn, error) {
+	dialer := &net.Dialer{Timeout: timeout}
+	raw, err := dialer.Dial("tcp", endpoint)
+	if err != nil {
+		return nil, err
+	}
+	host, _, _ := net.SplitHostPort(endpoint)
+	config := channel.tlsConfig.Clone()
+	config.ServerName = host
+	config.NextProtos = []string{protocol}
+	connection := tls.Client(raw, config)
+	_ = connection.SetDeadline(time.Now().Add(timeout))
+	if err := connection.HandshakeContext(context.Background()); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	_ = connection.SetDeadline(time.Time{})
+	return connection, nil
+}
+
+func (channel *PrivateChannel) relayTargetTLS(node string) *tls.Config {
+	member, _ := channel.raftMember(node)
+	want, _ := decodePublicKey(member.PublicKey)
+	config := channel.tlsConfig.Clone()
+	config.NextProtos = []string{raftALPN}
+	config.ServerName = ""
+	config.InsecureSkipVerify = true // VerifyConnection binds CA, member ID, and member key below.
+	config.VerifyConnection = func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 {
+			return errors.New("raft relay target certificate is missing")
+		}
+		leaf := state.PeerCertificates[0]
+		intermediates := x509.NewCertPool()
+		for _, certificate := range state.PeerCertificates[1:] {
+			intermediates.AddCert(certificate)
+		}
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: config.RootCAs, Intermediates: intermediates,
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+			return err
+		}
+		public, ok := leaf.PublicKey.(ed25519.PublicKey)
+		if !ok || leaf.Subject.CommonName != member.ID || want == nil || !want.Equal(public) {
+			return errors.New("raft relay target is not the configured member")
+		}
+		return nil
+	}
+	return config
 }

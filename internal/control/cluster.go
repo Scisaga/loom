@@ -204,9 +204,9 @@ func (runtime *Runtime) reconcileLoop() {
 		case <-runtime.stop:
 			return
 		case <-ticker.C:
-			if runtime.Raft.State() == raft.Leader {
-				runtime.reconcilePeers()
-			}
+			// Materials are immutable and a CertifiedHead is independently
+			// quorum-verifiable, so direct neighbors may relay both.
+			runtime.reconcilePeers()
 		}
 	}
 }
