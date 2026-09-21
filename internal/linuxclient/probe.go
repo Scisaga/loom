@@ -23,7 +23,7 @@ func businessProbe(ctx context.Context, dnsAddress string) ProbeResult {
 	started := time.Now()
 	probeContext, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	if err := probeTCP(probeContext); err != nil {
+	if err := probeTCP(probeContext, dnsAddress); err != nil {
 		return ProbeResult{Metric: time.Since(started), Description: "TCP: " + err.Error()}
 	}
 	if err := probeDNS(probeContext, dnsAddress); err != nil {
@@ -32,8 +32,18 @@ func businessProbe(ctx context.Context, dnsAddress string) ProbeResult {
 	return ProbeResult{Available: true, Metric: time.Since(started), Description: "TCP, UDP and DNS succeeded"}
 }
 
-func probeTCP(ctx context.Context) error {
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second},
+func probeTCP(ctx context.Context, dnsAddress string) error {
+	dnsServer, err := dnsEndpoint(dnsAddress)
+	if err != nil {
+		return err
+	}
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "udp", dnsServer)
+		},
+	}
+	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second, Resolver: resolver},
 		Config: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "www.baidu.com"}}
 	connection, err := dialer.DialContext(ctx, "tcp", "www.baidu.com:443")
 	if err != nil {
@@ -75,10 +85,11 @@ func probeDNS(ctx context.Context, dnsAddress string) error {
 		return err
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	if net.ParseIP(dnsAddress) == nil {
-		return errors.New("DNS probe address is invalid")
+	dnsServer, err := dnsEndpoint(dnsAddress)
+	if err != nil {
+		return err
 	}
-	connection, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(dnsAddress, "53"))
+	connection, err := dialer.DialContext(ctx, "udp", dnsServer)
 	if err != nil {
 		return err
 	}
@@ -100,4 +111,11 @@ func probeDNS(ctx context.Context, dnsAddress string) error {
 		return fmt.Errorf("DNS response is not a successful answer")
 	}
 	return nil
+}
+
+func dnsEndpoint(address string) (string, error) {
+	if net.ParseIP(address) == nil {
+		return "", errors.New("DNS probe address is invalid")
+	}
+	return net.JoinHostPort(address, "53"), nil
 }
