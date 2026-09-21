@@ -335,7 +335,61 @@ func accessRuntimeConfig(view control.DeviceView, caPath string) (string, error)
 	if err := deviceclient.SavePublicDataPlaneCA(caPath, view.PublicDataPlaneCA); err != nil {
 		return "", err
 	}
-	return attachDataPlaneCA(view.Runtime.Config, caPath)
+	config, err := attachDataPlaneCA(view.Runtime.Config, caPath)
+	if err != nil {
+		return "", err
+	}
+	return deriveLinuxAccessRuntime(config)
+}
+
+func deriveLinuxAccessRuntime(config string) (string, error) {
+	var document map[string]any
+	if err := json.Unmarshal([]byte(config), &document); err != nil {
+		return "", errors.New("access runtime is invalid")
+	}
+	inbounds, ok := document["inbounds"].([]any)
+	if !ok {
+		return "", errors.New("access runtime inbounds are invalid")
+	}
+	managed := 0
+	for _, raw := range inbounds {
+		inbound, ok := raw.(map[string]any)
+		if !ok || inbound["type"] != "tun" {
+			continue
+		}
+		if inbound["tag"] != "tun-in" || inbound["auto_route"] != true {
+			return "", errors.New("access runtime TUN contract is invalid")
+		}
+		if existing, found := inbound["address"]; found {
+			values, ok := existing.([]any)
+			if !ok || len(values) != 1 || values[0] != "172.19.0.1/30" {
+				return "", errors.New("access runtime TUN address conflicts with the Linux platform boundary")
+			}
+		}
+		if existing, found := inbound["stack"]; found && existing != "system" {
+			return "", errors.New("access runtime TUN stack conflicts with the Linux platform boundary")
+		}
+		inbound["address"] = []string{"172.19.0.1/30"}
+		inbound["stack"] = "system"
+		managed++
+	}
+	if managed != 1 {
+		return "", errors.New("access runtime must contain exactly one managed TUN")
+	}
+	route, found := document["route"].(map[string]any)
+	if document["route"] != nil && !found {
+		return "", errors.New("access runtime route is invalid")
+	}
+	if !found {
+		route = map[string]any{}
+		document["route"] = route
+	}
+	if existing, found := route["auto_detect_interface"]; found && existing != true {
+		return "", errors.New("access runtime interface detection conflicts with the Linux platform boundary")
+	}
+	route["auto_detect_interface"] = true
+	body, err := json.Marshal(document)
+	return string(body), err
 }
 
 func linuxComponentReadbacks(view control.DeviceView, singBox string) ([]control.ComponentReadback, error) {

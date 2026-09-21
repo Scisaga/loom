@@ -89,3 +89,31 @@ func TestAttachDataPlaneCAUpdatesOnlyTLSDataPlaneOutbounds(t *testing.T) {
 		t.Fatalf("data-plane CA binding is wrong: %+v", document.Outbounds)
 	}
 }
+
+func TestLinuxAccessRuntimeDerivesThePlatformTUNWithoutChangingAuthority(t *testing.T) {
+	config := `{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],"outbounds":[{"type":"direct","tag":"direct"}]}`
+	body, err := deriveLinuxAccessRuntime(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Inbounds []struct {
+			Address []string `json:"address"`
+			Stack   string   `json:"stack"`
+		} `json:"inbounds"`
+		Route struct {
+			AutoDetectInterface bool `json:"auto_detect_interface"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal([]byte(body), &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Inbounds) != 1 || len(document.Inbounds[0].Address) != 1 ||
+		document.Inbounds[0].Address[0] != "172.19.0.1/30" || document.Inbounds[0].Stack != "system" ||
+		!document.Route.AutoDetectInterface {
+		t.Fatalf("Linux platform TUN derivation is incomplete: %+v", document)
+	}
+	if _, err := deriveLinuxAccessRuntime(`{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true,"address":["192.0.2.1/30"]}]}`); err == nil {
+		t.Fatal("conflicting signed TUN address was overwritten")
+	}
+}
