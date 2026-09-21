@@ -52,3 +52,32 @@ func TestCommittedEnrollmentCollisionStillReplays(t *testing.T) {
 		t.Fatalf("previously committed enrollment no longer replays: %v", err)
 	}
 }
+
+func TestExistingNodeMayRejoinAfterCompletedAuthorizationWasRevoked(t *testing.T) {
+	projection := Projection{Schema: 1, Enrollments: []EnrollmentTransaction{{Schema: 1, ID: "old-enrollment", State: "completed",
+		Intent: EnrollmentIntent{DeviceID: "demo-node"}}}}
+	if err := reduceEnrollmentOpen(&projection, enrollmentOpenForID("demo-node")); err != nil {
+		t.Fatalf("completed enrollment history blocked a rejoin after revocation: %v", err)
+	}
+	if len(projection.Enrollments) != 2 {
+		t.Fatalf("completed enrollment history was not retained: %+v", projection.Enrollments)
+	}
+}
+
+func TestExistingNodeRejoinStillRejectsActiveEnrollmentOrAuthorization(t *testing.T) {
+	for _, state := range []string{"open", "bound", "approved"} {
+		projection := Projection{Schema: 1, Enrollments: []EnrollmentTransaction{{Schema: 1, ID: "old-enrollment", State: state,
+			Intent: EnrollmentIntent{DeviceID: "demo-node"}}}}
+		if err := reduceEnrollmentOpen(&projection, enrollmentOpenForID("demo-node")); err == nil {
+			t.Fatalf("active %s enrollment did not block a second transaction", state)
+		}
+	}
+	projection := Projection{Schema: 1,
+		DeviceAuthorizations: []DeviceAuthorization{{Schema: 2, DeviceID: "demo-node"}},
+		Enrollments: []EnrollmentTransaction{{Schema: 1, ID: "old-enrollment", State: "completed",
+			Intent: EnrollmentIntent{DeviceID: "demo-node"}}}}
+	if err := reduceEnrollmentOpen(&projection, enrollmentOpenForID("demo-node")); err == nil ||
+		!strings.Contains(err.Error(), "authorization") {
+		t.Fatalf("current authorization did not block a second enrollment: %v", err)
+	}
+}

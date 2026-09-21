@@ -791,7 +791,8 @@ func reduceEnrollmentOpen(projection *Projection, open EnrollmentOpen) error {
 		return errors.New("enrollment transaction already exists")
 	}
 	for _, transaction := range projection.Enrollments {
-		if transaction.Intent.DeviceID == open.Intent.DeviceID && transaction.State != "rejected" && transaction.State != "expired" && transaction.State != "cancelled" {
+		if transaction.Intent.DeviceID == open.Intent.DeviceID && transaction.State != "completed" && transaction.State != "rejected" &&
+			transaction.State != "expired" && transaction.State != "cancelled" {
 			return errors.New("device already has an enrollment transaction")
 		}
 	}
