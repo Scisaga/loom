@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"loom/internal/control"
@@ -180,16 +181,72 @@ func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error
 		}
 		hello := control.TunnelHello{Schema: 1, Mode: "device", EndpointID: endpoint.EndpointID,
 			Generation: endpoint.Generation, DeviceID: lkg.View.DeviceID}
-		connection, err := control.DialEndpoint(ctx, endpoint, hello, store.PrivateKey())
-		if err == nil {
-			return connection, nil
+		addresses, err := endpointDialAddresses(ctx, endpoint.Address, lkg.View.DNS)
+		if err != nil {
+			failures = append(failures, err)
+			continue
 		}
-		failures = append(failures, err)
+		for _, address := range addresses {
+			resolved := endpoint
+			resolved.Address = address
+			connection, dialErr := control.DialEndpoint(ctx, resolved, hello, store.PrivateKey())
+			if dialErr == nil {
+				return connection, nil
+			}
+			failures = append(failures, dialErr)
+		}
 	}
 	if len(failures) == 0 {
 		return nil, errors.New("device LKG has no serving endpoint generation")
 	}
 	return nil, errors.Join(failures...)
+}
+
+func endpointDialAddresses(ctx context.Context, address string, dnsAddresses []string) ([]string, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host == "" || port == "" {
+		return nil, errors.New("device endpoint address is invalid")
+	}
+	if net.ParseIP(host) != nil || len(dnsAddresses) == 0 {
+		return []string{address}, nil
+	}
+	dns := net.ParseIP(dnsAddresses[0])
+	if dns == nil {
+		return nil, errors.New("certified device DNS address is invalid")
+	}
+	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "udp", net.JoinHostPort(dns.String(), "53"))
+	}}
+	addresses, err := resolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil, errors.New("certified device DNS could not resolve an endpoint")
+	}
+	return canonicalEndpointAddresses(addresses, port)
+}
+
+func canonicalEndpointAddresses(addresses []string, port string) ([]string, error) {
+	values := append([]string(nil), addresses...)
+	sort.Slice(values, func(i, j int) bool {
+		leftV4, rightV4 := strings.Count(values[i], ":") == 0, strings.Count(values[j], ":") == 0
+		if leftV4 != rightV4 {
+			return leftV4
+		}
+		return values[i] < values[j]
+	})
+	result := make([]string, 0, len(values))
+	previous := ""
+	for _, value := range values {
+		parsed := net.ParseIP(value)
+		if parsed == nil || parsed.String() == previous {
+			continue
+		}
+		previous = parsed.String()
+		result = append(result, net.JoinHostPort(previous, port))
+	}
+	if len(result) == 0 {
+		return nil, errors.New("certified device DNS returned no endpoint addresses")
+	}
+	return result, nil
 }
 
 // Fetch retrieves and verifies the next certified view without advancing the

@@ -138,6 +138,10 @@ Service matcher 精确覆盖；客户端用认证 DNS 同时解析 HTTPS 目标�
 resolver、硬编码公网域名或为使探测通过而扩宽服务器 ACL。服务器仍只允许认证 DNS 的 53 端口和 Service
 matcher；因此探测成功证明的是该设备实际获授权的业务链，而不是任意公网可达性。
 
+设备已有认证 View 后，私有 Device tunnel 的 endpoint 主机名同样只用该 View 的认证 DNS 解析；解析结果只作为
+本次拨号地址，TLS 仍核对 EndpointGeneration 中独立认证的 server name 与 SPKI，不能让 DNS 结果改写 endpoint
+身份。尚未取得 View 的 bootstrap 维持 EndpointGeneration 原有拨号边界，不从业务运行时反推 bootstrap 权威。
+
 ICMP 结果只能作为地址 RTT 提示：
 
 - ICMP 成功不能把候选改成 `available`；
