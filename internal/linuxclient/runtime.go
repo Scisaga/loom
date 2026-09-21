@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/clientmodel"
 	"loom/internal/clientruntime"
 	"loom/internal/control"
 	"loom/internal/deviceclient"
@@ -525,6 +526,21 @@ func observeServer(ctx context.Context, store *deviceclient.Store, options Optio
 	if !ok {
 		return errors.New("Linux device is not server-only")
 	}
+	generation, err := options.Generation()
+	if err != nil {
+		return err
+	}
+	status := func(reported bool) Status {
+		return Status{Schema: 1, DeviceID: lkg.View.DeviceID, Head: control.HeadID(lkg.Head), Floor: lkg.Head.Index,
+			Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}, NetworkGeneration: generation,
+			Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}, Runtime: "running", Reported: reported}
+	}
+	// Listener and WireGuard readback already succeeded before this function is
+	// entered. Expose that fact before a possibly slow report attempt so install
+	// and supervision do not mistake a healthy server-only runtime for failure.
+	if err := WriteStatus(options.Status, status(false)); err != nil {
+		return err
+	}
 	components, componentErr := linuxComponentReadbacks(lkg.View, options.SingBox)
 	if componentErr != nil {
 		fmt.Fprintf(options.Log, "server component observation unavailable: %v\n", componentErr)
@@ -532,11 +548,11 @@ func observeServer(ctx context.Context, store *deviceclient.Store, options Optio
 	startedAt := options.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
 	lastFacts := ""
 	lastReportedAt := time.Time{}
-	report := func(force bool) {
+	report := func(force bool) bool {
 		digest, err := control.DeviceViewDigest(lkg.View)
 		if err != nil {
 			fmt.Fprintf(options.Log, "server observation view is invalid: %v\n", err)
-			return
+			return false
 		}
 		links, linkErr := linuxLinkReadbacks(lkg.View, options.WireGuard, options.Ping, startedAt)
 		if linkErr != nil {
@@ -553,7 +569,7 @@ func observeServer(ctx context.Context, store *deviceclient.Store, options Optio
 		}
 		facts := runtimeFactsDigest(Activation{}, nextComponents, links, deployment)
 		if !force && facts == lastFacts && options.Now().Sub(lastReportedAt) < 60*time.Second {
-			return
+			return !lastReportedAt.IsZero()
 		}
 		value := control.DeviceReport{ReportedAt: options.Now().UTC().Truncate(time.Second).Format(time.RFC3339),
 			Runtime:    &control.RuntimeReadback{State: "running", AppliedViewDigest: digest, Exact: exact, StartedAt: startedAt},
@@ -562,11 +578,15 @@ func observeServer(ctx context.Context, store *deviceclient.Store, options Optio
 		defer cancel()
 		if err := deviceclient.Report(reportContext, store, value); err != nil {
 			fmt.Fprintf(options.Log, "private server observation unavailable: %v\n", err)
+			return false
 		} else {
 			lastFacts, lastReportedAt, components = facts, options.Now(), nextComponents
 		}
+		return true
 	}
-	report(true)
+	if reported := report(true); WriteStatus(options.Status, status(reported)) != nil {
+		return errors.New("write Linux server runtime status")
+	}
 	ticker := time.NewTicker(options.RefreshPoll)
 	defer ticker.Stop()
 	for {
@@ -582,7 +602,9 @@ func observeServer(ctx context.Context, store *deviceclient.Store, options Optio
 			if certifiedViewChanged(ctx, store, options.Log) {
 				return errCertifiedViewChanged
 			}
-			report(false)
+			if reported := report(false); WriteStatus(options.Status, status(reported)) != nil {
+				return errors.New("write Linux server runtime status")
+			}
 		}
 	}
 }
