@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -246,6 +247,49 @@ func canonicalEndpointAddresses(addresses []string, port string) ([]string, erro
 	if len(result) == 0 {
 		return nil, errors.New("certified device DNS returned no endpoint addresses")
 	}
+	return result, nil
+}
+
+// EndpointRouteExclusions resolves only certified serving EndpointGeneration
+// addresses and returns exact host prefixes suitable for a platform TUN
+// exclusion. The result is local runtime input: endpoint identity continues to
+// come from the certified server name and SPKI.
+func EndpointRouteExclusions(ctx context.Context, endpoints []control.EndpointReference, dnsAddresses []string) ([]string, error) {
+	prefixes := map[string]bool{}
+	serving := 0
+	for _, endpoint := range endpointOrder(endpoints) {
+		if endpoint.State != "serving" {
+			continue
+		}
+		serving++
+		addresses, err := endpointDialAddresses(ctx, endpoint.Address, dnsAddresses)
+		if err != nil {
+			return nil, err
+		}
+		for _, address := range addresses {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, errors.New("resolved device endpoint address is invalid")
+			}
+			ip := net.ParseIP(host)
+			if ip == nil {
+				return nil, errors.New("resolved device endpoint is not an IP address")
+			}
+			bits := 128
+			if ip.To4() != nil {
+				ip, bits = ip.To4(), 32
+			}
+			prefixes[fmt.Sprintf("%s/%d", ip.String(), bits)] = true
+		}
+	}
+	if serving == 0 || len(prefixes) == 0 {
+		return nil, errors.New("device view has no resolvable serving endpoint")
+	}
+	result := make([]string, 0, len(prefixes))
+	for prefix := range prefixes {
+		result = append(result, prefix)
+	}
+	sort.Strings(result)
 	return result, nil
 }
 

@@ -358,7 +358,7 @@ func attachDataPlaneCA(config, path string) (string, error) {
 	return string(body), nil
 }
 
-func accessRuntimeConfig(view control.DeviceView, caPath string) (string, error) {
+func accessRuntimeConfig(view control.DeviceView, caPath string, endpointExclusions []string) (string, error) {
 	if view.Runtime == nil {
 		return "", errors.New("access device has no runtime profile")
 	}
@@ -369,10 +369,10 @@ func accessRuntimeConfig(view control.DeviceView, caPath string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return deriveLinuxAccessRuntime(config)
+	return deriveLinuxAccessRuntime(config, endpointExclusions)
 }
 
-func deriveLinuxAccessRuntime(config string) (string, error) {
+func deriveLinuxAccessRuntime(config string, endpointExclusions []string) (string, error) {
 	var document map[string]any
 	if err := json.Unmarshal([]byte(config), &document); err != nil {
 		return "", errors.New("access runtime is invalid")
@@ -399,8 +399,14 @@ func deriveLinuxAccessRuntime(config string) (string, error) {
 		if existing, found := inbound["stack"]; found && existing != "system" {
 			return "", errors.New("access runtime TUN stack conflicts with the Linux platform boundary")
 		}
+		if _, found := inbound["route_exclude_address"]; found {
+			return "", errors.New("signed access runtime cannot define local endpoint route exclusions")
+		}
 		inbound["address"] = []string{"172.19.0.1/30"}
 		inbound["stack"] = "system"
+		if len(endpointExclusions) != 0 {
+			inbound["route_exclude_address"] = append([]string(nil), endpointExclusions...)
+		}
 		managed++
 	}
 	if managed != 1 {
@@ -784,7 +790,7 @@ func Preflight(deviceState, singBox string) error {
 			lkg.View.RequiresServerDomainIdentification())
 	} else {
 		caPath := filepath.Join(directory, "data-plane-ca.crt")
-		config, err = accessRuntimeConfig(lkg.View, caPath)
+		config, err = accessRuntimeConfig(lkg.View, caPath, nil)
 		if lkg.View.ServerRuntime != nil {
 			config, err = mergeServerRuntime(config, *lkg.View.ServerRuntime, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key",
 				lkg.View.RequiresServerDomainIdentification())
@@ -1112,7 +1118,14 @@ func runGeneration(ctx context.Context, options Options, allowFetch bool) (retEr
 			caPrevious.restore()
 		}
 	}()
-	runtimeConfig, err := accessRuntimeConfig(lkg.View, options.DataPlaneCA)
+	endpointExclusions := []string(nil)
+	if lkg.View.RequiresServerDomainIdentification() {
+		endpointExclusions, err = deviceclient.EndpointRouteExclusions(ctx, lkg.View.Endpoints, lkg.View.DNS)
+		if err != nil {
+			return err
+		}
+	}
+	runtimeConfig, err := accessRuntimeConfig(lkg.View, options.DataPlaneCA, endpointExclusions)
 	if err != nil {
 		return err
 	}

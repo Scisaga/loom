@@ -2,6 +2,7 @@ package linuxclient
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -112,14 +113,15 @@ func TestAttachDataPlaneCAUpdatesOnlyTLSDataPlaneOutbounds(t *testing.T) {
 
 func TestLinuxAccessRuntimeDerivesThePlatformTUNWithoutChangingAuthority(t *testing.T) {
 	config := `{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],"outbounds":[{"type":"direct","tag":"direct"}]}`
-	body, err := deriveLinuxAccessRuntime(config)
+	body, err := deriveLinuxAccessRuntime(config, []string{"192.0.2.10/32", "2001:db8::10/128"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var document struct {
 		Inbounds []struct {
-			Address []string `json:"address"`
-			Stack   string   `json:"stack"`
+			Address             []string `json:"address"`
+			Stack               string   `json:"stack"`
+			RouteExcludeAddress []string `json:"route_exclude_address"`
 		} `json:"inbounds"`
 		Route struct {
 			AutoDetectInterface bool `json:"auto_detect_interface"`
@@ -130,10 +132,14 @@ func TestLinuxAccessRuntimeDerivesThePlatformTUNWithoutChangingAuthority(t *test
 	}
 	if len(document.Inbounds) != 1 || len(document.Inbounds[0].Address) != 1 ||
 		document.Inbounds[0].Address[0] != "172.19.0.1/30" || document.Inbounds[0].Stack != "system" ||
+		!reflect.DeepEqual(document.Inbounds[0].RouteExcludeAddress, []string{"192.0.2.10/32", "2001:db8::10/128"}) ||
 		!document.Route.AutoDetectInterface {
 		t.Fatalf("Linux platform TUN derivation is incomplete: %+v", document)
 	}
-	if _, err := deriveLinuxAccessRuntime(`{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true,"address":["192.0.2.1/30"]}]}`); err == nil {
+	if _, err := deriveLinuxAccessRuntime(`{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true,"address":["192.0.2.1/30"]}]}`, nil); err == nil {
 		t.Fatal("conflicting signed TUN address was overwritten")
+	}
+	if _, err := deriveLinuxAccessRuntime(`{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true,"route_exclude_address":["0.0.0.0/0"]}]}`, nil); err == nil {
+		t.Fatal("signed runtime was allowed to broaden local endpoint exclusions")
 	}
 }

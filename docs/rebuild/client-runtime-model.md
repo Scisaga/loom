@@ -141,6 +141,9 @@ matcher；因此探测成功证明的是该设备实际获授权的业务链，�
 设备已有认证 View 后，私有 Device tunnel 的 endpoint 主机名同样只用该 View 的认证 DNS 解析；解析结果只作为
 本次拨号地址，TLS 仍核对 EndpointGeneration 中独立认证的 server name 与 SPKI，不能让 DNS 结果改写 endpoint
 身份。尚未取得 View 的 bootstrap 维持 EndpointGeneration 原有拨号边界，不从业务运行时反推 bootstrap 权威。
+Linux HostAdapter 将这些解析结果以逐主机 `/32` 或 `/128` 投影为 TUN 的本机
+`route_exclude_address`，使私有 Device tunnel 不依赖某条业务 policy；认证 RuntimeProfile 不得自行提供或
+扩大该字段。DNS 变化时重新解析、重建本机投影，旧结果不是权威也不能扩成网段。
 
 ICMP 结果只能作为地址 RTT 提示：
 
