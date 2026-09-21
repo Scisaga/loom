@@ -247,6 +247,11 @@ func certifiedPublisherInput(projection Projection, head GovernanceHead) (publis
 }
 
 func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
+	if localAdmin(request) && server.Runtime != nil && server.Runtime.Raft != nil {
+		_, leaderID := server.Runtime.Raft.LeaderWithID()
+		writer.Header().Set("X-Loom-Raft-State", server.Runtime.Raft.State().String())
+		writer.Header().Set("X-Loom-Raft-Leader", string(leaderID))
+	}
 	response, err := server.snapshotValue(request)
 	if err != nil {
 		http.Error(writer, "control projection unavailable", http.StatusServiceUnavailable)

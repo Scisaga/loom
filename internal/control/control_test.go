@@ -199,8 +199,31 @@ func TestPrivateProjectionAndRetiredRoutes(t *testing.T) {
 		PeerCertificates: []*x509.Certificate{{Raw: testReadCertificateDER}}}
 	response = httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"admin":true`) {
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"admin":true`) ||
+		response.Header().Get("X-Loom-Raft-State") != "" || response.Header().Get("X-Loom-Raft-Leader") != "" {
 		t.Fatalf("read credential did not remain read-only: status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "http://loom.local/api/control/ui/snapshot", nil)
+	response = httptest.NewRecorder()
+	server.AdminHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("local admin snapshot status=%d", response.Code)
+	}
+}
+
+func TestLocalAdminSnapshotCarriesRuntimeDiagnosticsOnlyInHeaders(t *testing.T) {
+	server := testWritableRuntimeServer(t, testState())
+	server.ReleaseRoot = t.TempDir()
+	server.ReleaseKey = filepath.Join(t.TempDir(), "missing")
+	request := httptest.NewRequest(http.MethodGet, "http://loom.local/api/control/ui/snapshot", nil)
+	response := httptest.NewRecorder()
+	server.AdminHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("X-Loom-Raft-State") == "" ||
+		response.Header().Get("X-Loom-Raft-Leader") == "" {
+		t.Fatalf("local admin snapshot omitted runtime rollout diagnostics: status=%d headers=%v", response.Code, response.Header())
+	}
+	if strings.Contains(response.Body.String(), "raft_state") || strings.Contains(response.Body.String(), "raft_leader") {
+		t.Fatal("runtime rollout diagnostics leaked into the snapshot wire projection")
 	}
 }
 

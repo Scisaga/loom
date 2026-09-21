@@ -213,6 +213,8 @@ leaf/key、签名私钥内容和恢复 floor，是
   可消费认证头可沿同一非全互连拓扑收敛；转送不能形成日志顺序或认证候选 head。
 - UI 的写操作表达用户意图，由服务端生成、鉴权并提交 `Material`；UI 返回对象不得成为新权威。
 - UI 读取必须带所依据的 `CertifiedHead`，避免把不同头部的卡片拼成一个不存在的状态。
+- 本机 root admin socket 的 snapshot 响应可额外用 `X-Loom-Raft-State` 和 `X-Loom-Raft-Leader` 响应头暴露
+  当前进程的瞬时滚动部署诊断；它们不进入 JSON、WebProjection、Material 或完成判定，浏览器入口也不返回。
 - TLS 客户端证书请求列出的签发者名称从本机保存的 read/admin exact leaf 的 `RawIssuer` 派生，只用于
   浏览器选证书；最终 read/admin 权限仍由 exact leaf DER 决定，不能把签发者名称提升为授权事实。
 
