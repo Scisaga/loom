@@ -24,9 +24,15 @@ import (
 // Options 是发布器的运行期参数。
 type Options struct {
 	SSOTPath string
-	Key      ed25519.PrivateKey
-	Target   Target
-	Author   string
+	// AuthorityInput returns the canonical, certified, secret-free publisher
+	// input from the local control admin socket. Production v2 publishers set
+	// this and never watch legacy SSOT. SSOTPath remains only for explicit
+	// migration/manual compatibility callers.
+	AuthorityInput     func(context.Context) ([]byte, error)
+	AuthorityInputName string
+	Key                ed25519.PrivateKey
+	Target             Target
+	Author             string
 
 	// VerifyURL 非空时,推完之后从**节点视角**确认真的取得到。
 	// 推成功不等于取得到 —— nginx 的路径写错时,推送这一侧完全正常。
@@ -74,6 +80,10 @@ type Options struct {
 	// 没有它的话,"进程活着但发不出去"只能靠翻 journal 发现 —— 而没人
 	// 会去翻一个 systemd 显示 active 的服务的日志。
 	HealthPath string
+	// ObservationPath stores the platform-key signed publisher observation.
+	// It is separate from legacy human-readable Health and is the only
+	// publisher runtime value eligible for control/Web projection.
+	ObservationPath string
 	// LockPath 串行化每一次 Build→Push→Verify→存档/历史事务。生产
 	// 命令必须设置为 LockPath；留空只供纯内存/单元测试调用，
 	// 避免碰宿主 /var/lib。
@@ -117,6 +127,7 @@ func (o *Options) fill() {
 // 动过,都会让它和真相分叉。只在"文件变了"时才动作的发布器修不了这些。
 func Run(ctx context.Context, opts Options) error {
 	opts.fill()
+	configuredAuthorityVerifyURLs := append([]string(nil), opts.VerifyURLs...)
 	logf := func(f string, a ...any) {
 		fmt.Fprintf(opts.Log, "%s "+f+"\n", append([]any{opts.Now().Format("15:04:05")}, a...)...)
 	}
@@ -133,6 +144,40 @@ func Run(ctx context.Context, opts Options) error {
 		health.UpdatedAt = opts.Now().Format(time.RFC3339Nano)
 		if err := health.Write(opts.HealthPath); err != nil {
 			logf("⚠️ 写发布器状态失败:%v —— loom status 看到的会是旧的", err)
+		}
+		if opts.ObservationPath != "" && len(opts.Key) == ed25519.PrivateKeySize {
+			current, currentErr := ReadReleaseAuthority(opts.ReleaseDir, opts.Key.Public().(ed25519.PublicKey))
+			if currentErr != nil {
+				logf("⚠️ 读取发布 authority 以签名观测失败:%v", currentErr)
+			} else if current != nil {
+				success := health.LastErrorAt == "" || health.LastErrorAt <= health.LastSuccess
+				checks := make([]PublisherDistributionCheck, 0, len(health.DistributionChecks))
+				for _, check := range health.DistributionChecks {
+					projected := PublisherDistributionCheck{URL: check.URL, Snapshot: check.Snapshot,
+						SourceDigest: "sha256:" + check.SSOT, CheckedAt: check.CheckedAt, Success: check.Success}
+					if !check.Success {
+						projected.ErrorCode = PublisherErrorVerifyFailed
+					}
+					checks = append(checks, projected)
+				}
+				observation := PublisherObservation{Schema: PublisherObservationSchema, Current: *current,
+					ObservedAt: health.UpdatedAt, IntervalSeconds: health.IntervalSeconds, Version: health.Version,
+					Success: success, DistributionChecks: checks}
+				if !success {
+					observation.ErrorCode = PublisherErrorPublishFailed
+					for _, check := range checks {
+						if !check.Success {
+							observation.ErrorCode = PublisherErrorDistributionFailed
+							break
+						}
+					}
+				}
+				if err := observation.Sign(opts.Key); err != nil {
+					logf("⚠️ 签名发布器观测失败:%v", err)
+				} else if err := observation.Write(opts.ObservationPath); err != nil {
+					logf("⚠️ 写发布器签名观测失败:%v", err)
+				}
+			}
 		}
 	}
 	retryPending := false
@@ -156,12 +201,31 @@ func Run(ctx context.Context, opts Options) error {
 
 	for {
 		var iterationErr error
-		body, err := os.ReadFile(opts.SSOTPath)
+		body, err := readPublisherInput(ctx, &opts)
 		if err != nil {
-			iterationErr = fmt.Errorf("读 SSOT 失败:%w", err)
+			iterationErr = fmt.Errorf("读取认证发布输入失败:%w", err)
 			logf("未发布:%v", iterationErr)
 			recordFailure(iterationErr)
 		} else {
+			if opts.AuthorityInput != nil {
+				input, decodeErr := DecodeCertifiedPublisherInput(body)
+				if decodeErr != nil {
+					iterationErr = fmt.Errorf("认证发布输入无效:%w", decodeErr)
+					logf("未发布:%v", iterationErr)
+					recordFailure(iterationErr)
+					if opts.Once {
+						return iterationErr
+					}
+					saveHealth()
+					select {
+					case <-ctx.Done():
+						return nil
+					case <-time.After(opts.Interval):
+					}
+					continue
+				}
+				opts.VerifyURLs = append(append([]string(nil), configuredAuthorityVerifyURLs...), input.DistributionURLs...)
+			}
 			h := sha256.Sum256(body)
 			ssotSum := hex.EncodeToString(h[:])
 			// 变化坐标使用完整 SHA-256；截断只用于人读日志。
@@ -365,7 +429,7 @@ func Run(ctx context.Context, opts Options) error {
 					// 的输入变新。拿锁后再读一次授权坐标：若 daemon A
 					// 读了旧 SSOT，手工 B 先发布新 SSOT，A 不能随后把
 					// current 完整地退回旧版。
-					fresh, err := readPublishInputStamp(&opts)
+					fresh, err := readPublishInputStamp(ctx, &opts)
 					if err != nil {
 						return "", fmt.Errorf("取得发布锁后重读输入:%w", err)
 					}
@@ -375,7 +439,7 @@ func Run(ctx context.Context, opts Options) error {
 					}
 
 					if pin != nil {
-						candidateID, err := SnapshotID(body, bins)
+						candidateID, err := publisherSnapshotID(&opts, body, bins)
 						if err != nil {
 							return "", fmt.Errorf("核对钉住快照:%w", err)
 						}
@@ -511,7 +575,7 @@ func releasePointerConverged(opts *Options) (known, converged bool, retErr error
 }
 
 func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(string, ...any)) (string, error) {
-	t, err := Build(body, opts.Key, Meta{
+	t, err := buildPublisherTree(opts, body, Meta{
 		CreatedAt: opts.Now().Format(time.RFC3339), Author: opts.Author,
 		Binaries: bins,
 	})
@@ -969,10 +1033,10 @@ func (s publishInputStamp) summary() string {
 // readPublishInputStamp 在持有 publish.lock 后重新选一次输入。
 // 它不返回要发的字节：只用来证明锁外读到内存的那组字节
 // 仍是当前被授权的组合。坐标变了就丢掉整轮，不在原地混搭。
-func readPublishInputStamp(opts *Options) (publishInputStamp, error) {
-	body, err := os.ReadFile(opts.SSOTPath)
+func readPublishInputStamp(ctx context.Context, opts *Options) (publishInputStamp, error) {
+	body, err := readPublisherInput(ctx, opts)
 	if err != nil {
-		return publishInputStamp{}, fmt.Errorf("读 SSOT:%w", err)
+		return publishInputStamp{}, fmt.Errorf("读取认证发布输入:%w", err)
 	}
 	stamp := publishInputStamp{SSOT: sha256Bytes(body), Source: "config"}
 
@@ -1011,6 +1075,44 @@ func readPublishInputStamp(opts *Options) (publishInputStamp, error) {
 		stamp.Binary = candidate.SHA256
 	}
 	return stamp, nil
+}
+
+func readPublisherInput(ctx context.Context, opts *Options) ([]byte, error) {
+	if opts == nil {
+		return nil, errors.New("publisher options are nil")
+	}
+	if opts.AuthorityInput != nil {
+		body, err := opts.AuthorityInput(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := DecodeCertifiedPublisherInput(body); err != nil {
+			return nil, err
+		}
+		return body, nil
+	}
+	if opts.SSOTPath == "" {
+		return nil, errors.New("publisher has no certified authority input")
+	}
+	return os.ReadFile(opts.SSOTPath)
+}
+
+func buildPublisherTree(opts *Options, body []byte, meta Meta) (*Tree, error) {
+	if opts != nil && opts.AuthorityInput != nil {
+		return BuildCertified(body, opts.Key, meta)
+	}
+	return Build(body, opts.Key, meta)
+}
+
+func publisherSnapshotID(opts *Options, body []byte, binaries map[string][]byte) (string, error) {
+	if opts != nil && opts.AuthorityInput != nil {
+		tree, err := BuildCertified(body, opts.Key, Meta{Binaries: binaries})
+		if err != nil {
+			return "", err
+		}
+		return tree.Snapshot, nil
+	}
+	return SnapshotID(body, binaries)
 }
 
 // readBinary 读要一起发的二进制,并返回它的内容哈希。

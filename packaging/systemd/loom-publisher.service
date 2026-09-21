@@ -1,0 +1,25 @@
+[Unit]
+Description=Loom certified release publisher
+Documentation=file:/opt/loom/docs/rebuild/control-model.md
+After=network-online.target loom-control.service
+Wants=network-online.target loom-control.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/loom
+ExecStart=/usr/local/libexec/loom-control-minimal publisher -env /opt/loom/.env -control-socket /run/loom-control/admin.sock -release-dir /opt/loom/deploy/released -ssot-history /opt/loom/deploy/ssot-history -pin-dir /opt/loom/deploy/pinned -health /var/lib/loom/publisher.json -observation /var/lib/loom/publisher.json.signed
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

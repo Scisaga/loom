@@ -26,23 +26,29 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"loom/internal/clientrelease"
+	"loom/internal/publish"
 )
+
+var errPublisherProjectionUnavailable = errors.New("publisher observation projection is unavailable")
 
 //go:embed static/*
 var staticFiles embed.FS
 
 type Server struct {
-	Runtime            *Runtime
-	Channel            *PrivateChannel
-	Config             NodeConfig
-	ReleaseRoot        string
-	ReleaseKey         string
-	AdminSocket        string
-	Now                func() time.Time
-	Endpoints          *EndpointRuntime
-	Reports            *ObservationStore
-	ReportSyncInterval time.Duration
-	mu                 sync.Mutex
+	Runtime                  *Runtime
+	Channel                  *PrivateChannel
+	Config                   NodeConfig
+	ReleaseRoot              string
+	ReleaseKey               string
+	PublisherObservationPath string
+	AdminSocket              string
+	Now                      func() time.Time
+	Endpoints                *EndpointRuntime
+	Reports                  *ObservationStore
+	ReportSyncInterval       time.Duration
+	PublisherSyncInterval    time.Duration
+	mu                       sync.Mutex
+	endpointsMu              sync.RWMutex
 }
 
 func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) error {
@@ -65,7 +71,9 @@ func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) err
 	if err != nil {
 		return err
 	}
+	server.endpointsMu.Lock()
 	server.Endpoints = endpoints
+	server.endpointsMu.Unlock()
 	defer endpoints.Close()
 
 	handler := server.Handler()
@@ -83,6 +91,7 @@ func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) err
 	if server.Reports != nil {
 		go server.syncReports(ctx)
 	}
+	server.startPublisherSync(ctx)
 	select {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -97,6 +106,12 @@ func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) err
 		}
 		return err
 	}
+}
+
+func (server *Server) endpointRuntime() *EndpointRuntime {
+	server.endpointsMu.RLock()
+	defer server.endpointsMu.RUnlock()
+	return server.Endpoints
 }
 
 type adminContextKey struct{}
@@ -123,18 +138,24 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /favicon.svg", func(writer http.ResponseWriter, request *http.Request) {
 		serveEmbedded(writer, request, "favicon.svg", "image/svg+xml")
 	})
-	mux.HandleFunc("GET /api/control/ui", server.snapshot)
 	mux.HandleFunc("GET /api/control/ui/snapshot", server.snapshot)
-	mux.HandleFunc("GET /api/control/ui/events", server.events)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
+	mux.HandleFunc("GET /api/control/ui/enrollment-options", server.enrollmentOptions)
+	mux.HandleFunc("GET /api/control/ui/invites/{transaction}", server.inviteReadback)
+	mux.HandleFunc("GET /api/control/ui/invites/{transaction}/qr.png", server.inviteQR)
+	mux.HandleFunc("GET /api/control/ui/invites/{transaction}/download", server.inviteDownload)
 	mux.HandleFunc("GET /api/control/ui/releases/files/", server.download)
+	mux.HandleFunc("GET /api/control/publisher-input", server.publisherInput)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
 	mux.HandleFunc("PUT /internal/materials/{digest}", server.internalMaterial)
 	mux.HandleFunc("GET /internal/materials", server.internalMaterialIDs)
 	mux.HandleFunc("POST /internal/head/sign", server.internalSign)
 	mux.HandleFunc("PUT /internal/certified", server.internalCertified)
 	mux.HandleFunc("POST /internal/submit", server.internalSubmit)
+	mux.HandleFunc("GET /internal/quorum-writable", server.internalQuorumWritable)
 	mux.HandleFunc("PUT /internal/reports", server.internalReports)
+	mux.HandleFunc("POST /internal/report-ids", server.internalReportIDs)
+	server.registerPublisherRoutes(mux)
 	mux.HandleFunc("/", server.page)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
@@ -158,6 +179,68 @@ func (server *Server) Handler() http.Handler {
 	})
 }
 
+func (server *Server) publisherInput(writer http.ResponseWriter, request *http.Request) {
+	if !localAdmin(request) {
+		http.NotFound(writer, request)
+		return
+	}
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	input, err := certifiedPublisherInput(certified.Projection, certified.Head)
+	if err != nil {
+		http.Error(writer, "certified publisher input unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := canonical(input)
+	if err != nil {
+		http.Error(writer, "certified publisher input unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(body)
+}
+
+func certifiedPublisherInput(projection Projection, head GovernanceHead) (publish.CertifiedPublisherInput, error) {
+	if projection.NetworkIntent == nil {
+		return publish.CertifiedPublisherInput{}, errors.New("certified network intent is unavailable")
+	}
+	input := publish.CertifiedPublisherInput{Schema: publish.CertifiedPublisherInputSchema,
+		Head: HeadID(head), Index: head.Index, ProjectionDigest: head.ProjectionDigest,
+		DistributionURLs: []string{}, Devices: []publish.CertifiedPublisherDevice{}}
+	distributionURLs := map[string]bool{}
+	for _, node := range projection.NetworkIntent.Nodes {
+		for _, value := range node.DistributionURLs {
+			distributionURLs[value] = true
+		}
+		components := append([]ComponentExpectation(nil), projection.NetworkIntent.Components...)
+		for _, override := range node.Components {
+			index := sort.Search(len(components), func(index int) bool { return components[index].Name >= override.Name })
+			if index < len(components) && components[index].Name == override.Name {
+				components[index] = override
+			} else {
+				components = append(components, ComponentExpectation{})
+				copy(components[index+1:], components[index:])
+				components[index] = override
+			}
+		}
+		device := publish.CertifiedPublisherDevice{ID: node.ID, Platform: node.Platform,
+			Roles: append([]string(nil), node.Roles...), Components: make([]publish.CertifiedPublisherComponent, 0, len(components))}
+		for _, component := range components {
+			device.Components = append(device.Components, publish.CertifiedPublisherComponent{
+				Name: component.Name, Version: component.Version, Digest: component.Digest})
+		}
+		input.Devices = append(input.Devices, device)
+	}
+	for value := range distributionURLs {
+		input.DistributionURLs = append(input.DistributionURLs, value)
+	}
+	sort.Strings(input.DistributionURLs)
+	if err := input.Validate(); err != nil {
+		return publish.CertifiedPublisherInput{}, err
+	}
+	return input, nil
+}
+
 func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request) {
 	response, err := server.snapshotValue(request)
 	if err != nil {
@@ -167,15 +250,15 @@ func (server *Server) snapshot(writer http.ResponseWriter, request *http.Request
 	writeJSON(writer, http.StatusOK, response)
 }
 
-func (server *Server) snapshotValue(request *http.Request) (map[string]any, error) {
+func (server *Server) snapshotValue(request *http.Request) (WebSnapshotV2, error) {
 	_, _, certified := server.Runtime.Authority.Snapshot()
 	projectionBody, err := canonical(certified.Projection.Web)
 	if err != nil {
-		return nil, err
+		return WebSnapshotV2{}, err
 	}
 	var projection WebProjection
 	if err := json.Unmarshal(projectionBody, &projection); err != nil {
-		return nil, err
+		return WebSnapshotV2{}, err
 	}
 	if initial, err := server.Runtime.Authority.initialWebProjection(); err == nil {
 		projection.UIState.Warnings = append(projection.UIState.Warnings,
@@ -183,28 +266,54 @@ func (server *Server) snapshotValue(request *http.Request) (map[string]any, erro
 	}
 	hideRevokedDevices(&projection)
 	verifiedReports := []DeviceReport{}
+	historicalReports := []DeviceReport{}
 	if server.Reports != nil {
 		server.Reports.Project(&projection, certified.Projection, server.now())
 		verifiedReports = server.Reports.Verified(certified.Projection)
+		if authorities, historyErr := server.Runtime.Authority.HistoricalReportAuthorities(); historyErr == nil {
+			historicalReports = server.Reports.VerifiedHistory(authorities, server.now())
+		} else {
+			projection.UIState.Warnings = append(projection.UIState.Warnings, "Authenticated event history is unavailable.")
+		}
 	}
-	projection.Events = projectCurrentEvents(projection, verifiedReports, server.now())
+	projectEnrollmentReadiness(&projection, certified.Projection, verifiedReports, server.now())
+	if err := server.projectDeployments(&projection, verifiedReports); err != nil {
+		projection.UIState.Warnings = append(projection.UIState.Warnings, "Authenticated deployment readback is unavailable.")
+	}
+	projection.Events = projectCurrentEvents(projection, verifiedReports, historicalReports, server.now())
 	catalog, err := server.catalog()
 	if err != nil {
 		projection.UIState.Warnings = append(projection.UIState.Warnings, "Verified release catalog is unavailable.")
 	} else {
 		projection.Releases = make([]Release, 0, len(catalog.Artifacts))
 		for _, artifact := range catalog.Artifacts {
-			projection.Releases = append(projection.Releases, Release{Path: artifact.Path, Name: artifact.Name,
+			release := Release{Path: artifact.Path, Name: artifact.Name,
 				Title: artifact.Title, Platform: artifact.Platform, Arch: artifact.Arch, Variant: artifact.Variant,
 				Version: artifact.Version, SourceCommit: artifact.SourceCommit, SHA256: artifact.SHA256,
-				Size: artifact.Size, Signing: artifact.Signing, URL: "/api/control/ui/releases/files/" + artifact.Path})
+				Size: artifact.Size, Signing: artifact.Signing, URL: "/api/control/ui/releases/files/" + artifact.Path,
+				Checksum: releaseFileProjection(artifact.Checksum), Signature: releaseFileProjection(artifact.Signature)}
+			if artifact.SBOM != nil {
+				release.SBOM = releaseFileProjection(*artifact.SBOM)
+			}
+			projection.Releases = append(projection.Releases, release)
 		}
 	}
-	response := map[string]any{"capabilities": map[string]bool{"admin": server.admin(request)}, "projection": projection}
-	if server.Reports != nil {
-		response["reports"] = verifiedReports
+	return buildWebSnapshot(projection, certified.Projection, certified.Head, server.admin(request), localAdmin(request),
+		server.Runtime.QuorumWritable(request.Context())), nil
+}
+
+func releaseFileProjection(file clientrelease.File) *ReleaseFile {
+	return &ReleaseFile{Name: file.Name, SHA256: file.SHA256, Size: file.Size,
+		URL: "/api/control/ui/releases/files/" + file.Path}
+}
+
+func (server *Server) internalQuorumWritable(writer http.ResponseWriter, request *http.Request) {
+	if _, ok := server.internalBody(writer, request); !ok {
+		return
 	}
-	return response, nil
+	context, cancel := context.WithTimeout(request.Context(), 750*time.Millisecond)
+	defer cancel()
+	writeJSON(writer, http.StatusOK, quorumStatus{Writable: server.Runtime.verifyLocalLeader(context)})
 }
 
 func (server *Server) live(writer http.ResponseWriter, request *http.Request) {
@@ -239,16 +348,6 @@ func (server *Server) live(writer http.ResponseWriter, request *http.Request) {
 		case <-ticker.C:
 		}
 	}
-}
-
-func (server *Server) events(writer http.ResponseWriter, request *http.Request) {
-	response, err := server.snapshotValue(request)
-	if err != nil {
-		http.Error(writer, "control projection unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	projection, _ := response["projection"].(WebProjection)
-	writeJSON(writer, http.StatusOK, map[string]any{"events": projection.Events})
 }
 
 func (server *Server) download(writer http.ResponseWriter, request *http.Request) {
@@ -297,8 +396,14 @@ func (server *Server) page(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	allowed := map[string]bool{"/": true, "/devices": true, "/topology": true, "/routing": true,
-		"/services": true, "/releases": true, "/events": true, "/ssot": true, "/settings": true}
-	if !allowed[request.URL.Path] && !strings.HasPrefix(request.URL.Path, "/devices/") {
+		"/services": true, "/releases": true, "/deployments": true, "/events": true, "/ssot": true, "/settings": true}
+	devicePath := strings.TrimPrefix(request.URL.Path, "/devices/")
+	validDevicePath := devicePath != request.URL.Path && devicePath != "" && !strings.Contains(devicePath, "/")
+	if strings.HasPrefix(devicePath, "invites/") {
+		transaction := strings.TrimPrefix(devicePath, "invites/")
+		validDevicePath = transaction != "" && !strings.Contains(transaction, "/")
+	}
+	if !allowed[request.URL.Path] && !validDevicePath {
 		http.NotFound(writer, request)
 		return
 	}
@@ -334,6 +439,7 @@ func (server *Server) authorized(request *http.Request) bool {
 }
 
 type operationEnvelope struct {
+	Schema    int             `json:"schema"`
 	Kind      string          `json:"kind"`
 	Payload   json.RawMessage `json:"payload"`
 	RequestID string          `json:"request_id"`
@@ -357,7 +463,7 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 	var envelope operationEnvelope
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil || envelope.RequestID == "" || envelope.BaseHead == "" {
+	if err := decoder.Decode(&envelope); err != nil || envelope.Schema != 2 || envelope.RequestID == "" || envelope.BaseHead == "" {
 		http.Error(writer, "invalid operation", http.StatusBadRequest)
 		return
 	}
@@ -372,10 +478,24 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 		}
 		sort.Strings(service.Matchers)
 		material := Material{Schema: MaterialSchema, Kind: envelope.Kind, RequestID: envelope.RequestID, BaseHead: envelope.BaseHead, Service: &service}
-		materialBody, _, err := EncodeMaterial(material)
+		var materialBody []byte
+		materialBody, _, err = EncodeMaterial(material)
 		if err == nil {
 			result, err = server.Runtime.Submit(request.Context(), materialBody)
 		}
+	case "service.delete":
+		var payload ServiceDelete
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid service deletion", http.StatusBadRequest)
+			return
+		}
+		material := Material{Schema: MaterialSchema, Kind: envelope.Kind, RequestID: envelope.RequestID,
+			BaseHead: envelope.BaseHead, ServiceDelete: &payload}
+		materialBody, _, encodeErr := EncodeMaterial(material)
+		if encodeErr == nil {
+			result, encodeErr = server.Runtime.Submit(request.Context(), materialBody)
+		}
+		err = encodeErr
 	case "members.replace":
 		var payload struct {
 			Members []Member `json:"members"`
@@ -409,15 +529,36 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 		}
 		result, err = server.revokeDevice(request.Context(), envelope.RequestID, envelope.BaseHead, payload.DeviceID)
 	case "enrollment.create":
-		var payload enrollmentCreatePayload
+		var payload productEnrollmentCreatePayload
 		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
 			http.Error(writer, "invalid enrollment", http.StatusBadRequest)
 			return
 		}
 		var invite string
-		result, invite, err = server.createEnrollment(request.Context(), envelope.RequestID, envelope.BaseHead, payload)
+		result, invite, err = server.createEnrollment(request.Context(), envelope.RequestID, envelope.BaseHead, payload.internal())
 		if err == nil {
 			extra["invite"] = invite
+			if decoded, decodeErr := DecodeInvite(invite); decodeErr == nil {
+				extra["transaction_id"] = decoded.Capability.TransactionID
+			}
+		}
+	case "existing-node.rejoin":
+		if !localAdmin(request) {
+			http.Error(writer, "existing-node rejoin requires the local admin socket", http.StatusForbidden)
+			return
+		}
+		var payload existingNodeRejoinPayload
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid existing-node rejoin", http.StatusBadRequest)
+			return
+		}
+		var invite string
+		result, invite, err = server.createExistingNodeRejoin(request.Context(), envelope.RequestID, envelope.BaseHead, payload)
+		if err == nil {
+			extra["invite"] = invite
+			if decoded, decodeErr := DecodeInvite(invite); decodeErr == nil {
+				extra["transaction_id"] = decoded.Capability.TransactionID
+			}
 		}
 	case "enrollment.approve":
 		var payload struct {
@@ -428,14 +569,50 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		result, err = server.approveEnrollment(request.Context(), envelope.RequestID, envelope.BaseHead, payload.TransactionID)
+	case "network.import":
+		if !localAdmin(request) {
+			http.Error(writer, "network import requires the local admin socket", http.StatusForbidden)
+			return
+		}
+		var payload NetworkImport
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid network import", http.StatusBadRequest)
+			return
+		}
+		recoveryBody, encodeErr := canonical(server.Config.Recovery)
+		if encodeErr != nil || subtle.ConstantTimeCompare([]byte(payload.RecoveryEvidenceHash),
+			[]byte("sha256:"+SHA256(recoveryBody))) != 1 {
+			http.Error(writer, "network import recovery evidence does not match this control node", http.StatusUnprocessableEntity)
+			return
+		}
+		_, _, currentCertified := server.Runtime.Authority.Snapshot()
+		if currentCertified.Projection.NetworkIntent != nil {
+			existingBody, existingErr := canonical(currentCertified.Projection.NetworkIntent)
+			incomingBody, incomingErr := canonical(payload.Intent)
+			if existingErr == nil && incomingErr == nil && bytes.Equal(existingBody, incomingBody) {
+				result = currentCertified
+				break
+			}
+		}
+		material := Material{Schema: MaterialSchema, Kind: envelope.Kind, RequestID: envelope.RequestID,
+			BaseHead: envelope.BaseHead, NetworkImport: &payload}
+		materialBody, _, encodeErr := EncodeMaterial(material)
+		if encodeErr == nil {
+			result, encodeErr = server.Runtime.Submit(request.Context(), materialBody)
+		}
+		err = encodeErr
 	default:
 		http.Error(writer, "unknown operation", http.StatusBadRequest)
 		return
 	}
 	if err != nil {
 		status := http.StatusServiceUnavailable
-		if strings.Contains(err.Error(), "stale") {
+		if strings.Contains(err.Error(), "stale") || strings.Contains(err.Error(), "already bound") ||
+			strings.Contains(err.Error(), "another operation") || strings.Contains(err.Error(), "another identity") {
 			status = http.StatusConflict
+		} else if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "unknown") ||
+			strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "required") {
+			status = http.StatusUnprocessableEntity
 		}
 		http.Error(writer, err.Error(), status)
 		return
@@ -548,18 +725,47 @@ func (server *Server) internalReports(writer http.ResponseWriter, request *http.
 		http.Error(writer, "observation store unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var reports []DeviceReport
-	if err := decodeRawStrict(body, &reports); err != nil {
+	var records []reportRecord
+	if err := decodeRawStrict(body, &records); err != nil {
 		http.Error(writer, "invalid device reports", http.StatusBadRequest)
 		return
 	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	merged, err := server.Reports.Merge(reports, certified.Projection)
+	authorities, err := server.Runtime.Authority.HistoricalReportAuthorities()
+	if err != nil {
+		http.Error(writer, "certified report history unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	merged, err := server.Reports.mergeRecords(records, authorities)
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusConflict)
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]int{"merged": merged})
+}
+
+func (server *Server) internalReportIDs(writer http.ResponseWriter, request *http.Request) {
+	body, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	if server.Reports == nil {
+		http.Error(writer, "observation store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var page struct {
+		After string `json:"after"`
+		Limit int    `json:"limit"`
+	}
+	if decodeRawStrict(body, &page) != nil {
+		http.Error(writer, "invalid report content ID page", http.StatusBadRequest)
+		return
+	}
+	ids, next, err := server.Reports.IDPage(page.After, page.Limit)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"ids": ids, "next": next})
 }
 
 func (server *Server) syncReports(ctx context.Context) {
@@ -584,17 +790,54 @@ func (server *Server) syncReportsOnce(ctx context.Context) {
 		return
 	}
 	_, _, certified := server.Runtime.Authority.Snapshot()
-	body, err := canonical(server.Reports.Verified(certified.Projection))
-	if err != nil {
+	authorities, authorityErr := server.Runtime.Authority.HistoricalReportAuthorities()
+	if authorityErr != nil {
 		return
 	}
 	for _, member := range uniqueMembers(certified.Projection.Config) {
 		if member.ID == server.Config.MemberID {
 			continue
 		}
-		peerContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_ = server.Runtime.peerJSON(peerContext, member, http.MethodPut, "/internal/reports", body, nil)
-		cancel()
+		known, after, failed := []string{}, "", false
+		for {
+			requestBody, _ := canonical(map[string]any{"after": after, "limit": 4096})
+			var page struct {
+				IDs  []string `json:"ids"`
+				Next string   `json:"next"`
+			}
+			peerContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := server.Runtime.peerJSON(peerContext, member, http.MethodPost, "/internal/report-ids", requestBody, &page)
+			cancel()
+			if err != nil || page.Next != "" && (len(page.IDs) == 0 || page.Next <= after) {
+				failed = true
+				break
+			}
+			known = append(known, page.IDs...)
+			if page.Next == "" {
+				break
+			}
+			after = page.Next
+		}
+		if failed {
+			continue
+		}
+		records, recordErr := server.Reports.missingRecords(known, authorities)
+		if recordErr != nil {
+			continue
+		}
+		for start := 0; start < len(records); start += 128 {
+			end := min(start+128, len(records))
+			body, encodeErr := canonical(records[start:end])
+			if encodeErr != nil {
+				break
+			}
+			batchContext, batchCancel := context.WithTimeout(ctx, 5*time.Second)
+			putErr := server.Runtime.peerJSON(batchContext, member, http.MethodPut, "/internal/reports", body, nil)
+			batchCancel()
+			if putErr != nil {
+				break
+			}
+		}
 	}
 }
 

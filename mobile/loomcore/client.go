@@ -8,9 +8,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +23,7 @@ import (
 	"time"
 
 	"loom/internal/clientmodel"
+	"loom/internal/version"
 )
 
 type deviceState struct {
@@ -43,6 +47,55 @@ type androidProfile struct {
 	Config     string                       `json:"config"`
 	Routes     []clientmodel.RouteCandidate `json:"routes"`
 	RecordID   string                       `json:"record_id"`
+}
+
+func androidRuntimeConfig(config, publicCA string) (string, error) {
+	rest := []byte(publicCA)
+	certificates := 0
+	for len(rest) > 0 {
+		block, remainder := pem.Decode(rest)
+		if block == nil || block.Type != "CERTIFICATE" {
+			return "", errors.New("invalid public data-plane CA bundle")
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !certificate.IsCA {
+			return "", errors.New("invalid public data-plane CA certificate")
+		}
+		certificates++
+		rest = remainder
+	}
+	if certificates == 0 {
+		return "", errors.New("missing public data-plane CA")
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(config), &document); err != nil {
+		return "", errors.New("invalid Android runtime config")
+	}
+	outbounds, ok := document["outbounds"].([]any)
+	if !ok {
+		return "", errors.New("invalid Android runtime outbounds")
+	}
+	for _, raw := range outbounds {
+		outbound, ok := raw.(map[string]any)
+		if !ok {
+			return "", errors.New("invalid Android runtime outbound")
+		}
+		kind, _ := outbound["type"].(string)
+		if kind != "hysteria2" && kind != "trojan" {
+			continue
+		}
+		tlsValue, ok := outbound["tls"].(map[string]any)
+		if !ok {
+			return "", errors.New("Android data-plane TLS outbound is incomplete")
+		}
+		tlsValue["certificate"] = publicCA
+		delete(tlsValue, "certificate_path")
+	}
+	body, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 func validateState(state deviceState) error {
@@ -113,8 +166,15 @@ func AndroidDeviceProfile(body []byte) ([]byte, error) {
 		return nil, errors.New("device has no certified runtime profile")
 	}
 	digest, _ := viewDigest(state.LKG.View)
+	runtimeConfig := state.LKG.View.Runtime.Config
+	if state.LKG.View.Schema == 2 {
+		runtimeConfig, err = androidRuntimeConfig(runtimeConfig, state.LKG.View.PublicDataPlaneCA)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return canonical(androidProfile{Schema: 1, NodeID: state.LKG.View.DeviceID, Name: state.LKG.View.Name, Head: headID(state.LKG.Head),
-		Generation: state.LKG.Head.Index, ViewDigest: digest, Config: state.LKG.View.Runtime.Config,
+		Generation: state.LKG.Head.Index, ViewDigest: digest, Config: runtimeConfig,
 		Routes: state.LKG.View.Routes, RecordID: recordID(body)})
 }
 
@@ -152,15 +212,15 @@ func AdvanceAndroidEnrollment(body []byte) ([]byte, error) {
 	var request any
 	path := "/v2/enrollment/claim"
 	if state.Claimed {
-		value := enrollmentResume{Schema: 1, TransactionID: state.Capability.TransactionID,
+		value := enrollmentResume{Schema: 2, TransactionID: state.Capability.TransactionID,
 			RequestID: state.ClaimRequestID, DevicePublicKey: state.PublicKey}
-		if err := signValue(resumeDomain, value, &value.Signature, privateKey(state)); err != nil {
+		if err := signValue(resumeDomainV2, value, &value.Signature, privateKey(state)); err != nil {
 			return nil, err
 		}
 		request, path = value, "/v2/enrollment/resume"
 	} else {
-		value := enrollmentClaim{Schema: 1, Capability: state.Capability, RequestID: state.ClaimRequestID, DevicePublicKey: state.PublicKey}
-		if err := signValue(claimDomain, value, &value.Signature, privateKey(state)); err != nil {
+		value := enrollmentClaim{Schema: 2, Capability: state.Capability, RequestID: state.ClaimRequestID, DevicePublicKey: state.PublicKey}
+		if err := signValue(claimDomainV2, value, &value.Signature, privateKey(state)); err != nil {
 			return nil, err
 		}
 		request = value
@@ -169,7 +229,7 @@ func AdvanceAndroidEnrollment(body []byte) ([]byte, error) {
 	if err := postAcross(state.Capability.Endpoints, bootstrapHello(state.Capability), nil, path, request, &response); err != nil {
 		return nil, err
 	}
-	if response.Schema != 1 || response.Transaction.ID != state.Capability.TransactionID || response.Transaction.DevicePublicKey != state.PublicKey ||
+	if response.Schema != 2 || response.Transaction.ID != state.Capability.TransactionID || response.Transaction.DevicePublicKey != state.PublicKey ||
 		response.Transaction.ClaimRequestID != state.ClaimRequestID {
 		return nil, errors.New("enrollment response is bound to another transaction or identity")
 	}
@@ -214,7 +274,7 @@ func installEnvelope(state *deviceState, envelope deviceViewEnvelope) error {
 }
 
 // PostAndroidDeviceReport signs bounded business outcomes and sends them through the device tunnel.
-func PostAndroidDeviceReport(stateBody, observationsBody []byte, selection, reportedAt string) error {
+func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody []byte, reportedAt string) error {
 	state, err := decodeState(stateBody)
 	if err != nil {
 		return err
@@ -236,8 +296,38 @@ func PostAndroidDeviceReport(stateBody, observationsBody []byte, selection, repo
 	}
 	digest, _ := viewDigest(state.LKG.View)
 	report := deviceReport{Schema: 1, DeviceID: state.LKG.View.DeviceID, ViewDigest: digest,
-		Selection: selection, ReportedAt: reportedAt, Observations: observations}
-	if err := signValue(reportDomain, report, &report.Signature, privateKey(state)); err != nil {
+		ReportedAt: reportedAt, Observations: observations}
+	domain := reportDomain
+	if state.LKG.View.Schema == 2 {
+		if err := decodeStrictJSON(selectionsBody, 1<<20, &report.Selections); err != nil {
+			return err
+		}
+		routes := map[string]clientmodel.RouteCandidate{}
+		for _, route := range state.LKG.View.Routes {
+			routes[route.ID] = route
+		}
+		for index, selection := range report.Selections {
+			route, found := routes[selection.CandidateID]
+			if !found || route.Scope != selection.Scope || index > 0 && report.Selections[index-1].Scope >= selection.Scope {
+				return errors.New("report selections are not uniquely sorted or authorized")
+			}
+		}
+		report.Schema = 2
+		report.Runtime = &runtimeReadback{State: "running", AppliedViewDigest: digest, Exact: true}
+		for _, expected := range state.LKG.View.ExpectedComponents {
+			if expected.Name == "agent" {
+				report.Components = append(report.Components, componentReadback{Name: "agent", Version: version.AgentProtocolVersion})
+			}
+		}
+		domain = reportDomainV2
+	} else {
+		var selections []reportSelection
+		if err := decodeStrictJSON(selectionsBody, 1<<20, &selections); err != nil || len(selections) != 1 {
+			return errors.New("legacy report requires one selection")
+		}
+		report.Selection = selections[0].CandidateID
+	}
+	if err := signValue(domain, report, &report.Signature, privateKey(state)); err != nil {
 		return err
 	}
 	var response struct {

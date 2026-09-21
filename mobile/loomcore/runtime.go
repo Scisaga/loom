@@ -74,7 +74,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
-	application := runtimeApplication{Schema: 1, Mode: preference.Mode, Exit: preference.Exit,
+	application := runtimeApplication{Schema: 1, Mode: string(preference.Mode), Exit: preference.Exit,
 		DirectAvailable: direct, Exits: make([]string, 0, len(exits))}
 	for exit := range exits {
 		application.Exits = append(application.Exits, exit)

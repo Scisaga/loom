@@ -244,8 +244,8 @@ func misakaInitialBounds(work portableRect, dpi int32) portableRect {
 	if dpi <= 0 {
 		dpi = 96
 	}
-	width := min(860*dpi/96, max(1, work.right-work.left))
-	height := min(600*dpi/96, max(1, work.bottom-work.top))
+	width := min(876*dpi/96, max(1, work.right-work.left))
+	height := min(614*dpi/96, max(1, work.bottom-work.top))
 	x := work.left + (work.right-work.left-width)/2
 	y := work.top + (work.bottom-work.top-height)/2
 	return misakaRect(x, y, width, height)

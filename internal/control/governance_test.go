@@ -91,6 +91,17 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 	if joined.Projection.Config.Mode != "stable" || len(joined.Projection.Config.Members) != 3 {
 		t.Fatalf("join result: %#v", joined.Projection.Config)
 	}
+	importValue := NetworkImport{Intent: testNetworkIntent(t), RecoveryEvidenceHash: "sha256:" + strings.Repeat("1", 64)}
+	importMaterial := Material{Schema: MaterialSchema, Kind: "network.import", RequestID: "demo-network-import",
+		BaseHead: HeadID(joined.Head), NetworkImport: &importValue}
+	importBody, _, err := EncodeMaterial(importMaterial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err = leader.Submit(context.Background(), importBody)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Put leadership on a leaf. Raft must use the authenticated private relay
 	// through the center member to keep the other leaf in the same log.
 	leafLeader := runtimes[1]
@@ -118,7 +129,7 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 	if follower == leader {
 		follower = runtimes[1]
 	}
-	service := Service{ID: "demo-service", Name: "Demo", Matchers: []string{"demo.example"}, Policy: "direct"}
+	service := Service{ID: "demo-service-2", Name: "Demo", Matchers: []string{"demo.example"}, Policy: "demo-policy"}
 	material := Material{Schema: MaterialSchema, Kind: "service.put", RequestID: "demo-write", BaseHead: HeadID(joined.Head), Service: &service}
 	body, _, _ := EncodeMaterial(material)
 	written, err := follower.Submit(context.Background(), body)
@@ -300,8 +311,19 @@ func TestAuthenticatedOperationCommitsAndReadsBack(t *testing.T) {
 	defer runtime.Close()
 	waitLeader(t, []*Runtime{runtime})
 	server := &Server{Runtime: runtime, Channel: channel, Config: config, ReleaseRoot: t.TempDir(), ReleaseKey: filepath.Join(t.TempDir(), "missing")}
+	_, _, importedBefore := runtime.Authority.Snapshot()
+	importValue := NetworkImport{Intent: testNetworkIntent(t), RecoveryEvidenceHash: "sha256:" + strings.Repeat("1", 64)}
+	importMaterial := Material{Schema: MaterialSchema, Kind: "network.import", RequestID: "demo-http-network-import",
+		BaseHead: HeadID(importedBefore.Head), NetworkImport: &importValue}
+	importBody, _, err := EncodeMaterial(importMaterial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runtime.Submit(context.Background(), importBody); err != nil {
+		t.Fatal(err)
+	}
 	_, _, before := runtime.Authority.Snapshot()
-	payload, _ := json.Marshal(map[string]any{"kind": "service.put", "payload": map[string]any{"id": "demo-api", "name": "Demo API", "matchers": []string{"api.example"}, "policy": "direct"}, "request_id": "demo-api-write", "base_head": HeadID(before.Head)})
+	payload, _ := json.Marshal(map[string]any{"schema": 2, "kind": "service.put", "payload": map[string]any{"id": "demo-api", "name": "Demo API", "matchers": []string{"api.example"}, "policy": "demo-policy"}, "request_id": "demo-api-write", "base_head": HeadID(before.Head)})
 	request := httptest.NewRequest(http.MethodPost, "https://"+address+"/api/control/operations", strings.NewReader(string(payload)))
 	request.Host = address
 	request.Header.Set("Origin", "https://"+address)
@@ -325,7 +347,7 @@ func TestAuthenticatedOperationCommitsAndReadsBack(t *testing.T) {
 		t.Fatalf("read credential write status=%d", response.Code)
 	}
 	_, _, localBefore := runtime.Authority.Snapshot()
-	localPayload, _ := json.Marshal(map[string]any{"kind": "service.put", "payload": map[string]any{"id": "demo-local-api", "name": "Demo Local API", "matchers": []string{"local.example"}, "policy": "direct"}, "request_id": "demo-local-api-write", "base_head": HeadID(localBefore.Head)})
+	localPayload, _ := json.Marshal(map[string]any{"schema": 2, "kind": "service.put", "payload": map[string]any{"id": "demo-local-api", "name": "Demo Local API", "matchers": []string{"local.example"}, "policy": "demo-policy"}, "request_id": "demo-local-api-write", "base_head": HeadID(localBefore.Head)})
 	request = httptest.NewRequest(http.MethodPost, "http://loom.local/api/control/operations", strings.NewReader(string(localPayload)))
 	request.Header.Set("Origin", "http://loom.local")
 	response = httptest.NewRecorder()

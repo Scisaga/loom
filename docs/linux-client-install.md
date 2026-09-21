@@ -46,6 +46,28 @@ Enrollment 尚未批准时，installer 不启用 service。使用同一 Invite �
 的机器升级时使用 `sudo ./install.sh --upgrade`；它复用现有 owner-only 身份与完整
 LKG，候选 preflight 或启动回读失败时原子恢复旧 `current` 与旧 unit。
 
+既有 server/hybrid 首次接管前，先在旧数据面仍受保护时暂存一次受限迁移 overlay：
+
+通过新 release 的 installer 在停止旧 unit 前执行提取：
+
+```bash
+sudo ./install.sh --upgrade \
+  --server-migration-source /etc/loom/sing-box/v2/config.json
+```
+
+该命令只接受 owner-only 旧配置，只提取旧公网 listener 的用户、`auth_user` ACL 和 ACL 直接引用的
+`direct` 出站；输出固定为 `/var/lib/loom-device/migration-overlay.json`（`0600`），并打印不含秘密的源摘要。
+存在 overlay 时签名 runtime readback 必须为 `exact=false`。所有 access 已使用新凭据且真实业务、报告和重启
+恢复均通过后，操作者用 stage 时的精确摘要删除它，再重启唯一 service：
+
+```bash
+sudo loom client finalize-server-migration -source-sha256 <stage 输出的摘要>
+sudo systemctl restart loom-client.service
+```
+
+只有随后对纯认证 `ServerRuntime` 的 listener、WG、selector 和配置回读全部成功，报告才可变为
+`exact=true`。这两条命令不读取旧 SSOT，不恢复旧 unit，也不会接受旧 telemetry 或任意公网中继出站。
+
 ## 正式运行与回读
 
 `loom-client.service` 每次启动都从 `/var/lib/loom-device/state.json` 重新验证完整 LKG，将 RuntimeProfile

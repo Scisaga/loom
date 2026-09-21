@@ -47,7 +47,6 @@ func TestGUIMisakaEmptyProfileOffersInlineJoinWithoutChangingActiveProfile(t *te
 	if len(*writes) != 0 || app.snapshot().activeProfile != profileGUIFixtureA || app.snapshot().profiles[0].State != guiConnected {
 		t.Fatal("[§7.2] 查看空配置重写了稳定控件或改变正在运行的另一配置")
 	}
-	captureConfiguredProfileGUIState(t, app, "-empty-profile")
 	app.state, app.detail = guiJoining, "正在验证加入邀请。"
 	app.brokerProfiles[1].State = guiJoining
 	app.renderControls()
@@ -67,7 +66,6 @@ func TestGUIMisakaEmptyProfileOffersInlineJoinWithoutChangingActiveProfile(t *te
 			t.Fatal("[§7.2] 导入失败后没有恢复文件/粘贴重试入口")
 		}
 	}
-	captureConfiguredProfileGUIState(t, app, "-empty-profile-error")
 }
 
 func TestGUIMisakaNoProfilesShowsOneAddEntry(t *testing.T) {

@@ -96,6 +96,22 @@ Raft 负责形成并复制这个序列。日志记录至少绑定索引、Raft �
 `Projection` 不是另一份权威数据库。它可以在内存中保存，也可以作为经过摘要校验的加速缓存保存，
 但必须随时可以删除并重建。任何 UI 编辑、后台任务或迁移脚本都不得直接写它。
 
+`NetworkIntent` 是 `Projection` 中的一个规范值，不是第六个领域概念或第二个 store。它保存生成设备与
+服务器配置必需的节点角色、服务器端点、链路及精确探测目标、策略、服务、DNS、期望组件和公开数据面 CA。
+它只能由已提交 Material 更新；`DeviceView`、服务器 users/ACL、路由和 Web 列表只能从
+`NetworkIntent + DeviceAuthorization` 单向投影。一次性 `network.import` 必须经本机管理 socket，并且其
+`RecoveryEvidence` 摘要必须与当前 control 节点完全一致；已有值后只允许相同请求的幂等重放。
+server users/ACL 只进入对应设备的私有 DeviceView，不进入 WebProjection；密码由 access 授权中的
+RuntimeKey 派生，TLS/WireGuard 私钥继续只存在于设备本机。
+
+Publisher 只从本机 root 管理 socket 读取规范的 `CertifiedPublisherInput`：它绑定当前
+`CertifiedHead`、Projection 摘要、由 `NetworkIntent` 逐节点投影出的公开组件坐标及规范去重的
+`distribution_urls`。publisher daemon
+不得监视 `deploy/ssot.yaml`，也不得从 WebSnapshot 反推输入。公开分发树只包含签名
+`DeploymentCurrent`、immutable 制品和不含秘密的 deployment target；运行配置继续只通过私有
+DeviceView 下发。PublisherObservation 是可删除重建并在 control 成员间同步的签名观测，不进入
+Raft/QC，也不能倒写 Projection。
+
 ### 2.5 `CertifiedHead`
 
 `CertifiedHead` 绑定一个已提交索引、该索引处的日志前缀摘要、对应 `Projection` 摘要、

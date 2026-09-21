@@ -305,6 +305,60 @@ func (authority *Authority) Snapshot() (ConsensusState, Projection, CertifiedSta
 	return authority.consensus, authority.projection, authority.certified
 }
 
+// HistoricalReportKeys reconstructs every certified DeviceView identity up to
+// the current certified head. It lets members authenticate immutable report
+// history after a device floor/view has advanced without making old reports
+// current again.
+func (authority *Authority) HistoricalReportAuthorities() (map[string]reportAuthority, error) {
+	authority.mu.RLock()
+	entries := append([]ConsensusEntry(nil), authority.consensus.Entries...)
+	limit := int(authority.certified.Head.Index)
+	certifiedProjection := authority.certified.Projection
+	authority.mu.RUnlock()
+	// Some package-level protocol tests use an in-memory certified projection
+	// without a disk consensus log. A real opened authority can never take this
+	// branch because OpenAuthority rejects an empty consensus store.
+	if len(entries) == 0 && certifiedProjection.Schema == 1 {
+		return currentReportAuthorities(certifiedProjection), nil
+	}
+	if limit < 1 || limit > len(entries) {
+		return nil, errors.New("certified report history boundary is invalid")
+	}
+	identities := map[string]reportAuthority{}
+	var projection Projection
+	for _, entry := range entries[:limit] {
+		body, err := authority.Material(entry.MaterialID)
+		if err != nil {
+			return nil, err
+		}
+		material, err := DecodeMaterial(body)
+		if err != nil {
+			return nil, err
+		}
+		projection, err = Reduce(projection, material, entry.MaterialID)
+		if err != nil {
+			return nil, err
+		}
+		for _, authorization := range projection.DeviceAuthorizations {
+			view, found := projectDeviceView(projection, authorization.DeviceID)
+			if !found {
+				continue
+			}
+			digest, digestErr := DeviceViewDigest(view)
+			if digestErr != nil {
+				return nil, digestErr
+			}
+			key := authorization.DeviceID + "\x00" + digest
+			identity := reportAuthority{PublicKey: authorization.DevicePublicKey, View: view}
+			if previous, exists := identities[key]; exists && previous.PublicKey != identity.PublicKey {
+				return nil, errors.New("historical device view digest has conflicting keys")
+			}
+			identities[key] = identity
+		}
+	}
+	return identities, nil
+}
+
 func (authority *Authority) CandidateHead() (GovernanceHead, Projection, error) {
 	authority.mu.RLock()
 	defer authority.mu.RUnlock()

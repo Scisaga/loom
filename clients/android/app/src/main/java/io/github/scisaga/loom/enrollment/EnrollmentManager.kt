@@ -99,6 +99,39 @@ class EnrollmentManager private constructor(context: Context) {
         }
     }
 
+    /**
+     * Checks for a newer certified view without turning a periodic background
+     * check into a user-visible enrollment operation.  A changed view is only
+     * staged here: LoomVpnService still has to start libbox, read the selectors
+     * back and pass the real DNS/HTTPS probe before commitCandidate can promote
+     * it to the protected LKG.
+     */
+    fun refreshConfigurationInBackground(profileId: String) {
+        requireProfileId(profileId)
+        scope.launch {
+            operation.withLock {
+                val store = store(profileId)
+                if (store.loadCandidate() != null || store.loadCurrent() == null) return@withLock
+                val state = store.state() ?: return@withLock
+                val next = try {
+                    Loomcore.syncAndroidDevice(state)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // The active certified LKG remains authoritative and the
+                    // next report interval retries the private control path.
+                    return@withLock
+                }
+                currentCoroutineContext().ensureActive()
+                val profile = store.decodeProfile(next)
+                if (profile.recordID == store.loadCurrent()?.recordID) return@withLock
+                val staged = store.stageCandidate(next)
+                awaitingActivation(profileId, staged)
+                requestCandidateActivationIfConnected(profileId, staged)
+            }
+        }
+    }
+
     fun abandonPending(profileId: String) = launch(profileId, "无法放弃待加入事务") { store ->
         store.clearUncompletedIdentity()
         statusSink(profileId).value = EnrollmentStatus(EnrollmentPhase.NOT_JOINED, "已清除未完成的本机身份")

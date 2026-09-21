@@ -525,7 +525,7 @@ set -eu
 
 usage() {
     echo "usage: sudo ./install.sh --invite-file PATH [--state PATH]" >&2
-    echo "       sudo ./install.sh --upgrade [--state PATH]" >&2
+    echo "       sudo ./install.sh --upgrade [--state PATH] [--server-migration-source PATH]" >&2
     echo "       sudo ./install.sh --no-enroll" >&2
     exit 2
 }
@@ -534,12 +534,14 @@ invite_file=
 state=/var/lib/loom-device/state.json
 no_enroll=0
 upgrade=0
+server_migration_source=
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --invite-file) [ "$#" -ge 2 ] || usage; invite_file=$2; shift 2 ;;
         --state) [ "$#" -ge 2 ] || usage; state=$2; shift 2 ;;
         --no-enroll) no_enroll=1; shift ;;
         --upgrade) upgrade=1; shift ;;
+        --server-migration-source) [ "$#" -ge 2 ] || usage; server_migration_source=$2; shift 2 ;;
         -h|--help) usage ;;
         *) usage ;;
     esac
@@ -550,6 +552,7 @@ modes=$no_enroll
 [ "$upgrade" -eq 0 ] || modes=$((modes + 1))
 [ -z "$invite_file" ] || modes=$((modes + 1))
 [ "$modes" -eq 1 ] || usage
+[ -z "$server_migration_source" ] || [ "$upgrade" -eq 1 ] || usage
 
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 (cd "$base" && sha256sum -c checksums.txt)
@@ -600,6 +603,9 @@ fi
 
 if [ "$upgrade" -eq 0 ]; then
     "$release/loom" client enroll -invite-file "$invite_file" -state "$state" -wait 5m
+fi
+if [ -n "$server_migration_source" ]; then
+    "$release/loom" client stage-server-migration -source "$server_migration_source"
 fi
 "$release/loom" client preflight -state "$state" -sing-box "$release/sing-box"
 
@@ -666,24 +672,29 @@ if [ "$ready" -ne 1 ]; then
 fi
 
 [ -z "$unit_backup" ] || rm -f "$unit_backup"
+migration_overlay=/var/lib/loom-device/migration-overlay.json
 for old in loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service; do
     systemctl disable "$old" >/dev/null 2>&1 || true
-    rm -f "/etc/systemd/system/$old"
+    if [ ! -e "$migration_overlay" ]; then rm -f "/etc/systemd/system/$old"; fi
 done
 systemctl daemon-reload
 
-install -d -m 0700 /var/lib/loom-retired /etc/loom/retired-v2 /usr/local/lib/loom-client/retired
-if [ -d /var/lib/loom/client-v2 ] && [ ! -e /var/lib/loom-retired/client-v2 ]; then
-    mv /var/lib/loom/client-v2 /var/lib/loom-retired/client-v2
-fi
-for old_config in /etc/loom/agent/v2 /etc/loom/sing-box/v2; do
-    name=$(basename "$(dirname "$old_config")")-$(basename "$old_config")
-    if [ -d "$old_config" ] && [ ! -e "/etc/loom/retired-v2/$name" ]; then
-        mv "$old_config" "/etc/loom/retired-v2/$name"
+if [ ! -e "$migration_overlay" ]; then
+    install -d -m 0700 /var/lib/loom-retired /etc/loom/retired-v2 /usr/local/lib/loom-client/retired
+    if [ -d /var/lib/loom/client-v2 ] && [ ! -e /var/lib/loom-retired/client-v2 ]; then
+        mv /var/lib/loom/client-v2 /var/lib/loom-retired/client-v2
     fi
-done
-if [ -e /usr/local/bin/loom ] && [ ! -L /usr/local/bin/loom ] && [ ! -e /usr/local/lib/loom-client/retired/loom ]; then
-    mv /usr/local/bin/loom /usr/local/lib/loom-client/retired/loom
+    for old_config in /etc/loom/agent/v2 /etc/loom/sing-box/v2; do
+        name=$(basename "$(dirname "$old_config")")-$(basename "$old_config")
+        if [ -d "$old_config" ] && [ ! -e "/etc/loom/retired-v2/$name" ]; then
+            mv "$old_config" "/etc/loom/retired-v2/$name"
+        fi
+    done
+    if [ -e /usr/local/bin/loom ] && [ ! -L /usr/local/bin/loom ] && [ ! -e /usr/local/lib/loom-client/retired/loom ]; then
+        mv /usr/local/bin/loom /usr/local/lib/loom-client/retired/loom
+    fi
+else
+    echo "Migration overlay remains active; old unit/config files are retained disabled until fleet finalization."
 fi
 cli_tmp=/usr/local/bin/.loom.$$
 ln -s /usr/local/lib/loom-client/current/loom "$cli_tmp"

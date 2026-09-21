@@ -519,8 +519,16 @@ func (app *portableGUI) drawMisakaRoute(item *portableDrawItem) {
 	if !app.beginMisakaPaint(item.dc, item.rect) {
 		return
 	}
+	folded := item.itemState&portableODSComboBoxEdit != 0
 	bg, fg := uint32(misakaWhite), uint32(misakaText)
-	if item.itemState&portableODSSelected != 0 && item.itemState&portableODSComboBoxEdit == 0 {
+	if folded {
+		bg, fg = misakaGreenLight, misakaGreen
+		// A submitted preference stays neutral until selector readback confirms
+		// it; the control must never manufacture a green runtime fact.
+		if app.skin.route.pending != nil {
+			bg, fg = 0xF1F3F1, misakaMuted
+		}
+	} else if item.itemState&portableODSSelected != 0 {
 		bg = misakaGreenLight
 		fg = misakaGreen
 	}
@@ -528,7 +536,11 @@ func (app *portableGUI) drawMisakaRoute(item *portableDrawItem) {
 		bg = 0xF0F2F0
 		fg = misakaMuted
 	}
-	c.Fill(item.rect, bg, 0)
+	radius := int32(0)
+	if folded {
+		radius = s(6)
+	}
+	c.Fill(item.rect, bg, radius)
 	label := "选择出口…"
 	if int(item.itemID) < len(app.routeVisible) {
 		snapshot := app.snapshot()
@@ -541,9 +553,15 @@ func (app *portableGUI) drawMisakaRoute(item *portableDrawItem) {
 		label = app.routeFilter
 	}
 	r := item.rect
-	r.left += s(8)
-	r.right -= s(4)
+	r.left += s(9)
+	r.right -= s(18)
 	c.Text(label, r, s(12), 400, fg, 0)
+	if folded {
+		cx, cy := item.rect.right-s(10), (item.rect.top+item.rect.bottom)/2
+		for _, point := range [][2]int32{{-2, -1}, {-1, 0}, {0, 1}, {1, 0}, {2, -1}} {
+			c.Fill(misakaRect(cx+s(point[0]), cy+s(point[1]), s(1), s(1)), fg, 0)
+		}
+	}
 	app.finishMisakaPaint(item.dc)
 }
 

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +57,31 @@ func tunnelPost(t *testing.T, connection net.Conn, path string, requestValue, re
 	return response.StatusCode
 }
 
+func postAdminOperation(t *testing.T, server *Server, kind, requestID, baseHead string, payload, responseValue any) (int, string) {
+	t.Helper()
+	payloadBody, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(operationEnvelope{Schema: 2, Kind: kind, RequestID: requestID,
+		BaseHead: baseHead, Payload: payloadBody})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/control/operations", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.AdminHandler().ServeHTTP(response, request)
+	if responseValue != nil && response.Code == http.StatusOK {
+		decoder := json.NewDecoder(response.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(responseValue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return response.Code, response.Body.String()
+}
+
 func waitEndpointReady(t *testing.T, runtime *EndpointRuntime, generation EndpointGeneration) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -75,6 +101,8 @@ func currentHead(runtime *Runtime) string {
 
 func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	now := time.Date(2026, 9, 18, 3, 0, 0, 0, time.UTC)
+	var clock atomic.Int64
+	clock.Store(now.UnixNano())
 	root := t.TempDir()
 	privateAddress := freeAddress(t, "127.0.0.1")
 	state := testState()
@@ -98,7 +126,7 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	}
 	server := &Server{Runtime: runtime, Channel: channel, Config: config, ReleaseRoot: t.TempDir(),
 		ReleaseKey: filepath.Join(t.TempDir(), "missing"), AdminSocket: filepath.Join(t.TempDir(), "admin.sock"),
-		Reports: reports, Now: func() time.Time { return now }}
+		Reports: reports, Now: func() time.Time { return time.Unix(0, clock.Load()).UTC() }}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(ctx, http.NotFoundHandler()) }()
 	t.Cleanup(func() {
@@ -115,12 +143,13 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	})
 	waitLeader(t, []*Runtime{runtime})
 	deadline := time.Now().Add(5 * time.Second)
-	for server.Endpoints == nil && time.Now().Before(deadline) {
+	for server.endpointRuntime() == nil && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if server.Endpoints == nil {
+	if server.endpointRuntime() == nil {
 		t.Fatal("endpoint runtime did not start")
 	}
+	endpointRuntime := server.endpointRuntime()
 
 	certificatePath := filepath.Join(t.TempDir(), "endpoint.crt")
 	keyPath := filepath.Join(t.TempDir(), "endpoint.key")
@@ -141,7 +170,7 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	if _, err := server.putEndpoint(ctx, "endpoint-1-prepared", currentHead(runtime), generation1); err != nil {
 		t.Fatal(err)
 	}
-	waitEndpointReady(t, server.Endpoints, generation1)
+	waitEndpointReady(t, endpointRuntime, generation1)
 	generation1.State = "serving"
 	if _, err := server.putEndpoint(ctx, "endpoint-1-serving", currentHead(runtime), generation1); err != nil {
 		t.Fatal(err)
@@ -198,6 +227,7 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	_ = connection.Close()
 
 	now = now.Add(2 * time.Hour)
+	clock.Store(now.UnixNano())
 	if _, err := server.approveEnrollment(ctx, "approve", currentHead(runtime), "demo-transaction"); err != nil {
 		t.Fatal(err)
 	}
@@ -245,10 +275,13 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 	if len(reports.All()) != 1 {
 		t.Fatal("signed report was not persisted")
 	}
+	now = now.Add(2 * time.Minute)
+	clock.Store(now.UnixNano())
 	readback := httptest.NewRecorder()
 	server.AdminHandler().ServeHTTP(readback, httptest.NewRequest(http.MethodGet, "/api/control/ui/snapshot", nil))
 	if readback.Code != http.StatusOK || !bytes.Contains(readback.Body.Bytes(), []byte(`"enrollment":"completed"`)) ||
-		!bytes.Contains(readback.Body.Bytes(), []byte(`"reports":[`)) {
+		!bytes.Contains(readback.Body.Bytes(), []byte(`"last_report_at":"`)) ||
+		!bytes.Contains(readback.Body.Bytes(), []byte(`"evidence":{`)) || bytes.Contains(readback.Body.Bytes(), []byte(`"signature":"`)) {
 		t.Fatalf("authenticated UI/API did not read back enrollment and report: status=%d", readback.Code)
 	}
 	selected, err := SelectRoute(routes, report.Observations, "demo-exit", "one-hop", now.Add(time.Minute))
@@ -256,12 +289,148 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 		t.Fatalf("same-exit fallback=%q err=%v", selected, err)
 	}
 
+	// Exercise the product schema-2 flow over the real private bootstrap and
+	// device transports. The legacy flow above remains a replay/compatibility
+	// assertion; every newly created transaction below uses the v2 signing
+	// domain and a single atomic completion material.
+	importValue := NetworkImport{Intent: testNetworkIntent(t), RecoveryEvidenceHash: "sha256:" + strings.Repeat("7", 64)}
+	importMaterial := Material{Schema: MaterialSchema, Kind: "network.import", RequestID: "demo-network-import",
+		BaseHead: currentHead(runtime), NetworkImport: &importValue}
+	importBody, _, err := EncodeMaterial(importMaterial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Submit(ctx, importBody); err != nil {
+		t.Fatal(err)
+	}
+	productPayload := productEnrollmentCreatePayload{Name: "Demo Windows", Platform: "windows",
+		Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"demo-policy"}}
+	var productCreated struct {
+		Head          GovernanceHead `json:"head"`
+		Projection    WebProjection  `json:"projection"`
+		Invite        string         `json:"invite"`
+		TransactionID string         `json:"transaction_id"`
+	}
+	if status, body := postAdminOperation(t, server, "enrollment.create", "product-enrollment", currentHead(runtime),
+		productPayload, &productCreated); status != http.StatusOK {
+		t.Fatalf("schema-2 product create status=%d body=%s", status, body)
+	}
+	productInviteText := productCreated.Invite
+	productOpenHead := currentHead(runtime)
+	var productRetried struct {
+		Head          GovernanceHead `json:"head"`
+		Projection    WebProjection  `json:"projection"`
+		Invite        string         `json:"invite"`
+		TransactionID string         `json:"transaction_id"`
+	}
+	status, body := postAdminOperation(t, server, "enrollment.create", "product-enrollment", productOpenHead,
+		productPayload, &productRetried)
+	if status != http.StatusOK || productRetried.Invite != productInviteText || currentHead(runtime) != productOpenHead {
+		t.Fatalf("schema-2 create retry was not idempotent: same_invite=%t same_head=%t err=%v",
+			productRetried.Invite == productInviteText, currentHead(runtime) == productOpenHead, body)
+	}
+	conflictingPayload := productPayload
+	conflictingPayload.Name = "Different Windows"
+	if status, _ := postAdminOperation(t, server, "enrollment.create", "product-enrollment", productOpenHead,
+		conflictingPayload, nil); status != http.StatusConflict {
+		t.Fatalf("schema-2 create request ID conflict status=%d", status)
+	}
+	productInvite, err := DecodeInvite(productInviteText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	productPublic, productPrivate, _ := ed25519.GenerateKey(rand.Reader)
+	productClaim, err := SignEnrollmentClaim(EnrollmentClaimRequest{Schema: 2, Capability: productInvite.Capability,
+		RequestID: "product-claim", DevicePublicKey: base64.RawURLEncoding.EncodeToString(productPublic)}, productPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	productEndpoint := productInvite.Capability.Endpoints[0]
+	connection, err = DialEndpoint(ctx, productEndpoint, TunnelHello{Schema: 1, Mode: "bootstrap",
+		EndpointID: productEndpoint.EndpointID, Generation: productEndpoint.Generation, Capability: &productInvite.Capability}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var productBound EnrollmentResponse
+	if status := tunnelPost(t, connection, "/v2/enrollment/claim", productClaim, &productBound); status != http.StatusAccepted ||
+		productBound.Schema != 2 || productBound.Transaction.State != "bound" {
+		t.Fatalf("schema-2 claim status=%d response=%+v", status, productBound)
+	}
+	_ = connection.Close()
+	beforeApproval := productBound.Transaction
+	_, _, certifiedBeforeApproval := runtime.Authority.Snapshot()
+	if status, body := postAdminOperation(t, server, "enrollment.approve", "product-approve", currentHead(runtime),
+		map[string]string{"transaction_id": beforeApproval.ID}, &struct {
+			Head       GovernanceHead `json:"head"`
+			Projection WebProjection  `json:"projection"`
+		}{}); status != http.StatusOK {
+		t.Fatalf("schema-2 approval status=%d body=%s", status, body)
+	}
+	_, _, certifiedAfterApproval := runtime.Authority.Snapshot()
+	if certifiedAfterApproval.Head.Index != certifiedBeforeApproval.Head.Index+1 {
+		t.Fatalf("schema-2 approval used more than one material: before=%d after=%d",
+			certifiedBeforeApproval.Head.Index, certifiedAfterApproval.Head.Index)
+	}
+	productResume, err := SignEnrollmentResume(EnrollmentResumeRequest{Schema: 2, TransactionID: beforeApproval.ID,
+		RequestID: "product-resume", DevicePublicKey: base64.RawURLEncoding.EncodeToString(productPublic)}, productPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err = DialEndpoint(ctx, productEndpoint, TunnelHello{Schema: 1, Mode: "bootstrap",
+		EndpointID: productEndpoint.EndpointID, Generation: productEndpoint.Generation, Capability: &productInvite.Capability}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var productCompleted EnrollmentResponse
+	if status := tunnelPost(t, connection, "/v2/enrollment/resume", productResume, &productCompleted); status != http.StatusOK ||
+		productCompleted.Schema != 2 || productCompleted.Transaction.State != "completed" || productCompleted.DeviceView == nil ||
+		productCompleted.DeviceView.View.Schema != 2 {
+		t.Fatalf("schema-2 resume status=%d response=%+v", status, productCompleted)
+	}
+	_ = connection.Close()
+	encodedProductResponse, _ := json.Marshal(productCompleted)
+	if bytes.Contains(encodedProductResponse, []byte("runtime_key")) || bytes.Contains(encodedProductResponse, []byte("local-api")) {
+		t.Fatal("schema-2 enrollment response leaked a runtime secret")
+	}
+	if len(productCompleted.DeviceView.View.Routes) < 2 {
+		t.Fatalf("schema-2 enrollment did not derive direct and server candidates: %+v", productCompleted.DeviceView.View.Routes)
+	}
+	productViewDigest, err := DeviceViewDigest(productCompleted.DeviceView.View)
+	if err != nil {
+		t.Fatal(err)
+	}
+	productRoute := productCompleted.DeviceView.View.Routes[0]
+	productReport := DeviceReport{Schema: 2, DeviceID: productCompleted.DeviceView.View.DeviceID,
+		ViewDigest: productViewDigest, ReportedAt: now.Format(time.RFC3339),
+		Selections: []ReportSelection{{Scope: productRoute.Scope, CandidateID: productRoute.ID}},
+		Runtime:    &RuntimeReadback{State: "running", AppliedViewDigest: productViewDigest, Exact: true}}
+	productReport, err = SignDeviceReport(productReport, productPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err = DialEndpoint(ctx, productEndpoint, TunnelHello{Schema: 1, Mode: "device",
+		EndpointID: productEndpoint.EndpointID, Generation: productEndpoint.Generation,
+		DeviceID: productCompleted.DeviceView.View.DeviceID}, productPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := tunnelPost(t, connection, "/v2/device/report", productReport, &struct {
+		DeviceID   string `json:"device_id"`
+		ReportedAt string `json:"reported_at"`
+	}{}); status != http.StatusOK {
+		t.Fatalf("schema-2 report status=%d", status)
+	}
+	_ = connection.Close()
+	if len(reports.All()) != 2 {
+		t.Fatal("schema-2 signed report was not persisted beside schema-1 history")
+	}
+
 	generation2 := generation1
 	generation2.Generation, generation2.State, generation2.Preference = 2, "prepared", 1
 	if _, err := server.putEndpoint(ctx, "endpoint-2-prepared", currentHead(runtime), generation2); err != nil {
 		t.Fatal(err)
 	}
-	waitEndpointReady(t, server.Endpoints, generation2)
+	waitEndpointReady(t, endpointRuntime, generation2)
 	generation2.State = "serving"
 	if _, err := server.putEndpoint(ctx, "endpoint-2-serving", currentHead(runtime), generation2); err != nil {
 		t.Fatal(err)
@@ -291,6 +460,7 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 		t.Fatal("generation with an active bootstrap capability began draining")
 	}
 	now = now.Add(2 * time.Minute)
+	clock.Store(now.UnixNano())
 	if _, err := server.putEndpoint(ctx, "endpoint-1-drain", currentHead(runtime), generation1); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +514,7 @@ func TestPrivateEnrollmentDeviceChannelAndGenerationRotation(t *testing.T) {
 		}
 	}
 
-	now = time.Unix(4102444800, 0).UTC()
+	clock.Store(time.Unix(4102444800, 0).UnixNano())
 	expired := generation2
 	expired.Generation, expired.State, expired.Listen, expired.Address = 4, "prepared", freeAddress(t, "127.0.0.1"), freeAddress(t, "127.0.0.1")
 	if _, err := server.putEndpoint(ctx, "endpoint-4-prepared", currentHead(runtime), expired); err != nil {

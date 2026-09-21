@@ -5,24 +5,29 @@ import (
 	"crypto/ed25519"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"loom/internal/localconfig"
 	"loom/internal/publish"
 )
 
 // publisher 是中控上的发布器(§14.2.2、D35、D36)。
 //
-// 它是"我为什么还要自己部署"的答案:盯着 SSOT,变了就校验、渲染、签名、
-// 推到分发点;节点那半边本来就在定时自取。**改完文件,不用敲任何命令。**
+// 它消费本机 control admin socket 提供的 certified Projection/head，渲染、
+// 签名并推到分发点。旧 SSOT 文件不是运行输入。
 //
 // 签名私钥只有它用得到,不上任何服务器。它挂了不影响系统运行 —— 只影响
 // 改变系统。
 func cmdPublisher(args []string) error {
 	fs := flag.NewFlagSet("publisher", flag.ExitOnError)
-	ssot := fs.String("ssot", "deploy/ssot.yaml", "盯着哪个 SSOT")
+	envPath := fs.String("env", "", "六项本机部署配置；设置后从中读取签名 key、target 和 SSH config")
+	controlSocket := fs.String("control-socket", "/run/loom-control/admin.sock", "本机 control 管理 Unix socket")
 	keyPath := fs.String("key", "", "平台签名私钥(必需)")
 	var targetSpecs, verifyURLs repeatedFlag
 	fs.Var(&targetSpecs, "target", "分发目标，可重复:/绝对路径 或 ssh://主机/绝对路径(至少一个)")
@@ -34,22 +39,36 @@ func cmdPublisher(args []string) error {
 	pinDir := fs.String("pin-dir", publish.DefaultPinDir, "钉住状态目录(loom pin 写在这儿)")
 	health := fs.String("health", publish.HealthPath,
 		"发布器写自己状态的地方 —— 让 loom status 看得出\"进程活着但发不出去\"")
+	observation := fs.String("observation", publish.HealthPath+".signed",
+		"平台密钥签名的 publisher observation")
 	allowDirty := fs.Bool("allow-dirty", false,
 		"放行追溯不回 git 的二进制(认不出 commit,或构建自脏工作区)")
 	releaseDir := fs.String("release-dir", publish.DefaultReleaseDir,
 		"放行记录目录 —— 只发 loom release 批准过的二进制;留空则回到\"本机二进制一变就发\"")
-	archive := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地,不进分发树;loom rollback 从这里取)")
+	archive := fs.String("ssot-history", "deploy/ssot-history", "认证发布输入与 release authority 的本机存档目录")
 	interval := fs.Duration("interval", 30*time.Second, "多久看一次")
 	once := fs.Bool("once", false, "只跑一轮就退出")
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	if *keyPath == "" || len(targetSpecs) == 0 {
-		return fmt.Errorf("需要 -key 和至少一个 -target")
+	if *envPath != "" {
+		if *keyPath != "" || len(targetSpecs) != 0 || *sshConf != "" {
+			return fmt.Errorf("-env 不能与 -key、-target 或 -ssh-config 混用")
+		}
+		config, err := localconfig.Load(*envPath)
+		if err != nil {
+			return fmt.Errorf("读取本机部署配置:%w", err)
+		}
+		*keyPath = config.SigningKey
+		*sshConf = config.SSHConfig
+		targetSpecs = append(targetSpecs, config.PublishOutputs...)
 	}
 	if *archive == "" {
-		return fmt.Errorf("publisher 不允许关闭 -ssot-history：没有源头存档的快照无法回滚")
+		return fmt.Errorf("publisher 不允许关闭 -ssot-history：没有认证输入存档就无法审计 release")
+	}
+	if *keyPath == "" || len(targetSpecs) == 0 || *controlSocket == "" {
+		return fmt.Errorf("需要 -control-socket、-key 和至少一个 -target")
 	}
 	privBytes, err := readKey(*keyPath, ed25519.PrivateKeySize)
 	if err != nil {
@@ -68,10 +87,9 @@ func cmdPublisher(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Loom 发布器 · %s → %s\n", *ssot, tgt)
+	fmt.Printf("Loom 发布器 · certified control %s → %s\n", *controlSocket, tgt)
 	if len(verifyURLs) == 0 {
-		// 推成功不等于取得到。不验证就跑,等于把一类静默故障留在系统里。
-		fmt.Fprintln(os.Stderr, "! 没有 -verify-url:推送成功不代表节点取得到(nginx 路径写错时推送侧完全正常)")
+		fmt.Fprintln(os.Stderr, "ⓘ 未设置本机补充 -verify-url；使用 certified NetworkIntent 的 distribution URLs")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -83,14 +101,46 @@ func cmdPublisher(args []string) error {
 	}
 
 	return publish.Run(ctx, publish.Options{
-		SSOTPath: *ssot, Key: ed25519.PrivateKey(privBytes), Target: tgt,
+		AuthorityInput: certifiedPublisherInputReader(*controlSocket), AuthorityInputName: *controlSocket,
+		Key: ed25519.PrivateKey(privBytes), Target: tgt,
 		Author: *author, VerifyURLs: verifyURLs, DNS: *dns, BinaryPath: *binary,
 		ArchiveDir:       *archive,
 		PinDir:           *pinDir,
 		HealthPath:       *health,
+		ObservationPath:  *observation,
 		LockPath:         publishTransactionLockPath,
 		AllowUntraceable: *allowDirty,
 		ReleaseDir:       *releaseDir,
 		Interval:         *interval, Once: *once, Log: os.Stdout,
 	})
+}
+
+func certifiedPublisherInputReader(socket string) func(context.Context) ([]byte, error) {
+	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	return func(ctx context.Context) ([]byte, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			"http://loom.local/api/control/publisher-input", nil)
+		if err != nil {
+			return nil, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return nil, err
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > 8<<20 {
+			return nil, fmt.Errorf("certified publisher input exceeds size limit")
+		}
+		if response.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("control publisher input: %s", response.Status)
+		}
+		return body, nil
+	}
 }

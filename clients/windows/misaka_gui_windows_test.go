@@ -71,7 +71,6 @@ func TestGUIMisakaInlineRenameUsesKeyboardAndPersistsOnlyOnSave(t *testing.T) {
 		t.Fatal("invalid empty name replaced the persisted name or dismissed the editor")
 	}
 	setPortableControlText(app.controls.profileNameEdit, "demo-renamed")
-	captureConfiguredProfileGUIState(t, app, "-rename")
 	procSendMessage.Call(app.controls.profileNameEdit, portableWMKeyDown, portableVKReturn, 0)
 	m.workers.Wait()
 	app.renderControls()
@@ -159,7 +158,6 @@ func TestGUIMisakaDraftPreservesActiveConnectionAndUnsavedInput(t *testing.T) {
 		t.Fatal("join submission is enabled without an invitation")
 	}
 	setPortableControlText(app.controls.draftName, "demo-unsaved-input")
-	captureConfiguredProfileGUIState(t, app, "-draft")
 	writes := recordProfileGUIWrites(t, app)
 	for iteration := 0; iteration < 20; iteration++ {
 		app.renderControls()

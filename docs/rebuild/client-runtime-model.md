@@ -70,6 +70,12 @@ Direct:                    device → target
 `reverse_only` 只约束服务器间 WireGuard 的发起方向，也不能据此删除服务器的
 公开数据入口候选。授权、隧道方向和实时可达性是三个不同事实。
 
+Linux hybrid 节点同时是当前 access 设备和认证 server，且它与最终出口之间存在精确
+`NetworkLink` 时，可以从自己的 WG interface 进入出口，不要求自己或出口另有公网数据入口。
+该候选的规范服务器链以本机 hybrid 节点开头，运行时跳过“拨回本机 inbound”，直接把到下一
+server 隧道地址的连接绑定到 `wg-<peer>`；服务器投影也不得为这个本机起点生成 user/ACL。
+Web 拓扑展示时省略链首重复的本机节点，但 candidate ID 与签名报告仍保留完整规范链。
+
 ### 候选身份
 
 `RouteCandidate` 的稳定身份由规范化后的服务器链、最终出口和服务范围确定；
@@ -206,6 +212,22 @@ scheduler、probe budget 或一次性 registry。入口之后复用已有的有�
 - `Selection` 每次由 selector 回读恢复，而不是相信上次写入的期望值；
 - `HostAdapter` 是代码边界，不拥有另一套业务状态。
 
+### Linux 服务器迁移 overlay
+
+既有服务器切换到 schema-2 时允许存在一份有明确删除条件的本机迁移输入。它不是领域权威，也不是运行时
+配置的第二来源：root 工具只从一个 owner-only、已部署的旧 sing-box 配置中提取公网
+`hysteria2 / trojan` 入站用户、这些用户的 `auth_user` 规则，以及规则直接引用的
+`direct + bind_interface?` 出站，规范化后原子写入固定的 owner-only overlay 文件。未知规则字段、非 direct
+出站、多服务器入站、协议/端口不匹配、重复用户或冲突 tag 全部拒绝；旧 telemetry、旧服务器间公网链路、
+DNS、日志和其他配置不会进入 overlay。
+
+HostAdapter 每次 generation 仍先从 `DeviceView.ServerRuntime` 纯渲染完整新配置，再把 overlay 中互不冲突的
+旧用户和精确 ACL 插入同一个认证 listener。overlay 不能改变新 listener、WG、selector、新用户或新 ACL，
+也不能生成新的 endpoint。存在 overlay 时签名报告必须为 `runtime.running=true, exact=false`；只有显式删除
+overlay、重启并逐项回读纯 `ServerRuntime` 后才可报告 `exact=true`。运行 daemon 只读这份已经规范化的迁移
+文件，不再读取旧 SSOT、旧 store 或旧 unit 配置。这样保留的是一次前向切换所需的旧凭据重叠，不是新的
+长期 authority 或兼容状态机。
+
 这条边界禁止“为了恢复方便”再增加候选数据库、健康缓存权威、切换 journal、阶段表或
 影子 selector。诊断事件可以记录，但事件不能反向成为当前状态。
 
@@ -240,6 +262,13 @@ scheduler、probe budget 或一次性 registry。入口之后复用已有的有�
 - 仍存在且身份相同的候选复用当前网络代内有效的同范围观测；
 - 新候选为 `unknown`，可以在没有可用候选时被立即尝试；
 - selector 回读确认后才更新 `Selection`。
+
+Linux daemon 在运行期间按固定间隔只检测 certified head 是否变化，不在检测步骤保存新 envelope。
+变化发生时由同一进程监督器结束当前 sing-box 子进程并启动一个新的运行代：先对新 View 做完整
+preflight，事务应用 WireGuard，启动 sing-box，再读取 listener、selector、WireGuard 和配置摘要；这些
+读回全部成功后才保存新 LKG。若新代任一步失败，配置文件、CA 和 WireGuard 事务恢复为旧值，监督器
+立即从尚未提升的旧 LKG 重启旧运行代，下一次固定间隔才重试。这个“运行代”只是进程内调用边界，
+不持久化、不形成阶段表或第二份 authority。
 
 ### 撤权边界
 
@@ -347,7 +376,8 @@ fallback。
 2. **确定性派生**：相同 LKG 在 Android/Linux/Windows 纯核心得到相同候选身份和顺序，重启结果不变。
 3. **Direct 语义**：Direct 的服务器链为空，不产生代理入口检查；一跳直达包含最终出口，二者不混淆。
 4. **同出口双路径**：同一最终出口同时产生一跳直达和境内 WG 中继；关闭
-   `public_data_ingress` 只删除前者，开启它不会自动得到 `available`。
+   `public_data_ingress` 只删除前者，开启它不会自动得到 `available`；hybrid access 在出口无
+   公网入口时仍可通过自己已认证的 WG link 形成候选，且不会生成本机回环 inbound 凭据。
 5. **三态观测**：真实成功、真实失败、缺失/过期/跨网络代分别得到 available、unavailable、unknown；
    ICMP 成败只改变 RTT 提示，不改变三态。
 6. **非阻塞与 fallback**：启动在观测未完成时即可应用合法候选；一跳直达真实失败后选择

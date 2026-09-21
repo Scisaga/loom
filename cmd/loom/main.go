@@ -49,7 +49,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom rollback                            现在处在不处在回滚状态
   loom snapshots                           发过哪些快照,以及还能退回哪些
   loom current   -file <signed-current>    验签并打印 generation / payload digest
-  loom publisher -ssot <文件> -key <私钥> -target <目标> [-target <镜像>]
+  loom publisher -control-socket <Unix socket> -key <私钥> -target <目标> [-target <镜像>]
                                          中控守护进程:盯 SSOT,变了就发布
   loom publish  <ssot.yaml> -o <目标> [-o <镜像>] -key <私钥>
                                          手动发一次(目标可以是本地目录或 ssh://)

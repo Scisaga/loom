@@ -102,7 +102,6 @@ func TestGUIMisakaViewportScrollsWholeRightPaneAndReachesLastService(t *testing.
 	if last.top < 0 || last.bottom > view.bottom || last.bottom < view.bottom-app.scale(40) {
 		t.Fatalf("[§7.2] 滚动底部后最后一个服务不能完整到达：最后项=%+v 视口=%+v", last, view)
 	}
-	captureConfiguredProfileGUIState(t, app, "-viewport-bottom")
 }
 
 func TestGUIMisakaViewportTabRevealsFocusedControl(t *testing.T) {
@@ -327,5 +326,4 @@ func TestGUIMisakaViewportFixedTUNActualHintCapture(t *testing.T) {
 	if green < 20 {
 		t.Fatalf("[§7.2] 已连接状态的实际提示没有绿色高亮：像素数=%d", green)
 	}
-	captureConfiguredProfileGUIState(t, app, "-fixed-tun")
 }

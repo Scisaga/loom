@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -26,6 +27,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"loom/internal/clientrelease"
+	"loom/internal/publish"
 	"loom/internal/releasefloor"
 )
 
@@ -99,6 +101,36 @@ func testRuntimeServer(t *testing.T, state State) *Server {
 	return &Server{Runtime: &Runtime{Config: config, Authority: authority}, Channel: channel, Config: config}
 }
 
+// testWritableRuntimeServer runs the same single-member Raft/QC path used by
+// production writes. Tests that assert visible mutating capabilities must not
+// manufacture them with an admin handler while the cluster is actually
+// unwritable.
+func testWritableRuntimeServer(t *testing.T, state State) *Server {
+	t.Helper()
+	root := t.TempDir()
+	state.BrowserTLS = testTLS(t)
+	address := freeAddress(t, "127.0.0.1")
+	config, err := ActivateLegacy(root, state, "demo-control", "demo-node", []string{address})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel, err := OpenPrivateChannel(PrivateChannelConfig{Node: config.Node, Listen: []string{address}, Peers: map[string][]string{}}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := OpenRuntime(root, channel)
+	if err != nil {
+		channel.Close()
+		t.Fatal(err)
+	}
+	waitLeader(t, []*Runtime{runtime})
+	t.Cleanup(func() {
+		_ = runtime.Close()
+		_ = channel.Close()
+	})
+	return &Server{Runtime: runtime, Channel: channel, Config: config}
+}
+
 func TestStateSurvivesRestartExactly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	want := testState()
@@ -131,6 +163,7 @@ func TestPrivateProjectionAndRetiredRoutes(t *testing.T) {
 	}{
 		{http.MethodGet, "/", http.StatusOK},
 		{http.MethodGet, "/api/control/ui/snapshot", http.StatusOK},
+		{http.MethodGet, "/api/control/publisher-input", http.StatusNotFound},
 		{http.MethodGet, "/api/client/report", http.StatusNotFound},
 		{http.MethodPost, "/v2/enrollment/claim", http.StatusNotFound},
 		{http.MethodPost, "/v2/enrollment/resume", http.StatusNotFound},
@@ -168,6 +201,59 @@ func TestPrivateProjectionAndRetiredRoutes(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"admin":true`) {
 		t.Fatalf("read credential did not remain read-only: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCertifiedPublisherInputComesOnlyFromNetworkIntent(t *testing.T) {
+	intent := testNetworkIntent(t)
+	intent.Nodes[0].Components = []ComponentExpectation{{Name: "agent", Version: "2.1.0"}}
+	intent.Nodes[0].DistributionURLs = []string{"https://demo.example/loom/", "https://mirror.example/loom/"}
+	projection := Projection{Schema: 1, NetworkIntent: &intent}
+	head := GovernanceHead{Schema: 1, Index: 9, ProjectionDigest: "sha256:" + strings.Repeat("2", 64),
+		LogDigest: "sha256:" + strings.Repeat("3", 64), ConfigMaterial: "sha256:" + strings.Repeat("4", 64)}
+	input, err := certifiedPublisherInput(projection, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.Index != 9 || input.Head != HeadID(head) || len(input.Devices) != len(intent.Nodes) {
+		t.Fatalf("input=%+v", input)
+	}
+	if len(input.Devices[0].Components) != 1 || input.Devices[0].Components[0].Version != "2.1.0" {
+		t.Fatalf("node component override was not projected: %+v", input.Devices[0].Components)
+	}
+	if len(input.DistributionURLs) != 2 || input.DistributionURLs[0] != "https://demo.example/loom/" {
+		t.Fatalf("certified distribution URLs were not projected: %+v", input.DistributionURLs)
+	}
+	projection.NetworkIntent = nil
+	if _, err := certifiedPublisherInput(projection, head); err == nil {
+		t.Fatal("publisher input was guessed without a certified NetworkIntent")
+	}
+}
+
+func TestCertifiedPublisherInputEndpointIsLocalAdminOnly(t *testing.T) {
+	intent := testNetworkIntent(t)
+	head := GovernanceHead{Schema: 1, Index: 9, ProjectionDigest: "sha256:" + strings.Repeat("2", 64),
+		LogDigest: "sha256:" + strings.Repeat("3", 64), ConfigMaterial: "sha256:" + strings.Repeat("4", 64)}
+	projection := Projection{Schema: 1, NetworkIntent: &intent, Web: WebProjection{Schema: 1}}
+	authority := &Authority{projection: projection, certified: CertifiedState{Schema: 1, Head: head, Projection: projection}}
+	server := &Server{Runtime: &Runtime{Authority: authority}}
+
+	publicRequest := httptest.NewRequest(http.MethodGet, "http://loom.local/api/control/publisher-input", nil)
+	publicResponse := httptest.NewRecorder()
+	server.publisherInput(publicResponse, publicRequest)
+	if publicResponse.Code != http.StatusNotFound {
+		t.Fatalf("public publisher input status=%d", publicResponse.Code)
+	}
+
+	localRequest := httptest.NewRequest(http.MethodGet, "http://loom.local/api/control/publisher-input", nil)
+	localResponse := httptest.NewRecorder()
+	server.AdminHandler().ServeHTTP(localResponse, localRequest)
+	if localResponse.Code != http.StatusOK {
+		t.Fatalf("local publisher input status=%d body=%s", localResponse.Code, localResponse.Body.String())
+	}
+	var input publish.CertifiedPublisherInput
+	if err := json.Unmarshal(localResponse.Body.Bytes(), &input); err != nil || input.Head != HeadID(head) {
+		t.Fatalf("input=%+v err=%v", input, err)
 	}
 }
 
@@ -274,6 +360,35 @@ func TestPreservedWebUIShellUsesCurrentProjection(t *testing.T) {
 	}
 }
 
+func TestWebUIUnknownRoutesReturnNotFound(t *testing.T) {
+	server := testRuntimeServer(t, testState())
+	for _, page := range []string{"/unknown", "/api/control/ui", "/devices/demo-device/extra", "/devices/invites/demo-transaction/extra"} {
+		response := httptest.NewRecorder()
+		server.AdminHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, page, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d", page, response.Code)
+		}
+	}
+}
+
+func TestServiceOperationDoesNotSwallowMaterialEncodingFailure(t *testing.T) {
+	server := testRuntimeServer(t, testState())
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	body, err := json.Marshal(map[string]any{
+		"schema": 2, "kind": "service.put", "request_id": "invalid-service", "base_head": HeadID(certified.Head),
+		"payload": map[string]any{"id": "", "name": "Invalid", "matchers": []string{"demo.example"}, "policy": "demo-policy"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/control/operations", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+	server.AdminHandler().ServeHTTP(response, request)
+	if response.Code == http.StatusOK || strings.Contains(response.Body.String(), `"index":0`) {
+		t.Fatalf("invalid service material was reported as a successful zero head: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWebSocketStartsWithCurrentSnapshot(t *testing.T) {
 	server := testRuntimeServer(t, testState())
 	server.ReleaseRoot = t.TempDir()
@@ -287,13 +402,11 @@ func TestWebSocketStartsWithCurrentSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.CloseNow()
-	var snapshot struct {
-		Projection WebProjection `json:"projection"`
-	}
+	var snapshot WebSnapshotV2
 	if err := wsjson.Read(ctx, connection, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Projection.UIState.Head == "" || snapshot.Projection.UIState.Revision == 0 {
-		t.Fatalf("live snapshot head=%q", snapshot.Projection.UIState.Head)
+	if snapshot.Schema != 2 || snapshot.Head == "" || snapshot.Sequence == 0 {
+		t.Fatalf("live snapshot head=%q", snapshot.Head)
 	}
 }

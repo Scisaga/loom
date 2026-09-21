@@ -14,6 +14,7 @@ import (
 
 	"loom/internal/control"
 	"loom/internal/deviceclient"
+	"loom/internal/linuxclient"
 )
 
 const defaultDeviceState = "/var/lib/loom-device/state.json"
@@ -47,6 +48,10 @@ func cmdClientEnrollMinimal(args []string) error {
 	statePath := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
 	wait := fs.Duration("wait", 0, "wait for administrator approval")
 	retry := fs.Duration("retry", 2*time.Second, "resume interval while waiting")
+	serverEndpoint := fs.String("server-public-endpoint", "", "Linux server public endpoint from the approved deployment input")
+	serverPort := fs.Int("server-inbound-port", 0, "Linux server inbound data-plane port")
+	serverProtocol := fs.String("server-inbound-protocol", "", "Linux server inbound protocol")
+	wireGuardKey := fs.String("wireguard-private-key", "/etc/wireguard/node.key", "owner-only Linux WireGuard private key")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -70,6 +75,22 @@ func cmdClientEnrollMinimal(args []string) error {
 		return err
 	}
 	deadline := time.Now().Add(*wait)
+	var serverClaim *control.ServerClaimV2
+	serverFields := *serverEndpoint != "" || *serverPort != 0 || *serverProtocol != ""
+	if serverFields {
+		if runtime.GOOS != "linux" || *serverEndpoint == "" || *serverPort == 0 || *serverProtocol == "" {
+			return errors.New("Linux server enrollment requires endpoint, inbound port and protocol together")
+		}
+		publicKey, keyErr := linuxclient.WireGuardPublicKey(*wireGuardKey)
+		if keyErr != nil {
+			return keyErr
+		}
+		serverClaim = &control.ServerClaimV2{PublicEndpoint: *serverEndpoint, InboundPort: *serverPort,
+			InboundProtocol: *serverProtocol, WGPublicKey: publicKey}
+		if err := serverClaim.Validate(); err != nil {
+			return err
+		}
+	}
 	claimed := false
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -78,7 +99,7 @@ func cmdClientEnrollMinimal(args []string) error {
 		if claimed {
 			response, claimErr = deviceclient.Resume(ctx, store)
 		} else {
-			response, claimErr = deviceclient.Claim(ctx, store)
+			response, claimErr = deviceclient.ClaimWithServer(ctx, store, serverClaim)
 		}
 		cancel()
 		if claimErr != nil {
@@ -118,11 +139,20 @@ func cmdClientSync(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	envelope, err := deviceclient.Sync(ctx, store)
+	var envelope control.DeviceViewEnvelope
+	if runtime.GOOS == "linux" {
+		envelope, err = deviceclient.Fetch(ctx, store)
+	} else {
+		envelope, err = deviceclient.Sync(ctx, store)
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Printf("device view synchronized: device=%s head=%s floor=%d endpoints=%d routes=%d\n",
+	action := "synchronized"
+	if runtime.GOOS == "linux" {
+		action = "validated; activation by loom-client.service is pending"
+	}
+	fmt.Printf("device view %s: device=%s head=%s floor=%d endpoints=%d routes=%d\n", action,
 		envelope.View.DeviceID, control.HeadID(envelope.Head), envelope.Head.Index, len(envelope.View.Endpoints), len(envelope.View.Routes))
 	return nil
 }

@@ -22,8 +22,11 @@ import (
 const (
 	capabilityDomain = "loom-bootstrap-capability-v1\n"
 	claimDomain      = "loom-enrollment-claim-v1\n"
+	claimDomainV2    = "loom-enrollment-claim-v2\n"
 	resumeDomain     = "loom-enrollment-resume-v1\n"
+	resumeDomainV2   = "loom-enrollment-resume-v2\n"
 	reportDomain     = "loom-device-report-v1\n"
+	reportDomainV2   = "loom-device-report-v2\n"
 	headDomain       = "loom-certified-head-v1\n"
 	viewDomain       = "loom-device-view-v1\n"
 	viewNodeDomain   = "loom-device-view-node-v1\n"
@@ -101,16 +104,47 @@ type enrollmentTransaction struct {
 }
 
 type deviceView struct {
-	Schema          int                          `json:"schema"`
-	DeviceID        string                       `json:"device_id"`
-	Name            string                       `json:"name"`
-	Platform        string                       `json:"platform"`
-	Roles           []string                     `json:"roles"`
-	DevicePublicKey string                       `json:"device_public_key"`
-	Floor           uint64                       `json:"floor"`
-	Endpoints       []endpointReference          `json:"endpoint_generations"`
-	Routes          []clientmodel.RouteCandidate `json:"route_candidates"`
-	Runtime         *clientmodel.RuntimeProfile  `json:"runtime_profile,omitempty"`
+	Schema             int                          `json:"schema"`
+	DeviceID           string                       `json:"device_id"`
+	Name               string                       `json:"name"`
+	Platform           string                       `json:"platform"`
+	Roles              []string                     `json:"roles"`
+	DevicePublicKey    string                       `json:"device_public_key"`
+	Floor              uint64                       `json:"floor"`
+	Endpoints          []endpointReference          `json:"endpoint_generations"`
+	Routes             []clientmodel.RouteCandidate `json:"route_candidates"`
+	Runtime            *clientmodel.RuntimeProfile  `json:"runtime_profile,omitempty"`
+	DestinationGrants  []string                     `json:"destination_grants,omitempty"`
+	Server             *serverIntent                `json:"server,omitempty"`
+	PublicDataPlaneCA  string                       `json:"public_data_plane_ca,omitempty"`
+	ExpectedComponents []componentExpectation       `json:"expected_components,omitempty"`
+	LinkProbeTargets   []linkProbeTarget            `json:"link_probe_targets,omitempty"`
+}
+
+type serverIntent struct {
+	Direction         string `json:"direction"`
+	PublicDataIngress bool   `json:"public_data_ingress"`
+	PublicEndpoint    string `json:"public_endpoint"`
+	InboundPort       int    `json:"inbound_port"`
+	InboundProtocol   string `json:"inbound_protocol"`
+	EgressCapable     bool   `json:"egress_capable"`
+	WGPublicKey       string `json:"wg_public_key,omitempty"`
+	Country           string `json:"country,omitempty"`
+	City              string `json:"city,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+}
+
+type componentExpectation struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Digest  string `json:"digest,omitempty"`
+}
+type linkProbeTarget struct {
+	LinkID          string `json:"link_id"`
+	Peer            string `json:"peer"`
+	Transport       string `json:"transport"`
+	Target          string `json:"target"`
+	PeerWGPublicKey string `json:"peer_wg_public_key,omitempty"`
 }
 
 type headSignature struct {
@@ -196,6 +230,48 @@ type deviceReport struct {
 	ReportedAt   string                    `json:"reported_at"`
 	Observations []clientmodel.Observation `json:"observations"`
 	Signature    string                    `json:"signature"`
+	Selections   []reportSelection         `json:"selections,omitempty"`
+	Runtime      *runtimeReadback          `json:"runtime,omitempty"`
+	Components   []componentReadback       `json:"components,omitempty"`
+	Links        []linkReadback            `json:"links,omitempty"`
+	Deployment   *deploymentReadback       `json:"deployment,omitempty"`
+}
+
+type reportSelection struct {
+	Scope       string `json:"scope"`
+	CandidateID string `json:"candidate_id"`
+}
+type runtimeReadback struct {
+	State             string `json:"state"`
+	AppliedViewDigest string `json:"applied_view_digest"`
+	Exact             bool   `json:"exact"`
+	StartedAt         string `json:"started_at,omitempty"`
+	ErrorCode         string `json:"error_code,omitempty"`
+}
+type componentReadback struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Digest  string `json:"digest,omitempty"`
+}
+type linkReadback struct {
+	LinkID            string `json:"link_id"`
+	Peer              string `json:"peer"`
+	Interface         string `json:"interface"`
+	Epoch             string `json:"epoch"`
+	ProbeTarget       string `json:"probe_target"`
+	Result            string `json:"result"`
+	LatencyMS         int64  `json:"latency_ms,omitempty"`
+	LatestHandshakeAt string `json:"latest_handshake_at,omitempty"`
+	TXBytes           uint64 `json:"tx_bytes"`
+	RXBytes           uint64 `json:"rx_bytes"`
+}
+type deploymentReadback struct {
+	Generation       uint64 `json:"generation"`
+	PayloadSHA256    string `json:"payload_sha256"`
+	SelectedSnapshot string `json:"selected_snapshot"`
+	AppliedSnapshot  string `json:"applied_snapshot"`
+	Version          string `json:"version"`
+	RolloutVerified  bool   `json:"rollout_verified"`
 }
 
 func canonical(value any) ([]byte, error) { return json.Marshal(value) }
@@ -339,7 +415,7 @@ func endpointLess(left, right endpointReference) bool {
 }
 
 func validateView(view deviceView) error {
-	if view.Schema != 1 || !validName(view.DeviceID) || !validName(view.Name) || view.Platform != "android" || view.Floor == 0 || len(view.Endpoints) == 0 {
+	if view.Schema != 1 && view.Schema != 2 || !validName(view.DeviceID) || !validName(view.Name) || view.Platform != "android" || view.Floor == 0 || len(view.Endpoints) == 0 {
 		return errors.New("invalid device view")
 	}
 	if _, err := rawKey(view.DevicePublicKey); err != nil {
@@ -362,6 +438,29 @@ func validateView(view deviceView) error {
 	}
 	if view.Runtime == nil || view.Runtime.Validate(view.Routes) != nil {
 		return errors.New("invalid runtime profile")
+	}
+	if view.Schema == 2 {
+		if view.PublicDataPlaneCA == "" || len(view.DestinationGrants) == 0 {
+			return errors.New("invalid schema-2 device view")
+		}
+		for index, grant := range view.DestinationGrants {
+			if !validName(grant) || index > 0 && view.DestinationGrants[index-1] >= grant {
+				return errors.New("invalid destination grants")
+			}
+		}
+		for index, component := range view.ExpectedComponents {
+			if !validName(component.Name) || !validName(component.Version) || index > 0 && view.ExpectedComponents[index-1].Name >= component.Name {
+				return errors.New("invalid expected components")
+			}
+		}
+		for index, target := range view.LinkProbeTargets {
+			key, keyErr := base64.StdEncoding.DecodeString(target.PeerWGPublicKey)
+			if !validName(target.LinkID) || !validName(target.Peer) || !validName(target.Transport) || !validName(target.Target) ||
+				index > 0 && view.LinkProbeTargets[index-1].LinkID >= target.LinkID ||
+				target.PeerWGPublicKey != "" && (keyErr != nil || len(key) != 32 || base64.StdEncoding.EncodeToString(key) != target.PeerWGPublicKey) {
+				return errors.New("invalid link probe targets")
+			}
+		}
 	}
 	return nil
 }

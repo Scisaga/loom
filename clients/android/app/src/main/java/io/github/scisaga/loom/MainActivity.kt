@@ -40,7 +40,6 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -75,7 +74,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.EnrollmentPhase
 import io.github.scisaga.loom.enrollment.EnrollmentStatus
-import io.github.scisaga.loom.enrollment.InviteScanner
 import io.github.scisaga.libbox.Libbox
 import io.github.scisaga.loom.profiles.ConnectionProfile
 import io.github.scisaga.loom.profiles.ProfileCatalog
@@ -102,7 +100,7 @@ internal val Muted = Color(0xFF647269)
 internal val Paper = Color(0xFFF0F4F1)
 internal val CardTint = Color(0xFFF7FBF8)
 
-private enum class HomeTab(val label: String) {
+internal enum class HomeTab(val label: String) {
     CONNECTION("连接"),
     CONFIGURATION("配置"),
     DIAGNOSTICS("诊断"),
@@ -167,7 +165,7 @@ class MainActivity : ComponentActivity() {
         }
         enrollment.initialize(catalog.state.value.viewedProfileId)
         setContent {
-            LoomHome(
+            LoomHomeRoute(
                 catalog = catalog,
                 enrollment = enrollment,
                 onConnect = ::requestConnection,
@@ -281,7 +279,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun LoomHome(
+private fun LoomHomeRoute(
     catalog: ProfileCatalog,
     enrollment: EnrollmentManager,
     onConnect: (String) -> Unit,
@@ -302,13 +300,9 @@ private fun LoomHome(
     val routeManager = remember(context) { RouteManager.get(context) }
     val viewedRouteStatus = remember(viewedProfile.id) { routeManager.status(viewedProfile.id) }
     val route by viewedRouteStatus.collectAsStateWithLifecycle()
-    val activeProfile = profiles.profiles.firstOrNull { it.id == status.activeProfileId }
-    val requestedProfile = profiles.profiles.firstOrNull { it.id == status.requestedProfileId }
-    val headerProfile = activeProfile ?: requestedProfile ?: viewedProfile
     val activeRouteId = status.activeProfileId.ifBlank { viewedProfile.id }
     val activeRouteStatus = remember(activeRouteId) { routeManager.status(activeRouteId) }
     val activeRoute by activeRouteStatus.collectAsStateWithLifecycle()
-    val hasManagedProfile = join.snapshot.isNotEmpty()
     var diagnostics by remember { mutableStateOf("正在检查…") }
     var scanning by remember { mutableStateOf(false) }
     var profileSheet by remember { mutableStateOf(false) }
@@ -318,9 +312,6 @@ private fun LoomHome(
     var renameText by remember { mutableStateOf("") }
     var deleting by remember { mutableStateOf<ConnectionProfile?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(HomeTab.CONNECTION) }
-    val connectionScroll = rememberScrollState()
-    val configurationScroll = rememberScrollState()
-    val diagnosticsScroll = rememberScrollState()
     LaunchedEffect(viewedProfile.id) { enrollment.initialize(viewedProfile.id) }
     LaunchedEffect(Unit) {
         diagnostics = withContext(Dispatchers.IO) {
@@ -329,128 +320,51 @@ private fun LoomHome(
             }.getOrElse { "自检失败：${it.message}" }
         }
     }
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = LoomGreen,
-            onPrimary = Color.White,
-            background = Paper,
-            surface = Color.White,
-            onSurface = Ink,
-            onSurfaceVariant = Muted,
-        ),
-    ) {
-        Scaffold(
-            containerColor = Paper,
-            bottomBar = {
-                HomeTabBar(selectedTab) {
+    LoomTheme {
+        LoomHomeScreen(
+            state = HomeUiState(
+                status = status,
+                profiles = profiles,
+                join = join,
+                route = route,
+                activeRoute = activeRoute,
+                notificationsAllowed = notificationsAllowed,
+                diagnostics = diagnostics,
+                selectedTab = selectedTab,
+                scanning = scanning,
+            ),
+            actions = HomeUiActions(
+                onTabSelected = {
                     scanning = false
                     selectedTab = it
-                }
-            },
-        ) { contentPadding ->
-            Column(Modifier.fillMaxSize().padding(contentPadding)) {
-                LoomHeader(headerProfile.name, status)
-                when (selectedTab) {
-                    HomeTab.CONNECTION -> HomePage(
-                        title = "连接",
-                        subtitle = "连接状态与当前生效路径",
-                        scrollState = connectionScroll,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        ConnectionCard(
-                            status = status,
-                            viewedProfile = viewedProfile,
-                            activeProfile = activeProfile,
-                            requestedProfile = requestedProfile,
-                            hasManagedProfile = hasManagedProfile,
-                            onChoose = { profileSheet = true },
-                            onConnect = { onConnect(viewedProfile.id) },
-                            onDisconnect = onDisconnect,
-                        )
-                        if (!hasManagedProfile) {
-                            OutlinedButton(
-                                onClick = { selectedTab = HomeTab.CONFIGURATION },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("go-to-enrollment"),
-                            ) {
-                                Text("前往配置加入网络")
-                            }
-                        }
-                        CurrentPathCard(
-                            paths = activeRoute.currentPaths,
-                            running = activeRoute.running && status.phase == ConnectionPhase.CONNECTED,
-                            profileName = activeProfile?.name.orEmpty(),
-                        )
-                    }
-
-                    HomeTab.CONFIGURATION -> HomePage(
-                        title = "配置",
-                        subtitle = enrollmentSummary(join),
-                        scrollState = configurationScroll,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        ProfilesCard(
-                            index = profiles,
-                            vpn = status,
-                            onView = catalog::view,
-                            onAdd = {
-                                addName = suggestedProfileName(profiles.profiles)
-                                addingProfile = true
-                            },
-                            onRename = {
-                                renameText = it.name
-                                renaming = it
-                            },
-                            onDelete = { deleting = it },
-                        )
-                        if (scanning) {
-                            InviteScanner(
-                                onScanned = {
-                                    scanning = false
-                                    enrollment.importInvite(viewedProfile.id, it)
-                                },
-                                onCancel = { scanning = false },
-                            )
-                        } else if (join.phase == EnrollmentPhase.READY) {
-                            JoinedDeviceCard(viewedProfile, join) {
-                                enrollment.refreshConfiguration(viewedProfile.id)
-                            }
-                        } else {
-                            EnrollmentCard(
-                                profile = viewedProfile,
-                                status = join,
-                                onScan = { scanning = true },
-                                onImportFile = { onImportFile(viewedProfile.id) },
-                                onRetry = { enrollment.retry(viewedProfile.id) },
-                                onRefresh = { enrollment.refreshConfiguration(viewedProfile.id) },
-                                onAbandonPending = { enrollment.abandonPending(viewedProfile.id) },
-                            )
-                        }
-                        RouteModeCard(route) { mode, exit -> routeManager.select(viewedProfile.id, mode, exit) }
-                        Text(
-                            "配置身份、签名运行配置与连接模式均保存在本机受保护存储中。",
-                            color = Muted,
-                            fontSize = 12.sp,
-                        )
-                        if (!notificationsAllowed) NotificationPermissionCard(onOpenNotificationSettings)
-                    }
-
-                    HomeTab.DIAGNOSTICS -> HomePage(
-                        title = "诊断",
-                        subtitle = "网络证据、可信上报与本机组件",
-                        scrollState = diagnosticsScroll,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        NetworkEvidenceCard(
-                            status,
-                            if (status.activeProfileId.isNotBlank()) activeRoute else route,
-                            activeProfile?.name ?: viewedProfile.name,
-                            status.deviceName.ifBlank { join.deviceName },
-                            diagnostics,
-                        )
-                    }
-                }
-            }
-        }
+                },
+                onChooseProfile = { profileSheet = true },
+                onConnect = onConnect,
+                onDisconnect = onDisconnect,
+                onViewProfile = catalog::view,
+                onAddProfile = {
+                    addName = suggestedProfileName(profiles.profiles)
+                    addingProfile = true
+                },
+                onRenameProfile = {
+                    renameText = it.name
+                    renaming = it
+                },
+                onDeleteProfile = { deleting = it },
+                onScanned = {
+                    scanning = false
+                    enrollment.importInvite(viewedProfile.id, it)
+                },
+                onCancelScan = { scanning = false },
+                onStartScan = { scanning = true },
+                onImportFile = onImportFile,
+                onRetryEnrollment = enrollment::retry,
+                onRefreshEnrollment = enrollment::refreshConfiguration,
+                onAbandonEnrollment = enrollment::abandonPending,
+                onSelectRoute = { profileID, mode, exit -> routeManager.select(profileID, mode, exit) },
+                onOpenNotificationSettings = onOpenNotificationSettings,
+            ),
+        )
 
         if (profileSheet) {
             ProfilePickerSheet(
@@ -520,6 +434,21 @@ private fun LoomHome(
 }
 
 @Composable
+internal fun LoomTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = lightColorScheme(
+            primary = LoomGreen,
+            onPrimary = Color.White,
+            background = Paper,
+            surface = Color.White,
+            onSurface = Ink,
+            onSurfaceVariant = Muted,
+        ),
+        content = content,
+    )
+}
+
+@Composable
 private fun ProfileNameDialog(
     title: String,
     value: String,
@@ -555,7 +484,7 @@ private fun profileNameAvailable(
 }
 
 @Composable
-private fun LoomHeader(profileName: String, status: VpnStatus) {
+internal fun LoomHeader(profileName: String, status: VpnStatus) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp),
         verticalAlignment = Alignment.Top,
@@ -595,7 +524,7 @@ private fun LoomHeader(profileName: String, status: VpnStatus) {
 }
 
 @Composable
-private fun HomePage(
+internal fun HomePage(
     title: String,
     subtitle: String,
     scrollState: ScrollState,
@@ -615,7 +544,7 @@ private fun HomePage(
 }
 
 @Composable
-private fun HomeTabBar(selected: HomeTab, onSelect: (HomeTab) -> Unit) {
+internal fun HomeTabBar(selected: HomeTab, onSelect: (HomeTab) -> Unit) {
     NavigationBar(
         containerColor = Color.White,
         tonalElevation = 0.dp,
@@ -699,7 +628,7 @@ internal fun enrollmentSummary(join: EnrollmentStatus): String = when {
 }
 
 @Composable
-private fun ConnectionCard(
+internal fun ConnectionCard(
     status: VpnStatus,
     viewedProfile: ConnectionProfile,
     activeProfile: ConnectionProfile?,
@@ -793,7 +722,7 @@ private fun suggestedProfileName(profiles: List<ConnectionProfile>): String {
 }
 
 @Composable
-private fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStatus, onRefresh: () -> Unit) {
+internal fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStatus, onRefresh: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -833,7 +762,7 @@ private fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStatu
 }
 
 @Composable
-private fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean, profileName: String) {
+internal fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean, profileName: String) {
     var showingDetails by rememberSaveable(profileName, running) { mutableStateOf(true) }
     var selectedDetail by rememberSaveable(profileName, running) { mutableStateOf(0) }
     LaunchedEffect(paths.size) {
@@ -949,7 +878,7 @@ private fun RouteDetail(path: RoutePathStatus) {
 }
 
 @Composable
-private fun NetworkEvidenceCard(
+internal fun NetworkEvidenceCard(
     status: VpnStatus,
     route: RouteStatus,
     profileName: String,
@@ -985,7 +914,7 @@ private fun NetworkEvidenceCard(
 }
 
 @Composable
-private fun NotificationPermissionCard(onOpenSettings: () -> Unit) {
+internal fun NotificationPermissionCard(onOpenSettings: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E8)),
         shape = RoundedCornerShape(16.dp),
@@ -1009,7 +938,7 @@ private fun NotificationPermissionCard(onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun EnrollmentCard(
+internal fun EnrollmentCard(
     profile: ConnectionProfile,
     status: EnrollmentStatus,
     onScan: () -> Unit,
@@ -1125,7 +1054,7 @@ private fun enrollmentTitle(phase: EnrollmentPhase): String = when (phase) {
 }
 
 @Composable
-private fun RouteModeCard(status: RouteStatus, onSelect: (RouteMode, String) -> Unit) {
+internal fun RouteModeCard(status: RouteStatus, onSelect: (RouteMode, String) -> Unit) {
     var choosingExit by remember { mutableStateOf(false) }
     if (choosingExit) {
         AlertDialog(

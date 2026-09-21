@@ -200,6 +200,16 @@ class RouteManager private constructor(context: Context) {
     fun selectedCandidate(profileId: String): String =
         runtime(profileId).application?.selectors?.firstOrNull()?.candidate.orEmpty()
 
+    fun reportSelections(profileId: String): ByteArray {
+        val runtime = runtime(profileId)
+        return synchronized(runtime) {
+            val values = runtime.application?.selectors.orEmpty().sortedBy { it.selector }.map {
+                JSONObject().put("scope", it.selector).put("candidate_id", it.candidate)
+            }
+            JSONArray(values).toString().encodeToByteArray()
+        }
+    }
+
     suspend fun tunnelStopped(profileId: String) = operation.withLock {
         val runtime = runtime(profileId)
         runtime.runningProfile = null

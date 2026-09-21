@@ -66,6 +66,32 @@ func (app *portableGUI) misakaRouteWheel(hwnd, wParam, lParam uintptr) (uintptr,
 	return 0, false
 }
 
+// paintMisakaRouteControl keeps the collapsed TagSelect under Loom's drawing
+// lifecycle.  The COMBOBOX still owns focus, keyboard navigation, accessibility
+// and its native popup list, but it must not paint a themed rectangular field
+// over the product surface (or disappear from WM_PRINT captures).
+func (app *portableGUI) paintMisakaRouteControl(hwnd, dc uintptr) {
+	var bounds portableRect
+	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds)))
+	selection, _, _ := procSendMessage.Call(hwnd, portableCBGetCurSel, 0, 0)
+	itemID := uint32(^uint32(0))
+	if selection != ^uintptr(0) {
+		itemID = uint32(selection)
+	}
+	state := uint32(portableODSComboBoxEdit)
+	if enabled, _, _ := procIsWindowEnabled.Call(hwnd); enabled == 0 {
+		state |= portableODSDisabled
+	}
+	app.drawMisakaRoute(&portableDrawItem{
+		controlID: portableControlRoute,
+		itemID:    itemID,
+		itemState: state,
+		hwndItem:  hwnd,
+		dc:        dc,
+		rect:      bounds,
+	})
+}
+
 func (app *portableGUI) misakaRouteVisible(snapshot portableGUISnapshot) bool {
 	if app.skin == nil || !snapshot.joined || snapshot.profileDraft != nil {
 		return false

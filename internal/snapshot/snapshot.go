@@ -58,6 +58,12 @@ type Manifest struct {
 	CreatedAt string `json:"created_at"`
 	Author    string `json:"author,omitempty"`
 
+	// AuthorityHead is present on v2 releases built from a certified control
+	// projection.  It binds the public release target to the exact QC-certified
+	// head without making the public distribution tree an authority source.
+	// Legacy SSOT releases omit it.
+	AuthorityHead string `json:"authority_head,omitempty"`
+
 	// SSOTHash 是源头文件的哈希:这份成品是从哪一版源头生成的。
 	SSOTHash string `json:"ssot_hash"`
 
@@ -79,6 +85,32 @@ type Manifest struct {
 	// Skipped 把渲染期跳过的东西一并冻进来。没有它,一份"少生成了东西"
 	// 的快照看起来和完整的一模一样。
 	Skipped []render.Skip `json:"skipped,omitempty"`
+}
+
+// BuildAuthority freezes an already validated, secret-free certified control
+// input into the existing signed release manifest. The caller supplies the
+// bundle/component projections so this package remains independent of control
+// domain types. sourceBytes are the canonical certified publisher input; their
+// digest occupies the legacy provenance field so existing integrity readers
+// can continue to verify and archive the exact source bytes during migration.
+func BuildAuthority(authorityHead string, sourceBytes []byte, bundles []BundleRef,
+	components []ComponentRef, meta Meta) *Manifest {
+	m := &Manifest{
+		CreatedAt: meta.CreatedAt, Author: meta.Author, AuthorityHead: authorityHead,
+		SSOTHash: "sha256:" + hexSum(sourceBytes),
+		Binaries: append([]BinaryRef(nil), meta.Binaries...),
+		Bundles:  append([]BundleRef(nil), bundles...), Components: append([]ComponentRef(nil), components...),
+	}
+	sort.Slice(m.Binaries, func(i, j int) bool {
+		if m.Binaries[i].OS != m.Binaries[j].OS {
+			return m.Binaries[i].OS < m.Binaries[j].OS
+		}
+		return m.Binaries[i].Arch < m.Binaries[j].Arch
+	})
+	sort.Slice(m.Bundles, func(i, j int) bool { return m.Bundles[i].Owner < m.Bundles[j].Owner })
+	sort.Slice(m.Components, func(i, j int) bool { return m.Components[i].Node < m.Components[j].Node })
+	m.ID = m.contentID()
+	return m
 }
 
 // BinaryRef 是一个平台的 Agent 二进制。

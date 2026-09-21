@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("com.android.compose.screenshot")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
@@ -38,6 +39,7 @@ tasks.configureEach {
 }
 
 android {
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
     namespace = "io.github.scisaga.loom"
     compileSdk = 35
     buildToolsVersion = "35.0.1"
@@ -110,6 +112,8 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    screenshotTestImplementation("androidx.compose.ui:ui-tooling")
+    screenshotTestImplementation("org.junit.platform:junit-platform-commons:1.12.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

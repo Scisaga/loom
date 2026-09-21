@@ -105,6 +105,9 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 	}
 	caPath := windowsClientCAPath(root, profile)
 	store.SetLKGPreflight(func(envelope control.DeviceViewEnvelope) error {
+		if err := deviceclient.SavePublicDataPlaneCA(caPath, envelope.View.PublicDataPlaneCA); err != nil {
+			return fmt.Errorf("保存认证数据面 CA: %w", err)
+		}
 		derived, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(envelope.View.Runtime.Config), runtimeTarget, caPath)
 		if err != nil {
 			return err

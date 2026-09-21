@@ -41,7 +41,7 @@ const (
 	misakaWhite      = 0xFFFFFF
 	misakaText       = 0x181B1A
 	misakaMuted      = 0x717674
-	misakaBorder     = 0xE4E7E5
+	misakaBorder     = 0xD9DDDA
 	misakaGreen      = 0x239B68
 	misakaGreenLight = 0xEEF8F3
 	misakaAmber      = 0xA66A14
@@ -86,17 +86,45 @@ var (
 	procMisakaIsZoomed        = portableUser32.NewProc("IsZoomed")
 	procMisakaIsDialogMessage = portableUser32.NewProc("IsDialogMessageW")
 	procMisakaGetWindowLong   = portableUser32.NewProc("GetWindowLongPtrW")
+	procMisakaSetWindowRegion = portableUser32.NewProc("SetWindowRgn")
+	procMisakaRoundRectRegion = portableGDI32.NewProc("CreateRoundRectRgn")
 )
 
 func init() { misakaSubclassCallback = windows.NewCallback(misakaControlProc) }
 
 func configureMisakaFrame(hwnd uintptr) {
 	// §7.2：仅替换可见边框；窗口仍参与系统移动、缩放、任务栏与贴靠布局。
+	applyMisakaCorners(hwnd)
+	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, 0x0037) // FRAMECHANGED | NOMOVE | NOSIZE | NOZORDER | NOACTIVATE
+}
+
+func applyMisakaCorners(hwnd uintptr) {
+	dwmRounded := false
 	if proc := misakaDWM.NewProc("DwmSetWindowAttribute"); proc.Find() == nil {
 		preference := uint32(2)
-		proc.Call(hwnd, 33, uintptr(unsafe.Pointer(&preference)), unsafe.Sizeof(preference))
+		result, _, _ := proc.Call(hwnd, 33, uintptr(unsafe.Pointer(&preference)), unsafe.Sizeof(preference))
+		dwmRounded = int32(result) >= 0
 	}
-	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, 0x0037) // FRAMECHANGED | NOMOVE | NOSIZE | NOZORDER | NOACTIVATE
+	if dwmRounded {
+		// Clear a region left by a previous non-composited session. DWM owns the
+		// 10-DIP visual corner when the attribute succeeds.
+		procMisakaSetWindowRegion.Call(hwnd, 0, 1)
+	} else {
+		var bounds portableRect
+		if ok, _, _ := procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds))); ok != 0 && bounds.right > 0 && bounds.bottom > 0 {
+			dpi, _, _ := procGetDPIForWindow.Call(hwnd)
+			if dpi == 0 {
+				dpi = 96
+			}
+			diameter := uintptr(max(int32(2), int32(20*int32(dpi)/96)))
+			region, _, _ := procMisakaRoundRectRegion.Call(0, 0, uintptr(bounds.right+1), uintptr(bounds.bottom+1), diameter, diameter)
+			if region != 0 {
+				if ok, _, _ := procMisakaSetWindowRegion.Call(hwnd, region, 1); ok == 0 {
+					procDeleteObject.Call(region)
+				}
+			}
+		}
+	}
 }
 
 func (app *portableGUI) initializeMisaka() error {
@@ -609,6 +637,27 @@ func misakaControlProc(hwnd uintptr, message uint32, wParam, lParam, subclass, o
 	value, found := portableGUIWindows.Load(owner)
 	app, _ := value.(*portableGUI)
 	if found && app.skin != nil && !app.skin.closed {
+		if hwnd == app.controls.routeCombo {
+			switch message {
+			case 0x000F: // WM_PAINT: the collapsed field is a Loom TagSelect, not a themed combo frame.
+				var paint struct {
+					dc              uintptr
+					erase           int32
+					rect            portableRect
+					restore, update int32
+					reserved        [32]byte
+				}
+				dc, _, _ := procMisakaBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&paint)))
+				app.paintMisakaRouteControl(hwnd, dc)
+				procMisakaEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&paint)))
+				return 0
+			case 0x0317, 0x0318: // WM_PRINT / WM_PRINTCLIENT
+				app.paintMisakaRouteControl(hwnd, wParam)
+				return 0
+			case 0x0085: // WM_NCPAINT: suppress the stock rectangular combo border.
+				return 0
+			}
+		}
 		if message == 0x020A {
 			if result, handled := app.misakaRouteWheel(hwnd, wParam, lParam); handled {
 				return result
@@ -676,6 +725,8 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 	case 0x0317:
 		procDefWindowProc.Call(hwnd, uintptr(message), wParam, (lParam&^0x000A)|0x0004)
 		return 0, true
+	case 0x0005: // WM_SIZE: keep the non-DWM 10-DIP window region in sync.
+		applyMisakaCorners(hwnd)
 	case 0x0014:
 		return 1, true // WM_ERASEBKGND：每个绘制目标一次提交。
 	case 0x000F:

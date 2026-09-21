@@ -245,39 +245,47 @@ type operationJournal struct {
 }
 
 func Import(input ImportInput) (State, error) {
+	state, _, err := importValidated(input)
+	return state, err
+}
+
+// importValidated returns the exact protected LKG only to the one-time
+// NetworkIntent converter.  The daemon never persists or rereads this legacy
+// source after the import Material is certified.
+func importValidated(input ImportInput) (State, []byte, error) {
 	files := map[string]string{"config": input.ConfigPath, "certified": input.CertifiedPath,
 		"operations": input.OperationsPath, "browser TLS": input.BrowserTLSPath, "release floor": input.ReleaseFloorPath}
 	bodies := map[string][]byte{}
 	for name, path := range files {
 		body, err := readProtected(path, 64<<20)
 		if err != nil {
-			return State{}, fmt.Errorf("read %s: %w", name, err)
+			return State{}, nil, fmt.Errorf("read %s: %w", name, err)
 		}
 		bodies[name] = body
 	}
 
 	var certified certifiedState
 	if err := decodeStrict(bodies["certified"], &certified); err != nil {
-		return State{}, fmt.Errorf("verify certified state: %w", err)
+		return State{}, nil, fmt.Errorf("verify certified state: %w", err)
 	}
 	if certified.Schema != 2 || len(certified.Active) != 0 && string(certified.Active) != "null" || certified.CertifiedHead == nil || certified.CertifiedQC == nil {
-		return State{}, errors.New("certified state is not a stable completed head")
+		return State{}, nil, errors.New("certified state is not a stable completed head")
 	}
 	if err := verifyCertified(certified.ControlSet, *certified.CertifiedHead, *certified.CertifiedQC); err != nil {
-		return State{}, err
+		return State{}, nil, err
 	}
 
 	config, err := decodeObject(bodies["config"])
 	if err != nil {
-		return State{}, fmt.Errorf("verify control identity: %w", err)
+		return State{}, nil, fmt.Errorf("verify control identity: %w", err)
 	}
 	for _, key := range []string{"schema", "cluster_id", "member_id", "device_id", "overlay_ip", "control_port", "raft_port", "control_set", "peer_directory", "control_service", "admin_profiles", "authorizations", "genesis_evidence"} {
 		if _, ok := config[key]; !ok {
-			return State{}, fmt.Errorf("control identity is missing %s", key)
+			return State{}, nil, fmt.Errorf("control identity is missing %s", key)
 		}
 	}
 	if len(config) != 13 {
-		return State{}, errors.New("control identity contains an unknown field")
+		return State{}, nil, errors.New("control identity contains an unknown field")
 	}
 	var schema int
 	var clusterID, overlayIP string
@@ -288,11 +296,11 @@ func Import(input ImportInput) (State, error) {
 		json.Unmarshal(config["overlay_ip"], &overlayIP) != nil ||
 		json.Unmarshal(config["control_port"], &port) != nil || port < 1 || port > 65535 ||
 		json.Unmarshal(config["control_set"], &configuredSet) != nil || !canonicalEqual(configuredSet, certified.ControlSet) {
-		return State{}, errors.New("control identity does not match certified authority")
+		return State{}, nil, errors.New("control identity does not match certified authority")
 	}
 	ip := net.ParseIP(overlayIP)
 	if ip == nil || !ip.IsPrivate() && !ip.IsLoopback() {
-		return State{}, errors.New("control identity listener is not private")
+		return State{}, nil, errors.New("control identity listener is not private")
 	}
 
 	var tlsEnvelope struct {
@@ -300,25 +308,25 @@ func Import(input ImportInput) (State, error) {
 		BrowserTLS
 	}
 	if err := decodeStrict(bodies["browser TLS"], &tlsEnvelope); err != nil || tlsEnvelope.Schema != 1 {
-		return State{}, errors.New("browser TLS identity is invalid")
+		return State{}, nil, errors.New("browser TLS identity is invalid")
 	}
 	if err := verifyBrowserTLS(tlsEnvelope.BrowserTLS, overlayIP); err != nil {
-		return State{}, err
+		return State{}, nil, err
 	}
 	floor, err := releasefloor.Read(input.ReleaseFloorPath)
 	if err != nil || floor == nil {
-		return State{}, errors.New("release anti-rollback floor is unavailable or invalid")
+		return State{}, nil, errors.New("release anti-rollback floor is unavailable or invalid")
 	}
 	lkg, readCerts, adminCerts, err := recoverJournal(bodies["operations"], clusterID, certified.ControlSet,
 		*certified.CertifiedHead, config["authorizations"])
 	if err != nil {
-		return State{}, err
+		return State{}, nil, err
 	}
 	head := CertifiedHead{Hash: certified.CertifiedHead.HeadHash, Index: certified.CertifiedHead.Body.Payload.RaftIndex,
 		Revision: certified.CertifiedHead.Body.Payload.ControlRevision}
 	projection, err := ProjectionFromSSOT(lkg, head)
 	if err != nil {
-		return State{}, err
+		return State{}, nil, err
 	}
 	if input.ObservationPath != "" {
 		if body, readErr := os.ReadFile(input.ObservationPath); readErr == nil {
@@ -331,9 +339,9 @@ func Import(input ImportInput) (State, error) {
 			ReleaseFloor: *floor, V2Latch: certified.CertifiedHead.Body.Payload.MinReaderVersion >= 2},
 		BrowserTLS: tlsEnvelope.BrowserTLS, ReadCertDER: readCerts, AdminCertDER: adminCerts, Projection: projection}
 	if err := state.Validate(); err != nil {
-		return State{}, err
+		return State{}, nil, err
 	}
-	return state, nil
+	return state, lkg, nil
 }
 
 func verifyCertified(set controlSet, head legacyHead, qc stableQC) error {

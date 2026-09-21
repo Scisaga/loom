@@ -1,0 +1,7 @@
+{
+  "renderer": "Win32 Direct2D/DirectWrite WM_PRINT",
+  "renderer_version": "portable-gui-wm-print-v1",
+  "viewport": "876x614px",
+  "dpi": "96",
+  "os_build": "10.0.26200.0"
+}

@@ -1,15 +1,53 @@
 package loomcore
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"loom/internal/clientmodel"
 )
+
+func TestAndroidRuntimeConfigUsesCertifiedPublicCA(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "demo-data-plane-ca"},
+		NotBefore: time.Unix(1, 0), NotAfter: time.Unix(4102444800, 0), IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	body, err := androidRuntimeConfig(`{"outbounds":[{"type":"hysteria2","tag":"exit","tls":{"enabled":true,"server_name":"exit.example"}}]}`, ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Outbounds []struct {
+			TLS map[string]any `json:"tls"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal([]byte(body), &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Outbounds) != 1 || document.Outbounds[0].TLS["certificate"] != ca {
+		t.Fatal("Android runtime did not consume the certified public CA")
+	}
+}
 
 func TestAndroidDeviceProfileProjectsCertifiedName(t *testing.T) {
 	controlPublic, controlPrivate, err := ed25519.GenerateKey(rand.Reader)

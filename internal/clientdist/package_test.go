@@ -112,13 +112,21 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 			t.Fatalf("legacy runtime entry remains: %q", forbidden)
 		}
 	}
-	for _, required := range []string{"client run", "client preflight", "--upgrade", "WorkingDirectory=/var/lib/loom-device", "previous runnable release was restored"} {
+	for _, required := range []string{"client run", "client preflight", "--upgrade", "--server-migration-source",
+		"client stage-server-migration", "migration_overlay=/var/lib/loom-device/migration-overlay.json",
+		"WorkingDirectory=/var/lib/loom-device", "previous runnable release was restored"} {
 		if !strings.Contains(installScript+systemdService, required) {
 			t.Fatalf("installer is missing %q", required)
 		}
 	}
 	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl stop loom-client-v2.service") {
 		t.Fatal("installer stops the previous runtime before the ownership preflight")
+	}
+	if strings.Index(installScript, "client stage-server-migration") > strings.Index(installScript, "client preflight") {
+		t.Fatal("installer preflights before staging the bounded migration overlay")
+	}
+	if !strings.Contains(installScript, `if [ ! -e "$migration_overlay" ]; then rm -f "/etc/systemd/system/$old"; fi`) {
+		t.Fatal("installer deletes rollback unit files while a migration overlay is active")
 	}
 }
 

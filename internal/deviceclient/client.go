@@ -87,9 +87,13 @@ func endpointOrder(endpoints []control.EndpointReference) []control.EndpointRefe
 }
 
 func Claim(ctx context.Context, store IdentityStore) (control.EnrollmentResponse, error) {
+	return ClaimWithServer(ctx, store, nil)
+}
+
+func ClaimWithServer(ctx context.Context, store IdentityStore, server *control.ServerClaimV2) (control.EnrollmentResponse, error) {
 	capability := store.Capability()
-	claim, err := control.SignEnrollmentClaim(control.EnrollmentClaimRequest{Schema: 1, Capability: capability,
-		RequestID: store.ClaimRequestID(), DevicePublicKey: store.PublicKey()}, store.PrivateKey())
+	claim, err := control.SignEnrollmentClaim(control.EnrollmentClaimRequest{Schema: 2, Capability: capability,
+		RequestID: store.ClaimRequestID(), DevicePublicKey: store.PublicKey(), Server: server}, store.PrivateKey())
 	if err != nil {
 		return control.EnrollmentResponse{}, err
 	}
@@ -109,6 +113,9 @@ func Claim(ctx context.Context, store IdentityStore) (control.EnrollmentResponse
 			failures = append(failures, err)
 			continue
 		}
+		if response.Schema != 2 || response.Transaction.Intent.Schema != 2 {
+			return control.EnrollmentResponse{}, errors.New("enrollment response does not use schema 2")
+		}
 		if response.Transaction.ID != capability.TransactionID || response.Transaction.DevicePublicKey != store.PublicKey() {
 			return control.EnrollmentResponse{}, errors.New("enrollment response is bound to another transaction or identity")
 		}
@@ -124,7 +131,7 @@ func Claim(ctx context.Context, store IdentityStore) (control.EnrollmentResponse
 
 func Resume(ctx context.Context, store IdentityStore) (control.EnrollmentResponse, error) {
 	capability := store.Capability()
-	resume, err := control.SignEnrollmentResume(control.EnrollmentResumeRequest{Schema: 1,
+	resume, err := control.SignEnrollmentResume(control.EnrollmentResumeRequest{Schema: 2,
 		TransactionID: capability.TransactionID, RequestID: store.ClaimRequestID(), DevicePublicKey: store.PublicKey()}, store.PrivateKey())
 	if err != nil {
 		return control.EnrollmentResponse{}, err
@@ -144,6 +151,9 @@ func Resume(ctx context.Context, store IdentityStore) (control.EnrollmentRespons
 		if err != nil {
 			failures = append(failures, err)
 			continue
+		}
+		if response.Schema != 2 || response.Transaction.Intent.Schema != 2 {
+			return control.EnrollmentResponse{}, errors.New("enrollment response does not use schema 2")
 		}
 		if response.Transaction.ID != capability.TransactionID || response.Transaction.DevicePublicKey != store.PublicKey() {
 			return control.EnrollmentResponse{}, errors.New("enrollment response is bound to another transaction or identity")
@@ -182,7 +192,10 @@ func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error
 	return nil, errors.Join(failures...)
 }
 
-func Sync(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
+// Fetch retrieves and verifies the next certified view without advancing the
+// device floor. Host adapters use it to prepare, apply and read back the real
+// runtime before SaveLKG promotes the view.
+func Fetch(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
 	connection, err := deviceConnection(ctx, store)
 	if err != nil {
 		return control.DeviceViewEnvelope{}, err
@@ -191,6 +204,22 @@ func Sync(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope,
 	var envelope control.DeviceViewEnvelope
 	if _, err := postJSON(ctx, connection, "/v2/device/config", struct{}{}, &envelope); err != nil {
 		return envelope, err
+	}
+	if err := control.VerifyDeviceViewEnvelope(envelope, store.Capability()); err != nil || envelope.View.DevicePublicKey != store.PublicKey() {
+		return control.DeviceViewEnvelope{}, errors.New("device view is not certified for this identity")
+	}
+	if current := store.LKG(); current != nil && envelope.Head.Index < current.Head.Index {
+		return control.DeviceViewEnvelope{}, errors.New("device view rolls back the certified floor")
+	}
+	return envelope, nil
+}
+
+// Sync is retained for adapters that provide their own SaveLKG preflight
+// hook. Linux uses Fetch directly so persistence follows runtime readback.
+func Sync(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
+	envelope, err := Fetch(ctx, store)
+	if err != nil {
+		return control.DeviceViewEnvelope{}, err
 	}
 	if err := store.SaveLKG(envelope); err != nil {
 		return control.DeviceViewEnvelope{}, err
@@ -210,6 +239,15 @@ func Report(ctx context.Context, store IdentityStore, report control.DeviceRepor
 	report.Schema = 1
 	report.DeviceID = lkg.View.DeviceID
 	report.ViewDigest = digest
+	if lkg.View.Schema == 2 {
+		report.Schema = 2
+		if report.Selection != "" {
+			return errors.New("schema-2 report contains a legacy single selection")
+		}
+		if report.Runtime == nil {
+			return errors.New("schema-2 report has no measured runtime readback")
+		}
+	}
 	report, err = control.SignDeviceReport(report, store.PrivateKey())
 	if err != nil {
 		return err

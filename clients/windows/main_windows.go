@@ -199,6 +199,9 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 		if envelope.View.Runtime == nil {
 			return errors.New("certified Windows view has no runtime profile")
 		}
+		if err := deviceclient.SavePublicDataPlaneCA(caPath, envelope.View.PublicDataPlaneCA); err != nil {
+			return fmt.Errorf("save certified data-plane CA: %w", err)
+		}
 		derived, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(envelope.View.Runtime.Config), profile, caPath)
 		if err != nil {
 			return err
@@ -309,28 +312,121 @@ func windowsNetworkGeneration() (string, error) {
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
-func runWindowsCertifiedProfile(ctx context.Context, root string, store *deviceclient.ProtectedStore,
-	components clientcomponent.RuntimePaths, profile clientruntime.WindowsRuntimeProfile, caPath string) error {
+func windowsComponentReadbacks(view control.DeviceView, components clientcomponent.RuntimePaths) []control.ComponentReadback {
+	coordinate := version.Self()
+	actual := map[string]control.ComponentReadback{
+		"sing-box": {Name: "sing-box", Version: strings.TrimPrefix(components.Manifest.SingBox.Version, "v"), Digest: "sha256:" + components.Manifest.SingBox.SHA256},
+		"sing_box": {Name: "sing_box", Version: strings.TrimPrefix(components.Manifest.SingBox.Version, "v"), Digest: "sha256:" + components.Manifest.SingBox.SHA256},
+		"wintun":   {Name: "wintun", Version: strings.TrimPrefix(components.Manifest.Wintun.Version, "v"), Digest: "sha256:" + components.Manifest.Wintun.SHA256},
+		"agent":    {Name: "agent", Version: version.AgentProtocolVersion},
+	}
+	if coordinate.Binary != "" {
+		value := actual["agent"]
+		value.Digest = "sha256:" + coordinate.Binary
+		actual["agent"] = value
+	}
+	result := make([]control.ComponentReadback, 0, len(view.ExpectedComponents))
+	for _, expected := range view.ExpectedComponents {
+		if value, ok := actual[expected.Name]; ok {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapter.Activation,
+	components []control.ComponentReadback, startedAt string, reportedAt time.Time) (control.DeviceReport, error) {
+	report := control.DeviceReport{ReportedAt: reportedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
+		Observations: append([]control.Observation(nil), activation.State.Observations...)}
+	if lkg.View.Schema == 2 {
+		for _, selection := range activation.Selections {
+			report.Selections = append(report.Selections, control.ReportSelection{Scope: selection.Scope, CandidateID: selection.CandidateID})
+		}
+		sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].Scope < report.Selections[j].Scope })
+		viewDigest, err := control.DeviceViewDigest(lkg.View)
+		if err != nil {
+			return control.DeviceReport{}, err
+		}
+		report.Runtime = &control.RuntimeReadback{State: "running", AppliedViewDigest: viewDigest, Exact: true, StartedAt: startedAt}
+		report.Components = append([]control.ComponentReadback(nil), components...)
+	} else if len(activation.Selections) > 0 {
+		report.Selection = activation.Selections[0].CandidateID
+	}
+	return report, nil
+}
+
+func windowsRuntimeFactsDigest(activation clientadapter.Activation, components []control.ComponentReadback) string {
+	body, _ := json.Marshal(struct {
+		Selections   []clientadapter.SelectionStatus `json:"selections"`
+		Observations []control.Observation           `json:"observations"`
+		Components   []control.ComponentReadback     `json:"components"`
+	}{activation.Selections, activation.State.Observations, components})
+	digest := sha256.Sum256(body)
+	return hex.EncodeToString(digest[:])
+}
+
+var errWindowsCertifiedViewChanged = errors.New("a newer certified Windows device view is available")
+
+type windowsFetchedActivationError struct{ cause error }
+
+func (err *windowsFetchedActivationError) Error() string {
+	return "activate fetched Windows view: " + err.cause.Error()
+}
+func (err *windowsFetchedActivationError) Unwrap() error { return err.cause }
+
+func windowsCertifiedViewChanged(ctx context.Context, store *deviceclient.ProtectedStore) bool {
+	refreshContext, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	envelope, err := deviceclient.Fetch(refreshContext, store)
+	if err != nil {
+		log.Printf("private Windows view refresh unavailable; keeping certified LKG: %v", err)
+		return false
+	}
+	current := store.LKG()
+	return current == nil || envelope.Head.Index != current.Head.Index || control.HeadID(envelope.Head) != control.HeadID(current.Head)
+}
+
+func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.ProtectedStore,
+	components clientcomponent.RuntimePaths, profile clientruntime.WindowsRuntimeProfile, caPath string, allowFetch bool) (retErr error) {
 	statusPath := windowsRuntimeStatusPath(root)
 	_ = os.Remove(statusPath)
 	defer os.Remove(statusPath) //nolint:errcheck
-	syncContext, cancel := context.WithTimeout(ctx, 20*time.Second)
-	if _, err := deviceclient.Sync(syncContext, store); err != nil {
-		log.Printf("private device sync unavailable; using certified LKG: %v", err)
+	previous := store.LKG()
+	lkg := previous
+	var fetched *control.DeviceViewEnvelope
+	if allowFetch && previous != nil {
+		fetchContext, cancel := context.WithTimeout(ctx, 20*time.Second)
+		envelope, err := deviceclient.Fetch(fetchContext, store)
+		cancel()
+		if err != nil {
+			log.Printf("private Windows view fetch unavailable; using certified LKG: %v", err)
+		} else {
+			fetched, lkg = &envelope, &envelope
+		}
 	}
-	cancel()
-	lkg := store.LKG()
+	promoted := fetched == nil
+	defer func() {
+		if fetched != nil && !promoted && retErr != nil && !errors.Is(retErr, errWindowsCertifiedViewChanged) && ctx.Err() == nil {
+			retErr = &windowsFetchedActivationError{cause: retErr}
+		}
+	}()
 	if lkg == nil || lkg.View.Runtime == nil {
 		return errors.New("Windows profile lost its certified LKG")
 	}
 	if _, err := clientmodel.ProjectRuntimeCandidates(lkg.View.Routes, *lkg.View.Runtime); err != nil {
 		return err
 	}
+	if err := deviceclient.SavePublicDataPlaneCA(caPath, lkg.View.PublicDataPlaneCA); err != nil {
+		return fmt.Errorf("save certified data-plane CA: %w", err)
+	}
 	config, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(lkg.View.Runtime.Config), profile, caPath)
 	if err != nil {
 		return err
 	}
 	defer clear(config)
+	generationContext, stopGeneration := context.WithCancel(ctx)
+	defer stopGeneration()
+	ctx = generationContext
 	planeDone := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {
@@ -344,6 +440,14 @@ func runWindowsCertifiedProfile(ctx context.Context, root string, store *devicec
 		return err
 	case <-started:
 	}
+	planeStopped := false
+	defer func() {
+		stopGeneration()
+		if !planeStopped {
+			<-planeDone
+		}
+	}()
+	startedAt := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
 	selector, err := clientadapter.NewHTTPSelector(string(config))
 	if err != nil {
 		return err
@@ -355,6 +459,12 @@ func runWindowsCertifiedProfile(ctx context.Context, root string, store *devicec
 	if err := clientadapter.WaitSelector(ctx, selector, scopes); err != nil {
 		return err
 	}
+	if fetched != nil {
+		if err := store.SaveLKG(*fetched); err != nil {
+			return err
+		}
+	}
+	promoted = true
 	generation, err := windowsNetworkGeneration()
 	if err != nil {
 		return err
@@ -364,15 +474,19 @@ func runWindowsCertifiedProfile(ctx context.Context, root string, store *devicec
 	if activation.State.NetworkGeneration == "" {
 		return activationErr
 	}
-	selected := ""
-	if len(activation.Selections) > 0 {
-		selected = activation.Selections[0].CandidateID
+	componentReadbacks := windowsComponentReadbacks(lkg.View, components)
+	report, err := windowsDeviceReport(lkg, activation, componentReadbacks, startedAt, time.Now())
+	if err != nil {
+		return err
 	}
-	report := control.DeviceReport{Selection: selected, ReportedAt: time.Now().UTC().Truncate(time.Second).Format(time.RFC3339),
-		Observations: append([]control.Observation(nil), activation.State.Observations...)}
 	reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
 	reportErr := deviceclient.Report(reportContext, store, report)
 	reportCancel()
+	lastReportAt := time.Time{}
+	if reportErr == nil {
+		lastReportAt = time.Now()
+	}
+	lastFacts := windowsRuntimeFactsDigest(activation, componentReadbacks)
 	status := windowsRuntimeStatus{Schema: 1, DeviceID: lkg.View.DeviceID, Head: control.HeadID(lkg.Head),
 		Preference: activation.State.Preference, Selections: activation.Selections,
 		Observations: activation.State.Observations, Reported: reportErr == nil}
@@ -389,10 +503,86 @@ func runWindowsCertifiedProfile(ctx context.Context, root string, store *devicec
 	if activationErr != nil {
 		log.Printf("Windows candidate activation completed with unavailable outcome: %v", activationErr)
 	}
-	select {
-	case <-ctx.Done():
-		return <-planeDone
-	case err := <-planeDone:
+	refresh := time.NewTicker(30 * time.Second)
+	defer refresh.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			planeStopped = true
+			return <-planeDone
+		case err := <-planeDone:
+			planeStopped = true
+			return err
+		case <-refresh.C:
+			if windowsCertifiedViewChanged(ctx, store) {
+				return errWindowsCertifiedViewChanged
+			}
+			now := time.Now()
+			nextGeneration, generationErr := windowsNetworkGeneration()
+			if generationErr != nil {
+				log.Printf("Windows network generation refresh unavailable: %v", generationErr)
+				continue
+			}
+			nextState := activation.State
+			if nextGeneration != nextState.NetworkGeneration {
+				nextState.NetworkGeneration = nextGeneration
+				nextState.Observations = nil
+			}
+			next, nextErr := clientadapter.Activate(ctx, selector, lkg.View.Routes, nextState,
+				clientadapter.BusinessProbe, time.Now)
+			if next.State.NetworkGeneration == "" {
+				log.Printf("Windows candidate refresh unavailable: %v", nextErr)
+				continue
+			}
+			facts := windowsRuntimeFactsDigest(next, componentReadbacks)
+			if facts != lastFacts || now.Sub(lastReportAt) >= 60*time.Second {
+				nextReport, buildErr := windowsDeviceReport(lkg, next, componentReadbacks, startedAt, now)
+				if buildErr != nil {
+					return buildErr
+				}
+				reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
+				reportErr := deviceclient.Report(reportContext, store, nextReport)
+				reportCancel()
+				if reportErr != nil {
+					log.Printf("private signed report refresh unavailable: %v", reportErr)
+				} else {
+					lastReportAt, lastFacts = now, facts
+				}
+			}
+			activation = next
+			status := windowsRuntimeStatus{Schema: 1, DeviceID: lkg.View.DeviceID, Head: control.HeadID(lkg.Head),
+				Preference: activation.State.Preference, Selections: activation.Selections,
+				Observations: activation.State.Observations, Reported: now.Sub(lastReportAt) < 60*time.Second}
+			if body, encodeErr := json.MarshalIndent(status, "", "  "); encodeErr != nil {
+				return encodeErr
+			} else if writeErr := writeWindowsJoinFile(statusPath, append(body, '\n')); writeErr != nil {
+				return writeErr
+			}
+			if nextErr != nil {
+				log.Printf("Windows candidate refresh completed with unavailable outcome: %v", nextErr)
+			}
+		}
+	}
+}
+
+func runWindowsCertifiedProfile(ctx context.Context, root string, store *deviceclient.ProtectedStore,
+	components clientcomponent.RuntimePaths, profile clientruntime.WindowsRuntimeProfile, caPath string) error {
+	allowFetch := true
+	for {
+		err := runWindowsGeneration(ctx, root, store, components, profile, caPath, allowFetch)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if errors.Is(err, errWindowsCertifiedViewChanged) {
+			allowFetch = true
+			continue
+		}
+		var activationError *windowsFetchedActivationError
+		if errors.As(err, &activationError) {
+			log.Printf("fetched Windows view was not activated; restoring prior runtime: %v", activationError.cause)
+			allowFetch = false
+			continue
+		}
 		return err
 	}
 }

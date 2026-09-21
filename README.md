@@ -32,10 +32,10 @@ Windows 客户端采用原生浅色界面，支持多份连接配置、本地直
 从 [Releases](https://github.com/Scisaga/loom/releases) 下载 Windows 预览版。当前 EXE 和 MSI 尚未签名。
 
 <p align="center">
-  <img src="assets/client/windows/loom-client-windows-current.png" width="900" alt="Loom Windows 客户端：多配置侧栏、路由模式与 Service 分段路径">
+  <img src="clients/windows/testdata/ui-golden/connected.png" width="900" alt="Loom Windows 客户端：多配置侧栏、路由模式与 Service 分段路径">
 </p>
 
-<p align="center"><sub>Windows · Portable TUN · 当前源码的原生窗口截图，连接、身份与测量值均为演示数据；发行版可能滞后于源码。</sub></p>
+<p align="center"><sub>Windows · Portable TUN · 当前源码经固定 VM 原生渲染的规范基准图，连接、身份与测量值均为演示数据；发行版可能滞后于源码。</sub></p>
 
 三个版本均提供 x64（amd64）和 ARM64 包，共用同一套界面与加入流程：
 

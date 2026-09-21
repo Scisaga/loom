@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,9 +23,11 @@ import (
 )
 
 const (
-	endpointSchema   = 1
-	enrollmentSchema = 1
-	deviceViewSchema = 1
+	endpointSchema     = 1
+	enrollmentSchema   = 1
+	enrollmentSchemaV2 = 2
+	deviceViewSchema   = 1
+	deviceViewSchemaV2 = 2
 
 	capabilityDomain = "loom-bootstrap-capability-v1\n"
 	constraintDomain = "loom-enrollment-constraint-v1\n"
@@ -63,12 +66,15 @@ type RouteCandidate = clientmodel.RouteCandidate
 type RuntimeProfile = clientmodel.RuntimeProfile
 
 type EnrollmentIntent struct {
-	DeviceID string           `json:"device_id"`
-	Name     string           `json:"name"`
-	Platform string           `json:"platform"`
-	Roles    []string         `json:"roles"`
-	Routes   []RouteCandidate `json:"routes"`
-	Runtime  *RuntimeProfile  `json:"runtime_profile,omitempty"`
+	Schema            int              `json:"schema,omitempty"`
+	DeviceID          string           `json:"device_id"`
+	Name              string           `json:"name"`
+	Platform          string           `json:"platform"`
+	Roles             []string         `json:"roles"`
+	Routes            []RouteCandidate `json:"routes"`
+	Runtime           *RuntimeProfile  `json:"runtime_profile,omitempty"`
+	DestinationGrants []string         `json:"destination_grants,omitempty"`
+	Server            *ServerIntent    `json:"server,omitempty"`
 }
 
 type BootstrapCapability struct {
@@ -97,10 +103,11 @@ type EnrollmentOpen struct {
 }
 
 type EnrollmentBind struct {
-	TransactionID   string `json:"transaction_id"`
-	ClaimRequestID  string `json:"claim_request_id"`
-	DevicePublicKey string `json:"device_public_key"`
-	ClaimedAt       string `json:"claimed_at"`
+	TransactionID   string         `json:"transaction_id"`
+	ClaimRequestID  string         `json:"claim_request_id"`
+	DevicePublicKey string         `json:"device_public_key"`
+	ClaimedAt       string         `json:"claimed_at"`
+	Server          *ServerClaimV2 `json:"server,omitempty"`
 }
 
 type EnrollmentApprove struct {
@@ -123,19 +130,161 @@ type EnrollmentTransaction struct {
 	ClaimRequestID   string           `json:"claim_request_id,omitempty"`
 	DevicePublicKey  string           `json:"device_public_key,omitempty"`
 	ClaimedAt        string           `json:"claimed_at,omitempty"`
+	ClaimedServer    *ServerClaimV2   `json:"claimed_server,omitempty"`
 	ResultDigest     string           `json:"result_digest,omitempty"`
 }
 
 type DeviceAuthorization struct {
-	Schema          int              `json:"schema"`
-	DeviceID        string           `json:"device_id"`
-	Name            string           `json:"name"`
-	Platform        string           `json:"platform"`
-	Roles           []string         `json:"roles"`
-	Routes          []RouteCandidate `json:"routes"`
-	Runtime         *RuntimeProfile  `json:"runtime_profile,omitempty"`
-	DevicePublicKey string           `json:"device_public_key"`
-	Floor           uint64           `json:"floor"`
+	Schema            int              `json:"schema"`
+	DeviceID          string           `json:"device_id"`
+	Name              string           `json:"name,omitempty"`
+	Platform          string           `json:"platform,omitempty"`
+	Roles             []string         `json:"roles,omitempty"`
+	Routes            []RouteCandidate `json:"routes,omitempty"`
+	Runtime           *RuntimeProfile  `json:"runtime_profile,omitempty"`
+	DevicePublicKey   string           `json:"device_public_key"`
+	Floor             uint64           `json:"floor"`
+	DestinationGrants []string         `json:"destination_grants,omitempty"`
+	Server            *ServerIntent    `json:"server,omitempty"`
+	RuntimeKey        string           `json:"runtime_key,omitempty"`
+}
+
+// ServerRuntimeProfile is a private, deterministic projection for the
+// authorized server device. It is carried only in that device's certified
+// DeviceView; WebProjection never contains it. Passwords are derived from the
+// originating access authorization RuntimeKey and therefore do not create a
+// second credential store.
+type ServerRuntimeProfile struct {
+	Kind       string                   `json:"kind"`
+	Protocol   string                   `json:"protocol"`
+	ListenPort int                      `json:"listen_port"`
+	Users      []ServerRuntimeUser      `json:"users"`
+	ACL        []ServerRuntimeACL       `json:"acl"`
+	WireGuard  []ServerWireGuardRuntime `json:"wireguard"`
+}
+
+type ServerRuntimeUser struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
+}
+
+type ServerRuntimeACL struct {
+	User                string   `json:"user"`
+	Action              string   `json:"action"`
+	DestinationMatchers []string `json:"destination_matchers,omitempty"`
+	NextHost            string   `json:"next_host,omitempty"`
+	NextPort            int      `json:"next_port,omitempty"`
+	BindInterface       string   `json:"bind_interface,omitempty"`
+}
+
+type ServerWireGuardRuntime struct {
+	LinkID              string `json:"link_id"`
+	Interface           string `json:"interface"`
+	LocalAddress        string `json:"local_address"`
+	PeerID              string `json:"peer_id"`
+	PeerPublicKey       string `json:"peer_public_key"`
+	AllowedIP           string `json:"allowed_ip"`
+	Mode                string `json:"mode"`
+	ListenPort          int    `json:"listen_port,omitempty"`
+	Endpoint            string `json:"endpoint,omitempty"`
+	PersistentKeepalive int    `json:"persistent_keepalive"`
+	ProbeTarget         string `json:"probe_target"`
+}
+
+type ServerClaimV2 struct {
+	PublicEndpoint  string `json:"public_endpoint"`
+	InboundPort     int    `json:"inbound_port"`
+	InboundProtocol string `json:"inbound_protocol"`
+	WGPublicKey     string `json:"wg_public_key"`
+}
+
+func (claim ServerClaimV2) Validate() error {
+	server := ServerIntent{Direction: "bidirectional", PublicEndpoint: claim.PublicEndpoint, InboundPort: claim.InboundPort,
+		InboundProtocol: claim.InboundProtocol, WGPublicKey: claim.WGPublicKey}
+	return validateServerIntent(&server)
+}
+
+func serverIntentFromClaim(intent *ServerIntent, claim *ServerClaimV2) (*ServerIntent, error) {
+	if intent == nil || claim == nil || claim.Validate() != nil || validateServerDirection(intent) != nil {
+		return nil, errors.New("server claim does not match product intent")
+	}
+	return &ServerIntent{Direction: intent.Direction, PublicDataIngress: intent.PublicDataIngress,
+		PublicEndpoint: claim.PublicEndpoint, InboundPort: claim.InboundPort, InboundProtocol: claim.InboundProtocol,
+		EgressCapable: intent.EgressCapable, WGPublicKey: claim.WGPublicKey}, nil
+}
+
+func (profile ServerRuntimeProfile) Validate() error {
+	if profile.Kind != "sing_box" || profile.ListenPort < 1 || profile.ListenPort > 65535 {
+		return errors.New("server runtime profile is incomplete")
+	}
+	if profile.Protocol != "hysteria2" && profile.Protocol != "trojan" {
+		return errors.New("server runtime protocol is unsupported")
+	}
+	users := map[string]bool{}
+	used := map[string]bool{}
+	for index, user := range profile.Users {
+		if !validName(user.Name) || !validRuntimeKey(user.Password) ||
+			index > 0 && profile.Users[index-1].Name >= user.Name {
+			return errors.New("server runtime users are not uniquely sorted")
+		}
+		users[user.Name] = true
+	}
+	previous := ""
+	for _, rule := range profile.ACL {
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%05d\x00%s\x00%s", rule.User, rule.Action, rule.NextHost,
+			rule.NextPort, rule.BindInterface, strings.Join(rule.DestinationMatchers, "\x00"))
+		if !users[rule.User] || previous >= key && previous != "" {
+			return errors.New("server runtime ACL is not uniquely sorted")
+		}
+		switch rule.Action {
+		case "egress":
+			if rule.NextHost != "" || rule.NextPort != 0 || rule.BindInterface != "" ||
+				validateSortedNames(rule.DestinationMatchers, "server runtime destination matchers") != nil || len(rule.DestinationMatchers) == 0 {
+				return errors.New("server runtime egress ACL is invalid")
+			}
+		case "next_hop":
+			if len(rule.DestinationMatchers) != 0 || !validName(rule.NextHost) || rule.NextPort < 1 || rule.NextPort > 65535 ||
+				!validName(rule.BindInterface) {
+				return errors.New("server runtime next-hop ACL is incomplete")
+			}
+		default:
+			return errors.New("server runtime ACL action is invalid")
+		}
+		used[rule.User] = true
+		previous = key
+	}
+	for user := range users {
+		if !used[user] {
+			return errors.New("server runtime user has no authorized destination")
+		}
+	}
+	previous = ""
+	for _, link := range profile.WireGuard {
+		localPrefix, localErr := netip.ParsePrefix(link.LocalAddress)
+		allowedPrefix, allowedErr := netip.ParsePrefix(link.AllowedIP)
+		probeAddress, probeErr := netip.ParseAddr(link.ProbeTarget)
+		key := link.LinkID + "\x00" + link.PeerID
+		if !validName(link.LinkID) || !validName(link.Interface) || len(link.Interface) > 15 || !validName(link.PeerID) ||
+			!validWGPublicKey(link.PeerPublicKey) || link.LocalAddress == "" || link.AllowedIP == "" ||
+			localErr != nil || localPrefix.String() != link.LocalAddress || allowedErr != nil || allowedPrefix.String() != link.AllowedIP ||
+			probeErr != nil || probeAddress.String() != link.ProbeTarget || previous >= key && previous != "" {
+			return errors.New("server runtime WireGuard links are invalid")
+		}
+		switch link.Mode {
+		case "initiator":
+			if link.ListenPort != 0 || !validAddress(link.Endpoint) || link.PersistentKeepalive != 25 {
+				return errors.New("server runtime WireGuard initiator is invalid")
+			}
+		case "acceptor":
+			if link.ListenPort < 1 || link.ListenPort > 65535 || link.Endpoint != "" || link.PersistentKeepalive != 0 {
+				return errors.New("server runtime WireGuard acceptor is invalid")
+			}
+		default:
+			return errors.New("server runtime WireGuard mode is invalid")
+		}
+		previous = key
+	}
+	return nil
 }
 
 // DeviceRevoke is a Material payload, not a new lifecycle entity. Applying it
@@ -146,16 +295,22 @@ type DeviceRevoke struct {
 }
 
 type DeviceView struct {
-	Schema          int                 `json:"schema"`
-	DeviceID        string              `json:"device_id"`
-	Name            string              `json:"name"`
-	Platform        string              `json:"platform"`
-	Roles           []string            `json:"roles"`
-	DevicePublicKey string              `json:"device_public_key"`
-	Floor           uint64              `json:"floor"`
-	Endpoints       []EndpointReference `json:"endpoint_generations"`
-	Routes          []RouteCandidate    `json:"route_candidates"`
-	Runtime         *RuntimeProfile     `json:"runtime_profile,omitempty"`
+	Schema             int                    `json:"schema"`
+	DeviceID           string                 `json:"device_id"`
+	Name               string                 `json:"name"`
+	Platform           string                 `json:"platform"`
+	Roles              []string               `json:"roles"`
+	DevicePublicKey    string                 `json:"device_public_key"`
+	Floor              uint64                 `json:"floor"`
+	Endpoints          []EndpointReference    `json:"endpoint_generations"`
+	Routes             []RouteCandidate       `json:"route_candidates"`
+	Runtime            *RuntimeProfile        `json:"runtime_profile,omitempty"`
+	DestinationGrants  []string               `json:"destination_grants,omitempty"`
+	Server             *ServerIntent          `json:"server,omitempty"`
+	ServerRuntime      *ServerRuntimeProfile  `json:"server_runtime,omitempty"`
+	PublicDataPlaneCA  string                 `json:"public_data_plane_ca,omitempty"`
+	ExpectedComponents []ComponentExpectation `json:"expected_components,omitempty"`
+	LinkProbeTargets   []LinkProbeTarget      `json:"link_probe_targets,omitempty"`
 }
 
 type DeviceViewProof struct {
@@ -185,9 +340,59 @@ func validDigest(value string) bool {
 	return err == nil
 }
 
+func validLowerHex(value string, byteLength int) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == byteLength && hex.EncodeToString(decoded) == value
+}
+
 func validRawKey(value string) bool {
 	key, err := base64.RawURLEncoding.DecodeString(value)
 	return err == nil && len(key) == ed25519.PublicKeySize && base64.RawURLEncoding.EncodeToString(key) == value
+}
+
+func validRuntimeKey(value string) bool {
+	key, err := base64.RawURLEncoding.DecodeString(value)
+	return err == nil && len(key) == 32 && base64.RawURLEncoding.EncodeToString(key) == value
+}
+
+func validWGPublicKey(value string) bool {
+	key, err := base64.StdEncoding.DecodeString(value)
+	return err == nil && len(key) == 32 && base64.StdEncoding.EncodeToString(key) == value
+}
+
+func validateServerIntent(server *ServerIntent) error {
+	if server == nil || !validName(server.Direction) || server.PublicEndpoint == "" ||
+		server.InboundPort < 1 || server.InboundPort > 65535 || !validName(server.InboundProtocol) ||
+		!validWGPublicKey(server.WGPublicKey) {
+		return errors.New("server intent is incomplete")
+	}
+	switch server.Direction {
+	case "direct_only", "reverse_only", "bidirectional":
+	default:
+		return errors.New("server direction is invalid")
+	}
+	switch server.InboundProtocol {
+	case "hysteria2", "trojan":
+	default:
+		return errors.New("server inbound protocol is invalid")
+	}
+	return nil
+}
+
+func validateServerDirection(server *ServerIntent) error {
+	if server == nil {
+		return errors.New("server direction is missing")
+	}
+	switch server.Direction {
+	case "direct_only", "reverse_only", "bidirectional":
+	default:
+		return errors.New("server direction is invalid")
+	}
+	if server.PublicEndpoint != "" || server.InboundPort != 0 || server.InboundProtocol != "" || server.WGPublicKey != "" ||
+		server.Country != "" || server.City != "" || server.Provider != "" {
+		return errors.New("enrollment intent contains claim-time server facts")
+	}
+	return nil
 }
 
 func validAddress(value string) bool {
@@ -261,6 +466,37 @@ func (intent EnrollmentIntent) Validate() error {
 		if !validName(role) || index > 0 && intent.Roles[index-1] >= role {
 			return errors.New("enrollment roles are not uniquely sorted")
 		}
+	}
+	if intent.Schema == enrollmentSchemaV2 {
+		if len(intent.Routes) != 0 || intent.Runtime != nil {
+			return errors.New("schema-2 enrollment intent contains derived fields")
+		}
+		if err := validateSortedNames(intent.DestinationGrants, "enrollment grants"); err != nil {
+			return err
+		}
+		hasServer, hasAccess := false, false
+		for _, role := range intent.Roles {
+			if role != "access" && role != "server" {
+				return errors.New("schema-2 enrollment role is invalid")
+			}
+			hasServer = hasServer || role == "server"
+			hasAccess = hasAccess || role == "access"
+		}
+		egress := hasServer && intent.Server != nil && intent.Server.EgressCapable
+		if hasAccess && len(intent.DestinationGrants) == 0 || !hasAccess && !egress && len(intent.DestinationGrants) != 0 {
+			return errors.New("schema-2 responsibilities and grants disagree")
+		}
+		if hasServer {
+			if err := validateServerDirection(intent.Server); err != nil {
+				return err
+			}
+		} else if intent.Server != nil {
+			return errors.New("access-only enrollment contains server attributes")
+		}
+		return nil
+	}
+	if intent.Schema != 0 || len(intent.DestinationGrants) != 0 || intent.Server != nil {
+		return errors.New("enrollment intent schema is invalid")
 	}
 	for index, candidate := range intent.Routes {
 		if err := candidate.Validate(); err != nil || index > 0 && intent.Routes[index-1].ID >= candidate.ID {
@@ -407,6 +643,9 @@ func (bind EnrollmentBind) Validate() error {
 	if _, err := time.Parse(time.RFC3339, bind.ClaimedAt); err != nil {
 		return errors.New("enrollment claim time is invalid")
 	}
+	if bind.Server != nil && bind.Server.Validate() != nil {
+		return errors.New("enrollment server claim is invalid")
+	}
 	return nil
 }
 
@@ -418,10 +657,24 @@ func (approve EnrollmentApprove) Validate() error {
 }
 
 func (authorization DeviceAuthorization) Validate() error {
-	intent := EnrollmentIntent{DeviceID: authorization.DeviceID, Name: authorization.Name, Platform: authorization.Platform,
-		Roles: authorization.Roles, Routes: authorization.Routes, Runtime: authorization.Runtime}
-	if authorization.Schema != enrollmentSchema || intent.Validate() != nil || !validRawKey(authorization.DevicePublicKey) || authorization.Floor == 0 {
+	if !validName(authorization.DeviceID) || !validRawKey(authorization.DevicePublicKey) || authorization.Floor == 0 {
 		return errors.New("device authorization is invalid")
+	}
+	switch authorization.Schema {
+	case enrollmentSchema:
+		intent := EnrollmentIntent{DeviceID: authorization.DeviceID, Name: authorization.Name, Platform: authorization.Platform,
+			Roles: authorization.Roles, Routes: authorization.Routes, Runtime: authorization.Runtime}
+		if intent.Validate() != nil || authorization.RuntimeKey != "" || len(authorization.DestinationGrants) != 0 || authorization.Server != nil {
+			return errors.New("legacy device authorization is invalid")
+		}
+	case enrollmentSchemaV2:
+		if authorization.Name != "" || authorization.Platform != "" || len(authorization.Roles) != 0 || len(authorization.Routes) != 0 ||
+			authorization.Runtime != nil || authorization.Server != nil || !validRuntimeKey(authorization.RuntimeKey) ||
+			validateSortedNames(authorization.DestinationGrants, "device authorization grants") != nil {
+			return errors.New("schema-2 device authorization contains duplicated or invalid facts")
+		}
+	default:
+		return errors.New("device authorization schema is invalid")
 	}
 	return nil
 }
@@ -549,10 +802,17 @@ func reduceEnrollmentBind(projection *Projection, bind EnrollmentBind) error {
 	if transaction.State != "open" {
 		return errors.New("only open enrollment may bind")
 	}
+	if transaction.Intent.Schema == enrollmentSchemaV2 {
+		declared := transaction.Intent.Server
+		if (declared == nil) != (bind.Server == nil) {
+			return errors.New("device claim changes certified server responsibilities")
+		}
+	}
 	transaction.State = "bound"
 	transaction.ClaimRequestID = bind.ClaimRequestID
 	transaction.DevicePublicKey = bind.DevicePublicKey
 	transaction.ClaimedAt = bind.ClaimedAt
+	transaction.ClaimedServer = bind.Server
 	return nil
 }
 
@@ -567,17 +827,38 @@ func reduceEnrollmentApprove(projection *Projection, approve EnrollmentApprove) 
 
 func reduceEnrollmentComplete(projection *Projection, complete EnrollmentComplete) error {
 	_, transaction := findEnrollment(projection, complete.TransactionID)
-	if transaction == nil || transaction.State != "approved" {
-		return errors.New("only approved enrollment may complete")
+	if transaction == nil || transaction.State != "approved" && (transaction.State != "bound" || transaction.Intent.Schema != enrollmentSchemaV2) {
+		return errors.New("only approved legacy or bound schema-2 enrollment may complete")
 	}
 	intent := transaction.Intent
 	authorization := complete.Authorization
-	leftRuntime, _ := canonical(authorization.Runtime)
-	rightRuntime, _ := canonical(intent.Runtime)
-	if authorization.DeviceID != intent.DeviceID || authorization.Name != intent.Name || authorization.Platform != intent.Platform ||
-		authorization.DevicePublicKey != transaction.DevicePublicKey || !equalStrings(authorization.Roles, intent.Roles) ||
-		!equalRoutes(authorization.Routes, intent.Routes) || !bytes.Equal(leftRuntime, rightRuntime) {
+	if authorization.DeviceID != intent.DeviceID || authorization.DevicePublicKey != transaction.DevicePublicKey ||
+		!equalStrings(authorization.DestinationGrants, intent.DestinationGrants) {
 		return errors.New("device authorization does not match enrollment")
+	}
+	if intent.Schema == enrollmentSchemaV2 {
+		if authorization.Schema != enrollmentSchemaV2 || (transaction.ClaimedServer == nil) != (intent.Server == nil) {
+			return errors.New("schema-2 device authorization does not match claim")
+		}
+		server := (*ServerIntent)(nil)
+		if transaction.ClaimedServer != nil {
+			var err error
+			server, err = serverIntentFromClaim(intent.Server, transaction.ClaimedServer)
+			if err != nil {
+				return err
+			}
+		}
+		if err := integrateEnrollmentNetworkIntent(projection, intent, server); err != nil {
+			return err
+		}
+	} else {
+		leftRuntime, _ := canonical(authorization.Runtime)
+		rightRuntime, _ := canonical(intent.Runtime)
+		if authorization.Name != intent.Name || authorization.Platform != intent.Platform ||
+			!equalStrings(authorization.Roles, intent.Roles) || !equalRoutes(authorization.Routes, intent.Routes) ||
+			!bytes.Equal(leftRuntime, rightRuntime) {
+			return errors.New("legacy device authorization does not match enrollment")
+		}
 	}
 	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
 		return projection.DeviceAuthorizations[index].DeviceID >= authorization.DeviceID
@@ -601,6 +882,50 @@ func reduceEnrollmentComplete(projection *Projection, complete EnrollmentComplet
 	return nil
 }
 
+func integrateEnrollmentNetworkIntent(projection *Projection, intent EnrollmentIntent, claimedServer *ServerIntent) error {
+	if projection.NetworkIntent == nil {
+		return errors.New("schema-2 enrollment has no network intent")
+	}
+	node := NetworkNode{ID: intent.DeviceID, Name: intent.Name, Platform: intent.Platform,
+		Roles: append([]string(nil), intent.Roles...), Server: claimedServer}
+	if existing, found := networkNode(projection.NetworkIntent, intent.DeviceID); found {
+		existing.DNS = nil
+		existing.Components = nil
+		existing.ProbeTargets = nil
+		existing.DistributionURLs = nil
+		left, _ := canonical(existing)
+		right, _ := canonical(node)
+		if !bytes.Equal(left, right) {
+			return errors.New("existing-node rejoin does not match certified network intent")
+		}
+	} else {
+		projection.NetworkIntent.Nodes = append(projection.NetworkIntent.Nodes, node)
+		sort.Slice(projection.NetworkIntent.Nodes, func(i, j int) bool {
+			return projection.NetworkIntent.Nodes[i].ID < projection.NetworkIntent.Nodes[j].ID
+		})
+	}
+	if claimedServer != nil && claimedServer.EgressCapable {
+		for _, grant := range intent.DestinationGrants {
+			index := sort.Search(len(projection.NetworkIntent.Policies), func(index int) bool {
+				return projection.NetworkIntent.Policies[index].ID >= grant
+			})
+			if index == len(projection.NetworkIntent.Policies) || projection.NetworkIntent.Policies[index].ID != grant {
+				return errors.New("schema-2 egress enrollment references an unknown policy")
+			}
+			policy := &projection.NetworkIntent.Policies[index]
+			if !contains(policy.AllowedServers, intent.DeviceID) {
+				policy.AllowedServers = append(policy.AllowedServers, intent.DeviceID)
+				sort.Strings(policy.AllowedServers)
+			}
+			if !contains(policy.AllowedExits, intent.DeviceID) {
+				policy.AllowedExits = append(policy.AllowedExits, intent.DeviceID)
+				sort.Strings(policy.AllowedExits)
+			}
+		}
+	}
+	return projection.NetworkIntent.Validate()
+}
+
 func reduceDeviceAuthorization(projection *Projection, authorization DeviceAuthorization) error {
 	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
 		return projection.DeviceAuthorizations[index].DeviceID >= authorization.DeviceID
@@ -609,9 +934,12 @@ func reduceDeviceAuthorization(projection *Projection, authorization DeviceAutho
 		return errors.New("device authorization does not exist")
 	}
 	previous := projection.DeviceAuthorizations[index]
-	if authorization.Name != previous.Name || authorization.Platform != previous.Platform ||
-		authorization.DevicePublicKey != previous.DevicePublicKey || !equalStrings(authorization.Roles, previous.Roles) ||
-		authorization.Floor <= previous.Floor {
+	stableChanged := authorization.DevicePublicKey != previous.DevicePublicKey || authorization.Schema != previous.Schema
+	if authorization.Schema == enrollmentSchema {
+		stableChanged = stableChanged || authorization.Name != previous.Name || authorization.Platform != previous.Platform ||
+			!equalStrings(authorization.Roles, previous.Roles)
+	}
+	if stableChanged || authorization.Floor <= previous.Floor {
 		return errors.New("device update changes stable identity or does not advance floor")
 	}
 	projection.DeviceAuthorizations[index] = authorization
@@ -660,10 +988,74 @@ func projectDeviceView(projection Projection, deviceID string) (DeviceView, bool
 		return DeviceView{}, false
 	}
 	authorization := projection.DeviceAuthorizations[index]
-	view := DeviceView{Schema: deviceViewSchema, DeviceID: authorization.DeviceID, Name: authorization.Name,
-		Platform: authorization.Platform, Roles: append([]string(nil), authorization.Roles...),
+	routes, runtime, err := projectAuthorizationRuntime(projection, authorization)
+	if err != nil {
+		return DeviceView{}, false
+	}
+	schema := deviceViewSchema
+	name, platform := authorization.Name, authorization.Platform
+	roles := append([]string(nil), authorization.Roles...)
+	server := authorization.Server
+	if authorization.Schema == enrollmentSchemaV2 {
+		schema = deviceViewSchemaV2
+		node, found := networkNode(projection.NetworkIntent, authorization.DeviceID)
+		if !found {
+			return DeviceView{}, false
+		}
+		name, platform = node.Name, node.Platform
+		roles = append([]string(nil), node.Roles...)
+		server = node.Server
+	}
+	view := DeviceView{Schema: schema, DeviceID: authorization.DeviceID, Name: name,
+		Platform: platform, Roles: roles,
 		DevicePublicKey: authorization.DevicePublicKey, Floor: authorization.Floor,
-		Routes: append([]RouteCandidate(nil), authorization.Routes...), Runtime: cloneRuntimeProfile(authorization.Runtime)}
+		Routes: routes, Runtime: runtime, DestinationGrants: append([]string(nil), authorization.DestinationGrants...),
+		Server: server}
+	if authorization.Schema == enrollmentSchemaV2 && projection.NetworkIntent != nil {
+		view.PublicDataPlaneCA = projection.NetworkIntent.PublicDataPlaneCA
+		componentByName := map[string]ComponentExpectation{}
+		for _, component := range projection.NetworkIntent.Components {
+			componentByName[component.Name] = component
+		}
+		if node, found := networkNode(projection.NetworkIntent, authorization.DeviceID); found {
+			for _, component := range node.Components {
+				componentByName[component.Name] = component
+			}
+		}
+		for _, component := range componentByName {
+			view.ExpectedComponents = append(view.ExpectedComponents, component)
+		}
+		sort.Slice(view.ExpectedComponents, func(i, j int) bool { return view.ExpectedComponents[i].Name < view.ExpectedComponents[j].Name })
+		for _, link := range projection.NetworkIntent.Links {
+			peer := ""
+			if link.From == authorization.DeviceID {
+				peer = link.To
+			} else if link.To == authorization.DeviceID {
+				peer = link.From
+			}
+			if peer != "" {
+				target := ""
+				for _, probe := range link.ProbeTargets {
+					if probe.Reporter == authorization.DeviceID {
+						target = probe.Target
+					}
+				}
+				peerKey := ""
+				if peerNode, ok := networkNode(projection.NetworkIntent, peer); ok && peerNode.Server != nil {
+					peerKey = peerNode.Server.WGPublicKey
+				}
+				view.LinkProbeTargets = append(view.LinkProbeTargets, LinkProbeTarget{LinkID: link.ID, Peer: peer,
+					Transport: link.Transport, Target: target, PeerWGPublicKey: peerKey})
+			}
+		}
+		sort.Slice(view.LinkProbeTargets, func(i, j int) bool { return view.LinkProbeTargets[i].LinkID < view.LinkProbeTargets[j].LinkID })
+		if server != nil {
+			view.ServerRuntime, err = projectServerRuntime(projection, authorization.DeviceID, *server)
+			if err != nil {
+				return DeviceView{}, false
+			}
+		}
+	}
 	for _, generation := range projection.EndpointGenerations {
 		if generation.State == "serving" || generation.State == "draining" {
 			view.Endpoints = append(view.Endpoints, generation.Reference())
@@ -674,11 +1066,41 @@ func projectDeviceView(projection Projection, deviceID string) (DeviceView, bool
 }
 
 func (view DeviceView) Validate() error {
-	authorization := DeviceAuthorization{Schema: enrollmentSchema, DeviceID: view.DeviceID, Name: view.Name,
-		Platform: view.Platform, Roles: view.Roles, Routes: view.Routes, Runtime: view.Runtime,
-		DevicePublicKey: view.DevicePublicKey, Floor: view.Floor}
-	if view.Schema != deviceViewSchema || authorization.Validate() != nil || len(view.Endpoints) == 0 {
+	if view.Schema != deviceViewSchema && view.Schema != deviceViewSchemaV2 || !validName(view.DeviceID) || !validName(view.Name) ||
+		(view.Platform != "android" && view.Platform != "linux" && view.Platform != "windows") ||
+		!validRawKey(view.DevicePublicKey) || view.Floor == 0 || len(view.Endpoints) == 0 ||
+		validateSortedNames(view.Roles, "device view roles") != nil {
 		return errors.New("device view is invalid")
+	}
+	if view.Schema == deviceViewSchema {
+		authorization := DeviceAuthorization{Schema: enrollmentSchema, DeviceID: view.DeviceID, Name: view.Name,
+			Platform: view.Platform, Roles: view.Roles, Routes: view.Routes, Runtime: view.Runtime,
+			DevicePublicKey: view.DevicePublicKey, Floor: view.Floor}
+		if authorization.Validate() != nil || len(view.DestinationGrants) != 0 || view.Server != nil || view.ServerRuntime != nil ||
+			view.PublicDataPlaneCA != "" || len(view.ExpectedComponents) != 0 || len(view.LinkProbeTargets) != 0 {
+			return errors.New("legacy device view is invalid")
+		}
+	}
+	if view.Schema == deviceViewSchemaV2 {
+		if validateSortedNames(view.DestinationGrants, "device view grants") != nil {
+			return errors.New("schema-2 device view grants are invalid")
+		}
+		hasAccess := contains(view.Roles, "access")
+		hasServer := contains(view.Roles, "server")
+		invalidRuntime := hasAccess && (view.Runtime == nil || view.Runtime.Validate(view.Routes) != nil) ||
+			!hasAccess && (view.Runtime != nil || len(view.Routes) != 0)
+		invalidServerRuntime := hasServer && (view.Server == nil || view.ServerRuntime == nil || view.ServerRuntime.Validate() != nil) ||
+			!hasServer && view.ServerRuntime != nil
+		if view.PublicDataPlaneCA == "" || invalidRuntime || invalidServerRuntime || validateComponents(view.ExpectedComponents) != nil {
+			return errors.New("schema-2 device view is incomplete")
+		}
+		for index, target := range view.LinkProbeTargets {
+			if !validName(target.LinkID) || !validName(target.Peer) || !validName(target.Transport) || !validName(target.Target) ||
+				index > 0 && view.LinkProbeTargets[index-1].LinkID >= target.LinkID ||
+				target.PeerWGPublicKey != "" && !validWGPublicKey(target.PeerWGPublicKey) {
+				return errors.New("device view probe targets are invalid")
+			}
+		}
 	}
 	for index, endpoint := range view.Endpoints {
 		if endpoint.Validate() != nil || index > 0 && !endpointReferenceLess(view.Endpoints[index-1], endpoint) {
@@ -914,6 +1336,36 @@ func projectEnrollmentWeb(projection *Projection) {
 			Roles: append([]string(nil), transaction.Intent.Roles...), Authorized: authorized,
 			Availability: "unknown", EnrollmentID: transaction.ID, Enrollment: transaction.State, ViewDigest: transaction.ResultDigest}
 		if index < len(projection.Web.Devices) && projection.Web.Devices[index].ID == device.ID {
+			existing := projection.Web.Devices[index]
+			device.Endpoint = existing.Endpoint
+			device.Location = existing.Location
+			device.ExpectedComponents = append([]ComponentExpectation(nil), existing.ExpectedComponents...)
+		}
+		server := transaction.Intent.Server
+		if transaction.ClaimedServer != nil {
+			server, _ = serverIntentFromClaim(transaction.Intent.Server, transaction.ClaimedServer)
+		}
+		if authorized && authorization.Schema == enrollmentSchemaV2 {
+			if node, found := networkNode(projection.NetworkIntent, authorization.DeviceID); found {
+				server = node.Server
+			}
+		} else if authorized && authorization.Server != nil {
+			server = authorization.Server
+		}
+		if server != nil {
+			device.Direction = server.Direction
+			device.EgressCapable = server.EgressCapable
+			if server.PublicEndpoint != "" {
+				device.Endpoint = server.PublicEndpoint
+			}
+			if server.Country != "" {
+				device.Location = server.Country
+				if server.City != "" {
+					device.Location += " " + server.City
+				}
+			}
+		}
+		if index < len(projection.Web.Devices) && projection.Web.Devices[index].ID == device.ID {
 			projection.Web.Devices[index] = device
 		} else {
 			projection.Web.Devices = append(projection.Web.Devices, Device{})
@@ -930,9 +1382,17 @@ func projectEnrollmentWeb(projection *Projection) {
 		if !authorized {
 			continue
 		}
-		for _, candidate := range authorization.Routes {
+		routes, _, err := projectAuthorizationRuntime(*projection, authorization)
+		if err != nil {
+			continue
+		}
+		for _, candidate := range routes {
+			chain := append([]string(nil), candidate.Chain...)
+			if len(chain) > 0 && chain[0] == transaction.Intent.DeviceID {
+				chain = chain[1:]
+			}
 			projection.Web.Paths = append(projection.Web.Paths, Path{CandidateID: candidate.ID, Device: transaction.Intent.DeviceID,
-				FinalExit: candidate.FinalExit, Chain: append([]string(nil), candidate.Chain...), Availability: "unknown"})
+				Scope: candidate.Scope, FinalExit: candidate.FinalExit, Chain: chain, Availability: "unknown"})
 		}
 	}
 	sort.Slice(projection.Web.Paths, func(i, j int) bool {

@@ -44,8 +44,53 @@ type Runtime struct {
 	transport *raft.NetworkTransport
 	store     io.Closer
 	mu        sync.Mutex
+	statusMu  sync.Mutex
+	statusAt  time.Time
+	writable  bool
 	stop      chan struct{}
 	done      chan struct{}
+}
+
+type quorumStatus struct {
+	Writable bool `json:"writable"`
+}
+
+func (runtime *Runtime) verifyLocalLeader(ctx context.Context) bool {
+	if runtime == nil || runtime.Raft == nil || runtime.Raft.State() != raft.Leader {
+		return false
+	}
+	result := make(chan error, 1)
+	go func() { result <- runtime.Raft.VerifyLeader().Error() }()
+	select {
+	case err := <-result:
+		return err == nil
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// QuorumWritable is a short-lived runtime observation, not certified state.
+// The leader proves that it can still contact a voting quorum; followers read
+// that proof over the existing authenticated member channel. UI credentials
+// are deliberately not part of this result.
+func (runtime *Runtime) QuorumWritable(ctx context.Context) bool {
+	runtime.statusMu.Lock()
+	defer runtime.statusMu.Unlock()
+	now := time.Now()
+	if now.Sub(runtime.statusAt) < time.Second {
+		return runtime.writable
+	}
+	checkContext, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancel()
+	writable := runtime.verifyLocalLeader(checkContext)
+	if runtime.Raft != nil && runtime.Raft.State() != raft.Leader {
+		if leader, ok := runtime.LeaderMember(); ok {
+			var status quorumStatus
+			writable = runtime.peerJSON(checkContext, leader, http.MethodGet, "/internal/quorum-writable", nil, &status) == nil && status.Writable
+		}
+	}
+	runtime.statusAt, runtime.writable = now, writable
+	return writable
 }
 
 type authorityFSM struct{ authority *Authority }
@@ -592,7 +637,7 @@ func (runtime *Runtime) peerJSON(ctx context.Context, member Member, method, pat
 			continue
 		}
 		if result != nil {
-			decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
+			decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
 			decoder.DisallowUnknownFields()
 			err = decoder.Decode(result)
 		}

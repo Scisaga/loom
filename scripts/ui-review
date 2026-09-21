@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+readonly repo_root=$(cd -- "$script_dir/.." && pwd)
+readonly review_root="$repo_root/out/ui-review"
+readonly android_root="$repo_root/clients/android"
+readonly android_rendered="$android_root/app/build/outputs/screenshotTest-results/preview/debug/rendered"
+readonly android_reference="$android_root/app/src/screenshotTestDebug/reference"
+readonly windows_golden="$repo_root/clients/windows/testdata/ui-golden"
+readonly windows_run_id=ui-review
+readonly windows_collect="$review_root/windows-vm-evidence"
+readonly java_home=/usr/lib/jvm/java-17-openjdk-amd64
+readonly android_home=/opt/android-sdk
+
+readonly -a android_scenes=(
+  configuration-join-error
+  configuration-not-joined
+  configuration-ready-multiple-profiles
+  connection-connected-auto
+  connection-disconnected-unjoined
+  connection-error
+  diagnostics-connected
+  notification-warning
+  profile-picker
+)
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  scripts/ui-review preview android|windows|all
+  scripts/ui-review record all
+  scripts/ui-review verify android|windows|all
+  scripts/ui-review serve
+EOF
+  exit 2
+}
+
+gradle() {
+  (
+    cd "$android_root"
+    ANDROID_HOME="$android_home" JAVA_HOME="$java_home" \
+      ./gradlew --no-daemon --max-workers=4 "$@"
+  )
+}
+
+copy_android_set() {
+  local source_root=$1 destination=$2 scene match
+  rm -rf -- "$destination"
+  install -d "$destination"
+  for scene in "${android_scenes[@]}"; do
+    mapfile -t matches < <(find "$source_root" -type f -name "*_${scene}_*.png" -print | sort)
+    if [[ ${#matches[@]} -ne 1 ]]; then
+      echo "Android scene $scene resolved to ${#matches[@]} PNG files under $source_root" >&2
+      return 1
+    fi
+    match=${matches[0]}
+    install -m 0644 "$match" "$destination/$scene.png"
+  done
+  if [[ $(find "$source_root" -type f -name '*.png' | wc -l) -ne ${#android_scenes[@]} ]]; then
+    echo "Android renderer produced an unexpected scene set under $source_root" >&2
+    return 1
+  fi
+}
+
+write_android_metadata() {
+  local commit
+  commit=$(git -C "$repo_root" rev-parse HEAD)
+  install -d "$review_root/android"
+  printf '{\n  "renderer": "Compose Layoutlib alpha16",\n  "viewport": "412x915dp",\n  "locale": "zh-rCN",\n  "font_scale": "1.0",\n  "source_commit": "%s"\n}\n' "$commit" \
+    >"$review_root/android/metadata.json"
+}
+
+render_android() {
+  rm -rf -- "$android_rendered"
+  local result=0
+  gradle :app:validateDebugScreenshotTest || result=$?
+  if [[ ! -d "$android_rendered" ]]; then
+    echo "Android screenshot validation did not produce current images" >&2
+    return "$result"
+  fi
+  copy_android_set "$android_reference" "$review_root/android/baseline"
+  copy_android_set "$android_rendered" "$review_root/android/current"
+  write_android_metadata
+}
+
+render_windows() {
+  local allow_metadata_change=${1:-false}
+  install -d "$review_root"
+  install -m 0644 "$repo_root/scripts/ui-review-windows.ps1" "$review_root/run.ps1"
+  GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+    go test -c -vet=off -o "$review_root/windows-renderer.test.exe" ./clients/windows
+  "$repo_root/scripts/windows-test-vm.sh" stage "$windows_run_id" \
+    "$review_root/windows-renderer.test.exe" "$review_root/run.ps1"
+  "$repo_root/scripts/windows-test-vm.sh" run "$windows_run_id"
+  rm -rf -- "$windows_collect"
+  "$repo_root/scripts/windows-test-vm.sh" collect "$windows_run_id" "$windows_collect"
+  install -d "$windows_collect/unpacked"
+  local unzip_result=0
+  unzip -q "$windows_collect/evidence.zip" -d "$windows_collect/unpacked" || unzip_result=$?
+  if [[ $unzip_result -gt 1 ]]; then
+    echo "Could not unpack Windows UI review evidence" >&2
+    return "$unzip_result"
+  fi
+  local captured="$windows_collect/unpacked/windows/current"
+  if [[ ! -d $captured || $(find "$captured" -type f -name '*.png' | wc -l) -ne 8 ]]; then
+    echo "Windows VM did not return the eight expected screenshots" >&2
+    return 1
+  fi
+  rm -rf -- "$review_root/windows/current" "$review_root/windows/baseline"
+  install -d "$review_root/windows/current" "$review_root/windows/baseline"
+  find "$captured" -type f -name '*.png' -exec install -m 0644 '{}' "$review_root/windows/current/" \;
+  if [[ -d $windows_golden ]]; then
+    find "$windows_golden" -maxdepth 1 -type f -name '*.png' -exec install -m 0644 '{}' "$review_root/windows/baseline/" \;
+  fi
+  install -m 0644 "$windows_collect/unpacked/windows/metadata.json" "$review_root/windows/metadata.json"
+  if [[ $allow_metadata_change != true && -f $windows_golden/metadata.json ]] && \
+    ! cmp -s "$windows_golden/metadata.json" "$review_root/windows/metadata.json"; then
+    echo "Windows renderer environment differs from the approved baseline metadata" >&2
+    diff -u "$windows_golden/metadata.json" "$review_root/windows/metadata.json" >&2 || true
+    return 1
+  fi
+}
+
+build_gallery() {
+  local strict=$1 platform=$2
+  local -a args=(-root "$review_root" -platform "$platform")
+  if [[ $strict == true ]]; then
+    args+=(-strict)
+  fi
+  go run ./scripts/ui-review-tool "${args[@]}"
+  echo "Review: http://127.0.0.1:4173/index.html"
+}
+
+preview() {
+  case $1 in
+    android) render_android ;;
+    windows) render_windows ;;
+    all) render_android; render_windows ;;
+    *) usage ;;
+  esac
+  build_gallery false "$1"
+}
+
+verify() {
+  case $1 in
+    android) render_android ;;
+    windows) render_windows ;;
+    all) render_android; render_windows ;;
+    *) usage ;;
+  esac
+  build_gallery true "$1"
+}
+
+record_all() {
+  # Preflight both renderers before mutating either committed baseline.
+  render_android
+  render_windows true
+  gradle :app:updateDebugScreenshotTest
+  rm -rf -- "$windows_golden"
+  install -d "$windows_golden"
+  find "$review_root/windows/current" -maxdepth 1 -type f -name '*.png' -exec install -m 0644 '{}' "$windows_golden/" \;
+  install -m 0644 "$review_root/windows/metadata.json" "$windows_golden/metadata.json"
+  verify all
+}
+
+cd "$repo_root"
+case ${1:-} in
+  preview)
+    [[ $# -eq 2 ]] || usage
+    preview "$2"
+    ;;
+  verify)
+    [[ $# -eq 2 ]] || usage
+    verify "$2"
+    ;;
+  record)
+    [[ $# -eq 2 && $2 == all ]] || usage
+    record_all
+    ;;
+  serve)
+    [[ $# -eq 1 ]] || usage
+    exec python3 -u -m http.server 4173 --bind 127.0.0.1 --directory "$review_root"
+    ;;
+  *) usage ;;
+esac

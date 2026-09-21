@@ -62,3 +62,25 @@ APK, import a `.loom-invite` through the normal file or QR UI, receive operator
 approval, connect through the normal VPN action, and confirm the signed report
 from the private control service. Cellular/Wi-Fi transition coverage belongs to
 the separate network-switch acceptance item, not this build.
+
+## Visual review in VS Code
+
+The production Compose tree is the design source. `LoomHomeRoute` owns
+`StateFlow`, managers, Android permissions, and side effects;
+`LoomHomeScreen` consumes only an immutable UI projection and is shared by the
+Activity and screenshot fixtures. The nine committed references are rendered
+by Compose screenshot alpha16 at Chinese/light/`412×915dp`/font scale 1.0.
+
+From the repository root run:
+
+```bash
+scripts/ui-review preview android
+scripts/ui-review verify android
+```
+
+Open `http://127.0.0.1:4173/index.html` with VS Code's built-in Simple Browser
+while `scripts/ui-review serve` is running. No APK installation or preview
+extension is required. The only recommended editor extension is the official
+JetBrains Kotlin language server; rendering itself always goes through Gradle.
+Do not edit reference PNGs by hand. Use `scripts/ui-review record all` only
+after the complete Android and Windows gallery has been approved.

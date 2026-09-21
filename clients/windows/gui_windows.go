@@ -1366,7 +1366,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 		return 0, fmt.Errorf("register Windows client UI: %w", registerErr)
 	}
 	style := uintptr(portableMainWindowStyle)
-	width, height := int32(860)*dpi/96, int32(600)*dpi/96
+	width, height := int32(876)*dpi/96, int32(614)*dpi/96
 	screenWidth, _, _ := procGetSystemMetrics.Call(0)
 	screenHeight, _, _ := procGetSystemMetrics.Call(1)
 	x, y := int32(portableCWUseDefault), int32(portableCWUseDefault)
@@ -1386,7 +1386,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 	// window's real DPI so controls and the bottom status row cannot overlap.
 	if windowDPI, _, _ := procGetDPIForWindow.Call(hwnd); windowDPI != 0 && int32(windowDPI) != dpi {
 		dpi = int32(windowDPI)
-		width, height = int32(860)*dpi/96, int32(600)*dpi/96
+		width, height = int32(876)*dpi/96, int32(614)*dpi/96
 		screenWidth, _, _ = procGetSystemMetrics.Call(0)
 		screenHeight, _, _ = procGetSystemMetrics.Call(1)
 		if screenWidth > uintptr(width) && screenHeight > uintptr(height) {

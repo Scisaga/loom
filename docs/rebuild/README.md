@@ -23,6 +23,7 @@
 - [控制权威模型](control-model.md)
 - [Enrollment 与 Endpoint 模型](enrollment-endpoint-model.md)
 - [客户端运行与选路模型](client-runtime-model.md)
+- [客户端 UI 视觉审查模型](client-ui-visual-review.md)
 - [本机节点与部署配置模型](configuration-model.md)
 - [控制面 Web 投影](web-ui-projection.md)
 

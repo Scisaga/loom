@@ -40,6 +40,19 @@ func TestPublishCommandsRejectDisabledSSOTHistory(t *testing.T) {
 	}
 }
 
+func TestPublisherEnvIsTheOnlyLocalDeploymentInput(t *testing.T) {
+	for _, conflicting := range [][]string{
+		{"-env", "demo.env", "-key", "demo.key", "-target", "/srv/loom"},
+		{"-env", "demo.env", "-target", "/srv/loom"},
+		{"-env", "demo.env", "-ssh-config", "demo.ssh"},
+	} {
+		if err := cmdPublisher(append(conflicting, "-once")); err == nil ||
+			!strings.Contains(err.Error(), "不能与 -key、-target 或 -ssh-config 混用") {
+			t.Fatalf("publisher accepted a second local deployment input: args=%v err=%v", conflicting, err)
+		}
+	}
+}
+
 func TestManualPublishConsumesReleasedBinaryInsteadOfStrippingManifest(t *testing.T) {
 	ssot, err := os.ReadFile(filepath.Join("..", "..", "testdata", "matrix", "ssot.yaml"))
 	if err != nil {

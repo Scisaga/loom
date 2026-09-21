@@ -55,6 +55,7 @@ type Material struct {
 	BaseHead            string               `json:"base_head"`
 	Genesis             *Genesis             `json:"genesis,omitempty"`
 	Service             *Service             `json:"service,omitempty"`
+	ServiceDelete       *ServiceDelete       `json:"service_delete,omitempty"`
 	ControlConfig       *ControlConfig       `json:"control_config,omitempty"`
 	EndpointGeneration  *EndpointGeneration  `json:"endpoint_generation,omitempty"`
 	EnrollmentOpen      *EnrollmentOpen      `json:"enrollment_open,omitempty"`
@@ -63,6 +64,7 @@ type Material struct {
 	EnrollmentComplete  *EnrollmentComplete  `json:"enrollment_complete,omitempty"`
 	DeviceAuthorization *DeviceAuthorization `json:"device_authorization,omitempty"`
 	DeviceRevoke        *DeviceRevoke        `json:"device_revoke,omitempty"`
+	NetworkImport       *NetworkImport       `json:"network_import,omitempty"`
 }
 
 type ConsensusEntry struct {
@@ -85,6 +87,7 @@ type Projection struct {
 	EndpointGenerations  []EndpointGeneration    `json:"endpoint_generations,omitempty"`
 	Enrollments          []EnrollmentTransaction `json:"enrollments,omitempty"`
 	DeviceAuthorizations []DeviceAuthorization   `json:"device_authorizations,omitempty"`
+	NetworkIntent        *NetworkIntent          `json:"network_intent,omitempty"`
 	Web                  WebProjection           `json:"web"`
 }
 
@@ -168,6 +171,9 @@ func (material Material) Validate() error {
 	if material.Service != nil {
 		count++
 	}
+	if material.ServiceDelete != nil {
+		count++
+	}
 	if material.ControlConfig != nil {
 		count++
 	}
@@ -192,6 +198,9 @@ func (material Material) Validate() error {
 	if material.DeviceRevoke != nil {
 		count++
 	}
+	if material.NetworkImport != nil {
+		count++
+	}
 	if count != 1 {
 		return errors.New("material must contain exactly one payload")
 	}
@@ -207,13 +216,18 @@ func (material Material) Validate() error {
 			return errors.New("current genesis contains legacy member addresses")
 		}
 	case "service.put":
-		if material.Service == nil || material.BaseHead == "" || material.Service.ID == "" || material.Service.Name == "" {
+		if material.Service == nil || material.BaseHead == "" || !validName(material.Service.ID) ||
+			!validName(material.Service.Name) || !validName(material.Service.Policy) {
 			return errors.New("service material is invalid")
 		}
 		for index, matcher := range material.Service.Matchers {
-			if matcher == "" || index > 0 && material.Service.Matchers[index-1] >= matcher {
+			if !validName(matcher) || index > 0 && material.Service.Matchers[index-1] >= matcher {
 				return errors.New("service matchers are not uniquely sorted")
 			}
+		}
+	case "service.delete":
+		if material.ServiceDelete == nil || material.BaseHead == "" || !validName(material.ServiceDelete.ID) {
+			return errors.New("service delete material is invalid")
 		}
 	case "control.config":
 		if material.ControlConfig == nil || material.BaseHead == "" {
@@ -278,6 +292,11 @@ func (material Material) Validate() error {
 	case "device.revoke":
 		if material.DeviceRevoke == nil || material.BaseHead == "" || material.DeviceRevoke.Validate() != nil {
 			return errors.New("device revocation material is invalid")
+		}
+	case "network.import":
+		if material.Schema != MaterialSchema || material.NetworkImport == nil || material.BaseHead == "" ||
+			material.NetworkImport.Validate() != nil {
+			return errors.New("network import material is invalid")
 		}
 	default:
 		return fmt.Errorf("unknown material kind %q", material.Kind)
@@ -400,17 +419,43 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 		next.Web.UIState.Writable = true
 		next.Web.UIState.Warnings = []string{}
 	case "service.put":
+		if next.NetworkIntent == nil {
+			return Projection{}, errors.New("network intent is unavailable")
+		}
+		policyFound := false
+		for _, policy := range next.NetworkIntent.Policies {
+			policyFound = policyFound || policy.ID == material.Service.Policy
+		}
+		if !policyFound {
+			return Projection{}, errors.New("service references an unknown policy")
+		}
 		replaced := false
-		for index := range next.Web.Services {
-			if next.Web.Services[index].ID == material.Service.ID {
-				next.Web.Services[index] = *material.Service
+		for index := range next.NetworkIntent.Services {
+			if next.NetworkIntent.Services[index].ID == material.Service.ID {
+				next.NetworkIntent.Services[index] = *material.Service
 				replaced = true
 			}
 		}
 		if !replaced {
-			next.Web.Services = append(next.Web.Services, *material.Service)
+			next.NetworkIntent.Services = append(next.NetworkIntent.Services, *material.Service)
 		}
-		sort.Slice(next.Web.Services, func(i, j int) bool { return next.Web.Services[i].ID < next.Web.Services[j].ID })
+		sort.Slice(next.NetworkIntent.Services, func(i, j int) bool {
+			return next.NetworkIntent.Services[i].ID < next.NetworkIntent.Services[j].ID
+		})
+		if err := next.NetworkIntent.Validate(); err != nil {
+			return Projection{}, err
+		}
+	case "service.delete":
+		if next.NetworkIntent == nil {
+			return Projection{}, errors.New("network intent is unavailable")
+		}
+		index := sort.Search(len(next.NetworkIntent.Services), func(index int) bool {
+			return next.NetworkIntent.Services[index].ID >= material.ServiceDelete.ID
+		})
+		if index == len(next.NetworkIntent.Services) || next.NetworkIntent.Services[index].ID != material.ServiceDelete.ID {
+			return Projection{}, errors.New("service does not exist")
+		}
+		next.NetworkIntent.Services = append(next.NetworkIntent.Services[:index], next.NetworkIntent.Services[index+1:]...)
 	case "control.config":
 		if previous.Config.Mode == "stable" && material.ControlConfig.Mode == "joint" {
 			if !sameMembers(previous.Config.Members, material.ControlConfig.Old) {
@@ -476,9 +521,16 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 		if err := reduceDeviceRevoke(&next, *material.DeviceRevoke); err != nil {
 			return Projection{}, err
 		}
+	case "network.import":
+		if next.NetworkIntent != nil {
+			return Projection{}, errors.New("network intent was already imported")
+		}
+		intent := material.NetworkImport.Intent
+		next.NetworkIntent = &intent
 	}
 	next.Applied = append(next.Applied, material.RequestID)
 	sort.Strings(next.Applied)
+	projectNetworkWeb(&next)
 	projectEnrollmentWeb(&next)
 	return next, nil
 }

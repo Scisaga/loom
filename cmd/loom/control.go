@@ -22,6 +22,7 @@ import (
 
 	"loom/internal/control"
 	"loom/internal/localconfig"
+	"loom/internal/publish"
 	"loom/internal/report"
 )
 
@@ -58,11 +59,13 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <import|activate|prepare|migrate-browser-tls|serve|inspect|write>")
+		return errors.New("用法: loom control <import|import-network|activate|prepare|migrate-browser-tls|serve|inspect|write>")
 	}
 	switch args[0] {
 	case "import":
 		return cmdControlImport(args[1:])
+	case "import-network":
+		return cmdControlImportNetwork(args[1:])
 	case "serve":
 		return cmdControlServe(args[1:])
 	case "activate":
@@ -78,6 +81,79 @@ func cmdControl(args []string) error {
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
+}
+
+func cmdControlImportNetwork(args []string) error {
+	fs := flag.NewFlagSet("control import-network", flag.ContinueOnError)
+	sourceDir := fs.String("source-dir", "/var/lib/loom-control", "受保护旧控制状态目录")
+	floor := fs.String("release-floor", "/var/lib/loom/release-floor.json", "release anti-rollback floor")
+	observation := fs.String("observation", "", "可选的认证 Web 观测快照")
+	dataPlaneCA := fs.String("public-data-plane-ca", "", "认证的数据面公共 CA bundle")
+	socket := fs.String("socket", "/run/loom-control/admin.sock", "本机管理员 Unix socket")
+	requestID := fs.String("request-id", "", "稳定幂等请求 ID")
+	baseHead := fs.String("base-head", "", "当前 certified head")
+	dryRun := fs.Bool("dry-run", false, "只验证并输出非敏感摘要")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *dataPlaneCA == "" || !*dryRun && (*requestID == "" || *baseHead == "" || *socket == "") {
+		return errors.New("control import-network 缺少 public-data-plane-ca，提交时还需要 socket/request-id/base-head")
+	}
+	ca, err := os.ReadFile(*dataPlaneCA)
+	if err != nil {
+		return err
+	}
+	_, payload, err := control.PrepareLegacyNetworkImport(control.ImportInput{
+		ConfigPath: filepath.Join(*sourceDir, "config.json"), CertifiedPath: filepath.Join(*sourceDir, "control-state.json"),
+		OperationsPath: filepath.Join(*sourceDir, "operations.json"), BrowserTLSPath: filepath.Join(*sourceDir, "browser-tls.json"),
+		ReleaseFloorPath: *floor, ObservationPath: *observation,
+	}, ca)
+	if err != nil {
+		return err
+	}
+	intentBody, err := json.Marshal(payload.Intent)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("network import validated: nodes=%d links=%d policies=%d services=%d components=%d intent=sha256:%s\n",
+		len(payload.Intent.Nodes), len(payload.Intent.Links), len(payload.Intent.Policies), len(payload.Intent.Services),
+		len(payload.Intent.Components), control.SHA256(intentBody))
+	if *dryRun {
+		return nil
+	}
+	operation, err := json.Marshal(struct {
+		Schema    int                   `json:"schema"`
+		Kind      string                `json:"kind"`
+		RequestID string                `json:"request_id"`
+		BaseHead  string                `json:"base_head"`
+		Payload   control.NetworkImport `json:"payload"`
+	}{Schema: 2, Kind: "network.import", RequestID: *requestID, BaseHead: *baseHead, Payload: payload})
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{Proxy: nil,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", *socket)
+		}}}
+	request, err := http.NewRequest(http.MethodPost, "http://loom.local/api/control/operations", bytes.NewReader(operation))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("network import: %s: %s", response.Status, strings.TrimSpace(string(responseBody)))
+	}
+	_, err = os.Stdout.Write(responseBody)
+	return err
 }
 
 func cmdControlMigrateBrowserTLS(args []string) error {
@@ -204,6 +280,7 @@ func cmdControlServe(args []string) error {
 	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "最小控制状态目录")
 	releaseRoot := fs.String("release-root", "/var/lib/loom/client-dist/releases", "客户端 release 根目录")
 	releaseKey := fs.String("release-key", "/etc/loom/trust/platform.pub", "catalog 验签公钥")
+	publisherObservation := fs.String("publisher-observation", publish.HealthPath+".signed", "平台密钥签名的 publisher observation")
 	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
 	adminSocket := fs.String("admin-socket", "/run/loom-control/admin.sock", "本机管理员 Unix socket")
 	if err := fs.Parse(args); err != nil {
@@ -241,7 +318,8 @@ func cmdControlServe(args []string) error {
 		return err
 	}
 	err = (&control.Server{Runtime: runtime, Channel: channel, Config: runtime.Config, ReleaseRoot: *releaseRoot,
-		ReleaseKey: *releaseKey, AdminSocket: *adminSocket, Reports: reports}).Serve(ctx, reportRuntime.Handler())
+		ReleaseKey: *releaseKey, PublisherObservationPath: *publisherObservation,
+		AdminSocket: *adminSocket, Reports: reports}).Serve(ctx, reportRuntime.Handler())
 	stop()
 	if reportErr := reportRuntime.Wait(); err == nil {
 		err = reportErr
@@ -319,7 +397,7 @@ func cmdControlWrite(args []string) error {
 	certPath := fs.String("cert", "", "管理员客户端证书")
 	keyPath := fs.String("key", "", "管理员客户端私钥")
 	caPath := fs.String("ca", "", "control TLS 根证书")
-	kind := fs.String("kind", "", "service.put、members.replace、endpoint.put、enrollment.create、enrollment.approve、device.put 或 device.revoke")
+	kind := fs.String("kind", "", "existing-node.rejoin、service.put、service.delete、members.replace、endpoint.put、enrollment.create、enrollment.approve、device.put 或 device.revoke")
 	payloadPath := fs.String("payload", "", "operation payload JSON")
 	requestID := fs.String("request-id", "", "稳定幂等请求 ID")
 	baseHead := fs.String("base-head", "", "读取到的 certified head")
@@ -328,6 +406,9 @@ func cmdControlWrite(args []string) error {
 	}
 	if fs.NArg() != 0 || *kind == "" || *payloadPath == "" || *requestID == "" || *baseHead == "" {
 		return errors.New("control write 缺少 kind/payload/request-id/base-head 参数")
+	}
+	if *kind == "network.import" {
+		return errors.New("network.import 只能通过专用的一次性导入命令提交")
 	}
 	local := *socket != ""
 	remote := *endpoint != "" && *certPath != "" && *keyPath != "" && *caPath != ""
@@ -340,11 +421,12 @@ func cmdControlWrite(args []string) error {
 	}
 	var raw json.RawMessage = payload
 	body, err := json.Marshal(struct {
+		Schema    int             `json:"schema"`
 		Kind      string          `json:"kind"`
 		Payload   json.RawMessage `json:"payload"`
 		RequestID string          `json:"request_id"`
 		BaseHead  string          `json:"base_head"`
-	}{*kind, raw, *requestID, *baseHead})
+	}{2, *kind, raw, *requestID, *baseHead})
 	if err != nil {
 		return err
 	}

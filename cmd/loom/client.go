@@ -29,6 +29,8 @@ const clientUsage = `loom client —— 客户端交付
 	loom client inspect [-state <文件>]           回读本机身份与认证 LKG（不显示秘密）
 	loom client run                              正式 Linux service：启动统一 runtime
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
+	loom client stage-server-migration           从 owner-only 旧配置暂存受限用户/ACL overlay
+	loom client finalize-server-migration        按源摘要删除 overlay，重启后进入 exact runtime
 	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service
 	loom client status                           回读 selector 已确认的实际路径与观测
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
@@ -58,6 +60,10 @@ func cmdClient(args []string) error {
 		return cmdClientRun(args[1:])
 	case "preflight":
 		return cmdClientPreflight(args[1:])
+	case "stage-server-migration":
+		return cmdClientStageServerMigration(args[1:])
+	case "finalize-server-migration":
+		return cmdClientFinalizeServerMigration(args[1:])
 	case "route":
 		return cmdClientRoute(args[1:])
 	case "status":

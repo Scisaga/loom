@@ -87,7 +87,8 @@ Observation。失败的网络尝试不能扩大 capability 的权限，也不能
 约束摘要、设备密钥绑定、审批结果、当前状态和最终结果引用。其状态机为：
 
 ```text
-open -> bound -> approved -> completed
+schema-1: open -> bound -> approved -> completed
+schema-2: open -> bound -> completed
   |       |          |
   +-------+----------+-> rejected | expired | cancelled
 ```
@@ -96,6 +97,29 @@ open -> bound -> approved -> completed
 - `bound`：第一次有效 claim 已绑定设备密钥，重复的同请求返回同一状态。
 - `approved`：新权限已进入认证 `Projection`，可以生成私有 DeviceView。
 - `completed`：最终 DeviceView 的规范摘要已固定；重复 claim 或 resume 返回同一结果。
+
+schema-2 不把 `approved` 当成可见的中间完成态。管理员批准的单份 Material 同时生成 32 字节
+`RuntimeKey`、写入 `DeviceAuthorization` 并完成事务。`RuntimeKey` 只在认证设备配置链内消费，用
+HKDF-SHA256 按设备、policy 和用途派生数据面密码与本机 API secret；不进入 WebProjection、事件、
+错误或日志。schema-1 只作为已提交历史的只读重放窗口。
+
+claim 与 resume 的 schema 是 wire 版本，不直接复用历史 `EnrollmentIntent` 的持久字段：已提交的
+旧 intent 规范值没有显式 schema（值为 0），但其 wire 版本固定映射为 1；schema-2 intent 映射为
+wire 版本 2。两个 wire 版本分别使用 `loom-enrollment-claim-v1/v2` 和
+`loom-enrollment-resume-v1/v2` 签名域，修改 schema 会使签名失效。新客户端只产生 schema-2 请求，
+且只接受 schema-2 响应；schema-1 handler 仅为历史事务重放保留，不允许携带 server claim，也不再
+创建新的 schema-1 transaction。
+同一 reducer 还把这个新稳定设备身份原子加入 `NetworkIntent.nodes`。若管理员选择
+`internet_egress`，提交的 policy grant 同时把该节点加入这些 policy 的 `allowed_exits`；设备 claim
+只能补公网端点、入站端口、协议与 WG 公钥，不能把 `forward` 自行扩大为 egress。纯 forward 节点
+不接受无实际语义的 policy grant，后续链路仍必须由结构化网络操作明确声明，不能从 endpoint 猜测。
+
+一次性迁移既有基础设施节点复用同一个 EnrollmentTransaction/DeviceAuthorization 模型，不增加 rejoin
+registry。只有本机 root 管理 socket 可提交 `existing-node.rejoin`；请求只能引用已经存在于认证
+`NetworkIntent`、尚无 schema-2 authorization 的精确节点 ID，并从该节点读取名称、平台、角色、方向和
+egress 责任。管理员只补规范排序的 policy grant。设备 claim 的 server 事实必须与认证节点完全一致，
+批准仍是单份 schema-2 complete Material。旧部署凭据在设备外部迁移期间继续存在并不使其进入新模型；
+只有新 head、实际流量和新签名报告回读后，部署步骤才可删除旧凭据。
 - `rejected`、`expired`、`cancelled`：终态，不生成设备权限。
 
 网络中断、服务重启或暂时失去 quorum 不是新的事务状态。它们保留最近一次持久状态，resume 继续
@@ -106,6 +130,17 @@ open -> bound -> approved -> completed
 `DeviceView` 是面向一个已认证设备的私有、可验证投影。它包含该设备身份、安全 floor、可使用的
 Endpoint generation、允许的直连/转发约束、所需的通用 Artifact 引用以及 certified head。
 它不包含其他设备的信息，也不是新的治理权威。
+
+schema-2 server 的 DeviceView 还携带一个私有 `ServerRuntimeProfile`。其中 inbound user 密码由对应
+access 授权的 `RuntimeKey` 按设备、policy 和 server 用途派生；ACL 只允许最终出口执行 egress，或允许
+中继到该认证路径中的下一台 server。这个 profile 是 `NetworkIntent + DeviceAuthorization` 的确定性投影，
+不进入 Web、事件或日志，也没有独立 store。TLS/WireGuard 私钥仍是 server 本机输入，不进入 DeviceView。
+Linux server-only 与 hybrid 都由正式 `loom-client.service` 将 profile 合并为实际 sing-box 配置，先执行
+真实 preflight 并启动进程，随后才允许报告 `runtime=running`。
+
+Linux schema-2 报告还可从节点已经存在的签名 release floor、`applied` 快照和 rollout 记录投影
+`DeploymentReadback`。三者不一致时仍可报告各自的真实坐标，但 `rollout_verified` 必须为 false；缺少
+floor、实际快照或运行二进制坐标时整个 deployment readback 缺失，不能用期望版本补齐。
 
 服务端可从认证 `Projection`、已完成事务和设备身份确定性生成 DeviceView；缓存不具有权威性。
 客户端验证后将完整 view 保存为 last-known-good。新 view 验证失败时继续使用旧 view，不拼接
@@ -156,11 +191,15 @@ machine-scope 或 current-user DPAPI envelope，并把 `v2_latch=true` 与 floor
 Preference 一起原子替换，不能落盘明文私钥。服务端 Observation 与签名 report 保存在独立可过期
 运行时记录中，不进入 Raft/QC Projection。
 
-`platform=windows` 的 EnrollmentIntent 和设备更新都必须携带 RuntimeProfile。服务端先对整个请求做严格
-JSON 解码，再要求外层字段完整且无未知/多余值、内部 config 是唯一规范 JSON、每条 RouteCandidate 有且仅有
-一个同名可执行 outbound、每个 scope 有且仅有一个包含精确授权成员的 selector，并满足 Windows HostAdapter
-控制端点约束。任何缺失、重复、非规范或未经授权的成员使整笔 Material 在提交前失败；服务端不得规范化后
-悄悄接受原本非规范的 Windows 输入，也不得依赖客户端补默认值。
+schema-2 的浏览器 `EnrollmentIntent` 只接受 platform、产品职责、policy/declaration grant 和可选 direction；
+不接受 RuntimeProfile、route、password 或任意 JSON。Windows RuntimeProfile 与每个 scope 的 selector 由当前
+`NetworkIntent + DeviceAuthorization` 纯函数生成，再以规范 DeviceView 交付；server users/ACL 使用同一
+函数投影，不能另建 registry。任何缺失、重复、非规范或
+未授权成员使整笔 Material 在提交前失败；客户端不得补写权威默认值。
+
+`DeviceReport v2` 使用独立签名域，携带多 scope selection、runtime readback、实际组件坐标、精确链路探测与
+WG 累计计数、deployment readback。当前报告超过 3 分钟后全部运行事实回到 unknown；presence、业务可用性、
+组件匹配、链路和发布完成不得互相补绿。
 
 线格式必须规范化并可逆：
 
@@ -182,6 +221,7 @@ BootstrapCapability 不需要可变持久状态；其规范字节本身满足编
 ```text
 DeviceView = Project(CertifiedHead, Projection, CompletedTransaction, DeviceIdentity)
 AuthorizedCandidates = Project(DeviceView)
+ServerRuntime = Project(NetworkIntent, DeviceAuthorizations, ServerIdentity)
 SelectedCandidate = Select(AuthorizedCandidates, FreshObservations, Preference)
 UI = Present(CertifiedHead, Projection, Transactions, DeviceViews, Observations)
 ```
@@ -202,7 +242,9 @@ UI = Present(CertifiedHead, Projection, Transactions, DeviceViews, Observations)
    认证批准后转为 approved。
 6. 服务确定性生成 DeviceView，固定其规范摘要并把事务置为 completed；结果只经认证私有通道交付。
 7. 设备校验 view 与 certified head，完整替换本地 LKG，投影授权候选，并以最小 Observation 集选择
-   可用路径。报告也只经私有认证通道提交。
+   可用路径。server 节点从同一 view 生成并预检 users/ACL；只有运行进程回读成功后才报告 exact view
+   digest。access 选择包含 server 时，相关 server 未回报同一最新投影前，控制端保持 unknown/等待。
+   报告也只经私有认证通道提交。
 8. 任何响应丢失都通过 resume 读取或继续同一事务，不重新签发身份、不创建补偿事务。
 
 ## 失败与恢复
@@ -236,10 +278,13 @@ UI = Present(CertifiedHead, Projection, Transactions, DeviceViews, Observations)
 6. 既有证书匹配时 generation 可进入 serving；不匹配或失效时失败关闭，并确认没有 DNS/ACME 行为。
 7. 控制多数派中断时新审批失败关闭，已完成设备仍能从 LKG 启动；恢复后 bound 事务从原状态继续。
 8. UI 的状态、标识和转换与领域对象一致；Observation 以运行事实展示，不提供伪装成期望态修改的操作。
-9. Windows RuntimeProfile 对有效规范值完成 wire 往返；缺失 profile、未知/多余字段、重复键、非规范 JSON、
-   缺候选或多出 selector 成员分别归入同一拒绝等价类，均在治理写入前失败且不改变旧 DeviceView。
+9. Windows RuntimeProfile 的纯函数投影完成 wire 往返；缺候选、多出 selector 成员、未知/重复字段和非规范
+JSON 分别归入同一拒绝等价类，均在治理写入前失败且不改变旧 DeviceView。
 10. Windows 每个 profile 用 DPAPI 原子保存 Ed25519 身份、floor、latch、完整 LKG 与 Preference；claim 响应丢失、
     进程/SCM 重启继续同一 EnrollmentTransaction，坏新值不能覆盖旧 LKG，profile 索引不能重建网络事实。
+11. schema-2 server view 的 users/ACL 只由 access 授权派生；server-only 和 hybrid 都必须通过真实 sing-box
+    preflight/启动才可报告 running。所选路径上的任一 server 缺少最新 exact-view readback 时，access
+    presence、组件或自身探测均不能把整体业务状态补成 available。
 
 扩展测试只能在最小集合通过后增加，并且必须对应新的风险等价类，不能为每个服务器、每种协议或
 每个中间阶段复制同一测试。

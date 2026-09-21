@@ -148,3 +148,24 @@ notification-area base icon all use the approved violet-edged
 violet-gradient in-window brand tile; its generated ICO frames have a
 one-eighth-width corner radius. Neither asset may be redrawn as an
 edition-specific logo.
+
+## Native visual review
+
+The committed PNGs in `testdata/ui-golden` come from the production
+`portableGUI`, Win32 controls, Direct2D/DirectWrite, and the existing
+`WM_PRINT` memory capture. They are not a second renderer. Linux cross-compiles
+the scenario test executable; the fixed same-host Windows 11 VM renders eight
+synthetic `demo-*` scenes at 96 DPI and `860×600px`, without MSI installation or
+real identity data.
+
+From the repository root run:
+
+```bash
+scripts/ui-review preview windows
+scripts/ui-review verify windows
+```
+
+`preview` never changes the golden files. Review the generated gallery under
+`out/ui-review`, then use `scripts/ui-review record all` only after both
+platforms are approved. A Windows build, DPI, viewport, scene-set, or decoded
+pixel mismatch is a hard failure; do not hide instability with tolerance.

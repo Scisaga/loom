@@ -3,6 +3,9 @@ package control
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,20 +17,45 @@ import (
 )
 
 type enrollmentCreatePayload struct {
-	TransactionID string           `json:"transaction_id"`
-	ExpiresAt     string           `json:"expires_at"`
-	DeviceID      string           `json:"device_id"`
-	Name          string           `json:"name"`
-	Platform      string           `json:"platform"`
-	Roles         []string         `json:"roles"`
-	Routes        []RouteCandidate `json:"routes"`
-	Runtime       *RuntimeProfile  `json:"runtime_profile,omitempty"`
+	Schema            int              `json:"schema,omitempty"`
+	TransactionID     string           `json:"transaction_id"`
+	ExpiresAt         string           `json:"expires_at"`
+	DeviceID          string           `json:"device_id"`
+	Name              string           `json:"name"`
+	Platform          string           `json:"platform"`
+	Roles             []string         `json:"roles"`
+	Routes            []RouteCandidate `json:"routes"`
+	Runtime           *RuntimeProfile  `json:"runtime_profile,omitempty"`
+	Responsibilities  []string         `json:"responsibilities,omitempty"`
+	DestinationGrants []string         `json:"destination_grants,omitempty"`
+	Direction         string           `json:"direction,omitempty"`
+}
+
+// productEnrollmentCreatePayload is the complete browser-facing enrollment
+// request. Identity, expiry, roles, routes and runtime are authority-derived
+// and deliberately cannot be represented by this wire type.
+type productEnrollmentCreatePayload struct {
+	Name              string   `json:"name"`
+	Platform          string   `json:"platform"`
+	Responsibilities  []string `json:"responsibilities"`
+	DestinationGrants []string `json:"destination_grants"`
+	Direction         string   `json:"direction,omitempty"`
+}
+
+func (payload productEnrollmentCreatePayload) internal() enrollmentCreatePayload {
+	return enrollmentCreatePayload{Schema: enrollmentSchemaV2, Name: payload.Name, Platform: payload.Platform,
+		Responsibilities: payload.Responsibilities, DestinationGrants: payload.DestinationGrants, Direction: payload.Direction}
 }
 
 type deviceUpdatePayload struct {
 	DeviceID string           `json:"device_id"`
 	Routes   []RouteCandidate `json:"routes"`
 	Runtime  *RuntimeProfile  `json:"runtime_profile"`
+}
+
+type existingNodeRejoinPayload struct {
+	DeviceID          string   `json:"device_id"`
+	DestinationGrants []string `json:"destination_grants,omitempty"`
 }
 
 type tunnelIdentityKey struct{}
@@ -65,6 +93,105 @@ func (authority *Authority) EnrollmentOpen(transactionID string) (EnrollmentOpen
 	return EnrollmentOpen{}, errors.New("enrollment capability not found")
 }
 
+func (authority *Authority) EnrollmentOpenByRequestID(requestID string) (EnrollmentOpen, bool, error) {
+	consensus, _, _ := authority.Snapshot()
+	for _, entry := range consensus.Entries {
+		body, err := authority.Material(entry.MaterialID)
+		if err != nil {
+			return EnrollmentOpen{}, false, err
+		}
+		material, err := DecodeMaterial(body)
+		if err != nil {
+			return EnrollmentOpen{}, false, err
+		}
+		if material.RequestID == requestID {
+			if material.EnrollmentOpen == nil {
+				return EnrollmentOpen{}, false, errors.New("request ID is already used by another operation")
+			}
+			return *material.EnrollmentOpen, true, nil
+		}
+	}
+	return EnrollmentOpen{}, false, nil
+}
+
+func randomEnrollmentID(prefix string, bytes int) (string, error) {
+	body := make([]byte, bytes)
+	if _, err := rand.Read(body); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(body), nil
+}
+
+func productEnrollmentIntent(payload enrollmentCreatePayload) (EnrollmentIntent, error) {
+	if payload.Schema != enrollmentSchemaV2 || !validName(payload.Name) {
+		return EnrollmentIntent{}, errors.New("schema-2 enrollment request is incomplete")
+	}
+	if payload.TransactionID != "" || payload.ExpiresAt != "" || payload.DeviceID != "" || len(payload.Roles) != 0 ||
+		len(payload.Routes) != 0 || payload.Runtime != nil {
+		return EnrollmentIntent{}, errors.New("schema-2 enrollment request contains server-derived fields")
+	}
+	if payload.Platform != "android" && payload.Platform != "linux" && payload.Platform != "windows" {
+		return EnrollmentIntent{}, errors.New("schema-2 enrollment platform is invalid")
+	}
+	if err := validateSortedNames(payload.Responsibilities, "enrollment responsibilities"); err != nil {
+		return EnrollmentIntent{}, err
+	}
+	if err := validateSortedNames(payload.DestinationGrants, "enrollment grants"); err != nil {
+		return EnrollmentIntent{}, errors.New("schema-2 enrollment grants are invalid")
+	}
+	roles := []string{}
+	egress := false
+	for _, responsibility := range payload.Responsibilities {
+		switch responsibility {
+		case "forward":
+			roles = append(roles, "server")
+		case "internet_egress":
+			roles = append(roles, "server")
+			egress = true
+		case "use_loom":
+			roles = append(roles, "access")
+		default:
+			return EnrollmentIntent{}, errors.New("schema-2 enrollment responsibility is invalid")
+		}
+	}
+	sort.Strings(roles)
+	roles = compactStrings(roles)
+	if len(roles) == 0 || (payload.Platform == "android" || payload.Platform == "windows") && !contains(roles, "access") {
+		return EnrollmentIntent{}, errors.New("platform responsibilities are invalid")
+	}
+	hasAccess, hasServer := contains(roles, "access"), contains(roles, "server")
+	if hasAccess && len(payload.DestinationGrants) == 0 || !hasAccess && egress && len(payload.DestinationGrants) == 0 ||
+		!hasAccess && !egress && len(payload.DestinationGrants) != 0 {
+		return EnrollmentIntent{}, errors.New("responsibilities and destination grants disagree")
+	}
+	intent := EnrollmentIntent{Schema: enrollmentSchemaV2, Name: payload.Name, Platform: payload.Platform,
+		Roles: roles, DestinationGrants: append([]string(nil), payload.DestinationGrants...)}
+	if hasServer {
+		if payload.Direction == "" {
+			return EnrollmentIntent{}, errors.New("server enrollment direction is required")
+		}
+		intent.Server = &ServerIntent{Direction: payload.Direction, PublicDataIngress: payload.Direction != "reverse_only",
+			EgressCapable: egress}
+	} else if payload.Direction != "" {
+		return EnrollmentIntent{}, errors.New("access-only enrollment cannot set server direction")
+	}
+	// DeviceID is authority-generated after this product request has been
+	// validated. Full domain validation therefore belongs after that binding;
+	// calling it here would reject every browser-created schema-2 enrollment
+	// because the browser is deliberately unable to submit an identity.
+	return intent, nil
+}
+
+func compactStrings(values []string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if len(result) == 0 || result[len(result)-1] != value {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 func servingEndpointReferences(projection Projection) []EndpointReference {
 	result := []EndpointReference{}
 	for _, generation := range projection.EndpointGenerations {
@@ -78,6 +205,78 @@ func servingEndpointReferences(projection Projection) []EndpointReference {
 
 func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead string, payload enrollmentCreatePayload) (CertifiedState, string, error) {
 	_, projection, certified := server.Runtime.Authority.Snapshot()
+	if payload.Schema == enrollmentSchemaV2 {
+		if open, found, err := server.Runtime.Authority.EnrollmentOpenByRequestID(requestID); err != nil {
+			return CertifiedState{}, "", err
+		} else if found {
+			requested, intentErr := productEnrollmentIntent(payload)
+			if intentErr != nil {
+				return CertifiedState{}, "", intentErr
+			}
+			requested.DeviceID = open.Intent.DeviceID
+			if intentErr = requested.Validate(); intentErr != nil {
+				return CertifiedState{}, "", intentErr
+			}
+			if !equalEnrollmentIntent(open.Intent, requested) {
+				return CertifiedState{}, "", errors.New("request ID is already bound to different enrollment intent")
+			}
+			invite, encodeErr := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
+			return certified, invite, encodeErr
+		}
+		if baseHead != HeadID(certified.Head) {
+			return CertifiedState{}, "", errors.New("base head is stale")
+		}
+		intent, err := productEnrollmentIntent(payload)
+		if err != nil {
+			return CertifiedState{}, "", err
+		}
+		for _, grant := range intent.DestinationGrants {
+			if _, found := networkPolicy(projection.NetworkIntent, grant); !found {
+				return CertifiedState{}, "", errors.New("enrollment grant is unavailable")
+			}
+		}
+		intent.DeviceID, err = randomEnrollmentID("d-", 5)
+		if err != nil {
+			return CertifiedState{}, "", err
+		}
+		if err := intent.Validate(); err != nil {
+			return CertifiedState{}, "", err
+		}
+		if err := validateNewEnrollmentIdentity(certified.Projection, intent.DeviceID); err != nil {
+			return CertifiedState{}, "", err
+		}
+		transactionID, err := randomEnrollmentID("tx-", 16)
+		if err != nil {
+			return CertifiedState{}, "", err
+		}
+		expires := server.now().Add(15 * time.Minute).Truncate(time.Second)
+		endpoints := servingEndpointReferences(projection)
+		if len(endpoints) == 0 {
+			return CertifiedState{}, "", errors.New("no serving bootstrap endpoint generation")
+		}
+		constraint, _ := intentDigest(intent)
+		capability := BootstrapCapability{Schema: enrollmentSchema, TransactionID: transactionID,
+			IssuedHead: HeadID(certified.Head), ConfigMaterial: projection.ConfigMaterial, ControlConfig: projection.Config,
+			ExpiresAt: expires.Format(time.RFC3339), Actions: []string{"claim", "resume"}, Endpoints: endpoints,
+			ConstraintDigest: constraint, IssuerMemberID: server.Config.MemberID}
+		capability, err = SignBootstrapCapability(capability, server.Config)
+		if err != nil {
+			return CertifiedState{}, "", err
+		}
+		open := EnrollmentOpen{TransactionID: transactionID, Intent: intent, Capability: capability}
+		material := Material{Schema: MaterialSchema, Kind: "enrollment.open", RequestID: requestID,
+			BaseHead: baseHead, EnrollmentOpen: &open}
+		body, _, err := EncodeMaterial(material)
+		if err != nil {
+			return CertifiedState{}, "", err
+		}
+		result, err := server.Runtime.Submit(ctx, body)
+		if err != nil {
+			return CertifiedState{}, "", err
+		}
+		invite, err := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: capability})
+		return result, invite, err
+	}
 	if payload.Platform == "linux" && payload.Runtime == nil {
 		return CertifiedState{}, "", errors.New("Linux enrollment requires a certified runtime profile")
 	}
@@ -147,6 +346,85 @@ func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead 
 	return result, invite, err
 }
 
+func (server *Server) createExistingNodeRejoin(ctx context.Context, requestID, baseHead string,
+	payload existingNodeRejoinPayload) (CertifiedState, string, error) {
+	if !validName(payload.DeviceID) || validateSortedNames(payload.DestinationGrants, "existing-node rejoin grants") != nil {
+		return CertifiedState{}, "", errors.New("existing-node rejoin request is invalid")
+	}
+	_, projection, certified := server.Runtime.Authority.Snapshot()
+	if open, found, err := server.Runtime.Authority.EnrollmentOpenByRequestID(requestID); err != nil {
+		return CertifiedState{}, "", err
+	} else if found {
+		if open.Intent.Schema != enrollmentSchemaV2 || open.Intent.DeviceID != payload.DeviceID ||
+			!equalStrings(open.Intent.DestinationGrants, payload.DestinationGrants) {
+			return CertifiedState{}, "", errors.New("request ID is already bound to different existing-node rejoin intent")
+		}
+		invite, encodeErr := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
+		return certified, invite, encodeErr
+	}
+	if baseHead != HeadID(certified.Head) {
+		return CertifiedState{}, "", errors.New("base head is stale")
+	}
+	node, found := networkNode(projection.NetworkIntent, payload.DeviceID)
+	if !found || node.Platform == "" {
+		return CertifiedState{}, "", errors.New("existing-node rejoin target is not in certified network intent")
+	}
+	for _, authorization := range projection.DeviceAuthorizations {
+		if authorization.DeviceID == payload.DeviceID {
+			return CertifiedState{}, "", errors.New("existing-node rejoin target already has a device authorization")
+		}
+	}
+	for _, grant := range payload.DestinationGrants {
+		if _, found := networkPolicy(projection.NetworkIntent, grant); !found {
+			return CertifiedState{}, "", errors.New("existing-node rejoin grant is unavailable")
+		}
+	}
+	intent := EnrollmentIntent{Schema: enrollmentSchemaV2, DeviceID: node.ID, Name: node.Name,
+		Platform: node.Platform, Roles: append([]string(nil), node.Roles...),
+		DestinationGrants: append([]string(nil), payload.DestinationGrants...)}
+	if node.Server != nil {
+		intent.Server = &ServerIntent{Direction: node.Server.Direction, PublicDataIngress: node.Server.PublicDataIngress,
+			EgressCapable: node.Server.EgressCapable}
+	}
+	if node.Server != nil && node.Server.EgressCapable && len(payload.DestinationGrants) == 0 {
+		return CertifiedState{}, "", errors.New("existing egress rejoin requires at least one policy grant")
+	}
+	if err := intent.Validate(); err != nil {
+		return CertifiedState{}, "", err
+	}
+	transactionID, err := randomEnrollmentID("tx-", 16)
+	if err != nil {
+		return CertifiedState{}, "", err
+	}
+	expires := server.now().Add(15 * time.Minute).Truncate(time.Second)
+	endpoints := servingEndpointReferences(projection)
+	if len(endpoints) == 0 {
+		return CertifiedState{}, "", errors.New("no serving bootstrap endpoint generation")
+	}
+	constraint, _ := intentDigest(intent)
+	capability := BootstrapCapability{Schema: enrollmentSchema, TransactionID: transactionID,
+		IssuedHead: HeadID(certified.Head), ConfigMaterial: projection.ConfigMaterial, ControlConfig: projection.Config,
+		ExpiresAt: expires.Format(time.RFC3339), Actions: []string{"claim", "resume"}, Endpoints: endpoints,
+		ConstraintDigest: constraint, IssuerMemberID: server.Config.MemberID}
+	capability, err = SignBootstrapCapability(capability, server.Config)
+	if err != nil {
+		return CertifiedState{}, "", err
+	}
+	open := EnrollmentOpen{TransactionID: transactionID, Intent: intent, Capability: capability}
+	material := Material{Schema: MaterialSchema, Kind: "enrollment.open", RequestID: requestID,
+		BaseHead: baseHead, EnrollmentOpen: &open}
+	body, _, err := EncodeMaterial(material)
+	if err != nil {
+		return CertifiedState{}, "", err
+	}
+	result, err := server.Runtime.Submit(ctx, body)
+	if err != nil {
+		return CertifiedState{}, "", err
+	}
+	invite, err := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: capability})
+	return result, invite, err
+}
+
 func equalEnrollmentIntent(left, right EnrollmentIntent) bool {
 	a, _ := canonical(left)
 	b, _ := canonical(right)
@@ -177,7 +455,7 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 	if transaction.State == "completed" {
 		return certified, nil
 	}
-	if transaction.State == "bound" {
+	if transaction.State == "bound" && transaction.Intent.Schema != enrollmentSchemaV2 {
 		if baseHead != HeadID(certified.Head) {
 			return CertifiedState{}, errors.New("base head is stale")
 		}
@@ -194,7 +472,7 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 		_, projection, certified = server.Runtime.Authority.Snapshot()
 		_, transaction = findEnrollment(&projection, transactionID)
 	}
-	if transaction == nil || transaction.State != "approved" {
+	if transaction == nil || transaction.State != "approved" && (transaction.State != "bound" || transaction.Intent.Schema != enrollmentSchemaV2) {
 		return CertifiedState{}, errors.New("enrollment transaction is not bound or approved")
 	}
 	authorization := DeviceAuthorization{Schema: enrollmentSchema, DeviceID: transaction.Intent.DeviceID,
@@ -202,6 +480,23 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 		Routes: append([]RouteCandidate(nil), transaction.Intent.Routes...), Runtime: cloneRuntimeProfile(transaction.Intent.Runtime),
 		DevicePublicKey: transaction.DevicePublicKey,
 		Floor:           certified.Head.Index + 1}
+	requestMaterialID := requestID + ":complete"
+	if transaction.Intent.Schema == enrollmentSchemaV2 {
+		runtimeKey := make([]byte, 32)
+		if _, err := rand.Read(runtimeKey); err != nil {
+			return CertifiedState{}, err
+		}
+		authorization.Schema = enrollmentSchemaV2
+		authorization.Name = ""
+		authorization.Platform = ""
+		authorization.Roles = nil
+		authorization.Routes = nil
+		authorization.Runtime = nil
+		authorization.DestinationGrants = append([]string(nil), transaction.Intent.DestinationGrants...)
+		authorization.Server = nil
+		authorization.RuntimeKey = base64.RawURLEncoding.EncodeToString(runtimeKey)
+		requestMaterialID = requestID
+	}
 	projected, err := cloneProjection(projection)
 	if err != nil {
 		return CertifiedState{}, err
@@ -212,13 +507,25 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 	projected.DeviceAuthorizations = append(projected.DeviceAuthorizations, DeviceAuthorization{})
 	copy(projected.DeviceAuthorizations[index+1:], projected.DeviceAuthorizations[index:])
 	projected.DeviceAuthorizations[index] = authorization
+	if transaction.Intent.Schema == enrollmentSchemaV2 {
+		claimedServer, claimErr := serverIntentFromClaim(transaction.Intent.Server, transaction.ClaimedServer)
+		if transaction.Intent.Server == nil {
+			claimedServer, claimErr = nil, nil
+		}
+		if claimErr != nil {
+			return CertifiedState{}, claimErr
+		}
+		if err := integrateEnrollmentNetworkIntent(&projected, transaction.Intent, claimedServer); err != nil {
+			return CertifiedState{}, err
+		}
+	}
 	view, found := projectDeviceView(projected, authorization.DeviceID)
 	if !found {
 		return CertifiedState{}, errors.New("device view projection failed")
 	}
 	digest, _ := DeviceViewDigest(view)
 	complete := EnrollmentComplete{TransactionID: transactionID, Authorization: authorization, ResultDigest: digest}
-	material := Material{Schema: MaterialSchema, Kind: "enrollment.complete", RequestID: requestID + ":complete",
+	material := Material{Schema: MaterialSchema, Kind: "enrollment.complete", RequestID: requestMaterialID,
 		BaseHead: HeadID(certified.Head), EnrollmentComplete: &complete}
 	body, _, err := EncodeMaterial(material)
 	if err != nil {
@@ -244,15 +551,17 @@ func (server *Server) putEndpoint(ctx context.Context, requestID, baseHead strin
 		}
 	}
 	if previous != nil && previous.State == "prepared" && generation.State == "serving" {
-		if server.Endpoints == nil || generation.Node != server.Config.Node || !server.Endpoints.Ready(generation) {
+		endpoints := server.endpointRuntime()
+		if endpoints == nil || generation.Node != server.Config.Node || !endpoints.Ready(generation) {
 			return CertifiedState{}, errors.New("endpoint generation is not locally ready")
 		}
 	}
 	if previous != nil && previous.State == "serving" && generation.State == "draining" {
+		endpoints := server.endpointRuntime()
 		ready := false
 		for _, candidate := range projection.EndpointGenerations {
 			if candidate.EndpointID == generation.EndpointID && candidate.Generation != generation.Generation &&
-				candidate.State == "serving" && candidate.Preference < generation.Preference && server.Endpoints != nil && server.Endpoints.Successes(candidate) > 0 {
+				candidate.State == "serving" && candidate.Preference < generation.Preference && endpoints != nil && endpoints.Successes(candidate) > 0 {
 				ready = true
 			}
 		}
@@ -275,8 +584,9 @@ func (server *Server) putEndpoint(ctx context.Context, requestID, baseHead strin
 			}
 		}
 	}
+	endpoints := server.endpointRuntime()
 	if previous != nil && previous.State == "draining" && generation.State == "retired" &&
-		(server.Endpoints == nil || server.Endpoints.Active(generation) != 0) {
+		(endpoints == nil || endpoints.Active(generation) != 0) {
 		return CertifiedState{}, errors.New("endpoint generation still has protected sessions")
 	}
 	material := Material{Schema: MaterialSchema, Kind: "endpoint.put", RequestID: requestID, BaseHead: baseHead, EndpointGeneration: &generation}
@@ -306,6 +616,9 @@ func (server *Server) putDevice(ctx context.Context, requestID, baseHead string,
 		return CertifiedState{}, err
 	}
 	authorization := projection.DeviceAuthorizations[index]
+	if authorization.Schema == enrollmentSchemaV2 {
+		return CertifiedState{}, errors.New("schema-2 device runtime is derived from certified network intent")
+	}
 	if authorization.Platform == "windows" && canonicalConfig != payload.Runtime.Config {
 		return CertifiedState{}, errors.New("Windows runtime profile config is not canonical")
 	}
@@ -349,7 +662,7 @@ func (server *Server) enrollmentResponse(transactionID string) (EnrollmentRespon
 	if transaction == nil {
 		return EnrollmentResponse{}, errors.New("enrollment transaction does not exist")
 	}
-	response := EnrollmentResponse{Schema: enrollmentSchema, Transaction: *transaction}
+	response := EnrollmentResponse{Schema: enrollmentWireSchema(transaction.Intent), Transaction: *transaction}
 	if transaction.State == "completed" {
 		envelope, err := DeviceViewFor(certified.Projection, certified.Head, transaction.Intent.DeviceID)
 		if err != nil {
@@ -358,6 +671,17 @@ func (server *Server) enrollmentResponse(transactionID string) (EnrollmentRespon
 		response.DeviceView = &envelope
 	}
 	return response, nil
+}
+
+// The deployed enrollment intent predates an explicit schema field: its
+// canonical historical value is zero while its claim/resume wire protocol is
+// schema 1. Schema-2 intent and wire values are both explicit. Keep this
+// translation at the protocol boundary rather than rewriting replayed intent.
+func enrollmentWireSchema(intent EnrollmentIntent) int {
+	if intent.Schema == enrollmentSchemaV2 {
+		return enrollmentSchemaV2
+	}
+	return enrollmentSchema
 }
 
 func (server *Server) DeviceHandler() http.Handler {
@@ -410,13 +734,31 @@ func (server *Server) claim(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "enrollment capability rejected", http.StatusForbidden)
 		return
 	}
+	if claim.Schema != enrollmentWireSchema(transaction.Intent) {
+		http.Error(writer, "enrollment claim schema does not match product intent", http.StatusUnprocessableEntity)
+		return
+	}
+	claimedServer := claim.Server
+	if transaction.Intent.Schema == enrollmentSchemaV2 {
+		requiresServer := transaction.Intent.Server != nil
+		if requiresServer != (claimedServer != nil) || requiresServer && transaction.Intent.Platform != "linux" {
+			http.Error(writer, "enrollment server claim does not match product intent", http.StatusUnprocessableEntity)
+			return
+		}
+		if claimedServer != nil {
+			if claimedServer.Validate() != nil {
+				http.Error(writer, "enrollment server facts are invalid", http.StatusUnprocessableEntity)
+				return
+			}
+		}
+	}
 	if transaction.State == "open" {
 		if !server.now().Before(mustTime(claim.Capability.ExpiresAt)) {
 			http.Error(writer, "enrollment capability expired", http.StatusGone)
 			return
 		}
 		bind := EnrollmentBind{TransactionID: transaction.ID, ClaimRequestID: claim.RequestID,
-			DevicePublicKey: claim.DevicePublicKey, ClaimedAt: server.now().Format(time.RFC3339)}
+			DevicePublicKey: claim.DevicePublicKey, ClaimedAt: server.now().Format(time.RFC3339), Server: claimedServer}
 		material := Material{Schema: MaterialSchema, Kind: "enrollment.bind",
 			RequestID: "enrollment-bind:" + transaction.ID + ":" + claim.DevicePublicKey,
 			BaseHead:  HeadID(certified.Head), EnrollmentBind: &bind}
@@ -428,9 +770,13 @@ func (server *Server) claim(writer http.ResponseWriter, request *http.Request) {
 			http.Error(writer, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-	} else if transaction.DevicePublicKey != claim.DevicePublicKey || transaction.ClaimRequestID != claim.RequestID {
-		http.Error(writer, "enrollment transaction is bound to another identity", http.StatusConflict)
-		return
+	} else {
+		left, _ := canonical(transaction.ClaimedServer)
+		right, _ := canonical(claimedServer)
+		if transaction.DevicePublicKey != claim.DevicePublicKey || transaction.ClaimRequestID != claim.RequestID || !bytes.Equal(left, right) {
+			http.Error(writer, "enrollment transaction is bound to another identity", http.StatusConflict)
+			return
+		}
 	}
 	response, err := server.enrollmentResponse(transaction.ID)
 	if err != nil {
@@ -460,6 +806,10 @@ func (server *Server) resume(writer http.ResponseWriter, request *http.Request) 
 	if err != nil || response.Transaction.DevicePublicKey != resume.DevicePublicKey ||
 		identity.Mode == "device" && identity.DeviceID != response.Transaction.Intent.DeviceID {
 		http.Error(writer, "enrollment resume rejected", http.StatusForbidden)
+		return
+	}
+	if resume.Schema != enrollmentWireSchema(response.Transaction.Intent) {
+		http.Error(writer, "enrollment resume schema does not match product intent", http.StatusUnprocessableEntity)
 		return
 	}
 	status := http.StatusAccepted
@@ -493,6 +843,11 @@ func (server *Server) deviceReport(writer http.ResponseWriter, request *http.Req
 	var report DeviceReport
 	if !readDeviceJSON(writer, request, &report) || report.DeviceID != identity.DeviceID {
 		http.Error(writer, "invalid device report", http.StatusBadRequest)
+		return
+	}
+	reportedAt, parseErr := time.Parse(time.RFC3339, report.ReportedAt)
+	if parseErr != nil || reportedAt.After(server.now().Add(2*time.Minute)) || reportedAt.Before(server.now().Add(-30*24*time.Hour)) {
+		http.Error(writer, "device report time is outside the accepted window", http.StatusUnprocessableEntity)
 		return
 	}
 	_, _, certified := server.Runtime.Authority.Snapshot()

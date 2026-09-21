@@ -172,7 +172,6 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	if got := profileGUIPathText(t, app); got != text {
 		t.Fatal("read-only paths changed in response to typed text")
 	}
-	captureConfiguredProfileGUIState(t, app, "")
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlPathDetails, app.controls.pathsDetailsButton)
 	expanded := profileGUIPathText(t, app)
 	if profileGUIStyle(app.controls.pathsValue)&portableWSVScroll != 0 {
@@ -186,7 +185,6 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 			}
 		}
 	}
-	captureConfiguredProfileGUIState(t, app, "-expanded")
 	// §7.2：模拟 broker 返回正在查看的乙配置；实际连接仍是甲，不调用连接命令。
 	app.mu.Lock()
 	app.selectedProfile, app.profileName = profileGUIFixtureB, "演示网络乙"
@@ -416,15 +414,29 @@ func captureProfileGUITestWindow(t *testing.T, app *portableGUI, path string) {
 	t.Logf("synthetic native profile window captured to %s", path)
 }
 
-func captureConfiguredProfileGUIState(t *testing.T, app *portableGUI, suffix string) {
+func captureProfileGUIVisualScenario(t *testing.T, app *portableGUI, id string) {
 	t.Helper()
-	output := os.Getenv("LOOM_PROFILE_GUI_CAPTURE")
+	output := os.Getenv("LOOM_UI_CAPTURE_DIR")
 	if output == "" {
 		return
 	}
-	extension := filepath.Ext(output)
-	if suffix != "" {
-		output = strings.TrimSuffix(output, extension) + suffix + extension
+	if id == "" {
+		t.Fatal("visual scenario ID is empty")
 	}
-	captureProfileGUITestWindow(t, app, output)
+	for _, character := range id {
+		if character != '-' && character != '.' && (character < 'a' || character > 'z') && (character < '0' || character > '9') {
+			t.Fatalf("visual scenario ID %q is not canonical", id)
+		}
+	}
+	if app.windowDPI != 96 {
+		t.Fatalf("visual scenario %q requires 96 DPI, got %d", id, app.windowDPI)
+	}
+	window := guiWindowRect(t, app.hwnd)
+	if width, height := window.right-window.left, window.bottom-window.top; width != 876 || height != 614 {
+		t.Fatalf("visual scenario %q requires an 876x614 window, got %dx%d", id, width, height)
+	}
+	if err := os.MkdirAll(output, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	captureProfileGUITestWindow(t, app, filepath.Join(output, id+".png"))
 }

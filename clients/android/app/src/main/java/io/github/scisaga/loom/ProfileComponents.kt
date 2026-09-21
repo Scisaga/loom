@@ -144,27 +144,37 @@ internal fun ProfilePickerSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text("选择连接配置", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            index.profiles.forEach { profile ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 56.dp)
-                        .selectable(profile.id == index.viewedProfileId, role = Role.RadioButton) {
-                            onSelect(profile.id)
-                            onDismiss()
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = profile.id == index.viewedProfileId, onClick = null)
-                    Column(Modifier.padding(start = 12.dp)) {
-                        Text(profile.name, color = Ink, fontSize = 15.sp)
-                        if (profile.id == activeProfileId) Text("当前连接", color = LoomGreen, fontSize = 11.sp)
-                    }
+        ProfilePickerContent(index, activeProfileId, onSelect, onDismiss)
+    }
+}
+
+@Composable
+internal fun ProfilePickerContent(
+    index: ProfileIndex,
+    activeProfileId: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("选择连接配置", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        index.profiles.forEach { profile ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .selectable(profile.id == index.viewedProfileId, role = Role.RadioButton) {
+                        onSelect(profile.id)
+                        onDismiss()
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = profile.id == index.viewedProfileId, onClick = null)
+                Column(Modifier.padding(start = 12.dp)) {
+                    Text(profile.name, color = Ink, fontSize = 15.sp)
+                    if (profile.id == activeProfileId) Text("当前连接", color = LoomGreen, fontSize = 11.sp)
                 }
             }
         }

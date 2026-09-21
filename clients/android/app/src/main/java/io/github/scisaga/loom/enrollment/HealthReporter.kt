@@ -14,7 +14,7 @@ internal class HealthReporter(context: Context, private val profileId: String) {
         Loomcore.postAndroidDeviceReport(
             enrollment.currentState(profileId),
             routing.reportObservations(profileId),
-            routing.selectedCandidate(profileId),
+            routing.reportSelections(profileId),
             Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
         )
     }

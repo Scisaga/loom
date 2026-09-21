@@ -63,6 +63,10 @@ esac
 rm -rf -- "$shared_dir"
 mkdir -p "$shared_dir/internal"
 cp -a "$repo_dir/internal/clientmodel" "$shared_dir/internal/"
+# DeviceReport v2 includes the agent component coordinate.  Keep the canonical
+# protocol version package in the converged mobile module instead of teaching
+# the Android wrapper a second version constant.
+cp -a "$repo_dir/internal/version" "$shared_dir/internal/"
 printf 'module loom\n\ngo 1.27.0\n' >"$shared_dir/go.mod"
 
 env GOTOOLCHAIN="$go_toolchain" GOBIN="$go_bin" GOPATH="$go_path" GOCACHE="$go_cache" \

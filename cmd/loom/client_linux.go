@@ -62,6 +62,43 @@ func cmdClientPreflight(args []string) error {
 	return nil
 }
 
+func cmdClientStageServerMigration(args []string) error {
+	fs := flag.NewFlagSet("client stage-server-migration", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	source := fs.String("source", "/etc/loom/sing-box/v2/config.json", "owner-only active legacy sing-box config")
+	destination := fs.String("output", linuxclient.DefaultMigrationOverlay, "owner-only normalized migration overlay")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("client stage-server-migration does not accept positional arguments")
+	}
+	digest, err := linuxclient.StageMigrationOverlay(*source, *destination)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("server migration overlay staged: source_sha256=%s\n", digest)
+	return nil
+}
+
+func cmdClientFinalizeServerMigration(args []string) error {
+	fs := flag.NewFlagSet("client finalize-server-migration", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	overlay := fs.String("overlay", linuxclient.DefaultMigrationOverlay, "owner-only normalized migration overlay")
+	digest := fs.String("source-sha256", "", "exact source digest printed by the stage command")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *digest == "" {
+		return errors.New("client finalize-server-migration requires -source-sha256")
+	}
+	if err := linuxclient.FinalizeMigrationOverlay(*overlay, *digest); err != nil {
+		return err
+	}
+	fmt.Println("server migration overlay removed; restart loom-client.service and verify exact runtime readback")
+	return nil
+}
+
 func cmdClientRoute(args []string) error {
 	fs := flag.NewFlagSet("client route", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

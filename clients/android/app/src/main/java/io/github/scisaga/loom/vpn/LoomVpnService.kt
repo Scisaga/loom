@@ -411,6 +411,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 } else {
                     VpnRuntime.transform { it.copy(trustedReport = "失败；将重试") }
                 }
+                // Fetching a newer certified view only stages a candidate.
+                // The service reload path below remains the sole place that
+                // can promote it after libbox, selector and business readback.
+                EnrollmentManager.get(this@LoomVpnService).refreshConfigurationInBackground(profileID)
                 delay(REPORT_INTERVAL_MS)
             }
         }

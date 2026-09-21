@@ -75,12 +75,13 @@ func TestWindowsInstalledPrivateRuntimeAcceptance(t *testing.T) {
 	}()
 	waitLeader(t, []*Runtime{runtime})
 	deadline := time.Now().Add(10 * time.Second)
-	for server.Endpoints == nil && time.Now().Before(deadline) {
+	for server.endpointRuntime() == nil && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if server.Endpoints == nil {
+	if server.endpointRuntime() == nil {
 		t.Fatal("endpoint runtime did not start")
 	}
+	endpointRuntime := server.endpointRuntime()
 
 	certificatePath := filepath.Join(root, "endpoint.crt")
 	keyPath := filepath.Join(root, "endpoint.key")
@@ -101,7 +102,7 @@ func TestWindowsInstalledPrivateRuntimeAcceptance(t *testing.T) {
 	if _, err := server.putEndpoint(ctx, "demo-endpoint-prepare", currentHead(runtime), generation); err != nil {
 		t.Fatal(err)
 	}
-	waitEndpointReady(t, server.Endpoints, generation)
+	waitEndpointReady(t, endpointRuntime, generation)
 	generation.State = "serving"
 	if _, err := server.putEndpoint(ctx, "demo-endpoint-serve", currentHead(runtime), generation); err != nil {
 		t.Fatal(err)

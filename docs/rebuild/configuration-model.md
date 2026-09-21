@@ -67,6 +67,12 @@ certified Projection。三者以同一个稳定 `NodeAlias` 联结，但没有�
 release、history、pin、admin、imports、evidence、control data 和 client release store 的路径由
 仓库布局、packaging 或对应一次性命令确定，不再各设环境变量。
 
+Linux 设备本机的 WireGuard 私钥固定为 `/etc/wireguard/node.key`，权限 `0600`、root 持有。
+这不是可由根 `.env` 覆盖的部署变量：Ubuntu 的 `wg` AppArmor profile 只允许读取
+`/etc/wireguard/**`。HostAdapter 的临时 rollback config 同样只在 `/etc/wireguard/.loom-rollback-*`
+中以 `0700/0600` 短期存在，事务提交或回滚后删除；不得改回 `/tmp`、`/run` 或
+`/etc/loom/secrets`，也不得通过放宽 AppArmor 规避该边界。
+
 `.env` 必须是普通文件、权限不宽于 `0600`，且不得指向工作区外未经操作者明确选择的软链接。
 它可以随受保护备份保存，但不能进入 Git、日志、证据正文、Web 响应或子进程的完整环境。
 
@@ -133,6 +139,12 @@ LocalDeploymentConfig.deploy_hosts
 
 读取配置、生成 plan 或显示 readiness 都不构成生产发布授权。配置陈旧只会让下一次命令失败，不能改变
 已经运行的 daemon。
+
+常驻 publisher 使用同一个严格 loader：`loom publisher -env <path> -control-socket <path>` 只从
+`LocalDeploymentConfig` 取得 signing key 引用、publish targets 与 SSH config，不能再同时传
+`-key`、`-target` 或 `-ssh-config` 形成第二份输入。分发后的读取验证 URL 不来自 `.env`，而随当前
+certified `NetworkIntent.nodes[].distribution_urls` 进入 `CertifiedPublisherInput`；因此 head 变化时
+验证集合也原子变化，旧 systemd unit 中手写的 URL 不能继续成为发布事实。
 
 ## 失败语义
 
