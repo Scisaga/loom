@@ -142,11 +142,17 @@ func projectAuthorizationRuntime(projection Projection, authorization DeviceAuth
 		scope := "policy:" + policy.ID
 		if policy.AllowDirect {
 			routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":direct", FinalExit: "direct", Scope: scope})
+		} else if contains(policy.LocalEgressDevices, authorization.DeviceID) {
+			routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":local:" + authorization.DeviceID,
+				FinalExit: "direct", Scope: scope})
 		}
 		for _, exit := range policy.AllowedExits {
 			exitNode, found := networkNode(projection.NetworkIntent, exit)
 			if !found || exitNode.Server == nil {
 				return nil, nil, errors.New("policy exit is not a certified server")
+			}
+			if exit == authorization.DeviceID && contains(policy.LocalEgressDevices, authorization.DeviceID) {
+				continue
 			}
 			if policy.MaxHops >= 1 && exitNode.Server.PublicDataIngress {
 				routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":" + exit, FinalExit: exit,

@@ -70,6 +70,13 @@ Direct:                    device → target
 `reverse_only` 只约束服务器间 WireGuard 的发起方向，也不能据此删除服务器的
 公开数据入口候选。授权、隧道方向和实时可达性是三个不同事实。
 
+`NetworkPolicy.allow_direct` 表示该 policy 的所有获授权 access 都可产生 `final_exit=direct` 的普通 Direct
+候选。它不能表达“只有某个 hybrid access 在本机充当该 policy 的固定出口”。后一语义由规范排序的
+`local_egress_devices` 表达：成员必须同时是该 policy 的 allowed server/exit、具备 access+server 与 egress
+能力；只有授权设备 ID 命中时才生成服务器链为空、`final_exit=direct` 且候选 ID 绑定该设备的本地出口
+候选。其他设备仍把该节点当作一跳或中继出口。普通 Direct 与设备限定 Direct 的授权来源不同，不能在
+导入时把设备级许可提升成全 policy 的 `allow_direct`。
+
 Linux hybrid 节点同时是当前 access 设备和认证 server，且它与最终出口之间存在精确
 `NetworkLink` 时，可以从自己的 WG interface 进入出口，不要求自己或出口另有公网数据入口。
 该候选的规范服务器链以本机 hybrid 节点开头，运行时跳过“拨回本机 inbound”，直接把到下一

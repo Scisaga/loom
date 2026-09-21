@@ -86,7 +86,7 @@ services:
 	}
 }
 
-func TestNetworkIntentFromLegacySSOTRejectsPerDeviceDirectMeaning(t *testing.T) {
+func TestNetworkIntentFromLegacySSOTPreservesPerDeviceLocalEgress(t *testing.T) {
 	ca := []byte(testNetworkIntent(t).PublicDataPlaneCA)
 	legacy := []byte(`defaults:
   components: {agent: 0.1.0, sing_box: 1.11.4, wireguard: 1.0.0}
@@ -103,7 +103,23 @@ services:
 credentials:
   - {id: demo-credential, owner: demo-hybrid, declaration: demo-policy, secret_ref: cred/demo-credential}
 `)
-	if _, err := NetworkIntentFromLegacySSOT(legacy, ca); err == nil || !strings.Contains(err.Error(), "pins direct egress to hybrid") {
-		t.Fatalf("per-device direct meaning was not rejected: %v", err)
+	intent, err := NetworkIntentFromLegacySSOT(legacy, ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := intent.Policies[0]
+	if policy.AllowDirect || strings.Join(policy.LocalEgressDevices, ",") != "demo-hybrid" ||
+		strings.Join(policy.AllowedExits, ",") != "demo-hybrid" {
+		t.Fatalf("per-device local egress was not preserved: %+v", policy)
+	}
+	projection := Projection{Schema: 1, NetworkIntent: &intent,
+		DeviceAuthorizations: []DeviceAuthorization{{Schema: 2, DeviceID: "demo-hybrid",
+			DestinationGrants: []string{"demo-policy"},
+			DevicePublicKey:   "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			RuntimeKey:        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", Floor: 1}}}
+	routes, _, err := projectAuthorizationRuntime(projection, projection.DeviceAuthorizations[0])
+	if err != nil || len(routes) != 1 || len(routes[0].Chain) != 0 || routes[0].FinalExit != "direct" ||
+		routes[0].ID != "route:demo-policy:local:demo-hybrid" {
+		t.Fatalf("local egress runtime meaning changed: routes=%+v err=%v", routes, err)
 	}
 }

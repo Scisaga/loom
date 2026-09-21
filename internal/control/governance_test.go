@@ -13,10 +13,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -377,6 +379,229 @@ func testActivated(t *testing.T) (NodeConfig, string) {
 		t.Fatal(err)
 	}
 	return config, root
+}
+
+func TestPurePrivateRelayForwardsRaftWithoutControlAuthority(t *testing.T) {
+	roots, _, runtimes, _, cancel := testCluster(t, 3)
+	defer cancel()
+	leader := waitLeader(t, runtimes)
+	_, _, initial := leader.Authority.Snapshot()
+	members := []Member{runtimes[0].Config.Member(), runtimes[1].Config.Member(), runtimes[2].Config.Member()}
+	joined, err := leader.ReplaceMembers(context.Background(), "demo-pure-relay-join", HeadID(initial.Head), members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runtime := range runtimes {
+		waitHead(t, runtime.Authority, HeadID(joined.Head))
+	}
+
+	relayAddress := freeAddress(t, "127.0.0.1")
+	relayRoot := t.TempDir()
+	identity, err := PrepareRelayIdentity(relayRoot, roots[0], runtimes[0].Config.Node, []string{relayAddress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay, err := OpenPrivateRelay(PrivateChannelConfig{Node: runtimes[0].Config.Node, Listen: []string{relayAddress},
+		Peers: map[string][]string{runtimes[2].Config.Node: runtimes[2].Channel.ListenAddresses()}}, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+	if relay.authority != nil {
+		t.Fatal("pure relay loaded a control authority")
+	}
+
+	sourceAddress := freeAddress(t, "127.0.0.1")
+	source, err := OpenPrivateChannel(PrivateChannelConfig{Node: runtimes[1].Config.Node, Listen: []string{sourceAddress},
+		Peers: map[string][]string{runtimes[0].Config.Node: {relayAddress}}}, runtimes[1].Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	source.AttachAuthority(runtimes[1].Authority)
+	connection, err := source.RaftStream().Dial(raft.ServerAddress(runtimes[2].Config.Node), 3*time.Second)
+	if err != nil {
+		t.Fatalf("pure private relay did not forward end-to-end Raft TLS: %v", err)
+	}
+	_ = connection.Close()
+	client, err := source.peerClient(runtimes[2].Config.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodGet, "https://"+runtimes[2].Config.Node+"/internal/quorum-writable", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimes[1].signRequest(request, nil)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("pure private relay did not forward signed control HTTP: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("relayed control HTTP status=%s", response.Status)
+	}
+
+	entries, err := os.ReadDir(relayRoot)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "identity.json" {
+		t.Fatalf("pure relay persisted control state: entries=%v err=%v", entries, err)
+	}
+}
+
+func TestDisjointThreeMemberReplacementThroughPureRelay(t *testing.T) {
+	const memberCount = 6
+	addresses := make([]string, memberCount)
+	for index := range addresses {
+		addresses[index] = freeAddress(t, "127.0.0.1")
+	}
+	oldRoot := t.TempDir()
+	state := testState()
+	state.BrowserTLS = testTLS(t)
+	if _, err := ActivateLegacy(oldRoot, state, "demo-old-control-1", "demo-old-node-1", []string{addresses[0]}); err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{oldRoot}
+	for index := 1; index < memberCount; index++ {
+		group := "old"
+		groupIndex := index + 1
+		if index >= 3 {
+			group = "new"
+			groupIndex = index - 2
+		}
+		root := t.TempDir()
+		if _, err := PrepareMember(root, oldRoot,
+			fmt.Sprintf("demo-%s-control-%d", group, groupIndex),
+			fmt.Sprintf("demo-%s-node-%d", group, groupIndex), []string{addresses[index]}); err != nil {
+			t.Fatal(err)
+		}
+		roots = append(roots, root)
+	}
+
+	relayAddress := freeAddress(t, "127.0.0.1")
+	source, err := LoadNodeConfig(oldRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, relayPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayTLS, err := issuePeerTLS(source.BrowserTLS, "relay-demo-transport", []string{relayAddress}, relayPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayPeers := make(map[string][]string, memberCount)
+	for index, root := range roots {
+		config, loadErr := LoadNodeConfig(root)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		relayPeers[config.Node] = []string{addresses[index]}
+	}
+	relayRoot := t.TempDir()
+	relayIdentity := RelayIdentity{Schema: relayIdentitySchema, Node: "demo-transport", TLS: relayTLS}
+	if err := atomicJSON(filepath.Join(relayRoot, "identity.json"), relayIdentity); err != nil {
+		t.Fatal(err)
+	}
+	relay, err := OpenPrivateRelay(PrivateChannelConfig{Node: relayIdentity.Node, Listen: []string{relayAddress}, Peers: relayPeers}, relayIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+
+	runtimes := make([]*Runtime, 0, memberCount)
+	serverCancels := make([]context.CancelFunc, 0, memberCount)
+	for index, root := range roots {
+		config, loadErr := LoadNodeConfig(root)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		channel, openErr := OpenPrivateChannel(PrivateChannelConfig{Node: config.Node, Listen: []string{addresses[index]},
+			Peers: map[string][]string{relayIdentity.Node: {relayAddress}}}, config)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		runtime, openErr := OpenRuntime(root, channel)
+		if openErr != nil {
+			_ = channel.Close()
+			t.Fatal(openErr)
+		}
+		runtimes = append(runtimes, runtime)
+		serverCancels = append(serverCancels, serveTestRuntime(t, runtime))
+	}
+	t.Cleanup(func() {
+		for _, cancel := range serverCancels {
+			cancel()
+		}
+		for _, runtime := range runtimes {
+			_ = runtime.Close()
+			_ = runtime.Channel.Close()
+		}
+	})
+
+	oldMembers := []Member{runtimes[0].Config.Member(), runtimes[1].Config.Member(), runtimes[2].Config.Member()}
+	leader := waitLeader(t, runtimes[:3])
+	_, _, initial := leader.Authority.Snapshot()
+	oldStable, err := leader.ReplaceMembers(context.Background(), "demo-old-stable", HeadID(initial.Head), oldMembers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runtime := range runtimes[:3] {
+		waitHead(t, runtime.Authority, HeadID(oldStable.Head))
+	}
+	importValue := NetworkImport{Intent: testNetworkIntent(t), RecoveryEvidenceHash: "sha256:" + strings.Repeat("1", 64)}
+	importMaterial := Material{Schema: MaterialSchema, Kind: "network.import", RequestID: "demo-replacement-network-import",
+		BaseHead: HeadID(oldStable.Head), NetworkImport: &importValue}
+	importBody, _, err := EncodeMaterial(importMaterial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStable, err = leader.Submit(context.Background(), importBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runtime := range runtimes[:3] {
+		waitHead(t, runtime.Authority, HeadID(oldStable.Head))
+	}
+
+	newMembers := []Member{runtimes[3].Config.Member(), runtimes[4].Config.Member(), runtimes[5].Config.Member()}
+	newStable, err := leader.ReplaceMembers(context.Background(), "demo-disjoint-replacement", HeadID(oldStable.Head), newMembers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runtime := range runtimes[3:] {
+		waitHead(t, runtime.Authority, HeadID(newStable.Head))
+		_, projection, certified := runtime.Authority.Snapshot()
+		if projection.Config.Mode != "stable" || !reflect.DeepEqual(projection.Config.Members, newMembers) ||
+			HeadID(certified.Head) != HeadID(newStable.Head) {
+			t.Fatalf("replacement did not converge on %s: config=%+v head=%s", runtime.Config.Node,
+				projection.Config, HeadID(certified.Head))
+		}
+	}
+
+	newLeader := waitLeader(t, runtimes[3:])
+	follower := runtimes[3]
+	if follower == newLeader {
+		follower = runtimes[4]
+	}
+	service := Service{ID: "demo-after-replacement", Name: "After replacement", Matchers: []string{"replacement.example"}, Policy: "demo-policy"}
+	material := Material{Schema: MaterialSchema, Kind: "service.put", RequestID: "demo-after-replacement",
+		BaseHead: HeadID(newStable.Head), Service: &service}
+	body, _, err := EncodeMaterial(material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := follower.Submit(context.Background(), body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runtime := range runtimes[3:] {
+		waitHead(t, runtime.Authority, HeadID(written.Head))
+	}
+	entries, err := os.ReadDir(relayRoot)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "identity.json" {
+		t.Fatalf("pure relay persisted control state during replacement: entries=%v err=%v", entries, err)
+	}
 }
 
 func testCluster(t *testing.T, count int) ([]string, []PrivateChannelConfig, []*Runtime, []context.CancelFunc, context.CancelFunc) {

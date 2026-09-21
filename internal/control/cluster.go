@@ -451,6 +451,29 @@ func (runtime *Runtime) ReplaceMembers(ctx context.Context, requestID, baseHead 
 	if err != nil {
 		return CertifiedState{}, err
 	}
+	localRemains := false
+	for _, member := range stable.Members {
+		if member.ID == runtime.Config.MemberID && member.PublicKey == runtime.Config.Member().PublicKey {
+			localRemains = true
+			break
+		}
+	}
+	if !localRemains {
+		// A completely disjoint replacement cannot be certified by the former
+		// leader after the stable material takes effect: that node is no longer
+		// an authorized head signer. Hand leadership to a member of the new set
+		// while the joint config still authorizes both sides, then ask that member
+		// to submit the final stable material.
+		target := stable.Members[0]
+		if err := runtime.Raft.LeadershipTransferToServer(raft.ServerID(target.ID), raft.ServerAddress(target.Node)).Error(); err != nil {
+			return CertifiedState{}, fmt.Errorf("transfer leadership to replacement member %s: %w", target.ID, err)
+		}
+		var result CertifiedState
+		if err := runtime.peerJSON(ctx, target, http.MethodPost, "/internal/submit", body, &result); err != nil {
+			return CertifiedState{}, fmt.Errorf("submit stable config through replacement member %s: %w", target.ID, err)
+		}
+		return result, nil
+	}
 	return runtime.Submit(ctx, body)
 }
 
@@ -613,41 +636,30 @@ func (runtime *Runtime) peerJSON(ctx context.Context, member Member, method, pat
 	if member.Node == "" {
 		return errors.New("control member has no private channel node")
 	}
-	var failures []error
-	for _, endpoint := range runtime.Channel.endpoints(member.Node) {
-		client, err := runtime.Channel.peerClient(endpoint)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		request, err := http.NewRequestWithContext(ctx, method, "https://"+endpoint+path, bytes.NewReader(body))
-		if err != nil {
-			return err
-		}
-		runtime.signRequest(request, body)
-		response, err := client.Do(request)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		if response.StatusCode != http.StatusOK {
-			message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
-			response.Body.Close()
-			failures = append(failures, fmt.Errorf("peer %s: %s: %s", member.ID, response.Status, strings.TrimSpace(string(message))))
-			continue
-		}
-		if result != nil {
-			decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
-			decoder.DisallowUnknownFields()
-			err = decoder.Decode(result)
-		}
-		response.Body.Close()
+	client, err := runtime.Channel.peerClient(member.Node)
+	if err != nil {
 		return err
 	}
-	if len(failures) == 0 {
-		return fmt.Errorf("control member %s is not a direct private neighbor", member.ID)
+	request, err := http.NewRequestWithContext(ctx, method, "https://"+member.Node+path, bytes.NewReader(body))
+	if err != nil {
+		return err
 	}
-	return errors.Join(failures...)
+	runtime.signRequest(request, body)
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		return fmt.Errorf("peer %s: %s: %s", member.ID, response.Status, strings.TrimSpace(string(message)))
+	}
+	if result == nil {
+		return nil
+	}
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(result)
 }
 
 func requestBytes(method, path string, body []byte) []byte {

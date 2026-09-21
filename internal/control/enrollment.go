@@ -483,6 +483,9 @@ func (intent EnrollmentIntent) Validate() error {
 			hasAccess = hasAccess || role == "access"
 		}
 		egress := hasServer && intent.Server != nil && intent.Server.EgressCapable
+		if (intent.Platform == "android" || intent.Platform == "windows") && hasServer {
+			return errors.New("schema-2 client platform cannot provide a server role")
+		}
 		if hasAccess && len(intent.DestinationGrants) == 0 || !hasAccess && !egress && len(intent.DestinationGrants) != 0 {
 			return errors.New("schema-2 responsibilities and grants disagree")
 		}
@@ -1327,7 +1330,31 @@ func projectEnrollmentWeb(projection *Projection) {
 	for _, authorization := range projection.DeviceAuthorizations {
 		authorizations[authorization.DeviceID] = authorization
 	}
-	for _, transaction := range projection.Enrollments {
+	transactions := projection.Enrollments
+	if projection.NetworkIntent != nil {
+		current := map[string]EnrollmentTransaction{}
+		for _, transaction := range projection.Enrollments {
+			_, authorized := authorizations[transaction.Intent.DeviceID]
+			active := transaction.State == "open" || transaction.State == "bound" || transaction.State == "approved"
+			if !active && !(transaction.State == "completed" && authorized) {
+				continue
+			}
+			previous, found := current[transaction.Intent.DeviceID]
+			if !found || currentEnrollmentCoordinate(previous) < currentEnrollmentCoordinate(transaction) {
+				current[transaction.Intent.DeviceID] = transaction
+			}
+		}
+		deviceIDs := make([]string, 0, len(current))
+		for deviceID := range current {
+			deviceIDs = append(deviceIDs, deviceID)
+		}
+		sort.Strings(deviceIDs)
+		transactions = make([]EnrollmentTransaction, 0, len(deviceIDs))
+		for _, deviceID := range deviceIDs {
+			transactions = append(transactions, current[deviceID])
+		}
+	}
+	for _, transaction := range transactions {
 		index := sort.Search(len(projection.Web.Devices), func(index int) bool {
 			return projection.Web.Devices[index].ID >= transaction.Intent.DeviceID
 		})
@@ -1399,4 +1426,16 @@ func projectEnrollmentWeb(projection *Projection) {
 		return projection.Web.Paths[i].Device+"\x00"+projection.Web.Paths[i].CandidateID <
 			projection.Web.Paths[j].Device+"\x00"+projection.Web.Paths[j].CandidateID
 	})
+}
+
+func currentEnrollmentCoordinate(transaction EnrollmentTransaction) string {
+	priority := "0"
+	if transaction.State == "completed" {
+		priority = "1"
+	}
+	when := transaction.ClaimedAt
+	if when == "" {
+		when = transaction.ExpiresAt
+	}
+	return priority + "\x00" + when + "\x00" + transaction.ID
 }

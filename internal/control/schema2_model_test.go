@@ -78,6 +78,29 @@ func TestNetworkIntentMaterialRoundTripAndProjection(t *testing.T) {
 	}
 }
 
+func TestSchema2WebProjectionDoesNotResurrectRevokedEnrollmentHistory(t *testing.T) {
+	intent := testNetworkIntent(t)
+	projection := Projection{Schema: 1, NetworkIntent: &intent, Enrollments: []EnrollmentTransaction{
+		{Schema: enrollmentSchema, ID: "demo-completed", State: "completed",
+			Intent: EnrollmentIntent{DeviceID: "demo-revoked", Name: "Revoked fixture", Platform: "linux", Roles: []string{"access"}}},
+		{Schema: enrollmentSchemaV2, ID: "demo-pending", State: "open",
+			Intent: EnrollmentIntent{Schema: enrollmentSchemaV2, DeviceID: "d-0123456789", Name: "Pending client",
+				Platform: "windows", Roles: []string{"access"}, DestinationGrants: []string{"demo-policy"}}},
+	}}
+	projectNetworkWeb(&projection)
+	projectEnrollmentWeb(&projection)
+	if len(projection.Web.Devices) != 2 || projection.Web.Devices[0].ID != "d-0123456789" ||
+		projection.Web.Devices[1].ID != "demo-egress" {
+		t.Fatalf("current inventory contains revoked history: %+v", projection.Web.Devices)
+	}
+
+	legacy := Projection{Schema: 1, Enrollments: projection.Enrollments}
+	projectEnrollmentWeb(&legacy)
+	if len(legacy.Web.Devices) != 2 {
+		t.Fatalf("pre-import replay semantics changed before the forward correction: %+v", legacy.Web.Devices)
+	}
+}
+
 func TestServerRuntimeRejectsUserWithoutAuthorizedDestination(t *testing.T) {
 	password := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	profile := ServerRuntimeProfile{Kind: "sing_box", Protocol: "hysteria2", ListenPort: 443,
@@ -128,6 +151,23 @@ func TestSchema2ServerClaimCannotExpandCertifiedResponsibility(t *testing.T) {
 			WGPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}
 	if err := reduceEnrollmentBind(&projection, bind); err != nil || projection.Enrollments[0].Intent.Server.EgressCapable {
 		t.Fatalf("bounded server claim changed certified responsibility: %v", err)
+	}
+}
+
+func TestSchema2ClientPlatformsRejectServerResponsibilitiesAtBothBoundaries(t *testing.T) {
+	for _, platform := range []string{"android", "windows"} {
+		payload := enrollmentCreatePayload{Schema: enrollmentSchemaV2, Name: "Demo client", Platform: platform,
+			Responsibilities: []string{"forward", "use_loom"}, DestinationGrants: []string{"demo-policy"},
+			Direction: "bidirectional"}
+		if _, err := productEnrollmentIntent(payload); err == nil {
+			t.Fatalf("%s product request accepted server responsibility", platform)
+		}
+		intent := EnrollmentIntent{Schema: enrollmentSchemaV2, DeviceID: "d-0123456789", Name: "Demo client",
+			Platform: platform, Roles: []string{"access", "server"}, DestinationGrants: []string{"demo-policy"},
+			Server: &ServerIntent{Direction: "bidirectional"}}
+		if err := intent.Validate(); err == nil {
+			t.Fatalf("%s domain intent accepted server responsibility", platform)
+		}
 	}
 }
 

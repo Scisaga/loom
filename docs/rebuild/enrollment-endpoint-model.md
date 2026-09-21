@@ -109,6 +109,9 @@ wire 版本 2。两个 wire 版本分别使用 `loom-enrollment-claim-v1/v2` 和
 `loom-enrollment-resume-v1/v2` 签名域，修改 schema 会使签名失效。新客户端只产生 schema-2 请求，
 且只接受 schema-2 响应；schema-1 handler 仅为历史事务重放保留，不允许携带 server claim，也不再
 创建新的 schema-1 transaction。
+Android 与 Windows 的 schema-2 intent 必须恰好只有 `access` 责任，不能仅因同时含有 access 就夹带 server；
+该约束在产品请求解码和 `EnrollmentIntent` 领域校验两处一致执行，使非法邀请在 `open` 前失败，而不是等到
+claim 或 complete 后才形成无法完成的事务。Linux 才允许 server 或 access+server。
 同一 reducer 还把这个新稳定设备身份原子加入 `NetworkIntent.nodes`。若管理员选择
 `internet_egress`，提交的 policy grant 同时把该节点加入这些 policy 的 `allowed_exits`；设备 claim
 只能补公网端点、入站端口、协议与 WG 公钥，不能把 `forward` 自行扩大为 egress。纯 forward 节点

@@ -160,6 +160,9 @@ func productEnrollmentIntent(payload enrollmentCreatePayload) (EnrollmentIntent,
 		return EnrollmentIntent{}, errors.New("platform responsibilities are invalid")
 	}
 	hasAccess, hasServer := contains(roles, "access"), contains(roles, "server")
+	if (payload.Platform == "android" || payload.Platform == "windows") && hasServer {
+		return EnrollmentIntent{}, errors.New("mobile and desktop client platforms cannot provide server responsibilities")
+	}
 	if hasAccess && len(payload.DestinationGrants) == 0 || !hasAccess && egress && len(payload.DestinationGrants) == 0 ||
 		!hasAccess && !egress && len(payload.DestinationGrants) != 0 {
 		return EnrollmentIntent{}, errors.New("responsibilities and destination grants disagree")

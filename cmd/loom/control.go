@@ -59,7 +59,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <import|import-network|activate|prepare|migrate-browser-tls|serve|inspect|write>")
+		return errors.New("用法: loom control <import|import-network|activate|prepare|prepare-relay|migrate-browser-tls|serve|relay|inspect|write>")
 	}
 	switch args[0] {
 	case "import":
@@ -72,10 +72,14 @@ func cmdControl(args []string) error {
 		return cmdControlActivate(args[1:])
 	case "prepare":
 		return cmdControlPrepare(args[1:])
+	case "prepare-relay":
+		return cmdControlPrepareRelay(args[1:])
 	case "migrate-browser-tls":
 		return cmdControlMigrateBrowserTLS(args[1:])
 	case "inspect":
 		return cmdControlInspect(args[1:])
+	case "relay":
+		return cmdControlRelay(args[1:])
 	case "write":
 		return cmdControlWrite(args[1:])
 	default:
@@ -238,6 +242,29 @@ func cmdControlPrepare(args []string) error {
 	return json.NewEncoder(os.Stdout).Encode(config.Member())
 }
 
+func cmdControlPrepareRelay(args []string) error {
+	fs := flag.NewFlagSet("control prepare-relay", flag.ContinueOnError)
+	stateDir := fs.String("state-dir", "/var/lib/loom-control-relay", "纯 transport relay 身份目录")
+	sourceDir := fs.String("source-state-dir", "/var/lib/loom-minimal", "迁出前本节点控制身份目录")
+	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("control prepare-relay 不接受位置参数")
+	}
+	private, _, err := loadPrivateChannelConfig(*networkConfig)
+	if err != nil {
+		return err
+	}
+	identity, err := control.PrepareRelayIdentity(*stateDir, *sourceDir, private.Node, private.Listen)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("private relay identity prepared: node=%s listeners=%d\n", identity.Node, len(private.Listen))
+	return nil
+}
+
 func cmdControlImport(args []string) error {
 	fs := flag.NewFlagSet("control import", flag.ContinueOnError)
 	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "最小控制状态目录")
@@ -325,6 +352,35 @@ func cmdControlServe(args []string) error {
 		err = reportErr
 	}
 	return err
+}
+
+func cmdControlRelay(args []string) error {
+	fs := flag.NewFlagSet("control relay", flag.ContinueOnError)
+	stateDir := fs.String("state-dir", "/var/lib/loom-control-relay", "纯 transport relay 身份目录")
+	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("control relay 不接受位置参数")
+	}
+	private, _, err := loadPrivateChannelConfig(*networkConfig)
+	if err != nil {
+		return err
+	}
+	identity, err := control.LoadRelayIdentity(*stateDir, private.Listen)
+	if err != nil {
+		return err
+	}
+	channel, err := control.OpenPrivateRelay(private, identity)
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	return nil
 }
 
 func loadPrivateChannelConfig(path string) (control.PrivateChannelConfig, *report.Config, error) {

@@ -70,7 +70,7 @@ func NetworkIntentFromLegacySSOT(body, publicDataPlaneCA []byte) (NetworkIntent,
 		}
 		converted := NetworkNode{ID: node.ID, Name: node.Name, Platform: platform, Roles: roles,
 			DNS: sortedStrings(node.DNS), Components: legacyComponents(node.Components),
-			ProbeTargets: sortedStrings(node.ProbeTargets), DistributionURLs: append([]string(nil), legacy.DistributionURLsFor(node)...)}
+			ProbeTargets: sortedStrings(node.ProbeTargets), DistributionURLs: sortedUniqueStrings(legacy.DistributionURLsFor(node))}
 		if converted.Name == "" {
 			converted.Name = converted.ID
 		}
@@ -115,11 +115,12 @@ func NetworkIntentFromLegacySSOT(body, publicDataPlaneCA []byte) (NetworkIntent,
 		}
 		allowed := sortedStrings(declaration.AllowedServers)
 		exits := []string{}
+		localEgressDevices := []string{}
 		pinned := declaration.PinnedEgress()
 		if pinned != "" {
 			for _, node := range legacy.Nodes {
 				if node.ID == pinned && node.Access != nil && node.Server != nil {
-					return NetworkIntent{}, fmt.Errorf("legacy declaration %s pins direct egress to hybrid node %s; policy-level allow_direct cannot preserve that per-device meaning", declaration.ID, pinned)
+					localEgressDevices = append(localEgressDevices, pinned)
 				}
 			}
 		}
@@ -135,7 +136,8 @@ func NetworkIntentFromLegacySSOT(body, publicDataPlaneCA []byte) (NetworkIntent,
 			name = declaration.ID
 		}
 		intent.Policies = append(intent.Policies, NetworkPolicy{ID: declaration.ID, Name: name,
-			AllowedServers: allowed, AllowedExits: exits, AllowDirect: pinned == "", MaxHops: declaration.MaxHops})
+			AllowedServers: allowed, AllowedExits: exits, LocalEgressDevices: localEgressDevices,
+			AllowDirect: pinned == "", MaxHops: declaration.MaxHops})
 	}
 	sort.Slice(intent.Policies, func(i, j int) bool { return intent.Policies[i].ID < intent.Policies[j].ID })
 	for _, service := range legacy.Services {
@@ -160,6 +162,17 @@ func sortedStrings(values []string) []string {
 	result := append([]string(nil), values...)
 	sort.Strings(result)
 	return result
+}
+
+func sortedUniqueStrings(values []string) []string {
+	result := sortedStrings(values)
+	unique := result[:0]
+	for _, value := range result {
+		if len(unique) == 0 || unique[len(unique)-1] != value {
+			unique = append(unique, value)
+		}
+	}
+	return unique
 }
 
 func legacyComponents(versions *model.ComponentVersions) []ComponentExpectation {

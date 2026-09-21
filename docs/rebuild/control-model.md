@@ -112,6 +112,9 @@ Publisher 只从本机 root 管理 socket 读取规范的 `CertifiedPublisherInp
 DeviceView 下发。PublisherObservation 是可删除重建并在 control 成员间同步的签名观测，不进入
 Raft/QC，也不能倒写 Projection。
 
+`distribution_urls` 是规范排序、去重的不可变制品 locator。HTTPS 与既有 HTTP mirror 都可表达；HTTP
+不会降低接受边界，因为客户端仍须验证内容摘要、平台签名和 release floor，且它不能承载设备专属配置。
+
 ### 2.5 `CertifiedHead`
 
 `CertifiedHead` 绑定一个已提交索引、该索引处的日志前缀摘要、对应 `Projection` 摘要、
@@ -193,9 +196,14 @@ leaf/key、签名私钥内容和恢复 floor，是
 - runtime wrapper 可以持有缓存和连接，但不得拥有领域层没有的持久状态机。
 - 私有 listener、邻居地址和连接方向由既有 transport adapter 提供；成员 ID 只用于把当前
   `ControlConfig` 与本机邻居解析结果连接起来。地址变化不改写成员资格，缺少直连只表现为本次连接失败。
-- Raft 对目标成员没有直连地址时，可以经一个已认证的直接邻居转送原始 Raft TLS 流。中继只接受当前
-  `ControlConfig` 成员，只能拨号自己的已配置私网邻居；目标节点仍须独立验证原始发起成员的证书、成员 ID
-  和公钥。中继不投票、不改写消息，也不增加端口或成员事实。
+- control 对目标成员没有直连地址时，可以经一个已认证的直接邻居转送原始私有 TLS 流；这同时覆盖
+  Raft 和成员间已签名的内部 control HTTP。纯中继只验证 transport CA，并且只能拨号自己的已配置私网
+  邻居；目标节点仍须端到端验证原始发起成员的证书、成员 ID、公钥和 HTTP 请求签名。纯中继只持有独立
+  transport TLS identity，不加载 Material、ConsensusLog、CertifiedHead、成员签名私钥或管理 HTTP handler，
+  因此既不需要也不得出现在 `ControlConfig`。中继不投票、不签 head、不改写消息，也不增加端口或成员事实。
+- control daemon 可以在自己也是直接邻居时兼任上述 transport adapter，但这只是运行时复用。成员迁出后若
+  仍需转送，必须先切换为不加载控制状态的纯中继进程，再删除旧 control 状态和 unit；不能为了保留 transport
+  而保留一个伪装成“非投票成员”的 control runtime。
 - 不可变 Material 和已独立验签的 CertifiedHead 由每个成员向直接邻居增量转送，因此 Raft 引用的材料与
   可消费认证头可沿同一非全互连拓扑收敛；转送不能形成日志顺序或认证候选 head。
 - UI 的写操作表达用户意图，由服务端生成、鉴权并提交 `Material`；UI 返回对象不得成为新权威。
@@ -321,6 +329,10 @@ QC 不携带第二套业务决定，不允许对日志重新排序，也不维�
 4. Raft quorum 提交记录；所有已提交节点按相同顺序更新 `Projection`。
 5. control 为对应摘要签名并形成 `CertifiedHead`。
 6. 只有覆盖该记录的 head 持久化后，入口才返回业务完成，并让 UI/客户端读取新投影。
+
+验收、视觉和故障注入只能使用临时 control root、临时证书与隔离 listener。生产 admin 入口不承担测试夹具
+职责；测试不得把 `demo-*`、`issue-*` 或临时 Enrollment 写入生产 ConsensusLog。生产中已经提交的错误历史
+不能删除，只能由更高 head 的正式 Material 前向纠正，而当前投影必须只展示仍然有效的领域事实。
 
 若步骤 4 已完成而步骤 5 暂时失败，提交不可回滚，但外部仍读取旧 head。调用者重试同一请求时，
 系统继续完成认证并在 head 覆盖该 ID 后返回；不为这种情况另建持久工作流。

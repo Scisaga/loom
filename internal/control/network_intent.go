@@ -72,12 +72,13 @@ type NetworkLinkProbeTarget struct {
 }
 
 type NetworkPolicy struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	AllowedServers []string `json:"allowed_servers"`
-	AllowedExits   []string `json:"allowed_exits"`
-	AllowDirect    bool     `json:"allow_direct"`
-	MaxHops        int      `json:"max_hops"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	AllowedServers     []string `json:"allowed_servers"`
+	AllowedExits       []string `json:"allowed_exits"`
+	LocalEgressDevices []string `json:"local_egress_devices,omitempty"`
+	AllowDirect        bool     `json:"allow_direct"`
+	MaxHops            int      `json:"max_hops"`
 }
 
 type ComponentExpectation struct {
@@ -180,14 +181,12 @@ func validateProbeTargets(values []string) error {
 }
 
 func validateDistributionURLs(values []string) error {
-	seen := map[string]bool{}
-	for _, value := range values {
+	for index, value := range values {
 		parsed, err := url.Parse(value)
-		if err != nil || parsed.String() != value || parsed.Scheme != "https" || parsed.Host == "" ||
-			parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || seen[value] {
-			return errors.New("network distribution URLs are invalid or duplicated")
+		if err != nil || parsed.String() != value || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.Host == "" ||
+			parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || index > 0 && values[index-1] >= value {
+			return errors.New("network distribution URLs are invalid or not uniquely sorted")
 		}
-		seen[value] = true
 	}
 	return nil
 }
@@ -380,7 +379,10 @@ func (intent NetworkIntent) Validate() error {
 		if err := validateSortedNames(policy.AllowedExits, "policy exits"); err != nil {
 			return err
 		}
-		if !policy.AllowDirect && len(policy.AllowedExits) == 0 {
+		if err := validateSortedNames(policy.LocalEgressDevices, "policy local egress devices"); err != nil {
+			return err
+		}
+		if !policy.AllowDirect && len(policy.AllowedExits) == 0 && len(policy.LocalEgressDevices) == 0 {
 			return errors.New("network policy has no allowed route")
 		}
 		for _, serverID := range policy.AllowedServers {
@@ -393,6 +395,14 @@ func (intent NetworkIntent) Validate() error {
 			node, ok := nodes[exit]
 			if !ok || node.Server == nil || !node.Server.EgressCapable || !contains(policy.AllowedServers, exit) {
 				return errors.New("network policy exit is not egress capable")
+			}
+		}
+		for _, deviceID := range policy.LocalEgressDevices {
+			node, ok := nodes[deviceID]
+			if !ok || node.Server == nil || !node.Server.EgressCapable || !contains(node.Roles, "access") ||
+				!contains(node.Roles, "server") || !contains(policy.AllowedServers, deviceID) ||
+				!contains(policy.AllowedExits, deviceID) {
+				return errors.New("network policy local egress device is not an allowed hybrid exit")
 			}
 		}
 		policies[policy.ID] = true

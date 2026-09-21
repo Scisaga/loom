@@ -162,12 +162,17 @@ func (server *Server) Handler() http.Handler {
 		writer.Header().Set("Referrer-Policy", "same-origin")
 		writer.Header().Set("Cache-Control", "no-store")
 		local := localAdmin(request)
+		internal := strings.HasPrefix(request.URL.Path, "/internal/")
+		exactHost := false
+		if !local {
+			exactHost = server.exactHost(request.Host) || internal && request.Host == server.Config.Node
+		}
 		if request.URL.RawPath != "" || path.Clean(request.URL.Path) != request.URL.Path || !local && (request.TLS == nil ||
-			!request.TLS.HandshakeComplete || request.TLS.Version != tls.VersionTLS13 || !server.exactHost(request.Host)) {
+			!request.TLS.HandshakeComplete || request.TLS.Version != tls.VersionTLS13 || !exactHost) {
 			http.NotFound(writer, request)
 			return
 		}
-		if strings.HasPrefix(request.URL.Path, "/internal/") {
+		if internal {
 			mux.ServeHTTP(writer, request)
 			return
 		}

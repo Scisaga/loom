@@ -82,6 +82,7 @@ rebuild_ui(core_inputs)             = WebProjection
 - Overview、Devices、Device detail、Topology、Live paths、Services、Releases/Deployments、Events 和 SSOT 页面保留；
 - Device 只出现一次，不再并存 Client/Node 两份身份事实；
 - 已完成后被撤权的 Enrollment 保留在不可变控制历史中，但不再作为当前 Device/Topology 投影；尚未完成的 Enrollment 仍显示其真实状态；
+  投影只为当前 Authorization 选择一笔已完成事务，或展示尚未完成的当前事务，绝不遍历全部历史事务重新制造设备；
 - Enrollment 的 `completed` 只表示授权 Material 已认证，不表示 Ready。邀请与节点投影依次显示
   `awaiting_claim / awaiting_approval / awaiting_deployment / ready`；只有新设备本身及其所有派生 route chain
   中的服务器都提交三分钟内、schema-2、running、exact 且匹配当前 DeviceView digest 的签名报告，才显示 Ready；
