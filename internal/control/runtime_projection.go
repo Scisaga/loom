@@ -22,6 +22,14 @@ func normalizedDataPlaneProtocol(value string) string {
 	return value
 }
 
+// dataPlaneServerName is the stable certificate identity for a server.  The
+// public endpoint and a WireGuard next-hop address are only transport
+// addresses; neither is an authenticated identity and both may change while
+// the same server certificate remains valid.
+func dataPlaneServerName(nodeID string) string {
+	return nodeID + ".node.internal"
+}
+
 func deriveRuntimeSecret(runtimeKey, deviceID, policyID, purpose string) (string, error) {
 	key, err := base64.RawURLEncoding.DecodeString(runtimeKey)
 	if err != nil || len(key) != 32 {
@@ -233,7 +241,7 @@ func projectAuthorizationRuntime(projection Projection, authorization DeviceAuth
 			outbounds = append(outbounds, runtimeOutbound{Type: protocol, Tag: tag,
 				Server: serverAddress, ServerPort: node.Server.InboundPort, Password: password,
 				Detour: detour, BindInterface: bindInterface,
-				TLS: map[string]any{"enabled": true, "server_name": node.Server.PublicEndpoint}})
+				TLS: map[string]any{"enabled": true, "server_name": dataPlaneServerName(node.ID)}})
 			detour = tag
 		}
 	}

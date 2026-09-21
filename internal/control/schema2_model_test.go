@@ -299,8 +299,13 @@ func TestSchema2AuthorizationProjectsPrivateRuntimeWithoutRuntimeKey(t *testing.
 			ServerName: "control.example", SPKISHA256: strings.Repeat("a", 64), State: "serving"}},
 		DeviceAuthorizations: []DeviceAuthorization{{Schema: 2, DeviceID: "d-0123456789", DestinationGrants: []string{"demo-policy"},
 			DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), RuntimeKey: base64.RawURLEncoding.EncodeToString(runtimeKey), Floor: 1}}}
-	if routes, runtime, err := projectAuthorizationRuntime(projection, projection.DeviceAuthorizations[0]); err != nil {
+	routes, runtime, err := projectAuthorizationRuntime(projection, projection.DeviceAuthorizations[0])
+	if err != nil {
 		t.Fatalf("derive schema-2 runtime: %v routes=%+v runtime=%+v", err, routes, runtime)
+	}
+	if strings.Contains(runtime.Config, `"server_name":"192.0.2.10"`) ||
+		!strings.Contains(runtime.Config, `"server_name":"demo-egress.node.internal"`) {
+		t.Fatalf("runtime authenticated a transport address instead of the server identity: %s", runtime.Config)
 	}
 	view, found := projectDeviceView(projection, "d-0123456789")
 	if !found || view.Validate() != nil || len(view.Routes) != 2 || view.Runtime == nil {

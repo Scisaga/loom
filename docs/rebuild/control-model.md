@@ -107,6 +107,10 @@ Raft 负责形成并复制这个序列。日志记录至少绑定索引、Raft �
 server users/ACL 只进入对应设备的私有 DeviceView，不进入 WebProjection；密码由 access 授权中的
 RuntimeKey 派生，TLS/WireGuard 私钥继续只存在于设备本机。
 
+数据面拨号地址与 TLS 身份是两个不同边界：公网 `public_endpoint` 或链路隧道地址只决定数据包发往哪里，
+证书校验名始终由稳定节点 ID 确定为 `<node-id>.node.internal`。同一服务器从公网直连切换到 WireGuard
+下一跳时不得用 IP 地址替代证书身份，也不得通过关闭证书校验来兼容错误投影。
+
 在 `NetworkIntent` 首次导入前已经认证的旧 `service.put` Material 仍按其提交时的规则重放到旧 Web
 投影，以保持既有 CertifiedHead 摘要可验证；这只是不可变历史的 reducer 语义。正式提交入口在缺少
 `NetworkIntent` 时拒绝任何新的 Service 增删，导入后 Service 只修改 `NetworkIntent.services`，运行时
