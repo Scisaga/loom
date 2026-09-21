@@ -589,24 +589,48 @@ func (runtime *Runtime) certify(ctx context.Context) (GovernanceHead, error) {
 	}
 	signatures := []HeadSignature{local}
 	seen := map[string]bool{local.MemberID: true}
+	type signatureResult struct {
+		signature HeadSignature
+	}
+	signatureContext, stopSignatures := context.WithCancel(ctx)
+	defer stopSignatures()
+	signatureResults := make(chan signatureResult, len(uniqueMembers(projection.Config)))
+	pendingSignatures := 0
 	for _, member := range uniqueMembers(projection.Config) {
 		if seen[member.ID] {
 			continue
 		}
-		var signature HeadSignature
-		for attempt := 0; attempt < 10; attempt++ {
-			if err := runtime.peerJSON(ctx, member, http.MethodPost, "/internal/head/sign", mustJSON(head), &signature); err == nil {
-				signatures = append(signatures, signature)
-				seen[member.ID] = true
-				break
+		pendingSignatures++
+		go func(member Member) {
+			var signature HeadSignature
+			for attempt := 0; attempt < 10; attempt++ {
+				if err := runtime.peerJSON(signatureContext, member, http.MethodPost, "/internal/head/sign", mustJSON(head), &signature); err == nil {
+					signatureResults <- signatureResult{signature: signature}
+					return
+				}
+				select {
+				case <-signatureContext.Done():
+					signatureResults <- signatureResult{}
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
 			}
-			select {
-			case <-ctx.Done():
-				return head, ctx.Err()
-			case <-time.After(100 * time.Millisecond):
+			signatureResults <- signatureResult{}
+		}(member)
+	}
+	for pendingSignatures > 0 && !controlQuorumSatisfied(projection.Config, seen) {
+		select {
+		case result := <-signatureResults:
+			pendingSignatures--
+			if result.signature.MemberID != "" && !seen[result.signature.MemberID] {
+				signatures = append(signatures, result.signature)
+				seen[result.signature.MemberID] = true
 			}
+		case <-ctx.Done():
+			return head, ctx.Err()
 		}
 	}
+	stopSignatures()
 	sort.Slice(signatures, func(i, j int) bool { return signatures[i].MemberID < signatures[j].MemberID })
 	head.Signatures = signatures
 	if err := VerifyHead(head, projection, func() []ConsensusEntry { c, _, _ := runtime.Authority.Snapshot(); return c.Entries }()); err != nil {
@@ -616,31 +640,55 @@ func (runtime *Runtime) certify(ctx context.Context) (GovernanceHead, error) {
 		return head, err
 	}
 	installed := map[string]bool{runtime.Config.MemberID: true}
+	installContext, stopInstall := context.WithCancel(ctx)
+	defer stopInstall()
+	installResults := make(chan string, len(uniqueMembers(projection.Config)))
+	pendingInstall := 0
 	for _, member := range uniqueMembers(projection.Config) {
 		if member.ID == runtime.Config.MemberID {
 			continue
 		}
-		if err := runtime.peerJSON(ctx, member, http.MethodPut, "/internal/certified", mustJSON(head), nil); err == nil {
-			installed[member.ID] = true
+		pendingInstall++
+		go func(member Member) {
+			if err := runtime.peerJSON(installContext, member, http.MethodPut, "/internal/certified", mustJSON(head), nil); err == nil {
+				installResults <- member.ID
+				return
+			}
+			installResults <- ""
+		}(member)
+	}
+	for pendingInstall > 0 && !controlQuorumSatisfied(projection.Config, installed) {
+		select {
+		case memberID := <-installResults:
+			pendingInstall--
+			if memberID != "" {
+				installed[memberID] = true
+			}
+		case <-ctx.Done():
+			return head, ctx.Err()
 		}
 	}
+	stopInstall()
+	if !controlQuorumSatisfied(projection.Config, installed) {
+		return head, errors.New("certified head was not installed on the required quorum")
+	}
+	return head, nil
+}
+
+func controlQuorumSatisfied(config ControlConfig, present map[string]bool) bool {
 	count := func(members []Member) int {
 		total := 0
 		for _, member := range members {
-			if installed[member.ID] {
+			if present[member.ID] {
 				total++
 			}
 		}
 		return total
 	}
-	if projection.Config.Mode == "stable" {
-		if count(projection.Config.Members) < projection.Config.Quorum {
-			return head, errors.New("certified head was not installed on a quorum")
-		}
-	} else if count(projection.Config.Old) < projection.Config.OldQuorum || count(projection.Config.New) < projection.Config.NewQuorum {
-		return head, errors.New("certified joint head was not installed on both quorums")
+	if config.Mode == "stable" {
+		return count(config.Members) >= config.Quorum
 	}
-	return head, nil
+	return count(config.Old) >= config.OldQuorum && count(config.New) >= config.NewQuorum
 }
 
 func memberMap(config ControlConfig) map[string]Member {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"time"
 
@@ -206,8 +207,30 @@ func servingEndpointReferences(projection Projection) []EndpointReference {
 	return result
 }
 
+// submitCommittedRequest resumes the exact immutable Material already present
+// in the consensus log. This is the recovery path when Raft committed a request
+// but the caller's context ended before a QC could be returned; rebuilding a
+// random key, timestamp, transaction or capability would be a different
+// request and must never be used as a retry.
+func (server *Server) submitCommittedRequest(ctx context.Context, requestID string) (CertifiedState, Material, bool, error) {
+	id, material, err := server.Runtime.Authority.MaterialForRequest(requestID)
+	if errors.Is(err, os.ErrNotExist) {
+		return CertifiedState{}, Material{}, false, nil
+	}
+	if err != nil {
+		return CertifiedState{}, Material{}, false, err
+	}
+	body, encodedID, err := EncodeMaterial(material)
+	if err != nil || encodedID != id {
+		return CertifiedState{}, Material{}, true, errors.New("committed request material is not canonical")
+	}
+	result, err := server.Runtime.Submit(ctx, body)
+	return result, material, true, err
+}
+
 func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead string, payload enrollmentCreatePayload) (CertifiedState, string, error) {
-	_, projection, certified := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	if payload.Schema == enrollmentSchemaV2 {
 		if open, found, err := server.Runtime.Authority.EnrollmentOpenByRequestID(requestID); err != nil {
 			return CertifiedState{}, "", err
@@ -223,8 +246,15 @@ func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead 
 			if !equalEnrollmentIntent(open.Intent, requested) {
 				return CertifiedState{}, "", errors.New("request ID is already bound to different enrollment intent")
 			}
+			result, material, committed, retryErr := server.submitCommittedRequest(ctx, requestID)
+			if retryErr != nil || !committed || material.EnrollmentOpen == nil || material.EnrollmentOpen.TransactionID != open.TransactionID {
+				if retryErr != nil {
+					return CertifiedState{}, "", retryErr
+				}
+				return CertifiedState{}, "", errors.New("enrollment request material is unavailable")
+			}
 			invite, encodeErr := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
-			return certified, invite, encodeErr
+			return result, invite, encodeErr
 		}
 		if baseHead != HeadID(certified.Head) {
 			return CertifiedState{}, "", errors.New("base head is stale")
@@ -354,7 +384,8 @@ func (server *Server) createExistingNodeRejoin(ctx context.Context, requestID, b
 	if !validName(payload.DeviceID) || validateSortedNames(payload.DestinationGrants, "existing-node rejoin grants") != nil {
 		return CertifiedState{}, "", errors.New("existing-node rejoin request is invalid")
 	}
-	_, projection, certified := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	if open, found, err := server.Runtime.Authority.EnrollmentOpenByRequestID(requestID); err != nil {
 		return CertifiedState{}, "", err
 	} else if found {
@@ -366,8 +397,15 @@ func (server *Server) createExistingNodeRejoin(ctx context.Context, requestID, b
 		if transaction != nil && transaction.State != "completed" && !server.now().Before(mustTime(transaction.ExpiresAt)) {
 			return CertifiedState{}, "", errors.New("existing-node rejoin request ID is expired")
 		}
+		result, material, committed, retryErr := server.submitCommittedRequest(ctx, requestID)
+		if retryErr != nil || !committed || material.EnrollmentOpen == nil || material.EnrollmentOpen.TransactionID != open.TransactionID {
+			if retryErr != nil {
+				return CertifiedState{}, "", retryErr
+			}
+			return CertifiedState{}, "", errors.New("existing-node rejoin material is unavailable")
+		}
 		invite, encodeErr := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
-		return certified, invite, encodeErr
+		return result, invite, encodeErr
 	}
 	if baseHead != HeadID(certified.Head) {
 		return CertifiedState{}, "", errors.New("base head is stale")
@@ -377,14 +415,21 @@ func (server *Server) createExistingNodeRejoin(ctx context.Context, requestID, b
 			transaction.State == "expired" || transaction.State == "cancelled" || server.now().Before(mustTime(transaction.ExpiresAt)) {
 			continue
 		}
-		expire := EnrollmentExpire{TransactionID: transaction.ID, ExpiredAt: server.now().UTC().Truncate(time.Second).Format(time.RFC3339)}
-		material := Material{Schema: MaterialSchema, Kind: "enrollment.expire", RequestID: "enrollment-expire:" + transaction.ID,
-			BaseHead: baseHead, EnrollmentExpire: &expire}
-		body, _, encodeErr := EncodeMaterial(material)
-		if encodeErr != nil {
-			return CertifiedState{}, "", encodeErr
+		expireRequestID := "enrollment-expire:" + transaction.ID
+		result, material, committed, submitErr := server.submitCommittedRequest(ctx, expireRequestID)
+		if submitErr == nil && committed && (material.EnrollmentExpire == nil || material.EnrollmentExpire.TransactionID != transaction.ID) {
+			submitErr = errors.New("enrollment expiration request is bound to another transaction")
 		}
-		result, submitErr := server.Runtime.Submit(ctx, body)
+		if submitErr == nil && !committed {
+			expire := EnrollmentExpire{TransactionID: transaction.ID, ExpiredAt: server.now().UTC().Truncate(time.Second).Format(time.RFC3339)}
+			material = Material{Schema: MaterialSchema, Kind: "enrollment.expire", RequestID: expireRequestID,
+				BaseHead: baseHead, EnrollmentExpire: &expire}
+			body, _, encodeErr := EncodeMaterial(material)
+			if encodeErr != nil {
+				return CertifiedState{}, "", encodeErr
+			}
+			result, submitErr = server.Runtime.Submit(ctx, body)
+		}
 		if submitErr != nil {
 			return CertifiedState{}, "", submitErr
 		}
@@ -473,13 +518,34 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 	if !validName(transactionID) {
 		return CertifiedState{}, errors.New("enrollment transaction ID is invalid")
 	}
-	_, projection, certified := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	_, transaction := findEnrollment(&projection, transactionID)
 	if transaction == nil {
 		return CertifiedState{}, errors.New("enrollment transaction does not exist")
 	}
 	if transaction.State == "completed" {
 		return certified, nil
+	}
+	for _, candidateRequestID := range []string{requestID, requestID + ":approve", requestID + ":complete"} {
+		result, material, committed, retryErr := server.submitCommittedRequest(ctx, candidateRequestID)
+		if retryErr != nil {
+			return CertifiedState{}, retryErr
+		}
+		if !committed {
+			continue
+		}
+		matches := material.EnrollmentApprove != nil && material.EnrollmentApprove.TransactionID == transactionID ||
+			material.EnrollmentComplete != nil && material.EnrollmentComplete.TransactionID == transactionID
+		if !matches {
+			return CertifiedState{}, errors.New("enrollment approval request is bound to another transaction")
+		}
+		if material.EnrollmentComplete != nil {
+			return result, nil
+		}
+		certified = result
+		projection = result.Projection
+		_, transaction = findEnrollment(&projection, transactionID)
 	}
 	if transaction.State == "bound" && transaction.Intent.Schema != enrollmentSchemaV2 {
 		if baseHead != HeadID(certified.Head) {
@@ -495,7 +561,8 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 		if _, err := server.Runtime.Submit(ctx, body); err != nil {
 			return CertifiedState{}, err
 		}
-		_, projection, certified = server.Runtime.Authority.Snapshot()
+		_, _, certified = server.Runtime.Authority.Snapshot()
+		projection = certified.Projection
 		_, transaction = findEnrollment(&projection, transactionID)
 	}
 	if transaction == nil || transaction.State != "approved" && (transaction.State != "bound" || transaction.Intent.Schema != enrollmentSchemaV2) {
@@ -564,7 +631,8 @@ func (server *Server) putEndpoint(ctx context.Context, requestID, baseHead strin
 	if err := generation.Validate(); err != nil {
 		return CertifiedState{}, err
 	}
-	_, projection, certified := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	if baseHead != HeadID(certified.Head) {
 		return CertifiedState{}, errors.New("base head is stale")
 	}
@@ -624,7 +692,8 @@ func (server *Server) putEndpoint(ctx context.Context, requestID, baseHead strin
 }
 
 func (server *Server) putDevice(ctx context.Context, requestID, baseHead string, payload deviceUpdatePayload) (CertifiedState, error) {
-	_, projection, certified := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	if baseHead != HeadID(certified.Head) {
 		return CertifiedState{}, errors.New("base head is stale")
 	}
@@ -665,7 +734,8 @@ func (server *Server) revokeDevice(ctx context.Context, requestID, baseHead, dev
 	if !validName(deviceID) {
 		return CertifiedState{}, errors.New("device ID is invalid")
 	}
-	_, projection, certified := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	if baseHead != HeadID(certified.Head) {
 		return CertifiedState{}, errors.New("base head is stale")
 	}
@@ -683,8 +753,8 @@ func (server *Server) revokeDevice(ctx context.Context, requestID, baseHead, dev
 }
 
 func (server *Server) enrollmentResponse(transactionID string) (EnrollmentResponse, error) {
-	_, projection, certified := server.Runtime.Authority.Snapshot()
-	_, transaction := findEnrollment(&projection, transactionID)
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	_, transaction := findEnrollment(&certified.Projection, transactionID)
 	if transaction == nil {
 		return EnrollmentResponse{}, errors.New("enrollment transaction does not exist")
 	}
@@ -749,7 +819,8 @@ func (server *Server) claim(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "invalid enrollment claim", http.StatusBadRequest)
 		return
 	}
-	_, projection, certified := server.Runtime.Authority.Snapshot()
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	projection := certified.Projection
 	if projection.ConfigMaterial != claim.Capability.ConfigMaterial || !sameControlConfig(projection.Config, claim.Capability.ControlConfig) {
 		http.Error(writer, "enrollment capability control boundary changed", http.StatusConflict)
 		return
@@ -783,14 +854,31 @@ func (server *Server) claim(writer http.ResponseWriter, request *http.Request) {
 			http.Error(writer, "enrollment capability expired", http.StatusGone)
 			return
 		}
-		bind := EnrollmentBind{TransactionID: transaction.ID, ClaimRequestID: claim.RequestID,
-			DevicePublicKey: claim.DevicePublicKey, ClaimedAt: server.now().Format(time.RFC3339), Server: claimedServer}
-		material := Material{Schema: MaterialSchema, Kind: "enrollment.bind",
-			RequestID: "enrollment-bind:" + transaction.ID + ":" + claim.DevicePublicKey,
-			BaseHead:  HeadID(certified.Head), EnrollmentBind: &bind}
-		body, _, err := EncodeMaterial(material)
-		if err == nil {
-			_, err = server.Runtime.Submit(request.Context(), body)
+		bindRequestID := "enrollment-bind:" + transaction.ID + ":" + claim.DevicePublicKey
+		_, material, committed, err := server.submitCommittedRequest(request.Context(), bindRequestID)
+		if err == nil && committed {
+			if material.EnrollmentBind == nil {
+				err = errors.New("enrollment bind request has the wrong material kind")
+			} else {
+				left, _ := canonical(material.EnrollmentBind.Server)
+				right, _ := canonical(claimedServer)
+				if material.EnrollmentBind.TransactionID != transaction.ID ||
+					material.EnrollmentBind.ClaimRequestID != claim.RequestID || material.EnrollmentBind.DevicePublicKey != claim.DevicePublicKey ||
+					!bytes.Equal(left, right) {
+					err = errors.New("enrollment bind request is bound to another identity")
+				}
+			}
+		}
+		if err == nil && !committed {
+			bind := EnrollmentBind{TransactionID: transaction.ID, ClaimRequestID: claim.RequestID,
+				DevicePublicKey: claim.DevicePublicKey, ClaimedAt: server.now().Format(time.RFC3339), Server: claimedServer}
+			material = Material{Schema: MaterialSchema, Kind: "enrollment.bind", RequestID: bindRequestID,
+				BaseHead: HeadID(certified.Head), EnrollmentBind: &bind}
+			var body []byte
+			body, _, err = EncodeMaterial(material)
+			if err == nil {
+				_, err = server.Runtime.Submit(request.Context(), body)
+			}
 		}
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusServiceUnavailable)

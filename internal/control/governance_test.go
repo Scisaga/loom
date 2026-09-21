@@ -191,6 +191,20 @@ func TestThreeMemberQuorumWritePartitionRecoveryAndMembership(t *testing.T) {
 	}
 }
 
+func TestControlQuorumSatisfiedStopsAtCertifiedThreshold(t *testing.T) {
+	members := []Member{{ID: "demo-a"}, {ID: "demo-b"}, {ID: "demo-c"}}
+	stable := ControlConfig{Mode: "stable", Members: members, Quorum: 2}
+	if controlQuorumSatisfied(stable, map[string]bool{"demo-a": true}) ||
+		!controlQuorumSatisfied(stable, map[string]bool{"demo-a": true, "demo-b": true}) {
+		t.Fatal("stable signature threshold is wrong")
+	}
+	joint := ControlConfig{Mode: "joint", Old: members[:2], OldQuorum: 2, New: members[1:], NewQuorum: 2}
+	if controlQuorumSatisfied(joint, map[string]bool{"demo-a": true, "demo-b": true}) ||
+		!controlQuorumSatisfied(joint, map[string]bool{"demo-a": true, "demo-b": true, "demo-c": true}) {
+		t.Fatal("joint signature threshold is wrong")
+	}
+}
+
 func TestEnrollmentApprovalRequiresControlQuorum(t *testing.T) {
 	_, _, runtimes, serverCancels, cancel := testCluster(t, 3)
 	defer cancel()

@@ -244,6 +244,24 @@ func TestExpiredEnrollmentMustUseCertifiedTransitionBeforeRejoin(t *testing.T) {
 	}
 }
 
+func TestEnrollmentResponseNeverExposesUncertifiedCandidate(t *testing.T) {
+	transaction := EnrollmentTransaction{Schema: enrollmentSchemaV2, ID: "demo-transaction", State: "open",
+		Intent: EnrollmentIntent{Schema: enrollmentSchemaV2, DeviceID: "demo-device", Name: "Demo", Platform: "linux",
+			Roles: []string{"server"}, Server: &ServerIntent{Direction: "bidirectional"}}}
+	bound := transaction
+	bound.State = "bound"
+	authority := &Authority{projection: Projection{Schema: 1, Enrollments: []EnrollmentTransaction{bound}},
+		certified: CertifiedState{Schema: 1, Projection: Projection{Schema: 1, Enrollments: []EnrollmentTransaction{transaction}}}}
+	server := &Server{Runtime: &Runtime{Authority: authority}}
+	response, err := server.enrollmentResponse(transaction.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Transaction.State != "open" {
+		t.Fatalf("device saw uncertified candidate state %q", response.Transaction.State)
+	}
+}
+
 func TestEnrollmentProjectionKeepsCertifiedNodeMetadata(t *testing.T) {
 	intent := testNetworkIntent(t)
 	projection := Projection{Schema: 1, NetworkIntent: &intent, Web: WebProjection{Schema: 1},
