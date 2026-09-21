@@ -272,28 +272,49 @@ func (runtime *Runtime) reconcilePeers() {
 		return
 	}
 	_, projection, certified := runtime.Authority.Snapshot()
+	var peers sync.WaitGroup
 	for _, member := range uniqueMembers(projection.Config) {
 		if member.ID == runtime.Config.MemberID {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		var remoteIDs []string
-		if err := runtime.peerJSON(ctx, member, http.MethodGet, "/internal/materials", nil, &remoteIDs); err == nil {
-			remote := map[string]bool{}
-			for _, id := range remoteIDs {
-				remote[id] = true
-			}
-			for _, id := range localIDs {
-				if !remote[id] {
-					if body, readErr := runtime.Authority.Material(id); readErr == nil {
-						_ = runtime.peerJSON(ctx, member, http.MethodPut, "/internal/materials/"+strings.TrimPrefix(id, "sha256:"), body, nil)
-					}
-				}
-			}
-			_ = runtime.peerJSON(ctx, member, http.MethodPut, "/internal/certified", mustJSON(certified.Head), nil)
-		}
-		cancel()
+		peers.Add(1)
+		go func(member Member) {
+			defer peers.Done()
+			runtime.reconcilePeer(member, localIDs, certified.Head)
+		}(member)
 	}
+	peers.Wait()
+}
+
+func (runtime *Runtime) reconcilePeer(member Member, localIDs []string, certified GovernanceHead) {
+	// A control peer may be reached through an inter-region authenticated
+	// relay. Give each immutable transfer its own bounded deadline: sharing one
+	// short context across inventory, missing materials, and the certified head
+	// let a successful inventory consume the entire budget and permanently
+	// strand the peer with an applied Raft log but an older certified head.
+	call := func(method, path string, body []byte, result any) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return runtime.peerJSON(ctx, member, method, path, body, result)
+	}
+	var remoteIDs []string
+	if err := call(http.MethodGet, "/internal/materials", nil, &remoteIDs); err != nil {
+		return
+	}
+	remote := map[string]bool{}
+	for _, id := range remoteIDs {
+		remote[id] = true
+	}
+	for _, id := range localIDs {
+		if remote[id] {
+			continue
+		}
+		body, err := runtime.Authority.Material(id)
+		if err != nil || call(http.MethodPut, "/internal/materials/"+strings.TrimPrefix(id, "sha256:"), body, nil) != nil {
+			return
+		}
+	}
+	_ = call(http.MethodPut, "/internal/certified", mustJSON(certified), nil)
 }
 
 func (runtime *Runtime) LeaderMember() (Member, bool) {
