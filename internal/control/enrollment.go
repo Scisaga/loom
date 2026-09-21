@@ -154,7 +154,13 @@ type DeviceAuthorization struct {
 	DestinationGrants []string         `json:"destination_grants,omitempty"`
 	Server            *ServerIntent    `json:"server,omitempty"`
 	RuntimeKey        string           `json:"runtime_key,omitempty"`
+	// RuntimeContract versions the deterministic DeviceView projection. Zero
+	// preserves the schema-2 contract certified before this field existed;
+	// contract 2 binds data-plane TLS to the stable node identity.
+	RuntimeContract int `json:"runtime_contract,omitempty"`
 }
+
+const runtimeContractNodeTLS = 2
 
 // ServerRuntimeProfile is a private, deterministic projection for the
 // authorized server device. It is carried only in that device's certified
@@ -168,6 +174,11 @@ type ServerRuntimeProfile struct {
 	Users      []ServerRuntimeUser      `json:"users"`
 	ACL        []ServerRuntimeACL       `json:"acl"`
 	WireGuard  []ServerWireGuardRuntime `json:"wireguard"`
+}
+
+type DeviceRuntimeUpgrade struct {
+	DeviceID        string `json:"device_id"`
+	RuntimeContract int    `json:"runtime_contract"`
 }
 
 type ServerRuntimeUser struct {
@@ -685,17 +696,26 @@ func (authorization DeviceAuthorization) Validate() error {
 	case enrollmentSchema:
 		intent := EnrollmentIntent{DeviceID: authorization.DeviceID, Name: authorization.Name, Platform: authorization.Platform,
 			Roles: authorization.Roles, Routes: authorization.Routes, Runtime: authorization.Runtime}
-		if intent.Validate() != nil || authorization.RuntimeKey != "" || len(authorization.DestinationGrants) != 0 || authorization.Server != nil {
+		if intent.Validate() != nil || authorization.RuntimeKey != "" || len(authorization.DestinationGrants) != 0 || authorization.Server != nil ||
+			authorization.RuntimeContract != 0 {
 			return errors.New("legacy device authorization is invalid")
 		}
 	case enrollmentSchemaV2:
 		if authorization.Name != "" || authorization.Platform != "" || len(authorization.Roles) != 0 || len(authorization.Routes) != 0 ||
 			authorization.Runtime != nil || authorization.Server != nil || !validRuntimeKey(authorization.RuntimeKey) ||
+			authorization.RuntimeContract != 0 && authorization.RuntimeContract != runtimeContractNodeTLS ||
 			validateSortedNames(authorization.DestinationGrants, "device authorization grants") != nil {
 			return errors.New("schema-2 device authorization contains duplicated or invalid facts")
 		}
 	default:
 		return errors.New("device authorization schema is invalid")
+	}
+	return nil
+}
+
+func (upgrade DeviceRuntimeUpgrade) Validate() error {
+	if !validName(upgrade.DeviceID) || upgrade.RuntimeContract != runtimeContractNodeTLS {
+		return errors.New("device runtime upgrade is invalid")
 	}
 	return nil
 }
@@ -1007,6 +1027,38 @@ func reduceDeviceAuthorization(projection *Projection, authorization DeviceAutho
 	}
 	projection.DeviceAuthorizations[index] = authorization
 	view, _ := projectDeviceView(*projection, authorization.DeviceID)
+	digest, err := DeviceViewDigest(view)
+	if err != nil {
+		return err
+	}
+	for transactionIndex := range projection.Enrollments {
+		transaction := &projection.Enrollments[transactionIndex]
+		if transaction.Intent.DeviceID == authorization.DeviceID && transaction.State == "completed" {
+			transaction.ResultDigest = digest
+		}
+	}
+	return nil
+}
+
+func reduceDeviceRuntimeUpgrade(projection *Projection, upgrade DeviceRuntimeUpgrade, floor uint64) error {
+	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
+		return projection.DeviceAuthorizations[index].DeviceID >= upgrade.DeviceID
+	})
+	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != upgrade.DeviceID {
+		return errors.New("device authorization does not exist")
+	}
+	authorization := projection.DeviceAuthorizations[index]
+	if authorization.Schema != enrollmentSchemaV2 || authorization.RuntimeContract >= upgrade.RuntimeContract ||
+		floor <= authorization.Floor {
+		return errors.New("device runtime upgrade does not advance the certified contract")
+	}
+	authorization.RuntimeContract = upgrade.RuntimeContract
+	authorization.Floor = floor
+	projection.DeviceAuthorizations[index] = authorization
+	view, found := projectDeviceView(*projection, authorization.DeviceID)
+	if !found {
+		return errors.New("upgraded device view is unavailable")
+	}
 	digest, err := DeviceViewDigest(view)
 	if err != nil {
 		return err

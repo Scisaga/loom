@@ -238,10 +238,14 @@ func projectAuthorizationRuntime(projection Projection, authorization DeviceAuth
 					bindInterface = "wg-" + nodeID
 				}
 			}
+			serverName := node.Server.PublicEndpoint
+			if authorization.RuntimeContract >= runtimeContractNodeTLS {
+				serverName = dataPlaneServerName(node.ID)
+			}
 			outbounds = append(outbounds, runtimeOutbound{Type: protocol, Tag: tag,
 				Server: serverAddress, ServerPort: node.Server.InboundPort, Password: password,
 				Detour: detour, BindInterface: bindInterface,
-				TLS: map[string]any{"enabled": true, "server_name": dataPlaneServerName(node.ID)}})
+				TLS: map[string]any{"enabled": true, "server_name": serverName}})
 			detour = tag
 		}
 	}

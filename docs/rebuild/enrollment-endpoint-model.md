@@ -217,6 +217,10 @@ schema-2 的浏览器 `EnrollmentIntent` 只接受 platform、产品职责、pol
 函数投影，不能另建 registry。任何缺失、重复、非规范或
 未授权成员使整笔 Material 在提交前失败；客户端不得补写权威默认值。
 
+Linux HostAdapter 应用每条 WireGuard link 时必须同时事务化 interface、peer、地址和指向认证
+`allowed_ip` 的精确内核路由。预先存在的冲突路由使应用失败；后续 listener、selector 或业务探测失败时，
+路由必须和接口配置一起恢复到应用前状态。仅有 WireGuard handshake 而缺少内核路由不构成链路可用。
+
 `DeviceReport v2` 使用独立签名域，携带多 scope selection、runtime readback、实际组件坐标、精确链路探测与
 WG 累计计数、deployment readback。当前报告超过 3 分钟后全部运行事实回到 unknown；presence、业务可用性、
 组件匹配、链路和发布完成不得互相补绿。

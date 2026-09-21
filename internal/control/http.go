@@ -539,6 +539,17 @@ func (server *Server) operation(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		result, err = server.putDevice(request.Context(), envelope.RequestID, envelope.BaseHead, payload)
+	case "device.runtime-upgrade":
+		if !localAdmin(request) {
+			http.Error(writer, "device runtime upgrade requires the local admin socket", http.StatusForbidden)
+			return
+		}
+		var payload DeviceRuntimeUpgrade
+		if err := decodeRawStrict(envelope.Payload, &payload); err != nil {
+			http.Error(writer, "invalid device runtime upgrade", http.StatusBadRequest)
+			return
+		}
+		result, err = server.upgradeDeviceRuntime(request.Context(), envelope.RequestID, envelope.BaseHead, payload)
 	case "device.revoke":
 		var payload struct {
 			DeviceID string `json:"device_id"`

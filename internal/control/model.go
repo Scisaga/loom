@@ -49,23 +49,24 @@ type Genesis struct {
 }
 
 type Material struct {
-	Schema              int                  `json:"schema"`
-	Kind                string               `json:"kind"`
-	RequestID           string               `json:"request_id"`
-	BaseHead            string               `json:"base_head"`
-	Genesis             *Genesis             `json:"genesis,omitempty"`
-	Service             *Service             `json:"service,omitempty"`
-	ServiceDelete       *ServiceDelete       `json:"service_delete,omitempty"`
-	ControlConfig       *ControlConfig       `json:"control_config,omitempty"`
-	EndpointGeneration  *EndpointGeneration  `json:"endpoint_generation,omitempty"`
-	EnrollmentOpen      *EnrollmentOpen      `json:"enrollment_open,omitempty"`
-	EnrollmentBind      *EnrollmentBind      `json:"enrollment_bind,omitempty"`
-	EnrollmentApprove   *EnrollmentApprove   `json:"enrollment_approve,omitempty"`
-	EnrollmentComplete  *EnrollmentComplete  `json:"enrollment_complete,omitempty"`
-	EnrollmentExpire    *EnrollmentExpire    `json:"enrollment_expire,omitempty"`
-	DeviceAuthorization *DeviceAuthorization `json:"device_authorization,omitempty"`
-	DeviceRevoke        *DeviceRevoke        `json:"device_revoke,omitempty"`
-	NetworkImport       *NetworkImport       `json:"network_import,omitempty"`
+	Schema               int                   `json:"schema"`
+	Kind                 string                `json:"kind"`
+	RequestID            string                `json:"request_id"`
+	BaseHead             string                `json:"base_head"`
+	Genesis              *Genesis              `json:"genesis,omitempty"`
+	Service              *Service              `json:"service,omitempty"`
+	ServiceDelete        *ServiceDelete        `json:"service_delete,omitempty"`
+	ControlConfig        *ControlConfig        `json:"control_config,omitempty"`
+	EndpointGeneration   *EndpointGeneration   `json:"endpoint_generation,omitempty"`
+	EnrollmentOpen       *EnrollmentOpen       `json:"enrollment_open,omitempty"`
+	EnrollmentBind       *EnrollmentBind       `json:"enrollment_bind,omitempty"`
+	EnrollmentApprove    *EnrollmentApprove    `json:"enrollment_approve,omitempty"`
+	EnrollmentComplete   *EnrollmentComplete   `json:"enrollment_complete,omitempty"`
+	EnrollmentExpire     *EnrollmentExpire     `json:"enrollment_expire,omitempty"`
+	DeviceAuthorization  *DeviceAuthorization  `json:"device_authorization,omitempty"`
+	DeviceRuntimeUpgrade *DeviceRuntimeUpgrade `json:"device_runtime_upgrade,omitempty"`
+	DeviceRevoke         *DeviceRevoke         `json:"device_revoke,omitempty"`
+	NetworkImport        *NetworkImport        `json:"network_import,omitempty"`
 }
 
 type ConsensusEntry struct {
@@ -199,6 +200,9 @@ func (material Material) Validate() error {
 	if material.DeviceAuthorization != nil {
 		count++
 	}
+	if material.DeviceRuntimeUpgrade != nil {
+		count++
+	}
 	if material.DeviceRevoke != nil {
 		count++
 	}
@@ -299,6 +303,11 @@ func (material Material) Validate() error {
 		}
 		if err := material.DeviceAuthorization.Validate(); err != nil {
 			return err
+		}
+	case "device.runtime-upgrade":
+		if material.Schema != MaterialSchema || material.DeviceRuntimeUpgrade == nil || material.BaseHead == "" ||
+			material.DeviceRuntimeUpgrade.Validate() != nil {
+			return errors.New("device runtime upgrade material is invalid")
 		}
 	case "device.revoke":
 		if material.DeviceRevoke == nil || material.BaseHead == "" || material.DeviceRevoke.Validate() != nil {
@@ -546,6 +555,10 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 			return Projection{}, errors.New("device authorization floor does not match update index")
 		}
 		if err := reduceDeviceAuthorization(&next, *material.DeviceAuthorization); err != nil {
+			return Projection{}, err
+		}
+	case "device.runtime-upgrade":
+		if err := reduceDeviceRuntimeUpgrade(&next, *material.DeviceRuntimeUpgrade, uint64(len(previous.Applied)+1)); err != nil {
 			return Projection{}, err
 		}
 	case "device.revoke":

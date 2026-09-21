@@ -298,7 +298,8 @@ func TestSchema2AuthorizationProjectsPrivateRuntimeWithoutRuntimeKey(t *testing.
 			Node: "demo-egress", Transport: "tls_tunnel", Listen: "127.0.0.1:8443", Address: "192.0.2.10:8443",
 			ServerName: "control.example", SPKISHA256: strings.Repeat("a", 64), State: "serving"}},
 		DeviceAuthorizations: []DeviceAuthorization{{Schema: 2, DeviceID: "d-0123456789", DestinationGrants: []string{"demo-policy"},
-			DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), RuntimeKey: base64.RawURLEncoding.EncodeToString(runtimeKey), Floor: 1}}}
+			DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), RuntimeKey: base64.RawURLEncoding.EncodeToString(runtimeKey),
+			Floor: 1, RuntimeContract: runtimeContractNodeTLS}}}
 	routes, runtime, err := projectAuthorizationRuntime(projection, projection.DeviceAuthorizations[0])
 	if err != nil {
 		t.Fatalf("derive schema-2 runtime: %v routes=%+v runtime=%+v", err, routes, runtime)
@@ -318,6 +319,46 @@ func TestSchema2AuthorizationProjectsPrivateRuntimeWithoutRuntimeKey(t *testing.
 	webBody, _ := json.Marshal(projection.Web)
 	if strings.Contains(string(webBody), base64.RawURLEncoding.EncodeToString(runtimeKey)) {
 		t.Fatal("RuntimeKey leaked into WebProjection")
+	}
+}
+
+func TestDeviceRuntimeUpgradePreservesHistoricalProjectionUntilNewMaterial(t *testing.T) {
+	public, _, _ := ed25519.GenerateKey(rand.Reader)
+	intent := testNetworkIntent(t)
+	intent.Nodes = append([]NetworkNode{{ID: "d-0123456789", Name: "Demo client", Platform: "linux",
+		Roles: []string{"access"}}}, intent.Nodes...)
+	authorization := DeviceAuthorization{Schema: 2, DeviceID: "d-0123456789", DestinationGrants: []string{"demo-policy"},
+		DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), RuntimeKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Floor: 1}
+	projection := Projection{Schema: 1, NetworkIntent: &intent, Applied: []string{"demo-import"},
+		EndpointGenerations: []EndpointGeneration{{Schema: 1, EndpointID: "demo-endpoint", Generation: 1,
+			Node: "demo-egress", Transport: "tls_tunnel", Listen: "127.0.0.1:8443", Address: "192.0.2.10:8443",
+			ServerName: "control.example", SPKISHA256: strings.Repeat("a", 64), State: "serving"}},
+		DeviceAuthorizations: []DeviceAuthorization{authorization}}
+	_, legacy, err := projectAuthorizationRuntime(projection, authorization)
+	if err != nil || !strings.Contains(legacy.Config, `"server_name":"192.0.2.10"`) {
+		t.Fatalf("historical schema-2 projection changed before an authority upgrade: runtime=%+v err=%v", legacy, err)
+	}
+	upgrade := DeviceRuntimeUpgrade{DeviceID: authorization.DeviceID, RuntimeContract: runtimeContractNodeTLS}
+	material := Material{Schema: MaterialSchema, Kind: "device.runtime-upgrade", RequestID: "demo-runtime-upgrade",
+		BaseHead: "sha256:" + strings.Repeat("1", 64), DeviceRuntimeUpgrade: &upgrade}
+	body, _, err := EncodeMaterial(material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err = DecodeMaterial(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := Reduce(projection, material, "sha256:"+strings.Repeat("2", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded := next.DeviceAuthorizations[0]
+	_, runtime, err := projectAuthorizationRuntime(next, upgraded)
+	if err != nil || upgraded.Floor != 2 || upgraded.RuntimeContract != runtimeContractNodeTLS ||
+		!strings.Contains(runtime.Config, `"server_name":"demo-egress.node.internal"`) {
+		t.Fatalf("authority upgrade did not activate the node TLS contract: authorization=%+v runtime=%+v err=%v",
+			upgraded, runtime, err)
 	}
 }
 

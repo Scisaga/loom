@@ -111,6 +111,11 @@ RuntimeKey 派生，TLS/WireGuard 私钥继续只存在于设备本机。
 证书校验名始终由稳定节点 ID 确定为 `<node-id>.node.internal`。同一服务器从公网直连切换到 WireGuard
 下一跳时不得用 IP 地址替代证书身份，也不得通过关闭证书校验来兼容错误投影。
 
+已经认证的 head 同时绑定 DeviceView 摘要，因此投影规则不能靠替换二进制静默改变。schema-2
+Authorization 上的 `runtime_contract` 只标记使用哪一版确定性投影，不建立新 store 或生命周期；缺省值保留
+历史投影以保证旧 head 可重放。升级只能由本机管理员提交 `device.runtime-upgrade` Material，在新 head 中同时
+推进设备 floor 和 DeviceView 摘要，旧 control 二进制全部退出集群后才允许提交。
+
 在 `NetworkIntent` 首次导入前已经认证的旧 `service.put` Material 仍按其提交时的规则重放到旧 Web
 投影，以保持既有 CertifiedHead 摘要可验证；这只是不可变历史的 reducer 语义。正式提交入口在缺少
 `NetworkIntent` 时拒绝任何新的 Service 增删，导入后 Service 只修改 `NetworkIntent.services`，运行时

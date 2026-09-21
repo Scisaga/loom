@@ -588,6 +588,7 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 		authorization.DestinationGrants = append([]string(nil), transaction.Intent.DestinationGrants...)
 		authorization.Server = nil
 		authorization.RuntimeKey = base64.RawURLEncoding.EncodeToString(runtimeKey)
+		authorization.RuntimeContract = runtimeContractNodeTLS
 		requestMaterialID = requestID
 	}
 	projected, err := cloneProjection(projection)
@@ -723,6 +724,23 @@ func (server *Server) putDevice(ctx context.Context, requestID, baseHead string,
 	authorization.Floor = certified.Head.Index + 1
 	material := Material{Schema: MaterialSchema, Kind: "device.put", RequestID: requestID, BaseHead: baseHead,
 		DeviceAuthorization: &authorization}
+	body, _, err := EncodeMaterial(material)
+	if err != nil {
+		return CertifiedState{}, err
+	}
+	return server.Runtime.Submit(ctx, body)
+}
+
+func (server *Server) upgradeDeviceRuntime(ctx context.Context, requestID, baseHead string, payload DeviceRuntimeUpgrade) (CertifiedState, error) {
+	if err := payload.Validate(); err != nil {
+		return CertifiedState{}, err
+	}
+	_, _, certified := server.Runtime.Authority.Snapshot()
+	if baseHead != HeadID(certified.Head) {
+		return CertifiedState{}, errors.New("base head is stale")
+	}
+	material := Material{Schema: MaterialSchema, Kind: "device.runtime-upgrade", RequestID: requestID,
+		BaseHead: baseHead, DeviceRuntimeUpgrade: &payload}
 	body, _, err := EncodeMaterial(material)
 	if err != nil {
 		return CertifiedState{}, err

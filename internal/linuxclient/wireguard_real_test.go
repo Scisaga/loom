@@ -114,12 +114,12 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		WireGuard: makeWrapper("wg-a", acceptorNS, "/usr/bin/wg"), WireGuardPrivateKey: acceptorKey}
 	const listenPort = 51888 // isolated namespace only; deliberately not a production/public port
 	acceptorProfile := &control.ServerRuntimeProfile{WireGuard: []control.ServerWireGuardRuntime{{
-		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.2/30", PeerID: "demo-i",
+		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.2/32", PeerID: "demo-i",
 		PeerPublicKey: initiatorPublic, AllowedIP: "10.20.0.1/32", Mode: "acceptor", ListenPort: listenPort,
 		ProbeTarget: "10.20.0.1",
 	}}}
 	initiatorProfile := &control.ServerRuntimeProfile{WireGuard: []control.ServerWireGuardRuntime{{
-		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.1/30", PeerID: "demo-a",
+		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.1/32", PeerID: "demo-a",
 		PeerPublicKey: acceptorPublic, AllowedIP: "10.20.0.2/32", Mode: "initiator",
 		Endpoint: "192.0.2.2:51888", PersistentKeepalive: 25, ProbeTarget: "10.20.0.2",
 	}}}

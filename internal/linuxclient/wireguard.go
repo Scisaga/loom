@@ -18,10 +18,12 @@ import (
 )
 
 type wireGuardSnapshot struct {
-	Interface string
-	Existed   bool
-	Config    string
-	Addresses []string
+	Interface    string
+	AllowedIP    string
+	Existed      bool
+	RouteExisted bool
+	Config       string
+	Addresses    []string
 }
 
 type wireGuardTransaction struct {
@@ -36,6 +38,11 @@ type ipAddressDocument struct {
 		Local     string `json:"local"`
 		PrefixLen int    `json:"prefixlen"`
 	} `json:"addr_info"`
+}
+
+type ipRouteDocument struct {
+	Destination string `json:"dst"`
+	Device      string `json:"dev"`
 }
 
 type wireGuardActual struct {
@@ -137,6 +144,11 @@ func (transaction *wireGuardTransaction) Rollback() {
 			_, _ = runHostCommand(transaction.options.IP, "address", "add", address, "dev", snapshot.Interface)
 		}
 		_, _ = runHostCommand(transaction.options.IP, "link", "set", "dev", snapshot.Interface, "up")
+		if snapshot.RouteExisted {
+			_, _ = runHostCommand(transaction.options.IP, "route", "replace", snapshot.AllowedIP, "dev", snapshot.Interface)
+		} else if snapshot.AllowedIP != "" {
+			_, _ = runHostCommand(transaction.options.IP, "route", "delete", snapshot.AllowedIP, "dev", snapshot.Interface)
+		}
 	}
 	_ = os.RemoveAll(transaction.directory)
 }
@@ -149,8 +161,50 @@ func (transaction *wireGuardTransaction) Commit() {
 	_ = os.RemoveAll(transaction.directory)
 }
 
-func snapshotWireGuardInterface(options Options, name string) (wireGuardSnapshot, error) {
-	snapshot := wireGuardSnapshot{Interface: name}
+func wireGuardRouteState(options Options, allowedIP, name string) (bool, error) {
+	body, err := runHostCommand(options.IP, "-json", "route", "show", "exact", allowedIP)
+	if err != nil {
+		return false, err
+	}
+	var routes []ipRouteDocument
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(&routes); err != nil {
+		return false, errors.New("WireGuard route readback is invalid")
+	}
+	if len(routes) == 0 {
+		return false, nil
+	}
+	if len(routes) != 1 || !sameRoutePrefix(routes[0].Destination, allowedIP) || routes[0].Device != name {
+		return false, errors.New("WireGuard route conflicts with another runtime")
+	}
+	return true, nil
+}
+
+func sameRoutePrefix(actual, expected string) bool {
+	expectedIP, expectedNetwork, err := net.ParseCIDR(expected)
+	if err != nil {
+		return false
+	}
+	if actualIP := net.ParseIP(actual); actualIP != nil {
+		ones, bits := expectedNetwork.Mask.Size()
+		return ones == bits && expectedIP.Equal(actualIP)
+	}
+	actualIP, actualNetwork, err := net.ParseCIDR(actual)
+	if err != nil {
+		return false
+	}
+	actualOnes, actualBits := actualNetwork.Mask.Size()
+	expectedOnes, expectedBits := expectedNetwork.Mask.Size()
+	return actualBits == expectedBits && actualOnes == expectedOnes && actualIP.Equal(expectedIP)
+}
+
+func snapshotWireGuardInterface(options Options, name, allowedIP string) (wireGuardSnapshot, error) {
+	snapshot := wireGuardSnapshot{Interface: name, AllowedIP: allowedIP}
+	routeExisted, err := wireGuardRouteState(options, allowedIP, name)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.RouteExisted = routeExisted
 	if _, err := runHostCommand(options.IP, "link", "show", "dev", name); err != nil {
 		return snapshot, nil
 	}
@@ -237,7 +291,10 @@ func configureWireGuardLink(options Options, link control.ServerWireGuardRuntime
 	if _, err := runHostCommand(options.IP, "address", "replace", link.LocalAddress, "dev", link.Interface); err != nil {
 		return err
 	}
-	_, err = runHostCommand(options.IP, "link", "set", "dev", link.Interface, "up")
+	if _, err = runHostCommand(options.IP, "link", "set", "dev", link.Interface, "up"); err != nil {
+		return err
+	}
+	_, err = runHostCommand(options.IP, "route", "replace", link.AllowedIP, "dev", link.Interface)
 	return err
 }
 
@@ -339,6 +396,10 @@ func readbackWireGuard(profile control.ServerRuntimeProfile, options Options) er
 		if err != nil || addressIndex == len(addresses) || addresses[addressIndex] != link.LocalAddress {
 			return errors.New("WireGuard address readback does not match the certified runtime")
 		}
+		route, err := wireGuardRouteState(options, link.AllowedIP, link.Interface)
+		if err != nil || !route {
+			return errors.New("WireGuard route readback does not match the certified runtime")
+		}
 	}
 	return nil
 }
@@ -377,17 +438,17 @@ func applyWireGuard(profile, previous *control.ServerRuntimeProfile, server *con
 	for _, link := range profile.WireGuard {
 		desired[link.Interface] = true
 	}
-	stale := map[string]bool{}
+	stale := map[string]string{}
 	if previous != nil {
 		for _, link := range previous.WireGuard {
-			stale[link.Interface] = true
+			stale[link.Interface] = link.AllowedIP
 		}
 	}
-	for name := range stale {
+	for name, allowedIP := range stale {
 		if desired[name] {
 			continue
 		}
-		snapshot, snapshotErr := snapshotWireGuardInterface(options, name)
+		snapshot, snapshotErr := snapshotWireGuardInterface(options, name, allowedIP)
 		if snapshotErr != nil {
 			transaction.Rollback()
 			return nil, snapshotErr
@@ -402,7 +463,7 @@ func applyWireGuard(profile, previous *control.ServerRuntimeProfile, server *con
 		}
 	}
 	for _, link := range profile.WireGuard {
-		snapshot, err := snapshotWireGuardInterface(options, link.Interface)
+		snapshot, err := snapshotWireGuardInterface(options, link.Interface, link.AllowedIP)
 		if err != nil {
 			transaction.Rollback()
 			return nil, err
