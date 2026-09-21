@@ -16,13 +16,17 @@ import (
 // the selector has been read back. DNS is deliberately carried over UDP so the
 // one bounded probe covers the three issue-required data-plane classes.
 func BusinessProbe(ctx context.Context) ProbeResult {
+	return businessProbe(ctx, "1.1.1.1")
+}
+
+func businessProbe(ctx context.Context, dnsAddress string) ProbeResult {
 	started := time.Now()
 	probeContext, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if err := probeTCP(probeContext); err != nil {
 		return ProbeResult{Metric: time.Since(started), Description: "TCP: " + err.Error()}
 	}
-	if err := probeDNS(probeContext); err != nil {
+	if err := probeDNS(probeContext, dnsAddress); err != nil {
 		return ProbeResult{Metric: time.Since(started), Description: "UDP/DNS: " + err.Error()}
 	}
 	return ProbeResult{Available: true, Metric: time.Since(started), Description: "TCP, UDP and DNS succeeded"}
@@ -65,13 +69,16 @@ func dnsQuery(name string) ([]byte, uint16, error) {
 	return body, id, nil
 }
 
-func probeDNS(ctx context.Context) error {
+func probeDNS(ctx context.Context, dnsAddress string) error {
 	query, id, err := dnsQuery("example.com")
 	if err != nil {
 		return err
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	connection, err := dialer.DialContext(ctx, "udp", "1.1.1.1:53")
+	if net.ParseIP(dnsAddress) == nil {
+		return errors.New("DNS probe address is invalid")
+	}
+	connection, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(dnsAddress, "53"))
 	if err != nil {
 		return err
 	}

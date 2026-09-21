@@ -163,7 +163,8 @@ type DeviceAuthorization struct {
 const (
 	runtimeContractNodeTLS = 2
 	runtimeContractDNSACL  = 3
-	runtimeContractCurrent = runtimeContractDNSACL
+	runtimeContractViewDNS = 4
+	runtimeContractCurrent = runtimeContractViewDNS
 )
 
 // ServerRuntimeProfile is a private, deterministic projection for the
@@ -334,6 +335,8 @@ type DeviceView struct {
 	Server             *ServerIntent          `json:"server,omitempty"`
 	ServerRuntime      *ServerRuntimeProfile  `json:"server_runtime,omitempty"`
 	PublicDataPlaneCA  string                 `json:"public_data_plane_ca,omitempty"`
+	RuntimeContract    int                    `json:"runtime_contract,omitempty"`
+	DNS                []string               `json:"dns,omitempty"`
 	ExpectedComponents []ComponentExpectation `json:"expected_components,omitempty"`
 	LinkProbeTargets   []LinkProbeTarget      `json:"link_probe_targets,omitempty"`
 }
@@ -1136,6 +1139,10 @@ func projectDeviceView(projection Projection, deviceID string) (DeviceView, bool
 		Server: server}
 	if authorization.Schema == enrollmentSchemaV2 && projection.NetworkIntent != nil {
 		view.PublicDataPlaneCA = projection.NetworkIntent.PublicDataPlaneCA
+		if authorization.RuntimeContract >= runtimeContractViewDNS {
+			view.RuntimeContract = runtimeContractViewDNS
+			view.DNS = deviceDNSAddresses(projection.NetworkIntent, authorization.DeviceID)
+		}
 		componentByName := map[string]ComponentExpectation{}
 		for _, component := range projection.NetworkIntent.Components {
 			componentByName[component.Name] = component
@@ -1200,7 +1207,8 @@ func (view DeviceView) Validate() error {
 			Platform: view.Platform, Roles: view.Roles, Routes: view.Routes, Runtime: view.Runtime,
 			DevicePublicKey: view.DevicePublicKey, Floor: view.Floor}
 		if authorization.Validate() != nil || len(view.DestinationGrants) != 0 || view.Server != nil || view.ServerRuntime != nil ||
-			view.PublicDataPlaneCA != "" || len(view.ExpectedComponents) != 0 || len(view.LinkProbeTargets) != 0 {
+			view.PublicDataPlaneCA != "" || view.RuntimeContract != 0 || len(view.DNS) != 0 ||
+			len(view.ExpectedComponents) != 0 || len(view.LinkProbeTargets) != 0 {
 			return errors.New("legacy device view is invalid")
 		}
 	}
@@ -1214,7 +1222,10 @@ func (view DeviceView) Validate() error {
 			!hasAccess && (view.Runtime != nil || len(view.Routes) != 0)
 		invalidServerRuntime := hasServer && (view.Server == nil || view.ServerRuntime == nil || view.ServerRuntime.Validate() != nil) ||
 			!hasServer && view.ServerRuntime != nil
-		if view.PublicDataPlaneCA == "" || invalidRuntime || invalidServerRuntime || validateComponents(view.ExpectedComponents) != nil {
+		invalidDNS := view.RuntimeContract != 0 && view.RuntimeContract != runtimeContractViewDNS ||
+			view.RuntimeContract == runtimeContractViewDNS && (len(view.DNS) == 0 || validIPList(view.DNS, "device view DNS") != nil) ||
+			view.RuntimeContract == 0 && len(view.DNS) != 0
+		if view.PublicDataPlaneCA == "" || invalidRuntime || invalidServerRuntime || invalidDNS || validateComponents(view.ExpectedComponents) != nil {
 			return errors.New("schema-2 device view is incomplete")
 		}
 		for index, target := range view.LinkProbeTargets {

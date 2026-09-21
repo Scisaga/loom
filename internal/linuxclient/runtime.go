@@ -51,6 +51,7 @@ type Options struct {
 	Generation          func() (string, error)
 	Probe               Probe
 	RefreshPoll         time.Duration
+	defaultProbe        bool
 }
 
 func (options *Options) defaults() {
@@ -65,6 +66,7 @@ func (options *Options) defaults() {
 	}
 	if options.Probe == nil {
 		options.Probe = BusinessProbe
+		options.defaultProbe = true
 	}
 	if options.WireGuard == "" {
 		options.WireGuard = "/usr/bin/wg"
@@ -105,6 +107,14 @@ func (options *Options) defaults() {
 	if options.RefreshPoll <= 0 {
 		options.RefreshPoll = 30 * time.Second
 	}
+}
+
+func (options Options) probeForView(view control.DeviceView) Probe {
+	if !options.defaultProbe || view.RuntimeContract == 0 || len(view.DNS) == 0 {
+		return options.Probe
+	}
+	dns := view.DNS[0]
+	return func(ctx context.Context) ProbeResult { return businessProbe(ctx, dns) }
 }
 
 func linuxDeploymentReadback(options Options) (*control.DeploymentReadback, error) {
@@ -1185,7 +1195,8 @@ func runGeneration(ctx context.Context, options Options, allowFetch bool) (retEr
 	if err != nil {
 		return err
 	}
-	activation, activateErr := Activate(ctx, selector, lkg.View.Routes, local, options.Probe, options.Now)
+	probe := options.probeForView(lkg.View)
+	activation, activateErr := Activate(ctx, selector, lkg.View.Routes, local, probe, options.Now)
 	if activation.State.Schema == 0 {
 		return activateErr
 	}
@@ -1248,7 +1259,7 @@ func runGeneration(ctx context.Context, options Options, allowFetch bool) (retEr
 				fmt.Fprintf(options.Log, "runtime refresh state unavailable: %v\n", loadErr)
 				continue
 			}
-			next, nextErr := Activate(ctx, selector, lkg.View.Routes, local, options.Probe, options.Now)
+			next, nextErr := Activate(ctx, selector, lkg.View.Routes, local, probe, options.Now)
 			if next.State.Schema == 0 {
 				fmt.Fprintf(options.Log, "runtime refresh unavailable: %v\n", nextErr)
 				continue

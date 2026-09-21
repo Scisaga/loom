@@ -360,6 +360,18 @@ func TestDeviceRuntimeUpgradePreservesHistoricalProjectionUntilNewMaterial(t *te
 		t.Fatalf("authority upgrade did not activate the node TLS contract: authorization=%+v runtime=%+v err=%v",
 			upgraded, runtime, err)
 	}
+	upgrade.RuntimeContract = runtimeContractViewDNS
+	material = Material{Schema: MaterialSchema, Kind: "device.runtime-upgrade", RequestID: "demo-runtime-upgrade-dns",
+		BaseHead: "sha256:" + strings.Repeat("3", 64), DeviceRuntimeUpgrade: &upgrade}
+	next, err = Reduce(next, material, "sha256:"+strings.Repeat("4", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, found := projectDeviceView(next, authorization.DeviceID)
+	if !found || view.Validate() != nil || view.RuntimeContract != runtimeContractViewDNS ||
+		strings.Join(view.DNS, ",") != "1.1.1.1" {
+		t.Fatalf("certified DNS was not projected into the upgraded DeviceView: found=%t view=%+v", found, view)
+	}
 }
 
 func TestDNSRuntimeContractAddsOnlyCertifiedDNSAtFinalExit(t *testing.T) {
