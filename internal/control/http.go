@@ -152,6 +152,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/head/sign", server.internalSign)
 	mux.HandleFunc("PUT /internal/certified", server.internalCertified)
 	mux.HandleFunc("POST /internal/submit", server.internalSubmit)
+	mux.HandleFunc("POST /internal/members/replace", server.internalReplaceMembers)
 	mux.HandleFunc("GET /internal/quorum-writable", server.internalQuorumWritable)
 	mux.HandleFunc("PUT /internal/reports", server.internalReports)
 	mux.HandleFunc("POST /internal/report-ids", server.internalReportIDs)
@@ -719,6 +720,24 @@ func (server *Server) internalSubmit(writer http.ResponseWriter, request *http.R
 		return
 	}
 	result, err := server.Runtime.SubmitForwarded(request.Context(), body)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func (server *Server) internalReplaceMembers(writer http.ResponseWriter, request *http.Request) {
+	body, ok := server.internalBody(writer, request)
+	if !ok {
+		return
+	}
+	var replacement memberReplacementRequest
+	if err := decodeRawStrict(body, &replacement); err != nil || replacement.RequestID == "" || replacement.BaseHead == "" {
+		http.Error(writer, "invalid member replacement", http.StatusBadRequest)
+		return
+	}
+	result, err := server.Runtime.ReplaceMembers(request.Context(), replacement.RequestID, replacement.BaseHead, replacement.Members)
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusServiceUnavailable)
 		return

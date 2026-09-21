@@ -445,6 +445,18 @@ func (runtime *Runtime) submitLeader(ctx context.Context, material Material, id 
 }
 
 func (runtime *Runtime) ReplaceMembers(ctx context.Context, requestID, baseHead string, members []Member) (CertifiedState, error) {
+	if runtime.Raft.State() != raft.Leader {
+		leader, ok := runtime.LeaderMember()
+		if !ok {
+			return CertifiedState{}, errors.New("write quorum is unavailable")
+		}
+		request := memberReplacementRequest{RequestID: requestID, BaseHead: baseHead, Members: members}
+		var result CertifiedState
+		if err := runtime.peerJSON(ctx, leader, http.MethodPost, "/internal/members/replace", mustJSON(request), &result); err != nil {
+			return CertifiedState{}, err
+		}
+		return result, nil
+	}
 	_, projection, _ := runtime.Authority.Snapshot()
 	if projection.Config.Mode != "stable" {
 		return CertifiedState{}, errors.New("member replacement requires a stable current config")
@@ -494,6 +506,12 @@ func (runtime *Runtime) ReplaceMembers(ctx context.Context, requestID, baseHead 
 		return result, nil
 	}
 	return runtime.Submit(ctx, body)
+}
+
+type memberReplacementRequest struct {
+	RequestID string   `json:"request_id"`
+	BaseHead  string   `json:"base_head"`
+	Members   []Member `json:"members"`
 }
 
 func (runtime *Runtime) syncMaterialToVoters(ctx context.Context, id string, body []byte) error {

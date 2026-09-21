@@ -74,6 +74,9 @@ Raft 流；不能为两者分别发明新的公网或 overlay 端口。
 
 “联合”是 `ControlConfig` 的一个值，不是新的领域实体或工作流对象。
 初始安装提供规范的首个 `ControlConfig`；首条已提交记录引用它。单成员配置按同一规则运行。
+成员替换请求可以由任意健康 control 接收，但必须通过成员签名的内部请求整体转交给当时 leader 执行；不能让
+follower 分别转交 joint/stable 两笔写入。若当前 leader 不在新稳定集合中，它必须在 joint head 已认证后、
+stable Material 提交前把 leadership 交给新集合成员，使最终 stable head 只由新 quorum 签署。
 
 ### 2.3 `ConsensusLog`
 

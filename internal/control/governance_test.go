@@ -601,7 +601,11 @@ func TestDisjointThreeMemberReplacementThroughPureRelay(t *testing.T) {
 	}
 
 	newMembers := []Member{runtimes[3].Config.Member(), runtimes[4].Config.Member(), runtimes[5].Config.Member()}
-	newStable, err := leader.ReplaceMembers(context.Background(), "demo-disjoint-replacement", HeadID(oldStable.Head), newMembers)
+	coordinator := runtimes[0]
+	if coordinator == leader {
+		coordinator = runtimes[1]
+	}
+	newStable, err := coordinator.ReplaceMembers(context.Background(), "demo-disjoint-replacement", HeadID(oldStable.Head), newMembers)
 	if err != nil {
 		t.Fatal(err)
 	}
