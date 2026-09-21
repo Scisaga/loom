@@ -349,6 +349,9 @@ func (runtime *Runtime) submit(ctx context.Context, body []byte, forwarded bool)
 	if material.BaseHead != HeadID(certified.Head) {
 		return CertifiedState{}, errors.New("base head is stale")
 	}
+	if err := validateSubmission(projection, material, id); err != nil {
+		return CertifiedState{}, err
+	}
 	if _, err := runtime.Authority.PutMaterial(body); err != nil {
 		return CertifiedState{}, err
 	}
@@ -358,6 +361,14 @@ func (runtime *Runtime) submit(ctx context.Context, body []byte, forwarded bool)
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	return runtime.submitLeader(ctx, material, id, body)
+}
+
+func validateSubmission(projection Projection, material Material, id string) error {
+	if (material.Kind == "service.put" || material.Kind == "service.delete") && projection.NetworkIntent == nil {
+		return errors.New("network intent is unavailable")
+	}
+	_, err := Reduce(projection, material, id)
+	return err
 }
 
 func (runtime *Runtime) forwardSubmit(ctx context.Context, body []byte, forwarded bool) (CertifiedState, error) {

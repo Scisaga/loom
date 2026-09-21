@@ -104,6 +104,11 @@ Raft 负责形成并复制这个序列。日志记录至少绑定索引、Raft �
 server users/ACL 只进入对应设备的私有 DeviceView，不进入 WebProjection；密码由 access 授权中的
 RuntimeKey 派生，TLS/WireGuard 私钥继续只存在于设备本机。
 
+在 `NetworkIntent` 首次导入前已经认证的旧 `service.put` Material 仍按其提交时的规则重放到旧 Web
+投影，以保持既有 CertifiedHead 摘要可验证；这只是不可变历史的 reducer 语义。正式提交入口在缺少
+`NetworkIntent` 时拒绝任何新的 Service 增删，导入后 Service 只修改 `NetworkIntent.services`，运行时
+和 Web 再从该值单向投影，不能继续制造只改 WebProjection 的新 fallback。
+
 Publisher 只从本机 root 管理 socket 读取规范的 `CertifiedPublisherInput`：它绑定当前
 `CertifiedHead`、Projection 摘要、由 `NetworkIntent` 逐节点投影出的公开组件坐标及规范去重的
 `distribution_urls`。publisher daemon

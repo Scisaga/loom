@@ -101,6 +101,25 @@ func TestSchema2WebProjectionDoesNotResurrectRevokedEnrollmentHistory(t *testing
 	}
 }
 
+func TestHistoricalServiceMaterialReplaysBeforeNetworkIntentButNewWriteFailsClosed(t *testing.T) {
+	service := Service{ID: "demo-historical-service", Name: "Historical fixture",
+		Matchers: []string{"historical.example"}, Policy: "demo-policy"}
+	material := Material{Schema: MaterialSchema, Kind: "service.put", RequestID: "demo-historical-service-put",
+		BaseHead: "sha256:" + strings.Repeat("1", 64), Service: &service}
+	_, id, err := EncodeMaterial(material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := Projection{Schema: 1, Web: WebProjection{Schema: 1}}
+	replayed, err := Reduce(legacy, material, id)
+	if err != nil || len(replayed.Web.Services) != 1 || replayed.Web.Services[0].ID != service.ID {
+		t.Fatalf("historical service material no longer replays: projection=%+v err=%v", replayed, err)
+	}
+	if err := validateSubmission(legacy, material, id); err == nil {
+		t.Fatal("new service write bypassed the NetworkIntent authority boundary")
+	}
+}
+
 func TestServerRuntimeRejectsUserWithoutAuthorizedDestination(t *testing.T) {
 	password := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	profile := ServerRuntimeProfile{Kind: "sing_box", Protocol: "hysteria2", ListenPort: 443,

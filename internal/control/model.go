@@ -420,7 +420,23 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 		next.Web.UIState.Warnings = []string{}
 	case "service.put":
 		if next.NetworkIntent == nil {
-			return Projection{}, errors.New("network intent is unavailable")
+			// Historical schema-2 service materials were committed before
+			// NetworkIntent existed and updated only the legacy Web projection.
+			// Replaying those immutable bytes must retain their original meaning so
+			// the certified pre-import head remains verifiable. Runtime submission
+			// rejects new service writes until NetworkIntent has been imported.
+			replaced := false
+			for index := range next.Web.Services {
+				if next.Web.Services[index].ID == material.Service.ID {
+					next.Web.Services[index] = *material.Service
+					replaced = true
+				}
+			}
+			if !replaced {
+				next.Web.Services = append(next.Web.Services, *material.Service)
+			}
+			sort.Slice(next.Web.Services, func(i, j int) bool { return next.Web.Services[i].ID < next.Web.Services[j].ID })
+			break
 		}
 		policyFound := false
 		for _, policy := range next.NetworkIntent.Policies {
