@@ -362,11 +362,34 @@ func (server *Server) createExistingNodeRejoin(ctx context.Context, requestID, b
 			!equalStrings(open.Intent.DestinationGrants, payload.DestinationGrants) {
 			return CertifiedState{}, "", errors.New("request ID is already bound to different existing-node rejoin intent")
 		}
+		_, transaction := findEnrollment(&projection, open.TransactionID)
+		if transaction != nil && transaction.State != "completed" && !server.now().Before(mustTime(transaction.ExpiresAt)) {
+			return CertifiedState{}, "", errors.New("existing-node rejoin request ID is expired")
+		}
 		invite, encodeErr := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
 		return certified, invite, encodeErr
 	}
 	if baseHead != HeadID(certified.Head) {
 		return CertifiedState{}, "", errors.New("base head is stale")
+	}
+	for _, transaction := range projection.Enrollments {
+		if transaction.Intent.DeviceID != payload.DeviceID || transaction.State == "completed" || transaction.State == "rejected" ||
+			transaction.State == "expired" || transaction.State == "cancelled" || server.now().Before(mustTime(transaction.ExpiresAt)) {
+			continue
+		}
+		expire := EnrollmentExpire{TransactionID: transaction.ID, ExpiredAt: server.now().UTC().Truncate(time.Second).Format(time.RFC3339)}
+		material := Material{Schema: MaterialSchema, Kind: "enrollment.expire", RequestID: "enrollment-expire:" + transaction.ID,
+			BaseHead: baseHead, EnrollmentExpire: &expire}
+		body, _, encodeErr := EncodeMaterial(material)
+		if encodeErr != nil {
+			return CertifiedState{}, "", encodeErr
+		}
+		result, submitErr := server.Runtime.Submit(ctx, body)
+		if submitErr != nil {
+			return CertifiedState{}, "", submitErr
+		}
+		projection, certified, baseHead = result.Projection, result, HeadID(result.Head)
+		break
 	}
 	node, found := networkNode(projection.NetworkIntent, payload.DeviceID)
 	if !found || node.Platform == "" {

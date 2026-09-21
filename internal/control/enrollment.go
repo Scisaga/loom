@@ -122,6 +122,11 @@ type EnrollmentComplete struct {
 	ResultDigest  string              `json:"result_digest"`
 }
 
+type EnrollmentExpire struct {
+	TransactionID string `json:"transaction_id"`
+	ExpiredAt     string `json:"expired_at"`
+}
+
 type EnrollmentTransaction struct {
 	Schema           int              `json:"schema"`
 	ID               string           `json:"id"`
@@ -709,6 +714,14 @@ func (complete EnrollmentComplete) Validate() error {
 	return nil
 }
 
+func (expire EnrollmentExpire) Validate() error {
+	expiredAt, err := time.Parse(time.RFC3339, expire.ExpiredAt)
+	if !validName(expire.TransactionID) || err != nil || expire.ExpiredAt != expiredAt.UTC().Format(time.RFC3339) {
+		return errors.New("enrollment expiration is invalid")
+	}
+	return nil
+}
+
 func endpointReferenceLess(left, right EndpointReference) bool {
 	if left.Preference != right.Preference {
 		return left.Preference < right.Preference
@@ -793,6 +806,26 @@ func reduceEnrollmentOpen(projection *Projection, open EnrollmentOpen) error {
 	projection.Enrollments = append(projection.Enrollments, EnrollmentTransaction{})
 	copy(projection.Enrollments[index+1:], projection.Enrollments[index:])
 	projection.Enrollments[index] = transaction
+	return nil
+}
+
+func reduceEnrollmentExpire(projection *Projection, expire EnrollmentExpire) error {
+	index, transaction := findEnrollment(projection, expire.TransactionID)
+	if transaction == nil {
+		return errors.New("enrollment transaction does not exist")
+	}
+	if transaction.State == "expired" {
+		return nil
+	}
+	if transaction.State != "open" && transaction.State != "bound" {
+		return errors.New("enrollment transaction cannot expire from its current state")
+	}
+	expiresAt, expiresErr := time.Parse(time.RFC3339, transaction.ExpiresAt)
+	expiredAt, expiredErr := time.Parse(time.RFC3339, expire.ExpiredAt)
+	if expiresErr != nil || expiredErr != nil || expiredAt.Before(expiresAt) {
+		return errors.New("enrollment transaction has not reached its certified expiry")
+	}
+	projection.Enrollments[index].State = "expired"
 	return nil
 }
 

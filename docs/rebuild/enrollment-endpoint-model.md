@@ -133,6 +133,9 @@ egress 责任。管理员只补规范排序的 policy grant。设备 claim 的 s
 
 网络中断、服务重启或暂时失去 quorum 不是新的事务状态。它们保留最近一次持久状态，resume 继续
 同一事务。输入相同的重复请求必须得到相同结果；已绑定后换密钥、换意图或扩大 scope 必须冲突失败。
+超过 capability 的认证 expiry 后，控制面必须先提交同一事务的 `enrollment.expire` Material，才允许
+同一既有节点开始新的 rejoin；只比较本机时钟、换 request ID 或从 UI 隐藏旧行都不能解除权威阻塞。
+该转换只把既有事务置为 `expired`，不删除历史，也不建立 purge registry。
 
 ### DeviceView
 

@@ -210,6 +210,29 @@ func TestExistingNodeRejoinKeepsCertifiedNodeFacts(t *testing.T) {
 	}
 }
 
+func TestExpiredEnrollmentMustUseCertifiedTransitionBeforeRejoin(t *testing.T) {
+	transaction := EnrollmentTransaction{Schema: enrollmentSchemaV2, ID: "demo-expired-transaction", State: "open",
+		Intent: EnrollmentIntent{Schema: enrollmentSchemaV2, DeviceID: "demo-egress", Name: "Demo egress", Platform: "linux",
+			Roles: []string{"server"}, DestinationGrants: []string{"demo-policy"},
+			Server: &ServerIntent{Direction: "bidirectional", EgressCapable: true}},
+		ExpiresAt: "2030-01-01T00:00:00Z"}
+	projection := Projection{Schema: 1, Enrollments: []EnrollmentTransaction{transaction}, Web: WebProjection{Schema: 1}}
+	early := EnrollmentExpire{TransactionID: transaction.ID, ExpiredAt: "2029-12-31T23:59:59Z"}
+	if _, err := Reduce(projection, Material{Schema: MaterialSchema, Kind: "enrollment.expire", RequestID: "demo-expire-early",
+		BaseHead: "sha256:" + strings.Repeat("1", 64), EnrollmentExpire: &early}, "sha256:"+strings.Repeat("2", 64)); err == nil {
+		t.Fatal("enrollment expired before its certified expiry")
+	}
+	expire := EnrollmentExpire{TransactionID: transaction.ID, ExpiredAt: "2030-01-01T00:00:00Z"}
+	next, err := Reduce(projection, Material{Schema: MaterialSchema, Kind: "enrollment.expire", RequestID: "demo-expire",
+		BaseHead: "sha256:" + strings.Repeat("1", 64), EnrollmentExpire: &expire}, "sha256:"+strings.Repeat("3", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Enrollments[0].State != "expired" || projection.Enrollments[0].State != "open" {
+		t.Fatalf("expiration did not preserve immutable replay: before=%s after=%s", projection.Enrollments[0].State, next.Enrollments[0].State)
+	}
+}
+
 func TestEnrollmentProjectionKeepsCertifiedNodeMetadata(t *testing.T) {
 	intent := testNetworkIntent(t)
 	projection := Projection{Schema: 1, NetworkIntent: &intent, Web: WebProjection{Schema: 1},

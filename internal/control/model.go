@@ -62,6 +62,7 @@ type Material struct {
 	EnrollmentBind      *EnrollmentBind      `json:"enrollment_bind,omitempty"`
 	EnrollmentApprove   *EnrollmentApprove   `json:"enrollment_approve,omitempty"`
 	EnrollmentComplete  *EnrollmentComplete  `json:"enrollment_complete,omitempty"`
+	EnrollmentExpire    *EnrollmentExpire    `json:"enrollment_expire,omitempty"`
 	DeviceAuthorization *DeviceAuthorization `json:"device_authorization,omitempty"`
 	DeviceRevoke        *DeviceRevoke        `json:"device_revoke,omitempty"`
 	NetworkImport       *NetworkImport       `json:"network_import,omitempty"`
@@ -192,6 +193,9 @@ func (material Material) Validate() error {
 	if material.EnrollmentComplete != nil {
 		count++
 	}
+	if material.EnrollmentExpire != nil {
+		count++
+	}
 	if material.DeviceAuthorization != nil {
 		count++
 	}
@@ -280,6 +284,13 @@ func (material Material) Validate() error {
 			return errors.New("enrollment complete material is invalid")
 		}
 		if err := material.EnrollmentComplete.Validate(); err != nil {
+			return err
+		}
+	case "enrollment.expire":
+		if material.EnrollmentExpire == nil || material.BaseHead == "" {
+			return errors.New("enrollment expire material is invalid")
+		}
+		if err := material.EnrollmentExpire.Validate(); err != nil {
 			return err
 		}
 	case "device.put":
@@ -524,6 +535,10 @@ func Reduce(previous Projection, material Material, materialID string) (Projecti
 			return Projection{}, errors.New("device authorization floor does not match completion index")
 		}
 		if err := reduceEnrollmentComplete(&next, *material.EnrollmentComplete); err != nil {
+			return Projection{}, err
+		}
+	case "enrollment.expire":
+		if err := reduceEnrollmentExpire(&next, *material.EnrollmentExpire); err != nil {
 			return Projection{}, err
 		}
 	case "device.put":
