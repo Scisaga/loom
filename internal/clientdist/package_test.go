@@ -114,10 +114,14 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 	}
 	for _, required := range []string{"client run", "client preflight", "--upgrade", "--server-migration-source",
 		"client stage-server-migration", "migration_overlay=/var/lib/loom-device/migration-overlay.json",
-		"WorkingDirectory=/var/lib/loom-device", "previous runnable release was restored"} {
+		"WorkingDirectory=/var/lib/loom-device", "ReadWritePaths=/var/lib/loom-device /run/loom-client /etc/wireguard",
+		"previous runnable release was restored"} {
 		if !strings.Contains(installScript+systemdService, required) {
 			t.Fatalf("installer is missing %q", required)
 		}
+	}
+	if strings.Contains(systemdService, "ReadWritePaths=/etc ") || strings.Contains(systemdService, "ReadWritePaths=/etc\n") {
+		t.Fatal("runtime service may not make all of /etc writable")
 	}
 	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl stop loom-client-v2.service") {
 		t.Fatal("installer stops the previous runtime before the ownership preflight")

@@ -505,7 +505,10 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/loom-device /run/loom-client
+# HostAdapter applies and rolls back WireGuard as one transaction.  Its only
+# persistent /etc write surface is the existing owner-only WireGuard directory;
+# the rendered sing-box config and public CA remain ephemeral under /run.
+ReadWritePaths=/var/lib/loom-device /run/loom-client /etc/wireguard
 DeviceAllow=/dev/net/tun rw
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
