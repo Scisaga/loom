@@ -219,7 +219,8 @@ func TestLocalAdminSnapshotCarriesRuntimeDiagnosticsOnlyInHeaders(t *testing.T) 
 	response := httptest.NewRecorder()
 	server.AdminHandler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("X-Loom-Raft-State") == "" ||
-		response.Header().Get("X-Loom-Raft-Leader") == "" {
+		response.Header().Get("X-Loom-Raft-Leader") == "" || response.Header().Get("X-Loom-Raft-Last-Log") == "" ||
+		response.Header().Get("X-Loom-Raft-Commit") == "" || response.Header().Get("X-Loom-Raft-Applied") == "" {
 		t.Fatalf("local admin snapshot omitted runtime rollout diagnostics: status=%d headers=%v", response.Code, response.Header())
 	}
 	if strings.Contains(response.Body.String(), "raft_state") || strings.Contains(response.Body.String(), "raft_leader") {
