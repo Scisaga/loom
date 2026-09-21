@@ -47,7 +47,7 @@ func TestMigrationOverlayStagesAppliesAndFinalizesExactBoundary(t *testing.T) {
 	profile := control.ServerRuntimeProfile{Kind: "sing_box", Protocol: "hysteria2", ListenPort: 443,
 		Users: []control.ServerRuntimeUser{{Name: "demo-new", Password: strings.Repeat("A", 43)}},
 		ACL:   []control.ServerRuntimeACL{{User: "demo-new", Action: "egress", DestinationMatchers: []string{"new.example"}}}}
-	config, err := renderServerRuntime(profile, "/demo/cert", "/demo/key")
+	config, err := renderServerRuntime(profile, "/demo/cert", "/demo/key", true)
 	if err != nil {
 		t.Fatal(err)
 	}

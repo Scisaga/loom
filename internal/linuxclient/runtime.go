@@ -193,7 +193,7 @@ func serverOnlyEnvelope(lkg *control.DeviceViewEnvelope) (*control.DeviceViewEnv
 		!hasRole(lkg.View.Roles, "access") && lkg.View.ServerRuntime != nil
 }
 
-func renderServerRuntime(profile control.ServerRuntimeProfile, certificatePath, keyPath string) (string, error) {
+func renderServerRuntime(profile control.ServerRuntimeProfile, certificatePath, keyPath string, identifyDomains bool) (string, error) {
 	if err := profile.Validate(); err != nil {
 		return "", err
 	}
@@ -208,7 +208,10 @@ func renderServerRuntime(profile control.ServerRuntimeProfile, certificatePath, 
 	if profile.Protocol == "hysteria2" {
 		tls["alpn"] = []string{"h3"}
 	}
-	rules := make([]map[string]any, 0, len(profile.ACL)+1)
+	rules := make([]map[string]any, 0, len(profile.ACL)+2)
+	if identifyDomains {
+		rules = append(rules, map[string]any{"inbound": []string{"loom-server-in"}, "action": "sniff"})
+	}
 	outbounds := []any{map[string]any{"type": "direct", "tag": "loom-server-egress"},
 		map[string]any{"type": "block", "tag": "loom-server-block"}}
 	nextOutbounds := map[string]bool{}
@@ -282,8 +285,8 @@ func renderServerRuntime(profile control.ServerRuntimeProfile, certificatePath, 
 	return string(body), nil
 }
 
-func mergeServerRuntime(accessConfig string, profile control.ServerRuntimeProfile, certificatePath, keyPath string) (string, error) {
-	serverConfig, err := renderServerRuntime(profile, certificatePath, keyPath)
+func mergeServerRuntime(accessConfig string, profile control.ServerRuntimeProfile, certificatePath, keyPath string, identifyDomains bool) (string, error) {
+	serverConfig, err := renderServerRuntime(profile, certificatePath, keyPath, identifyDomains)
 	if err != nil {
 		return "", err
 	}
@@ -777,12 +780,14 @@ func Preflight(deviceState, singBox string) error {
 	path := filepath.Join(directory, "config.json")
 	config := ""
 	if serverOnly {
-		config, err = renderServerRuntime(*lkg.View.ServerRuntime, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key")
+		config, err = renderServerRuntime(*lkg.View.ServerRuntime, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key",
+			lkg.View.RequiresServerDomainIdentification())
 	} else {
 		caPath := filepath.Join(directory, "data-plane-ca.crt")
 		config, err = accessRuntimeConfig(lkg.View, caPath)
 		if lkg.View.ServerRuntime != nil {
-			config, err = mergeServerRuntime(config, *lkg.View.ServerRuntime, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key")
+			config, err = mergeServerRuntime(config, *lkg.View.ServerRuntime, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key",
+				lkg.View.RequiresServerDomainIdentification())
 		}
 	}
 	if err != nil {
@@ -1021,7 +1026,8 @@ func runGeneration(ctx context.Context, options Options, allowFetch bool) (retEr
 		return err
 	}
 	if lkg, ok := serverOnlyEnvelope(selected); ok {
-		config, renderErr := renderServerRuntime(*lkg.View.ServerRuntime, options.ServerCert, options.ServerKey)
+		config, renderErr := renderServerRuntime(*lkg.View.ServerRuntime, options.ServerCert, options.ServerKey,
+			lkg.View.RequiresServerDomainIdentification())
 		if renderErr != nil {
 			return renderErr
 		}
@@ -1111,7 +1117,8 @@ func runGeneration(ctx context.Context, options Options, allowFetch bool) (retEr
 		return err
 	}
 	if lkg.View.ServerRuntime != nil {
-		runtimeConfig, err = mergeServerRuntime(runtimeConfig, *lkg.View.ServerRuntime, options.ServerCert, options.ServerKey)
+		runtimeConfig, err = mergeServerRuntime(runtimeConfig, *lkg.View.ServerRuntime, options.ServerCert, options.ServerKey,
+			lkg.View.RequiresServerDomainIdentification())
 		if err != nil {
 			return err
 		}

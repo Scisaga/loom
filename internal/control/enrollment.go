@@ -343,6 +343,14 @@ type DeviceView struct {
 	LinkProbeTargets     []LinkProbeTarget      `json:"link_probe_targets,omitempty"`
 }
 
+// RequiresServerDomainIdentification reports whether the certified runtime
+// contract requires a server HostAdapter to recover HTTP Host/TLS SNI before
+// applying Service matcher ACLs. Keeping this on the versioned view prevents a
+// newer binary from silently changing historical runtime projection.
+func (view DeviceView) RequiresServerDomainIdentification() bool {
+	return view.RuntimeContract >= runtimeContractProbe
+}
+
 type DeviceViewProof struct {
 	Index    int      `json:"index"`
 	Size     int      `json:"size"`

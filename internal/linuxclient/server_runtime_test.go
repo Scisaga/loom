@@ -16,7 +16,7 @@ func TestRenderServerRuntimeConsumesDerivedUsersAndFailsClosed(t *testing.T) {
 			{User: "u-demo", Action: "egress", DestinationMatchers: []string{"example.com"}},
 			{User: "u-demo", Action: "next_hop", NextHost: "192.0.2.20", NextPort: 443, BindInterface: "wg-demo"},
 		}}
-	body, err := renderServerRuntime(profile, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key")
+	body, err := renderServerRuntime(profile, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,27 @@ func TestRenderServerRuntimeConsumesDerivedUsersAndFailsClosed(t *testing.T) {
 		len(document.Inbounds[0].Users) != 1 || document.Inbounds[0].Users[0].Name != "u-demo" {
 		t.Fatalf("server inbound did not consume the certified profile: %+v", document.Inbounds)
 	}
-	if len(document.Route.Rules) != 4 || document.Route.Final != "loom-server-block" {
+	if len(document.Route.Rules) != 5 || document.Route.Final != "loom-server-block" {
 		t.Fatalf("server ACL is not fail closed: %+v", document.Route)
 	}
-	if got := document.Route.Rules[0]; got["port"].([]any)[0].(float64) != 53 || len(got["ip_cidr"].([]any)) != 1 {
+	if got := document.Route.Rules[0]; got["action"] != "sniff" || len(got["inbound"].([]any)) != 1 {
+		t.Fatalf("server runtime does not identify domains before its ACL: %+v", got)
+	}
+	if got := document.Route.Rules[1]; got["port"].([]any)[0].(float64) != 53 || len(got["ip_cidr"].([]any)) != 1 {
 		t.Fatalf("certified DNS egress was not narrowed to its address and port: %+v", got)
+	}
+}
+
+func TestRenderHistoricalServerRuntimeDoesNotChangeDomainHandling(t *testing.T) {
+	profile := control.ServerRuntimeProfile{Kind: "sing_box", Protocol: "hysteria2", ListenPort: 443,
+		Users: []control.ServerRuntimeUser{{Name: "u-demo", Password: strings.Repeat("A", 43)}},
+		ACL:   []control.ServerRuntimeACL{{User: "u-demo", Action: "egress", DestinationMatchers: []string{"example.com"}}}}
+	body, err := renderServerRuntime(profile, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body, `"action":"sniff"`) {
+		t.Fatal("a newer HostAdapter silently changed a historical server runtime contract")
 	}
 }
 
@@ -54,7 +70,7 @@ func TestMergeServerRuntimeKeepsAccessControlAndAddsInboundACL(t *testing.T) {
 		Users: []control.ServerRuntimeUser{{Name: "u-demo", Password: strings.Repeat("A", 43)}},
 		ACL: []control.ServerRuntimeACL{{User: "u-demo", Action: "egress",
 			DestinationMatchers: []string{"example.com"}}}}
-	body, err := mergeServerRuntime(access, profile, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key")
+	body, err := mergeServerRuntime(access, profile, "/etc/loom/tls/node.crt", "/etc/loom/tls/node.key", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +85,7 @@ func TestMergeServerRuntimeKeepsAccessControlAndAddsInboundACL(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &document); err != nil {
 		t.Fatal(err)
 	}
-	if len(document.Inbounds) != 2 || len(document.Outbounds) != 3 || len(document.Route.Rules) != 2 || document.Experimental == nil {
+	if len(document.Inbounds) != 2 || len(document.Outbounds) != 3 || len(document.Route.Rules) != 3 || document.Experimental == nil {
 		t.Fatalf("hybrid runtime lost an access or server section: %+v", document)
 	}
 }
