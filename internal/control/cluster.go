@@ -647,30 +647,51 @@ func (runtime *Runtime) peerJSON(ctx context.Context, member Member, method, pat
 	if member.Node == "" {
 		return errors.New("control member has no private channel node")
 	}
+	call := func(client *http.Client, host string) error {
+		request, err := http.NewRequestWithContext(ctx, method, "https://"+host+path, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		runtime.signRequest(request, body)
+		response, err := client.Do(request)
+		if err != nil {
+			return err
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+			return fmt.Errorf("peer %s: %s: %s", member.ID, response.Status, strings.TrimSpace(string(message)))
+		}
+		if result == nil {
+			return nil
+		}
+		decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(result)
+	}
+	var failures []error
+	// Keep the original address-form Host on direct links so a rolling update
+	// can still call a peer whose handler predates node-name Host support.
+	for _, endpoint := range runtime.Channel.endpoints(member.Node) {
+		if err := call(runtime.Channel.directPeerClient(endpoint), endpoint); err == nil {
+			return nil
+		} else {
+			failures = append(failures, err)
+		}
+	}
 	client, err := runtime.Channel.peerClient(member.Node)
+	if err == nil {
+		if err = call(client, member.Node); err == nil {
+			return nil
+		}
+	}
 	if err != nil {
-		return err
+		failures = append(failures, err)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, "https://"+member.Node+path, bytes.NewReader(body))
-	if err != nil {
-		return err
+	if len(failures) == 0 {
+		return fmt.Errorf("control member %s has no private route", member.ID)
 	}
-	runtime.signRequest(request, body)
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
-		return fmt.Errorf("peer %s: %s: %s", member.ID, response.Status, strings.TrimSpace(string(message)))
-	}
-	if result == nil {
-		return nil
-	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(result)
+	return errors.Join(failures...)
 }
 
 func requestBytes(method, path string, body []byte) []byte {

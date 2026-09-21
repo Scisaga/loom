@@ -448,6 +448,42 @@ func TestPurePrivateRelayForwardsRaftWithoutControlAuthority(t *testing.T) {
 	}
 }
 
+func TestDirectControlHTTPKeepsAddressHostDuringRollingUpgrade(t *testing.T) {
+	sourceConfig, sourceRoot := testActivated(t)
+	targetAddress := freeAddress(t, "127.0.0.1")
+	targetRoot := t.TempDir()
+	targetConfig, err := PrepareMember(targetRoot, sourceRoot, "demo-rolling-target", "demo-rolling-node", []string{targetAddress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceAddress := freeAddress(t, "127.0.0.1")
+	sourceChannel, err := OpenPrivateChannel(PrivateChannelConfig{Node: sourceConfig.Node, Listen: []string{sourceAddress},
+		Peers: map[string][]string{targetConfig.Node: {targetAddress}}}, sourceConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceChannel.Close()
+	targetChannel, err := OpenPrivateChannel(PrivateChannelConfig{Node: targetConfig.Node, Listen: []string{targetAddress},
+		Peers: map[string][]string{sourceConfig.Node: {sourceAddress}}}, targetConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetChannel.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Host != targetAddress {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.WriteHeader(http.StatusOK)
+	})}
+	defer server.Close()
+	go func() { _ = server.Serve(targetChannel.ControlListener()) }()
+	runtime := &Runtime{Config: sourceConfig, Channel: sourceChannel}
+	if err := runtime.peerJSON(context.Background(), targetConfig.Member(), http.MethodGet, "/internal/demo", nil, nil); err != nil {
+		t.Fatalf("new member could not call an address-Host-only old peer: %v", err)
+	}
+}
+
 func TestDisjointThreeMemberReplacementThroughPureRelay(t *testing.T) {
 	const memberCount = 6
 	addresses := make([]string, memberCount)
