@@ -1228,6 +1228,14 @@ func runGeneration(ctx context.Context, options Options, allowFetch bool) (retEr
 		fmt.Fprintf(options.Log, "deployment observation unavailable: %v\n", deploymentErr)
 	}
 	lastFacts := runtimeFactsDigest(activation, components, links, deployment)
+	// Runtime/selector readback and private report delivery are distinct facts.
+	// Publish the former immediately so an unavailable control tunnel cannot
+	// make a running data plane look as if it never started. A successful report
+	// below atomically replaces this projection with Reported=true.
+	if err := WriteStatus(options.Status, runtimeStatus(lkg, activation, false)); err != nil {
+		cancel()
+		return err
+	}
 	if err := reportSelection(reportContext, store, activation, options.Now(), components, links, deployment, startedAt, options, exact); err != nil {
 		fmt.Fprintf(options.Log, "private report unavailable; data plane remains on certified LKG: %v\n", err)
 	} else {
