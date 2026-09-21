@@ -157,6 +157,20 @@ func restoreReservedDeviceCollisions(web *WebProjection, authority Projection, i
 	if web == nil {
 		return nil
 	}
+	// Schema-2 enrollment.create can only allocate server-generated d-* IDs.
+	// Consequently, an enrollment whose device ID is already present in the
+	// certified NetworkIntent can only have come through the local-admin-only
+	// existing-node.rejoin operation. Control membership and data-plane device
+	// authorization are independent roles: a control member is allowed to
+	// rejoin as an access/server runtime. Restoring the legacy WebProjection in
+	// that case would hide the certified enrollment and falsely ask the operator
+	// to revoke a valid authorization.
+	//
+	// Keep the collision repair only for pre-NetworkIntent replay, where legacy
+	// enrollment material could still contain caller-selected device IDs.
+	if authority.NetworkIntent != nil {
+		return nil
+	}
 	reserved := map[string]bool{}
 	for _, member := range uniqueConfigMembers(authority.Config) {
 		reserved[member.ID] = true

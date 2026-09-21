@@ -30,6 +30,26 @@ func TestReservedEnrollmentCannotReplaceImportedNodeInWebProjection(t *testing.T
 	}
 }
 
+func TestReservedControlMemberMayRejoinDataPlane(t *testing.T) {
+	initial := WebProjection{Schema: 1, Devices: []Device{{ID: "demo-node", Name: "Demo server",
+		Roles: []string{"server"}, Availability: "unknown"}}}
+	intent := NetworkIntent{Schema: 2}
+	authority := Projection{Schema: 1, NetworkIntent: &intent,
+		Config:               ControlConfig{Mode: "stable", Quorum: 1, Members: []Member{{ID: "demo-control", Node: "demo-node"}}},
+		DeviceAuthorizations: []DeviceAuthorization{{Schema: 2, DeviceID: "demo-node"}}}
+	web := WebProjection{Schema: 1, Devices: []Device{{ID: "demo-node", Name: "Demo server",
+		Roles: []string{"server"}, Authorized: true, EnrollmentID: "demo-rejoin", Enrollment: "completed"}},
+		Paths: []Path{{Device: "demo-node", CandidateID: "demo-path"}}}
+
+	if warnings := restoreReservedDeviceCollisions(&web, authority, initial); len(warnings) != 0 {
+		t.Fatalf("valid existing-node rejoin was reported as a collision: %v", warnings)
+	}
+	if len(web.Devices) != 1 || web.Devices[0].EnrollmentID != "demo-rejoin" || !web.Devices[0].Authorized ||
+		len(web.Paths) != 1 {
+		t.Fatalf("valid existing-node rejoin was hidden: device=%+v paths=%+v", web.Devices, web.Paths)
+	}
+}
+
 func TestWebCapabilitiesSeparateCredentialFromQuorumWriteAvailability(t *testing.T) {
 	head := GovernanceHead{Index: 1}
 	intent := testNetworkIntent(t)
