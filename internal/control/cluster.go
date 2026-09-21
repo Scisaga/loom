@@ -80,7 +80,15 @@ func (runtime *Runtime) QuorumWritable(ctx context.Context) bool {
 	if now.Sub(runtime.statusAt) < time.Second {
 		return runtime.writable
 	}
-	checkContext, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	timeout := 750 * time.Millisecond
+	if runtime.Raft != nil && runtime.Raft.State() != raft.Leader {
+		// A follower may reach its leader across an inter-region private relay.
+		// The leader's own VerifyLeader remains bounded to 750 ms by the
+		// internal endpoint; the outer request also needs room for both network
+		// legs and TLS without turning a healthy quorum into a UI false negative.
+		timeout = 3 * time.Second
+	}
+	checkContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	writable := runtime.verifyLocalLeader(checkContext)
 	if runtime.Raft != nil && runtime.Raft.State() != raft.Leader {
