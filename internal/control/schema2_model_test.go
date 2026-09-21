@@ -362,6 +362,26 @@ func TestDeviceRuntimeUpgradePreservesHistoricalProjectionUntilNewMaterial(t *te
 	}
 }
 
+func TestDNSRuntimeContractAddsOnlyCertifiedDNSAtFinalExit(t *testing.T) {
+	public, _, _ := ed25519.GenerateKey(rand.Reader)
+	intent := testNetworkIntent(t)
+	intent.Nodes = append([]NetworkNode{{ID: "d-0123456789", Name: "Demo client", Platform: "linux",
+		Roles: []string{"access"}, DNS: []string{"192.0.2.53"}}}, intent.Nodes...)
+	authorization := DeviceAuthorization{Schema: 2, DeviceID: "d-0123456789", DestinationGrants: []string{"demo-policy"},
+		DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), RuntimeKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		Floor: 1, RuntimeContract: runtimeContractDNSACL}
+	projection := Projection{Schema: 1, NetworkIntent: &intent, DeviceAuthorizations: []DeviceAuthorization{authorization}}
+	profile, err := projectServerRuntime(projection, "demo-egress", *intent.Nodes[1].Server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.ACL) != 2 || len(profile.ACL[0].DNSAddresses) != 2 ||
+		strings.Join(profile.ACL[0].DNSAddresses, ",") != "1.1.1.1,192.0.2.53" ||
+		len(profile.ACL[0].DestinationMatchers) != 0 || len(profile.ACL[1].DestinationMatchers) != 1 {
+		t.Fatalf("server runtime DNS ACL is not exact and separate from service policy: %+v", profile.ACL)
+	}
+}
+
 func TestHybridAccessUsesItsCertifiedWireGuardLinkWithoutPublicIngress(t *testing.T) {
 	intent := testNetworkIntent(t)
 	intent.Nodes[0].Server.PublicDataIngress = false

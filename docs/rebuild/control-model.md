@@ -116,6 +116,10 @@ Authorization 上的 `runtime_contract` 只标记使用哪一版确定性投影�
 历史投影以保证旧 head 可重放。升级只能由本机管理员提交 `device.runtime-upgrade` Material，在新 head 中同时
 推进设备 floor 和 DeviceView 摘要，旧 control 二进制全部退出集群后才允许提交。
 
+数据面 DNS 不是业务域名 matcher 的隐含副作用。启用对应 runtime contract 后，每个最终出口为该 access
+用户额外生成一条独立 ACL，只允许 `NetworkIntent.dns + node.dns` 中规范去重的精确 IP 与端口 53；业务
+域名规则继续单独存在，中继节点仍只允许下一跳。缺少认证 DNS 地址时投影失败，不允许放宽为任意 UDP/TCP。
+
 在 `NetworkIntent` 首次导入前已经认证的旧 `service.put` Material 仍按其提交时的规则重放到旧 Web
 投影，以保持既有 CertifiedHead 摘要可验证；这只是不可变历史的 reducer 语义。正式提交入口在缺少
 `NetworkIntent` 时拒绝任何新的 Service 增删，导入后 Service 只修改 `NetworkIntent.services`，运行时

@@ -588,7 +588,7 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 		authorization.DestinationGrants = append([]string(nil), transaction.Intent.DestinationGrants...)
 		authorization.Server = nil
 		authorization.RuntimeKey = base64.RawURLEncoding.EncodeToString(runtimeKey)
-		authorization.RuntimeContract = runtimeContractNodeTLS
+		authorization.RuntimeContract = runtimeContractCurrent
 		requestMaterialID = requestID
 	}
 	projected, err := cloneProjection(projection)

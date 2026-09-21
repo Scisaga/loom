@@ -160,7 +160,11 @@ type DeviceAuthorization struct {
 	RuntimeContract int `json:"runtime_contract,omitempty"`
 }
 
-const runtimeContractNodeTLS = 2
+const (
+	runtimeContractNodeTLS = 2
+	runtimeContractDNSACL  = 3
+	runtimeContractCurrent = runtimeContractDNSACL
+)
 
 // ServerRuntimeProfile is a private, deterministic projection for the
 // authorized server device. It is carried only in that device's certified
@@ -190,6 +194,7 @@ type ServerRuntimeACL struct {
 	User                string   `json:"user"`
 	Action              string   `json:"action"`
 	DestinationMatchers []string `json:"destination_matchers,omitempty"`
+	DNSAddresses        []string `json:"dns_addresses,omitempty"`
 	NextHost            string   `json:"next_host,omitempty"`
 	NextPort            int      `json:"next_port,omitempty"`
 	BindInterface       string   `json:"bind_interface,omitempty"`
@@ -249,19 +254,21 @@ func (profile ServerRuntimeProfile) Validate() error {
 	}
 	previous := ""
 	for _, rule := range profile.ACL {
-		key := fmt.Sprintf("%s\x00%s\x00%s\x00%05d\x00%s\x00%s", rule.User, rule.Action, rule.NextHost,
-			rule.NextPort, rule.BindInterface, strings.Join(rule.DestinationMatchers, "\x00"))
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%05d\x00%s\x00%s\x00%s", rule.User, rule.Action, rule.NextHost,
+			rule.NextPort, rule.BindInterface, strings.Join(rule.DestinationMatchers, "\x00"), strings.Join(rule.DNSAddresses, "\x00"))
 		if !users[rule.User] || previous >= key && previous != "" {
 			return errors.New("server runtime ACL is not uniquely sorted")
 		}
 		switch rule.Action {
 		case "egress":
 			if rule.NextHost != "" || rule.NextPort != 0 || rule.BindInterface != "" ||
-				validateSortedNames(rule.DestinationMatchers, "server runtime destination matchers") != nil || len(rule.DestinationMatchers) == 0 {
+				validateSortedNames(rule.DestinationMatchers, "server runtime destination matchers") != nil ||
+				validIPList(rule.DNSAddresses, "server runtime DNS addresses") != nil ||
+				(len(rule.DestinationMatchers) == 0) == (len(rule.DNSAddresses) == 0) {
 				return errors.New("server runtime egress ACL is invalid")
 			}
 		case "next_hop":
-			if len(rule.DestinationMatchers) != 0 || !validName(rule.NextHost) || rule.NextPort < 1 || rule.NextPort > 65535 ||
+			if len(rule.DestinationMatchers) != 0 || len(rule.DNSAddresses) != 0 || !validName(rule.NextHost) || rule.NextPort < 1 || rule.NextPort > 65535 ||
 				!validName(rule.BindInterface) {
 				return errors.New("server runtime next-hop ACL is incomplete")
 			}
@@ -703,7 +710,8 @@ func (authorization DeviceAuthorization) Validate() error {
 	case enrollmentSchemaV2:
 		if authorization.Name != "" || authorization.Platform != "" || len(authorization.Roles) != 0 || len(authorization.Routes) != 0 ||
 			authorization.Runtime != nil || authorization.Server != nil || !validRuntimeKey(authorization.RuntimeKey) ||
-			authorization.RuntimeContract != 0 && authorization.RuntimeContract != runtimeContractNodeTLS ||
+			authorization.RuntimeContract != 0 &&
+				(authorization.RuntimeContract < runtimeContractNodeTLS || authorization.RuntimeContract > runtimeContractCurrent) ||
 			validateSortedNames(authorization.DestinationGrants, "device authorization grants") != nil {
 			return errors.New("schema-2 device authorization contains duplicated or invalid facts")
 		}
@@ -714,7 +722,7 @@ func (authorization DeviceAuthorization) Validate() error {
 }
 
 func (upgrade DeviceRuntimeUpgrade) Validate() error {
-	if !validName(upgrade.DeviceID) || upgrade.RuntimeContract != runtimeContractNodeTLS {
+	if !validName(upgrade.DeviceID) || upgrade.RuntimeContract < runtimeContractNodeTLS || upgrade.RuntimeContract > runtimeContractCurrent {
 		return errors.New("device runtime upgrade is invalid")
 	}
 	return nil

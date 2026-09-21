@@ -217,6 +217,19 @@ func renderServerRuntime(profile control.ServerRuntimeProfile, certificatePath, 
 			if len(suffix) != 0 {
 				rule["domain_suffix"] = suffix
 			}
+			if len(acl.DNSAddresses) != 0 {
+				prefixes := make([]string, 0, len(acl.DNSAddresses))
+				for _, value := range acl.DNSAddresses {
+					address := net.ParseIP(value)
+					suffix := "/32"
+					if address.To4() == nil {
+						suffix = "/128"
+					}
+					prefixes = append(prefixes, address.String()+suffix)
+				}
+				rule["ip_cidr"] = prefixes
+				rule["port"] = []int{53}
+			}
 		case "next_hop":
 			sum := sha256.Sum256([]byte(acl.BindInterface + "\x00" + acl.NextHost + "\x00" + strconv.Itoa(acl.NextPort)))
 			tag := "loom-next-" + hex.EncodeToString(sum[:6])

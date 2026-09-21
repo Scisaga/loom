@@ -302,6 +302,26 @@ func policyMatchers(intent *NetworkIntent, policyID string) []string {
 	return result
 }
 
+func deviceDNSAddresses(intent *NetworkIntent, deviceID string) []string {
+	addresses := append([]string(nil), intent.DNS...)
+	if node, found := networkNode(intent, deviceID); found {
+		addresses = append(addresses, node.DNS...)
+	}
+	sort.Strings(addresses)
+	result := addresses[:0]
+	for _, address := range addresses {
+		if len(result) == 0 || result[len(result)-1] != address {
+			result = append(result, address)
+		}
+	}
+	return result
+}
+
+func serverRuntimeACLKey(rule ServerRuntimeACL) string {
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%05d\x00%s\x00%s\x00%s", rule.User, rule.Action, rule.NextHost,
+		rule.NextPort, rule.BindInterface, strings.Join(rule.DestinationMatchers, "\x00"), strings.Join(rule.DNSAddresses, "\x00"))
+}
+
 func projectServerWireGuard(intent *NetworkIntent, serverID string) ([]ServerWireGuardRuntime, error) {
 	local, found := networkNode(intent, serverID)
 	if !found || local.Server == nil {
@@ -424,9 +444,15 @@ func projectServerRuntime(projection Projection, serverID string, server ServerI
 					rule.NextPort = next.Server.InboundPort
 					rule.BindInterface = "wg-" + next.ID
 				}
-				key := fmt.Sprintf("%s\x00%s\x00%s\x00%05d\x00%s\x00%s", rule.User, rule.Action, rule.NextHost,
-					rule.NextPort, rule.BindInterface, strings.Join(rule.DestinationMatchers, "\x00"))
-				rules[key] = rule
+				rules[serverRuntimeACLKey(rule)] = rule
+				if rule.Action == "egress" && authorization.RuntimeContract >= runtimeContractDNSACL {
+					dns := deviceDNSAddresses(projection.NetworkIntent, authorization.DeviceID)
+					if len(dns) == 0 {
+						return nil, errors.New("runtime DNS contract has no certified DNS addresses")
+					}
+					dnsRule := ServerRuntimeACL{User: name, Action: "egress", DNSAddresses: dns}
+					rules[serverRuntimeACLKey(dnsRule)] = dnsRule
+				}
 			}
 		}
 	}

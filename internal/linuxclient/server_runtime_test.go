@@ -12,6 +12,7 @@ func TestRenderServerRuntimeConsumesDerivedUsersAndFailsClosed(t *testing.T) {
 	profile := control.ServerRuntimeProfile{Kind: "sing_box", Protocol: "hysteria2", ListenPort: 443,
 		Users: []control.ServerRuntimeUser{{Name: "u-demo", Password: strings.Repeat("A", 43)}},
 		ACL: []control.ServerRuntimeACL{
+			{User: "u-demo", Action: "egress", DNSAddresses: []string{"192.0.2.53"}},
 			{User: "u-demo", Action: "egress", DestinationMatchers: []string{"example.com"}},
 			{User: "u-demo", Action: "next_hop", NextHost: "192.0.2.20", NextPort: 443, BindInterface: "wg-demo"},
 		}}
@@ -39,8 +40,11 @@ func TestRenderServerRuntimeConsumesDerivedUsersAndFailsClosed(t *testing.T) {
 		len(document.Inbounds[0].Users) != 1 || document.Inbounds[0].Users[0].Name != "u-demo" {
 		t.Fatalf("server inbound did not consume the certified profile: %+v", document.Inbounds)
 	}
-	if len(document.Route.Rules) != 3 || document.Route.Final != "loom-server-block" {
+	if len(document.Route.Rules) != 4 || document.Route.Final != "loom-server-block" {
 		t.Fatalf("server ACL is not fail closed: %+v", document.Route)
+	}
+	if got := document.Route.Rules[0]; got["port"].([]any)[0].(float64) != 53 || len(got["ip_cidr"].([]any)) != 1 {
+		t.Fatalf("certified DNS egress was not narrowed to its address and port: %+v", got)
 	}
 }
 
