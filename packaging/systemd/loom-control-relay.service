@@ -6,7 +6,7 @@ Conflicts=loom-control.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/libexec/loom-control-minimal control relay --state-dir /var/lib/loom-control-relay --network-config /etc/loom/report/v2/config.json
+ExecStart=/usr/local/libexec/loom-control-minimal control relay --state-dir /var/lib/loom-control-relay --network-config /etc/loom/report/v2/config.json --endpoint-edge-plan /var/lib/loom-control-relay/endpoint-edge.json
 Restart=on-failure
 RestartSec=3s
 User=root

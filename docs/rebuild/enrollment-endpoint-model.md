@@ -46,6 +46,12 @@ certified head 的写入；客户端可以继续读取自己已经验证的旧 v
 它以“逻辑入口 + 单调 generation”标识，引用既有证书和监听材料，并声明哪些接入方式可被授权。
 地址或 `public_data_ingress` 声明只表示该候选可以被尝试，不表示此刻网络可达。
 
+公网映射落在非 control 节点时，同一 generation 可以同时声明 `edge_node/edge_listen`。`node/listen`
+仍是持有当前认证 Projection、终止 TLS 并处理 capability 的 control listener；edge 只把既有公网端口的
+TCP 字节原样转发到该 listener，既不持有 control/设备签名密钥，也不解析 claim。edge 配置是该
+generation 的本机运行时投影，不是第二份 endpoint catalog；`edge_node` 不能因此成为 control 成员。
+没有 edge 字段时维持单节点 listener 语义。
+
 生命周期只有：
 
 ```text
@@ -179,11 +185,14 @@ floor、实际快照或运行二进制坐标时整个 deployment readback 缺失
 | Observation | 私有认证报告或本地规范记录 | 可过期的观测记录，不进入治理状态 | 可用性与选择输入 | available/unavailable/unknown 和证据时间 |
 
 首个实现投影中，`EndpointGeneration` 的 wire/persistent 字段是 `endpoint_id`、单调
-`generation`、承载 listener 的 `node`、`tls_tunnel` transport、本地 `listen`、客户端
+`generation`、承载认证 listener 的 `node`、`tls_tunnel` transport、本地 `listen`、可选的
+`edge_node/edge_listen`、客户端
 `address`、`server_name`、已有 TLS 证书/私钥文件引用、证书 SPKI SHA-256、领域状态和
 `preference`。除状态与 serving 期间的偏好外，同一 generation 的其他字段不可变。listener
 只从已认证 Projection 投影；进入 serving 前必须在所声明节点实际读取证书，核对
-SPKI 和有效期，并成功绑定 listener。
+SPKI 和有效期，并成功绑定 listener。声明 edge 时还必须先由 edge 节点加载从同一 certified head
+确定性投影的 owner-only 转发计划，并以客户端看到的地址完成端到端 TLS/SPKI 回读；端口可达本身
+仍不能代替 capability 处理成功。
 
 `tls_tunnel` 仅提供 TLS 1.3 且使用独立 ALPN。bootstrap 模式在握手中校验完整
 `BootstrapCapability`；device 模式对随机挑战做设备 Ed25519 签名。claim、resume、DeviceView
@@ -279,6 +288,8 @@ UI = Present(CertifiedHead, Projection, Transactions, DeviceViews, Observations)
 5. 新旧 generation 依次经历 prepared、并行 serving、偏好切换、draining、retired；重启不改变阶段，
    无成功路径或仍有受保护旧会话时不能提前退休。
 6. 既有证书匹配时 generation 可进入 serving；不匹配或失效时失败关闭，并确认没有 DNS/ACME 行为。
+   公网映射位于非 control 节点时，再验证纯 TCP edge 重启后仍只转发到认证 listener，且 edge 无法独立
+   处理 claim、签署 head 或读取设备配置。
 7. 控制多数派中断时新审批失败关闭，已完成设备仍能从 LKG 启动；恢复后 bound 事务从原状态继续。
 8. UI 的状态、标识和转换与领域对象一致；Observation 以运行事实展示，不提供伪装成期望态修改的操作。
 9. Windows RuntimeProfile 的纯函数投影完成 wire 往返；缺候选、多出 selector 成员、未知/重复字段和非规范

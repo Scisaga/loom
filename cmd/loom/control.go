@@ -59,7 +59,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <import|import-network|activate|prepare|prepare-relay|migrate-browser-tls|serve|relay|inspect|write>")
+		return errors.New("用法: loom control <import|import-network|activate|prepare|prepare-relay|project-endpoint-edge|migrate-browser-tls|serve|relay|inspect|write>")
 	}
 	switch args[0] {
 	case "import":
@@ -74,6 +74,8 @@ func cmdControl(args []string) error {
 		return cmdControlPrepare(args[1:])
 	case "prepare-relay":
 		return cmdControlPrepareRelay(args[1:])
+	case "project-endpoint-edge":
+		return cmdControlProjectEndpointEdge(args[1:])
 	case "migrate-browser-tls":
 		return cmdControlMigrateBrowserTLS(args[1:])
 	case "inspect":
@@ -265,6 +267,34 @@ func cmdControlPrepareRelay(args []string) error {
 	return nil
 }
 
+func cmdControlProjectEndpointEdge(args []string) error {
+	fs := flag.NewFlagSet("control project-endpoint-edge", flag.ContinueOnError)
+	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "当前认证 control 状态目录")
+	edgeNode := fs.String("edge-node", "", "承载既有公网映射的纯 transport 节点")
+	output := fs.String("out", "", "owner-only endpoint edge 运行时投影")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *edgeNode == "" || *output == "" {
+		return errors.New("control project-endpoint-edge 缺少 edge-node/out")
+	}
+	authority, err := control.OpenAuthority(*stateDir)
+	if err != nil {
+		return err
+	}
+	_, _, certified := authority.Snapshot()
+	plan, err := control.ProjectEndpointEdge(certified, *edgeNode)
+	if err != nil {
+		return err
+	}
+	if err := control.SaveEndpointEdgePlan(*output, plan); err != nil {
+		return err
+	}
+	fmt.Printf("endpoint edge projected: node=%s generations=%d head=%s\n",
+		plan.EdgeNode, len(plan.Generations), plan.CertifiedHead)
+	return nil
+}
+
 func cmdControlImport(args []string) error {
 	fs := flag.NewFlagSet("control import", flag.ContinueOnError)
 	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "最小控制状态目录")
@@ -358,6 +388,7 @@ func cmdControlRelay(args []string) error {
 	fs := flag.NewFlagSet("control relay", flag.ContinueOnError)
 	stateDir := fs.String("state-dir", "/var/lib/loom-control-relay", "纯 transport relay 身份目录")
 	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
+	edgePlan := fs.String("endpoint-edge-plan", "/var/lib/loom-control-relay/endpoint-edge.json", "可选的认证 endpoint edge 运行时投影")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -377,6 +408,17 @@ func cmdControlRelay(args []string) error {
 		return err
 	}
 	defer channel.Close()
+	plan, err := control.LoadEndpointEdgePlan(*edgePlan, identity.Node)
+	var edge *control.EndpointEdgeRuntime
+	if err == nil {
+		edge, err = control.OpenEndpointEdge(plan, identity.Node)
+		if err != nil {
+			return err
+		}
+		defer edge.Close()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	<-ctx.Done()

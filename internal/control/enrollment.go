@@ -40,6 +40,8 @@ type EndpointGeneration struct {
 	EndpointID         string `json:"endpoint_id"`
 	Generation         uint64 `json:"generation"`
 	Node               string `json:"node"`
+	EdgeNode           string `json:"edge_node,omitempty"`
+	EdgeListen         string `json:"edge_listen,omitempty"`
 	Transport          string `json:"transport"`
 	Listen             string `json:"listen"`
 	Address            string `json:"address"`
@@ -413,6 +415,17 @@ func (generation EndpointGeneration) Validate() error {
 		!validAddress(generation.Address) || !validName(generation.ServerName) || generation.Preference < 0 ||
 		len(generation.SPKISHA256) != sha256.Size*2 {
 		return errors.New("endpoint generation is incomplete")
+	}
+	if (generation.EdgeNode == "") != (generation.EdgeListen == "") || generation.EdgeNode != "" &&
+		(!validName(generation.EdgeNode) || generation.EdgeNode == generation.Node || !validAddress(generation.EdgeListen)) {
+		return errors.New("endpoint generation edge is invalid")
+	}
+	if generation.EdgeNode != "" {
+		host, _, _ := net.SplitHostPort(generation.Listen)
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsPrivate() && !ip.IsLoopback() {
+			return errors.New("endpoint generation edge target is not private")
+		}
 	}
 	if digest, err := hex.DecodeString(generation.SPKISHA256); err != nil || hex.EncodeToString(digest) != generation.SPKISHA256 {
 		return errors.New("endpoint generation SPKI digest is invalid")
