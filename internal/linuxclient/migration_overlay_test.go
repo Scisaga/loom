@@ -100,6 +100,37 @@ func TestMigrationOverlayRejectsUnsupportedLegacyAuthority(t *testing.T) {
 	}
 }
 
+func TestMigrationOverlayKeepsOnlyThePublicServerInboundAuthority(t *testing.T) {
+	legacy := `{
+  "inbounds":[
+    {"type":"mixed","tag":"local-auth","listen_port":1080,"users":[{"username":"local-user","password":"local-secret"}]},
+    {"type":"hysteria2","tag":"server-in","listen_port":443,"users":[{"name":"server-user","password":"server-secret"}],"tls":{}}
+  ],
+	  "outbounds":[{"type":"direct","tag":"egress"},{"type":"block","tag":"deny"}],
+	  "route":{"rules":[
+	    {"auth_user":["local-user"],"inbound":["local-auth"],"outbound":"egress"},
+	    {"auth_user":["server-user","local-user"],"inbound":["server-in"],"domain":["example.com"],"outbound":"egress"},
+	    {"auth_user":["server-user"],"inbound":["server-in"],"ip_cidr":["192.0.2.1/32"],"outbound":"deny"},
+	    {"auth_user":["local-user"],"outbound":"egress"}
+	  ]}}
+`
+	overlay, err := extractMigrationOverlay([]byte(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overlay.Users) != 1 || overlay.Users[0].Name != "server-user" || len(overlay.Rules) != 2 ||
+		len(overlay.Rules[0].Users) != 1 || overlay.Rules[0].Users[0] != "server-user" {
+		t.Fatalf("non-server authenticated authority escaped the migration boundary: %+v", overlay)
+	}
+	foundBlock := false
+	for _, outbound := range overlay.Outbounds {
+		foundBlock = foundBlock || outbound.Kind == "block"
+	}
+	if !foundBlock {
+		t.Fatalf("server fail-closed authority was not retained: %+v", overlay.Outbounds)
+	}
+}
+
 func TestMigrationOverlayRequiresCertifiedListenerMatch(t *testing.T) {
 	overlay := migrationOverlay{Schema: 1, SourceSHA256: strings.Repeat("0", 64), Protocol: "hysteria2", ListenPort: 443,
 		Users: []migrationUser{{Name: "demo-old", Password: "secret"}}}

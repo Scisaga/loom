@@ -42,6 +42,7 @@ type migrationRule struct {
 
 type migrationOutbound struct {
 	Tag           string `json:"tag"`
+	Kind          string `json:"kind,omitempty"`
 	BindInterface string `json:"bind_interface,omitempty"`
 }
 
@@ -63,7 +64,9 @@ func (overlay migrationOverlay) validate() error {
 	}
 	outbounds := map[string]bool{}
 	for index, outbound := range overlay.Outbounds {
-		if outbound.Tag == "" || index > 0 && overlay.Outbounds[index-1].Tag >= outbound.Tag {
+		if outbound.Tag == "" || outbound.Kind != "" && outbound.Kind != "direct" && outbound.Kind != "block" ||
+			outbound.Kind == "block" && outbound.BindInterface != "" ||
+			index > 0 && overlay.Outbounds[index-1].Tag >= outbound.Tag {
 			return errors.New("migration overlay outbounds are invalid")
 		}
 		outbounds[outbound.Tag] = true
@@ -161,6 +164,7 @@ func extractMigrationOverlay(body []byte) (migrationOverlay, error) {
 		return migrationOverlay{}, errors.New("legacy server runtime collections are missing")
 	}
 	overlay := migrationOverlay{Schema: 1}
+	serverInboundTag := ""
 	sum := sha256.Sum256(body)
 	overlay.SourceSHA256 = hex.EncodeToString(sum[:])
 	for _, raw := range inbounds {
@@ -188,6 +192,7 @@ func extractMigrationOverlay(body []byte) (migrationOverlay, error) {
 			return migrationOverlay{}, errors.New("legacy server inbound is unsupported")
 		}
 		overlay.Protocol, overlay.ListenPort, overlay.Users = inbound.Type, inbound.ListenPort, inbound.Users
+		serverInboundTag = inbound.Tag
 	}
 	if overlay.Protocol == "" {
 		return migrationOverlay{}, errors.New("legacy runtime has no server inbound")
@@ -208,6 +213,7 @@ func extractMigrationOverlay(body []byte) (migrationOverlay, error) {
 		}
 		var rule struct {
 			Users        []string `json:"auth_user"`
+			Inbound      []string `json:"inbound,omitempty"`
 			Outbound     string   `json:"outbound"`
 			Domain       []string `json:"domain,omitempty"`
 			DomainSuffix []string `json:"domain_suffix,omitempty"`
@@ -217,16 +223,24 @@ func extractMigrationOverlay(body []byte) (migrationOverlay, error) {
 		if err := decodeStrictLocal(raw, &rule); err != nil {
 			return migrationOverlay{}, errors.New("legacy authenticated route rule is unsupported")
 		}
+		if len(rule.Inbound) != 0 && !containsString(rule.Inbound, serverInboundTag) {
+			continue
+		}
+		serverUsers := rule.Users[:0]
+		for _, user := range rule.Users {
+			if userSet[user] {
+				serverUsers = append(serverUsers, user)
+			}
+		}
+		rule.Users = serverUsers
+		if len(rule.Users) == 0 {
+			continue
+		}
 		sort.Strings(rule.Users)
 		sort.Strings(rule.Domain)
 		sort.Strings(rule.DomainSuffix)
 		sort.Strings(rule.IPCIDR)
 		sort.Ints(rule.Ports)
-		for _, user := range rule.Users {
-			if !userSet[user] {
-				return migrationOverlay{}, errors.New("legacy authenticated rule references an unknown user")
-			}
-		}
 		overlay.Rules = append(overlay.Rules, migrationRule{Users: rule.Users, Outbound: rule.Outbound,
 			Domain: rule.Domain, DomainSuffix: rule.DomainSuffix, IPCIDR: rule.IPCIDR, Ports: rule.Ports})
 		referenced[rule.Outbound] = true
@@ -244,10 +258,14 @@ func extractMigrationOverlay(body []byte) (migrationOverlay, error) {
 			Tag           string `json:"tag"`
 			BindInterface string `json:"bind_interface,omitempty"`
 		}
-		if err := decodeStrictLocal(raw, &outbound); err != nil || outbound.Type != "direct" {
+		if err := decodeStrictLocal(raw, &outbound); err != nil || outbound.Type != "direct" && outbound.Type != "block" {
 			return migrationOverlay{}, errors.New("legacy authenticated rule requires an unsupported outbound")
 		}
-		overlay.Outbounds = append(overlay.Outbounds, migrationOutbound{Tag: outbound.Tag, BindInterface: outbound.BindInterface})
+		kind := ""
+		if outbound.Type == "block" {
+			kind = "block"
+		}
+		overlay.Outbounds = append(overlay.Outbounds, migrationOutbound{Tag: outbound.Tag, Kind: kind, BindInterface: outbound.BindInterface})
 		delete(referenced, outbound.Tag)
 	}
 	if len(referenced) != 0 {
@@ -258,6 +276,15 @@ func extractMigrationOverlay(body []byte) (migrationOverlay, error) {
 		return migrationOverlay{}, err
 	}
 	return overlay, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func loadMigrationOverlay(path string) (*migrationOverlay, error) {
@@ -339,6 +366,10 @@ func applyMigrationOverlay(config string, profile controlServerProfile, path str
 	}
 	mapped := map[string]string{}
 	for _, outbound := range overlay.Outbounds {
+		if outbound.Kind == "block" {
+			mapped[outbound.Tag] = "loom-server-block"
+			continue
+		}
 		sum := sha256.Sum256([]byte(outbound.Tag + "\x00" + outbound.BindInterface))
 		tag := "loom-migration-" + hex.EncodeToString(sum[:6])
 		if tags[tag] {

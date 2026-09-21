@@ -55,8 +55,9 @@ sudo ./install.sh --upgrade \
   --server-migration-source /etc/loom/sing-box/v2/config.json
 ```
 
-该命令只接受 owner-only 旧配置，只提取旧公网 listener 的用户、`auth_user` ACL 和 ACL 直接引用的
-`direct` 出站；输出固定为 `/var/lib/loom-device/migration-overlay.json`（`0600`），并打印不含秘密的源摘要。
+该命令只接受 owner-only 旧配置，只提取旧公网 listener 的用户、属于该 listener 的 `auth_user` ACL、
+ACL 直接引用的 `direct` 出站及映射到新运行时 fail-closed 出站的 `block` 规则；同进程中其他认证入口的
+用户和规则不会迁入。输出固定为 `/var/lib/loom-device/migration-overlay.json`（`0600`），并打印不含秘密的源摘要。
 存在 overlay 时签名 runtime readback 必须为 `exact=false`。所有 access 已使用新凭据且真实业务、报告和重启
 恢复均通过后，操作者用 stage 时的精确摘要删除它，再重启唯一 service：
 
