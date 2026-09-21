@@ -938,11 +938,24 @@ func integrateEnrollmentNetworkIntent(projection *Projection, intent EnrollmentI
 	node := NetworkNode{ID: intent.DeviceID, Name: intent.Name, Platform: intent.Platform,
 		Roles: append([]string(nil), intent.Roles...), Server: claimedServer}
 	if existing, found := networkNode(projection.NetworkIntent, intent.DeviceID); found {
-		existing.DNS = nil
-		existing.Components = nil
-		existing.ProbeTargets = nil
-		existing.DistributionURLs = nil
-		left, _ := canonical(existing)
+		// A rejoining device proves only the server facts that can originate on
+		// that device.  Location/provider and node-level overrides remain
+		// certified NetworkIntent facts: the claim neither carries nor clears
+		// them.  Compare normalized copies so the check cannot mutate the
+		// authoritative node through the Server pointer shared by the value copy.
+		comparable := existing
+		comparable.DNS = nil
+		comparable.Components = nil
+		comparable.ProbeTargets = nil
+		comparable.DistributionURLs = nil
+		if comparable.Server != nil {
+			server := *comparable.Server
+			server.Country = ""
+			server.City = ""
+			server.Provider = ""
+			comparable.Server = &server
+		}
+		left, _ := canonical(comparable)
 		right, _ := canonical(node)
 		if !bytes.Equal(left, right) {
 			return errors.New("existing-node rejoin does not match certified network intent")

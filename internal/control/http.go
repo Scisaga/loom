@@ -80,7 +80,12 @@ func (server *Server) Serve(ctx context.Context, reportHandler http.Handler) err
 	servers := []*http.Server{
 		{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 		{Handler: reportHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
-		{Handler: server.AdminHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
+		// A local operation may need two certified transitions (expire an old
+		// enrollment, then open its replacement).  Cutting the response off at
+		// the ordinary HTTP timeout left callers with EOF after both transitions
+		// had committed.  The root-only socket has its own bounded operation
+		// client and may wait long enough to return that authoritative result.
+		{Handler: server.AdminHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 2 * time.Minute},
 		{Handler: server.DeviceHandler(), ConnContext: endpointConnContext, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
 	}
 	errorsOut := make(chan error, 4)

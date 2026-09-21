@@ -532,7 +532,7 @@ func cmdControlWrite(args []string) error {
 	origin := strings.TrimRight(*endpoint, "/")
 	if local {
 		origin = "http://loom.local"
-		client = &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		client = &http.Client{Timeout: 2 * time.Minute, Transport: &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", *socket)
 		}}}
 	} else {

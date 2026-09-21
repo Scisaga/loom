@@ -192,18 +192,29 @@ func TestSchema2ClientPlatformsRejectServerResponsibilitiesAtBothBoundaries(t *t
 
 func TestExistingNodeRejoinKeepsCertifiedNodeFacts(t *testing.T) {
 	intent := testNetworkIntent(t)
+	intent.Nodes[0].Server.Country = "DE"
+	intent.Nodes[0].Server.City = "Berlin"
+	intent.Nodes[0].Server.Provider = "demo-provider"
 	projection := Projection{Schema: 1, NetworkIntent: &intent}
 	node := intent.Nodes[0]
 	enrollment := EnrollmentIntent{Schema: enrollmentSchemaV2, DeviceID: node.ID, Name: node.Name,
 		Platform: node.Platform, Roles: node.Roles, DestinationGrants: []string{"demo-policy"},
 		Server: &ServerIntent{Direction: node.Server.Direction, PublicDataIngress: node.Server.PublicDataIngress, EgressCapable: true}}
-	if err := integrateEnrollmentNetworkIntent(&projection, enrollment, node.Server); err != nil {
+	claim := *node.Server
+	claim.Country = ""
+	claim.City = ""
+	claim.Provider = ""
+	if err := integrateEnrollmentNetworkIntent(&projection, enrollment, &claim); err != nil {
 		t.Fatal(err)
 	}
 	if len(projection.NetworkIntent.Nodes) != len(intent.Nodes) {
 		t.Fatalf("rejoin duplicated the certified node: %+v", projection.NetworkIntent.Nodes)
 	}
-	changed := *node.Server
+	kept := projection.NetworkIntent.Nodes[0].Server
+	if kept.Country != "DE" || kept.City != "Berlin" || kept.Provider != "demo-provider" {
+		t.Fatalf("rejoin changed certified location facts: %+v", kept)
+	}
+	changed := claim
 	changed.PublicEndpoint = "192.0.2.99"
 	if err := integrateEnrollmentNetworkIntent(&projection, enrollment, &changed); err == nil {
 		t.Fatal("rejoin changed the certified server endpoint")

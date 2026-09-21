@@ -126,7 +126,9 @@ claim 或 complete 后才形成无法完成的事务。Linux 才允许 server �
 一次性迁移既有基础设施节点复用同一个 EnrollmentTransaction/DeviceAuthorization 模型，不增加 rejoin
 registry。只有本机 root 管理 socket 可提交 `existing-node.rejoin`；请求只能引用已经存在于认证
 `NetworkIntent`、尚无 schema-2 authorization 的精确节点 ID，并从该节点读取名称、平台、角色、方向和
-egress 责任。管理员只补规范排序的 policy grant。设备 claim 的 server 事实必须与认证节点完全一致，
+egress 责任。管理员只补规范排序的 policy grant。设备 claim 的 endpoint、入站端口、协议和 WG 公钥
+必须与认证节点完全一致；country、city、provider 以及节点级 DNS、组件、探测和分发覆盖仍由
+`NetworkIntent` 保留，claim 既不能提交也不能清空这些权威事实。
 批准仍是单份 schema-2 complete Material。旧部署凭据在设备外部迁移期间继续存在并不使其进入新模型；
 只有新 head、实际流量和新签名报告回读后，部署步骤才可删除旧凭据。
 - `rejected`、`expired`、`cancelled`：终态，不生成设备权限。
