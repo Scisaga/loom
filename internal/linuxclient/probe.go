@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -16,26 +18,32 @@ import (
 // the selector has been read back. DNS is deliberately carried over UDP so the
 // one bounded probe covers the three issue-required data-plane classes.
 func BusinessProbe(ctx context.Context) ProbeResult {
-	return businessProbe(ctx, "1.1.1.1")
+	return businessProbe(ctx, "1.1.1.1", "https://www.baidu.com/")
 }
 
-func businessProbe(ctx context.Context, dnsAddress string) ProbeResult {
+func businessProbe(ctx context.Context, dnsAddress, target string) ProbeResult {
 	started := time.Now()
 	probeContext, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	if err := probeTCP(probeContext, dnsAddress); err != nil {
+	if err := probeTCP(probeContext, dnsAddress, target); err != nil {
 		return ProbeResult{Metric: time.Since(started), Description: "TCP: " + err.Error()}
 	}
-	if err := probeDNS(probeContext, dnsAddress); err != nil {
+	parsed, _ := url.Parse(target)
+	if err := probeDNS(probeContext, dnsAddress, parsed.Hostname()); err != nil {
 		return ProbeResult{Metric: time.Since(started), Description: "UDP/DNS: " + err.Error()}
 	}
 	return ProbeResult{Available: true, Metric: time.Since(started), Description: "TCP, UDP and DNS succeeded"}
 }
 
-func probeTCP(ctx context.Context, dnsAddress string) error {
+func probeTCP(ctx context.Context, dnsAddress, target string) error {
 	dnsServer, err := dnsEndpoint(dnsAddress)
 	if err != nil {
 		return err
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" ||
+		parsed.Port() != "" && parsed.Port() != "443" {
+		return errors.New("business probe target is invalid")
 	}
 	resolver := &net.Resolver{
 		PreferGo: true,
@@ -43,13 +51,23 @@ func probeTCP(ctx context.Context, dnsAddress string) error {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "udp", dnsServer)
 		},
 	}
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second, Resolver: resolver},
-		Config: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "www.baidu.com"}}
-	connection, err := dialer.DialContext(ctx, "tcp", "www.baidu.com:443")
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true,
+		DialContext:     (&net.Dialer{Timeout: 5 * time.Second, Resolver: resolver}).DialContext,
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
 		return err
 	}
-	return connection.Close()
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 400 {
+		return fmt.Errorf("business probe returned HTTP status %d", response.StatusCode)
+	}
+	_, err = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	return err
 }
 
 func dnsQuery(name string) ([]byte, uint16, error) {
@@ -79,8 +97,8 @@ func dnsQuery(name string) ([]byte, uint16, error) {
 	return body, id, nil
 }
 
-func probeDNS(ctx context.Context, dnsAddress string) error {
-	query, id, err := dnsQuery("example.com")
+func probeDNS(ctx context.Context, dnsAddress, name string) error {
+	query, id, err := dnsQuery(name)
 	if err != nil {
 		return err
 	}

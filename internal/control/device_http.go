@@ -588,7 +588,19 @@ func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead
 		authorization.DestinationGrants = append([]string(nil), transaction.Intent.DestinationGrants...)
 		authorization.Server = nil
 		authorization.RuntimeKey = base64.RawURLEncoding.EncodeToString(runtimeKey)
-		authorization.RuntimeContract = runtimeContractCurrent
+		// A newly-created access node has no browser-supplied probe target: that
+		// field belongs to certified NetworkIntent, not Enrollment. Existing-node
+		// rejoin can activate the current contract immediately when its certified
+		// target is already present and covered by the requested grants. A brand
+		// new node remains on the DNS contract until an administrator adds that
+		// authority and explicitly upgrades its runtime contract.
+		authorization.RuntimeContract = runtimeContractViewDNS
+		if !contains(transaction.Intent.Roles, "access") {
+			authorization.RuntimeContract = runtimeContractCurrent
+		} else if node, found := networkNode(projection.NetworkIntent, transaction.Intent.DeviceID); found &&
+			authorizedBusinessProbeTargets(projection.NetworkIntent, transaction.Intent.DestinationGrants, node.ProbeTargets) {
+			authorization.RuntimeContract = runtimeContractCurrent
+		}
 		requestMaterialID = requestID
 	}
 	projected, err := cloneProjection(projection)

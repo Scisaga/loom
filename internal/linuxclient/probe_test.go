@@ -32,3 +32,11 @@ func TestDNSEndpoint(t *testing.T) {
 		})
 	}
 }
+
+func TestProbeTCPRejectsUncertifiedTargetShapesBeforeDial(t *testing.T) {
+	for _, target := range []string{"http://example.com/", "https://example.com:444/", "https://user@example.com/", "not-a-url"} {
+		if err := probeTCP(t.Context(), "192.0.2.53", target); err == nil {
+			t.Fatalf("probeTCP accepted %q", target)
+		}
+	}
+}

@@ -326,7 +326,7 @@ func TestDeviceRuntimeUpgradePreservesHistoricalProjectionUntilNewMaterial(t *te
 	public, _, _ := ed25519.GenerateKey(rand.Reader)
 	intent := testNetworkIntent(t)
 	intent.Nodes = append([]NetworkNode{{ID: "d-0123456789", Name: "Demo client", Platform: "linux",
-		Roles: []string{"access"}}}, intent.Nodes...)
+		Roles: []string{"access"}, ProbeTargets: []string{"https://example.com/health"}}}, intent.Nodes...)
 	authorization := DeviceAuthorization{Schema: 2, DeviceID: "d-0123456789", DestinationGrants: []string{"demo-policy"},
 		DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), RuntimeKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Floor: 1}
 	projection := Projection{Schema: 1, NetworkIntent: &intent, Applied: []string{"demo-import"},
@@ -369,8 +369,24 @@ func TestDeviceRuntimeUpgradePreservesHistoricalProjectionUntilNewMaterial(t *te
 	}
 	view, found := projectDeviceView(next, authorization.DeviceID)
 	if !found || view.Validate() != nil || view.RuntimeContract != runtimeContractViewDNS ||
-		strings.Join(view.DNS, ",") != "1.1.1.1" {
+		strings.Join(view.DNS, ",") != "1.1.1.1" || len(view.BusinessProbeTargets) != 0 {
 		t.Fatalf("certified DNS was not projected into the upgraded DeviceView: found=%t view=%+v", found, view)
+	}
+	upgrade.RuntimeContract = runtimeContractProbe
+	material = Material{Schema: MaterialSchema, Kind: "device.runtime-upgrade", RequestID: "demo-runtime-upgrade-probe",
+		BaseHead: "sha256:" + strings.Repeat("5", 64), DeviceRuntimeUpgrade: &upgrade}
+	next, err = Reduce(next, material, "sha256:"+strings.Repeat("6", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, found = projectDeviceView(next, authorization.DeviceID)
+	if !found || view.Validate() != nil || view.RuntimeContract != runtimeContractProbe ||
+		strings.Join(view.BusinessProbeTargets, ",") != "https://example.com/health" {
+		t.Fatalf("certified business probe target was not projected into the upgraded DeviceView: found=%t view=%+v", found, view)
+	}
+	next.NetworkIntent.Nodes[0].ProbeTargets = []string{"https://outside.example/health"}
+	if _, found := projectDeviceView(next, authorization.DeviceID); found {
+		t.Fatal("runtime contract accepted a business probe target outside the authorized Service matchers")
 	}
 }
 

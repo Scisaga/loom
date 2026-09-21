@@ -132,6 +132,12 @@ HostAdapter 可以按交付形态投影本机 capture 配置，但不得增加�
 一次完整业务成功则可以证明当时整条候选可用。客户端可以复用认证的服务器段观测，
 但不得为了把所有候选变绿而逐条扫描完整业务路径。
 
+完整业务探测的 DNS 地址和 HTTPS 目标都来自同一份认证 `DeviceView`：DNS 是 NetworkIntent 的全局值与
+节点逐项覆盖，HTTPS 目标是该节点已有 `probe_targets` 的只读投影。目标必须被设备获授 policy 下的
+Service matcher 精确覆盖；客户端用认证 DNS 同时解析 HTTPS 目标并执行 UDP/DNS 查询，不得改用主机
+resolver、硬编码公网域名或为使探测通过而扩宽服务器 ACL。服务器仍只允许认证 DNS 的 53 端口和 Service
+matcher；因此探测成功证明的是该设备实际获授权的业务链，而不是任意公网可达性。
+
 ICMP 结果只能作为地址 RTT 提示：
 
 - ICMP 成功不能把候选改成 `available`；

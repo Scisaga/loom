@@ -114,7 +114,11 @@ func (options Options) probeForView(view control.DeviceView) Probe {
 		return options.Probe
 	}
 	dns := view.DNS[0]
-	return func(ctx context.Context) ProbeResult { return businessProbe(ctx, dns) }
+	target := "https://www.baidu.com/"
+	if len(view.BusinessProbeTargets) != 0 {
+		target = view.BusinessProbeTargets[0]
+	}
+	return func(ctx context.Context) ProbeResult { return businessProbe(ctx, dns, target) }
 }
 
 func linuxDeploymentReadback(options Options) (*control.DeploymentReadback, error) {
