@@ -1,9 +1,10 @@
 # Android 本机配置模型
 
-[重建入口](README.md) · [客户端运行与选路模型](client-runtime-model.md)
+[设计入口](../README.md) · [客户端运行与选路模型](client-runtime-model.md)
 
 本文定义 Android 如何在同一应用中保存、命名、浏览和切换多份连接配置。
-它只是现有 `DeviceIdentity` 、`CertifiedLKG` 和 `Preference` 的本机聚合边界，
+它只是现有 `DeviceIdentity` 、`CertifiedLKG` 和 `Preference` 的本机聚合边界；每份
+`CertifiedLKG` 都包含签名 `DeviceView`、连续成员表证明、签发者事实前沿及该 profile 的单调 floor，
 不是第九个网络权威概念，也不改变一台 Android 设备同时只运行一条 VPN 的约束。
 
 ## 有限概念
@@ -83,7 +84,7 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 一条正常链：用户在配置页创建“Loom B” → 为该行完成私有 Enrollment 并保存其 LKG
 → 在连接页选中 Loom B → 点击连接 → VPN 按 Loom B 的 `id` 读取、应用并回读真实结果
 → active 变为该 `id` → 应用标题显示 `LOOM · Loom B`，辅助行显示 Android、连接状态、
-设备名称或认证版本。内部 ID、Head、digest 和长哈希不得出现在标题或配置选择中。
+设备名称或成员表证明状态。内部 ID、成员表/事实摘要和长哈希不得出现在标题或配置选择中。
 
 最小测试集只覆盖风险等价类：
 
@@ -94,6 +95,6 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 ## 禁止恢复
 
 - 不恢复旧 profile manager、每配置 manager、切换 phase/gate/journal 或后台调度器；
-- 不用 DeviceView 的设备名、Head/digest 或随机 ID 代替用户配置名；
+- 不用 DeviceView 的设备名、成员表/事实摘要或随机 ID 代替用户配置名；
 - 不把 viewed 投影为已连接，不持久化 active，不从 UI 倒写运行事实；
 - 不保留旧单槽双读、跨 profile fallback、公开配置下载或 v1 路径。

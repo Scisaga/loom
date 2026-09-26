@@ -36,3 +36,4 @@ measurements.jsonl
 /deploy/
 /docs/status.md
 /docs/status/
+loom.deploy.yaml

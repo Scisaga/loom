@@ -1,6 +1,6 @@
 [Unit]
 Description=Loom certified release publisher
-Documentation=file:/opt/loom/docs/rebuild/control-model.md
+Documentation=file:/opt/loom/docs/core/control-model.md
 After=network-online.target loom-control.service
 Wants=network-online.target loom-control.service
 

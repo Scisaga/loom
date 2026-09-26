@@ -1,11 +1,14 @@
 # Loom Windows client
 
-`clients/windows` is the Windows HostAdapter for the v2 client contract. The
-authoritative model is [Client runtime model](../../docs/rebuild/client-runtime-model.md);
+This document defines the client contract. Business acceptance and
+release status are tracked in [implementation status](../../docs/progress.md).
+
+`clients/windows` is the Windows HostAdapter for the shared client contract. The
+authoritative model is [Client runtime model](../../docs/clients/client-runtime-model.md);
 enrollment and private transport are defined by
-[Enrollment endpoint model](../../docs/rebuild/enrollment-endpoint-model.md).
-This package does not define a second enrollment protocol, candidate store,
-health authority, or selection state machine.
+[Enrollment endpoint model](../../docs/core/enrollment-endpoint-model.md).
+All editions use the same enrollment, candidate, observation, and selection
+semantics.
 
 ## Normal user flow
 
@@ -13,9 +16,9 @@ All three editions use the same native Misaka UI and the same private device
 wire:
 
 ```text
-Control creates Device and BootstrapInvite
+Effective control signs an Invite for exact duties and grants
   → Windows imports QR / .loom-invite / clipboard text
-  → private tunnel claim or resume
+  → local device key generation and issuer-only private claim or resume
   → DPAPI atomic profile commit
   → connect
   → HostAdapter starts the certified runtime
@@ -30,14 +33,18 @@ The sidebar `+` action opens the import panel; **加入并保存** is the only n
 join action. A pending join can be resumed with the same capability, request ID,
 and identity. A profile is added to the local index only after its protected
 authority has committed. The index contains UI names, ordering, selection, and
-the last connected profile only; it is never network authority.
+the last requested profile for reconnect only; it is never network authority or
+proof that the profile connected successfully. QR Invite signing and claim
+validation restrict duties to `access`; a request for `control` through another
+medium waits for the old members' majority certificate.
 
 Each profile owns exactly one `DeviceIdentity`, `CertifiedLKG`, and
 `Preference`. Installed stores these under `%ProgramData%\Loom` with machine
 DPAPI; Portable editions use `%LocalAppData%\LoomPortable` with user DPAPI. The
 protected state contains the Ed25519 identity, stable claim request ID,
-capability, rollback floor, irreversible v2 latch, complete certified LKG, and
-preference. Plaintext private keys and partial LKGs are invalid. A new LKG is
+capability, continuous member proof, signer fact frontier, rollback floor,
+irreversible anti-rollback latch, complete certified LKG, and preference.
+Plaintext private keys and partial LKGs are invalid. A new LKG is
 replaced only after signature, identity, floor, canonical runtime, component,
 and HostAdapter preflight checks succeed and the protected staging file reads
 back exactly.
@@ -48,18 +55,19 @@ stable. Applying a candidate is not success: `Selection` is the value returned
 by the authenticated Windows selector after the write. `Observation` is created
 only by real transport/business results—TCP with TLS where applicable and
 UDP/DNS—not by ICMP, process existence, a listener, or a UI color. One failed
-candidate may cause one same-exit fallback; it does not create a scheduler,
-sample window, generation, or measurement authority.
+candidate may cause one same-exit fallback. Business observations bind Service,
+candidate, actual target and network generation; a result for one Service does
+not establish another Service's health.
 
-The UI keeps the existing native Direct2D/DirectWrite Misaka layout, profile
+The UI uses the native Direct2D/DirectWrite Misaka layout, profile
 interactions, favicon, tray behavior, DPI handling, and SCM broker. The EXE has
 no WebView2, Electron, .NET, Qt, or bundled-font dependency.
 
 ## Editions
 
-Installed, Portable TUN, and Portable Mixed differ only in delivery and
-HostAdapter behavior. They do not duplicate enrollment, projection, selection,
-fallback, observation, or reporting rules.
+Installed, Portable TUN, and Portable Mixed share enrollment, projection,
+selection, fallback, observation, and reporting rules. Delivery and HostAdapter
+behavior vary by edition.
 
 | Edition | HostAdapter and delivery |
 |---|---|
@@ -78,9 +86,8 @@ delete a disconnected profile in the UI to delete its identity intentionally.
 
 - `internal/clientjoin` strictly decodes bounded bootstrap QR images, files, or
   text and accepts only canonical `BootstrapInvite` values.
-- `internal/deviceclient` owns the reusable private claim/resume/sync/report wire
-  and the Windows DPAPI profile store. Windows does not copy Android/Linux
-  protocol state machines.
+- `internal/deviceclient` owns the shared private claim/resume/sync/report wire
+  and the Windows DPAPI profile store.
 - `internal/clientmodel` validates the complete runtime and projects certified
   routes into runtime candidates.
 - `internal/clientcomponent` verifies the bundled component signature, hashes,
@@ -90,12 +97,9 @@ delete a disconnected profile in the UI to delete its identity intentionally.
 - `internal/clientadapter` applies and reads the authenticated selector and
   records real TCP/TLS plus UDP/DNS results.
 
-The client never uses the removed public `/loom-client/enroll`, public
-report/config/pull routes, P-256 certificate identity, v1 fallback, Agent,
-scheduler, probe budget, `min_samples`, generation/measurement authority, or a
-second candidate store. If a pre-v2 Windows identity is ever found, migration is
-an explicit one-way Rejoin/rekey that preserves stable Device meaning and the
-rollback/latch boundary; it is not an automatic fallback.
+The client accepts only private authenticated device data and a complete
+certified `DeviceView`. Current runtime state comes from verified LKG and
+HostAdapter readback.
 
 ## Build
 
@@ -129,7 +133,7 @@ stage/run/run-interactive/collect result must be kept as one audit chain.
 ## Verification boundary
 
 Use the restricted same-host
-[Windows 11 test VM](../../docs/windows-test-vm.md) only as a native executor.
+[Windows 11 test VM](../../docs/operations/windows-test-vm.md) only as a native executor.
 All source, builds, component verification, artifact decisions, and retained
 evidence stay on the repository host. Run `windows-test-vm.sh verify` before
 acceptance. The VM can validate x64 GUI, DPAPI, SCM, MSI, TUN, route cleanup,
@@ -155,7 +159,7 @@ The committed PNGs in `testdata/ui-golden` come from the production
 `portableGUI`, Win32 controls, Direct2D/DirectWrite, and the existing
 `WM_PRINT` memory capture. They are not a second renderer. Linux cross-compiles
 the scenario test executable; the fixed same-host Windows 11 VM renders eight
-synthetic `demo-*` scenes at 96 DPI and `860×600px`, without MSI installation or
+synthetic `demo-*` scenes at 96 DPI and `876×614px`, without MSI installation or
 real identity data.
 
 From the repository root run:

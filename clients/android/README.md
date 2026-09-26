@@ -1,15 +1,18 @@
-# Loom Android v2 minimal client
+# Loom Android client
 
-The Android app consumes one private, quorum-certified `DeviceView`. The view
+This document defines the client contract. Business acceptance and
+release status are tracked in [implementation status](../../docs/progress.md).
+
+The Android app consumes a private `DeviceView` signed by an effective control,
+with a continuous control membership proof and signer fact frontier. The view
 contains the authorized route candidates and one canonical sing-box runtime
-profile. No public enrollment endpoint, `current.json`, snapshot registry,
-route-plan scheduler, entry scanner, sampling window, threshold ranker, or v1
-fallback participates in startup.
+profile. Enrollment, configuration sync, and reporting use the private device
+channel defined by the [Enrollment model](../../docs/core/enrollment-endpoint-model.md).
 
 The protected Android Keystore store contains:
 
-- the Ed25519 device identity, bootstrap capability, monotonic head floor, and
-  complete certified LKG as one state record;
+- the Ed25519 device identity, bootstrap capability, monotonic observed-fact floor,
+  control membership proof, and complete signed LKG as one state record;
 - at most one certified candidate awaiting runtime acceptance;
 - the user's Direct / Auto / fixed-exit preference;
 - bounded business observations keyed by network generation.
@@ -20,11 +23,13 @@ client pins its SPKI and proves the device key before HTTP is available.
 
 `RouteCandidate.ID` maps directly to the same sing-box outbound and
 `RouteCandidate.Scope` maps directly to its selector. The shared Go model makes
-one deterministic choice for each scope. Kotlin only applies that choice and
+one deterministic choice for each authorized Service scope. Kotlin only applies that choice and
 publishes selector readback. Missing, expired, and prior-network results remain
 `unknown`; Direct never receives a synthetic measurement. A selected non-Direct
-candidate receives at most one real DNS+HTTPS result per network generation.
-If that result is unavailable, the model may choose one same-exit fallback and
+candidate receives the minimum real DNS+HTTPS results needed for the current Service
+and network generation. Each result binds the actual target and candidate; a success
+for one Service does not establish another Service's health.
+If the selected candidate is unavailable, the model may choose one same-exit fallback and
 the host performs one second business check—there is no full candidate scan.
 
 A candidate becomes current only after `Libbox.checkConfig`, encrypted
@@ -56,12 +61,12 @@ audited AAR:
 ANDROID_HOME=/opt/android-sdk ./scripts/build-release.sh
 ```
 
-The package remains `io.github.scisaga.loom`; preserve the existing PKCS12 key
+The package ID remains `io.github.scisaga.loom`; preserve its PKCS12 signing key
 for upgrade continuity. A clean-install acceptance must use the signed release
-APK, import a `.loom-invite` through the normal file or QR UI, receive operator
-approval, connect through the normal VPN action, and confirm the signed report
-from the private control service. Cellular/Wi-Fi transition coverage belongs to
-the separate network-switch acceptance item, not this build.
+APK, import a `.loom-invite` through the normal file or QR UI, complete claim with
+the issuing control, connect through the normal VPN action, and confirm the signed report
+from the private control service. Cellular/Wi-Fi transition evidence is required
+for runtime acceptance and is tracked in [implementation status](../../docs/progress.md).
 
 ## Visual review in VS Code
 

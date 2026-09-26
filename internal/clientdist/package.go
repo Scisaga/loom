@@ -65,7 +65,7 @@ type Manifest struct {
 }
 
 // BuildInput contains all bytes that affect the output. The builder never
-// reads the clock, environment, network, or source paths (design.md §12).
+// reads the clock, environment, network, or source paths.
 type BuildInput struct {
 	Loom       []byte
 	SingBox    []byte
@@ -481,7 +481,7 @@ persistent values; actual Selection is always selector readback under /run.
 
 const systemdService = `[Unit]
 Description=Loom certified Linux client runtime
-Documentation=file:/opt/loom/docs/rebuild/client-runtime-model.md
+Documentation=file:/opt/loom/docs/clients/client-runtime-model.md
 After=network-online.target
 Wants=network-online.target
 Conflicts=loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service
@@ -492,8 +492,7 @@ WorkingDirectory=/var/lib/loom-device
 ExecStartPre=/usr/bin/rm -f /run/loom-client/status.json
 ExecStart=/usr/local/lib/loom-client/current/loom client run
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
-RestartSec=3s
+Restart=no
 TimeoutStopSec=20s
 KillMode=mixed
 UMask=0077

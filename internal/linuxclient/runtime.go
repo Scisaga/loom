@@ -772,6 +772,9 @@ func Preflight(deviceState, singBox string) error {
 		if err != nil {
 			return err
 		}
+		if err := requireIsolatedNetworkNamespace(); err != nil {
+			return err
+		}
 	}
 	if err := protectLegacyServerRuntime(legacySingBoxConfig); err != nil {
 		if overlay, overlayErr := loadMigrationOverlay(DefaultMigrationOverlay); overlayErr != nil || overlay == nil {
@@ -1099,6 +1102,9 @@ func runGeneration(ctx context.Context, options Options, allowFetch bool) (retEr
 	}
 	lkg, err := accessView(selected)
 	if err != nil {
+		return err
+	}
+	if err := requireIsolatedNetworkNamespace(); err != nil {
 		return err
 	}
 	if lkg.View.ServerRuntime == nil {

@@ -112,6 +112,9 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 			t.Fatalf("legacy runtime entry remains: %q", forbidden)
 		}
 	}
+	if strings.Contains(systemdService, "Restart=always") || !strings.Contains(systemdService, "Restart=no") {
+		t.Fatal("Linux client service may retry a failed host network activation")
+	}
 	for _, required := range []string{"client run", "client preflight", "--upgrade", "--server-migration-source",
 		"client stage-server-migration", "migration_overlay=/var/lib/loom-device/migration-overlay.json",
 		"WorkingDirectory=/var/lib/loom-device", "ReadWritePaths=/var/lib/loom-device /run/loom-client /etc/wireguard",
@@ -125,6 +128,9 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 	}
 	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl stop loom-client-v2.service") {
 		t.Fatal("installer stops the previous runtime before the ownership preflight")
+	}
+	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl enable loom-client.service") {
+		t.Fatal("installer enables the runtime before the network namespace preflight")
 	}
 	if strings.Index(installScript, "client stage-server-migration") > strings.Index(installScript, "client preflight") {
 		t.Fatal("installer preflights before staging the bounded migration overlay")

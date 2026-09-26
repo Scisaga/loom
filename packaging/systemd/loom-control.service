@@ -1,6 +1,6 @@
 [Unit]
 Description=Loom private v2 control authority
-Documentation=file:/opt/loom/docs/rebuild/control-model.md
+Documentation=file:/opt/loom/docs/core/control-model.md
 After=network-online.target
 Wants=network-online.target
 Conflicts=loom-bootstrap-v2.service loom-client-v2-report.service

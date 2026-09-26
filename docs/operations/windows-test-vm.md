@@ -1,7 +1,7 @@
 # Windows 11 原生测试虚拟机
 
-[客户端接入设计](client-access.md#84-开发构建与验证环境) ·
-[Windows 客户端](../clients/windows/README.md)
+[客户端运行与选路模型](../clients/client-runtime-model.md) ·
+[Windows 客户端](../../clients/windows/README.md)
 
 这台虚拟机只承担 Loom Windows 客户端的**原生执行与验收**。源码、Git 历史、平台
 签名能力、服务端凭据和发布判断全部留在 Linux 工作树；虚拟机只接收本次测试所需的
