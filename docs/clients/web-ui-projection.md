@@ -8,16 +8,35 @@
 
 ## 私有入口与两种证书
 
-`control.loom` 是加入 Loom 后可解析的私有 HTTPS 名称，指向已认证 control 的私有 Web listener；
-多个 control 可以提供同一入口名，各自的网站证书必须覆盖 `control.loom`，设备须信任已固定的网站
-证书信任根。客户端按真实连接结果选择可达入口；DNS 解析只提供地址，不证明健康、成员资格或管理权限。该名称不作为公开互联网域名使用，
-公网 Nginx 永远不能反代页面或管理 API。回环入口也使用经验证的网站证书。
+`control.loom` 是加入 Loom 后可解析的私有 HTTPS 名称，指向已认证 control 的私有 Web listener，
+地址来自各 control 处于 serving 的 web 模式 `EndpointGeneration`；多个 control 可以提供同一入口名，
+各自的网站证书必须覆盖 `control.loom`。已入网客户端从已验证的 DeviceView 取得
+`NetworkIntent` 中的网站证书信任根；独立浏览器不能直接读取 DeviceView，须经受保护安装输入或已认证
+客户端的受信本机交付取得并核对同一公开根。导入浏览器前须验证根证书带 critical NameConstraints、
+允许 dNSName 仅限 `.loom`，且以 excluded IP 子树 `0.0.0.0/0`、`::/0` 排除所有 IP SAN；
+拒绝无约束根，只有目标浏览器经实际验证执行 DNS 与 IP 约束才可导入该根。
+网站根私钥不得在 control 上；control 仅持有 SAN 恰为 `control.loom` 的网站叶证书及对应私钥，不含其他 DNS、IP、URI 或 email 名称，且不能签发其他网站证书。
+操作者在与所有 control 隔离的离线签发介质保管根私钥，在管理页或本机 CLI 的到期前提醒出现后手工续签。
+每台 control 本机生成并保留叶私钥，只交出经成员身份认证、绑定节点及入口的 CSR；操作者核对 CSR 签名、
+成员证明、公钥、名称和用途后按固定模板签发，通过受保护渠道把证书链交回。新叶证书先经本机私钥匹配和验链，
+在 prepared 阶段以候选地址和 SNI `control.loom` 预检 TLS 与 Web；新代 serving 后再从目标浏览器回读，
+成功才让旧代退出。根不变时无需重导入；若续签未完成且旧叶已过期，
+页面入口 TLS 失败关闭，管理员从受保护的本机状态或 CLI 得到到期诊断，不能点击证书警告继续访问。
+admin 页面与本机 `control inspect` 对每个已知 serving web 入口显示叶证书的到期 UTC 时间和剩余有效期，
+进入 30 天窗口时显著提醒续签；本机 CLI 在 Web TLS 过期后仍可诊断。页面长开跨阈值时更新提示。
+其他 control 的有效期须由认证运行回读提供，缺失或陈旧时显示 `unknown`。提示仅对 admin 可见，
+不进入普通 access 入口页，也不改变 `Material`、`EndpointGeneration` 或 DNS。
+未建立该信任时 TLS 失败关闭；不能从待访问网站、DNS 答案或证书警告页临时接受根。客户端按真实连接结果选择可达入口；DNS 解析只提供地址，
+不证明健康、成员资格或管理权限。该名称不作为公开互联网域名使用，
+公网 Nginx 永远不能反代页面或管理 API。回环连接也以 `control.loom` 作为 TLS 校验名与 SNI，
+使用经验证的网站证书；不能以回环 IP 作为证书名称。
 
 浏览器证书只有两类用途：
 
 - **网站证书**由 Web listener 提供，浏览器据此验证私有 HTTPS 服务；
 - **admin 客户端证书**由管理员浏览器提交，私有服务校验证书链、精确受信叶子、Origin 和管理授权，
-  才开放管理快照及 operation API。
+  才开放管理快照及 operation API。受信叶子名单是 `Projection` 中由普通事实维护的值，所有 control
+  使用同一份，增删管理员经正常 operation 提交。
 
 无需 admin 证书的已入网 `access` 可打开 `https://control.loom` 的静态入口页，页面只说明该私有
 站点可达和如何使用管理员身份；它不返回设备列表、拓扑、成员、策略、事件、部署信息或管理 API。
@@ -41,11 +60,12 @@ flowchart LR
     Q -->|成员多数证书| C
 ```
 
-`WebProjection = f(ValidMaterial, ControlConfig, Observation, Release, Deployment)` 是确定性单向投影。
+`WebProjection = f(ValidMaterial, ControlConfig, Observation, Release, Deployment, NowUTC)` 是确定性单向投影；
+`NowUTC` 由调用方注入，只用于证书剩余时间等展示计算，不进入控制事实。
 可选 Web 缓存删掉后须能重建；签名事实缺失、成员链无效或投影冲突时不能从旧 UI 缓存、
 观测或一次性导入结果补造可写状态。重启先验证网络锚、成员链、事实前沿与当前规范内容，
 再重建页面。不同 control 在事实传播期间可能显示不同的**已知前沿**；页面须标明本地接受、
-已传播情况和冲突，不把本地结果称为全网即时完成。
+已传播情况、冲突，以及因成员移除或换键而作废的事实，不把本地结果称为全网即时完成。
 
 | 层 | 表达 | 权威性及可逆边界 |
 |---|---|---|
@@ -57,7 +77,7 @@ flowchart LR
 
 ```text
 decode_ui(encode_ui(WebProjection)) = WebProjection
-rebuild_ui(verified_inputs)         = WebProjection
+rebuild_ui(verified_inputs, now_utc) = WebProjection
 core_state != inverse(WebProjection)
 ```
 
@@ -70,24 +90,33 @@ Overview、Devices、Device detail、Topology、Live paths、Services、Releases
 | 页面值 | 唯一输入 | 显示重点 |
 |---|---|---|
 | `UIState` | 当前成员链、本 control 已验证的签发者前沿和冲突 | 网络锚、成员、已知前沿、局部可写性及传播状态；不显示不存在的全局 head |
+| 网站叶有效期 | serving web 入口的已验证叶证书 `NotAfter`、认证的远端运行回读与注入的当前 UTC 时间 | admin 显示每个入口的到期时间、剩余有效期、30 天提醒或 `unknown`；不改变签名入口阶段 |
 | `Device` | 当前设备授权与签名 View、presence/runtime 观测 | 四项职责、policy grants、在线与实际运行状态 |
 | `Link` | `NetworkLink` 的 LinkID、资源及其独立 Observation | 同一节点对 WG/hy2 分行，旧规范摘要失效为 unknown |
 | `Path` | Service 范围、首跳资源、有序 LinkID、最终出口及选择 | Direct、Auto、指定出口及真实可用性；不以一个 Service 探测代替另一个 |
 | `Service` | 有效 `NetworkIntent`、matcher、Policy、DNS 与局域网映射 | 精确目标、授权范围、虚拟前缀及网关 |
-| `Release/Deployment` | 签名 catalog、publisher 与设备回读 | 精确制品、应用快照、真实一致性，不显示未回读的 current |
-| `Event` | 不可变签名 Material 与有效设备报告 | 普通事实、成员变更、冲突、撤权和运行变化，不另建事件权威 |
+| `Release/Deployment` | 验签 catalog、`Projection` 期望摘要、publisher 与设备回读 | 精确制品、应用快照、真实一致性，不显示未回读的已应用版本 |
+| `Event` | 不可变签名 Material 与有效设备报告 | 普通事实、成员变更、冲突、撤权和运行变化，脱敏后显示、不含 `RuntimeKey` 等秘密，不另建事件权威 |
+
+Web 服务端以受保护安装信任输入中的发布验签公钥核验签名 catalog 与制品，页面只消费核验后的结果；
+可变 `current` 指针只选择待验 catalog，不授予信任，也不决定 `Projection` 的期望组件。只有精确摘要、
+平台及组件相符，且设备或节点报告实际应用坐标后，页面才显示已应用。最低版本仅在签名发布记录明确
+提供同组件、同平台的可核验约束时判断；未声明时此项不适用，已声明而实际版本不可比较时显示
+`unknown`，不按版本字符串或文件名推断。
 
 邀请发出、设备密钥绑定、授权完成及运行 Ready 分开展示。普通加入不出现
 `awaiting_approval`：签发 Invite 即批准；`control` 入网在多数证书形成前显示“等待成员签名”，
-绝不显示为有效 control。事务 `completed` 只表示授权事实有效，不等于服务已部署或可用；
+绝不显示为有效 control。事务 `completed` 表示加入所需授权事实与成员证书（如需）已验证；
+当前授权仍受撤权和冲突投影约束，不等于服务已部署或可用；
 Ready 要求设备自身及所选路径涉及的 forward/出网节点以当前 View 摘要报告新鲜、匹配的运行回读。
 授权、传输连通、业务探测和部署一致性分别展示；缺失、过期或不匹配统一呈现 `unknown`，
 不因 presence、组件匹配、链路数量或 UI 颜色补成健康。
 
 Topology 由有效连接事实生成；当前路径和健康状态只作颜色叠加，不能改变拓扑权威。
 同一 control 集的成员通过私有认证通道交换有效报告的必要摘要；短暂未见报告时本地显示
-`unknown`，不能把其他成员的陈旧绿色推断为本地可用。WebSocket 首帧是当前脱敏快照，后续只因
-已验证输入变化发送，不触发额外网络测量，也不把原始报告、本机诊断、密钥或私有路径泄露给浏览器。
+`unknown`，不能把其他成员的陈旧绿色推断为本地可用。WebSocket 首帧是当前脱敏快照，后续因
+已验证输入变化或注入时间跨过证书提醒阈值而更新展示，不触发额外网络测量，也不把原始报告、
+本机诊断、密钥或私有路径泄露给浏览器。
 
 ## 正常写入与具体界面
 
@@ -111,14 +140,18 @@ sequenceDiagram
 
 表单仅提交操作种类、必要 payload、稳定 request ID，以及当前对象事实的因果基线/摘要；
 不提交完整 `Projection`、Web snapshot 或全局 `base_head`。过期对象基线返回冲突并保留草稿，
-管理员可回读冲突事实后明确重新提交；并发撤权按控制模型优先，其他不兼容更新暂停该对象生效。
+管理员可回读冲突事实后明确重新提交；并发撤权按控制模型优先，其他不兼容更新使受影响目标暂停
+投影，依赖它的运行授权收口；页面显示冲突并提供签发解决事实的入口。
+不同目标的 Policy 改名和新增 Service 可分别投影；同一 Policy 的不兼容并发修改才暂停该目标。
 普通操作在签发 control 持久接受时返回**本地已接受**，并展示其后增量传播；不能将该响应写成
 “全网已完成”。control 成员操作必须等旧成员多数签同一后继表后才显示资格生效。
 本机 CLI 通过 root-only socket 提交同一 envelope 和事实校验，不能从旁路更改成员或授权。
 
 - **Add Device**：管理员选择 SSH 直接添加、bootstrap 脚本或扫码。扫码仅可签 `access`；
-  SSH/脚本可在目标平台已支持的范围内选择四项职责组合。Invite 明示唯一签发 control、入口、期限和准确 grants；
-  签发后不出现二次批准按钮。申请 control 时展示自动多数签名进度及成员表结果。
+  SSH/脚本可在目标平台已支持的范围内选择四项职责组合。Invite 明示唯一签发 control、目标设备 ID 与平台、
+  入口、期限和准确 grants；签发后不出现二次批准按钮。申请 control 时展示自动多数签名进度及成员表结果；
+  取消已绑定的 control 加入须等待作废该事务的多数证书；若较高轮必须继承已投的原加入提案，
+  可先完成加入再另行移除，作废证书形成前显示待决且不释放设备 ID。
 - **Devices**：普通设备的职责、policy grants 和撤权可由任一有效 control 修改；control 卸任、
   强制撤销及整个 control 节点删除进入多数签名成员操作，不能靠普通设备删除绕过。仅卸任保留该节点其他职责；
   整体删除须在同一多数证书中绑定该节点墓碑，并从页面、授权和依赖投影中原子退出。
@@ -140,8 +173,13 @@ sequenceDiagram
 - 签名事实尚缺依赖或同一对象发生不可兼容冲突时，页面显示待定/冲突，不提前展示新授权；
   撤权传播到达后及时收缩页面和运行投影。一个 control 离线不阻止其他有效 control 本地接受
   普通操作，但会影响成员变更是否能取得多数。
-- 测试网站证书覆盖 `control.loom` 且浏览器可验证；无客户端证书的 access 仅见入口页；
+- 测试网站证书 SAN 仅含 `control.loom`；根证书缺少 critical `.loom` DNS 约束或全 IPv4/IPv6
+  IP 排除时禁止导入；control 不持有根私钥或其他网站签发能力；目标浏览器必须证明越界名称和 IP SAN 不会因该根被接受。
+  检查根私钥与 control、发布签名钥匙隔离；由已认证的本机 CSR 经操作者离线续签后，验证新入口代的链、私钥匹配、prepared 定向预检、serving 后真实浏览器握手和旧代退出；旧叶过期而未续签时拒绝新 TLS 连接并给出诊断。
+  独立浏览器从受信输入安装合格根后可验证，未安装或拿到错误根时 TLS 失败关闭；无客户端证书的 access 仅见入口页；
   admin 证书可读管理快照并提交 operation。reader 证书和 reader 能力路径必须不存在。
+- 使用固定时间验证有效期恰好 30 天、进入窗口、过期及缺证书四种回读；长开 admin 页面跨阈值更新，
+  普通 access 入口页不泄露到期信息；本机 CLI 在 Web TLS 过期后仍能显示故障。
 - 测试同一设备只出现一次、同节点对两条链路各自观测、Direct/Auto/指定出口保留、不同 Service
   分别探测；unknown 不被 UI 补绿。成员表签名进度与普通事实本地接受的文案不能互换。
 - 测试已有 access 授予或撤销局域网 Policy 后的页面、签名事实及客户端 View 回读；

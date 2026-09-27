@@ -11,6 +11,9 @@ Gandi provider token。它是本机私有输入，
 
 本文只定义仓库根 `.env`。节点上的 systemd environment 和 Android 签名文件各有独立消费者与权限边界，
 不得合并进根文件。`GANDI_PAT_TOKEN` 是唯一例外：它保留在根文件，但当前核心服务不会读取或使用它。
+网站根私钥由操作者在与所有 control 隔离的离线签发介质保管；它不属于 `LocalDeploymentConfig.signing_key`
+（发布签名私钥），也不进入根 `.env`。网站叶私钥由承载 control 在本机受保护输入中生成并保管，
+操作者只取 CSR、手工签回证书链；续签不新增根 `.env` 配置键。
 
 ## 一个领域实体
 
@@ -192,7 +195,8 @@ WG 地址都不进入长期 `.env`：
   `EndpointGeneration` 仍决定对应私有服务入口的身份和生命周期，而非各配一套端口；
 - 公网 DNS provider 与 ACME 自动签发/续期不属于当前核心范围；`.loom` 精确 overlay DNS 记录来自认证网络意图。
   `GANDI_PAT_TOKEN` 只为保留既有操作者配置而常驻；以后启用时仅由获授权的
-  隔离 executor 按需读取。它的存在不表示当前允许修改 DNS、签发或续期证书；
+  隔离 executor 按需读取。它的存在不授权调用 DNS provider、DNS-01 或 ACME 自动签发/续期；
+  网站叶证书的操作者离线手工续签使用独立网站根，与该 token 无关；
 - 某阶段尚未实现时，其 parser 和 key 都不存在。实现、正常入口和清理规则一起交付后才激活该输入。
 
 这保证“按阶段启用”不是把未来字段长期堆在根文件中。
