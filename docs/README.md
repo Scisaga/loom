@@ -16,6 +16,8 @@ Direct、Auto 和指定最终出口复用同一候选模型；授权与真实可
 `TransportResource` 可供多个接入会话和显式中继 `NetworkLink` 复用；新 access 不生成专属 WG 接口，
 首跳与中继分别保留稳定身份和真实观测。共享 HTTPS 业务探测目标按 Service 和授权过滤。
 精确 `.loom` DNS 及经 control 签发的局域网映射属于同一 `NetworkIntent`。
+离网管理员通过 SSH 转发访问指定 control 的回环 Web 入口；已接入设备通过网络 DNS 的
+`control.loom` 访问处于服务状态的 control。SSH 转发不提供 `.loom` 解析，两条路径分别验收。
 
 ## 主要流程设计
 
@@ -23,6 +25,7 @@ Direct、Auto 和指定最终出口复用同一候选模型；授权与真实可
 2. [私有 Enrollment、配置、报告与入口轮换](core/enrollment-endpoint-model.md#正常业务链)；
 3. [客户端加入、恢复、选路与撤权](clients/client-runtime-model.md#状态转换与恢复)；
 4. [本机配置加载与发布](operations/configuration-model.md#正常加载与执行链)。
+5. [管理员证书交付与 Web 访问](operations/admin-access.md)。
 
 ## 客户端与界面设计
 
@@ -35,6 +38,7 @@ Direct、Auto 和指定最终出口复用同一候选模型；授权与真实可
 ## 运维与验收
 
 - [本机部署配置模型](operations/configuration-model.md)：严格 `.env` 输入及其与控制权威的关系。
+- [管理员证书交付与 Web 访问](operations/admin-access.md)：control 生成交付包、离网调试与入网访问。
 - [Linux 客户端安装与运行安全](operations/linux-client-install.md)。
 - [同机 Windows 测试虚拟机](operations/windows-test-vm.md)。
 - [Windows 代码签名策略](operations/code-signing-policy.md)。

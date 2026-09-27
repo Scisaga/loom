@@ -13,7 +13,6 @@ The protected Android Keystore store contains:
 
 - the Ed25519 device identity, bootstrap capability, monotonic observed-fact floor,
   control membership proof, and complete signed LKG as one state record;
-- at most one certified candidate awaiting runtime acceptance;
 - the user's Direct / Auto / fixed-exit preference;
 - bounded business observations keyed by network generation.
 
@@ -26,16 +25,23 @@ client pins its SPKI and proves the device key before HTTP is available.
 one deterministic choice for each authorized Service scope. Kotlin only applies that choice and
 publishes selector readback. Missing, expired, and prior-network results remain
 `unknown`; Direct never receives a synthetic measurement. A selected non-Direct
-candidate receives the minimum real DNS+HTTPS results needed for the current Service
+candidate receives the minimum real DNS+HTTPS checks available for the authorized Service
 and network generation. Each result binds the actual target and candidate; a success
 for one Service does not establish another Service's health.
 If the selected candidate is unavailable, the model may choose one same-exit fallback and
 the host performs one second business check—there is no full candidate scan.
 
-A candidate becomes current only after `Libbox.checkConfig`, encrypted
-write/readback, libbox startup, selector apply/readback, and real DNS/HTTPS all
-succeed. Any failure deletes only the candidate and leaves the current LKG
-runnable. Process and device restart always revalidate the complete LKG and its
+A verified signed View becomes the `CertifiedLKG` when authentication, member
+proof, device binding, floor checks, and protected atomic write/readback succeed.
+The profile becomes runtime `active` only after `Libbox.checkConfig`, libbox
+startup, and selector apply/readback succeed. Runtime failure leaves the
+authenticated LKG available for repair but does not mark the VPN active;
+an older runtime may continue only if it remains authorized by the newly
+verified View. Real DNS/HTTPS checks follow runtime application and determine business availability for their actual
+Service and network generation. Missing authorized probe targets leave that
+business scope `unknown` without blocking LKG acceptance or VPN operation;
+a real failure records `unavailable` and permits the one necessary fallback.
+Process and device restart always revalidate the complete LKG and its
 anti-rollback floor before projecting a runtime profile.
 
 ## Build

@@ -17,13 +17,18 @@
 
 ### 2.1 Material：规范签名事实
 
-`Material` 是不可变、内容寻址的控制事实。首份 genesis 固定网络 ID、首个 `ControlConfig`、初始 `NetworkIntent`、首批管理员证书与信任锚。其余普通事实固定网络 ID、签发 control 及其验证键、签发时引用的成员表摘要、该验证键下连续递增的序列与前一事实哈希（序列跨成员表连续，换届不重新起算）、规范排序的因果依赖 ID、稳定目标 ID、操作、内容及签名：
+`Material` 是不可变、内容寻址的控制事实。首份 genesis 固定网络 ID、首个 `ControlConfig`、初始 `NetworkIntent`、首批管理员证书与信任锚。其余普通事实固定网络 ID、签发 control 及其验证键、签发时引用的成员表摘要、该验证键下连续递增的序列与前一事实哈希（序列跨成员表连续，换届不重新起算）、规范排序的因果依赖 ID、稳定目标 ID、操作、内容及签名。为避免签名和内容 ID 循环，`UnsignedMaterial` 只指上述业务字段，不含签名或自身 ID；`Material` 是这些业务字段与签名组成的完整事实：
 
 ```text
-material_id = Hash(domain_separator || CanonicalEncode(Material))
+signature   = Sign(issuer_private_key, "loom-material-v3\0" || CanonicalEncode(UnsignedMaterial))
+material_id = Hash(material_id_domain || CanonicalEncode(Material))
 ```
 
-签名覆盖全部规范业务字段；相同字节必有相同 ID。普通事实的操作只有以下几类，每类按稳定目标 ID 创建、修改或撤销：
+`material_id` 不写入被哈希的完整事实，签名也不覆盖自己；签名使用本机签发私钥，载荷绑定对应验证键，
+覆盖全部无签名业务字段。`material_id_domain`、哈希算法与文本格式尚未固定，不能把签名域直接用于 ID。
+规范字节、完整字段及哈希文本格式仍须按[唯一现行契约的字段级阻塞](current-contract.md#已确定的签名边界与字段级阻塞)
+补齐，不能根据这个公式猜测 schema 3 的 JSON 字段。相同规范事实字节必有相同 ID。
+普通事实的操作只有以下几类，每类按稳定目标 ID 创建、修改或撤销：
 
 - 设备：加入（身份、显示名、平台、职责与 policy grants）、职责与授权修改、撤销或删除（留下防复活墓碑）；组合申请 `control` 时还有绑定 Invite、设备公钥和普通职责的条件授权事实，成员证书形成前不投影；
 - 网络意图：Service、Policy、`TransportResource`、`NetworkLink`、共享 HTTPS 探测目标、`.loom` DNS 记录、局域网映射、公开信任材料与各节点期望组件；
@@ -35,6 +40,12 @@ material_id = Hash(domain_separator || CanonicalEncode(Material))
 删除是新事实，不抹掉旧字节。普通操作不再用整份 `network.update` 或全局 `base_head` 覆盖另一 control 的写入。
 
 设备授权携带签发者生成的 `RuntimeKey`，它是按设备、policy 和用途派生数据面凭据的根密钥，因此 Material 含秘密：只在 control 之间经端到端加密认证的通道同步，静态存储受保护，中继只转送密文。`RuntimeKey` 不下发给任何设备或节点；DeviceView 只携带由它派生的本设备凭据，forward/出网节点的 View 只携带派生出的、仅对本节点有效的入站凭据；Web、事件、日志与报告只显示脱敏投影。
+派生必须把设备 ID、获授 Policy ID 和用途纳入输入；数据面凭据还须绑定所服务资源和接收节点，
+两个不同接收方不得因同一设备/Policy 获得可互用的凭据。凭据只对当前有效授权及相应资源/服务节点有效：授权撤销、
+Policy grant 移除、`RuntimeKey` 轮换或资源认证身份变化时，相关客户端和服务节点执行投影须移除旧凭据，
+并在真实入站认证回读中拒绝旧值。分区中尚未收到撤权的节点可能暂时仍接受旧值，不能把签名撤权描述为
+立即全网断开。现行源码的旧派生域及其隐式用途字符串不是 schema 3 规范；密钥长度、KDF、每个用途的
+精确输入顺序、输出编码和更新失败时的原子替换规则尚须补入字段级契约，未补齐前不得实现新凭据 writer。
 
 接收只判定这条事实本身能否成立：网络、规范编码、内容 ID、签名、签发者是否属于其引用的成员表、序列与前一事实哈希是否衔接；目标存在与权限只在**该事实声明的因果依赖闭包及同一验证键的此前事实**内判定。声明的因果依赖或前一序列事实**尚未到达**时暂存为待补齐，不得投影。上述任一项不成立，或输入未知、非规范，即拒绝且不进入权威集合；这些判定只取决于事实自身及其因果历史，所有 control 对同一事实得出相同结论。在自身因果历史内就不成立的事实说明签发者有缺陷或已被攻破，其后续序列在所有 control 上同样停止，按成员问题处理（强制撤销或换键）。依赖闭包之外的并发事实——例如并发撤销了它引用的对象——不影响接收：事实照常保存，是否生效由 `Projection` 按 §2.3 计算，因此到达顺序不改变有效事实集合，签发链也不会因此中断。同 ID 不同内容、同一验证键在同一序列下签出不同内容都不得择一覆盖。事实已知、已同步并不等于事实有效或生效。
 
@@ -255,6 +266,21 @@ sequenceDiagram
 
 `TransportResource` 有稳定 ID、种类、固定承载节点及 interface/listener 身份、拨号坐标和公开认证参数。当前接受已定义的 `wireguard`、`hysteria2` 和 `tls_tunnel`；新加密隧道需在同一模型写清身份、用途和回读规则。多个 access 首跳和中继 LinkID 可复用同一 WG interface 或 hy2 listener。普通设备参与资格由其身份、授权和实际数据面 ACL 投影，**不追加到共享资源的规范参与者列表**；新增 WG peer 只改变该设备对应的受保护执行投影，不改变其他设备的资源身份或观测摘要。资源自身规范参数变化只使引用它的观测失效。私钥、凭据、证书私有部分及本机 listener 参数只在节点受保护执行输入中保存；不为每设备建立新接口。
 
+三种资源的最小业务边界如下；表中的字段是必须表达的**语义**，不是尚未定义的 schema 3 字节名。
+所有拨号地址仅用于到达，不能替代签名资源中的节点与认证身份；每个资源必须由承载节点的实际执行
+回读其 listener/interface 与当前公开认证参数，失败即不可报告 `running`。
+
+| 种类 | 稳定身份和必须公开的认证/拨号值 | 真正能证明的动作与 report 范围 | 留在节点本机的秘密 |
+|---|---|---|---|
+| `wireguard` | 资源 ID、承载 NodeID、interface 身份、承载端 UDP 拨号坐标、WG 公钥及资源自身的公开地址/路由参数；设备 peer/AllowedIPs 从该设备的授权和本机执行投影生成，不成为共享资源的参与者表。 | 先核对当前 peer/接口执行回读；显式中继 LinkID 的成功须通过隧道向该 Link 的精确探测目标发起并收到返回数据，普通首跳则按自身实际连接或业务结果报告。最近握手时间或计数器只能作为诊断，不能单独宣布 Service 业务成功。 | WG 私钥及本机 peer 安装材料 |
+| `hysteria2` | 资源 ID、承载 NodeID、listener 身份、UDP 拨号坐标、必须校验的服务端证书身份/公开信任材料及该用途的授权身份。拨号可使用认证的 IP 地址；不要求公网域名或 Gandi token。 | 验证服务端证书和 Hy2 身份；显式中继 LinkID 通过该资源向其精确目标完成有返回的传输动作，普通首跳按自身实际连接或业务结果报告。报告 Hy2 的认证、建连和真实返回结果，不填 WG 握手/peer 字段。完整 Service HTTPS 探测仍另按 Service 报告。 | 服务端证书私钥与设备/Policy 派生的服务凭据 |
+| `tls_tunnel` | 资源 ID、承载 NodeID、listener 身份、TCP 拨号坐标、固定服务端 SPKI、服务 ALPN，以及需要时附加的 TLS 名称和成员或设备端到端身份。 | 引导和设备私有隧道必须验 SPKI 与专用 ALPN，再完成对应私有服务的认证请求和响应；握手只证明该入口，不证明治理、设备授权或任何 Service 已可用。 | TLS 私钥、成员/设备私钥及本机 listener 输入 |
+
+没有域名或 `GANDI_PAT_TOKEN` 不得自动禁用 Hy2；但没有可验证的服务端身份、有效证书/信任材料或
+设备可执行的 Hy2 凭据时，Hy2 候选必须失败关闭，不能以关闭证书校验换取可达。签名资源需进一步
+逐字段固定认证材料是证书链、SPKI 固定值还是其他已受信身份、各自的实际字段和规范字节，
+否则不能由适配器临时猜测并写入 schema 3。
+
 `NetworkLink` 有独立 LinkID，记录需显式固定的**中继邻接**两端、资源引用、发起方向、用途和真实探测动作。同一节点对可并存 WG 与 hy2 LinkID，各自观测。首次引导、加入后的认证管理/配置/报告、control 事实同步可以使用已有认证连接及共享资源，无须先为每对节点建 NetworkLink。删除 LinkID 只撤销引用它的候选，不连带删除共享资源；撤销资源时所有引用它的首跳与中继候选都立即退出投影，残留 Link 不再生效并须清理。节点、control 资格或公钥出现都不自动创建中继链路。
 
 ```mermaid
@@ -300,7 +326,16 @@ flowchart TD
 
 control 只签发精确 `.loom` 名称的 A/AAAA 地址记录；拒绝通配符、其他域名、同名冲突、显式占用保留名 `control.loom` 和覆盖公网 DNS。DNS resolver 地址是运行配置，和 overlay 权威记录不同。记录从有效 NetworkIntent 投影到设备；解析结果不授予 Service 或 Policy 权限。引导及 underlay/control 端点不能依赖尚未取得的 overlay DNS，避免自举循环；不能接管开发宿主初始 namespace 的 DNS。
 
-`control.loom` 是保留的私有 HTTPS 别名，解析为所有处于 serving、允许 `web` 模式的 `EndpointGeneration` 的客户端地址，即有效 control 的私有 Web 入口；它不是可签发的普通 DNS 记录。网站证书受信名称覆盖该域名；信任根的公开证书属于 NetworkIntent 并随 DeviceView 交付，网站根证书带 critical NameConstraints，允许 dNSName 仅限 `.loom`，并以 excluded IP 子树 `0.0.0.0/0` 和 `::/0` 排除所有 IP SAN；不满足者禁止导入浏览器；根私钥不得进入任何 control，须由独立受保护的签发输入保管。control 仅持有 SAN 精确为 `control.loom`、不含其他 DNS/IP/URI/email 名称的网站叶证书及对应私钥，不能持有网站 CA 签发能力。网站信任根与可能签发其他名称/IP 的成员或传输 TLS CA 分离；信任锚上的约束可能不被浏览器执行，导入前必须独立校验证书约束并验证目标浏览器的信任行为。可返回多个入口地址，设备按真实连接选择可达端点，不能以 DNS 回答认定治理同步。普通 access 可打开无敏感管理数据的入口页；管理数据读取及操作必须验证 admin 客户端证书和操作授权，受信 admin 叶子名单是 `Projection` 中由普通事实维护的值，所有 control 使用同一份。目标证书只有网站证书与 admin 证书，reader 证书属于应删除的漂移；入口页不能匿名暴露管理信息。
+`control.loom` 是保留的私有 HTTPS 别名，解析为所有处于 serving、允许 `web` 模式的 `EndpointGeneration` 的客户端地址，即有效 control 的私有 Web 入口；它不是可签发的普通 DNS 记录。网站证书受信名称覆盖该域名；信任根的公开证书属于 NetworkIntent 并随 DeviceView 交付，网站根证书带 critical NameConstraints，允许 dNSName 仅限 `.loom`，并以 excluded IP 子树 `0.0.0.0/0` 和 `::/0` 排除所有 IP SAN；不满足者禁止导入浏览器；根私钥不得进入任何 control，须由独立受保护的签发输入保管。control 的正式 Web 入口仅持有 SAN 精确为 `control.loom`、不含其他 DNS/IP/URI/email 名称的网站叶证书及对应私钥，不能持有网站 CA 签发能力。网站信任根与可能签发其他名称/IP 的成员或传输 TLS CA 分离；信任锚上的约束可能不被浏览器执行，导入前必须独立校验证书约束并验证目标浏览器的信任行为。可返回多个入口地址，设备按真实连接选择可达端点，不能以 DNS 回答认定治理同步。普通 access 可打开无敏感管理数据的入口页；管理数据读取及操作必须验证 admin 客户端证书和操作授权，受信 admin 叶子名单是 `Projection` 中由普通事实维护的值，所有 control 使用同一份。正式管理认证只需网站证书与 admin 证书，reader 证书属于应删除的漂移；入口页不能匿名暴露管理信息。
+
+这里的 `control.loom` 是**入网后的正常入口**：客户端先取得认证网络意图，使用 Loom DNS 解析它，
+再按 serving 入口及 TLS 名称访问。离网笔记本现有的开发调试入口是 SSH 到指定 control，转发
+Web 端口到笔记本后以 `https://127.0.0.1:<本地端口>/` 访问，并使用已取回的 `admin.p12`；
+这是旧部署文档记载、用户确定用于开发调试的路径；本轮尚未单独重做登录回读。SSH 不提供 `control.loom` 解析，回环 URL 的 TLS 校验名仍是
+`127.0.0.1`。上述受 `.loom` 限定的网站根和只含 `control.loom` 的叶证书不能为该回环 URL 验证。
+回环调试入口必须保持与该 IP 匹配的独立受信 TLS 材料；在迁移网站根、清理旧浏览器信任之前，
+须只读核验现有回环证书链及浏览器行为，再验证替代材料的实际调试登录。当前尚未完成这项核验，
+不能把 `.loom` 叶、SSH 端口转发或 admin 客户端证书当成已解决的回环网站 TLS 方案。
 
 网站根私钥由操作者保管在与所有 control 隔离的离线签发介质中；它与发布签名私钥、成员验证键及传输 TLS CA 分开，不进入仓库根 `.env`、部署制品或 control 的运行输入。每台 control 在本机受保护输入中生成网站叶私钥和 CSR，仅将经成员身份认证、绑定节点及入口的 CSR 交给操作者。操作者核对 CSR 签名、当前成员证明、公钥与目标 web 入口后，以离线根手工签发仅含 `control.loom` SAN、`serverAuth` 用途且 `CA=false` 的叶证书；只把证书链经受保护渠道交回该 control。叶私钥不离开该 control。到期前由操作者发起续签，并按[入口代生命周期](enrollment-endpoint-model.md#endpointgeneration)预检、切换；旧根不变时公开信任根无需重导入，换根须另行完成受保护的信任锚迁移。续签失败或证书过期时，新 TLS 连接失败关闭，不能改用自签、无约束根或旧证书绕过校验。
 

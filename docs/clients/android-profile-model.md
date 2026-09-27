@@ -26,7 +26,7 @@
 |---|---|---|
 | viewed | catalog | UI 正在浏览或编辑哪份配置 |
 | requested | 用户连接意图 | 哪份配置被明确请求连接或恢复 |
-| active | VPN 运行时 | 哪份配置已真实完成验证、TUN 启动和业务检查 |
+| active | VPN 运行时 | 哪份配置已通过认证校验、TUN 启动和 selector 回读；业务健康另由实际观测决定 |
 
 浏览另一份配置不得修改 requested 或 active；只有明确的“连接/切换”操作可以修改
 requested。active 只能由真实 VPN 结果单向产生，不能由 catalog 或 UI 倒写。
@@ -37,8 +37,10 @@ requested。active 只能由真实 VPN 结果单向产生，不能由 catalog �
 2. 名称去除首尾空格后必须非空且在 catalog 内唯一；重命名只替换该 `id` 的
    `name`，不替换设备身份、LKG、路由或 VPN。
 3. 选中只替换 viewed。用户点击连接后，requested 才指向该 `id`。
-4. 当且仅当该 `id` 的认证 LKG、libbox/TUN 和真实 DNS/HTTPS 结果成功时，active 才指向它。
-5. 切换先停止旧运行时，再使用新 `id` 走同一连接链；失败停留在新配置的错误状态，
+4. 当且仅当该 `id` 的认证 LKG 校验、libbox/TUN 启动及 selector 回读成功时，active 才指向它。
+   DNS/HTTPS 探测随后按授权 Service 产生 `available`、`unavailable` 或 `unknown`；无匹配目标时
+   保持 `unknown`，不阻断 active，也不把 active 当成业务健康。
+5. 切换先停止旧运行时，再使用新 `id` 走同一连接链；认证或运行时应用失败停留在新配置的错误状态，
    不跨配置自动恢复旧连接，也不建立多 VPN manager 或切换状态机。
 6. 正在 requested/active 的行必须先断开才能删除，最后一行不能删除。删除先取消并等待该行的本机工作，
    再原子提交不再可见的 catalog，
@@ -69,13 +71,20 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 
 ## 恢复与失败语义
 
-首次升级时，旧单槽只能单向迁移为 `primary / Loom A`：先验证并逐字节写入
-`p.primary.*`，独立回读成功后提交 catalog 作为迁移标记，最后删除旧键。标记存在后
-只读新槽，不保留双读、fallback 或兼容层。旧的单配置 VPN 恢复意图也只允许一次映射到
-`primary`；迁移后 requested ID 缺失、非法或已删除时必须拒绝恢复，不得用 viewed 代替。
+全新安装没有旧单槽时，按创建规则建立不含身份和 LKG 的首个 `primary / Loom A`，等待正常 Enrollment；
+不把“无旧槽”当作升级失败。首次升级时，只有旧单槽已包含**完整且可按现行 schema 3 严格验证**的身份、信任绑定、floor、
+不可回退 latch 与认证 LKG，才能单向迁移为 `primary / Loom A`：先验证，再将这些原始认证字节
+逐字节写入 `p.primary.*`，独立回读成功后提交 catalog 作为迁移标记，最后删除旧键。
+无法证明旧槽符合现行格式时，包括只有 1、2 号材料的情形，不提交可运行的 `primary`，
+不把旧字节送进 schema 3 decoder、重放或作为 fallback；原始身份、材料、floor 和 latch
+按受保护切换证据保全，等待经验证的前向迁移办法，不自动生成替代身份或清空状态。
+标记存在后只读新槽，不保留双读、fallback 或兼容层。旧的单配置 VPN 恢复意图也只允许在
+现行槽完整迁移后一次映射到 `primary`；迁移后 requested ID 缺失、非法或已删除时必须拒绝恢复，
+不得用 viewed 代替。
 
 进程重启时恢复 catalog 和被保存的 requested ID，但 active 仍为空；只有重走认证 LKG、
-运行时应用和业务检查后才重新产生 active。配置失败保留该行和其认证 LKG，显示明确错误；
+运行时应用和 selector 回读后才重新产生 active；后续业务检查只更新该 Service 的观测状态。
+配置失败保留该行和其认证 LKG，显示明确错误；
 本次连接已终止时清除持久 desired，运行投影暂保留失败的 requested ID 只用于给错误归属；
 它不是 active，也不得自动恢复或切换到 viewed/另一行。重试、删除该行或发出另一连接请求后替换该错误投影。
 
@@ -83,13 +92,14 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 
 一条正常链：用户在配置页创建“Loom B” → 为该行完成私有 Enrollment 并保存其 LKG
 → 在连接页选中 Loom B → 点击连接 → VPN 按 Loom B 的 `id` 读取、应用并回读真实结果
-→ active 变为该 `id` → 应用标题显示 `LOOM · Loom B`，辅助行显示 Android、连接状态、
+→ active 变为该 `id`，业务探测按实际结果另行更新 → 应用标题显示 `LOOM · Loom B`，辅助行显示 Android、连接状态、
 设备名称或成员表证明状态。内部 ID、成员表/事实摘要和长哈希不得出现在标题或配置选择中。
 
 最小测试集只覆盖风险等价类：
 
 1. catalog 规范编解码往返及重复、悬空、非规范值拒绝；
-2. 旧单槽在 catalog 提交前完整复制回读，提交后不再读旧键；
+2. 现行 schema 3 旧单槽在 catalog 提交前完整复制回读，提交后不再读旧键；1、2 号或不完整
+   旧槽保全原始字节和 floor/latch，不能产生可运行的 `primary`；
 3. 真机沿正式入口验证 A/B 隔离、显式切换、重启回读和安全删除，不回读哈希。
 
 ## 禁止恢复

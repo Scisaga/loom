@@ -15,11 +15,21 @@
 | 设备授权与视图 | `DeviceAuthorization` 是签名事实的有效结果；普通职责由有效 control 单签，`control` 只由成员表投影。`DeviceView` 由有效 control 对设备相关配置、成员证明和事实前沿签名；设备原子保存信任绑定、完整 LKG、不可回退 latch 与单调的已见高水位。连续多数证书仅可对明确封存的键把新 View 验收前沿降至封存序列，原高水位与 latch 保留，旧 LKG 只在验收失败时保留，成功时原子替换唯一 LKG；留任 control 在证书验收前已持久接受且可验证的超限撤权自动重签，原始证据全失时可能复权，必须标记可见差异和剩余未知风险。其他键、成员链和既有全局认证 floor 不回退。 | 运行时、报告和 UI 仅从获授权的视图与真实观测生成；不能由视图、报告或颜色倒写权威。 |
 | 发布记录 | 发布签名密钥签署的不可变 release catalog 与制品 manifest；规范签名负载包含 schema 3、单调发布 generation，以及每项的组件 ID、目标平台、制品摘要、长度、媒体类型、受众、版本和可选最低兼容版本，签名覆盖所有这些字段及规范排序。发布私钥引用来自 `LocalDeploymentConfig.signing_key`（`LOOM_SIGNING_KEY`）；验签公钥由验证方受保护的安装信任输入固定，发布前须与签发密钥的公钥核对，不从待验 catalog 或 Web 响应取得。签名 release store 独立于控制事实；可变 `current` 指针只定位待验 catalog。 | `Projection` 只按摘要引用期望组件；Web 仅展示验签且逐文件核验通过的 catalog。公网 Nginx 只分发受众为通用公开的制品；设备与节点报告实际运行坐标，只有报告与期望摘要相符才能显示已应用。 |
 | 客户端本机值 | `DeviceIdentity` 私钥与信任绑定、已见 floor、完整 LKG、唯一 `Preference`，以及 Android/Windows 保存用户命名、稳定本机 ID 与恢复意图的 profile catalog；各自严格 schema、原子持久往返。 | 候选、Selection 与 UI 每次从这些值和宿主回读重建；这些值不作为网络权威上传。 |
-| 本机部署输入 | [配置模型](../operations/configuration-model.md)规定的六键规范 `.env`，密钥和证书正文留在受保护本机输入。 | 只生成本次部署计划与脱敏结果，不保存 control 或 DNS overlay 的第二份事实。 |
+| 本机部署输入 | [配置模型](../operations/configuration-model.md)规定的六键白名单规范 `.env`；可选键缺席时不写该行，密钥和证书正文留在受保护本机输入。 | 只生成本次部署计划与脱敏结果，不保存 control 或 DNS overlay 的第二份事实。 |
 
-控制面 Web 只使用网站服务端证书和 admin 客户端证书。网站根证书必须有 critical `.loom` DNS 约束和全 IPv4/IPv6 IP 排除，且目标浏览器已实测执行这些约束才可导入，根私钥不得进入 control；control 仅持有 `control.loom` 网站叶私钥，网站根与成员/传输 CA 分离。普通已加入 access 可打开私有
+正式入网的控制面 Web 使用网站服务端证书和 admin 客户端证书。网站根证书必须有 critical `.loom` DNS 约束和全 IPv4/IPv6 IP 排除，且目标浏览器已实测执行这些约束才可导入，根私钥不得进入 control；control 的正式 Web 入口仅持有 `control.loom` 网站叶私钥，网站根与成员/传输 CA 分离。普通已加入 access 可打开私有
 `control.loom` 入口页；管理数据和操作要求 admin 证书，受信 admin 名单由普通事实维护、所有 control
 一致。reader 证书、read capability 和对应的第二套页面权限不是本契约的一部分。
+目标 Web 对 admin 客户端证书还要求验链并与受信叶精确匹配。受信叶事实的加入/撤销只决定**授权**，
+不能代替 X.509 叶证书的签发、签发者信任锚或私钥保管。现有 `admin.p12` 及密码文件的 control 生成、
+手动取回和浏览器登录是用户已验证的入口；目标模型尚未定 admin 叶的签发者、验链锚和多 control
+场景中哪台机器持有签发能力，这些须基于现有实际材料只读核对后补入，不把补发说成已实现。
+开发调试的已验证入口是笔记本经 SSH 将指定 control 的 Web 端口映射到本机，再由浏览器访问
+`https://127.0.0.1:<本地端口>/`，使用已交付的 `admin.p12` 登录；SSH 不解析 `control.loom`，也不改变浏览器的
+TLS 校验名。入网设备则由 Loom DNS 解析 `control.loom` 访问 serving Web 入口。这两条路径不互相替代。
+受 `.loom` 限定且排除 IP 的正式网站根不能签出可供 `127.0.0.1` 验证的叶证书。切换前须只读核验现有
+回环入口实际使用的证书、信任锚和浏览器行为，再确定独立于正式网站根的回环调试证书及信任处理并完成实测；
+不能以 SSH 转发成功或 admin 客户端证书存在代替该 TLS 验收。此项未完成时，不宣称切换后的回环调试入口可用。
 根私钥由操作者隔离离线保管，区别于 `LOOM_SIGNING_KEY` 的发布私钥；各 control 本机生成叶私钥与 CSR，
 操作者在叶证书到期前手工续签，经受保护渠道交回证书链，并用新的 `EndpointGeneration` 验证和切换。
 
@@ -44,6 +54,29 @@ envelope、Invite 与 claim/resume、设备 report——统一使用 schema **3*
 | `DeviceView` 交付 envelope | `loom-device-view-v3\0` |
 | claim / resume / report | `loom-claim-v3\0` / `loom-resume-v3\0` / `loom-report-v3\0` |
 | 发布 catalog / manifest | `loom-release-catalog-v3\0` / `loom-release-manifest-v3\0` |
+
+### 已确定的签名边界与字段级阻塞
+
+`CanonicalEncode` 目前只是所需规范编码函数的名字，尚未选定字节格式、各类值的完整字段表、
+排序、长度和可选字段规则；不能把当前源码的 JSON 结构、旧 schema 字节或某种通用 JSON 规范
+默认为 schema 3。签名领域分隔符已由上表确定，签名输入严格为该分隔符的原始字节后接**无自身签名的业务载荷**
+的规范字节；对象自身的签名与自身 ID 不在该载荷中，被引用对象的 ID 可以是业务字段。对 `Material`，完整签名事实由该载荷及签名组成，
+`material_id` 根据完整事实的规范字节计算且不再写入事实本身，避免签名和 ID 循环；完整公式见
+[Material](control-model.md#21-material规范签名事实)。
+
+现有模型已决定下列字段**语义**，但以下清单不等于可编码规格：
+
+| 对象 | 必须封闭的字段语义 | 尚缺的字段级决定 |
+|---|---|---|
+| `Material` | 网络、签发 control 与验证键、所引成员表、该键序列和前事实 ID、因果依赖、稳定目标、操作及对应内容、签名；genesis 固定初始成员、网络意图和管理员信任。 | genesis 与普通事实的精确字段；每种操作的唯一内容形状；签名字段所在的完整事实形状；ID 哈希领域、哈希函数与输出文本格式；编码、排序、长度及拒绝向量。 |
+| 成员承诺、投票、证书 | 基础表、轮次、发起者、成员、完整投票史、按键已验证前缀、后继提案、封存点和同轮多数签名。 | 每种消息的精确字段、提案摘要输入、历史／前缀／签名集合的字节排序、空值及长度。 |
+| `DeviceView` 与 envelope | 单设备配置、签发者资格、连续成员证明、签发者事实前沿、View 摘要、设备绑定与签名。 | View 每种内层值、摘要输入、证明和签名封装的精确字段及规范字节。 |
+| Invite、claim、resume、report | Invite 的签发者/锚/设备/职责/入口/一次性约束；首次 claim 的设备公钥与 request ID；resume 同事务同密钥；report 的 View 摘要、按设备序列、真实观测与运行回读。 | 请求与响应逐字段表、签名覆盖范围、报告观测键与过期字段、排序和严格 decoder。 |
+| release catalog 与 manifest | generation、组件/平台、不可变文件摘要、长度、媒体类型、受众、版本和最低兼容约束，发布密钥签名。 | catalog 与 manifest 的分层字段、路径规则、排序、签名和摘要字节；旧 floor 与新发布坐标的迁移证明。 |
+
+任何对象的内层值、可选性或签名输入仍不明确时，生产 writer/decoder 不得自行发明格式。
+完成字段表时须给出接受和拒绝字节向量，验证 `decode(encode(D))=D`、`encode(decode(B))=B`；
+拒绝未知字段、重复字段、歧义空值、错误排序、错误签名目的、签名未覆盖字段及不规范输入。
 
 成员证书由同一提案的规范投票签名组成，不能把另一目的签名当成员票。发布 catalog 固定
 generation 与规范排序的 manifest 摘要集合；每份 manifest 固定组件、平台及逐文件字段。解码后重编码
@@ -77,6 +110,28 @@ DeviceView、客户端运行时和 Web 都是从已验证事实的单向投影�
 它不是可删除缓存。schema 3 的可变 `current` 指针没有与该 floor 自然可比的摘要；原 floor 字节须作为
 受保护证据保全，不进入新 decoder，也不得重置。经批准的一次性前向切换证明新发布接受规则维持同等或更强
 的反重放约束之前，schema 3 catalog 不得作为生产激活依据；不以旧 current 的长期双读填补此缺口。
+
+切换证明必须逐节点覆盖下列事实及失败边界，不能只展示一份新 catalog 验签成功：
+
+1. 只读取得各节点已持久接受的旧 floor 原始字节及其 `generation`、`payload_sha256`、
+   `selected_snapshot`，按旧**验证工具**及固定发布公钥核对相应 signed-current 原始载荷和所选不可变制品；
+   核对生产实际运行坐标、备份和 latch，证据只放受保护部署证据目录，旧字节不喂给 schema 3 decoder。
+2. 冻结会改变旧 signed-current 的写入。定义并由操作者批准旧 `(generation,payload_sha256,selected_snapshot)`
+   到新 `(catalog_generation,catalog_digest,manifest/artifact_digest)` 的逐节点对应，说明发布验签公钥是否延续；
+   换钥须有独立受保护的认证证明。新旧摘要不是同一对象的哈希，不能直接比较或以同号相等替代证明。
+3. 证明每节点存在从旧 floor 到新发布坐标的严格单调接受关系：旧 floor 已拒绝的重放在切换后仍被
+   拒绝，同一新 generation 的不同 catalog 内容不得择一覆盖，`current` 可变指针不能降低已保存的
+   接受前沿。若新旧 generation 不共用含义，必须给出可验证的顺序映射和持久切换证据，不能把数字
+   大小直接当作证明，也不能删除旧 floor 从零起算。
+4. 对每节点先验证 schema 3 reader、catalog、全部 manifest 和逐文件摘要，再证明切换前沿的落盘与
+   精确制品激活具有崩溃可恢复的顺序；重启、断电、重复执行和部分节点成功时均不能接受旧格式或
+   更低发布坐标。失败节点继续保持其最后可验证的运行状态并停止切换写入。
+5. 通过正式发布入口、节点拉取、实际进程／文件摘要及正常状态入口回读每节点结果，确认
+   `Projection` 期望摘要、从 catalog 选定的 manifest 和真实运行坐标一致。完整证明与受保护证据
+   交由用户明确决定切换；未经决定不启用生产路径。
+
+上述是证明义务，**尚不是一份已批准的迁移算法**：现网逐节点 floor、签名材料、公钥连续性、
+快照到 manifest 的对应和真实运行制品尚未在本轮只读核对，因此不能填写切换记录或声称生产可用。
 
 ## 遇错时只修订这一份契约
 

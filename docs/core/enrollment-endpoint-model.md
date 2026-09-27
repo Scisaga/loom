@@ -71,6 +71,7 @@ stateDiagram-v2
     [*] --> prepared
     prepared --> serving: 验证材料和真实入口
     serving --> draining: 新代可用后停止分配新连接
+    serving --> draining: 新代正式回读失败，立即停止新连接并签收口
     draining --> retired: 受保护会话结束
 ```
 
@@ -88,8 +89,10 @@ EKU 仅 `serverAuth`、`CA=false`，KeyUsage 不含 `keyCertSign`。叶私钥留
 
 承载者核对链、名称、用途、有效期与本地私钥匹配后，以新证书引用建立下一 `EndpointGeneration`。
 在 prepared 阶段用候选地址及 SNI `control.loom` 定向预检 TLS 与 Web；通过后才签发 serving 阶段，
-再用目标浏览器从正式入口回读，成功后旧代转为 draining、retired。正式回读失败则让新代退出服务，
-旧代证书尚未过期时继续 serving；证书到期后，已有 serving 声明也不能使新连接通过 TLS，
+再用目标浏览器从正式入口回读，成功后旧代转为 draining、retired。正式回读失败时只让**新代**
+停止接受新连接并推进 draining；其会话结束后 retired，旧代证书尚未过期时继续 serving。
+若签收口事实暂不可用，本机新 listener 仍先失败关闭并保留待补的阶段事实，不能因 DNS 缓存仍指向
+该代而继续服务。证书到期后，已有 serving 声明也不能使新连接通过 TLS，
 须失败关闭并在运行观测、本机 CLI 中显示到期故障，不按本机时钟改写签名阶段或 DNS 投影。
 根证书不变则浏览器无需重导入；根轮换另需受保护信任锚迁移。
 
@@ -199,8 +202,13 @@ Endpoint generation、可见的共享 `TransportResource` 与显式中继 `Netwo
 同一 LinkID 当前链路和资源的规范字节派生 `link_spec_digest`；规范改变使旧观测回到 `unknown`。
 
 交付 envelope 由当前有效 control 对完整 View 签名，附网络锚、从设备已固定成员表到当前成员表的
-连续多数签名证明、签发者事实前沿和 View 摘要。客户端验证签发者在相应成员表中的资格、签名、
-因果依赖、设备绑定、范围及本机已见事实的验收前沿；除连续多数证书明确封存的验证键外，前沿
+连续多数签名证明、签发者事实前沿和 View 摘要。**签发 control** 必须先验证构成 View 的普通事实、
+所声明因果依赖及前序链已经补齐并在当前成员表封存规则下生效，再按当前 `Projection` 签发完整 View；
+不能用待补齐、冲突暂停或已失格键的新事实制造设备权限。设备不接收全网原始事实，无法独立重算
+这些因果闭包；**客户端**只验证固定网络锚、连续成员链、签发者资格、envelope 签名与规范摘要、
+本设备身份/公钥绑定、View 仅含本设备可消费的值且内部引用/形状自洽，以及本机已见前沿。
+客户端不能从 View 独立证明每项新权限确由哪些原始事实授予；这属于签发 control 的验证责任。
+除连续多数证书明确封存的验证键外，前沿
 不得回退，成员证明也不得倒退。封存证书只允许将**该键**的新 View 验收前沿降至证书封存序列；
 原已认证高水位与不可回退 latch 仍保存；验收失败时保留旧 LKG，成功时原子替换唯一 LKG，其他键与现网全局认证 floor 不回退。
 留任 control 对自身证书验收前已持久接受、可取得原始事实及前序的超限撤权自动重签为引用原事实的
@@ -227,6 +235,22 @@ View、原已见事实高水位、身份私钥引用及不可回退 latch。Linu
 `link_spec_digest`，不同 WG/hy2 链路分别观测。共享资源握手或一个 HTTPS 目标成功，不证明另一条
 链路或另一 Service 可用。缺失、过期和摘要不匹配回到 `unknown`，ICMP 不能填充业务成功。首次绑定前
 的引导连接诊断不作为设备签名 report 进入 `Observation`。
+
+设备签名 report 至少须覆盖：网络与设备身份、设备持久递增的报告序列、当前完整 View 摘要、底层
+网络代、报告时间、本次已运行 Service 的实际选择、逐条 Observation、实际运行组件的发布坐标，以及
+forward/出网节点的 listener、ACL、进程和返回路径回读。每条 Observation 保留其来源动作、观测层级
+（资源、LinkID 或 Service 业务）、实际目标、结果、采样时间与有效期；LinkID 层级携带当前
+`link_spec_digest`，Service 候选携带有序链路摘要及其候选规范摘要。签名必须覆盖这些原始结果与
+摘要，不能只签一行 UI 状态或只签 WG 字段。report 不包含 `RuntimeKey`、私钥、派生密码或整个
+控制事实集合。接收者按设备公钥、当前授权和 View 验签，旧报告序列不得覆盖新值；跨 View 摘要、
+跨底层网络代、超出目标 Service/Policy、过期或规范摘要不匹配的条目只投影为 `unknown`，不回写
+`Material`。不同 control 交换的是已验证报告及序列，不以接收先后选择较旧结果。
+
+报告记录的有效性按“设备 + 网络代 + 观测层级 + Service/候选或 LinkID + 实际目标 + 当前规范摘要”
+分别判断：一个 WG LinkID 的结果不能替代同节点对上的 Hy2 LinkID，也不能以 transport 成功替代
+HTTPS 业务成功。当前文档仍缺 report 逐字段字节、具体观测时间／有效期编码、最大可接受寿命与
+设备时钟偏差处理、相同序列不同签名内容的拒绝规则；这些在[字段级阻塞](current-contract.md#已确定的签名边界与字段级阻塞)
+补齐前，不能实现 schema 3 报告 writer/decoder 或声称报告过期算法已封闭。
 
 ## 私有入口与运行时
 

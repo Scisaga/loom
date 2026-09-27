@@ -10,7 +10,8 @@ Gandi provider token。它是本机私有输入，
 `.env` 不能创建或修改这些事实。
 
 本文只定义仓库根 `.env`。节点上的 systemd environment 和 Android 签名文件各有独立消费者与权限边界，
-不得合并进根文件。`GANDI_PAT_TOKEN` 是唯一例外：它保留在根文件，但当前核心服务不会读取或使用它。
+不得合并进根文件。`GANDI_PAT_TOKEN` 是唯一允许直接保存的 provider secret；已有值继续保留，
+未配置时可省略，当前核心服务不会读取或使用它。
 网站根私钥由操作者在与所有 control 隔离的离线签发介质保管；它不属于 `LocalDeploymentConfig.signing_key`
 （发布签名私钥），也不进入根 `.env`。网站叶私钥由承载 control 在本机受保护输入中生成并保管，
 操作者只取 CSR、手工签回证书链；续签不新增根 `.env` 配置键。
@@ -50,22 +51,29 @@ inventory、目录配置或 credential store 则只会制造冲突，因此都�
 
 ## 长期变量白名单
 
-当前根 `.env` 只接受以下六个既有键。它是受限 dotenv 数据，不是 shell 脚本；解析器只识别
+当前根 `.env` 的白名单只有以下六个既有键。它是受限 dotenv 数据，不是 shell 脚本；解析器只识别
 单行 assignment，不执行 `source`、`eval`、命令替换、变量展开或转义拼接。
 
 | 键 | 类型 | 必填 | 规则 |
 |---|---|---:|---|
-| `GANDI_PAT_TOKEN` | opaque secret | 当前部署保留 | 非空；只允许独立 DNS executor 显式读取，其他命令不得导出或透传 |
+| `GANDI_PAT_TOKEN` | opaque secret | 否 | 出现时必须非空；只允许独立 DNS executor 显式读取，其他命令不得导出或透传 |
 | `LOOM_DEPLOY_HOSTS` | `NodeAlias` 列表 | 是 | 非空、去重；语义上是集合，不表达优先级 |
-| `LOOM_LOCAL_NODE` | `NodeAlias` | 否 | 非空时必须属于 `LOOM_DEPLOY_HOSTS` |
-| `LOOM_SSH_CONFIG` | path | 否 | 默认 `.ssh_config`，相对路径以 `.env` 所在目录为锚点 |
+| `LOOM_LOCAL_NODE` | `NodeAlias` | 否 | 出现时必须非空且属于 `LOOM_DEPLOY_HOSTS`；无本机目标时省略 |
+| `LOOM_SSH_CONFIG` | path | 否 | 省略时使用 `.ssh_config`；显式值不得等于该默认路径，相对路径以 `.env` 所在目录为锚点 |
 | `LOOM_SIGNING_KEY` | path/ref | 是 | 只允许受支持的文件路径或硬件/secret-store 引用，不允许私钥正文 |
 | `LOOM_PUBLISH_OUTPUTS` | target 列表 | 是 | 非空、去重，只允许已定义的 local/SSH target |
 
-规范编码沿用现有最小格式：`GANDI_PAT_TOKEN` 是不带换行的安全 token；其余值使用单引号包围，
+规范编码沿用现有最小格式：已配置的 `GANDI_PAT_TOKEN` 是不带换行的安全 token，编码器保留其原文；
+未配置时**整行省略**，解码为 `None`，空赋值不表示缺席且须拒绝。`local_node=None` 也省略
+`LOOM_LOCAL_NODE`，该键空赋值同样拒绝。`ssh_config` 为默认 `.ssh_config` 时省略
+`LOOM_SSH_CONFIG`；非默认路径必须显式写入，空赋值和把默认路径显式再写一遍均拒绝。
+其余已出现的值使用单引号包围，
 `LOOM_DEPLOY_HOSTS` 以 ASCII 空白分隔别名，`LOOM_PUBLISH_OUTPUTS` 以逗号分隔目标。别名和目标内部
-不得含分隔符。decoder 只接受上表当前六键的规范顺序和规范排序集合；旧顺序须由一次性迁移器
-重写，不能作为常驻读取兼容。encoder 按同一顺序输出。
+不得含分隔符。规范文件有三至六个 assignment，白名单仍只有六键；decoder 只接受已出现键的
+规范顺序和规范排序集合；旧顺序须由一次性迁移器重写，不能作为常驻读取兼容。encoder 按同一
+顺序输出。缺少 Gandi token 不改变 WG、Hy2 或私有 TLS 资源的授权和执行条件；
+节点没有域名时，Hy2 仍须具备由认证资源明确指定、客户端可验证的服务端 TLS 身份，
+不能因 token 缺席而改用跳过验签的连接。
 
 节点顺序不表达优先级。解析后按规范别名排序，发布执行可以并行；某个节点失败只形成该次操作结果，
 不得回写列表或把节点永久标成不可用。
@@ -85,7 +93,8 @@ WG 资源由 HostAdapter 在节点本机事务安装 interface、peer、精确�
 `0700/0600` 创建，事务提交或回滚后删除；不得移到 `/tmp`、`/run` 或 `/etc/loom/secrets`，
 也不得放宽 AppArmor。
 
-Hy2 资源由节点的受保护本机证书、私钥与连接凭据引用执行；认证 `TransportResource` 只携带
+Hy2 资源由节点的受保护本机证书、私钥与连接凭据引用执行，与 Gandi provider token 无关；
+认证 `TransportResource` 只携带
 可公开验证的节点身份和资源参数，不携带私钥路径、私钥正文或口令。现有 Linux 转发/出网数据面
 适配器默认从 `/etc/loom/tls/node.crt` 与 `/etc/loom/tls/node.key` 读取 TLS 材料；该默认位置
 不成为新资源的规范字段或所有节点的固定路径。对端按认证节点 ID、证书身份和该用途的授权校验；
@@ -107,7 +116,8 @@ domain(T)                       = D
 encode_env(decode_env(E, A), A) = E             // E 是被接受的规范字节
 ```
 
-相对路径在 `A` 下规范化；`encode_env` 按上表固定顺序输出键、按规范顺序输出集合，并显式写出默认值。
+相对路径在 `A` 下规范化；`encode_env` 按上表固定顺序输出键、按规范顺序输出集合；
+`gandi_pat_token=None`、`local_node=None` 与默认 `ssh_config` 的唯一表示分别是省略对应 assignment。
 因此同一领域配置只有一种规范字节表示。`decode_env` 对未知键、重复键、重复集合项、未知 target、
 空别名、控制字符、命令替换、变量展开和换行失败，不能静默忽略“别的工具的变量”。
 `GANDI_PAT_TOKEN` 的原文参与往返但在日志、错误、plan 和 UI 中始终以 secret 处理。
@@ -126,8 +136,8 @@ UIStatus   = redact(DeployPlan, RunResult)
 | 层 | 表达 | 是否可逆回领域值 | 边界 |
 |---|---|---:|---|
 | domain | `LocalDeploymentConfig` | 是 | 本机部署输入的唯一语义 |
-| env wire | 六个规范 dotenv assignment | 是 | `0600` 私有文件；未知键失败 |
-| typed config | 六个已校验字段及派生路径 | 是 | 仅存在于一次命令进程内 |
+| env wire | 六键白名单中的三至六个规范 dotenv assignment | 是 | `0600` 私有文件；未知键失败 |
+| typed config | 六个已校验字段及派生路径；token 可为 `None` | 是 | 仅存在于一次命令进程内 |
 | persistent result | release store、pin、history、evidence | 否 | 保存操作结果，不保存另一份 config |
 | runtime | `DeployPlan`、逐节点 `RunResult` | 否 | 同一 config 仍会因当前认证事实、制品和本次操作不同而变化 |
 | UI | redacted readiness/result | 否 | 不显示 path/ref，不提供整份配置写回 |
@@ -165,6 +175,38 @@ LocalDeploymentConfig.deploy_hosts
 `-key`、`-target` 或 `-ssh-config` 形成第二份输入。分发后的读取验证 URL 不来自 `.env`，而随当前
 认证的 `NetworkIntent.nodes[].distribution_urls` 进入 `PublisherInput`；因此事实前沿变化时
 验证集合也原子变化，旧 systemd unit 中手写的 URL 不能继续成为发布事实。
+
+### 签名发布记录到实际运行的闭环
+
+以下是目标操作顺序，不表示现有 publisher、节点或客户端已完成 schema 3 发布验收。
+现网 signed-current floor 与新 catalog 的一次性反重放切换尚无批准并验证的办法；**在此之前
+不得把 schema 3 `current` 用作生产激活依据**，也不得重置旧 floor。
+
+1. 操作者沿同一正式发布入口提供本次精确 commit、制品、目标和理由。planner 从严格 `.env`、
+   受保护安装信任输入中的发布验签公钥及当前认证 `Projection` 生成计划，核对签发密钥对应公钥、
+   受众、组件/平台、generation、制品摘要、长度及媒体类型；计划只给出脱敏结果，
+   不改变 `current` 或期望事实。
+2. publisher 用 `LOOM_SIGNING_KEY` 引用签署不可变 manifest 与 catalog。executor 先把同一内容
+   摘要的制品和签名记录写入全部获准目标，再从认证分发地址读回字节，逐项验签和验摘要；相同
+   摘要已存在时必须逐字节一致。公开分发端只可取得签名标为通用公开受众的制品。
+3. 全部目标的 catalog 与引用制品读回通过后，才逐目标把可变 `current` 指向该 catalog。
+   每次推进须由目标端以原子条件更新，或在覆盖所有发布者的独占锁内比较计划读取的旧指针并
+   原子替换；单独“先读再写”不能防并发覆盖。条件不成立或目标端没有这种门禁时停止推进，
+   重新读取、重新计划。该并发门禁目前也属于待实现与验收的目标流程。
+   推进后再次读回指针、签名 catalog 和实际制品；消费方仍须依经批准的单调发布规则验收，
+   不能因指针可读而跳过验签、摘要或反重放检查。部分指针推进失败时逐目标记录结果，
+   不把整体写成已激活，也不把已推进的指针倒退到较旧 generation。
+4. 全部目标的发布读回成立后，管理员再经私有认证控制写入入口，为需更新的节点签发“期望组件”
+   普通事实，只引用已核验 catalog 中对应组件/平台的制品摘要。control 本地接受、持久化和同步后，
+   `Projection` 才改变期望；发布者、`.env` 或 `current` 都不能自动写入该事实。
+5. executor 在已授权节点安装精确制品，按职责完成安全 preflight、运行时应用及重启回读；节点和设备
+   从实际进程与文件报告组件、平台、制品摘要及版本。控制面分别显示签名发布、认证期望、实际运行
+   和报告是否新鲜；只有实际摘要与期望相符且必要运行回读成功才显示“已应用”。
+
+任一步失败都保留不可变记录和逐目标结果供同一输入重试；重启后从签名 release store、当前认证
+事实和节点实际回读重建状态，不从缓存、指针或上次 plan 猜测完成。部分目标已推进时须逐一展示
+真实状态，不以一次总开关掩盖差异。上述流程仍受[唯一现行契约的生产切换门禁](../core/current-contract.md#往返与拒绝)
+限制；实施进度与证据见[实施状态](../progress.md)。
 
 ## 失败语义
 
@@ -208,7 +250,7 @@ WG 地址都不进入长期 `.env`：
 
 | 现有键 | 结果 |
 |---|---|
-| `GANDI_PAT_TOKEN` | 保留；仍是 secret，不得进入普通 deploy plan、日志或 UI |
+| `GANDI_PAT_TOKEN` | 旧文件中存在则原文保留；缺席则省略，不制造空 token；仍是 secret，不得进入普通 deploy plan、日志或 UI |
 | `LOOM_DEPLOY_HOSTS`、`LOOM_LOCAL_NODE`、`LOOM_SSH_CONFIG` | 保留并严格解析，节点列表去重且规范排序 |
 | `LOOM_PUBLISH_OUTPUTS`、`LOOM_SIGNING_KEY` | 保留；前者是不可变发布目标，后者只保存 path/ref |
 | `LOOM_RELEASE_DIR`、`LOOM_PUBLISH_HISTORY`、`LOOM_PIN_DIR`、`LOOM_ADMIN_DIR`、`LOOM_ACCEPTANCE_DIR` | 删除；由仓库布局、packaging 或本次命令确定 |
@@ -226,13 +268,17 @@ WG 地址都不进入长期 `.env`：
 
 ## 最小必要测试
 
-1. 一个包含六个键的配置完成 domain → env → domain 往返，默认值、集合排序和相对路径锚定得到唯一字节；
+1. 一个含既有 token、一个省略 token 的配置分别完成 domain → env → domain 往返；可选值与默认 SSH
+   路径的缺席唯一编码为省略键，空赋值和显式重复默认值拒绝，集合排序及相对路径锚定得到唯一字节；
 2. 对未知键、重复键、shell 展开、宽权限和非法 target 各用同一表驱动 decoder 断言失败；
 3. 两个节点中一个缺少 SSH alias 或认证节点身份时，plan 在任何发布副作用前整体失败；全部匹配时
    只产生两个目标且不因 `reverse_only` 或网络观测改变；
 4. signing key ref、Gandi token、真实 SSH 地址和本机路径不出现在脱敏 plan、普通子进程环境、UI 或日志；一次节点执行失败只
    记录该次结果，不修改配置或 authority；
 5. 一份旧键集合经一次性迁移得到新规范配置；所有移除键在正常 loader 中均被拒绝。
+6. 发布只测一条必要链及失败边界：签名 catalog/manifest 和制品逐项读回后推进 `current`；
+   指针被并发修改或任一目标读回失败时不宣称整体激活；期望事实须独立签发，运行报告只按实际
+   摘要与新鲜回读确认。现网 floor 前向切换未获批准前，生产 `current` 失败关闭。
 
 不为节点数、路径组合、provider、端口和平台建立笛卡尔测试矩阵。核心测试锁定的是边界、同构和一次
 正常部署链，不是用分支数量代替模型。

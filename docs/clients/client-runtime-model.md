@@ -320,7 +320,8 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
    `ControlConfig` 成员链；首次 claim 只找签发者。扫码 Invite 只能授予 `access`。
 2. 验证收到的完整 DeviceView、签发 control 的成员资格与签名、连续多数签名的成员变更证明、
    签发者事实前沿及设备绑定。除经连续多数证书明确封存的验证键按封存序列验收外，已见撤权不得在新 View 中消失；通过后与信任绑定、已见高水位
-   原子保存为 `CertifiedLKG`。签名 View 不能证明没有尚未传播的撤权。
+   原子保存为 `CertifiedLKG`。事实及其因果依赖由签发 control 验证；设备没有全网事实，不能独立重算
+   该闭包。签名 View 不能证明没有尚未传播的撤权。
 3. 纯核心从认证的 Service、Policy、首跳资源、节点链和有序 `LinkID` 派生授权候选，再按平台
    实际能力投影可执行候选；`HostAdapter` 按资源 ID 复用并安装必要运行配置。首份 View 没有
    `NetworkLink` 时仍可经设备认证私有入口领配置，并按授权使用共享首跳。
@@ -329,6 +330,12 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
 5. 并行采集必要的真实 transport outcome；结果到达后再以同一纯函数重算。
 
 第 4 步不等待第 5 步，所以首次启动不会被测量阻塞。
+Android 在签名、成员链、设备绑定、floor 和受保护原子写入回读通过后保存该 profile 的
+`CertifiedLKG`；`active_profile_id` 只在 libbox 配置校验、VPN 启动及 selector 实际运行回读后产生。
+运行应用失败时不把该 profile 画成 active，旧运行路径只有仍获新 View 授权才可继续。
+后续 DNS/HTTPS 结果只决定相应 Service 的业务观测，
+目标缺席为 `unknown`，真实失败为 `unavailable` 并按同一选择函数尝试必要 fallback；
+不能因目标缺席或探测失败删除已认证的 LKG，也不能把 active 画成业务健康。
 
 ### 进程重启与离线
 
@@ -546,8 +553,10 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
    同一节点对的 WG 与 hy2 及共享同一资源的不同链路都只按各自 `LinkID` 的真实结果改变状态，未实测者
    保持 unknown；同 ID 链路或资源更新规范内容后，旧 `link_spec_digest` 的链路/候选观测及签名报告失效，
    不影响未引用该资源的候选；ICMP 成败只改变 RTT 提示，不改变三态。
-6. **非阻塞与 fallback**：启动在观测未完成时即可应用合法候选；一跳直达真实失败后选择
-   同一最终出口的中继；后续成功可恢复，无需配置变化。
+6. **非阻塞与 fallback**：启动在观测未完成时即可应用合法候选；Android 在验证并持久保存
+   `CertifiedLKG` 后，VPN/selector 回读可使 profile 成为 active，缺少获授权业务目标仍为 `unknown`；
+   真实业务失败更新观测并
+   选择同一最终出口的必要中继 fallback，后续成功可恢复，无需配置变化或删除认证 LKG。
 7. **运行事实**：adapter apply 成功但 readback 不匹配时不更新 Selection；UI 显示回读实际值，
    不把 Preference 显示为当前路径。
 8. **平台契约**：Android/Linux/Windows adapter 各用一个成功 outcome、一个失败 outcome、一次 apply/readback

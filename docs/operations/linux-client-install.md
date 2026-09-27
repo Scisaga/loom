@@ -51,8 +51,9 @@ installer 依次完成：
 5. 隔离成立后切换 `/usr/local/lib/loom-client/current`，启动唯一正式 unit `loom-client.service`；
 6. 等待 selector 和宿主网络不变量实际回读。失败时只允许恢复已证明安全、同样隔离的先前 release/unit；
    若旧 release 会在初始 netns 启动 access TUN，保持 service disabled/failed，不得为了“回滚成功”重施危险状态；
-7. 成功后停用并移除旧 `loom-client-v2*` units，把旧身份/store 和配置移入 owner-only retired 目录，
-   不作为 fallback 读取。
+7. 成功后停用旧 `loom-client-v2*` units；没有迁移 overlay 时，移除旧 unit 文件，把旧身份/store 和
+   配置移入 owner-only retired 目录并读回。有 overlay 时，旧 unit 保持停用，旧 unit 文件和源配置
+   暂留至 finalize 收尾，但唯一正式 service 不得读取它们或把它们当 fallback。
 
 claim 尚未由签发者接受时，installer 不启用 service。使用同一 Invite 重跑会 resume 同一事务，不生成第二身份。
 `--no-enroll` 只安装已验证 release，不创建身份也不启动 service。已 Enrollment
@@ -80,8 +81,22 @@ sudo loom client finalize-server-migration -source-sha256 <stage 输出的摘要
 sudo systemctl restart loom-client.service
 ```
 
-只有随后对纯认证的转发/出网运行时 listener、WG、selector 和配置回读全部成功，报告才可变为
-`exact=true`。这两条命令不读取旧 SSOT，不恢复旧 unit，也不会接受旧 telemetry 或任意公网中继出站。
+`finalize-server-migration` 目前只核对 overlay 中的源摘要并删除 overlay；它不会删除旧 unit 文件，
+也不会移走 `/etc/loom/sing-box/v2/config.json`。因此这两条命令本身不构成迁移完成。
+重启后须先从唯一正式 service 回读纯认证转发/出网运行时的 listener、WG、selector、配置摘要及真实业务，
+确认报告不再引用 overlay 且 `exact=true`；失败则保持未完成，不恢复旧 unit 或读取旧 SSOT。
+随后按 stage 时的**同一源路径和摘要**核对旧源文件，再将原始配置连同旧身份/store 移入 owner-only
+retired 目录作为受保护历史材料；只删除列明的旧 `loom-client-v2.service`、
+`loom-client-v2-agent.service`、`loom-client-v2-sing-box.service` 和 `loom-client-v2-report.service`
+的旧 unit 文件，执行 `daemon-reload`。清理后须从 systemd 回读这四个旧 unit 均不再运行、启用或
+可加载，旧源路径和 overlay 均不存在，唯一正式 unit 不引用旧路径；再重启一次正式 service 并重复
+`exact=true`、真实业务和签名 report 回读。源摘要不符、retired 写入失败或旧入口仍可加载时，
+保留原始字节并报告收尾未完成，不以 `exact=true` 单项结果宣称迁移完成。
+
+上述旧文件与 unit 收尾是目标流程；当前 finalize 命令只删除 overlay，尚未实现这部分收尾，
+须在相同工作项补齐并按正式入口验收。
+清理只能处理这些明确列明且经所有权核实的对象，不 flush 共享 route/rule/firewall，也不得移除
+事故宿主的 `00-host-network-quarantine.conf` 或重新启用初始 namespace access TUN。
 
 ## 正式运行与回读
 
