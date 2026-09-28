@@ -34,6 +34,8 @@ Direct、Auto 和指定最终出口复用同一候选模型；授权与真实可
 - [控制面 Web 投影](clients/web-ui-projection.md)：认证状态到页面与管理操作的映射。
 - [客户端 UI 视觉审查](clients/client-ui-visual-review.md)、[Android 客户端](../clients/android/README.md)和
   [Windows 客户端](../clients/windows/README.md)。
+- [原型与验收图对照](clients/prototype-review.md)：客户端原生截图到可编辑原型的场景映射，以及
+  Web 目标原型与当前界面的差距。
 
 ## 运维与验收
 

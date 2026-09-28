@@ -27,8 +27,9 @@ brand_pngs=()
 for size in "${icon_sizes[@]}"; do
   favicon_png="$stage_dir/favicon-${size}.png"
   brand_png="$stage_dir/brand-v4-${size}.png"
+  # The favicon viewBox already frames the full mark; a second crop cuts its tips.
   ffmpeg -loglevel error -i "$repo_root/internal/control/static/favicon.svg" \
-    -vf "scale=1060:1060:flags=lanczos,crop=1000:1000:30:30,scale=${size}:${size}:flags=lanczos" \
+    -vf "scale=${size}:${size}:flags=lanczos" \
     -frames:v 1 "$favicon_png"
   ffmpeg -loglevel error -i "$repo_root/assets/loom-logo-v4.svg" \
     -vf "crop=1100:1100:77:77,scale=${size}:${size}:flags=lanczos" -frames:v 1 "$brand_png"

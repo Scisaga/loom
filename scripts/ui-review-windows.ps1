@@ -33,13 +33,15 @@ $images = @(Get-ChildItem -LiteralPath $captureRoot -Filter '*.png' -File)
 if ($images.Count -ne 8) {
     throw "Windows UI review produced $($images.Count) images; expected 8."
 }
-$metadata = [ordered]@{
-    renderer = 'Win32 Direct2D/DirectWrite WM_PRINT'
-    renderer_version = 'portable-gui-wm-print-v1'
-    viewport = '876x614px'
-    dpi = [string]$dpi
-    os_build = [Environment]::OSVersion.Version.ToString()
-}
-# Windows PowerShell 5.1 writes a BOM for -Encoding utf8.  The metadata is
-# deliberately ASCII-only so every consumer sees canonical JSON bytes.
-$metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'metadata.json') -Encoding ascii
+$metadata = @(
+    '{'
+    '  "renderer": "Win32 Direct2D/DirectWrite WM_PRINT",'
+    '  "renderer_version": "portable-gui-wm-print-v1",'
+    '  "viewport": "876x614px",'
+    ('  "dpi": "' + $dpi + '",')
+    ('  "os_build": "' + [Environment]::OSVersion.Version.ToString() + '"')
+    '}'
+) -join "`n"
+# Emit the same LF/UTF-8 bytes on every Windows PowerShell version.
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $evidenceRoot 'metadata.json'), $metadata + "`n", $utf8)

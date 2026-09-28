@@ -5,6 +5,8 @@
 控制面 Web 保留现有页面、样式、图标及有效交互。页面从已验证的成员表链、签名事实形成的
 `Projection`、实际运行观测、签名发布记录和可验证事件生成；它没有另一套治理权威。
 浏览器操作与本机管理 CLI 提交同一种管理 operation，由 control 按同一权限和事实规则处理。
+现行页面的目标 SVG 与当前浏览器截图差距记录在[原型与验收图对照](prototype-review.md)；
+SVG 只作界面沟通稿，不是新的业务输入或完成证据。
 
 ## 私有入口与两种证书
 
@@ -116,10 +118,17 @@ Overview、Devices、Device detail、Topology、Live paths、Services、Releases
 | 网站叶有效期 | serving web 入口的已验证叶证书 `NotAfter`、认证的远端运行回读与注入的当前 UTC 时间 | admin 显示每个入口的到期时间、剩余有效期、30 天提醒或 `unknown`；不改变签名入口阶段 |
 | `Device` | 当前设备授权与签名 View、presence/runtime 观测 | 四项职责、policy grants、在线与实际运行状态 |
 | `Link` | `NetworkLink` 的 LinkID、资源及其独立 Observation | 同一节点对 WG/hy2 分行，旧规范摘要失效为 unknown |
+| 接口与链路流量 | 有效签名报告中同设备、LinkID、接口与 epoch 的相邻计数器增量 | Overview 的网络 TX、Topology 的所选 LinkID 两端 TX、设备详情的 RX／TX 历史；缺少增量的小时留空 |
 | `Path` | Service 范围、首跳资源、有序 LinkID、最终出口及选择 | Direct、Auto、指定出口及真实可用性；不以一个 Service 探测代替另一个 |
 | `Service` | 有效 `NetworkIntent`、matcher、Policy、DNS 与局域网映射 | 精确目标、授权范围、虚拟前缀及网关 |
 | `Release/Deployment` | 验签 catalog、`Projection` 期望摘要、publisher 与设备回读 | 精确制品、应用快照、真实一致性，不显示未回读的已应用版本 |
 | `Event` | 不可变签名 Material 与有效设备报告 | 普通事实、成员变更、冲突、撤权和运行变化，脱敏后显示、不含 `RuntimeKey` 等秘密，不另建事件权威 |
+
+传输柱状图保留最近 24 小时的有效计数器增量。设备页分列 RX 与 TX；链路及网络汇总按发送端 TX
+累计，对端 RX 不再重复计入。计数下降、epoch 变化及超过三分钟的相邻报告间隔不产生增量，
+旧范围报告不能填入已变更规范的新范围。没有有效增量的时段留位并表示 `unknown`，不能画成零值；
+覆盖小时数仅表示该小时至少有有效增量，不能承诺所有端点或每分钟均已观测。图和列表只累计已观测部分，
+历史流量与当前可用性、运行状态、实际应用回读分别呈现。以上是现有报告的派生展示，不新增流量权威或存储。
 
 Web 服务端以受保护安装信任输入中的发布验签公钥核验签名 catalog 与制品，页面只消费核验后的结果；
 可变 `current` 指针只选择待验 catalog，不授予信任，也不决定 `Projection` 的期望组件。只有精确摘要、

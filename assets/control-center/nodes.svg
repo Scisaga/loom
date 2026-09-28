@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1586" height="992" viewBox="0 0 1586 992" role="img" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">nodes — Loom control center</title>
+  <desc id="svg-desc">Loom control center: nodes.</desc>
+  <defs>
+    <marker id="route-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0 0L8 4L0 8Z" fill="#4D78D1"/></marker>
+    <symbol id="icon-grid" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></symbol>
+    <symbol id="icon-node" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="5" rx="1"/><rect x="2" y="9" width="12" height="5" rx="1"/><circle cx="4" cy="4.5" r=".6"/><circle cx="4" cy="11.5" r=".6"/></symbol>
+    <symbol id="icon-topology" viewBox="0 0 16 16"><path d="M4 4l4 4 4-4M8 8v4"/><circle cx="3" cy="3" r="1.7"/><circle cx="13" cy="3" r="1.7"/><circle cx="8" cy="13" r="1.7"/></symbol>
+    <symbol id="icon-path" viewBox="0 0 16 16"><path d="M2 4h4c3 0 2 8 5 8h3M2 12h3c3 0 2-8 5-8h4"/></symbol>
+    <symbol id="icon-service" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/></symbol>
+    <symbol id="icon-release" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M8 5v5m-2-2 2 2 2-2"/></symbol>
+    <symbol id="icon-events" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 1.5"/></symbol>
+    <symbol id="icon-signed" viewBox="0 0 16 16"><path d="M8 1.5 13 4v4c0 3-2 5-5 6.5C5 13 3 11 3 8V4Z"/><path d="m5.5 8 1.6 1.6 3.4-3.5"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></symbol>
+    <symbol id="icon-terminal" viewBox="0 0 16 16"><rect x="1.5" y="2" width="13" height="12" rx="2"/><path d="m4 5 3 3-3 3m5 0h3"/></symbol>
+    <symbol id="icon-code" viewBox="0 0 16 16"><path d="m5.5 3-4 5 4 5m5-10 4 5-4 5M9.5 2l-3 12"/></symbol>
+    <symbol id="icon-qr" viewBox="0 0 16 16"><path d="M2 2h4v4H2zm8 0h4v4h-4zM2 10h4v4H2zm8 0v2m3-2v4m-3 0h2"/></symbol>
+    <symbol id="icon-phone" viewBox="0 0 16 16"><rect x="4" y="1" width="8" height="14" rx="2"/><path d="M7 3h2M7 13h2"/></symbol>
+    <symbol id="icon-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></symbol>
+    <symbol id="icon-expand" viewBox="0 0 16 16"><path d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+    <symbol id="icon-filter" viewBox="0 0 16 16"><path d="M2 4h12M4 8h8m-6 4h4"/></symbol>
+    <style><![CDATA[
+    .ui { font-family: Inter, "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill:#1B201D }
+    .mono { font-family: "Intel One Mono", "SFMono-Regular", Consolas, monospace }
+    .title { font-size:28px; font-weight:700; letter-spacing:-.5px }
+    .section { font-size:17px; font-weight:650; letter-spacing:-.2px }
+    .metric { font-size:22px; font-weight:650; letter-spacing:-.3px }
+    .body { font-size:14px }
+    .small { font-size:12px }
+    .tiny { font-size:11px }
+    .micro { font-size:10px }
+    .eyebrow { font-size:11px; font-weight:700; letter-spacing:1px }
+    .muted { fill:#6E7771 }
+    .faint { fill:#929B95 }
+    .green { fill:#218A61 }
+    .amber { fill:#A66A14 }
+    .red { fill:#B74E4E }
+    .blue { fill:#427994 }
+    .white { fill:#FFFFFF }
+    .nav { font-size:13px }
+    .nav-icon { fill:none; stroke:#79837D; stroke-width:1.45; stroke-linecap:round; stroke-linejoin:round }
+    .nav-active { fill:none; stroke:#1B201D; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round }
+    .rule { stroke:#E5EAE6; stroke-width:1 }
+    .dash { stroke:#ABB7AF; stroke-width:1.5; stroke-dasharray:5 5; fill:none }
+    .link { stroke:#B8C4BC; stroke-width:2; fill:none }
+    .selected { stroke:#4D78D1; stroke-width:2.3; fill:none; marker-end:url(#route-arrow) }
+]]></style>
+  </defs>
+  <rect width="1586" height="992" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="365" y="34" text-anchor="start">Nodes</text>
+  <line x1="344" y1="57" x2="397" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="573" y="34" text-anchor="start">Live paths</text>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-release" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="902" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="923" y="34" text-anchor="start">Events</text>
+  <use href="#icon-signed" x="996" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1017" y="34" text-anchor="start">Signed state</text>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">INVENTORY</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Devices</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">One stable identity per device, with roles, policy grants and runtime evidence.</text>
+  <circle cx="30" cy="180" r="6" fill="#FFFFFF" stroke="#2AA875"/>
+  <text class="ui tiny green" x="30" y="184" text-anchor="middle">✓</text>
+  <text class="ui small" x="47" y="184" text-anchor="start">Six stable device identities · three current runtime reports</text>
+  <rect data-ui="panel" x="24" y="196" width="1538" height="83" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <text class="ui eyebrow muted" x="44.0" y="219" text-anchor="start">DEVICE IDENTITIES</text>
+  <text class="ui metric" x="44.0" y="244" text-anchor="start">6</text>
+  <text class="ui small muted" x="44.0" y="264" text-anchor="start">same ID across roles</text>
+  <text class="ui eyebrow muted" x="428.5" y="219" text-anchor="start">CONTROL MEMBERS</text>
+  <text class="ui metric" x="428.5" y="244" text-anchor="start">2</text>
+  <text class="ui small muted" x="428.5" y="264" text-anchor="start">majority certificate</text>
+  <line data-ui="panel-column" class="rule" x1="408.5" y1="196" x2="408.5" y2="279"/>
+  <text class="ui eyebrow muted" x="813.0" y="219" text-anchor="start">OBSERVED RUNNING</text>
+  <text class="ui metric" x="813.0" y="244" text-anchor="start">3</text>
+  <text class="ui small muted" x="813.0" y="264" text-anchor="start">fresh runtime reports</text>
+  <line data-ui="panel-column" class="rule" x1="793.0" y1="196" x2="793.0" y2="279"/>
+  <text class="ui eyebrow muted" x="1197.5" y="219" text-anchor="start">RUNTIME UNKNOWN</text>
+  <text class="ui metric" x="1197.5" y="244" text-anchor="start">3</text>
+  <text class="ui small muted" x="1197.5" y="264" text-anchor="start">no inferred process state</text>
+  <line data-ui="panel-column" class="rule" x1="1177.5" y1="196" x2="1177.5" y2="279"/>
+  <text class="ui body" x="25" y="305" text-anchor="start">All devices</text>
+  <line x1="25" y1="317" x2="113" y2="317" stroke="#2AA875" stroke-width="2"/>
+  <text class="ui body muted" x="154" y="305" text-anchor="start">Control members</text>
+  <text class="ui body muted" x="319" y="305" text-anchor="start">Needs attention</text>
+  <line class="rule" x1="24" y1="318" x2="1562" y2="318"/>
+  <rect data-ui="panel" x="24" y="335" width="1538" height="636" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <text class="ui section" x="44" y="367" text-anchor="start">Device inventory</text>
+  <text class="ui small muted" x="1544" y="366" text-anchor="end">one row per stable DeviceID</text>
+  <line data-ui="panel-header" class="rule" x1="24" y1="383" x2="1562" y2="383"/>
+  <rect x="46" y="399" width="356" height="38" rx="5" fill="#F8FAF8" stroke="#E1E7E2"/>
+  <use href="#icon-search" x="57" y="410" width="15" height="15" class="nav-icon"/>
+  <text class="ui small muted" x="81" y="423" text-anchor="start">Search ID, policy or platform</text>
+  <g data-ui="pill">
+  <rect x="422" y="404" width="101" height="28" rx="14" fill="#ECF7F0" stroke="#C8E5D1"/>
+  <text class="ui small green" x="472" y="422" text-anchor="middle">All · 6</text>
+  </g>
+  <g data-ui="pill">
+  <rect x="536" y="404" width="135" height="28" rx="14" fill="#F4F6F4" stroke="#DEE4DF"/>
+  <text class="ui small muted" x="603" y="422" text-anchor="middle">Control · 2</text>
+  </g>
+  <g data-ui="pill">
+  <rect x="684" y="404" width="145" height="28" rx="14" fill="#FFF8EA" stroke="#EFDDBA"/>
+  <text class="ui small amber" x="756" y="422" text-anchor="middle">Runtime unknown · 3</text>
+  </g>
+  <g data-ui="button">
+  <rect x="1362" y="401" width="178" height="34" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1451" y="422" text-anchor="middle">+ Add device</text>
+  </g>
+  <line data-ui="panel-section" class="rule" x1="24" y1="453" x2="1562" y2="453"/>
+  <text class="ui eyebrow muted" x="47" y="479" text-anchor="start">DEVICE / PLATFORM</text>
+  <text class="ui eyebrow muted" x="277" y="479" text-anchor="start">ROLES</text>
+  <text class="ui eyebrow muted" x="580" y="479" text-anchor="start">POLICY GRANTS</text>
+  <text class="ui eyebrow muted" x="809" y="479" text-anchor="start">AUTHORIZATION</text>
+  <text class="ui eyebrow muted" x="1009" y="479" text-anchor="start">RUNTIME / PROBE</text>
+  <text class="ui eyebrow muted" x="1247" y="479" text-anchor="start">REPORT EVIDENCE</text>
+  <text class="ui eyebrow muted" x="1456" y="479" text-anchor="start">OPEN</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="493" x2="1562" y2="493"/>
+  <circle cx="53" cy="516" r="4" fill="#2AA875" stroke="none"/>
+  <text class="ui body mono" x="66" y="521" text-anchor="start">control-a</text>
+  <text class="ui tiny muted" x="66" y="541" text-anchor="start">Linux · member</text>
+  <text class="ui body" x="277" y="532" text-anchor="start">control + forward</text>
+  <text class="ui body mono" x="580" y="532" text-anchor="start">none</text>
+  <text class="ui body green" x="809" y="532" text-anchor="start">effective</text>
+  <text class="ui body green" x="1009" y="521" text-anchor="start">running</text>
+  <text class="ui tiny muted" x="1009" y="541" text-anchor="start">resource + LinkID current</text>
+  <text class="ui body" x="1247" y="532" text-anchor="start">runtime fresh</text>
+  <text class="ui metric muted" x="1522" y="532" text-anchor="middle">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="563" x2="1562" y2="563"/>
+  <circle cx="53" cy="586" r="4" fill="#D79B3B" stroke="none"/>
+  <text class="ui body mono" x="66" y="591" text-anchor="start">control-b</text>
+  <text class="ui tiny muted" x="66" y="611" text-anchor="start">Linux · member</text>
+  <text class="ui body" x="277" y="602" text-anchor="start">control + forward</text>
+  <text class="ui body mono" x="580" y="602" text-anchor="start">none</text>
+  <text class="ui body green" x="809" y="602" text-anchor="start">effective</text>
+  <text class="ui body amber" x="1009" y="591" text-anchor="start">unknown</text>
+  <text class="ui tiny muted" x="1009" y="611" text-anchor="start">no fresh runtime View</text>
+  <text class="ui body amber" x="1247" y="602" text-anchor="start">runtime missing</text>
+  <text class="ui metric muted" x="1522" y="602" text-anchor="middle">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="633" x2="1562" y2="633"/>
+  <circle cx="53" cy="656" r="4" fill="#D79B3B" stroke="none"/>
+  <text class="ui body mono" x="66" y="661" text-anchor="start">relay-east</text>
+  <text class="ui tiny muted" x="66" y="681" text-anchor="start">Linux · relay</text>
+  <text class="ui body" x="277" y="672" text-anchor="start">forward</text>
+  <text class="ui body mono" x="580" y="672" text-anchor="start">none</text>
+  <text class="ui body green" x="809" y="672" text-anchor="start">effective</text>
+  <text class="ui body amber" x="1009" y="661" text-anchor="start">unknown</text>
+  <text class="ui tiny muted" x="1009" y="681" text-anchor="start">link digest changed</text>
+  <text class="ui body amber" x="1247" y="672" text-anchor="start">runtime stale</text>
+  <text class="ui metric muted" x="1522" y="672" text-anchor="middle">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="703" x2="1562" y2="703"/>
+  <rect x="25" y="703" width="1536" height="70" rx="0" fill="#F2F8F4" stroke="none"/>
+  <circle cx="53" cy="726" r="4" fill="#2AA875" stroke="none"/>
+  <text class="ui body mono" x="66" y="731" text-anchor="start">relay-west</text>
+  <text class="ui tiny muted" x="66" y="751" text-anchor="start">Linux · gateway</text>
+  <text class="ui body" x="277" y="742" text-anchor="start">forward</text>
+  <text class="ui body mono" x="580" y="742" text-anchor="start">none</text>
+  <text class="ui body green" x="809" y="742" text-anchor="start">effective</text>
+  <text class="ui body green" x="1009" y="731" text-anchor="start">running</text>
+  <text class="ui tiny muted" x="1009" y="751" text-anchor="start">LAN ACL current</text>
+  <text class="ui body" x="1247" y="742" text-anchor="start">runtime fresh</text>
+  <text class="ui metric muted" x="1522" y="742" text-anchor="middle">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="773" x2="1562" y2="773"/>
+  <circle cx="53" cy="796" r="4" fill="#2AA875" stroke="none"/>
+  <text class="ui body mono" x="66" y="801" text-anchor="start">internet-exit</text>
+  <text class="ui tiny muted" x="66" y="821" text-anchor="start">Linux · exit</text>
+  <text class="ui body" x="277" y="812" text-anchor="start">forward + internet_egress</text>
+  <text class="ui body mono" x="580" y="812" text-anchor="start">none</text>
+  <text class="ui body green" x="809" y="812" text-anchor="start">effective</text>
+  <text class="ui body green" x="1009" y="801" text-anchor="start">running</text>
+  <text class="ui tiny muted" x="1009" y="821" text-anchor="start">path result is scoped</text>
+  <text class="ui body" x="1247" y="812" text-anchor="start">runtime fresh</text>
+  <text class="ui metric muted" x="1522" y="812" text-anchor="middle">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="843" x2="1562" y2="843"/>
+  <circle cx="53" cy="866" r="4" fill="#D79B3B" stroke="none"/>
+  <text class="ui body mono" x="66" y="871" text-anchor="start">android-phone</text>
+  <text class="ui tiny muted" x="66" y="891" text-anchor="start">Android · access</text>
+  <text class="ui body" x="277" y="882" text-anchor="start">access</text>
+  <text class="ui body mono" x="580" y="882" text-anchor="start">media-access</text>
+  <text class="ui body green" x="809" y="882" text-anchor="start">effective</text>
+  <text class="ui body amber" x="1009" y="871" text-anchor="start">runtime unknown</text>
+  <text class="ui tiny muted" x="1009" y="891" text-anchor="start">media available</text>
+  <text class="ui body" x="1247" y="882" text-anchor="start">probe fresh</text>
+  <text class="ui metric muted" x="1522" y="882" text-anchor="middle">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="913" x2="1562" y2="913"/>
+  <text class="ui tiny muted" x="47" y="946" text-anchor="start">Ordinary grants can be accepted locally; control retirement and whole-node deletion require old-member majority.</text>
+</svg>

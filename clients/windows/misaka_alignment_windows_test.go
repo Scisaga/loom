@@ -222,6 +222,13 @@ func TestGUIMisakaBrandUsesRoundedFullMark(t *testing.T) {
 		if violet < int(s(40)*s(40)/8) {
 			t.Fatalf("DPI %d 品牌区没有保留新版紫色背景：紫色像素=%d", dpi, violet)
 		}
+		y := top + s(40) - 1
+		for x := left + s(4); x < left+s(36); x++ {
+			pixel := misakaCanvasTestPixel(pixels, width, x, y)
+			if pixel>>16&255 > 190 && pixel>>8&255 > 190 && pixel&255 > 190 {
+				t.Fatalf("DPI %d 品牌区白色花瓣触及底部留白：位置=(%d,%d)", dpi, x, y)
+			}
+		}
 	}
 }
 
@@ -251,9 +258,16 @@ func TestGUIProgramFaviconUsesApprovedVioletMark(t *testing.T) {
 	if violet < 100 {
 		t.Fatalf("程序 favicon 没有保留新版紫色边：紫色像素=%d", violet)
 	}
+	ink := misakaAlignmentInk(pixels, size, background, func(rgb uint32) bool {
+		red, green, blue := int(rgb>>16&255), int(rgb>>8&255), int(rgb&255)
+		return blue > red+10 && blue > green+5 && blue > 100
+	})
+	if ink.top <= 0 || ink.bottom >= size {
+		t.Fatalf("程序 favicon 花瓣触及图标上下边缘：图形=%+v", ink)
+	}
 }
 
-func TestGUIMisakaTitleFaviconUsesTwentyDIPWithoutRightClipping(t *testing.T) {
+func TestGUIMisakaTitleFaviconUsesTwentyDIPWithoutClipping(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	const width, height int32 = 180, 80
 	dc, pixels := misakaCanvasTestDC(t, width, height)
@@ -276,6 +290,9 @@ func TestGUIMisakaTitleFaviconUsesTwentyDIPWithoutRightClipping(t *testing.T) {
 		}
 		if ink.right >= area.right || ink.left <= area.left {
 			t.Fatalf("DPI %d 标题栏 favicon 横向触边：图形=%+v 绘制框=%+v", dpi, ink, area)
+		}
+		if ink.bottom >= area.bottom || ink.top <= area.top {
+			t.Fatalf("DPI %d 标题栏 favicon 纵向触边：图形=%+v 绘制框=%+v", dpi, ink, area)
 		}
 		if ink.right-ink.left < s(16) {
 			t.Fatalf("DPI %d 标题栏 favicon 可见宽度仍偏小：图形=%+v", dpi, ink)

@@ -25,15 +25,18 @@ Loom 管理可组合承担 `access`、`forward`、`internet_egress`、`control` 
 
 控制面 Web 包含 Overview、Devices、Topology、Services、Releases、Deployments 与 Events。
 Android 和 Windows 提供原生页面、配置选择与实际路径显示。界面从认证状态和真实运行结果单向投影；
-业务验收状态见[实施状态](docs/progress.md)。
+业务验收状态见[实施状态](docs/progress.md)。下列 Web 图片是按现行模型绘制的目标原型，
+与当前浏览器页面的差距见[原型对照](docs/clients/prototype-review.md)。
+总览与拓扑保留双圈结构和 24 小时传输柱状图；[设备详情](assets/control-center/node-detail.svg)
+展示独立的 RX／TX 历史，缺失观测以空档或 `unknown` 表示。
 
 <p align="center">
-  <img src="assets/loom-control-center-overview-misaka-v1.svg" width="100%" alt="Loom 控制中心总览">
+  <img src="assets/control-center/overview.svg" width="100%" alt="Loom 控制中心目标总览原型">
 </p>
 
 | 动态拓扑 | Service 管理 |
 |---|---|
-| ![Loom 动态拓扑](assets/loom-control-center-topology-misaka-v1.svg) | ![Loom Service 管理](assets/loom-control-center-services-misaka-v1.svg) |
+| ![Loom 目标拓扑原型](assets/control-center/topology.svg) | ![Loom 目标 Service 原型](assets/control-center/services.svg) |
 
 Windows 原生界面提供多配置侧栏、Direct/Auto/固定出口、当前路径和详细信息。三种交付形态是
 Portable Mixed、Portable TUN 和 Installed；当前发行签名与实体机验收状态见[状态文档](docs/progress.md)。
@@ -43,6 +46,9 @@ Portable Mixed、Portable TUN 和 Installed；当前发行签名与实体机验�
 </p>
 
 <p align="center"><sub>Windows · 同机测试 VM 的合成场景；图片不是生产连接证据。</sub></p>
+
+对应的可编辑[Windows 原型](assets/client/windows/connected.svg)与
+[Android 原型](assets/client/android/connection-connected-auto.svg)按原生截图整理，Windows 外框另表达目标圆角。
 
 ## 设计与操作入口
 
