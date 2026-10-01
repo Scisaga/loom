@@ -20,8 +20,9 @@
 首期不声称覆盖 Android 相机画面、系统权限页、真实 VPN 连接、Windows UAC/托盘、多显示器、
 物理 DPI、ARM64、睡眠唤醒或物理网络切换。这些仍由对应真机或实体机里程碑验收。
 
-可编辑 SVG 原型用于把已获批客户端截图整理成后续迭代的沟通稿；Windows 目标圆角外框是标注的
-设计差异。Web 原型则按[现行 Web 投影](web-ui-projection.md)表达目标内容，现有 Web 截图仅供差距核对。
+可编辑 SVG 原型以已获批客户端截图为业务场景对照，并表达后续迭代的目标设计。Windows 原型中的
+圆角外框、间距、线宽和控件布局均可与当前原生基准不同；同一场景 ID 表示状态对应，不表示像素一致。
+Web 原型则按[现行 Web 投影](web-ui-projection.md)表达目标内容，现有 Web 截图仅供差距核对。
 全部场景、来源和差异见[原型与验收图对照](prototype-review.md)。原型不是客户端截图基准、
 运行时输入或领域权威；未来设计变更仍须落到生产 UI，再由原生截图和正式业务入口回读。
 
@@ -66,8 +67,12 @@ Android 正式 `Activity` 通过 `LoomHomeRoute` 读取 `StateFlow`、调用 man
 `LoomHomeScreen` 只接收不可变 UI 投影、当前标签和回调。截图与正式入口共用后者。CameraX、Android
 权限页与 VPN 系统页不由假页面代替。
 
-Windows 场景集中复用生产 `portableGUI`、真实 Win32 控件、Direct2D/DirectWrite 及已有 `WM_PRINT`
-内存捕获。不存在 HTML、SVG 或第二套 Windows 设计渲染器。
+Windows 原生截图场景集中复用生产 `portableGUI`、真实 Win32 控件、Direct2D/DirectWrite 及已有 `WM_PRINT`
+内存捕获；此链路不能使用 HTML、SVG 或独立页面代替生产 UI。
+[`scripts/generate_windows_prototypes.py`](../../scripts/generate_windows_prototypes.py) 仅生成设计沟通用 SVG，
+不接入 `scripts/ui-review`，不生成或更新原生 baseline，也不作为 Windows 运行时的另一套 UI。
+其固定合成内容和布局规格见[Windows 原型](prototype-review.md#windows原生场景与目标视觉设计)；
+原型重复生成、几何检查和人工渲染检查只验证设计稿，不证明原生控件、DPI 或业务交互已实现。
 
 ## 场景集合与环境
 

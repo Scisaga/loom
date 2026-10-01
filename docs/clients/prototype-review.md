@@ -3,7 +3,8 @@
 [设计入口](../README.md) · [客户端视觉审查](client-ui-visual-review.md) · [Web 投影](web-ui-projection.md)
 
 本目录中的 SVG 是可编辑的界面沟通稿。Android 与 Windows 的已实现内容以生产 UI 生成的原生截图为对照；
-Windows 圆角外框是目标设计，须另外由 DWM 合成截图回读。Web SVG 是现行模型的目标投影，
+Windows 的圆角外框、间距、线宽和控件布局表达目标设计，不再要求与原生截图的位置和像素一致。
+外框须另由 DWM 合成截图回读，内容变更须落到生产 UI 后重新审查。Web SVG 是现行模型的目标投影，
 现有浏览器截图仅记录实现差距。原型不读取 wire 或持久状态，也不参与客户端或 control 的运行判断：
 
 ```text
@@ -16,12 +17,16 @@ domain、wire、persistent 的可逆性仍由各自核心模型规定；SVG 只�
 `control-a`、`relay-west`、`media` 等显示别名，去掉 `Prototype`、`sample data` 和 `demo-*` 水印或占位名称。
 这些别名仍然不是现网身份；地址与域名继续使用 RFC 5737 和 `example`。
 
-## Windows：原生内容与目标外框
+## Windows：原生场景与目标视觉设计
 
 基准目录为 [`clients/windows/testdata/ui-golden/`](../../clients/windows/testdata/ui-golden/)，截图由生产
 `portableGUI` 在 Windows 11 VM 上以 96 DPI、`876×614 DIP` 渲染。下表每行的 PNG 和 SVG 使用同一场景 ID；
-PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。SVG 外框统一画成 10 DIP 圆角的目标自定义窗体。
-实际 Windows 标题栏图标的下缘裁切已通过修正 `favicon.svg` 取景和资源栅格化消除；因此本轮由原生渲染器
+PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。SVG 保留同一场景的业务事实与有效操作，
+通过 [`scripts/generate_windows_prototypes.py`](../../scripts/generate_windows_prototypes.py) 生成目标视觉稿；
+它只读取固定合成内容和公开图形资源，不读取本机配置、身份、网络或时钟，不接入原生截图流程。
+本次只调整原型布局和样式，不修改原生 Windows 代码或 PNG 基准，不代表生产 UI 已完成这些调整。
+
+此前记录的标题栏图标修复通过调整 `favicon.svg` 取景和资源栅格化消除了下缘裁切；当时由原生渲染器
 重新录制八张 PNG，每张与旧基准仅在标题栏图标区域有 338 个像素变化，侧栏图标没有变化。
 
 | 场景 | 原生 PNG | 可编辑 SVG | 应核对的状态和文案 |
@@ -29,19 +34,96 @@ PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。SVG 外框统�
 | `connected` | [截图](../../clients/windows/testdata/ui-golden/connected.png) | [原型](../../assets/client/windows/connected.svg) | 已连接、自动模式、按 Service 分开的当前路径及真实/未知观测 |
 | `path-expanded` | [截图](../../clients/windows/testdata/ui-golden/path-expanded.png) | [原型](../../assets/client/windows/path-expanded.svg) | 展开详情、当前选择回读和测量范围 |
 | `profile-rename` | [截图](../../clients/windows/testdata/ui-golden/profile-rename.png) | [原型](../../assets/client/windows/profile-rename.svg) | 侧栏配置重命名及输入焦点 |
-| `join-draft` | [截图](../../clients/windows/testdata/ui-golden/join-draft.png) | [原型](../../assets/client/windows/join-draft.svg) | 加入草稿、邀请文件/二维码入口、尚未提交 |
-| `join-empty` | [截图](../../clients/windows/testdata/ui-golden/join-empty.png) | [原型](../../assets/client/windows/join-empty.svg) | 空加入表单和不可用提交动作 |
+| `join-draft` | [截图](../../clients/windows/testdata/ui-golden/join-draft.png) | [原型](../../assets/client/windows/join-draft.svg) | 正常新增表单；尚未进入正式配置列表，保留邀请文件/二维码入口 |
+| `join-empty` | [截图](../../clients/windows/testdata/ui-golden/join-empty.png) | [原型](../../assets/client/windows/join-empty.svg) | 已有条目未加入的特殊状态；原连接仍运行，不是新增流程的下一步 |
 | `join-error` | [截图](../../clients/windows/testdata/ui-golden/join-error.png) | [原型](../../assets/client/windows/join-error.svg) | 加入失败及可回读的错误提示 |
 | `viewport-bottom` | [截图](../../clients/windows/testdata/ui-golden/viewport-bottom.png) | [原型](../../assets/client/windows/viewport-bottom.svg) | 固定视口底部、滚动和控件位置 |
 | `fixed-tun` | [截图](../../clients/windows/testdata/ui-golden/fixed-tun.png) | [原型](../../assets/client/windows/fixed-tun.svg) | 指定最终出口、TUN 形态与当前选择 |
 
-本轮在同机 Windows 11 VM 的交互 RDP 桌面捕获了三档 DWM 合成窗口，`GetDpiForWindow` 分别实读
+`join-draft` 与 `join-empty` 不是连续两步。正常入口是侧栏“＋”→ 输入名称、导入邀请 →
+“加入并保存”→ 受保护的加入身份及认证配置提交后，新配置进入列表并保持断开；原有连接继续运行。
+首次启动的列表为空，不会自动创建空配置。具体入口约定见 [Windows 客户端](../../clients/windows/README.md#normal-user-flow)。
+
+`join-empty` 来自原生截图 fixture 直接构造的“列表已有条目，但未加入”状态；现有实现仍有读取既有条目后
+缺少加入身份或完整认证配置的显示分支。这不证明它属于正常新增链路，也不能把截图保留要求解释为
+“先保存空配置，再导入邀请”。本次保留该场景用于状态对照，未据此增加产品流程；真正的首次使用空态应表达
+“尚无连接配置 → 添加配置”，不能用当前 `join-empty` 图替代。
+
+### 目标布局与线条
+
+原型保持中文、浅色、`876×614 DIP` 窗口、176 DIP 侧栏及 10 DIP 外框圆角。
+尺寸均按 SVG 的 1 单位对应 1 DIP 表达，统一使用下列尺度：
+
+| 项目 | 目标规格 |
+|---|---|
+| 主内容边界 | `x=200` 至 `x=852`，距侧栏及窗口右侧各 24 DIP |
+| 内容间距 | 卡片内边距 16 DIP；分组间距 24 DIP；行内按 8、12、16 DIP 排列 |
+| 侧栏配置 | 每行高 64 DIP，行间距 8 DIP；为 32 DIP 重命名输入框和下方状态文字留出独立空间 |
+| 面板组 | 12 DIP 圆角、无描边；标题与操作在面板内，分隔线贯穿面板全宽 |
+| 滚动条 | 轨道与滑块右缘贴住窗体内缘 `x=875.5`，不留额外右边距；正文留白独立保留 |
+| 滚动底界 | 内容裁切和轨道延伸到窗体内底缘 `y=613.5`；24 DIP 末尾留白属于可滚动内容，不得形成固定底部空带 |
+| 操作控件 | 正文按钮、输入框、出口选择统一高 32 DIP、圆角 8 DIP；系统标题栏和图标按钮单独布局 |
+| 路由模式 | 三段各宽 80 DIP；选中项四周留白均为 4 DIP，绿色填充、白色文字，不叠加内外两圈描边 |
+| 描边 | 需要描边的控件及分隔线 0.75 DIP；路径和普通图标 1 DIP；状态图标 1.25 DIP |
+| 文字层级 | 页面标题 20 DIP、分组标题 14 DIP、正文与控件 12 DIP、说明 11 DIP |
+
+路由模式、固定出口选择和辅助说明在同一区域对齐；路径行的名称、观测摘要及状态垂直居中对齐，
+节点与标签的距离一致。加入表单沿用同一控件和间距尺度，空状态、错误状态使用相同操作位置。
+减少重复边框和无意义留白，不能通过删掉证据、状态、入口或缩小视口来获得整齐效果。
+
+对齐与间距进一步遵循以下规则：
+
+- 连接状态单行区域高 64 DIP，状态图标、标题和按钮居中；TUN 说明增加 24 DIP 内容高度，
+  后续模式行和路径面板随内容顺延，两段分组间距均保持 24 DIP。设备标识底栏高 48 DIP、垂直居中。
+- 侧栏重命名输入框保留 12 DIP 左内距，与状态文字至少相隔 4 DIP；编辑态与普通态使用同一行高，
+  光标位于文字末尾之后。侧栏底部说明沿用原有上下留白。
+- 路径节点直径为 32 DIP，四个中心等距排列；首尾各预留 80 DIP 标签列，标签不侵入面板的 16 DIP 内边距。
+  节点与箭头、节点与标签的间隔均为 8 DIP。展开证据按 24 DIP 行距排列，说明块上下各保留 16 DIP。
+- 观测摘要在固定列内右对齐，状态区域预留 80 DIP；只读标签内部使用 12 DIP 左右内距、4 DIP 状态点和
+  8 DIP 图文间隔。带展开箭头的按钮左右各留 16 DIP，文字与箭头相隔 8 DIP。
+- 加入表单的辅助说明距对应操作 12–16 DIP；空态与错误态共用相同的位置与间距。
+  只读信息底栏与操作按钮底栏分别按内容居中，不把多余空白作为固定面板高度保留。
+
+### 与 Android 共用的组件样式
+
+Windows 参考 Android [连接页](../../assets/client/android/connection-connected-auto.svg)与
+[配置页](../../assets/client/android/configuration-ready-multiple-profiles.svg)的面板分组，
+采用同一浅绿灰画布 `#F0F4F1`、白色内容面、浅绿连接状态面 `#F7FBF8` 和绿色选中填充 `#239B68`。
+深浅层级与状态语义共用，控件尺寸仍适配桌面：保留 32 DIP 高度、横向逐跳路径和固定侧栏。
+
+“当前选路”是一个完整白色面板，标题、展开/收起按钮、各 Service 的路径与观测证据都在组内。
+连接状态脚注、选路标题、各 Service 和展开说明的分隔线均贯穿所属面板的左右边界；
+文字与控件仍保留 16 DIP 内边距。展开说明仍属于该 Service，不再套独立描边面板。
+可用状态用浅绿标签、测量未知用中性灰标签；节点与箭头维持中性细线，不能把服务级业务成功投影为逐跳健康。
+连接操作、模式选择、说明按钮与普通输入框共用圆角和颜色层级；状态标签是只读信息，不是操作按钮。
+三个加入场景的右侧主体也各自使用一个白色圆角面板：新增页将说明、表单和提交操作归组，
+未加入与导入失败页将状态、导入或重试操作、当前连接提示归组。页标题及删除入口位于面板外；
+面板沿用 12 DIP 圆角、16 DIP 内边距和贯穿全宽的分隔线，空态与错误态的控件位置保持一致。
+此处只调整 Windows 原型，Android 原型、两端原生实现与 PNG 基准均不随组件样式对齐而改写。
+
+### 原型最小核对
+
+- 八个场景 ID 和业务状态全部保留；选中配置与当前运行配置分别表达，不能把未加入配置画成已断开现有连接。
+- 新配置尚未导入邀请时保存不可用；保留邀请文件、二维码粘贴、导入失败后的重试，以及保存后保持断开的说明。
+- 重命名保留未提交输入及焦点；连接状态保留设备标识和断开入口；固定出口保留出口名称、前置路径自动选择和 TUN 说明。
+- 按 Service 展示路径，真实可用与测量未知不能合并；展开内容保留证据范围、当前选择回读和读取时间。
+- 固定视口中保留展开后的溢出及滚动底部场景；检查滚动范围、内容裁切和侧栏不随主区滚动。
+  底部场景使用与首屏相同的完整面板和行高，完整显示服务 4–7，顶部可见服务 3 的路径尾部。
+  未到内容末尾时，路径面板可以延伸并裁切于窗体底缘；不能在未显示完的服务下固定预留背景空带。
+- 重新生成应得到相同 SVG；逐页检查 XML、控件尺寸、等距内留白、文字溢出和遮挡，并在原始尺寸及放大后查看线条。
+
+本次已完成八张 SVG 的 XML、原有场景文案、控件几何、重复生成和文字重叠核对，并检查了 1×、1.5×、2× 渲染。
+展开详情与底部视图统一采用右侧主区滚动，侧栏和标题栏固定。这些检查只验证原型，不能替代原生内容或 DWM 验收。
+
+### 原生验收边界
+
+此前在同机 Windows 11 VM 的交互 RDP 桌面捕获了三档 DWM 合成窗口，`GetDpiForWindow` 分别实读
 96、144、192 DPI。96 与 192 DPI 截图可见较小的外角弧度，144 DPI 截图左上角接近直角；三档均未达到
 SVG 表达的 10 DIP 目标圆角。截图保存在被忽略的
 `deploy/evidence/ui-prototype-rebuild/rdp-window-{96,144,192}.png`。这些单帧只证明各自 RDP 会话中的合成结果，
 不抵扣实体显示器、跨屏移动或长期窗口行为的验收。当前源码已设置圆角偏好和非合成回退 region；
 `WM_PRINT` 只核对内容，不能用它的方角判断 DWM 外框。后续 Windows 产品实现须修复并再次回读外角差距，
-不能改写原生内容基准掩盖它。
+不能改写原生内容基准掩盖它。本次原型视觉调整没有重新执行这些 VM 或原生像素验收。
 
 ## Android：Compose 场景
 
