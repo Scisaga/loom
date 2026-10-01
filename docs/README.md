@@ -14,7 +14,12 @@
 变化由旧成员多数签名。设备通过受限引导与私有认证通道加入、取得配置并报告。
 Direct、Auto 和指定最终出口复用同一候选模型；授权与真实可用性分开。Web 只投影认证状态和运行观测。
 `TransportResource` 可供多个接入会话和显式中继 `NetworkLink` 复用；新 access 不生成专属 WG 接口，
-首跳与中继分别保留稳定身份和真实观测。共享 HTTPS 业务探测目标按 Service 和授权过滤。
+首跳与中继分别保留稳定身份和真实观测。Service 定义访问目标，Policy 固定属于一个 Service，
+保存允许/禁止及路径规则，并可被多台节点复用。节点只选择 PolicyIDs，同一节点对同一服务最多选择一条策略；
+同一服务在不同节点上可使用不同策略。未设置路径限制明确表示“不限”，未分配策略则没有该服务权限。
+共享策略在 Policies 管理；只改单节点时替换它的策略选择，或复制策略后分配。共享 HTTPS 探测目标按
+策略所属 Service 与节点有效权限过滤，服务关系、ACL 和界面摘要均从同一授权投影。
+LAN mapping 属于局域网 Service，Services 统一管理，节点详情按网关显示它提供的服务。
 精确 `.loom` DNS 及经 control 签发的局域网映射属于同一 `NetworkIntent`。
 离网管理员通过 SSH 转发访问指定 control 的回环 Web 入口；已接入设备通过网络 DNS 的
 `control.loom` 访问处于服务状态的 control。SSH 转发不提供 `.loom` 解析，两条路径分别验收。

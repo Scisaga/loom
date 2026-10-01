@@ -44,10 +44,14 @@ Preference + Observation ────────┴─→ 纯函数提出候选
 
 ## 路径语义
 
-`Service` 定义目标地址或名称范围，`NetworkPolicy` 定义允许的路径，设备的
-`DeviceAuthorization.DestinationGrants` 决定它能使用哪些 Policy。客户端只消费签名 DeviceView
-下发的交集，不从入口存在、DNS 解析或探测结果创造新授权。互联网 Service 的终点是指定或可选的
-最终出网节点；`local_network` Service 的终点是固定的 `forward` 网关，不称为互联网出口。
+`Service` 定义目标地址或名称范围；每条 `NetworkPolicy` 固定属于一个 Service，定义 allow/deny
+和允许的路径。设备的 `DeviceAuthorization.PolicyIDs` 只选择策略，客户端经策略的固定 ServiceID
+解析目标。同一设备同一 Service 最多一条 Policy，不叠加或按顺序挑选规则；不同设备可以选择不同
+Policy。未选择、deny、已删除或冲突的策略均不产生该服务的候选、ACL、数据面凭据或探测授权。
+Loom 管理的请求命中上述目标时须拒绝，不能因没有候选就回退 Direct、换用较宽服务或绕过捕获。
+客户端只消费签名 DeviceView 下发的交集，不从入口存在、DNS 解析或探测结果创造新授权。
+互联网 Service 的终点是指定或可选的最终出网节点；`local_network` Service 的终点是固定的
+`forward` 网关，不称为互联网出口。策略创建后不能改属其他 Service。
 
 ### Direct 不等于一跳直达
 
@@ -65,7 +69,7 @@ Direct:                    device → target
 同出口中继 demo-sv:        device → demo-cn → demo-sv → target
 ```
 
-后两条拥有相同的最终出口，但拥有不同的入口和受管节点链。它们必须同时保留为候选，
+后两条拥有相同的最终出口，但拥有不同的入口和受管节点链。在策略同时允许这两种入口时，须同时保留为候选，
 使“一跳直达失败后仍从同一最终出口经境内中继访问”成为普通选路结果，而不是专用分支。
 
 `public_data_ingress` 是可供客户端使用的一种已认证首跳声明；已有 WG、hy2 等共享
@@ -73,10 +77,22 @@ Direct:                    device → target
 不要求为每个设备新建接口或 `NetworkLink`。入口声明绝不表示该入口在当前网络可达。入口可能今天可用、
 随后因 UDP 受限而不可用、几天后再次恢复，整个过程都不需要修改认证拓扑。
 
+Policy 的业务入口、中间转发及互联网出口分别使用规范范围 `any / only / none`。
+any 表示所有符合资格的当前及未来节点；only 只允许非空的明确 ID 集合；none 不允许此位置的节点。
+范围模式缺失或仅有空数组不是 any，须在认证输入处拒绝。only 的节点失效后保留限制并移除相关候选，
+不自动变为 any。第一台受管节点须满足入口范围、有效资源及职责；中间节点须满足转发范围和显式
+LinkID 方向；最终节点须满足出口或固定 LAN 网关约束。一跳互联网候选的节点同时满足入口与出口范围。
+中间范围 none 仍可允许一跳，入口 none 则不产生受管路径。
+
+普通 Direct 独立由 `allow_direct` 控制，不经过受管首跳或出口。Direct 允许加出口 only 表示两种
+路径都允许；要求只经指定出口时必须关闭 Direct。纯 Direct 可用入口 none 表达，不能把旧空入口
+集合重解释为不限。LAN Policy 只含 allow/deny、入口及转发范围，没有互联网 Direct/出口字段，
+入口选择只能改变到固定网关的路径。这些检查均从所选 PolicyIDs 解析，不新增本机授权策略。
+
 `NetworkLink` 的连接发起端必须满足端点的 `direction` / `reverse_only` 约束；这些约束不删除节点的
 公开数据入口候选。授权、链路方向和实时可达性是三个不同事实。
 
-`NetworkPolicy.allow_direct` 表示该 policy 的所有获授权 access 都可产生 `final_exit=direct` 的普通 Direct
+`NetworkPolicy.allow_direct` 表示选择该 Policy 的 access 才可为其固定的互联网 Service 产生 `final_exit=direct` 的普通 Direct
 候选。它不能表达“只有某个 hybrid access 在本机充当该 policy 的固定出口”。后一语义由规范排序的
 `local_egress_devices` 表达：成员必须同时是该 policy 的获准最终出口、具备 `access` 与 `internet_egress`
 能力；只有授权设备 ID 命中时才生成受管节点链为空、`final_exit=direct` 且候选 ID 绑定该设备的本地出口
@@ -165,9 +181,9 @@ Auto 可以用已知首跳连通性优先尝试候选，但不能据此向 UI �
 
 完整业务探测的 DNS 地址和 HTTPS 目标都来自同一份认证 `DeviceView`。DNS 是 `NetworkIntent` 的全局值
 与节点逐项覆盖；HTTPS 目标来自 `NetworkIntent` 中一份规范排序、去重、仅含 HTTPS URL 的全局业务探测
-目标池，不要求每个 access 节点手工填写。服务端先从该设备 `DestinationGrants` 找到获授 policy，再只把
-主机名被这些 policy 的 Service matcher 覆盖的 HTTPS URL **按 Service 分别**投影为 `BusinessProbeTargets`，
-不建立第二个权威 `ProbeGroup`。同一 policy 下两个 Service 的实际业务结果也不得互相借用。无匹配目标时，
+目标池，不要求每个 access 节点手工填写。服务端先解析该设备的 `PolicyIDs`，过滤出有效 allow 策略及其固定 Service，再只把
+主机名被这些 Service matcher 覆盖且授权允许的 HTTPS URL **按 Service 分别**投影为 `BusinessProbeTargets`，
+不建立第二个权威 `ProbeGroup`。不同设备/Service/Policy 范围的实际业务结果不得互相借用。无匹配目标时，
 主动业务探测范围保持 `unknown`，不把 transport 成功冒充业务成功，也不把缺少目标视为加入失败；
 真实正常业务仍可形成其实际范围的 Observation。客户端用认证 DNS 解析获授权 HTTPS 目标，执行真实
 TCP/TLS 与 HTTP 探测，并对认证 DNS
@@ -218,7 +234,7 @@ scheduler、probe budget 或一次性 registry。入口之后复用已有的有�
 
 具备 `forward` 职责的网关可认证报告自己的本地 IPv4 前缀；报告本身不产生共享权限。
 control 签发的 `local_network` Service 值给出稳定映射 ID、网关节点、本地前缀、等长的虚拟前缀和
-绑定的 `NetworkPolicy`。access 的 `DestinationGrant` 获授该 Policy 后，签名 DeviceView 才向它
+固定网关约束。access 的 `PolicyIDs` 选择了属于此 Service 的有效 allow Policy 后，签名 DeviceView 才向它
 下发虚拟前缀及到**固定网关**的获授权候选。access 不得提交任意 CIDR 或从网关报告自行生成路由。
 
 `local_network:<mapping_id>` 是独立的 Service scope。客户端只对该虚拟前缀建立精确业务捕获与
@@ -322,7 +338,7 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
    签发者事实前沿及设备绑定。除经连续多数证书明确封存的验证键按封存序列验收外，已见撤权不得在新 View 中消失；通过后与信任绑定、已见高水位
    原子保存为 `CertifiedLKG`。事实及其因果依赖由签发 control 验证；设备没有全网事实，不能独立重算
    该闭包。签名 View 不能证明没有尚未传播的撤权。
-3. 纯核心从认证的 Service、Policy、首跳资源、节点链和有序 `LinkID` 派生授权候选，再按平台
+3. 纯核心逐项解析该设备 PolicyIDs，从有效 allow Policy、其固定 Service、首跳资源、节点链和有序 `LinkID` 派生授权候选，再按平台
    实际能力投影可执行候选；`HostAdapter` 按资源 ID 复用并安装必要运行配置。首份 View 没有
    `NetworkLink` 时仍可经设备认证私有入口领配置，并按授权使用共享首跳。
 4. 有可执行业务候选时，按 `Preference` 立即选择一个被授权且未被证明不可用的候选，应用并回读；
@@ -570,16 +586,20 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
 12. **Windows 最小原生闭环**：Installed x64 用一个 profile 完成 UI invite → claim/resume → DPAPI → runtime →
     selector readback → TCP 与 UDP/DNS → 一个 unavailable 候选 → 同出口 fallback → 签名 report/readback；再按同一
     adapter 契约抽样 Portable TUN/Mixed 的 capture、清理和持久差异，不建立 Edition × 模式 × 协议矩阵。
-13. **共享业务探测**：一份规范 HTTPS 目标池只投影 `DestinationGrants` 所获 Service matcher 覆盖的目标；
-    同一 Policy 的两个 Service 分别探测、分别选路，一个成功不使另一个变绿。空投影只使相应业务
+13. **共享业务探测**：一份规范 HTTPS 目标池只投影所选有效 allow Policy 对应的 Service matcher 覆盖的目标；
+    不同设备/Service/Policy 范围分别探测、分别选路，一个成功不使另一个变绿。空投影只使相应业务
     范围保持 unknown，不扩大 ACL、不阻断加入；中继链路的精确目标按 `LinkID` 独立验证。
 14. **Linux capture 隔离**：初始 network namespace 的 access/hybrid preflight 与 runtime 均失败关闭；专用
     namespace 中只捕获显式 workload；同机 control + forward + internet_egress 在没有 TUN 时保持业务可用；正常
     停止、child/parent crash、SIGKILL、启动中途失败和重启后，宿主 rule、main route、LAN、WireGuard、DNS、
     代理与 SSH 回读均保持基线，未知所有权对象不会被删除。
 15. **DNS 与局域网**：`.loom` 仅精确 A/AAAA、`control.loom` 保留，解析不扩大 ACL；
-    获授 mapping Policy 的 access 才得到虚拟前缀及固定网关候选，撤权后精确路由和 DNS 投影消失。
+    选择了 mapping Service 所属有效 allow Policy 的 access 才得到虚拟前缀及固定网关候选，撤权后精确路由和 DNS 投影消失。
     映射范围没有适用 HTTPS 目标时保持 unknown，真实业务结果只证明所访问目标；互联网 Preference 不受影响。
+
+16. **策略分配与范围**：同服务重复分配拒绝；未分配和 deny 均无业务权限；any 只枚举实际合格资源；
+    only 的唯一出口删除后无替代受管出口；none 不等于 any；关闭 Direct 的指定出口规则不能直连绕过；
+    LAN 终点不可替换。策略变更仅使依赖其规范摘要的观测失效，重启从认证 LKG 恢复相同范围。
 
 扩展测试只能在上述最小集合通过后进行，并且发现新场景时优先把它表达为新的候选或观测数据，
 而不是新增路由分支。

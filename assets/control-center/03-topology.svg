@@ -1,0 +1,909 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1586" height="1680" viewBox="0 0 1586 1680" role="img" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">topology — Loom control center</title>
+  <desc id="svg-desc">Loom control center: topology.</desc>
+  <defs>
+    <marker id="route-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0 0L8 4L0 8Z" fill="#4D78D1"/></marker>
+    <symbol id="icon-grid" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></symbol>
+    <symbol id="icon-node" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="5" rx="1"/><rect x="2" y="9" width="12" height="5" rx="1"/><circle cx="4" cy="4.5" r=".6"/><circle cx="4" cy="11.5" r=".6"/></symbol>
+    <symbol id="icon-topology" viewBox="0 0 16 16"><path d="M4 4l4 4 4-4M8 8v4"/><circle cx="3" cy="3" r="1.7"/><circle cx="13" cy="3" r="1.7"/><circle cx="8" cy="13" r="1.7"/></symbol>
+    <symbol id="icon-path" viewBox="0 0 16 16"><path d="M2 4h4c3 0 2 8 5 8h3M2 12h3c3 0 2-8 5-8h4"/></symbol>
+    <symbol id="icon-service" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/></symbol>
+    <symbol id="icon-release" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M8 5v5m-2-2 2 2 2-2"/></symbol>
+    <symbol id="icon-events" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 1.5"/></symbol>
+    <symbol id="icon-signed" viewBox="0 0 16 16"><path d="M8 1.5 13 4v4c0 3-2 5-5 6.5C5 13 3 11 3 8V4Z"/><path d="m5.5 8 1.6 1.6 3.4-3.5"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></symbol>
+    <symbol id="icon-terminal" viewBox="0 0 16 16"><rect x="1.5" y="2" width="13" height="12" rx="2"/><path d="m4 5 3 3-3 3m5 0h3"/></symbol>
+    <symbol id="icon-code" viewBox="0 0 16 16"><path d="m5.5 3-4 5 4 5m5-10 4 5-4 5M9.5 2l-3 12"/></symbol>
+    <symbol id="icon-qr" viewBox="0 0 16 16"><path d="M2 2h4v4H2zm8 0h4v4h-4zM2 10h4v4H2zm8 0v2m3-2v4m-3 0h2"/></symbol>
+    <symbol id="icon-phone" viewBox="0 0 16 16"><rect x="4" y="1" width="8" height="14" rx="2"/><path d="M7 3h2M7 13h2"/></symbol>
+    <symbol id="icon-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></symbol>
+    <symbol id="icon-expand" viewBox="0 0 16 16"><path d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+    <symbol id="icon-filter" viewBox="0 0 16 16"><path d="M2 4h12M4 8h8m-6 4h4"/></symbol>
+    <style><![CDATA[
+    .ui { font-family: Inter, "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill:#1B201D }
+    .mono { font-family: "Intel One Mono", "SFMono-Regular", Consolas, monospace }
+    .title { font-size:28px; font-weight:700; letter-spacing:-.5px }
+    .section { font-size:17px; font-weight:650; letter-spacing:-.2px }
+    .metric { font-size:22px; font-weight:650; letter-spacing:-.3px }
+    .body { font-size:14px }
+    .small { font-size:12px }
+    .tiny { font-size:11px }
+    .micro { font-size:10px }
+    .eyebrow { font-size:11px; font-weight:700; letter-spacing:1px }
+    .muted { fill:#6E7771 }
+    .faint { fill:#929B95 }
+    .green { fill:#218A61 }
+    .amber { fill:#A66A14 }
+    .red { fill:#B74E4E }
+    .blue { fill:#427994 }
+    .white { fill:#FFFFFF }
+    .nav { font-size:13px }
+    .nav-icon { fill:none; stroke:#79837D; stroke-width:1.45; stroke-linecap:round; stroke-linejoin:round }
+    .nav-active { fill:none; stroke:#1B201D; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round }
+    .rule { stroke:#E5EAE6; stroke-width:1 }
+    .dash { stroke:#ABB7AF; stroke-width:1.5; stroke-dasharray:5 5; fill:none }
+    .link { stroke:#B8C4BC; stroke-width:2; fill:none }
+    .selected { stroke:#4D78D1; stroke-width:2.3; fill:none; marker-end:url(#route-arrow) }
+]]></style>
+  </defs>
+  <rect width="1586" height="1680" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="459" y="34" text-anchor="start">Topology</text>
+  <line x1="438" y1="57" x2="512" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="573" y="34" text-anchor="start">Live paths</text>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / TOPOLOGY</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Network topology</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect connections, measured link quality and the path reported for a selected Service.</text>
+  <circle cx="30" cy="180" r="6" fill="#FFFFFF" stroke="#2AA875"/>
+  <text class="ui tiny green" x="30" y="184" text-anchor="middle">✓</text>
+  <text class="ui small" x="47" y="184" text-anchor="start">Nine explicit relay LinkIDs · five fresh results · four unknown</text>
+  <rect data-ui="panel" x="24" y="201" width="1080" height="571" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <text class="ui section" x="46" y="234" text-anchor="start">Connections</text>
+  <g data-ui="pill">
+  <rect x="178" y="215" width="88" height="25" rx="14" fill="#F4F6F4" stroke="#DEE4DF"/>
+  <text class="ui small muted" x="222" y="231" text-anchor="middle">6 devices</text>
+  </g>
+  <text class="ui small muted" x="834" y="234" text-anchor="start">View from control-a</text>
+  <line data-ui="panel-header" class="rule" x1="24" y1="249" x2="1104" y2="249"/>
+  <rect x="45" y="265" width="236" height="38" rx="5" fill="#F8FAF8" stroke="#E1E7E2"/>
+  <use href="#icon-search" x="56" y="276" width="15" height="15" class="nav-icon"/>
+  <text class="ui small muted" x="80" y="289" text-anchor="start">Find a device or LinkID</text>
+  <rect x="293" y="265" width="231" height="38" rx="5" fill="#FFFFFF" stroke="#DAE3DC"/>
+  <text class="ui small mono" x="306" y="289" text-anchor="start">Service: media</text>
+  <use href="#icon-chevron" x="498" y="276" width="16" height="16" class="nav-icon"/>
+  <rect x="546" y="277" width="13" height="13" rx="3" fill="#2A9066" stroke="#2A9066"/>
+  <text class="ui tiny white" x="552" y="288" text-anchor="middle">✓</text>
+  <text class="ui small" x="568" y="288" text-anchor="start">WG</text>
+  <rect x="622" y="277" width="13" height="13" rx="3" fill="#2A9066" stroke="#2A9066"/>
+  <text class="ui tiny white" x="628" y="288" text-anchor="middle">✓</text>
+  <text class="ui small" x="644" y="288" text-anchor="start">hy2</text>
+  <rect x="706" y="277" width="13" height="13" rx="3" fill="#2A9066" stroke="#2A9066"/>
+  <text class="ui tiny white" x="712" y="288" text-anchor="middle">✓</text>
+  <text class="ui small" x="728" y="288" text-anchor="start">Selected path</text>
+  <rect x="999" y="268" width="82" height="32" rx="5" fill="#FFFFFF" stroke="#DDE5DF"/>
+  <use href="#icon-expand" x="1009" y="276" width="16" height="16" class="nav-icon"/>
+  <text class="ui small" x="1034" y="289" text-anchor="start">Fit</text>
+  <ellipse data-ui="topology-ring" cx="564.5" cy="486.1" rx="311.7" ry="178.2" fill="none" stroke="#E5ECE7"/>
+  <ellipse data-ui="topology-ring" cx="564.5" cy="486.1" rx="180.78599999999997" ry="105.13799999999999" fill="none" stroke="#E5ECE7" stroke-dasharray="3 5"/>
+  <line x1="564.5" y1="380.96200000000005" x2="834.4322" y2="397.0" stroke="#B3C0B8" stroke-width="1.3"/>
+  <line x1="564.5" y1="380.96200000000005" x2="721.060676" y2="538.669" stroke="#B3C0B8" stroke-width="1.3"/>
+  <line x1="564.5" y1="380.96200000000005" x2="407.93932400000006" y2="538.669" stroke="#B3C0B8" stroke-width="1.3"/>
+  <line x1="564.5" y1="380.96200000000005" x2="564.5" y2="664.3" stroke="#B3C0B8" stroke-width="1.3"/>
+  <line x1="834.4322" y1="397.0" x2="721.060676" y2="538.669" stroke="#B3C0B8" stroke-width="1.3"/>
+  <line x1="834.4322" y1="397.0" x2="564.5" y2="664.3" stroke="#B3C0B8" stroke-width="1.3"/>
+  <line x1="407.93932400000006" y1="538.669" x2="564.5" y2="664.3" stroke="#B3C0B8" stroke-width="1.3"/>
+  <line x1="721.060676" y1="538.669" x2="564.5" y2="664.3" stroke="#B3C0B8" stroke-width="1.3"/>
+  <path d="M569.5 385.96200000000005 Q699.4661 475.96200000000005 829.4322 402.0" fill="none" stroke="#C39952" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <path d="M302.56780000000003 393.0 Q429.5339 355.96200000000005 554.5 377.96200000000005" class="selected" stroke-dasharray="5 4"/>
+  <path d="M574.5 378.96200000000005 L824.4322 394.0" class="selected"/>
+  <text class="ui tiny blue" x="429.5339" y="359.96200000000005" text-anchor="middle">Shared first hop</text>
+  <g data-ui="link-metric-label">
+  <text class="ui tiny blue" x="699.4661" y="363.981" text-anchor="middle">media · selected</text>
+  <text class="ui tiny blue" x="699.4661" y="379.981" text-anchor="middle">37 ms · 12.8 Mbps · Δ 9 ms</text>
+  </g>
+  <rect x="642.4661" y="422.9715" width="114" height="24" rx="5" fill="#FFFBF4" stroke="#EBDCBC"/>
+  <text class="ui tiny amber" x="699.4661" y="438.9715" text-anchor="middle">hy2 · unknown</text>
+  <circle cx="564.5" cy="380.96200000000005" r="7" fill="#FFFFFF" stroke="none"/>
+  <circle cx="564.5" cy="380.96200000000005" r="4.5" fill="#28A472" stroke="none"/>
+  <text class="ui body mono" x="564.5" y="358.96200000000005" text-anchor="middle">control-a</text>
+  <text class="ui tiny muted" x="564.5" y="340.96200000000005" text-anchor="middle">control · forward</text>
+  <circle cx="294.56780000000003" cy="397.0" r="7" fill="#FFFFFF" stroke="none"/>
+  <circle cx="294.56780000000003" cy="397.0" r="4.5" fill="#B3BEB6" stroke="none"/>
+  <text class="ui body mono" x="276.56780000000003" y="395.0" text-anchor="end">android-phone</text>
+  <text class="ui tiny muted" x="276.56780000000003" y="415.0" text-anchor="end">access</text>
+  <circle cx="834.4322" cy="397.0" r="7" fill="#FFFFFF" stroke="none"/>
+  <circle cx="834.4322" cy="397.0" r="4.5" fill="#28A472" stroke="none"/>
+  <text class="ui body mono" x="852.4322" y="395.0" text-anchor="start">internet-exit</text>
+  <text class="ui tiny muted" x="852.4322" y="415.0" text-anchor="start">forward · internet egress</text>
+  <circle cx="407.93932400000006" cy="538.669" r="7" fill="#FFFFFF" stroke="none"/>
+  <circle cx="407.93932400000006" cy="538.669" r="4.5" fill="#28A472" stroke="none"/>
+  <text class="ui body mono" x="389.93932400000006" y="536.669" text-anchor="end">relay-west</text>
+  <text class="ui tiny muted" x="389.93932400000006" y="556.669" text-anchor="end">forward · LAN gateway</text>
+  <circle cx="721.060676" cy="538.669" r="7" fill="#FFFFFF" stroke="none"/>
+  <circle cx="721.060676" cy="538.669" r="4.5" fill="#B3BEB6" stroke="none"/>
+  <text class="ui body mono" x="739.060676" y="536.669" text-anchor="start">relay-east</text>
+  <text class="ui tiny muted" x="739.060676" y="556.669" text-anchor="start">forward</text>
+  <circle cx="564.5" cy="664.3" r="7" fill="#FFFFFF" stroke="none"/>
+  <circle cx="564.5" cy="664.3" r="4.5" fill="#B3BEB6" stroke="none"/>
+  <text class="ui body mono" x="564.5" y="688.3" text-anchor="middle">control-b</text>
+  <text class="ui tiny muted" x="564.5" y="706.3" text-anchor="middle">control · forward</text>
+  <text class="ui tiny muted" x="46" y="716" text-anchor="start">Point to a link to preview its metrics; click to pin the selection.</text>
+  <line data-ui="panel-section" class="rule" x1="24" y1="732" x2="1104" y2="732"/>
+  <path d="M48 751h24" class="selected"/>
+  <text class="ui tiny muted" x="83" y="755" text-anchor="start">Observed selection</text>
+  <path d="M233 751h25" stroke="#BECBC2" stroke-width="1.5"/>
+  <text class="ui tiny muted" x="266" y="755" text-anchor="start">Declared relay</text>
+  <circle cx="393" cy="751" r="3" fill="#2AA875" stroke="none"/>
+  <text class="ui tiny muted" x="404" y="755" text-anchor="start">Runtime current</text>
+  <circle cx="515" cy="751" r="3" fill="#B3BEB6" stroke="none"/>
+  <text class="ui tiny muted" x="526" y="755" text-anchor="start">Runtime unknown</text>
+  <text class="ui tiny muted" x="1082" y="755" text-anchor="end">3 / 6 current runtime reports</text>
+  <rect data-ui="panel" x="1120" y="201" width="442" height="320" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <text class="ui section" x="1140" y="233" text-anchor="start">Link observations</text>
+  <text class="ui small muted" x="1544" y="232" text-anchor="end">current spec only</text>
+  <line data-ui="panel-header" class="rule" x1="1120" y1="249" x2="1562" y2="249"/>
+  <circle cx="1181" cy="302" r="33" fill="none" stroke="#F2E8D6" stroke-width="8"/>
+  <circle cx="1181" cy="302" r="33" fill="none" stroke="#3BAA79" stroke-width="8" stroke-dasharray="115.19 207.35" transform="rotate(-90 1181 302)"/>
+  <text class="ui section" x="1181" y="303" text-anchor="middle">5 / 9</text>
+  <text class="ui tiny muted" x="1181" y="319" text-anchor="middle">current</text>
+  <circle cx="1245" cy="280" r="4" fill="#3BAA79" stroke="none"/>
+  <text class="ui body green" x="1258" y="285" text-anchor="start">5 available</text>
+  <circle cx="1245" cy="308" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="1258" y="313" text-anchor="start">4 unknown</text>
+  <line data-ui="panel-section" class="rule" x1="1120" y1="348" x2="1562" y2="348"/>
+  <text class="ui body mono" x="1141" y="378" text-anchor="start">link-wg · WG</text>
+  <g data-ui="pill">
+  <rect x="1431" y="360" width="109" height="25" rx="14" fill="#ECF7F0" stroke="#C8E5D1"/>
+  <text class="ui small green" x="1485" y="376" text-anchor="middle">available</text>
+  </g>
+  <text class="ui eyebrow muted" x="1141" y="412" text-anchor="start">LATENCY</text>
+  <text class="ui metric" x="1141" y="440" text-anchor="start">37 ms</text>
+  <text class="ui tiny muted" x="1141" y="461" text-anchor="start">RTT · latest</text>
+  <text class="ui eyebrow muted" x="1269" y="412" text-anchor="start">BANDWIDTH</text>
+  <text class="ui metric" x="1269" y="440" text-anchor="start">12.8 Mbps</text>
+  <text class="ui tiny muted" x="1269" y="461" text-anchor="start">TX · 300/300s</text>
+  <text class="ui eyebrow muted" x="1410" y="412" text-anchor="start">VARIATION</text>
+  <text class="ui metric" x="1410" y="440" text-anchor="start">Δ 9 ms</text>
+  <text class="ui tiny muted" x="1410" y="461" text-anchor="start">P95 − P50 · 15m</text>
+  <text class="ui tiny muted" x="1141" y="489" text-anchor="start">P50 37 ms · P95 46 ms · 14 successful samples</text>
+  <text class="ui tiny mono muted" x="1141" y="509" text-anchor="start">control-a → internet-exit · 18s ago</text>
+  <rect data-ui="panel" x="1120" y="537" width="442" height="235" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <text class="ui section" x="1140" y="569" text-anchor="start">Link traffic</text>
+  <text class="ui small muted" x="1544" y="568" text-anchor="end">link-wg · endpoint TX</text>
+  <line data-ui="panel-header" class="rule" x1="1120" y1="585" x2="1562" y2="585"/>
+  <text class="ui eyebrow muted" x="1141" y="617" text-anchor="start">OBSERVED TX</text>
+  <text class="ui metric" x="1141" y="648" text-anchor="start">225.0 GiB</text>
+  <text class="ui tiny muted" x="1141" y="674" text-anchor="start">2 reporting endpoints</text>
+  <text class="ui tiny muted" x="1141" y="696" text-anchor="start">22 / 24 h with deltas</text>
+  <g data-ui="traffic-chart">
+  <line x1="1320" y1="698" x2="1539" y2="698" stroke="#E9EEE9"/>
+  <line x1="1320" y1="658.5" x2="1539" y2="658.5" stroke="#E9EEE9"/>
+  <line x1="1320" y1="619" x2="1539" y2="619" stroke="#E9EEE9"/>
+  <text class="ui micro muted" x="1312" y="623" text-anchor="end">12</text>
+  <text class="ui micro muted" x="1312" y="701" text-anchor="end">0</text>
+  <text class="ui micro muted" x="1320" y="607" text-anchor="start">GiB / hour</text>
+  <rect x="1321.28" y="683.19" width="2.78" height="14.81" rx="1" fill="#5D89C5"><title>00:00 · 2.2 GiB</title></rect>
+  <rect x="1324.56" y="688.12" width="2.78" height="9.88" rx="1" fill="#8CCCB0"><title>00:00 · 1.5 GiB</title></rect>
+  <rect x="1330.40" y="688.12" width="2.78" height="9.88" rx="1" fill="#5D89C5"><title>01:00 · 1.5 GiB</title></rect>
+  <rect x="1333.69" y="691.42" width="2.78" height="6.58" rx="1" fill="#8CCCB0"><title>01:00 · 1.0 GiB</title></rect>
+  <rect x="1339.53" y="683.19" width="2.78" height="14.81" rx="1" fill="#5D89C5"><title>02:00 · 2.2 GiB</title></rect>
+  <rect x="1342.81" y="688.12" width="2.78" height="9.88" rx="1" fill="#8CCCB0"><title>02:00 · 1.5 GiB</title></rect>
+  <rect x="1348.65" y="678.25" width="2.78" height="19.75" rx="1" fill="#5D89C5"><title>03:00 · 3.0 GiB</title></rect>
+  <rect x="1351.94" y="684.83" width="2.78" height="13.17" rx="1" fill="#8CCCB0"><title>03:00 · 2.0 GiB</title></rect>
+  <rect data-ui="traffic-gap" x="1357.78" y="623" width="6.57" height="75" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>No valid counter deltas · unknown</title></rect>
+  <rect x="1366.90" y="673.31" width="2.78" height="24.69" rx="1" fill="#5D89C5"><title>05:00 · 3.8 GiB</title></rect>
+  <rect x="1370.19" y="681.54" width="2.78" height="16.46" rx="1" fill="#8CCCB0"><title>05:00 · 2.5 GiB</title></rect>
+  <rect x="1376.03" y="663.44" width="2.78" height="34.56" rx="1" fill="#5D89C5"><title>06:00 · 5.2 GiB</title></rect>
+  <rect x="1379.31" y="674.96" width="2.78" height="23.04" rx="1" fill="#8CCCB0"><title>06:00 · 3.5 GiB</title></rect>
+  <rect x="1385.15" y="643.69" width="2.78" height="54.31" rx="1" fill="#5D89C5"><title>07:00 · 8.2 GiB</title></rect>
+  <rect x="1388.44" y="661.79" width="2.78" height="36.21" rx="1" fill="#8CCCB0"><title>07:00 · 5.5 GiB</title></rect>
+  <rect x="1394.28" y="648.62" width="2.78" height="49.38" rx="1" fill="#5D89C5"><title>08:00 · 7.5 GiB</title></rect>
+  <rect x="1397.56" y="665.08" width="2.78" height="32.92" rx="1" fill="#8CCCB0"><title>08:00 · 5.0 GiB</title></rect>
+  <rect x="1403.40" y="658.50" width="2.78" height="39.50" rx="1" fill="#5D89C5"><title>09:00 · 6.0 GiB</title></rect>
+  <rect x="1406.69" y="671.67" width="2.78" height="26.33" rx="1" fill="#8CCCB0"><title>09:00 · 4.0 GiB</title></rect>
+  <rect x="1412.53" y="663.44" width="2.78" height="34.56" rx="1" fill="#5D89C5"><title>10:00 · 5.2 GiB</title></rect>
+  <rect x="1415.81" y="674.96" width="2.78" height="23.04" rx="1" fill="#8CCCB0"><title>10:00 · 3.5 GiB</title></rect>
+  <rect x="1421.65" y="658.50" width="2.78" height="39.50" rx="1" fill="#5D89C5"><title>11:00 · 6.0 GiB</title></rect>
+  <rect x="1424.94" y="671.67" width="2.78" height="26.33" rx="1" fill="#8CCCB0"><title>11:00 · 4.0 GiB</title></rect>
+  <rect x="1430.78" y="648.62" width="2.78" height="49.38" rx="1" fill="#5D89C5"><title>12:00 · 7.5 GiB</title></rect>
+  <rect x="1434.06" y="665.08" width="2.78" height="32.92" rx="1" fill="#8CCCB0"><title>12:00 · 5.0 GiB</title></rect>
+  <rect x="1439.90" y="638.75" width="2.78" height="59.25" rx="1" fill="#5D89C5"><title>13:00 · 9.0 GiB</title></rect>
+  <rect x="1443.19" y="658.50" width="2.78" height="39.50" rx="1" fill="#8CCCB0"><title>13:00 · 6.0 GiB</title></rect>
+  <rect x="1449.03" y="623.94" width="2.78" height="74.06" rx="1" fill="#5D89C5"><title>14:00 · 11.2 GiB</title></rect>
+  <rect x="1452.31" y="648.62" width="2.78" height="49.38" rx="1" fill="#8CCCB0"><title>14:00 · 7.5 GiB</title></rect>
+  <rect x="1458.15" y="633.81" width="2.78" height="64.19" rx="1" fill="#5D89C5"><title>15:00 · 9.8 GiB</title></rect>
+  <rect x="1461.44" y="655.21" width="2.78" height="42.79" rx="1" fill="#8CCCB0"><title>15:00 · 6.5 GiB</title></rect>
+  <rect x="1467.28" y="619.00" width="2.78" height="79.00" rx="1" fill="#5D89C5"><title>16:00 · 12.0 GiB</title></rect>
+  <rect x="1470.56" y="645.33" width="2.78" height="52.67" rx="1" fill="#8CCCB0"><title>16:00 · 8.0 GiB</title></rect>
+  <rect data-ui="traffic-gap" x="1476.40" y="623" width="6.57" height="75" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>No valid counter deltas · unknown</title></rect>
+  <rect x="1485.53" y="638.75" width="2.78" height="59.25" rx="1" fill="#5D89C5"><title>18:00 · 9.0 GiB</title></rect>
+  <rect x="1488.81" y="658.50" width="2.78" height="39.50" rx="1" fill="#8CCCB0"><title>18:00 · 6.0 GiB</title></rect>
+  <rect x="1494.65" y="653.56" width="2.78" height="44.44" rx="1" fill="#5D89C5"><title>19:00 · 6.8 GiB</title></rect>
+  <rect x="1497.94" y="668.38" width="2.78" height="29.62" rx="1" fill="#8CCCB0"><title>19:00 · 4.5 GiB</title></rect>
+  <rect x="1503.78" y="658.50" width="2.78" height="39.50" rx="1" fill="#5D89C5"><title>20:00 · 6.0 GiB</title></rect>
+  <rect x="1507.06" y="671.67" width="2.78" height="26.33" rx="1" fill="#8CCCB0"><title>20:00 · 4.0 GiB</title></rect>
+  <rect x="1512.90" y="663.44" width="2.78" height="34.56" rx="1" fill="#5D89C5"><title>21:00 · 5.2 GiB</title></rect>
+  <rect x="1516.19" y="674.96" width="2.78" height="23.04" rx="1" fill="#8CCCB0"><title>21:00 · 3.5 GiB</title></rect>
+  <rect x="1522.03" y="668.38" width="2.78" height="29.62" rx="1" fill="#5D89C5"><title>22:00 · 4.5 GiB</title></rect>
+  <rect x="1525.31" y="678.25" width="2.78" height="19.75" rx="1" fill="#8CCCB0"><title>22:00 · 3.0 GiB</title></rect>
+  <rect x="1531.15" y="678.25" width="2.78" height="19.75" rx="1" fill="#5D89C5"><title>23:00 · 3.0 GiB</title></rect>
+  <rect x="1534.44" y="684.83" width="2.78" height="13.17" rx="1" fill="#8CCCB0"><title>23:00 · 2.0 GiB</title></rect>
+  <text class="ui micro muted" x="1320" y="717" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1429.5" y="717" text-anchor="middle">12h</text>
+  <text class="ui micro muted" x="1539" y="717" text-anchor="end">now</text>
+  </g>
+  <rect x="1141" y="736" width="8" height="8" rx="2" fill="#5D89C5" stroke="none"/>
+  <text class="ui tiny mono muted" x="1157" y="744" text-anchor="start">control-a</text>
+  <rect x="1291" y="736" width="8" height="8" rx="2" fill="#8CCCB0" stroke="none"/>
+  <text class="ui tiny mono muted" x="1307" y="744" text-anchor="start">internet-exit</text>
+  <text class="ui tiny muted" x="1539" y="744" text-anchor="end">24h</text>
+  <rect data-ui="panel" x="24" y="788" width="1538" height="868" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <text class="ui section" x="44" y="820" text-anchor="start">Relay link inventory</text>
+  <text class="ui small muted" x="1544" y="819" text-anchor="end">9 explicit links · access first hop is a separate resource</text>
+  <line data-ui="panel-header" class="rule" x1="24" y1="836" x2="1562" y2="836"/>
+  <text class="ui eyebrow muted" x="47" y="862" text-anchor="start">LINK</text>
+  <text class="ui eyebrow muted" x="450" y="862" text-anchor="start">CURRENT MEASUREMENTS</text>
+  <text class="ui eyebrow muted" x="903" y="862" text-anchor="start">STATUS · 24H</text>
+  <text class="ui eyebrow muted" x="1192" y="862" text-anchor="start">TRANSFER · 24H</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="876" x2="1562" y2="876"/>
+  <g data-ui="link-row" data-link-id="demo-link-wg">
+  <title>control-a → internet-exit · 18s ago; latest transport RTT 37 ms; 5m TX rate 12.8 Mbps · 300/300 seconds observed; 15m RTT: 14 successful samples · Δ 9 ms · P50 37 ms / P95 46 ms</title>
+  <rect x="25" y="876" width="1536" height="80" rx="0" fill="#EDF4FC" stroke="none"/>
+  <rect x="25" y="876" width="3" height="80" rx="0" fill="#537FCC" stroke="none"/>
+  <text class="ui body" x="47" y="901" text-anchor="start">control-a ↔ internet-exit</text>
+  <text class="ui small mono muted" x="47" y="921" text-anchor="start">link-wg · WG</text>
+  <text class="ui tiny muted" x="47" y="940" text-anchor="start">From control-a · 18s ago</text>
+  <text class="ui body" x="450" y="909" text-anchor="start">37 ms · 12.8 Mbps · Δ 9 ms</text>
+  <text class="ui tiny muted" x="450" y="931" text-anchor="start">RTT · 5m TX rate · 15m variation</text>
+  <circle cx="907" cy="892" r="3" fill="#3BAA79" stroke="none"/>
+  <text class="ui small green" x="918" y="896" text-anchor="start">available</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="available" x="903.00" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>24h–23h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="912.38" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>23h–22h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="921.75" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>22h–21h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="931.12" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>21h–20h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="940.50" y="910" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>20h–19h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="949.88" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>19h–18h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="959.25" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>18h–17h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="968.62" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>17h–16h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="978.00" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>16h–15h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="987.38" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>15h–14h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="996.75" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>14h–13h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1006.12" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>13h–12h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1015.50" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>12h–11h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1024.88" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>11h–10h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1034.25" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>10h–9h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1043.62" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>9h–8h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1053.00" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>8h–7h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1062.38" y="910" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>7h–6h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1071.75" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>6h–5h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1081.12" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>5h–4h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1090.50" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>4h–3h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1099.88" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>3h–2h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1109.25" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>2h–1h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1118.62" y="910" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>1h–0h ago · last valid link sample: available</title></rect>
+  <text class="ui micro muted" x="903" y="945" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="945" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="925" x2="1498" y2="925" stroke="#E5EAE6"/>
+  <rect x="1192.00" y="918.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>24h–23h ago · endpoint TX · 4,026,531,840 bytes observed</title></rect>
+  <rect x="1204.75" y="920.75" width="8.92" height="4.25" rx="1" fill="#61BC92"><title>23h–22h ago · endpoint TX · 2,684,354,560 bytes observed</title></rect>
+  <rect x="1217.50" y="918.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>22h–21h ago · endpoint TX · 4,026,531,840 bytes observed</title></rect>
+  <rect x="1230.25" y="916.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>21h–20h ago · endpoint TX · 5,368,709,120 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="893" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1255.75" y="914.38" width="8.92" height="10.62" rx="1" fill="#61BC92"><title>19h–18h ago · endpoint TX · 6,710,886,400 bytes observed</title></rect>
+  <rect x="1268.50" y="910.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>18h–17h ago · endpoint TX · 9,395,240,960 bytes observed</title></rect>
+  <rect x="1281.25" y="901.62" width="8.92" height="23.38" rx="1" fill="#61BC92"><title>17h–16h ago · endpoint TX · 14,763,950,080 bytes observed</title></rect>
+  <rect x="1294.00" y="903.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>16h–15h ago · endpoint TX · 13,421,772,800 bytes observed</title></rect>
+  <rect x="1306.75" y="908.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>15h–14h ago · endpoint TX · 10,737,418,240 bytes observed</title></rect>
+  <rect x="1319.50" y="910.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>14h–13h ago · endpoint TX · 9,395,240,960 bytes observed</title></rect>
+  <rect x="1332.25" y="908.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>13h–12h ago · endpoint TX · 10,737,418,240 bytes observed</title></rect>
+  <rect x="1345.00" y="903.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>12h–11h ago · endpoint TX · 13,421,772,800 bytes observed</title></rect>
+  <rect x="1357.75" y="899.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>11h–10h ago · endpoint TX · 16,106,127,360 bytes observed</title></rect>
+  <rect x="1370.50" y="893.12" width="8.92" height="31.88" rx="1" fill="#61BC92"><title>10h–9h ago · endpoint TX · 20,132,659,200 bytes observed</title></rect>
+  <rect x="1383.25" y="897.38" width="8.92" height="27.62" rx="1" fill="#61BC92"><title>9h–8h ago · endpoint TX · 17,448,304,640 bytes observed</title></rect>
+  <rect x="1396.00" y="891.00" width="8.92" height="34.00" rx="1" fill="#61BC92"><title>8h–7h ago · endpoint TX · 21,474,836,480 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="893" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1421.50" y="899.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>6h–5h ago · endpoint TX · 16,106,127,360 bytes observed</title></rect>
+  <rect x="1434.25" y="905.88" width="8.92" height="19.12" rx="1" fill="#61BC92"><title>5h–4h ago · endpoint TX · 12,079,595,520 bytes observed</title></rect>
+  <rect x="1447.00" y="908.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>4h–3h ago · endpoint TX · 10,737,418,240 bytes observed</title></rect>
+  <rect x="1459.75" y="910.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>3h–2h ago · endpoint TX · 9,395,240,960 bytes observed</title></rect>
+  <rect x="1472.50" y="912.25" width="8.92" height="12.75" rx="1" fill="#61BC92"><title>2h–1h ago · endpoint TX · 8,053,063,680 bytes observed</title></rect>
+  <rect x="1485.25" y="916.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>1h–0h ago · endpoint TX · 5,368,709,120 bytes observed</title></rect>
+  <text class="ui tiny muted" x="1192" y="945" text-anchor="start">TX 225.0 GiB</text>
+  <text class="ui tiny muted" x="1498" y="945" text-anchor="end">22 / 24 h with deltas</text>
+  </g>
+  <text class="ui small blue" x="1534" y="921" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="956" x2="1562" y2="956"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-hy2">
+  <title>link-hy2 · no fresh report · current RTT, rate and variation unknown</title>
+  <text class="ui body" x="47" y="981" text-anchor="start">control-a ↔ internet-exit</text>
+  <text class="ui small mono muted" x="47" y="1001" text-anchor="start">link-hy2 · hy2</text>
+  <text class="ui tiny muted" x="47" y="1020" text-anchor="start">No current measurement</text>
+  <text class="ui body amber" x="450" y="989" text-anchor="start">unknown</text>
+  <text class="ui tiny muted" x="450" y="1011" text-anchor="start">no fresh report</text>
+  <circle cx="907" cy="972" r="3" fill="#D2A45B" stroke="none"/>
+  <text class="ui small amber" x="918" y="976" text-anchor="start">unknown</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="unknown" x="903.00" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>24h–23h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="912.38" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>23h–22h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="921.75" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>22h–21h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="931.12" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>21h–20h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="940.50" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>20h–19h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="949.88" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>19h–18h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="959.25" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>18h–17h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="968.62" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>17h–16h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="978.00" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>16h–15h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="987.38" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>15h–14h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="996.75" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>14h–13h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1006.12" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>13h–12h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1015.50" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>12h–11h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1024.88" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>11h–10h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1034.25" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>10h–9h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1043.62" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>9h–8h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1053.00" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>8h–7h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1062.38" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>7h–6h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1071.75" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>6h–5h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1081.12" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>5h–4h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1090.50" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>4h–3h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1099.88" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>3h–2h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1109.25" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>2h–1h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1118.62" y="990" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>1h–0h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <text class="ui micro muted" x="903" y="1025" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1025" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1005" x2="1498" y2="1005" stroke="#E5EAE6"/>
+  <rect data-ui="traffic-gap" x="1192.00" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>24h–23h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1204.75" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>23h–22h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1217.50" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>22h–21h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1230.25" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>21h–20h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1255.75" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>19h–18h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1268.50" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>18h–17h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1281.25" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>17h–16h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1294.00" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>16h–15h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1306.75" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>15h–14h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1319.50" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>14h–13h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1332.25" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>13h–12h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1345.00" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>12h–11h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1357.75" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>11h–10h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1370.50" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>10h–9h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1383.25" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>9h–8h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1396.00" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>8h–7h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1421.50" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>6h–5h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1434.25" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>5h–4h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1447.00" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>4h–3h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1459.75" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>3h–2h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1472.50" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>2h–1h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1485.25" y="973" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>1h–0h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <text class="ui tiny amber" x="1192" y="1025" text-anchor="start">TX unknown</text>
+  <text class="ui tiny muted" x="1498" y="1025" text-anchor="end">0 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1001" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1036" x2="1562" y2="1036"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-a-b">
+  <title>control-a → relay-east · 24s ago; latest transport RTT 21 ms; 5m TX rate 8.4 Mbps · 300/300 seconds observed; 15m RTT: 15 successful samples · Δ 4 ms · P50 20 ms / P95 24 ms</title>
+  <text class="ui body" x="47" y="1061" text-anchor="start">control-a ↔ relay-east</text>
+  <text class="ui small mono muted" x="47" y="1081" text-anchor="start">link-a-east · WG</text>
+  <text class="ui tiny muted" x="47" y="1100" text-anchor="start">From control-a · 24s ago</text>
+  <text class="ui body" x="450" y="1069" text-anchor="start">21 ms · 8.4 Mbps · Δ 4 ms</text>
+  <text class="ui tiny muted" x="450" y="1091" text-anchor="start">RTT · 5m TX rate · 15m variation</text>
+  <circle cx="907" cy="1052" r="3" fill="#3BAA79" stroke="none"/>
+  <text class="ui small green" x="918" y="1056" text-anchor="start">available</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="available" x="903.00" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>24h–23h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="912.38" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>23h–22h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="921.75" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>22h–21h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="931.12" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>21h–20h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="940.50" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>20h–19h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="949.88" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>19h–18h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="959.25" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>18h–17h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="968.62" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>17h–16h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="978.00" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>16h–15h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="unavailable" x="987.38" y="1070" width="7.38" height="16" rx="1.5" fill="#C87171" stroke="#C87171"><title>15h–14h ago · last valid link sample: unavailable</title></rect>
+  <rect data-ui="link-status-hour" data-state="unavailable" x="996.75" y="1070" width="7.38" height="16" rx="1.5" fill="#C87171" stroke="#C87171"><title>14h–13h ago · last valid link sample: unavailable</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1006.12" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>13h–12h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1015.50" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>12h–11h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1024.88" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>11h–10h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1034.25" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>10h–9h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1043.62" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>9h–8h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1053.00" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>8h–7h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1062.38" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>7h–6h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1071.75" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>6h–5h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1081.12" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>5h–4h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1090.50" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>4h–3h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1099.88" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>3h–2h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1109.25" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>2h–1h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1118.62" y="1070" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>1h–0h ago · last valid link sample: available</title></rect>
+  <text class="ui micro muted" x="903" y="1105" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1105" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1085" x2="1498" y2="1085" stroke="#E5EAE6"/>
+  <rect x="1192.00" y="1078.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>24h–23h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect x="1204.75" y="1080.75" width="8.92" height="4.25" rx="1" fill="#61BC92"><title>23h–22h ago · endpoint TX · 1,073,741,824 bytes observed</title></rect>
+  <rect x="1217.50" y="1078.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>22h–21h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect x="1230.25" y="1076.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>21h–20h ago · endpoint TX · 2,147,483,648 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="1053" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1255.75" y="1074.38" width="8.92" height="10.62" rx="1" fill="#61BC92"><title>19h–18h ago · endpoint TX · 2,684,354,560 bytes observed</title></rect>
+  <rect x="1268.50" y="1070.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>18h–17h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1281.25" y="1061.62" width="8.92" height="23.38" rx="1" fill="#61BC92"><title>17h–16h ago · endpoint TX · 5,905,580,032 bytes observed</title></rect>
+  <rect x="1294.00" y="1063.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>16h–15h ago · endpoint TX · 5,368,709,120 bytes observed</title></rect>
+  <rect x="1306.75" y="1068.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>15h–14h ago · endpoint TX · 4,294,967,296 bytes observed</title></rect>
+  <rect x="1319.50" y="1070.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>14h–13h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1332.25" y="1068.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>13h–12h ago · endpoint TX · 4,294,967,296 bytes observed</title></rect>
+  <rect x="1345.00" y="1063.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>12h–11h ago · endpoint TX · 5,368,709,120 bytes observed</title></rect>
+  <rect x="1357.75" y="1059.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>11h–10h ago · endpoint TX · 6,442,450,944 bytes observed</title></rect>
+  <rect x="1370.50" y="1053.12" width="8.92" height="31.88" rx="1" fill="#61BC92"><title>10h–9h ago · endpoint TX · 8,053,063,680 bytes observed</title></rect>
+  <rect x="1383.25" y="1057.38" width="8.92" height="27.62" rx="1" fill="#61BC92"><title>9h–8h ago · endpoint TX · 6,979,321,856 bytes observed</title></rect>
+  <rect x="1396.00" y="1051.00" width="8.92" height="34.00" rx="1" fill="#61BC92"><title>8h–7h ago · endpoint TX · 8,589,934,592 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="1053" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1421.50" y="1059.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>6h–5h ago · endpoint TX · 6,442,450,944 bytes observed</title></rect>
+  <rect x="1434.25" y="1065.88" width="8.92" height="19.12" rx="1" fill="#61BC92"><title>5h–4h ago · endpoint TX · 4,831,838,208 bytes observed</title></rect>
+  <rect x="1447.00" y="1068.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>4h–3h ago · endpoint TX · 4,294,967,296 bytes observed</title></rect>
+  <rect x="1459.75" y="1070.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>3h–2h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1472.50" y="1072.25" width="8.92" height="12.75" rx="1" fill="#61BC92"><title>2h–1h ago · endpoint TX · 3,221,225,472 bytes observed</title></rect>
+  <rect x="1485.25" y="1076.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>1h–0h ago · endpoint TX · 2,147,483,648 bytes observed</title></rect>
+  <text class="ui tiny muted" x="1192" y="1105" text-anchor="start">TX 90.0 GiB</text>
+  <text class="ui tiny muted" x="1498" y="1105" text-anchor="end">22 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1081" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1116" x2="1562" y2="1116"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-a-c">
+  <title>control-a → relay-west · 31s ago; latest transport RTT 22 ms; 5m TX rate 0.0 Mbps · 300/300 seconds observed; 15m RTT: 13 successful samples · Δ 4 ms · P50 22 ms / P95 26 ms</title>
+  <text class="ui body" x="47" y="1141" text-anchor="start">control-a ↔ relay-west</text>
+  <text class="ui small mono muted" x="47" y="1161" text-anchor="start">link-a-west · WG</text>
+  <text class="ui tiny muted" x="47" y="1180" text-anchor="start">From control-a · 31s ago</text>
+  <text class="ui body" x="450" y="1149" text-anchor="start">22 ms · 0.0 Mbps · Δ 4 ms</text>
+  <text class="ui tiny muted" x="450" y="1171" text-anchor="start">RTT · 5m TX rate · 15m variation</text>
+  <circle cx="907" cy="1132" r="3" fill="#3BAA79" stroke="none"/>
+  <text class="ui small green" x="918" y="1136" text-anchor="start">available</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="available" x="903.00" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>24h–23h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="912.38" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>23h–22h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="921.75" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>22h–21h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="931.12" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>21h–20h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="940.50" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>20h–19h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="949.88" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>19h–18h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="959.25" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>18h–17h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="968.62" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>17h–16h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="978.00" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>16h–15h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="987.38" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>15h–14h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="996.75" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>14h–13h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1006.12" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>13h–12h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1015.50" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>12h–11h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1024.88" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>11h–10h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1034.25" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>10h–9h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1043.62" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>9h–8h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1053.00" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>8h–7h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1062.38" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>7h–6h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1071.75" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>6h–5h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1081.12" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>5h–4h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1090.50" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>4h–3h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1099.88" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>3h–2h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1109.25" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>2h–1h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1118.62" y="1150" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>1h–0h ago · last valid link sample: available</title></rect>
+  <text class="ui micro muted" x="903" y="1185" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1185" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1165" x2="1498" y2="1165" stroke="#E5EAE6"/>
+  <rect x="1192.00" y="1158.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>24h–23h ago · endpoint TX · 1,409,286,144 bytes observed</title></rect>
+  <rect x="1204.75" y="1160.75" width="8.92" height="4.25" rx="1" fill="#61BC92"><title>23h–22h ago · endpoint TX · 939,524,096 bytes observed</title></rect>
+  <rect x="1217.50" y="1158.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>22h–21h ago · endpoint TX · 1,409,286,144 bytes observed</title></rect>
+  <rect x="1230.25" y="1156.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>21h–20h ago · endpoint TX · 1,879,048,192 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="1133" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1255.75" y="1154.38" width="8.92" height="10.62" rx="1" fill="#61BC92"><title>19h–18h ago · endpoint TX · 2,348,810,240 bytes observed</title></rect>
+  <rect x="1268.50" y="1150.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>18h–17h ago · endpoint TX · 3,288,334,336 bytes observed</title></rect>
+  <rect x="1281.25" y="1141.62" width="8.92" height="23.38" rx="1" fill="#61BC92"><title>17h–16h ago · endpoint TX · 5,167,382,528 bytes observed</title></rect>
+  <rect x="1294.00" y="1143.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>16h–15h ago · endpoint TX · 4,697,620,480 bytes observed</title></rect>
+  <rect x="1306.75" y="1148.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>15h–14h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1319.50" y="1150.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>14h–13h ago · endpoint TX · 3,288,334,336 bytes observed</title></rect>
+  <rect x="1332.25" y="1148.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>13h–12h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1345.00" y="1143.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>12h–11h ago · endpoint TX · 4,697,620,480 bytes observed</title></rect>
+  <rect x="1357.75" y="1139.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>11h–10h ago · endpoint TX · 5,637,144,576 bytes observed</title></rect>
+  <rect x="1370.50" y="1133.12" width="8.92" height="31.88" rx="1" fill="#61BC92"><title>10h–9h ago · endpoint TX · 7,046,430,720 bytes observed</title></rect>
+  <rect x="1383.25" y="1137.38" width="8.92" height="27.62" rx="1" fill="#61BC92"><title>9h–8h ago · endpoint TX · 6,106,906,624 bytes observed</title></rect>
+  <rect x="1396.00" y="1131.00" width="8.92" height="34.00" rx="1" fill="#61BC92"><title>8h–7h ago · endpoint TX · 7,516,192,768 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="1133" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1421.50" y="1139.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>6h–5h ago · endpoint TX · 5,637,144,576 bytes observed</title></rect>
+  <rect x="1434.25" y="1145.88" width="8.92" height="19.12" rx="1" fill="#61BC92"><title>5h–4h ago · endpoint TX · 4,227,858,432 bytes observed</title></rect>
+  <rect x="1447.00" y="1148.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>4h–3h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1459.75" y="1150.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>3h–2h ago · endpoint TX · 3,288,334,336 bytes observed</title></rect>
+  <rect x="1472.50" y="1152.25" width="8.92" height="12.75" rx="1" fill="#61BC92"><title>2h–1h ago · endpoint TX · 2,818,572,288 bytes observed</title></rect>
+  <rect x="1485.25" y="1156.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>1h–0h ago · endpoint TX · 1,879,048,192 bytes observed</title></rect>
+  <text class="ui tiny muted" x="1192" y="1185" text-anchor="start">TX 78.8 GiB</text>
+  <text class="ui tiny muted" x="1498" y="1185" text-anchor="end">22 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1161" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1196" x2="1562" y2="1196"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-a-cb">
+  <title>link-a-b · report missing · current RTT, rate and variation unknown</title>
+  <text class="ui body" x="47" y="1221" text-anchor="start">control-a ↔ control-b</text>
+  <text class="ui small mono muted" x="47" y="1241" text-anchor="start">link-a-b · WG</text>
+  <text class="ui tiny muted" x="47" y="1260" text-anchor="start">No current measurement</text>
+  <text class="ui body amber" x="450" y="1229" text-anchor="start">unknown</text>
+  <text class="ui tiny muted" x="450" y="1251" text-anchor="start">report missing</text>
+  <circle cx="907" cy="1212" r="3" fill="#D2A45B" stroke="none"/>
+  <text class="ui small amber" x="918" y="1216" text-anchor="start">unknown</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="available" x="903.00" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>24h–23h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="912.38" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>23h–22h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="921.75" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>22h–21h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="931.12" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>21h–20h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="940.50" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>20h–19h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="949.88" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>19h–18h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="959.25" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>18h–17h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="968.62" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>17h–16h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="978.00" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>16h–15h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="987.38" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>15h–14h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="996.75" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>14h–13h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1006.12" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>13h–12h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1015.50" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>12h–11h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1024.88" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>11h–10h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1034.25" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>10h–9h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1043.62" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>9h–8h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1053.00" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>8h–7h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1062.38" y="1230" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>7h–6h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1071.75" y="1230" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>6h–5h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1081.12" y="1230" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>5h–4h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1090.50" y="1230" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>4h–3h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1099.88" y="1230" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>3h–2h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1109.25" y="1230" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>2h–1h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1118.62" y="1230" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>1h–0h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <text class="ui micro muted" x="903" y="1265" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1265" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1245" x2="1498" y2="1245" stroke="#E5EAE6"/>
+  <rect x="1192.00" y="1238.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>24h–23h ago · endpoint TX · 301,989,888 bytes observed</title></rect>
+  <rect x="1204.75" y="1240.75" width="8.92" height="4.25" rx="1" fill="#61BC92"><title>23h–22h ago · endpoint TX · 201,326,592 bytes observed</title></rect>
+  <rect x="1217.50" y="1238.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>22h–21h ago · endpoint TX · 301,989,888 bytes observed</title></rect>
+  <rect x="1230.25" y="1236.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>21h–20h ago · endpoint TX · 402,653,184 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="1213" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1255.75" y="1234.38" width="8.92" height="10.62" rx="1" fill="#61BC92"><title>19h–18h ago · endpoint TX · 503,316,480 bytes observed</title></rect>
+  <rect x="1268.50" y="1230.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>18h–17h ago · endpoint TX · 704,643,072 bytes observed</title></rect>
+  <rect x="1281.25" y="1221.62" width="8.92" height="23.38" rx="1" fill="#61BC92"><title>17h–16h ago · endpoint TX · 1,107,296,256 bytes observed</title></rect>
+  <rect x="1294.00" y="1223.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>16h–15h ago · endpoint TX · 1,006,632,960 bytes observed</title></rect>
+  <rect x="1306.75" y="1228.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>15h–14h ago · endpoint TX · 805,306,368 bytes observed</title></rect>
+  <rect x="1319.50" y="1230.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>14h–13h ago · endpoint TX · 704,643,072 bytes observed</title></rect>
+  <rect x="1332.25" y="1228.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>13h–12h ago · endpoint TX · 805,306,368 bytes observed</title></rect>
+  <rect x="1345.00" y="1223.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>12h–11h ago · endpoint TX · 1,006,632,960 bytes observed</title></rect>
+  <rect x="1357.75" y="1219.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>11h–10h ago · endpoint TX · 1,207,959,552 bytes observed</title></rect>
+  <rect x="1370.50" y="1213.12" width="8.92" height="31.88" rx="1" fill="#61BC92"><title>10h–9h ago · endpoint TX · 1,509,949,440 bytes observed</title></rect>
+  <rect x="1383.25" y="1217.38" width="8.92" height="27.62" rx="1" fill="#61BC92"><title>9h–8h ago · endpoint TX · 1,308,622,848 bytes observed</title></rect>
+  <rect x="1396.00" y="1211.00" width="8.92" height="34.00" rx="1" fill="#61BC92"><title>8h–7h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="1213" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1421.50" y="1219.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>6h–5h ago · endpoint TX · 1,207,959,552 bytes observed</title></rect>
+  <rect x="1434.25" y="1225.88" width="8.92" height="19.12" rx="1" fill="#61BC92"><title>5h–4h ago · endpoint TX · 905,969,664 bytes observed</title></rect>
+  <rect x="1447.00" y="1228.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>4h–3h ago · endpoint TX · 805,306,368 bytes observed</title></rect>
+  <rect x="1459.75" y="1230.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>3h–2h ago · endpoint TX · 704,643,072 bytes observed</title></rect>
+  <rect x="1472.50" y="1232.25" width="8.92" height="12.75" rx="1" fill="#61BC92"><title>2h–1h ago · endpoint TX · 603,979,776 bytes observed</title></rect>
+  <rect x="1485.25" y="1236.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>1h–0h ago · endpoint TX · 402,653,184 bytes observed</title></rect>
+  <text class="ui tiny muted" x="1192" y="1265" text-anchor="start">TX 16.9 GiB</text>
+  <text class="ui tiny muted" x="1498" y="1265" text-anchor="end">22 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1241" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1276" x2="1562" y2="1276"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-e-b">
+  <title>internet-exit → relay-east · 42s ago; latest transport RTT 32 ms; 5m TX rate 9.6 Mbps · 300/300 seconds observed; 15m RTT: 12 successful samples · Δ 7 ms · P50 31 ms / P95 38 ms</title>
+  <text class="ui body" x="47" y="1301" text-anchor="start">internet-exit ↔ relay-east</text>
+  <text class="ui small mono muted" x="47" y="1321" text-anchor="start">link-exit-east · WG</text>
+  <text class="ui tiny muted" x="47" y="1340" text-anchor="start">From internet-exit · 42s ago</text>
+  <text class="ui body" x="450" y="1309" text-anchor="start">32 ms · 9.6 Mbps · Δ 7 ms</text>
+  <text class="ui tiny muted" x="450" y="1331" text-anchor="start">RTT · 5m TX rate · 15m variation</text>
+  <circle cx="907" cy="1292" r="3" fill="#3BAA79" stroke="none"/>
+  <text class="ui small green" x="918" y="1296" text-anchor="start">available</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="available" x="903.00" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>24h–23h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="912.38" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>23h–22h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="921.75" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>22h–21h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="931.12" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>21h–20h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="940.50" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>20h–19h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="949.88" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>19h–18h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="959.25" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>18h–17h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="968.62" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>17h–16h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="978.00" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>16h–15h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="987.38" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>15h–14h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="996.75" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>14h–13h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1006.12" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>13h–12h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1015.50" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>12h–11h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1024.88" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>11h–10h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1034.25" y="1310" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>10h–9h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1043.62" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>9h–8h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1053.00" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>8h–7h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1062.38" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>7h–6h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1071.75" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>6h–5h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1081.12" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>5h–4h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1090.50" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>4h–3h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1099.88" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>3h–2h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1109.25" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>2h–1h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1118.62" y="1310" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>1h–0h ago · last valid link sample: available</title></rect>
+  <text class="ui micro muted" x="903" y="1345" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1345" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1325" x2="1498" y2="1325" stroke="#E5EAE6"/>
+  <rect x="1192.00" y="1318.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>24h–23h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect x="1204.75" y="1320.75" width="8.92" height="4.25" rx="1" fill="#61BC92"><title>23h–22h ago · endpoint TX · 1,073,741,824 bytes observed</title></rect>
+  <rect x="1217.50" y="1318.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>22h–21h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect x="1230.25" y="1316.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>21h–20h ago · endpoint TX · 2,147,483,648 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="1293" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1255.75" y="1314.38" width="8.92" height="10.62" rx="1" fill="#61BC92"><title>19h–18h ago · endpoint TX · 2,684,354,560 bytes observed</title></rect>
+  <rect x="1268.50" y="1310.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>18h–17h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1281.25" y="1301.62" width="8.92" height="23.38" rx="1" fill="#61BC92"><title>17h–16h ago · endpoint TX · 5,905,580,032 bytes observed</title></rect>
+  <rect x="1294.00" y="1303.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>16h–15h ago · endpoint TX · 5,368,709,120 bytes observed</title></rect>
+  <rect x="1306.75" y="1308.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>15h–14h ago · endpoint TX · 4,294,967,296 bytes observed</title></rect>
+  <rect x="1319.50" y="1310.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>14h–13h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1332.25" y="1308.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>13h–12h ago · endpoint TX · 4,294,967,296 bytes observed</title></rect>
+  <rect x="1345.00" y="1303.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>12h–11h ago · endpoint TX · 5,368,709,120 bytes observed</title></rect>
+  <rect x="1357.75" y="1299.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>11h–10h ago · endpoint TX · 6,442,450,944 bytes observed</title></rect>
+  <rect x="1370.50" y="1293.12" width="8.92" height="31.88" rx="1" fill="#61BC92"><title>10h–9h ago · endpoint TX · 8,053,063,680 bytes observed</title></rect>
+  <rect x="1383.25" y="1297.38" width="8.92" height="27.62" rx="1" fill="#61BC92"><title>9h–8h ago · endpoint TX · 6,979,321,856 bytes observed</title></rect>
+  <rect x="1396.00" y="1291.00" width="8.92" height="34.00" rx="1" fill="#61BC92"><title>8h–7h ago · endpoint TX · 8,589,934,592 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="1293" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1421.50" y="1299.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>6h–5h ago · endpoint TX · 6,442,450,944 bytes observed</title></rect>
+  <rect x="1434.25" y="1305.88" width="8.92" height="19.12" rx="1" fill="#61BC92"><title>5h–4h ago · endpoint TX · 4,831,838,208 bytes observed</title></rect>
+  <rect x="1447.00" y="1308.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>4h–3h ago · endpoint TX · 4,294,967,296 bytes observed</title></rect>
+  <rect x="1459.75" y="1310.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>3h–2h ago · endpoint TX · 3,758,096,384 bytes observed</title></rect>
+  <rect x="1472.50" y="1312.25" width="8.92" height="12.75" rx="1" fill="#61BC92"><title>2h–1h ago · endpoint TX · 3,221,225,472 bytes observed</title></rect>
+  <rect x="1485.25" y="1316.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>1h–0h ago · endpoint TX · 2,147,483,648 bytes observed</title></rect>
+  <text class="ui tiny muted" x="1192" y="1345" text-anchor="start">TX 90.0 GiB</text>
+  <text class="ui tiny muted" x="1498" y="1345" text-anchor="end">22 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1321" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1356" x2="1562" y2="1356"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-e-cb">
+  <title>link-exit-b · report expired · current RTT, rate and variation unknown</title>
+  <text class="ui body" x="47" y="1381" text-anchor="start">internet-exit ↔ control-b</text>
+  <text class="ui small mono muted" x="47" y="1401" text-anchor="start">link-exit-b · WG</text>
+  <text class="ui tiny muted" x="47" y="1420" text-anchor="start">No current measurement</text>
+  <text class="ui body amber" x="450" y="1389" text-anchor="start">unknown</text>
+  <text class="ui tiny muted" x="450" y="1411" text-anchor="start">report expired</text>
+  <circle cx="907" cy="1372" r="3" fill="#D2A45B" stroke="none"/>
+  <text class="ui small amber" x="918" y="1376" text-anchor="start">unknown</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="available" x="903.00" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>24h–23h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="912.38" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>23h–22h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="921.75" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>22h–21h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="931.12" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>21h–20h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="940.50" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>20h–19h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="949.88" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>19h–18h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="959.25" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>18h–17h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="968.62" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>17h–16h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="978.00" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>16h–15h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="987.38" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>15h–14h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="996.75" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>14h–13h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1006.12" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>13h–12h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1015.50" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>12h–11h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1024.88" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>11h–10h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1034.25" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>10h–9h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1043.62" y="1390" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>9h–8h ago · last valid link sample: available</title></rect>
+  <rect data-ui="link-status-hour" data-state="unavailable" x="1053.00" y="1390" width="7.38" height="16" rx="1.5" fill="#C87171" stroke="#C87171"><title>8h–7h ago · last valid link sample: unavailable</title></rect>
+  <rect data-ui="link-status-hour" data-state="unavailable" x="1062.38" y="1390" width="7.38" height="16" rx="1.5" fill="#C87171" stroke="#C87171"><title>7h–6h ago · last valid link sample: unavailable</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1071.75" y="1390" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>6h–5h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1081.12" y="1390" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>5h–4h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1090.50" y="1390" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>4h–3h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1099.88" y="1390" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>3h–2h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1109.25" y="1390" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>2h–1h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1118.62" y="1390" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>1h–0h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <text class="ui micro muted" x="903" y="1425" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1425" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1405" x2="1498" y2="1405" stroke="#E5EAE6"/>
+  <rect x="1192.00" y="1398.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>24h–23h ago · endpoint TX · 503,316,480 bytes observed</title></rect>
+  <rect x="1204.75" y="1400.75" width="8.92" height="4.25" rx="1" fill="#61BC92"><title>23h–22h ago · endpoint TX · 335,544,320 bytes observed</title></rect>
+  <rect x="1217.50" y="1398.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>22h–21h ago · endpoint TX · 503,316,480 bytes observed</title></rect>
+  <rect x="1230.25" y="1396.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>21h–20h ago · endpoint TX · 671,088,640 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="1373" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1255.75" y="1394.38" width="8.92" height="10.62" rx="1" fill="#61BC92"><title>19h–18h ago · endpoint TX · 838,860,800 bytes observed</title></rect>
+  <rect x="1268.50" y="1390.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>18h–17h ago · endpoint TX · 1,174,405,120 bytes observed</title></rect>
+  <rect x="1281.25" y="1381.62" width="8.92" height="23.38" rx="1" fill="#61BC92"><title>17h–16h ago · endpoint TX · 1,845,493,760 bytes observed</title></rect>
+  <rect x="1294.00" y="1383.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>16h–15h ago · endpoint TX · 1,677,721,600 bytes observed</title></rect>
+  <rect x="1306.75" y="1388.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>15h–14h ago · endpoint TX · 1,342,177,280 bytes observed</title></rect>
+  <rect x="1319.50" y="1390.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>14h–13h ago · endpoint TX · 1,174,405,120 bytes observed</title></rect>
+  <rect x="1332.25" y="1388.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>13h–12h ago · endpoint TX · 1,342,177,280 bytes observed</title></rect>
+  <rect x="1345.00" y="1383.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>12h–11h ago · endpoint TX · 1,677,721,600 bytes observed</title></rect>
+  <rect x="1357.75" y="1379.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>11h–10h ago · endpoint TX · 2,013,265,920 bytes observed</title></rect>
+  <rect x="1370.50" y="1373.12" width="8.92" height="31.88" rx="1" fill="#61BC92"><title>10h–9h ago · endpoint TX · 2,516,582,400 bytes observed</title></rect>
+  <rect x="1383.25" y="1377.38" width="8.92" height="27.62" rx="1" fill="#61BC92"><title>9h–8h ago · endpoint TX · 2,181,038,080 bytes observed</title></rect>
+  <rect x="1396.00" y="1371.00" width="8.92" height="34.00" rx="1" fill="#61BC92"><title>8h–7h ago · endpoint TX · 2,684,354,560 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="1373" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1421.50" y="1379.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>6h–5h ago · endpoint TX · 2,013,265,920 bytes observed</title></rect>
+  <rect x="1434.25" y="1385.88" width="8.92" height="19.12" rx="1" fill="#61BC92"><title>5h–4h ago · endpoint TX · 1,509,949,440 bytes observed</title></rect>
+  <rect x="1447.00" y="1388.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>4h–3h ago · endpoint TX · 1,342,177,280 bytes observed</title></rect>
+  <rect x="1459.75" y="1390.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>3h–2h ago · endpoint TX · 1,174,405,120 bytes observed</title></rect>
+  <rect x="1472.50" y="1392.25" width="8.92" height="12.75" rx="1" fill="#61BC92"><title>2h–1h ago · endpoint TX · 1,006,632,960 bytes observed</title></rect>
+  <rect x="1485.25" y="1396.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>1h–0h ago · endpoint TX · 671,088,640 bytes observed</title></rect>
+  <text class="ui tiny muted" x="1192" y="1425" text-anchor="start">TX 28.1 GiB</text>
+  <text class="ui tiny muted" x="1498" y="1425" text-anchor="end">22 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1401" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1436" x2="1562" y2="1436"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-b-cb">
+  <title>control-b → relay-east · 12s ago; latest transport RTT 15 ms; 5m TX rate unknown · 0/300 seconds observed; 15m RTT: 1 successful samples · unknown</title>
+  <text class="ui body" x="47" y="1461" text-anchor="start">relay-east ↔ control-b</text>
+  <text class="ui small mono muted" x="47" y="1481" text-anchor="start">link-east-b · WG</text>
+  <text class="ui tiny muted" x="47" y="1500" text-anchor="start">From control-b · 12s ago</text>
+  <text class="ui body" x="450" y="1469" text-anchor="start">15 ms · rate unknown · Δ unknown</text>
+  <text class="ui tiny muted" x="450" y="1491" text-anchor="start">1 RTT sample · no rate window or variation yet</text>
+  <circle cx="907" cy="1452" r="3" fill="#3BAA79" stroke="none"/>
+  <text class="ui small green" x="918" y="1456" text-anchor="start">available</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="unknown" x="903.00" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>24h–23h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="912.38" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>23h–22h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="921.75" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>22h–21h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="931.12" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>21h–20h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="940.50" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>20h–19h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="949.88" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>19h–18h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="959.25" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>18h–17h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="968.62" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>17h–16h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="978.00" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>16h–15h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="987.38" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>15h–14h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="996.75" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>14h–13h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1006.12" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>13h–12h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1015.50" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>12h–11h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1024.88" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>11h–10h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1034.25" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>10h–9h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1043.62" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>9h–8h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1053.00" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>8h–7h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1062.38" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>7h–6h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1071.75" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>6h–5h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1081.12" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>5h–4h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1090.50" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>4h–3h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1099.88" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>3h–2h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1109.25" y="1470" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>2h–1h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="available" x="1118.62" y="1470" width="7.38" height="16" rx="1.5" fill="#64B88E" stroke="#64B88E"><title>1h–0h ago · last valid link sample: available</title></rect>
+  <text class="ui micro muted" x="903" y="1505" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1505" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1485" x2="1498" y2="1485" stroke="#E5EAE6"/>
+  <rect x="1192.00" y="1478.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>24h–23h ago · endpoint TX · 603,979,776 bytes observed</title></rect>
+  <rect x="1204.75" y="1480.75" width="8.92" height="4.25" rx="1" fill="#61BC92"><title>23h–22h ago · endpoint TX · 402,653,184 bytes observed</title></rect>
+  <rect x="1217.50" y="1478.62" width="8.92" height="6.38" rx="1" fill="#61BC92"><title>22h–21h ago · endpoint TX · 603,979,776 bytes observed</title></rect>
+  <rect x="1230.25" y="1476.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>21h–20h ago · endpoint TX · 805,306,368 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="1453" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1255.75" y="1474.38" width="8.92" height="10.62" rx="1" fill="#61BC92"><title>19h–18h ago · endpoint TX · 1,006,632,960 bytes observed</title></rect>
+  <rect x="1268.50" y="1470.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>18h–17h ago · endpoint TX · 1,409,286,144 bytes observed</title></rect>
+  <rect x="1281.25" y="1461.62" width="8.92" height="23.38" rx="1" fill="#61BC92"><title>17h–16h ago · endpoint TX · 2,214,592,512 bytes observed</title></rect>
+  <rect x="1294.00" y="1463.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>16h–15h ago · endpoint TX · 2,013,265,920 bytes observed</title></rect>
+  <rect x="1306.75" y="1468.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>15h–14h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect x="1319.50" y="1470.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>14h–13h ago · endpoint TX · 1,409,286,144 bytes observed</title></rect>
+  <rect x="1332.25" y="1468.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>13h–12h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect x="1345.00" y="1463.75" width="8.92" height="21.25" rx="1" fill="#61BC92"><title>12h–11h ago · endpoint TX · 2,013,265,920 bytes observed</title></rect>
+  <rect x="1357.75" y="1459.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>11h–10h ago · endpoint TX · 2,415,919,104 bytes observed</title></rect>
+  <rect x="1370.50" y="1453.12" width="8.92" height="31.88" rx="1" fill="#61BC92"><title>10h–9h ago · endpoint TX · 3,019,898,880 bytes observed</title></rect>
+  <rect x="1383.25" y="1457.38" width="8.92" height="27.62" rx="1" fill="#61BC92"><title>9h–8h ago · endpoint TX · 2,617,245,696 bytes observed</title></rect>
+  <rect x="1396.00" y="1451.00" width="8.92" height="34.00" rx="1" fill="#61BC92"><title>8h–7h ago · endpoint TX · 3,221,225,472 bytes observed</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="1453" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect x="1421.50" y="1459.50" width="8.92" height="25.50" rx="1" fill="#61BC92"><title>6h–5h ago · endpoint TX · 2,415,919,104 bytes observed</title></rect>
+  <rect x="1434.25" y="1465.88" width="8.92" height="19.12" rx="1" fill="#61BC92"><title>5h–4h ago · endpoint TX · 1,811,939,328 bytes observed</title></rect>
+  <rect x="1447.00" y="1468.00" width="8.92" height="17.00" rx="1" fill="#61BC92"><title>4h–3h ago · endpoint TX · 1,610,612,736 bytes observed</title></rect>
+  <rect x="1459.75" y="1470.12" width="8.92" height="14.88" rx="1" fill="#61BC92"><title>3h–2h ago · endpoint TX · 1,409,286,144 bytes observed</title></rect>
+  <rect x="1472.50" y="1472.25" width="8.92" height="12.75" rx="1" fill="#61BC92"><title>2h–1h ago · endpoint TX · 1,207,959,552 bytes observed</title></rect>
+  <rect x="1485.25" y="1476.50" width="8.92" height="8.50" rx="1" fill="#61BC92"><title>1h–0h ago · endpoint TX · 805,306,368 bytes observed</title></rect>
+  <text class="ui tiny muted" x="1192" y="1505" text-anchor="start">TX 33.8 GiB</text>
+  <text class="ui tiny muted" x="1498" y="1505" text-anchor="end">22 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1481" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1516" x2="1562" y2="1516"/>
+  </g>
+  <g data-ui="link-row" data-link-id="demo-link-c-cb">
+  <title>link-west-b · spec changed · old report · current RTT, rate and variation unknown</title>
+  <text class="ui body" x="47" y="1541" text-anchor="start">relay-west ↔ control-b</text>
+  <text class="ui small mono muted" x="47" y="1561" text-anchor="start">link-west-b · WG</text>
+  <text class="ui tiny muted" x="47" y="1580" text-anchor="start">No current measurement</text>
+  <text class="ui body amber" x="450" y="1549" text-anchor="start">unknown</text>
+  <text class="ui tiny muted" x="450" y="1571" text-anchor="start">spec changed · old report</text>
+  <circle cx="907" cy="1532" r="3" fill="#D2A45B" stroke="none"/>
+  <text class="ui small amber" x="918" y="1536" text-anchor="start">unknown</text>
+  <g data-ui="link-status-history">
+  <rect data-ui="link-status-hour" data-state="unknown" x="903.00" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>24h–23h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="912.38" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>23h–22h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="921.75" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>22h–21h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="931.12" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>21h–20h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="940.50" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>20h–19h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="949.88" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>19h–18h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="959.25" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>18h–17h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="968.62" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>17h–16h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="978.00" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>16h–15h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="987.38" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>15h–14h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="996.75" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>14h–13h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1006.12" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>13h–12h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1015.50" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>12h–11h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1024.88" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>11h–10h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1034.25" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>10h–9h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1043.62" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>9h–8h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1053.00" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>8h–7h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1062.38" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>7h–6h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1071.75" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>6h–5h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1081.12" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>5h–4h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1090.50" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>4h–3h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1099.88" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>3h–2h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1109.25" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>2h–1h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <rect data-ui="link-status-hour" data-state="unknown" x="1118.62" y="1550" width="7.38" height="16" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2"><title>1h–0h ago · last valid link sample: unknown · no valid link sample</title></rect>
+  <text class="ui micro muted" x="903" y="1585" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="1126" y="1585" text-anchor="end">now</text>
+  </g>
+  <g data-ui="link-traffic-history">
+  <line x1="1192" y1="1565" x2="1498" y2="1565" stroke="#E5EAE6"/>
+  <rect data-ui="traffic-gap" x="1192.00" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>24h–23h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1204.75" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>23h–22h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1217.50" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>22h–21h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1230.25" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>21h–20h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1243.00" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>20h–19h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1255.75" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>19h–18h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1268.50" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>18h–17h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1281.25" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>17h–16h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1294.00" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>16h–15h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1306.75" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>15h–14h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1319.50" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>14h–13h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1332.25" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>13h–12h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1345.00" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>12h–11h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1357.75" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>11h–10h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1370.50" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>10h–9h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1383.25" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>9h–8h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1396.00" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>8h–7h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1408.75" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>7h–6h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1421.50" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>6h–5h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1434.25" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>5h–4h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1447.00" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>4h–3h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1459.75" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>3h–2h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1472.50" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>2h–1h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <rect data-ui="traffic-gap" x="1485.25" y="1533" width="8.92" height="32" rx="1" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"><title>1h–0h ago · endpoint TX · unknown · no valid deltas</title></rect>
+  <text class="ui tiny amber" x="1192" y="1585" text-anchor="start">TX unknown</text>
+  <text class="ui tiny muted" x="1498" y="1585" text-anchor="end">0 / 24 h with deltas</text>
+  </g>
+  <text class="ui small faint" x="1534" y="1561" text-anchor="end">›</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1596" x2="1562" y2="1596"/>
+  </g>
+  <rect x="47" y="1612" width="7" height="12" rx="1" fill="#64B88E" stroke="#64B88E"/>
+  <text class="ui tiny muted" x="61" y="1622" text-anchor="start">Available</text>
+  <rect x="165" y="1612" width="7" height="12" rx="1" fill="#C87171" stroke="#C87171"/>
+  <text class="ui tiny muted" x="179" y="1622" text-anchor="start">Unavailable</text>
+  <rect x="305" y="1612" width="7" height="12" rx="1" fill="#FAFBFA" stroke="#BFC9C2"/>
+  <text class="ui tiny muted" x="319" y="1622" text-anchor="start">Unknown</text>
+  <text class="ui tiny muted" x="450" y="1622" text-anchor="start">Status: last valid link sample each hour.</text>
+  <text class="ui tiny muted" x="1192" y="1622" text-anchor="start">TX: both endpoints · per-link scale</text>
+  <text class="ui tiny muted" x="47" y="1642" text-anchor="start">Rate: WG 5m TX / hy2 probe throughput. Variation: 15m P95 − P50. Hover for sample counts, coverage and measurement details.</text>
+</svg>

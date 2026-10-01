@@ -30,7 +30,7 @@ material_id = Hash(material_id_domain || CanonicalEncode(Material))
 补齐，不能根据这个公式猜测 schema 3 的 JSON 字段。相同规范事实字节必有相同 ID。
 普通事实的操作只有以下几类，每类按稳定目标 ID 创建、修改或撤销：
 
-- 设备：加入（身份、显示名、平台、职责与 policy grants）、职责与授权修改、撤销或删除（留下防复活墓碑）；组合申请 `control` 时还有绑定 Invite、设备公钥和普通职责的条件授权事实，成员证书形成前不投影；
+- 设备：加入（身份、显示名、平台、职责与所选 PolicyIDs）、职责与授权修改、撤销或删除（留下防复活墓碑）；组合申请 `control` 时还有绑定 Invite、设备公钥和普通职责的条件授权事实，成员证书形成前不投影；
 - 网络意图：Service、Policy、`TransportResource`、`NetworkLink`、共享 HTTPS 探测目标、`.loom` DNS 记录、局域网映射、公开信任材料与各节点期望组件；
 - 管理员证书：受信 admin 客户端证书叶子的加入与撤销；
 - 私有入口：`EndpointGeneration` 的新代及阶段推进，只由承载该入口 listener 的 control 签发；
@@ -39,10 +39,10 @@ material_id = Hash(material_id_domain || CanonicalEncode(Material))
 
 删除是新事实，不抹掉旧字节。普通操作不再用整份 `network.update` 或全局 `base_head` 覆盖另一 control 的写入。
 
-设备授权携带签发者生成的 `RuntimeKey`，它是按设备、policy 和用途派生数据面凭据的根密钥，因此 Material 含秘密：只在 control 之间经端到端加密认证的通道同步，静态存储受保护，中继只转送密文。`RuntimeKey` 不下发给任何设备或节点；DeviceView 只携带由它派生的本设备凭据，forward/出网节点的 View 只携带派生出的、仅对本节点有效的入站凭据；Web、事件、日志与报告只显示脱敏投影。
-派生必须把设备 ID、获授 Policy ID 和用途纳入输入；数据面凭据还须绑定所服务资源和接收节点，
-两个不同接收方不得因同一设备/Policy 获得可互用的凭据。凭据只对当前有效授权及相应资源/服务节点有效：授权撤销、
-Policy grant 移除、`RuntimeKey` 轮换或资源认证身份变化时，相关客户端和服务节点执行投影须移除旧凭据，
+设备授权携带签发者生成的 `RuntimeKey`，它是按设备、Service、Policy 和用途派生数据面凭据的根密钥，因此 Material 含秘密：只在 control 之间经端到端加密认证的通道同步，静态存储受保护，中继只转送密文。`RuntimeKey` 不下发给任何设备或节点；DeviceView 只携带由它派生的本设备凭据，forward/出网节点的 View 只携带派生出的、仅对本节点有效的入站凭据；Web、事件、日志与报告只显示脱敏投影。
+派生必须把设备 ID、获授 Service ID、该 Service 的 Policy ID 和用途纳入输入；数据面凭据还须绑定所服务资源和接收节点，
+两个不同接收方不得因同一设备/Service/Policy 获得可互用的凭据。凭据只对当前有效授权及相应资源/服务节点有效：授权撤销、
+设备所选 Policy 移除或替换、`RuntimeKey` 轮换或资源认证身份变化时，相关客户端和服务节点执行投影须移除旧凭据，
 并在真实入站认证回读中拒绝旧值。分区中尚未收到撤权的节点可能暂时仍接受旧值，不能把签名撤权描述为
 立即全网断开。现行源码的旧派生域及其隐式用途字符串不是 schema 3 规范；密钥长度、KDF、每个用途的
 精确输入顺序、输出编码和更新失败时的原子替换规则尚须补入字段级契约，未补齐前不得实现新凭据 writer。
@@ -230,9 +230,9 @@ N=2 一人失联时成员变化停住，在线者仍可签普通事实；任何�
 
 ## 6. Invite、首次信任与 DeviceView
 
-SSH 直接添加、bootstrap 脚本和扫码是同一 Invite/claim 协议的三种交付媒介。Invite 的完整字段由 [Enrollment 与 Endpoint 模型的 `BootstrapCapability`](enrollment-endpoint-model.md#bootstrapcapability) 定义，本模型只要求它固定网络信任锚、签发者及成员证明、签发者受限入口、事务 ID、目标设备稳定 ID 与平台、准确职责与 Policy grant、媒介、一次性约束和到期时间。签发 Invite 即批准，无第二次人工批准或站点签发规则。签名媒介为扫码的 Invite 只能授予 access，发行端、扫码客户端解码和签发者 claim 校验三处都检查；其他媒介的 Invite 重新编码成二维码后，签名媒介字段仍不是扫码，扫码客户端拒绝解码。媒介字段只约束诚实客户端的交付方式，Invite 本身是持有即可使用的能力，须按其职责范围保护。
+SSH 直接添加、bootstrap 脚本和扫码是同一 Invite/claim 协议的三种交付媒介。Invite 的完整字段由 [Enrollment 与 Endpoint 模型的 `BootstrapCapability`](enrollment-endpoint-model.md#bootstrapcapability) 定义，本模型只要求它固定网络信任锚、签发者及成员证明、签发者受限入口、事务 ID、目标设备稳定 ID、准确职责与所选 PolicyIDs、媒介、一次性约束和到期时间。签发 Invite 即批准，无第二次人工批准或站点签发规则。角色先于交付方式：纯 access 使用二维码，包含其他职责使用 SSH 或 sh 脚本；签发端、客户端解码和首次 claim 三处都拒绝不匹配的职责/媒介组合；其他媒介的 Invite 重新编码成二维码后，签名媒介字段仍不是扫码，扫码客户端拒绝解码。媒介字段只约束诚实客户端的交付方式，Invite 本身是持有即可使用的能力，须按其职责范围保护。
 
-设备在本机生成私钥，用 Invite 仅向**签发它的 control**完成首次 claim。签发者失联时等待恢复，或按事务终结规则取消或到期；换签发者须另签 Invite。claim 原子绑定设备公钥、身份和一次性约束；重试只恢复同一事务。普通加入事实由签发者本地持久化后传播；加入本身不建 WG 接口、NetworkLink 或全互联拓扑。
+设备在本机生成私钥，用 Invite 仅向**签发它的 control**完成首次 claim。签发者失联时等待恢复，或按事务终结规则取消或到期；换签发者须另签 Invite。claim 原子绑定设备公钥、身份、目标端识别的平台和一次性约束；重试只恢复同一绑定。平台不由管理员预选，也不授予职责，识别与能力拒绝规则见 Enrollment 模型。普通加入事实由签发者本地持久化后传播；加入本身不建 WG 接口、NetworkLink 或全互联拓扑。
 
 申请 control 的 Invite 在 claim 时先绑定设备密钥与待纳入资格；若还申请非 control 职责，签发者或持有已验证绑定的其他有效 control 在提案前签一份按该 Invite 和设备公钥限定的条件授权事实，明确依赖绑定事实（并经其依赖 Invite），内含所需 `RuntimeKey`，证书前不投影。后继 ControlConfig 引用该事实 ID，按 §2.2 自动收集当前成员多数签名；证书形成后 control 与所请求普通职责一同生效。完整成员证书形成及交付前，该设备的任何职责都不生效、不交付 View，不能签治理事实或投票；这仍是一次入网操作，无第二次人工审批。取消已绑定的 control 加入须按 §2.2 第 5 条取得作废该事务的成员证书；证明不足时保持待决，已形成原加入证书时改走后续成员移除。
 
@@ -273,7 +273,7 @@ sequenceDiagram
 | 种类 | 稳定身份和必须公开的认证/拨号值 | 真正能证明的动作与 report 范围 | 留在节点本机的秘密 |
 |---|---|---|---|
 | `wireguard` | 资源 ID、承载 NodeID、interface 身份、承载端 UDP 拨号坐标、WG 公钥及资源自身的公开地址/路由参数；设备 peer/AllowedIPs 从该设备的授权和本机执行投影生成，不成为共享资源的参与者表。 | 先核对当前 peer/接口执行回读；显式中继 LinkID 的成功须通过隧道向该 Link 的精确探测目标发起并收到返回数据，普通首跳则按自身实际连接或业务结果报告。最近握手时间或计数器只能作为诊断，不能单独宣布 Service 业务成功。 | WG 私钥及本机 peer 安装材料 |
-| `hysteria2` | 资源 ID、承载 NodeID、listener 身份、UDP 拨号坐标、必须校验的服务端证书身份/公开信任材料及该用途的授权身份。拨号可使用认证的 IP 地址；不要求公网域名或 Gandi token。 | 验证服务端证书和 Hy2 身份；显式中继 LinkID 通过该资源向其精确目标完成有返回的传输动作，普通首跳按自身实际连接或业务结果报告。报告 Hy2 的认证、建连和真实返回结果，不填 WG 握手/peer 字段。完整 Service HTTPS 探测仍另按 Service 报告。 | 服务端证书私钥与设备/Policy 派生的服务凭据 |
+| `hysteria2` | 资源 ID、承载 NodeID、listener 身份、UDP 拨号坐标、必须校验的服务端证书身份/公开信任材料及该用途的授权身份。拨号可使用认证的 IP 地址；不要求公网域名或 Gandi token。 | 验证服务端证书和 Hy2 身份；显式中继 LinkID 通过该资源向其精确目标完成有返回的传输动作，普通首跳按自身实际连接或业务结果报告。报告 Hy2 的认证、建连和真实返回结果，不填 WG 握手/peer 字段。完整 Service HTTPS 探测仍另按 Service 报告。 | 服务端证书私钥与设备/Service/Policy 派生的服务凭据 |
 | `tls_tunnel` | 资源 ID、承载 NodeID、listener 身份、TCP 拨号坐标、固定服务端 SPKI、服务 ALPN，以及需要时附加的 TLS 名称和成员或设备端到端身份。 | 引导和设备私有隧道必须验 SPKI 与专用 ALPN，再完成对应私有服务的认证请求和响应；握手只证明该入口，不证明治理、设备授权或任何 Service 已可用。 | TLS 私钥、成员/设备私钥及本机 listener 输入 |
 
 没有域名或 `GANDI_PAT_TOKEN` 不得自动禁用 Hy2；但没有可验证的服务端身份、有效证书/信任材料或
@@ -301,18 +301,141 @@ flowchart LR
 
 ## 8. Service、Policy、偏好与业务探测
 
-Service 定义目标地址的业务范围和 matcher；NetworkPolicy 定义允许的路径及最终出口；`DeviceAuthorization.DestinationGrants` 引用获授 Policy ID。设备不能自填 CIDR 或用 Preference 扩大授权。普通访问、forward 和 internet_egress 分别核验职责与 Policy。Policy 的 `allow_direct` 授权该 Policy 下所有获授 access 的普通 Direct；`local_egress_devices` 只允许列出的、同时承担 access 与 internet_egress 的节点在本机直出，不会把本机许可扩大到整个 Policy。候选从 Service、Policy、设备授权、有效首跳资源及显式中继链确定性投影；稳定身份至少包含 Service 范围、首跳资源 ID、有序 LinkID 和最终出口。另计算只覆盖该候选实际引用的 Service、Policy、资源、链路与授权规范内容的摘要；不相关事实变化不改变该候选身份或摘要。Direct 的受管节点链为空；一跳直达某出网节点有最终出口，不是 Direct。
+Service 定义“访问什么”：一组域名/目标地址范围，或者由一个固定网关共享的 LAN。
+NetworkPolicy 定义“对这个服务允许怎样访问”：**每条 Policy 固定属于一个 Service**，保存访问
+允许/禁止、Direct 许可、业务入口、互联网出口与中间转发限制。一个 Service 可有多条 Policy，
+一条 Policy 可被多台设备复用。Service 本身不保存全局唯一 Policy 引用。
+`DeviceAuthorization.PolicyIDs` 只保存该设备选择的 Policy ID 集合；Service 范围通过每条 Policy
+的固定 `ServiceID` 推导，不再要求设备保存或编辑一组独立的 Service → Policy 配对。
+
+例如 `demo-media-free` 和 `demo-media-exit` 都属于 `demo-media`；前者允许不限路径访问，后者只允许
+经选定出口。手机选择前者，电脑选择后者，其他设备可直接复用其中一条。`demo-office-access`
+属于 `demo-office`，目标始终是该局域网 Service 的固定网关。新增 Service 或仅创建 Policy
+都不扩大设备权限；只有设备授权选择该 Policy 后，它才参与该设备的业务投影。
+
+### 策略身份与访问规则
+
+ServiceID、PolicyID 和 DeviceID 都是稳定身份。Policy 创建时必须选定有效 Service；**已有 Policy
+不能更换所属 Service**，改目标服务须创建新 Policy，再显式替换设备选择。允许修改 Policy 的名称、
+访问动作及路径限制，修改作用于所有引用该策略的设备，包括仍有效但尚未 claim 的邀请所引用的规则。
+删除 Service 会失去目标边界，删除 Policy 会失去可复用的服务访问规则，删除设备的 PolicyIDs 会
+失去设备间权限差异；三者满足独立需求，不新增 Binding、grant store 或第二份授权表。
+
+| Policy 值 | 含义及默认草稿 |
+|---|---|
+| 所属 ServiceID | 必填且创建后不可修改；目标集合或固定 LAN 网关从 Service 读取 |
+| 访问动作 `allow / deny` | 新建草稿默认 allow；deny 保留策略分配关系，但不生成该服务的业务授权、路由、ACL 凭据或探测目标 |
+| 业务入口范围 | 仅约束第一台受管节点；默认 any，按当前职责和已认证首跳资源过滤 |
+| 中间转发范围 | 约束路径中使用的中间转发节点；默认 any，仍要求具有 forward 职责及显式中继 LinkID |
+| 互联网出口范围 | 仅互联网 Service 使用，默认 any；只接受具有 internet_egress 职责的节点 |
+| 互联网 Direct 许可 | 仅互联网 Service 使用，新建草稿默认允许；Direct 不经过受管入口、中继或出口 |
+| 设备限定本地出口许可 | 保留既有 `local_egress_devices` 的显式设备 ID 集合，默认空；只能给相应 hybrid access/出网设备启用其自身出口，不能变成其他设备的 Direct 许可 |
+
+节点范围是 Policy 内的有限值，只有 `any`（不限）、`only`（仅指定集合）、`none`（明确不允许）。
+`any` 与 `none` 的 ID 集合必须为空；`only` 必须携带非空、无重复、按规范字节排序的稳定 NodeID。
+缺少模式、only 的空集合、未知 ID、模式与内容矛盾均拒绝。UI 未设置限制时使用明确的“不限”，
+提交前规范化为 any；规范签名值不靠字段缺失、null 或裸空数组猜默认值。none 是显式操作，
+例如“仅 Direct”以允许 Direct、入口 none 表达；中间转发 none 允许没有中间节点的一跳路径。
+这些范围只是现有 Policy 的值，不拥有新的身份或生命周期。
+
+any 包含当前及以后符合资格的节点，但不会赋予节点新职责、制造资源、NetworkLink 或健康观测。
+only 引用的节点后来被删除或失去职责时，保留原引用及失效原因，移除不合格候选；**不能删除失效 ID
+后把范围改成 any**。例如策略仅许 `demo-exit-a`，该节点删除后没有符合规则的出口，不自动借
+`demo-exit-b` 出网。编辑并提交只含已失效节点的新限制仍须拒绝；已有策略的无候选结果如实回读。
+
+“不限”只作用于已经分配的策略内部。设备未选择某服务的 Policy，就没有该服务的业务访问授权；
+空 PolicyIDs 表示“仅加入，无业务权限”，不影响设备认证管理、配置和报告通道。无 access 职责
+不能分配这些访问策略；纯 forward/出网节点转发其他设备流量的 ACL，仍从来源设备的有效策略投影。
+
+Direct 与受管路径是两个允许项：允许 Direct 且出口范围 only 表示“可直连，或经所列出口”。
+“只能经指定出口”必须禁止普通 Direct；页面摘要不能把两者混为一谈。一跳直达出网节点仍是受管
+路径，该节点须同时满足入口和出口范围。入口是业务首跳，不是 Invite 引导入口或 SSH 安装目标。
+`local_egress_devices` 仍只匹配当前同时具备 access 与 internet_egress、且获准为最终出口的设备本身。
+
+LAN Policy 只设置 allow/deny、业务入口和中间转发范围，终点固定为所属 Service 的网关。
+LAN 规范值不携带互联网出口、普通 Direct 或本地互联网出口许可字段，出现即拒绝；未设入口/转发
+限制表示到固定网关的所有合格路径，不会改换网关或授予公网访问。none 或资源定义可能使策略当前
+没有候选；这表示权限条件下无路可走，不自动放宽。真实可用性另由运行观测确定。
+
+### 节点选择策略与跨层对应
+
+设备可选择多个 Policy，但按这些策略的所属 Service 检查，**同一设备对同一 Service 最多选择一条**。
+替换同服务策略时，在一次设备授权变更中移除旧 PolicyID、加入新 PolicyID；不合并两条规则，也不
+引入“允许优先/拒绝优先”排序。不同设备可以为同一 Service 选择不同策略。两个 Service 的目标
+重叠而不能唯一确定请求所属服务时，拒绝该设备的歧义授权组合，不按列表顺序选择较宽规则。
+目标后继修改导致原分配出现歧义时，相应请求也须拒绝，不能自行选择一个较宽服务。
+
+| 层 | 唯一表达与读写边界 |
+|---|---|
+| domain | Service 定义目标；Policy 以固定 ServiceID 保存 allow/deny 和路径限制；设备授权保存规范 PolicyIDs |
+| wire | Policy 事实签名覆盖所属 Service 与全部规则；Invite 和设备授权固定 PolicyIDs，因果依赖绑定引用对象；View 携带所需 Policy、Service 及认证证明 |
+| persistent | 原始签名策略/设备事实、Invite 与完整 LKG 规范往返；不另存可写 ServicePolicies 或关联表 |
+| runtime | 从 PolicyIDs 解析有效 Policy，再解析固定 Service；通过下述筛选生成 View、候选、ACL、凭据及探测目标 |
+| UI | Services 管目标并只读列相关策略；Policies 创建/编辑完整服务访问规则；节点页面只选 Policy，服务及规则摘要只读派生 |
+
+PolicyIDs 中每项必须是非空稳定 ID，集合无重复并按规范字节排序，引用现有、无冲突的 Policy；分配时其所属 Service
+也必须有效。合法空集合只有一个编码。已经分配的 Policy 或 Service 后来被删除、撤销或冲突时，
+相应权限退出投影，不自动换策略、恢复旧值或变成不限。deny 是合法可分配策略，不等同于对象删除。
+从 deny 改回 allow 须有效的后继策略事实；设备会按既有分配重新获得符合规则的权限。
+Loom 管理范围内命中未授权或 deny 服务的请求须拒绝，不能回退为 Direct 或借另一服务绕过；
+不生成允许的业务路由不等于从捕获范围删掉目标后交给宿主默认出网。
+
+候选筛选顺序为：读取设备当前有效身份、职责及 PolicyIDs → 解析 Policy 和唯一 Service →
+检查 allow/deny → 匹配 Service 目标 → 应用入口、中间转发、终点及 Direct 规则 → 验证资源、
+LinkID 方向和节点资格 → 交给平台能力与真实观测选路。任一权威引用未知或冲突则相关权限收口；
+观测 unknown 不能被当成已授权之外的候选。遍历规范排序，输入相同就产生同样候选集合。
+
+候选身份仍包含 Service 范围、首跳资源、有序 LinkID 与最终出口，规范摘要覆盖当前 Policy 内容及
+实际依赖。策略替换或规则变化使依赖旧摘要的观测失效；无关策略变化不影响其他范围。普通 access、
+forward 和 internet_egress 都核验设备选择的 Policy、该 Policy 固定的 Service 及当前路径条件。
+数据面凭据仍按设备、Service、Policy 与用途派生，不能因设备仅选 Policy 就省略 Service 绑定。
+
+DeviceAuthorization 的 PolicyIDs 更新仅改变该设备；Policy 规则更新影响所有引用设备。
+它们使用各自对象的因果基线，陈旧提交拒绝并保留草稿；并发不兼容授权修改按设备目标冲突收口，
+共享策略冲突只收口其引用范围。撤权从客户端、网关及入口 ACL 移除相应权限；分区或离线未收到
+撤权的设备可能暂时保留旧配置，不能将本地接受描述为全网即时生效。重启从签名事实与 LKG 恢复，
+草稿与反向索引可删除重建，不能反写授权。
+
+### 策略创建、分配与复用
+
+正常链是：创建 Service → 在 Policies 为它创建 Policy → 添加节点选择 Policy → 签发固定 PolicyIDs
+的 Invite → claim 与设备授权 → 下发 View → 客户端和服务节点消费 → 节点详情回读所选策略及业务结果。
+已有节点通过同一节点授权入口增加、移除或替换策略，无需重新扫码。添加页或节点详情中的“新建策略”
+进入同一个 Policies 创建表单；返回后选中该策略，不在节点页嵌入第二套服务或策略编辑器。
+
+共享编辑先列出使用节点和仍有效邀请的引用。只改一个节点时选择另一条同服务策略，或复制当前策略
+为新 Policy、保存后替换该节点的 PolicyID；其他节点保留原引用。Policy 的 ServiceID 保持不变，
+Service 目标内容修改也须展示所有经 Policy 引用的节点范围。创建、复制、修改都走普通签名事实，
+不新增策略模板、隐式私有策略或有独立生命周期的草稿 store。
+
+先保存新 Policy，再签发 Invite 或更新节点 PolicyIDs。若第二步失败，策略仍是可回读的已保存对象，
+节点/邀请尚未改变；按原请求及对象 ID 只重试未完成步骤，不能重复创建策略或把草稿显示为有效权限。
+陈旧依赖回到审阅；取消分配不自动删除已保存策略。丢失身份后重新添加若需创建策略，先完成策略保存，
+再执行旧身份删除 → 新 Invite 的替换链；策略失败不删除旧身份，已删除后的邀请失败不回滚墓碑。
+
+最小反例及验证：同 Service 的两条 Policy 可分配给不同设备，同一设备同时选择两条须拒绝；
+共享规则修改影响全部引用，单节点替换不改共享规则；新 Service/Policy 不自动授权；Policy 不可改属
+其他 Service；any、only、none 及规范往返互不混淆；only 的唯一出口删除不变成 any；deny、空分配、
+引用删除/冲突都无业务授权；仅出口策略不能经 Direct 绕过；LAN 不能经其他网关出网；部分成功按原请求
+恢复；重启及撤权保持相同范围。UI、runtime 是单向投影，不能据“空标签”或设备报告改写规范值。
+
+本节取代设备单独保存 ServicePolicies 配对的旧目标；旧 `Service.policy`、`DestinationGrants`、
+已签 Invite 和任何既存空数组字节不能通过改名或默认值重解释。仍在 schema 3 内修订目标契约，
+实施前完成[现行契约的前向切换与拒绝边界](current-contract.md#设备服务授权修订的切换边界)。
+
+### 偏好与探测
 
 - **Direct**：只选 Policy 允许且不经过受管节点的目标路径。
 - **Auto**：在当前 Service 范围内选全部获授权、平台可执行的候选，以真实观测决定当前路径。无探测的 unknown 候选可尝试，已知失败暂不新选。
 - **指定最终出口**：只保留通往该出口的路径；一跳直达与经 forward 中继抵达同一出口可以并存，一条失败不伪造另一条失败。
 
-NetworkIntent 保存**一份**规范 HTTPS 业务探测目标池，按设备已获授 Policy 的 Service matcher 派生每个 Service 的目标集合；不新增独立权威 ProbeGroup，也不因探测扩大 ACL。同一 Policy 的两个 Service 可以选不同路径。业务观测绑定 Service、候选、底层网络代、该候选及实际目标的规范摘要、实际目标和有效期，只证明实测范围；不相关网络意图事实不会使全网观测失效。入口/中继成功不等于业务成功。无匹配目标仍可入网，主动完整业务健康为 unknown；真实业务结果可按实际范围形成观测。按当前业务需要做最少真实探测，复用首跳和链路观测，不做 Service×候选全量扫描；ICMP、接口 UP 和 UI 颜色不能制造健康事实。
+NetworkIntent 保存**一份**规范 HTTPS 业务探测目标池，按设备显式获授的 Service matcher 和对应 Policy 派生每个 Service 的目标集合；不新增独立权威 ProbeGroup，也不因探测扩大 ACL。同一 Service 的不同设备/Policy 范围分别探测和选路。业务观测绑定 Service、候选、底层网络代、该候选及实际目标的规范摘要、实际目标和有效期，只证明实测范围；不相关网络意图事实不会使全网观测失效。入口/中继成功不等于业务成功。无匹配目标仍可入网，主动完整业务健康为 unknown；真实业务结果可按实际范围形成观测。按当前业务需要做最少真实探测，复用首跳和链路观测，不做 Service×候选全量扫描；ICMP、接口 UP 和 UI 颜色不能制造健康事实。
 
 ```mermaid
 flowchart TD
-    S["Service 范围"] --> P["设备获授 Policy"]
-    P --> C["可执行候选"]
+    D["设备选择 PolicyIDs"] --> P["有效 allow Policy"]
+    P --> S["固定所属 Service 范围"]
+    S --> C["按策略限制派生可执行候选"]
     T["共享 HTTPS 目标池"] --> F["按 Service matcher 与授权过滤"]
     F --> O["Service、候选、实际目标的观测"]
     C --> X["Direct / Auto / 指定最终出口"]
@@ -341,11 +464,18 @@ Web 端口到笔记本后以 `https://127.0.0.1:<本地端口>/` 访问，并使
 
 ## 10. 共享局域网映射
 
-有 forward 职责的节点可认证报告本机实际可达的 LAN IPv4 前缀；报告本身不开放路由。管理员在 `control.loom` 的该节点详情选择已报告前缀，由有效 control 签发稳定 ID 的 `local_network` Service 值，包含网关 ID、本地前缀、**等长**虚拟 IPv4 前缀及 Policy ID。它归入 NetworkIntent，不设映射 store。默认建立只用于该映射的 Policy；选择已有 Policy 时 UI 明示它已开放的其他目标。管理员在新设备 Invite 或现有 access 授权页授予 Policy，access 无法自填或扩大 CIDR。
+有 forward 职责的节点可认证报告本机实际可达的 LAN IPv4 前缀；报告本身不开放路由。管理员在 `control.loom` 的该节点详情或 Services 选择网关及已报告前缀，由有效 control 签发稳定 ID 的 `local_network` Service 值，包含网关 ID、本地前缀和**等长**虚拟 IPv4 前缀。它归入 NetworkIntent，不设映射 store，也不绑定全局 Policy。管理员先创建该 Service，再为它创建允许到固定网关的 Policy；在新设备 Invite 或现有 access 详情中只选择该 Policy。复用策略授权的始终是它固定所属的 Service，access 无法自填或扩大 CIDR。
 
-control 从私有 IPv4 候选空间按网络 ID、映射 ID、尝试序数确定性选择同长度前缀，排除已认证 overlay、已知 LAN 和已有虚拟前缀；不要求手工地址池。签名事实保存**精确分配结果**，设备不得各自重算。分区并发分配冲突时受影响映射停止投影；最多三次签名重分配尝试，仍冲突则禁用并等待明确人工处理，不按时间戳或先见者择胜。未知外部网络冲突由运行回读发现并进入相同禁用/重分配流程。
+**一个 LAN mapping 就是一个局域网 Service 的地址映射配置**，不是与 Service 并列管理的第二个对象。
+映射使用所属 Service 的稳定身份；网关、本地前缀、虚拟前缀均在同一个 `local_network` Service
+值内签名、持久保存并回读。Services 目录统一列出互联网与局域网服务；节点详情的“提供的局域网服务”
+只是按网关 ID 过滤同一份服务投影。在节点详情创建时预选该网关，在 Services 创建时先选具有 forward
+职责且有有效 LAN 报告的网关，两处提交同一种 Service 创建操作。网关报告变化不能自行修改已签的映射。
+局域网服务的目标是该映射的虚拟地址范围，路径终点固定为其网关；它不提供任意互联网出口选择。
 
-DeviceView 只向获授 access 下发虚拟前缀、固定网关和到网关的获授权候选。客户端仅在平台隔离业务边界安装精确路由；网关再次验证设备与 Policy，按主机位一对一转换目标地址，LAN 缺回程路由时按需转换源地址。首阶段仅允许 **overlay 设备主动访问 LAN 主机**；LAN 主机可回复该连接，不能仅凭映射主动新建到 overlay 设备的连接。不登录或修改路由器。局域网是独立 Service 范围，可在到固定网关的获授路径中自动选路；网关不因此成为互联网出口。用户互联网 Direct、Auto、指定出口仍按原语义工作。无适用 HTTPS 目标时局域网业务状态是 unknown。删除、禁用映射或撤销网关身份时，相关路由、DNS、ACL 与候选退出投影。
+control 从私有 IPv4 候选空间按网络 ID、Service ID、尝试序数确定性选择同长度前缀，排除已认证 overlay、已知 LAN 和已有虚拟前缀；不要求手工地址池。签名事实保存**精确分配结果**，设备不得各自重算。分区并发分配冲突时受影响映射停止投影；最多三次签名重分配尝试，仍冲突则禁用并等待明确人工处理，不按时间戳或先见者择胜。未知外部网络冲突由运行回读发现并进入相同禁用/重分配流程。
+
+DeviceView 只向选择了该服务 allow Policy 的 access 下发虚拟前缀、固定网关和到网关的获授权候选。客户端仅在平台隔离业务边界安装精确路由；网关再次验证设备、该局域网 Service 与该设备获授的 Policy，按主机位一对一转换目标地址，LAN 缺回程路由时按需转换源地址。首阶段仅允许 **overlay 设备主动访问 LAN 主机**；LAN 主机可回复该连接，不能仅凭映射主动新建到 overlay 设备的连接。不登录或修改路由器。局域网是独立 Service 范围，候选终点始终是该 Service 的固定网关，只保留所选 Policy 允许的路径；无匹配路径时不产生候选，不能用互联网 Direct 或另一出口绕过。可在到固定网关的获授路径中自动选路；网关不因此成为互联网出口。用户互联网 Direct、Auto、指定出口仍按原语义工作。无适用 HTTPS 目标时局域网业务状态是 unknown。删除、禁用映射或撤销网关身份时，相关路由、DNS、ACL 与候选退出投影。
 
 ```mermaid
 sequenceDiagram
@@ -354,7 +484,7 @@ sequenceDiagram
     participant A as 获授 access
     participant L as LAN 主机
     F->>C: 认证报告本地前缀
-    C->>C: 签发映射及 Policy
+    C->>C: 签发 LAN Service 及所属 Policy，再为设备分配 Policy
     C->>A: 签名视图下发虚拟前缀与网关候选
     A->>F: 向虚拟地址发起获授连接
     F->>F: 复核 Policy，目标转换及必要源地址转换
@@ -388,7 +518,7 @@ sequenceDiagram
 3. N=1/2/3 成员多数、N=2 一人失联、分票后以更高轮次推进；乱序 `prepare` 与延迟旧轮投票不产生双证书，恢复后完整投票历史不丢；N=2 单人已投及跨轮各一票均能在全员回复且各轮未获多数时作废，按同轮同提案计票；N=3 多个不同轮可能项且一人永久失联时选最高轮推进，不能直接签较低轮作废请求；同轮 A/B 各投不同值、C 失联时仅最高轮歧义才暂停，C 回应无票或投其中一个值后重算或形成证书；较低轮分叉但更高轮唯一可能项时可继承；同成员双签与冲突多数证书失败关闭；虚报极大封存序列、tip 与原始链不符及安全继承旧提案时后见高序列或设备 ID 冲突的处理；失格键封存低于已见高水位时只对该键按证书验收，原高水位保全，证书验收前已持久接受的超限撤权由留任键自动重签并在放宽运行授权前验证，未知遗漏标记可能复权；留任成员的独立撤权跨换届有效；从陈旧备份恢复的成员不再签名；最后 control 交接及全员故障不自动晋升。
 4. SSH、脚本、扫码共用 claim；扫码夹带非 access 在发行、客户端解码和 claim 校验三处拒绝；首次 claim 只找签发者；不同事务占用同一设备 ID 时授权失败关闭；申请 control 的条件普通授权在多数证书形成前不生效，证书绑定事实 ID 后无需第二份完成事实；设备验证签名视图和成员链。
 5. 新 access 无独立 WG 仍领取配置；WG/hy2 资源复用、同节点对多 LinkID 独立建连及回读、删链只影响引用候选；control 经任一承载仍核验成员。
-6. Direct、Auto、指定出口同一候选模型；指定出口一跳失败可走同出口中继；同一 Policy 下不同 Service 分别探测和选路，空目标为 unknown。
+6. Direct、Auto、指定出口同一候选模型；指定出口一跳失败可走同出口中继；不同设备/Policy 的 Service 范围分别探测和选路，空目标为 unknown。
 7. 精确 `.loom` A/AAAA；`control.loom` 只解析到 web 模式 serving 入口，网站根带 critical `.loom` DNS 约束及全 IPv4/IPv6 IP 排除、私钥不在 control、叶证书仅含 `control.loom`，错误根拒绝导入且浏览器真实验链；admin 名单经普通事实增删后各 control 一致生效；reader 路径消失；重叠 LAN 获不同虚拟前缀、Policy 授权、地址冲突三次重分配、删除映射后路由/DNS/ACL 撤销。
 
 代码完成还须经正式 UI/CLI、daemon 认证处理、权威持久化和重启恢复、真实连接与运行时消费、正常入口回读及本任务授权部署验收；文档或单元测试不能代替业务完成。DNS 和局域网路由验收遵守专用 network namespace、宿主安全回读和精确回滚，不修改开发宿主初始 netns 或 LAN 路由器。

@@ -139,7 +139,10 @@ sudo ./scripts/windows-test-vm.sh data-up
 干净基线只能建立在 Windows、SSH 和测试权限准备完成而**尚未 Enrollment**的状态。
 Enrollment 后，磁盘、OVMF vars 和 TPM 状态构成同一个不可拆分的本机身份；不能只回滚
 qcow2，也不能复制 VM 后让两个实例同时运行同一 Device。恢复干净基线后必须在控制面
-创建新的测试 Device 或按正式 Rejoin 流程取得新二维码。
+创建新的测试 Device；替换旧测试身份时，按
+[重新添加流程](../core/enrollment-endpoint-model.md#二维码的使用场景)先删除旧身份，再为新 ID
+签发邀请。二维码只适用于纯 access，不能复用已消费的码或恢复旧身份；目标流程尚未接入时
+不能用旧 Rejoin 入口绕过这些要求。
 
 不要把生产身份或现网私有材料放入这台 VM。测试 TUN 前先保留管理通道并设置有界超时；
 若 guest 无法正常关闭，`force-stop` 只停止 QEMU，不代表路由清理、stale 或恢复验收成功。

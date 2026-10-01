@@ -1,0 +1,863 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1586" height="1192" viewBox="0 0 1586 1192" role="group" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">administration-certificates — Loom control center</title>
+  <desc id="svg-desc">Loom control center: administration-certificates.</desc>
+  <defs>
+    <marker id="route-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0 0L8 4L0 8Z" fill="#4D78D1"/></marker>
+    <symbol id="icon-grid" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></symbol>
+    <symbol id="icon-node" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="5" rx="1"/><rect x="2" y="9" width="12" height="5" rx="1"/><circle cx="4" cy="4.5" r=".6"/><circle cx="4" cy="11.5" r=".6"/></symbol>
+    <symbol id="icon-topology" viewBox="0 0 16 16"><path d="M4 4l4 4 4-4M8 8v4"/><circle cx="3" cy="3" r="1.7"/><circle cx="13" cy="3" r="1.7"/><circle cx="8" cy="13" r="1.7"/></symbol>
+    <symbol id="icon-path" viewBox="0 0 16 16"><path d="M2 4h4c3 0 2 8 5 8h3M2 12h3c3 0 2-8 5-8h4"/></symbol>
+    <symbol id="icon-service" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/></symbol>
+    <symbol id="icon-release" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M8 5v5m-2-2 2 2 2-2"/></symbol>
+    <symbol id="icon-events" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 1.5"/></symbol>
+    <symbol id="icon-signed" viewBox="0 0 16 16"><path d="M8 1.5 13 4v4c0 3-2 5-5 6.5C5 13 3 11 3 8V4Z"/><path d="m5.5 8 1.6 1.6 3.4-3.5"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></symbol>
+    <symbol id="icon-terminal" viewBox="0 0 16 16"><rect x="1.5" y="2" width="13" height="12" rx="2"/><path d="m4 5 3 3-3 3m5 0h3"/></symbol>
+    <symbol id="icon-code" viewBox="0 0 16 16"><path d="m5.5 3-4 5 4 5m5-10 4 5-4 5M9.5 2l-3 12"/></symbol>
+    <symbol id="icon-qr" viewBox="0 0 16 16"><path d="M2 2h4v4H2zm8 0h4v4h-4zM2 10h4v4H2zm8 0v2m3-2v4m-3 0h2"/></symbol>
+    <symbol id="icon-phone" viewBox="0 0 16 16"><rect x="4" y="1" width="8" height="14" rx="2"/><path d="M7 3h2M7 13h2"/></symbol>
+    <symbol id="icon-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></symbol>
+    <symbol id="icon-expand" viewBox="0 0 16 16"><path d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+    <symbol id="icon-filter" viewBox="0 0 16 16"><path d="M2 4h12M4 8h8m-6 4h4"/></symbol>
+    <style><![CDATA[
+    .ui { font-family: Inter, "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill:#1B201D }
+    .mono { font-family: "Intel One Mono", "SFMono-Regular", Consolas, monospace }
+    .title { font-size:28px; font-weight:700; letter-spacing:-.5px }
+    .section { font-size:17px; font-weight:650; letter-spacing:-.2px }
+    .metric { font-size:22px; font-weight:650; letter-spacing:-.3px }
+    .body { font-size:14px }
+    .small { font-size:12px }
+    .tiny { font-size:11px }
+    .micro { font-size:10px }
+    .eyebrow { font-size:11px; font-weight:700; letter-spacing:1px }
+    .muted { fill:#6E7771 }
+    .faint { fill:#929B95 }
+    .green { fill:#218A61 }
+    .amber { fill:#A66A14 }
+    .red { fill:#B74E4E }
+    .blue { fill:#427994 }
+    .white { fill:#FFFFFF }
+    .nav { font-size:13px }
+    .nav-icon { fill:none; stroke:#79837D; stroke-width:1.45; stroke-linecap:round; stroke-linejoin:round }
+    .nav-active { fill:none; stroke:#1B201D; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round }
+    .rule { stroke:#E5EAE6; stroke-width:1 }
+    .dash { stroke:#ABB7AF; stroke-width:1.5; stroke-dasharray:5 5; fill:none }
+    .link { stroke:#B8C4BC; stroke-width:2; fill:none }
+    .selected { stroke:#4D78D1; stroke-width:2.3; fill:none; marker-end:url(#route-arrow) }
+]]></style>
+  </defs>
+  <rect width="1586" height="1192" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="573" y="34" text-anchor="start">Live paths</text>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="1116" y="34" text-anchor="start">Administration</text>
+  <line x1="1095" y1="57" x2="1211" y2="57" stroke="#2AA875" stroke-width="2"/>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">CONTROL / MANAGEMENT</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Administration</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Manage control nodes, administrator access, certificates and configuration.</text>
+  <a href="09-administration.svg" data-ui="administration-navigation" data-section="controls" aria-current="false">
+  <rect x="24" y="214" width="252" height="65" rx="4" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="42" y="241" text-anchor="start">Control nodes</text>
+  <text class="ui small muted" x="42" y="263" text-anchor="start">Membership and sync</text>
+  </a>
+  <a href="09-administration-administrators.svg" data-ui="administration-navigation" data-section="administrators" aria-current="false">
+  <rect x="24" y="290" width="252" height="65" rx="4" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="42" y="317" text-anchor="start">Administrators</text>
+  <text class="ui small muted" x="42" y="339" text-anchor="start">Browser access</text>
+  </a>
+  <a href="09-administration-certificates.svg" data-ui="administration-navigation" data-section="certificates" aria-current="page">
+  <rect x="24" y="366" width="252" height="65" rx="4" fill="#EDF5EF" stroke="none"/>
+  <rect x="24" y="376" width="3" height="45" rx="0" fill="#248F64" stroke="none"/>
+  <text class="ui body" x="42" y="393" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="42" y="415" text-anchor="start">HTTPS identity</text>
+  </a>
+  <a href="09-administration-configuration.svg" data-ui="administration-navigation" data-section="configuration" aria-current="false">
+  <rect x="24" y="442" width="252" height="65" rx="4" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="42" y="469" text-anchor="start">Configuration state</text>
+  <text class="ui small muted" x="42" y="491" text-anchor="start">Effective values and conflicts</text>
+  </a>
+  <line class="rule" x1="296" y1="214" x2="296" y2="1168"/>
+  <line class="rule" x1="42" y1="550" x2="258" y2="550"/>
+  <text class="ui eyebrow muted" x="42" y="582" text-anchor="start">CURRENT CONNECTION</text>
+  <text class="ui body mono" x="42" y="613" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="42" y="638" text-anchor="start">Local authenticated view</text>
+  <text class="ui small muted" x="42" y="683" text-anchor="start">Other controls may have</text>
+  <text class="ui small muted" x="42" y="705" text-anchor="start">received different changes.</text>
+  <g id="overview" class="administration-target"/>
+  <g id="administration-overview" class="administration-scene" data-ui="administration-scene" data-scene="overview">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">control-a · serving certificate</text>
+  <text class="ui small muted" x="348" y="646" text-anchor="start">Website name</text>
+  <text class="ui body mono" x="744" y="646" text-anchor="start">control.loom</text>
+  <text class="ui small muted" x="348" y="683" text-anchor="start">Issuer</text>
+  <text class="ui body" x="744" y="683" text-anchor="start">demo-website-root</text>
+  <text class="ui small muted" x="348" y="720" text-anchor="start">Fingerprint</text>
+  <text class="ui body" x="744" y="720" text-anchor="start">demo-web-current-fingerprint · SHA-256</text>
+  <text class="ui small muted" x="348" y="757" text-anchor="start">Purpose</text>
+  <text class="ui body" x="744" y="757" text-anchor="start">HTTPS server · serverAuth · not a CA</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-leaf">
+  <g data-ui="button">
+  <rect x="348" y="794" width="198" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="447" y="819" text-anchor="middle">Download certificate</text>
+  </g>
+  </a>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-chain">
+  <g data-ui="button">
+  <rect x="562" y="794" width="198" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="661" y="819" text-anchor="middle">Download chain</text>
+  </g>
+  </a>
+  <a href="#renewal" data-ui="administration-action" data-action="Prepare renewal">
+  <g data-ui="button">
+  <rect x="1298" y="794" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1408" y="819" text-anchor="middle">Prepare renewal</text>
+  </g>
+  </a>
+  <line class="rule" x1="328" y1="877" x2="1538" y2="877"/>
+  <text class="ui body amber" x="348" y="917" text-anchor="start">Renew before 25 January</text>
+  <text class="ui small muted" x="348" y="950" text-anchor="start">Generate a bound request here, have it signed offline, then import the signed certificate chain.</text>
+  <text class="ui small muted" x="348" y="980" text-anchor="start">Keep the current entry until the new certificate and browser access have been verified.</text>
+  <text class="ui small muted" x="348" y="1025" text-anchor="start">Using the same trust root does not require browsers to import it again.</text>
+  <text class="ui small muted" x="348" y="1090" text-anchor="start">If this entry expires, use another valid control entry or the protected local CLI for recovery.</text>
+  </g>
+  <g id="downloads" class="administration-target"/>
+  <g id="administration-downloads" class="administration-scene" data-ui="administration-scene" data-scene="downloads">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Download public certificate files</text>
+  <text class="ui small muted" x="348" y="636" text-anchor="start">Files are delivered through the authenticated management connection. No private keys are included.</text>
+  <g data-ui="certificate-download" data-kind="leaf" data-generation="current" data-audience="authenticated-admin" data-private-key="excluded">
+  <line class="rule" x1="328" y1="662" x2="1538" y2="662"/>
+  <text class="ui body" x="348" y="696" text-anchor="start">Website certificate</text>
+  <text class="ui body mono" x="744" y="696" text-anchor="start">control-a.crt</text>
+  <text class="ui small muted" x="744" y="727" text-anchor="start">Leaf for the current control-a entry</text>
+  <g data-ui="download-public-certificate" data-source="verified-leaf">
+  <g data-ui="button">
+  <rect x="1370" y="684" width="148" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1444" y="709" text-anchor="middle">Download</text>
+  </g>
+  </g></g>
+  <g data-ui="certificate-download" data-kind="chain" data-generation="current" data-audience="authenticated-admin" data-private-key="excluded">
+  <line class="rule" x1="328" y1="762" x2="1538" y2="762"/>
+  <text class="ui body" x="348" y="796" text-anchor="start">Certificate chain</text>
+  <text class="ui body mono" x="744" y="796" text-anchor="start">control-a-chain.pem</text>
+  <text class="ui small muted" x="744" y="827" text-anchor="start">Current website leaf and public chain</text>
+  <g data-ui="download-public-certificate" data-source="verified-chain">
+  <g data-ui="button">
+  <rect x="1370" y="784" width="148" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1444" y="809" text-anchor="middle">Download</text>
+  </g>
+  </g></g>
+  <g data-ui="certificate-download" data-kind="root" data-generation="current" data-audience="authenticated-admin" data-private-key="excluded">
+  <line class="rule" x1="328" y1="862" x2="1538" y2="862"/>
+  <text class="ui body" x="348" y="896" text-anchor="start">Website trust root</text>
+  <text class="ui body mono" x="744" y="896" text-anchor="start">demo-website-root.crt</text>
+  <text class="ui small muted" x="744" y="927" text-anchor="start">Public trust certificate for .loom</text>
+  <g data-ui="download-public-certificate" data-source="verified-root">
+  <g data-ui="button">
+  <rect x="1370" y="884" width="148" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1444" y="909" text-anchor="middle">Download</text>
+  </g>
+  </g></g>
+  <line class="rule" x1="328" y1="962" x2="1538" y2="962"/>
+  <text class="ui body" x="348" y="1003" text-anchor="start">Initial browser trust must come from an independently trusted delivery channel.</text>
+  <text class="ui small muted" x="348" y="1035" text-anchor="start">Downloading this root does not install it, grant admin access or replace the localhost development certificate.</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="348" y="1081" text-anchor="start">‹ Certificate details</text>
+  </a>
+  </g>
+  <g id="downloads-renewed" class="administration-target"/>
+  <g id="administration-downloads-renewed" class="administration-scene" data-ui="administration-scene" data-scene="downloads-renewed">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads-renewed" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2031-01-01 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">365 days remaining</text>
+  <text class="ui body green" x="1084" y="417" text-anchor="start">Valid · renewed</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Serving readback verified</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Download public certificate files</text>
+  <text class="ui small muted" x="348" y="636" text-anchor="start">Files are delivered through the authenticated management connection. No private keys are included.</text>
+  <g data-ui="certificate-download" data-kind="leaf" data-generation="renewed" data-audience="authenticated-admin" data-private-key="excluded">
+  <line class="rule" x1="328" y1="662" x2="1538" y2="662"/>
+  <text class="ui body" x="348" y="696" text-anchor="start">Website certificate</text>
+  <text class="ui body mono" x="744" y="696" text-anchor="start">control-a.crt</text>
+  <text class="ui small muted" x="744" y="727" text-anchor="start">Leaf for the current control-a entry</text>
+  <g data-ui="download-public-certificate" data-source="verified-leaf">
+  <g data-ui="button">
+  <rect x="1370" y="684" width="148" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1444" y="709" text-anchor="middle">Download</text>
+  </g>
+  </g></g>
+  <g data-ui="certificate-download" data-kind="chain" data-generation="renewed" data-audience="authenticated-admin" data-private-key="excluded">
+  <line class="rule" x1="328" y1="762" x2="1538" y2="762"/>
+  <text class="ui body" x="348" y="796" text-anchor="start">Certificate chain</text>
+  <text class="ui body mono" x="744" y="796" text-anchor="start">control-a-chain.pem</text>
+  <text class="ui small muted" x="744" y="827" text-anchor="start">Current website leaf and public chain</text>
+  <g data-ui="download-public-certificate" data-source="verified-chain">
+  <g data-ui="button">
+  <rect x="1370" y="784" width="148" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1444" y="809" text-anchor="middle">Download</text>
+  </g>
+  </g></g>
+  <g data-ui="certificate-download" data-kind="root" data-generation="renewed" data-audience="authenticated-admin" data-private-key="excluded">
+  <line class="rule" x1="328" y1="862" x2="1538" y2="862"/>
+  <text class="ui body" x="348" y="896" text-anchor="start">Website trust root</text>
+  <text class="ui body mono" x="744" y="896" text-anchor="start">demo-website-root.crt</text>
+  <text class="ui small muted" x="744" y="927" text-anchor="start">Public trust certificate for .loom</text>
+  <g data-ui="download-public-certificate" data-source="verified-root">
+  <g data-ui="button">
+  <rect x="1370" y="884" width="148" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1444" y="909" text-anchor="middle">Download</text>
+  </g>
+  </g></g>
+  <line class="rule" x1="328" y1="962" x2="1538" y2="962"/>
+  <text class="ui body" x="348" y="1003" text-anchor="start">Initial browser trust must come from an independently trusted delivery channel.</text>
+  <text class="ui small muted" x="348" y="1035" text-anchor="start">Downloading this root does not install it, grant admin access or replace the localhost development certificate.</text>
+  <a href="#complete" data-ui="administration-link">
+  <text class="ui small green" x="348" y="1081" text-anchor="start">‹ Certificate details</text>
+  </a>
+  </g>
+  <g id="renewal" class="administration-target"/>
+  <g id="administration-renewal" class="administration-scene" data-ui="administration-scene" data-scene="renewal">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <text class="ui body" x="348" y="646" text-anchor="start">1. Prepare a signing request</text>
+  <text class="ui small muted" x="348" y="683" text-anchor="start">Control</text>
+  <text class="ui body mono" x="744" y="683" text-anchor="start">control-a · web entry demo-web-a-next</text>
+  <text class="ui small muted" x="348" y="720" text-anchor="start">Website name</text>
+  <text class="ui body" x="744" y="720" text-anchor="start">control.loom · fixed for this entry</text>
+  <text class="ui small muted" x="348" y="760" text-anchor="start">A new private key is generated on control-a and stays there. Only the bound request is exported.</text>
+  <text class="ui small muted" x="348" y="789" text-anchor="start">The website root signs offline. The current certificate remains in service during preparation.</text>
+  <a href="#request" data-ui="administration-action" data-action="generate-bound-csr-on-owner">
+  <g data-ui="button">
+  <rect x="1238" y="831" width="280" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1378" y="856" text-anchor="middle">Generate signing request</text>
+  </g>
+  </a>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="348" y="858" text-anchor="start">Cancel preparation</text>
+  </a>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <g id="request" class="administration-target"/>
+  <g id="administration-request" class="administration-scene" data-ui="administration-scene" data-scene="request">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <rect x="328" y="634" width="1210" height="72" rx="0" fill="#EFF8F2" stroke="none"/>
+  <rect x="328" y="634" width="3" height="72" rx="0" fill="#31936B" stroke="none"/>
+  <text class="ui body green" x="348" y="661" text-anchor="start">Signing request is ready</text>
+  <text class="ui small" x="348" y="687" text-anchor="start">Bound to control-a, its Web entry and current membership proof. The private key remains on control-a.</text>
+  <text class="ui body mono" x="348" y="746" text-anchor="start">control-a-web-request.zip</text>
+  <text class="ui small muted" x="348" y="775" text-anchor="start">Includes CSR, authenticated node / entry binding and membership proof</text>
+  <g data-ui="download-bound-csr" data-control="demo-control-a" data-entry="demo-web-a-next" data-private-key="excluded">
+  <g data-ui="button">
+  <rect x="1218" y="725" width="300" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1368" y="750" text-anchor="middle">Download signing request</text>
+  </g>
+  </g>
+  <line class="rule" x1="328" y1="810" x2="1538" y2="810"/>
+  <text class="ui body" x="348" y="851" text-anchor="start">2. Have the request signed offline</text>
+  <text class="ui small muted" x="348" y="884" text-anchor="start">Verify the request signature, member, key and entry before signing for control.loom.</text>
+  <text class="ui small muted" x="348" y="912" text-anchor="start">Return the signed certificate chain. Never transfer the website root private key to a control.</text>
+  <a href="#import" data-ui="administration-action" data-action="Import signed certificate">
+  <g data-ui="button">
+  <rect x="1218" y="952" width="300" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1368" y="977" text-anchor="middle">Import signed certificate</text>
+  </g>
+  </a>
+  <text class="ui small muted" x="348" y="1024" text-anchor="start">You can leave this page. The pending key and entry are recovered from protected local state.</text>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <g id="import" class="administration-target"/>
+  <g id="administration-import" class="administration-scene" data-ui="administration-scene" data-scene="import">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <text class="ui body" x="348" y="645" text-anchor="start">3. Import the signed certificate chain</text>
+  <g data-ui="input">
+  <rect x="348" y="667" width="866" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="362" y="694" text-anchor="start">control-a-signed-chain.pem</text>
+  </g>
+  <a href="#import" data-ui="administration-action" data-action="Choose certificate file">
+  <g data-ui="button">
+  <rect x="1230" y="667" width="288" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1374" y="692" text-anchor="middle">Choose certificate file</text>
+  </g>
+  </a>
+  <text class="ui small muted" x="348" y="750" text-anchor="start">New certificate</text>
+  <text class="ui body" x="744" y="750" text-anchor="start">control.loom · expires 2031-01-01 00:00 UTC</text>
+  <text class="ui small muted" x="348" y="787" text-anchor="start">Local signing request</text>
+  <text class="ui body mono" x="744" y="787" text-anchor="start">demo-web-a-next · control-a</text>
+  <text class="ui body amber" x="348" y="847" text-anchor="start">The file has been selected; validation and preflight have not run yet.</text>
+  <text class="ui small muted" x="348" y="883" text-anchor="start">Check the certificate against this request, then preflight TLS and Web on the prepared entry.</text>
+  <a href="#ready" data-ui="administration-action" data-action="validate-chain-and-preflight">
+  <g data-ui="button">
+  <rect x="1258" y="928" width="260" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1388" y="953" text-anchor="middle">Validate and preflight</text>
+  </g>
+  </a>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <g id="import-failed" class="administration-target"/>
+  <g id="administration-import-failed" class="administration-scene" data-ui="administration-scene" data-scene="import-failed">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <text class="ui body" x="348" y="645" text-anchor="start">3. Import the signed certificate chain</text>
+  <g data-ui="input">
+  <rect x="348" y="667" width="866" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="362" y="694" text-anchor="start">control-a-signed-chain.pem</text>
+  </g>
+  <a href="#import" data-ui="administration-action" data-action="Choose certificate file">
+  <g data-ui="button">
+  <rect x="1230" y="667" width="288" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1374" y="692" text-anchor="middle">Choose certificate file</text>
+  </g>
+  </a>
+  <text class="ui small muted" x="348" y="750" text-anchor="start">New certificate</text>
+  <text class="ui body" x="744" y="750" text-anchor="start">control.loom · expires 2031-01-01 00:00 UTC</text>
+  <text class="ui small muted" x="348" y="787" text-anchor="start">Local signing request</text>
+  <text class="ui body mono" x="744" y="787" text-anchor="start">demo-web-a-next · control-a</text>
+  <rect x="328" y="820" width="1210" height="72" rx="0" fill="#FCF2F1" stroke="none"/>
+  <rect x="328" y="820" width="3" height="72" rx="0" fill="#B74E4E" stroke="none"/>
+  <text class="ui body red" x="348" y="847" text-anchor="start">Certificate does not match the pending private key</text>
+  <text class="ui small" x="348" y="873" text-anchor="start">Nothing was activated. Import the chain signed for this request; the current entry is unchanged.</text>
+  <a href="#import" data-ui="administration-action" data-action="Choose another file">
+  <g data-ui="button">
+  <rect x="1258" y="929" width="260" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1388" y="954" text-anchor="middle">Choose another file</text>
+  </g>
+  </a>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <g id="ready" class="administration-target"/>
+  <g id="administration-ready" class="administration-scene" data-ui="administration-scene" data-scene="ready">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <text class="ui body" x="348" y="645" text-anchor="start">3. Import the signed certificate chain</text>
+  <g data-ui="input">
+  <rect x="348" y="667" width="866" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="362" y="694" text-anchor="start">control-a-signed-chain.pem</text>
+  </g>
+  <a href="#import" data-ui="administration-action" data-action="Choose certificate file">
+  <g data-ui="button">
+  <rect x="1230" y="667" width="288" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1374" y="692" text-anchor="middle">Choose certificate file</text>
+  </g>
+  </a>
+  <text class="ui small muted" x="348" y="750" text-anchor="start">New certificate</text>
+  <text class="ui body" x="744" y="750" text-anchor="start">control.loom · expires 2031-01-01 00:00 UTC</text>
+  <text class="ui small muted" x="348" y="787" text-anchor="start">Local signing request</text>
+  <text class="ui body mono" x="744" y="787" text-anchor="start">demo-web-a-next · control-a</text>
+  <rect x="328" y="820" width="1210" height="72" rx="0" fill="#EFF8F2" stroke="none"/>
+  <rect x="328" y="820" width="3" height="72" rx="0" fill="#31936B" stroke="none"/>
+  <text class="ui body green" x="348" y="847" text-anchor="start">Certificate and prepared entry checks passed</text>
+  <text class="ui small" x="348" y="873" text-anchor="start">Chain, name, use, validity and key match verified. TLS and Web preflight passed with SNI control.loom.</text>
+  <text class="ui body" x="348" y="928" text-anchor="start">Ready to serve · formal browser verification is still required before retiring the old entry.</text>
+  <a href="#verify" data-ui="administration-action" data-action="activate-preflighted-web-entry">
+  <g data-ui="button">
+  <rect x="1258" y="963" width="260" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1388" y="988" text-anchor="middle">Activate new certificate</text>
+  </g>
+  </a>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <g id="verify" class="administration-target"/>
+  <g id="administration-verify" class="administration-scene" data-ui="administration-scene" data-scene="verify">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <rect x="328" y="634" width="1210" height="72" rx="0" fill="#FFF8EC" stroke="none"/>
+  <rect x="328" y="634" width="3" height="72" rx="0" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="348" y="661" text-anchor="start">New entry is serving · browser verification is pending</text>
+  <text class="ui small" x="348" y="687" text-anchor="start">The previous entry is still serving. Activation alone does not prove the new entry works for a browser.</text>
+  <text class="ui small muted" x="348" y="753" text-anchor="start">New entry</text>
+  <text class="ui body" x="744" y="753" text-anchor="start">Serving · browser check pending</text>
+  <text class="ui small muted" x="348" y="798" text-anchor="start">Previous entry</text>
+  <text class="ui body" x="744" y="798" text-anchor="start">Serving · valid until 2030-01-25</text>
+  <text class="ui small muted" x="348" y="843" text-anchor="start">Trust root</text>
+  <text class="ui body" x="744" y="843" text-anchor="start">Unchanged · browsers do not need to import it again</text>
+  <text class="ui body" x="348" y="925" text-anchor="start">Verify the new entry with control.loom TLS identity and an authenticated browser readback.</text>
+  <text class="ui small muted" x="348" y="957" text-anchor="start">A successful check must identify the new entry and certificate, not another control answering the same name.</text>
+  <a href="#complete" data-ui="administration-action" data-action="browser-readback-new-web-entry">
+  <g data-ui="button">
+  <rect x="1208" y="993" width="310" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1363" y="1018" text-anchor="middle">Verify new entry in browser</text>
+  </g>
+  </a>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <g id="activation-failed" class="administration-target"/>
+  <g id="administration-activation-failed" class="administration-scene" data-ui="administration-scene" data-scene="activation-failed">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 renewal reminder · 1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2030-01-25 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">24 days remaining</text>
+  <text class="ui body amber" x="1084" y="417" text-anchor="start">Renew soon</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Current certificate remains in use</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#overview" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <rect x="328" y="634" width="1210" height="72" rx="0" fill="#FCF2F1" stroke="none"/>
+  <rect x="328" y="634" width="3" height="72" rx="0" fill="#B74E4E" stroke="none"/>
+  <text class="ui body red" x="348" y="661" text-anchor="start">New entry failed browser verification</text>
+  <text class="ui small" x="348" y="687" text-anchor="start">New connections to the failed entry are closed. The previous valid entry continues serving.</text>
+  <text class="ui small muted" x="348" y="753" text-anchor="start">New entry</text>
+  <text class="ui body" x="744" y="753" text-anchor="start">Draining · new connections closed</text>
+  <text class="ui small muted" x="348" y="798" text-anchor="start">Previous entry</text>
+  <text class="ui body" x="744" y="798" text-anchor="start">Serving · valid until 2030-01-25</text>
+  <text class="ui small muted" x="348" y="843" text-anchor="start">Trust root</text>
+  <text class="ui body" x="744" y="843" text-anchor="start">Unchanged · browsers do not need to import it again</text>
+  <text class="ui small red" x="348" y="920" text-anchor="start">Failure · the target browser could not complete authenticated Web access to the new entry.</text>
+  <text class="ui small muted" x="348" y="951" text-anchor="start">Check this entry from the protected local CLI before preparing a new attempt.</text>
+  <a href="#overview" data-ui="administration-action" data-action="Review certificate">
+  <g data-ui="button">
+  <rect x="348" y="988" width="230" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="463" y="1013" text-anchor="middle">Review certificate</text>
+  </g>
+  </a>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <g id="complete" class="administration-target"/>
+  <g id="administration-complete" class="administration-scene" data-ui="administration-scene" data-scene="complete">
+  <text class="ui metric" x="328" y="231" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="328" y="260" text-anchor="start">Website identity for https://control.loom/ · administrator login is managed separately.</text>
+  <a href="#downloads-renewed" data-ui="administration-action" data-action="download-public-website-root">
+  <g data-ui="button">
+  <rect x="1328" y="210" width="210" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="1433" y="235" text-anchor="middle">Download trust root</text>
+  </g>
+  </a>
+  <text class="ui section" x="328" y="310" text-anchor="start">2 control nodes</text>
+  <text class="ui body muted" x="638" y="310" text-anchor="start">1 unknown</text>
+  <text class="ui small muted" x="1538" y="310" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <text class="ui eyebrow muted" x="344" y="365" text-anchor="start">CONTROL / ENTRY</text>
+  <text class="ui eyebrow muted" x="744" y="365" text-anchor="start">EXPIRES (UTC)</text>
+  <text class="ui eyebrow muted" x="1084" y="365" text-anchor="start">CURRENT RESULT</text>
+  <line class="rule" x1="328" y1="385" x2="1538" y2="385"/>
+  <g data-ui="web-certificate" data-control="demo-control-a" data-readback="current">
+  <rect x="328" y="385" width="1210" height="88" rx="0" fill="#EEF4FA" stroke="none"/>
+  <text class="ui body mono" x="344" y="417" text-anchor="start">control-a</text>
+  <text class="ui small muted" x="344" y="444" text-anchor="start">Local serving entry · control.loom</text>
+  <text class="ui body" x="744" y="417" text-anchor="start">2031-01-01 00:00</text>
+  <text class="ui small muted" x="744" y="444" text-anchor="start">365 days remaining</text>
+  <text class="ui body green" x="1084" y="417" text-anchor="start">Valid · renewed</text>
+  <text class="ui small muted" x="1084" y="444" text-anchor="start">Serving readback verified</text>
+  <line class="rule" x1="328" y1="473" x2="1538" y2="473"/>
+  </g>
+  <g data-ui="web-certificate" data-control="demo-control-b" data-readback="stale">
+  <text class="ui body mono" x="344" y="505" text-anchor="start">control-b</text>
+  <text class="ui small muted" x="344" y="532" text-anchor="start">Authenticated peer readback is stale</text>
+  <text class="ui body amber" x="744" y="505" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="744" y="532" text-anchor="start">No current expiry value</text>
+  <text class="ui body amber" x="1084" y="505" text-anchor="start">Needs fresh readback</text>
+  <text class="ui small muted" x="1084" y="532" text-anchor="start">Expiry cannot be inferred</text>
+  <line class="rule" x1="328" y1="561" x2="1538" y2="561"/>
+  </g>
+  <text class="ui section" x="348" y="604" text-anchor="start">Renew website certificate · control-a</text>
+  <a href="#complete" data-ui="administration-link">
+  <text class="ui small green" x="1518" y="604" text-anchor="end">Certificate details</text>
+  </a>
+  <rect x="328" y="634" width="1210" height="72" rx="0" fill="#EFF8F2" stroke="none"/>
+  <rect x="328" y="634" width="3" height="72" rx="0" fill="#31936B" stroke="none"/>
+  <text class="ui body green" x="348" y="661" text-anchor="start">Renewal verified · new certificate is serving</text>
+  <text class="ui small" x="348" y="687" text-anchor="start">Formal browser access passed. The old entry was drained and retired after verification.</text>
+  <text class="ui small muted" x="348" y="753" text-anchor="start">New entry</text>
+  <text class="ui body" x="744" y="753" text-anchor="start">Serving · browser verified</text>
+  <text class="ui small muted" x="348" y="798" text-anchor="start">Previous entry</text>
+  <text class="ui body" x="744" y="798" text-anchor="start">Retired after browser verification</text>
+  <text class="ui small muted" x="348" y="843" text-anchor="start">Trust root</text>
+  <text class="ui body" x="744" y="843" text-anchor="start">Unchanged · browsers do not need to import it again</text>
+  <text class="ui small muted" x="348" y="929" text-anchor="start">The verified leaf fingerprint matches the new control-a entry. control-b still has no fresh readback.</text>
+  <a href="#downloads-renewed" data-ui="administration-action" data-action="Download current chain">
+  <g data-ui="button">
+  <rect x="348" y="973" width="230" height="42" rx="6" fill="#FFFFFF" stroke="#DDE4DE"/>
+  <text class="ui small" x="463" y="998" text-anchor="middle">Download current chain</text>
+  </g>
+  </a>
+  <line class="rule" x1="328" y1="1110" x2="1538" y2="1110"/>
+  <text class="ui small muted" x="348" y="1145" text-anchor="start">Renewal is local to this control. Other entries keep their own certificate and readback status.</text>
+  </g>
+  <style><![CDATA[.administration-scene { display:none; } #administration-overview { display:inline; }
+svg:has(.administration-target:target) #administration-overview { display:none; }
+a { cursor:pointer; }
+svg:has(#overview:target) #administration-overview { display:inline; }
+svg:has(#downloads:target) #administration-downloads { display:inline; }
+svg:has(#downloads-renewed:target) #administration-downloads-renewed { display:inline; }
+svg:has(#renewal:target) #administration-renewal { display:inline; }
+svg:has(#request:target) #administration-request { display:inline; }
+svg:has(#import:target) #administration-import { display:inline; }
+svg:has(#import-failed:target) #administration-import-failed { display:inline; }
+svg:has(#ready:target) #administration-ready { display:inline; }
+svg:has(#verify:target) #administration-verify { display:inline; }
+svg:has(#activation-failed:target) #administration-activation-failed { display:inline; }
+svg:has(#complete:target) #administration-complete { display:inline; }]]></style>
+</svg>

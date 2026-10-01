@@ -23,20 +23,33 @@ Loom 管理可组合承担 `access`、`forward`、`internet_egress`、`control` 
 
 ## 界面
 
-控制面 Web 包含 Overview、Devices、Topology、Services、Releases、Deployments 与 Events。
+控制面 Web 包含 Overview、Nodes、Topology、Live paths、Services、Policies、Releases、Events 与 Administration。
 Android 和 Windows 提供原生页面、配置选择与实际路径显示。界面从认证状态和真实运行结果单向投影；
 业务验收状态见[实施状态](docs/progress.md)。下列 Web 图片是按现行模型绘制的目标原型，
 与当前浏览器页面的差距见[原型对照](docs/clients/prototype-review.md)。
-总览与拓扑保留双圈结构和 24 小时传输柱状图；[设备详情](assets/control-center/node-detail.svg)
-展示独立的 RX／TX 历史，缺失观测以空档或 `unknown` 表示。
+[服务管理](assets/control-center/05-services.svg)统一包含互联网与[局域网服务](assets/control-center/05-services-lan.svg)，
+[策略管理](assets/control-center/06-policies.svg)为一个固定服务定义可复用的访问规则；
+[添加设备](assets/control-center/02-nodes-add-ssh.svg)先多选角色：纯 access 使用[二维码](assets/control-center/02-nodes-add-qr.svg)，
+含其他角色使用 SSH 或 [sh 脚本](assets/control-center/02-nodes-add-script.svg)；包含 access 时只选择策略，
+服务及规则由策略派生。每台设备同一服务最多选择一条策略；后续可在设备详情替换，不修改共享规则。
+完整规则在策略页[创建](assets/control-center/06-policies-new.svg)、复制或编辑。
+[统一设备详情](assets/control-center/02-nodes-detail.svg)按组合角色展示服务权限、当前路径、转发资源、
+共享 LAN 和重新添加入口，并保留独立的 RX／TX 历史；缺失观测以空档或 `unknown` 表示。
+添加后分别显示 [SSH 执行结果](assets/control-center/02-nodes-add-ssh-result.svg)、
+[带 URL 的安装命令](assets/control-center/02-nodes-add-script-delivery.svg)或[二维码](assets/control-center/02-nodes-add-qr-delivery.svg)；
+等待执行、成员签名、加入完成及实际运行结果都在同一节点详情中回读，不另设 enrollment 进度页。
+总览与拓扑保留双圈结构和 24 小时传输柱状图。
+实时路径只保留两层、两张原型：[服务与设备](assets/control-center/04-live-paths.svg) →
+[设备路径详情](assets/control-center/04-live-paths-detail.svg)。左侧选服务，右侧直接显示对应设备，
+切换服务和筛选都在同页完成；点击设备查看路线、度量、候选与历史，异常和 LAN 沿用同一详情布局。
 
 <p align="center">
-  <img src="assets/control-center/overview.svg" width="100%" alt="Loom 控制中心目标总览原型">
+  <img src="assets/control-center/01-overview.svg" width="100%" alt="Loom 控制中心目标总览原型">
 </p>
 
 | 动态拓扑 | Service 管理 |
 |---|---|
-| ![Loom 目标拓扑原型](assets/control-center/topology.svg) | ![Loom 目标 Service 原型](assets/control-center/services.svg) |
+| ![Loom 目标拓扑原型](assets/control-center/03-topology.svg) | ![Loom 目标 Service 原型](assets/control-center/05-services.svg) |
 
 Windows 原生界面提供多配置侧栏、Direct/Auto/固定出口、当前路径和详细信息。三种交付形态是
 Portable Mixed、Portable TUN 和 Installed；当前发行签名与实体机验收状态见[状态文档](docs/progress.md)。

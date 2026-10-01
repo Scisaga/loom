@@ -1,0 +1,1678 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1586" height="1224" viewBox="0 0 1586 1224" role="group" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">04-live-paths-detail — Loom control center</title>
+  <desc id="svg-desc">Loom control center: 04-live-paths-detail.</desc>
+  <defs>
+    <marker id="route-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0 0L8 4L0 8Z" fill="#4D78D1"/></marker>
+    <symbol id="icon-grid" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></symbol>
+    <symbol id="icon-node" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="5" rx="1"/><rect x="2" y="9" width="12" height="5" rx="1"/><circle cx="4" cy="4.5" r=".6"/><circle cx="4" cy="11.5" r=".6"/></symbol>
+    <symbol id="icon-topology" viewBox="0 0 16 16"><path d="M4 4l4 4 4-4M8 8v4"/><circle cx="3" cy="3" r="1.7"/><circle cx="13" cy="3" r="1.7"/><circle cx="8" cy="13" r="1.7"/></symbol>
+    <symbol id="icon-path" viewBox="0 0 16 16"><path d="M2 4h4c3 0 2 8 5 8h3M2 12h3c3 0 2-8 5-8h4"/></symbol>
+    <symbol id="icon-service" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/></symbol>
+    <symbol id="icon-release" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M8 5v5m-2-2 2 2 2-2"/></symbol>
+    <symbol id="icon-events" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 1.5"/></symbol>
+    <symbol id="icon-signed" viewBox="0 0 16 16"><path d="M8 1.5 13 4v4c0 3-2 5-5 6.5C5 13 3 11 3 8V4Z"/><path d="m5.5 8 1.6 1.6 3.4-3.5"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></symbol>
+    <symbol id="icon-terminal" viewBox="0 0 16 16"><rect x="1.5" y="2" width="13" height="12" rx="2"/><path d="m4 5 3 3-3 3m5 0h3"/></symbol>
+    <symbol id="icon-code" viewBox="0 0 16 16"><path d="m5.5 3-4 5 4 5m5-10 4 5-4 5M9.5 2l-3 12"/></symbol>
+    <symbol id="icon-qr" viewBox="0 0 16 16"><path d="M2 2h4v4H2zm8 0h4v4h-4zM2 10h4v4H2zm8 0v2m3-2v4m-3 0h2"/></symbol>
+    <symbol id="icon-phone" viewBox="0 0 16 16"><rect x="4" y="1" width="8" height="14" rx="2"/><path d="M7 3h2M7 13h2"/></symbol>
+    <symbol id="icon-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></symbol>
+    <symbol id="icon-expand" viewBox="0 0 16 16"><path d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+    <symbol id="icon-filter" viewBox="0 0 16 16"><path d="M2 4h12M4 8h8m-6 4h4"/></symbol>
+    <style><![CDATA[
+    .ui { font-family: Inter, "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill:#1B201D }
+    .mono { font-family: "Intel One Mono", "SFMono-Regular", Consolas, monospace }
+    .title { font-size:28px; font-weight:700; letter-spacing:-.5px }
+    .section { font-size:17px; font-weight:650; letter-spacing:-.2px }
+    .metric { font-size:22px; font-weight:650; letter-spacing:-.3px }
+    .body { font-size:14px }
+    .small { font-size:12px }
+    .tiny { font-size:11px }
+    .micro { font-size:10px }
+    .eyebrow { font-size:11px; font-weight:700; letter-spacing:1px }
+    .muted { fill:#6E7771 }
+    .faint { fill:#929B95 }
+    .green { fill:#218A61 }
+    .amber { fill:#A66A14 }
+    .red { fill:#B74E4E }
+    .blue { fill:#427994 }
+    .white { fill:#FFFFFF }
+    .nav { font-size:13px }
+    .nav-icon { fill:none; stroke:#79837D; stroke-width:1.45; stroke-linecap:round; stroke-linejoin:round }
+    .nav-active { fill:none; stroke:#1B201D; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round }
+    .rule { stroke:#E5EAE6; stroke-width:1 }
+    .dash { stroke:#ABB7AF; stroke-width:1.5; stroke-dasharray:5 5; fill:none }
+    .link { stroke:#B8C4BC; stroke-width:2; fill:none }
+    .selected { stroke:#4D78D1; stroke-width:2.3; fill:none; marker-end:url(#route-arrow) }
+]]></style>
+  </defs>
+  <g id="paths-current-candidates" class="path-scene-target"/>
+  <g id="paths-current-history" class="path-scene-target"/>
+  <g id="paths-failed-candidates" class="path-scene-target"/>
+  <g id="paths-failed-history" class="path-scene-target"/>
+  <g id="paths-direct-candidates" class="path-scene-target"/>
+  <g id="paths-direct-history" class="path-scene-target"/>
+  <g id="paths-pending-candidates" class="path-scene-target"/>
+  <g id="paths-pending-history" class="path-scene-target"/>
+  <g id="paths-expired-candidates" class="path-scene-target"/>
+  <g id="paths-expired-history" class="path-scene-target"/>
+  <g id="paths-denied-candidates" class="path-scene-target"/>
+  <g id="paths-denied-history" class="path-scene-target"/>
+  <g id="paths-unassigned-candidates" class="path-scene-target"/>
+  <g id="paths-unassigned-history" class="path-scene-target"/>
+  <g id="paths-lan-candidates" class="path-scene-target"/>
+  <g id="paths-lan-history" class="path-scene-target"/>
+  <g id="paths-scene-current" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="current" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">media</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <a data-ui="navigation" data-route="/policies/demo-policy?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="06-policies.svg">
+  <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
+  </a>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
+  <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
+  <g data-ui="path-policy-summary" data-policy="demo-policy">
+  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
+  <a data-ui="navigation" data-route="/services/demo-video?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </a>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">Current route</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Selected by android-phone · 8s ago</text>
+  <circle cx="29" cy="388" r="4" fill="#2AA875" stroke="none"/>
+  <text class="ui body green" x="43" y="393" text-anchor="start">Target succeeded · HTTPS 200 · media.example/health</text>
+  <a data-ui="navigation" data-route="/topology?link=demo-link-wg&amp;device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="03-topology.svg">
+  <text class="ui small green" x="1562" y="393" text-anchor="end">Open topology →</text>
+  </a>
+  <g data-ui="current-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
+  <g data-ui="path-segment">
+  <title>android-phone → control-a · transport RTT · 11s ago</title>
+  <path d="M163 475H509" class="selected"/>
+  <text class="ui tiny blue" x="337.0" y="435" text-anchor="middle">WG · shared entry</text>
+  <text class="ui small blue" x="337.0" y="455" text-anchor="middle">12 ms · available</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>Shared link only · 18s ago · WG 5m TX rate; RTT variation is 15m P95 − P50</title>
+  <path d="M569 475H916" class="selected"/>
+  <text class="ui tiny blue" x="743.5" y="435" text-anchor="middle">WG · link-wg</text>
+  <text class="ui small blue" x="743.5" y="455" text-anchor="middle">37 ms · 12.8 Mbps shared · Δ 9 ms</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>No separate exit-to-target timing; full HTTPS request shown below</title>
+  <path d="M976 475H1351" class="selected"/>
+  <text class="ui tiny blue" x="1164.5" y="435" text-anchor="middle">HTTPS · destination</text>
+  <text class="ui small amber" x="1164.5" y="455" text-anchor="middle">Segment timing unknown</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="134" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-phone" x="123" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="134" y="522" text-anchor="middle">android-phone</text>
+  <text class="ui tiny muted" x="134" y="543" text-anchor="middle">access</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="540" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-signed" x="529" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="540" y="522" text-anchor="middle">control-a</text>
+  <text class="ui tiny muted" x="540" y="543" text-anchor="middle">entry · control + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="947" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="936" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="947" y="522" text-anchor="middle">internet-exit</text>
+  <text class="ui tiny muted" x="947" y="543" text-anchor="middle">final exit · internet_egress</text>
+  </g>
+  <g data-ui="path-target">
+  <circle cx="1382" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-globe" x="1371" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="1382" y="522" text-anchor="middle">media.example</text>
+  <text class="ui tiny muted" x="1382" y="543" text-anchor="middle">HTTPS target · one of this service's URLs</text>
+  </g>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui metric" x="24" y="625" text-anchor="start">126 ms</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">Measured on android-phone · 8s ago</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </g>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="current">
+  <a id="paths-current-tab-candidates" class="path-tab path-tab-candidates" href="#paths-current-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-current-tab-history" class="path-tab path-tab-history" href="#paths-current-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-current-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui eyebrow muted" x="47" y="737" text-anchor="start">ROUTE</text>
+  <text class="ui eyebrow muted" x="675" y="737" text-anchor="start">TARGET RESULT</text>
+  <text class="ui eyebrow muted" x="1138" y="737" text-anchor="start">DEVICE SELECTION</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="754" x2="1562" y2="754"/>
+  <g data-ui="path-candidate" data-candidate="demo-media-relay-wg" data-selected="true">
+  <rect x="25" y="754" width="1536" height="80" rx="0" fill="#EDF4FC" stroke="none"/>
+  <rect x="25" y="754" width="3" height="80" rx="0" fill="#537FCC" stroke="none"/>
+  <text class="ui body" x="47" y="784" text-anchor="start">WG relay</text>
+  <text class="ui small muted" x="47" y="809" text-anchor="start">android-phone → control-a → internet-exit → media.example</text>
+  <text class="ui body green" x="675" y="784" text-anchor="start">Target succeeded · 126 ms</text>
+  <text class="ui small muted" x="675" y="809" text-anchor="start">HTTPS 200 · 8s ago</text>
+  <text class="ui body blue" x="1138" y="784" text-anchor="start">Current</text>
+  <text class="ui small muted" x="1138" y="809" text-anchor="start">Confirmed by device · 8s ago</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="834" x2="1562" y2="834"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-direct" data-selected="false">
+  <text class="ui body" x="47" y="864" text-anchor="start">Direct · no managed nodes</text>
+  <text class="ui small muted" x="47" y="889" text-anchor="start">android-phone → media.example</text>
+  <text class="ui body" x="675" y="864"><tspan class="green">Target succeeded</tspan><tspan class="amber"> · timing unknown</tspan></text>
+  <text class="ui small muted" x="675" y="889" text-anchor="start">Reported 25s ago</text>
+  <text class="ui body muted" x="1138" y="864" text-anchor="start">Not selected</text>
+  <text class="ui small muted" x="1138" y="889" text-anchor="start">No comparable timing reported</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="914" x2="1562" y2="914"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-one-hop" data-selected="false">
+  <text class="ui body" x="47" y="944" text-anchor="start">One hop · same final exit</text>
+  <text class="ui small muted" x="47" y="969" text-anchor="start">android-phone → internet-exit → media.example</text>
+  <text class="ui body amber" x="675" y="944" text-anchor="start">Target unknown · entry unknown</text>
+  <text class="ui small muted" x="675" y="969" text-anchor="start">Entry report expired · details below</text>
+  <text class="ui body muted" x="1138" y="944" text-anchor="start">Not selected</text>
+  <text class="ui small muted" x="1138" y="969" text-anchor="start">Reported by the device</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="994" x2="1562" y2="994"/>
+  </g>
+  <g data-ui="path-observation-detail" data-candidate="demo-media-one-hop">
+  <rect x="25" y="994" width="1536" height="88" rx="0" fill="#FFFCF5" stroke="none"/>
+  <circle cx="50" cy="1017" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="65" y="1022" text-anchor="start">Expired entry report</text>
+  <text class="ui small" x="65" y="1046" text-anchor="start">Last successful entry check: 12m ago · android-phone → internet-exit.</text>
+  <text class="ui small muted" x="65" y="1067" text-anchor="start">No fresh check for this device and entry. Current reachability remains unknown.</text>
+  <g data-ui="navigation" data-route="/devices/demo-egress-e?section=forwarding&amp;fromDevice=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="1540" y="1044" text-anchor="end">View internet-exit resources →</text>
+  </g>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1082" x2="1562" y2="1082"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-relay-hy2" data-selected="false">
+  <text class="ui body" x="47" y="1112" text-anchor="start">hy2 relay · same final exit</text>
+  <text class="ui small muted" x="47" y="1137" text-anchor="start">android-phone → control-a → internet-exit → media.example</text>
+  <text class="ui body amber" x="675" y="1112" text-anchor="start">Target unknown · hy2 unknown</text>
+  <text class="ui small muted" x="675" y="1137" text-anchor="start">No current report for link-hy2</text>
+  <text class="ui body muted" x="1138" y="1112" text-anchor="start">Not selected</text>
+  <g data-ui="navigation" data-route="/topology?link=demo-link-hy2&amp;device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="1138" y="1137" text-anchor="start">Inspect link-hy2 →</text>
+  </g>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1162" x2="1562" y2="1162"/>
+  </g>
+  <text class="ui small muted" x="47" y="1191" text-anchor="start">Viewing candidates does not change device traffic. Only a fresh device report confirms its selection.</text>
+  </g>
+  <g id="paths-current-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="749" text-anchor="start">Last 24 hours · WG relay</text>
+  <text class="ui small mono muted" x="1540" y="749" text-anchor="end">android-phone · media.example/health</text>
+  <text class="ui eyebrow muted" x="47" y="797" text-anchor="start">HOURS WITH A RESULT</text>
+  <text class="ui metric" x="47" y="832" text-anchor="start">22 / 24</text>
+  <text class="ui body" x="47" y="864" text-anchor="start">20 succeeded · 2 failed</text>
+  <text class="ui small muted" x="47" y="889" text-anchor="start">2 hours unknown</text>
+  <text class="ui small muted" x="47" y="922" text-anchor="start">This route · one sample per hour</text>
+  <rect x="47" y="951" width="7" height="12" rx="1" fill="#64B88E" stroke="#64B88E"/>
+  <text class="ui tiny muted" x="62" y="962" text-anchor="start">Success</text>
+  <rect x="161" y="951" width="7" height="12" rx="1" fill="#C87171" stroke="#C87171"/>
+  <text class="ui tiny muted" x="176" y="962" text-anchor="start">Failed</text>
+  <rect x="259" y="951" width="7" height="12" rx="1" fill="#FAFBFA" stroke="#BFC9C2"/>
+  <text class="ui tiny muted" x="274" y="962" text-anchor="start">Unknown</text>
+  <g data-ui="business-history" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy" data-target="media.example/health" data-candidate="demo-media-relay-wg" data-window-end="now">
+  <text class="ui tiny muted" x="457" y="802" text-anchor="start">HTTPS response · ms</text>
+  <text class="ui micro muted" x="445" y="824" text-anchor="end">200</text>
+  <text class="ui micro muted" x="445" y="924" text-anchor="end">0</text>
+  <line class="rule" x1="457" y1="820" x2="1540" y2="820"/>
+  <line class="rule" x1="457" y1="920" x2="1540" y2="920"/>
+  <g data-ui="business-hour" data-state="available"><title>24h–23h ago · available · HTTPS 164 ms</title>
+  <rect x="466.0" y="838.0" width="27.125" height="82.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="460.0" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>23h–22h ago · available · HTTPS 152 ms</title>
+  <rect x="511.125" y="844.0" width="27.125" height="76.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="505.125" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>22h–21h ago · available · HTTPS 142 ms</title>
+  <rect x="556.25" y="849.0" width="27.125" height="71.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="550.25" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="unknown"><title>21h–20h ago · unknown · no valid business sample</title>
+  <rect data-ui="business-gap" x="601.38" y="822" width="27.12" height="98" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"/>
+  <rect x="595.375" y="942" width="39.125" height="12" rx="2" fill="#FAFBFA" stroke="#BFC9C2"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>20h–19h ago · available · HTTPS 141 ms</title>
+  <rect x="646.5" y="849.5" width="27.125" height="70.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="640.5" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>19h–18h ago · available · HTTPS 138 ms</title>
+  <rect x="691.625" y="851.0" width="27.125" height="69.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="685.625" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>18h–17h ago · available · HTTPS 134 ms</title>
+  <rect x="736.75" y="853.0" width="27.125" height="67.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="730.75" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="unavailable"><title>17h–16h ago · unavailable · no successful response duration</title>
+  <path data-ui="business-failure" d="M791.4375 912l8 8m-8 0 8-8" stroke="#C87171" stroke-width="1.5"/>
+  <rect x="775.875" y="942" width="39.125" height="12" rx="2" fill="#C87171" stroke="#C87171"/>
+  </g>
+  <g data-ui="business-hour" data-state="unavailable"><title>16h–15h ago · unavailable · no successful response duration</title>
+  <path data-ui="business-failure" d="M836.5625 912l8 8m-8 0 8-8" stroke="#C87171" stroke-width="1.5"/>
+  <rect x="821.0" y="942" width="39.125" height="12" rx="2" fill="#C87171" stroke="#C87171"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>15h–14h ago · available · HTTPS 173 ms</title>
+  <rect x="872.125" y="833.5" width="27.125" height="86.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="866.125" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>14h–13h ago · available · HTTPS 149 ms</title>
+  <rect x="917.25" y="845.5" width="27.125" height="74.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="911.25" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>13h–12h ago · available · HTTPS 144 ms</title>
+  <rect x="962.375" y="848.0" width="27.125" height="72.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="956.375" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>12h–11h ago · available · HTTPS 137 ms</title>
+  <rect x="1007.5" y="851.5" width="27.125" height="68.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1001.5" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>11h–10h ago · available · HTTPS 132 ms</title>
+  <rect x="1052.625" y="854.0" width="27.125" height="66.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1046.625" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>10h–9h ago · available · HTTPS 129 ms</title>
+  <rect x="1097.75" y="855.5" width="27.125" height="64.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1091.75" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>9h–8h ago · available · HTTPS 131 ms</title>
+  <rect x="1142.875" y="854.5" width="27.125" height="65.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1136.875" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="unknown"><title>8h–7h ago · unknown · no valid business sample</title>
+  <rect data-ui="business-gap" x="1188.00" y="822" width="27.12" height="98" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"/>
+  <rect x="1182.0" y="942" width="39.125" height="12" rx="2" fill="#FAFBFA" stroke="#BFC9C2"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>7h–6h ago · available · HTTPS 140 ms</title>
+  <rect x="1233.125" y="850.0" width="27.125" height="70.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1227.125" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>6h–5h ago · available · HTTPS 136 ms</title>
+  <rect x="1278.25" y="852.0" width="27.125" height="68.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1272.25" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>5h–4h ago · available · HTTPS 128 ms</title>
+  <rect x="1323.375" y="856.0" width="27.125" height="64.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1317.375" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>4h–3h ago · available · HTTPS 130 ms</title>
+  <rect x="1368.5" y="855.0" width="27.125" height="65.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1362.5" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>3h–2h ago · available · HTTPS 124 ms</title>
+  <rect x="1413.625" y="858.0" width="27.125" height="62.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1407.625" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>2h–1h ago · available · HTTPS 128 ms</title>
+  <rect x="1458.75" y="856.0" width="27.125" height="64.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1452.75" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>1h–0h ago · available · HTTPS 126 ms</title>
+  <rect x="1503.875" y="857.0" width="27.125" height="63.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1497.875" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <text class="ui micro muted" x="457" y="982" text-anchor="start">24h ago</text>
+  <text class="ui micro muted" x="998.5" y="982" text-anchor="middle">12h</text>
+  <text class="ui micro muted" x="1540" y="982" text-anchor="end">now</text>
+  </g>
+  <text class="ui small muted" x="47" y="1020" text-anchor="start">Last matching sample each hour · full HTTPS request time · not request totals or continuous uptime.</text>
+  </g>
+  </g>
+  </g>
+  <g id="paths-scene-failed" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="failed" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">workstation</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">media</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <g data-ui="navigation" data-route="/policies/demo-policy?device=demo-laptop&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
+  </g>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
+  <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
+  <g data-ui="path-policy-summary" data-policy="demo-policy">
+  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
+  <a data-ui="navigation" data-route="/services/demo-video?device=demo-laptop&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </a>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">Current route · target failed</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Selected by workstation · 10s ago</text>
+  <circle cx="29" cy="388" r="4" fill="#C87171" stroke="none"/>
+  <text class="ui body red" x="43" y="393" text-anchor="start">Target failed · HTTPS 503 · media.example/health</text>
+  <g data-ui="navigation" data-route="/topology?link=demo-link-wg&amp;device=demo-laptop&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="1562" y="393" text-anchor="end">Open topology →</text>
+  </g>
+  <g data-ui="current-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
+  <g data-ui="path-segment">
+  <title>No matching first-hop observation</title>
+  <path d="M163 475H509" class="selected"/>
+  <text class="ui tiny blue" x="337.0" y="435" text-anchor="middle">WG · shared entry</text>
+  <text class="ui small amber" x="337.0" y="455" text-anchor="middle">Entry check unknown</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>Shared link only · 18s ago · WG 5m TX rate; RTT variation is 15m P95 − P50</title>
+  <path d="M569 475H916" class="selected"/>
+  <text class="ui tiny blue" x="743.5" y="435" text-anchor="middle">WG · link-wg</text>
+  <text class="ui small blue" x="743.5" y="455" text-anchor="middle">37 ms · 12.8 Mbps shared · Δ 9 ms</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>No separate exit-to-target timing; full HTTPS request shown below</title>
+  <path d="M976 475H1351" class="selected"/>
+  <text class="ui tiny blue" x="1164.5" y="435" text-anchor="middle">HTTPS · destination</text>
+  <text class="ui small amber" x="1164.5" y="455" text-anchor="middle">Segment timing unknown</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="134" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="123" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="134" y="522" text-anchor="middle">workstation</text>
+  <text class="ui tiny muted" x="134" y="543" text-anchor="middle">access + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="540" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-signed" x="529" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="540" y="522" text-anchor="middle">control-a</text>
+  <text class="ui tiny muted" x="540" y="543" text-anchor="middle">entry · control + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="947" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="936" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="947" y="522" text-anchor="middle">internet-exit</text>
+  <text class="ui tiny muted" x="947" y="543" text-anchor="middle">final exit · internet_egress</text>
+  </g>
+  <g data-ui="path-target">
+  <circle cx="1382" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-globe" x="1371" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="1382" y="522" text-anchor="middle">media.example</text>
+  <text class="ui tiny muted" x="1382" y="543" text-anchor="middle">HTTPS target · one of this service's URLs</text>
+  </g>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body red" x="24" y="625" text-anchor="start">HTTPS 503</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">Measured on workstation · 10s ago</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <a data-ui="navigation" data-route="/devices/demo-laptop?section=overview&amp;service=demo-video&amp;policy=demo-policy" href="02-nodes-detail.svg#detail-ssh-joined-overview">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </a>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="failed">
+  <a id="paths-failed-tab-candidates" class="path-tab path-tab-candidates" href="#paths-failed-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-failed-tab-history" class="path-tab path-tab-history" href="#paths-failed-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-failed-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui eyebrow muted" x="47" y="737" text-anchor="start">ROUTE</text>
+  <text class="ui eyebrow muted" x="675" y="737" text-anchor="start">TARGET RESULT</text>
+  <text class="ui eyebrow muted" x="1138" y="737" text-anchor="start">DEVICE SELECTION</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="754" x2="1562" y2="754"/>
+  <g data-ui="path-candidate" data-candidate="demo-media-relay-wg" data-selected="true">
+  <rect x="25" y="754" width="1536" height="80" rx="0" fill="#EDF4FC" stroke="none"/>
+  <rect x="25" y="754" width="3" height="80" rx="0" fill="#537FCC" stroke="none"/>
+  <text class="ui body" x="47" y="784" text-anchor="start">WG relay</text>
+  <text class="ui small muted" x="47" y="809" text-anchor="start">workstation → control-a → internet-exit → media.example</text>
+  <text class="ui body red" x="675" y="784" text-anchor="start">Target failed · HTTPS 503</text>
+  <text class="ui small muted" x="675" y="809" text-anchor="start">media.example/health · 10s ago</text>
+  <text class="ui body blue" x="1138" y="784" text-anchor="start">Current</text>
+  <text class="ui small muted" x="1138" y="809" text-anchor="start">Confirmed by device · 10s ago</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="834" x2="1562" y2="834"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-direct" data-selected="false">
+  <text class="ui body" x="47" y="864" text-anchor="start">Direct · no managed nodes</text>
+  <text class="ui small muted" x="47" y="889" text-anchor="start">workstation → media.example</text>
+  <text class="ui body amber" x="675" y="864" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="889" text-anchor="start">No matching target observation</text>
+  <text class="ui body muted" x="1138" y="864" text-anchor="start">Not selected</text>
+  <text class="ui small muted" x="1138" y="889" text-anchor="start">Reported by the device</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="914" x2="1562" y2="914"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-one-hop" data-selected="false">
+  <text class="ui body" x="47" y="944" text-anchor="start">One hop · same final exit</text>
+  <text class="ui small muted" x="47" y="969" text-anchor="start">workstation → internet-exit → media.example</text>
+  <text class="ui body amber" x="675" y="944" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="969" text-anchor="start">No matching target observation</text>
+  <text class="ui body muted" x="1138" y="944" text-anchor="start">Not selected</text>
+  <text class="ui small muted" x="1138" y="969" text-anchor="start">Reported by the device</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="994" x2="1562" y2="994"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-relay-hy2" data-selected="false">
+  <text class="ui body" x="47" y="1024" text-anchor="start">hy2 relay · same final exit</text>
+  <text class="ui small muted" x="47" y="1049" text-anchor="start">workstation → control-a → internet-exit → media.example</text>
+  <text class="ui body amber" x="675" y="1024" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="1049" text-anchor="start">No matching target observation</text>
+  <text class="ui body muted" x="1138" y="1024" text-anchor="start">Not selected</text>
+  <text class="ui small muted" x="1138" y="1049" text-anchor="start">Reported by the device</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1074" x2="1562" y2="1074"/>
+  </g>
+  <text class="ui small muted" x="47" y="1103" text-anchor="start">Viewing candidates does not change device traffic. Only a fresh device report confirms its selection.</text>
+  </g>
+  <g id="paths-failed-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="755" text-anchor="start">No matching target history in this view</text>
+  <text class="ui body muted" x="47" y="790" text-anchor="start">No hourly history for workstation on this target yet. The latest request returned HTTP 503.</text>
+  <text class="ui small muted" x="47" y="820" text-anchor="start">History follows the device, service, target and route being inspected.</text>
+  </g>
+  </g>
+  </g>
+  <g id="paths-scene-direct" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="direct" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">new-phone</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">media</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <g data-ui="navigation" data-route="/policies/demo-direct-policy?device=demo-access-g&amp;service=demo-video&amp;policy=demo-direct-policy">
+  <text class="ui small green" x="712" y="244" text-anchor="start">direct-access  ↗</text>
+  </g>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
+  <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
+  <g data-ui="path-policy-summary" data-policy="demo-direct-policy">
+  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">Direct only · no entry, transit or internet exit nodes</text>
+  <a data-ui="navigation" data-route="/services/demo-video?device=demo-access-g&amp;service=demo-video&amp;policy=demo-direct-policy" href="05-services.svg">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </a>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">Current route · target result unknown</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Selected by new-phone · 15s ago</text>
+  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="43" y="393" text-anchor="start">Direct selection confirmed · no business result for media.example/health</text>
+  <g data-ui="current-service-route" data-candidate="demo-media-direct" data-policy="demo-direct-policy">
+  <g data-ui="path-segment"><path d="M163 475H1351" class="selected"/>
+  <text class="ui tiny blue" x="758" y="435" text-anchor="middle">Direct · no managed nodes</text>
+  <text class="ui small amber" x="758" y="455" text-anchor="middle">No target response measurement</text>
+  </g>
+  <circle cx="134" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-phone" x="123" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="134" y="522" text-anchor="middle">new-phone</text>
+  <text class="ui tiny muted" x="134" y="543" text-anchor="middle">access</text>
+  <circle cx="1382" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-globe" x="1371" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="1382" y="522" text-anchor="middle">media.example</text>
+  <text class="ui tiny muted" x="1382" y="543" text-anchor="middle">HTTPS target</text>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">No target observation received</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <a data-ui="navigation" data-route="/devices/demo-access-g?section=overview&amp;service=demo-video&amp;policy=demo-direct-policy" href="02-nodes-detail.svg#detail-qr-joined-overview">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </a>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="direct">
+  <a id="paths-direct-tab-candidates" class="path-tab path-tab-candidates" href="#paths-direct-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-direct-tab-history" class="path-tab path-tab-history" href="#paths-direct-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">1 authorized candidate · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-direct-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui eyebrow muted" x="47" y="737" text-anchor="start">ROUTE</text>
+  <text class="ui eyebrow muted" x="675" y="737" text-anchor="start">TARGET RESULT</text>
+  <text class="ui eyebrow muted" x="1138" y="737" text-anchor="start">DEVICE SELECTION</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="754" x2="1562" y2="754"/>
+  <g data-ui="path-candidate" data-candidate="demo-media-direct" data-selected="true">
+  <rect x="25" y="754" width="1536" height="80" rx="0" fill="#EDF4FC" stroke="none"/>
+  <rect x="25" y="754" width="3" height="80" rx="0" fill="#537FCC" stroke="none"/>
+  <text class="ui body" x="47" y="784" text-anchor="start">Direct · no managed nodes</text>
+  <text class="ui small muted" x="47" y="809" text-anchor="start">new-phone → media.example</text>
+  <text class="ui body amber" x="675" y="784" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="809" text-anchor="start">No target result received</text>
+  <text class="ui body blue" x="1138" y="784" text-anchor="start">Current</text>
+  <text class="ui small muted" x="1138" y="809" text-anchor="start">Confirmed by device · 15s ago</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="834" x2="1562" y2="834"/>
+  </g>
+  <text class="ui small muted" x="47" y="863" text-anchor="start">Viewing candidates does not change device traffic. Only a fresh device report confirms its selection.</text>
+  </g>
+  <g id="paths-direct-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="755" text-anchor="start">No matching target history in this view</text>
+  <text class="ui body muted" x="47" y="790" text-anchor="start">The device reported its Direct selection, but no target samples have arrived.</text>
+  <text class="ui small muted" x="47" y="820" text-anchor="start">History follows the device, service, target and route being inspected.</text>
+  </g>
+  </g>
+  </g>
+  <g id="paths-scene-pending" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="pending" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">relay-west</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">media</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <g data-ui="navigation" data-route="/policies/demo-direct-policy?device=demo-forward-c&amp;service=demo-video&amp;policy=demo-direct-policy">
+  <text class="ui small green" x="712" y="244" text-anchor="start">direct-access  ↗</text>
+  </g>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
+  <g data-ui="path-policy-summary" data-policy="demo-direct-policy">
+  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">Direct only · no entry, transit or internet exit nodes</text>
+  <a data-ui="navigation" data-route="/services/demo-video?device=demo-forward-c&amp;service=demo-video&amp;policy=demo-direct-policy" href="05-services.svg">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </a>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">Waiting for device confirmation</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Policy assignment saved on control-a</text>
+  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="43" y="393" text-anchor="start">Policy updated to direct-access · current route and target result unknown</text>
+  <text class="ui small muted" x="1562" y="393" text-anchor="end">Previous route · media-access · not current</text>
+  <g data-ui="historical-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
+  <g data-ui="path-segment">
+  <title>Previous route only; no current measurement</title>
+  <path d="M163 475H509" class="dash"/>
+  <text class="ui tiny muted" x="337.0" y="435" text-anchor="middle">WG · shared entry</text>
+  <text class="ui small muted" x="337.0" y="455" text-anchor="middle">Previous route</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>Previous route only; no current measurement</title>
+  <path d="M569 475H916" class="dash"/>
+  <text class="ui tiny muted" x="743.5" y="435" text-anchor="middle">WG · link-wg</text>
+  <text class="ui small muted" x="743.5" y="455" text-anchor="middle">Previous route</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>Previous route only; no current measurement</title>
+  <path d="M976 475H1351" class="dash"/>
+  <text class="ui tiny muted" x="1164.5" y="435" text-anchor="middle">HTTPS · destination</text>
+  <text class="ui small muted" x="1164.5" y="455" text-anchor="middle">Previous route</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="134" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="123" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="134" y="522" text-anchor="middle">relay-west</text>
+  <text class="ui tiny muted" x="134" y="543" text-anchor="middle">access + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="540" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-signed" x="529" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="540" y="522" text-anchor="middle">control-a</text>
+  <text class="ui tiny muted" x="540" y="543" text-anchor="middle">entry · control + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="947" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="936" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="947" y="522" text-anchor="middle">internet-exit</text>
+  <text class="ui tiny muted" x="947" y="543" text-anchor="middle">final exit · internet_egress</text>
+  </g>
+  <g data-ui="path-target">
+  <circle cx="1382" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-globe" x="1371" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="1382" y="522" text-anchor="middle">media.example</text>
+  <text class="ui tiny muted" x="1382" y="543" text-anchor="middle">HTTPS target · one of this service's URLs</text>
+  </g>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <a data-ui="navigation" data-route="/devices/demo-forward-c?section=overview&amp;service=demo-video&amp;policy=demo-direct-policy" href="02-nodes-detail.svg">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </a>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="pending">
+  <a id="paths-pending-tab-candidates" class="path-tab path-tab-candidates" href="#paths-pending-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-pending-tab-history" class="path-tab path-tab-history" href="#paths-pending-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">1 authorized candidate · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-pending-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui eyebrow muted" x="47" y="737" text-anchor="start">ROUTE</text>
+  <text class="ui eyebrow muted" x="675" y="737" text-anchor="start">TARGET RESULT</text>
+  <text class="ui eyebrow muted" x="1138" y="737" text-anchor="start">DEVICE SELECTION</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="754" x2="1562" y2="754"/>
+  <g data-ui="path-candidate" data-candidate="demo-media-direct" data-selected="false">
+  <text class="ui body" x="47" y="784" text-anchor="start">Direct · no managed nodes</text>
+  <text class="ui small muted" x="47" y="809" text-anchor="start">relay-west → media.example</text>
+  <text class="ui body amber" x="675" y="784" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="809" text-anchor="start">No report matching the new policy</text>
+  <text class="ui body muted" x="1138" y="784" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1138" y="809" text-anchor="start">Waiting for a fresh selection report</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="834" x2="1562" y2="834"/>
+  </g>
+  <text class="ui small muted" x="47" y="863" text-anchor="start">Viewing candidates does not change device traffic. Only a fresh device report confirms its selection.</text>
+  </g>
+  <g id="paths-pending-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="755" text-anchor="start">No matching target history in this view</text>
+  <text class="ui body muted" x="47" y="790" text-anchor="start">The new policy has no matching device selection or target samples yet.</text>
+  <text class="ui small muted" x="47" y="820" text-anchor="start">History follows the device, service, target and route being inspected.</text>
+  </g>
+  </g>
+  </g>
+  <g id="paths-scene-expired" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="expired" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">media</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <a data-ui="navigation" data-route="/policies/demo-policy?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="06-policies.svg">
+  <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
+  </a>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
+  <g data-ui="path-policy-summary" data-policy="demo-policy">
+  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
+  <a data-ui="navigation" data-route="/services/demo-video?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </a>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">Current route unknown</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Last selection report · 12m ago</text>
+  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="43" y="393" text-anchor="start">Device selection report expired · no fresh target result</text>
+  <text class="ui small muted" x="1562" y="393" text-anchor="end">Previous route · media-access · not current</text>
+  <g data-ui="historical-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
+  <g data-ui="path-segment">
+  <title>Previous route only; no current measurement</title>
+  <path d="M163 475H509" class="dash"/>
+  <text class="ui tiny muted" x="337.0" y="435" text-anchor="middle">WG · shared entry</text>
+  <text class="ui small muted" x="337.0" y="455" text-anchor="middle">Previous route</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>Previous route only; no current measurement</title>
+  <path d="M569 475H916" class="dash"/>
+  <text class="ui tiny muted" x="743.5" y="435" text-anchor="middle">WG · link-wg</text>
+  <text class="ui small muted" x="743.5" y="455" text-anchor="middle">Previous route</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>Previous route only; no current measurement</title>
+  <path d="M976 475H1351" class="dash"/>
+  <text class="ui tiny muted" x="1164.5" y="435" text-anchor="middle">HTTPS · destination</text>
+  <text class="ui small muted" x="1164.5" y="455" text-anchor="middle">Previous route</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="134" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-phone" x="123" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="134" y="522" text-anchor="middle">android-phone</text>
+  <text class="ui tiny muted" x="134" y="543" text-anchor="middle">access</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="540" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-signed" x="529" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="540" y="522" text-anchor="middle">control-a</text>
+  <text class="ui tiny muted" x="540" y="543" text-anchor="middle">entry · control + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="947" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="936" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="947" y="522" text-anchor="middle">internet-exit</text>
+  <text class="ui tiny muted" x="947" y="543" text-anchor="middle">final exit · internet_egress</text>
+  </g>
+  <g data-ui="path-target">
+  <circle cx="1382" cy="475" r="23" fill="#F6F7F6" stroke="#D6E1D9"/>
+  <use href="#icon-globe" x="1371" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono muted" x="1382" y="522" text-anchor="middle">media.example</text>
+  <text class="ui tiny muted" x="1382" y="543" text-anchor="middle">HTTPS target · one of this service's URLs</text>
+  </g>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </g>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="expired">
+  <a id="paths-expired-tab-candidates" class="path-tab path-tab-candidates" href="#paths-expired-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-expired-tab-history" class="path-tab path-tab-history" href="#paths-expired-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-expired-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui eyebrow muted" x="47" y="737" text-anchor="start">ROUTE</text>
+  <text class="ui eyebrow muted" x="675" y="737" text-anchor="start">TARGET RESULT</text>
+  <text class="ui eyebrow muted" x="1138" y="737" text-anchor="start">DEVICE SELECTION</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="754" x2="1562" y2="754"/>
+  <g data-ui="path-candidate" data-candidate="demo-media-relay-wg" data-selected="false">
+  <text class="ui body" x="47" y="784" text-anchor="start">WG relay</text>
+  <text class="ui small muted" x="47" y="809" text-anchor="start">android-phone → control-a → internet-exit → media.example</text>
+  <text class="ui body amber" x="675" y="784" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="809" text-anchor="start">No fresh target result for this route</text>
+  <text class="ui body muted" x="1138" y="784" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1138" y="809" text-anchor="start">Waiting for a fresh selection report</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="834" x2="1562" y2="834"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-direct" data-selected="false">
+  <text class="ui body" x="47" y="864" text-anchor="start">Direct · no managed nodes</text>
+  <text class="ui small muted" x="47" y="889" text-anchor="start">android-phone → media.example</text>
+  <text class="ui body amber" x="675" y="864" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="889" text-anchor="start">No fresh target result for this route</text>
+  <text class="ui body muted" x="1138" y="864" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1138" y="889" text-anchor="start">Waiting for a fresh selection report</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="914" x2="1562" y2="914"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-one-hop" data-selected="false">
+  <text class="ui body" x="47" y="944" text-anchor="start">One hop · same final exit</text>
+  <text class="ui small muted" x="47" y="969" text-anchor="start">android-phone → internet-exit → media.example</text>
+  <text class="ui body amber" x="675" y="944" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="969" text-anchor="start">No fresh target result for this route</text>
+  <text class="ui body muted" x="1138" y="944" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1138" y="969" text-anchor="start">Waiting for a fresh selection report</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="994" x2="1562" y2="994"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-media-relay-hy2" data-selected="false">
+  <text class="ui body" x="47" y="1024" text-anchor="start">hy2 relay · same final exit</text>
+  <text class="ui small muted" x="47" y="1049" text-anchor="start">android-phone → control-a → internet-exit → media.example</text>
+  <text class="ui body amber" x="675" y="1024" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="1049" text-anchor="start">No fresh target result for this route</text>
+  <text class="ui body muted" x="1138" y="1024" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1138" y="1049" text-anchor="start">Waiting for a fresh selection report</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="1074" x2="1562" y2="1074"/>
+  </g>
+  <text class="ui small muted" x="47" y="1103" text-anchor="start">Viewing candidates does not change device traffic. Only a fresh device report confirms its selection.</text>
+  </g>
+  <g id="paths-expired-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="749" text-anchor="start">Previous WG route · 24h before last report</text>
+  <text class="ui small mono muted" x="1540" y="749" text-anchor="end">android-phone · media.example/health</text>
+  <text class="ui eyebrow muted" x="47" y="797" text-anchor="start">HOURS WITH A RESULT</text>
+  <text class="ui metric" x="47" y="832" text-anchor="start">22 / 24</text>
+  <text class="ui body" x="47" y="864" text-anchor="start">20 succeeded · 2 failed</text>
+  <text class="ui small muted" x="47" y="889" text-anchor="start">2 hours unknown</text>
+  <text class="ui small muted" x="47" y="922" text-anchor="start">This route · one sample per hour</text>
+  <rect x="47" y="951" width="7" height="12" rx="1" fill="#64B88E" stroke="#64B88E"/>
+  <text class="ui tiny muted" x="62" y="962" text-anchor="start">Success</text>
+  <rect x="161" y="951" width="7" height="12" rx="1" fill="#C87171" stroke="#C87171"/>
+  <text class="ui tiny muted" x="176" y="962" text-anchor="start">Failed</text>
+  <rect x="259" y="951" width="7" height="12" rx="1" fill="#FAFBFA" stroke="#BFC9C2"/>
+  <text class="ui tiny muted" x="274" y="962" text-anchor="start">Unknown</text>
+  <g data-ui="business-history" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy" data-target="media.example/health" data-candidate="demo-media-relay-wg" data-window-end="12m ago">
+  <text class="ui tiny muted" x="457" y="802" text-anchor="start">HTTPS response · ms</text>
+  <text class="ui micro muted" x="445" y="824" text-anchor="end">200</text>
+  <text class="ui micro muted" x="445" y="924" text-anchor="end">0</text>
+  <line class="rule" x1="457" y1="820" x2="1540" y2="820"/>
+  <line class="rule" x1="457" y1="920" x2="1540" y2="920"/>
+  <g data-ui="business-hour" data-state="available"><title>24h–23h ago · available · HTTPS 164 ms · relative to the last report (12m ago), not now</title>
+  <rect x="466.0" y="838.0" width="27.125" height="82.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="460.0" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>23h–22h ago · available · HTTPS 152 ms · relative to the last report (12m ago), not now</title>
+  <rect x="511.125" y="844.0" width="27.125" height="76.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="505.125" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>22h–21h ago · available · HTTPS 142 ms · relative to the last report (12m ago), not now</title>
+  <rect x="556.25" y="849.0" width="27.125" height="71.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="550.25" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="unknown"><title>21h–20h ago · unknown · no valid business sample · relative to the last report (12m ago), not now</title>
+  <rect data-ui="business-gap" x="601.38" y="822" width="27.12" height="98" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"/>
+  <rect x="595.375" y="942" width="39.125" height="12" rx="2" fill="#FAFBFA" stroke="#BFC9C2"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>20h–19h ago · available · HTTPS 141 ms · relative to the last report (12m ago), not now</title>
+  <rect x="646.5" y="849.5" width="27.125" height="70.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="640.5" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>19h–18h ago · available · HTTPS 138 ms · relative to the last report (12m ago), not now</title>
+  <rect x="691.625" y="851.0" width="27.125" height="69.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="685.625" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>18h–17h ago · available · HTTPS 134 ms · relative to the last report (12m ago), not now</title>
+  <rect x="736.75" y="853.0" width="27.125" height="67.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="730.75" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="unavailable"><title>17h–16h ago · unavailable · no successful response duration · relative to the last report (12m ago), not now</title>
+  <path data-ui="business-failure" d="M791.4375 912l8 8m-8 0 8-8" stroke="#C87171" stroke-width="1.5"/>
+  <rect x="775.875" y="942" width="39.125" height="12" rx="2" fill="#C87171" stroke="#C87171"/>
+  </g>
+  <g data-ui="business-hour" data-state="unavailable"><title>16h–15h ago · unavailable · no successful response duration · relative to the last report (12m ago), not now</title>
+  <path data-ui="business-failure" d="M836.5625 912l8 8m-8 0 8-8" stroke="#C87171" stroke-width="1.5"/>
+  <rect x="821.0" y="942" width="39.125" height="12" rx="2" fill="#C87171" stroke="#C87171"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>15h–14h ago · available · HTTPS 173 ms · relative to the last report (12m ago), not now</title>
+  <rect x="872.125" y="833.5" width="27.125" height="86.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="866.125" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>14h–13h ago · available · HTTPS 149 ms · relative to the last report (12m ago), not now</title>
+  <rect x="917.25" y="845.5" width="27.125" height="74.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="911.25" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>13h–12h ago · available · HTTPS 144 ms · relative to the last report (12m ago), not now</title>
+  <rect x="962.375" y="848.0" width="27.125" height="72.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="956.375" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>12h–11h ago · available · HTTPS 137 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1007.5" y="851.5" width="27.125" height="68.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1001.5" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>11h–10h ago · available · HTTPS 132 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1052.625" y="854.0" width="27.125" height="66.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1046.625" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>10h–9h ago · available · HTTPS 129 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1097.75" y="855.5" width="27.125" height="64.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1091.75" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>9h–8h ago · available · HTTPS 131 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1142.875" y="854.5" width="27.125" height="65.5" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1136.875" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="unknown"><title>8h–7h ago · unknown · no valid business sample · relative to the last report (12m ago), not now</title>
+  <rect data-ui="business-gap" x="1188.00" y="822" width="27.12" height="98" rx="1.5" fill="#FAFBFA" stroke="#BFC9C2" stroke-dasharray="2 3"/>
+  <rect x="1182.0" y="942" width="39.125" height="12" rx="2" fill="#FAFBFA" stroke="#BFC9C2"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>7h–6h ago · available · HTTPS 140 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1233.125" y="850.0" width="27.125" height="70.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1227.125" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>6h–5h ago · available · HTTPS 136 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1278.25" y="852.0" width="27.125" height="68.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1272.25" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>5h–4h ago · available · HTTPS 128 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1323.375" y="856.0" width="27.125" height="64.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1317.375" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>4h–3h ago · available · HTTPS 130 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1368.5" y="855.0" width="27.125" height="65.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1362.5" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>3h–2h ago · available · HTTPS 124 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1413.625" y="858.0" width="27.125" height="62.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1407.625" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>2h–1h ago · available · HTTPS 128 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1458.75" y="856.0" width="27.125" height="64.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1452.75" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <g data-ui="business-hour" data-state="available"><title>1h–0h ago · available · HTTPS 126 ms · relative to the last report (12m ago), not now</title>
+  <rect x="1503.875" y="857.0" width="27.125" height="63.0" rx="1.5" fill="#7B9BC8" stroke="none"/>
+  <rect x="1497.875" y="942" width="39.125" height="12" rx="2" fill="#64B88E" stroke="#64B88E"/>
+  </g>
+  <text class="ui micro muted" x="457" y="982" text-anchor="start">24h before report</text>
+  <text class="ui micro muted" x="998.5" y="982" text-anchor="middle">12h</text>
+  <text class="ui micro muted" x="1540" y="982" text-anchor="end">12m ago</text>
+  </g>
+  <text class="ui small muted" x="47" y="1020" text-anchor="start">Historical window ends at the last report, 12m ago. These samples do not establish current reachability.</text>
+  </g>
+  </g>
+  </g>
+  <g id="paths-scene-denied" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="denied" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">media</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <g data-ui="navigation" data-route="/policies/demo-policy?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
+  </g>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
+  <g data-ui="path-policy-summary" data-policy="demo-policy">
+  <text class="ui body red" x="24" y="294" text-anchor="start">Access denied</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">All paths and target probes are denied</text>
+  <a data-ui="navigation" data-route="/services/demo-video?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </a>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">Access denied by policy</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Device application remains unknown</text>
+  <circle cx="29" cy="388" r="4" fill="#C87171" stroke="none"/>
+  <text class="ui body red" x="43" y="393" text-anchor="start">media-access now denies this service · no authorized routes or target probes</text>
+  <use href="#icon-lock" x="47" y="456" width="30" height="30" class="nav-icon"/>
+  <text class="ui section" x="102" y="473" text-anchor="start">Access is blocked by the current policy.</text>
+  <text class="ui small muted" x="102" y="504" text-anchor="start">Earlier successful checks do not establish current permission. Direct is not a fallback.</text>
+  <g data-ui="navigation" data-route="/policies/demo-policy?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="102" y="536" text-anchor="start">Review media-access →</text>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">TARGET RESULT</text>
+  <text class="ui body amber" x="24" y="625" text-anchor="start">Not authorized</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-video&amp;policy=demo-policy">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </g>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="denied">
+  <a id="paths-denied-tab-candidates" class="path-tab path-tab-candidates" href="#paths-denied-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-denied-tab-history" class="path-tab path-tab-history" href="#paths-denied-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">0 authorized candidates · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-denied-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui section" x="47" y="754" text-anchor="start">No authorized candidates</text>
+  <text class="ui body muted" x="47" y="788" text-anchor="start">This policy denies access to media.</text>
+  <text class="ui small muted" x="47" y="816" text-anchor="start">No route or target probe is authorized for this device and service.</text>
+  </g>
+  <g id="paths-denied-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="755" text-anchor="start">No matching target history in this view</text>
+  <text class="ui body muted" x="47" y="790" text-anchor="start">Access is denied. Earlier results cannot establish current permission or reachability.</text>
+  <text class="ui small muted" x="47" y="820" text-anchor="start">History follows the device, service, target and route being inspected.</text>
+  </g>
+  </g>
+  </g>
+  <g id="paths-scene-unassigned" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-private" href="04-live-paths.svg#paths-service-private">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← private-app devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="unassigned" data-device="demo-phone-f" data-service="demo-private" data-policy="">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">private-app</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <text class="ui body amber" x="712" y="244" text-anchor="start">None assigned</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
+  <g data-ui="path-policy-summary" data-policy="">
+  <text class="ui body red" x="24" y="294" text-anchor="start">Not authorized</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">Assign an access policy on this device to use private-app</text>
+  <g data-ui="navigation" data-route="/services/demo-private?device=demo-phone-f&amp;service=demo-private&amp;policy=">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </g>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">No access policy for this service</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Requested service is not authorized</text>
+  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="43" y="393" text-anchor="start">private-app is not assigned to android-phone</text>
+  <use href="#icon-lock" x="47" y="456" width="30" height="30" class="nav-icon"/>
+  <text class="ui section" x="102" y="473" text-anchor="start">Choose a policy on the device to grant access.</text>
+  <text class="ui small muted" x="102" y="504" text-anchor="start">Earlier successful checks do not establish current permission. Direct is not a fallback.</text>
+  <g data-ui="navigation" data-route="/devices/demo-phone-f?section=access&amp;device=demo-phone-f&amp;service=demo-private&amp;policy=">
+  <text class="ui small green" x="102" y="536" text-anchor="start">Edit this device's policies →</text>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">TARGET RESULT</text>
+  <text class="ui body amber" x="24" y="625" text-anchor="start">Not authorized</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">private.example</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-private&amp;policy=">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </g>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="unassigned">
+  <a id="paths-unassigned-tab-candidates" class="path-tab path-tab-candidates" href="#paths-unassigned-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-unassigned-tab-history" class="path-tab path-tab-history" href="#paths-unassigned-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">0 authorized candidates · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-unassigned-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui section" x="47" y="754" text-anchor="start">No authorized candidates</text>
+  <text class="ui body muted" x="47" y="788" text-anchor="start">This device has no policy for private-app.</text>
+  <text class="ui small muted" x="47" y="816" text-anchor="start">No route or target probe is authorized for this device and service.</text>
+  </g>
+  <g id="paths-unassigned-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="755" text-anchor="start">No matching target history in this view</text>
+  <text class="ui body muted" x="47" y="790" text-anchor="start">This device is not authorized for this service; no target samples are shown.</text>
+  <text class="ui small muted" x="47" y="820" text-anchor="start">History follows the device, service, target and route being inspected.</text>
+  </g>
+  </g>
+  </g>
+  <g id="paths-scene-lan" class="path-scene">
+  <rect width="1586" height="1224" fill="#FCFDFC"/>
+  <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="57" x2="1586" y2="57"/>
+  <svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)"><path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>
+  <text class="ui section" x="65" y="36" text-anchor="start">LOOM</text>
+  <use href="#icon-grid" x="230" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="251" y="34" text-anchor="start">Overview</text>
+  <use href="#icon-node" x="344" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="365" y="34" text-anchor="start">Nodes</text>
+  <use href="#icon-topology" x="438" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
+  <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
+  <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
+  <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
+  <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
+  <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
+  <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
+  <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <a data-ui="navigation" data-route="/routing?service=demo-office" href="04-live-paths.svg#paths-service-office">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← office-network devices</text>
+  </a>
+  <g data-ui="path-context" data-scene="lan" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy">
+  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <g data-ui="path-device-context">
+  <text class="ui section" x="24" y="244" text-anchor="start">workstation</text>
+  </g>
+  <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
+  <g data-ui="path-service-context">
+  <text class="ui section" x="358" y="244" text-anchor="start">office-network</text>
+  </g>
+  <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
+  <a data-ui="navigation" data-route="/policies/demo-lan-policy?device=demo-laptop&amp;service=demo-office&amp;policy=demo-lan-policy" href="06-policies-lan.svg">
+  <text class="ui small green" x="712" y="244" text-anchor="start">office-lan  ↗</text>
+  </a>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">LAN ROUTING</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">To fixed gateway</text>
+  <text class="ui small muted" x="1280" y="244" text-anchor="start">Within allowed routes</text>
+  <g data-ui="path-policy-summary" data-policy="demo-lan-policy">
+  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui small muted" x="171" y="294" text-anchor="start">Fixed gateway: relay-west · entry: unrestricted · transit: unrestricted</text>
+  <a data-ui="navigation" data-route="/services/demo-office?device=demo-laptop&amp;service=demo-office&amp;policy=demo-lan-policy" href="05-services-lan.svg">
+  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  </a>
+  </g>
+  <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
+  <text class="ui section" x="24" y="355" text-anchor="start">Current route unknown</text>
+  <text class="ui small muted" x="1562" y="355" text-anchor="end">Specific target · 198.51.100.42</text>
+  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="43" y="393" text-anchor="start">No device selection report · dashed path is an allowed candidate preview</text>
+  <g data-ui="navigation" data-route="/topology?link=demo-link-a-c&amp;device=demo-laptop&amp;service=demo-office&amp;policy=demo-lan-policy">
+  <text class="ui small green" x="1562" y="393" text-anchor="end">Open topology →</text>
+  </g>
+  <g data-ui="allowed-route-preview" data-candidate="demo-office-relay-wg" data-policy="demo-lan-policy">
+  <g data-ui="path-segment">
+  <title>No matching first-hop observation</title>
+  <path d="M163 475H509" class="dash"/>
+  <text class="ui tiny blue" x="337.0" y="435" text-anchor="middle">WG · shared entry</text>
+  <text class="ui small amber" x="337.0" y="455" text-anchor="middle">Entry check unknown</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>Shared link only · 31s ago · WG 5m TX rate; RTT variation is 15m P95 − P50</title>
+  <path d="M569 475H916" class="dash"/>
+  <text class="ui tiny blue" x="743.5" y="435" text-anchor="middle">WG · link-a-west</text>
+  <text class="ui small blue" x="743.5" y="455" text-anchor="middle">22 ms · 0.0 Mbps shared · Δ 4 ms</text>
+  </g>
+  <g data-ui="path-segment">
+  <title>No matching business observation for this LAN target</title>
+  <path d="M976 475H1351" class="dash"/>
+  <text class="ui tiny blue" x="1164.5" y="435" text-anchor="middle">LAN · mapped destination</text>
+  <text class="ui small amber" x="1164.5" y="455" text-anchor="middle">Target result unknown</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="134" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="123" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="134" y="522" text-anchor="middle">workstation</text>
+  <text class="ui tiny muted" x="134" y="543" text-anchor="middle">access + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="540" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-signed" x="529" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="540" y="522" text-anchor="middle">control-a</text>
+  <text class="ui tiny muted" x="540" y="543" text-anchor="middle">entry · control + forward</text>
+  </g>
+  <g data-ui="path-device">
+  <circle cx="947" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-node" x="936" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="947" y="522" text-anchor="middle">relay-west</text>
+  <text class="ui tiny muted" x="947" y="543" text-anchor="middle">fixed LAN gateway · forward</text>
+  </g>
+  <g data-ui="path-target">
+  <circle cx="1382" cy="475" r="23" fill="#F1F6F3" stroke="#D6E1D9"/>
+  <use href="#icon-globe" x="1371" y="464" width="22" height="22" class="nav-icon"/>
+  <text class="ui body mono" x="1382" y="522" text-anchor="middle">198.51.100.42</text>
+  <text class="ui tiny muted" x="1382" y="543" text-anchor="middle">LAN target · 192.0.2.42 behind gateway</text>
+  </g>
+  </g>
+  <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
+  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">TARGET RESULT</text>
+  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui body mono" x="218" y="594" text-anchor="start">198.51.100.42</text>
+  <text class="ui small muted" x="218" y="622" text-anchor="start">No applicable HTTPS target or actual business sample</text>
+  <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
+  <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
+  <a data-ui="navigation" data-route="/devices/demo-laptop?section=overview&amp;service=demo-office&amp;policy=demo-lan-policy" href="02-nodes-detail.svg#detail-ssh-joined-overview">
+  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  </a>
+  <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
+  <g data-ui="path-tabs" data-scene="lan">
+  <a id="paths-lan-tab-candidates" class="path-tab path-tab-candidates" href="#paths-lan-candidates" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-lan-tab-history" class="path-tab path-tab-history" href="#paths-lan-history" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  <text class="ui small muted" x="1562" y="691" text-anchor="end">2 authorized candidates · read only</text>
+  </g>
+  <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
+  <g id="paths-lan-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
+  <text class="ui eyebrow muted" x="47" y="737" text-anchor="start">ROUTE</text>
+  <text class="ui eyebrow muted" x="675" y="737" text-anchor="start">TARGET RESULT</text>
+  <text class="ui eyebrow muted" x="1138" y="737" text-anchor="start">DEVICE SELECTION</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="754" x2="1562" y2="754"/>
+  <g data-ui="path-candidate" data-candidate="demo-office-relay-wg" data-selected="false">
+  <text class="ui body" x="47" y="784" text-anchor="start">WG relay · fixed LAN gateway</text>
+  <text class="ui small muted" x="47" y="809" text-anchor="start">workstation → control-a → relay-west → 198.51.100.42</text>
+  <text class="ui body amber" x="675" y="784" text-anchor="start">Target unknown</text>
+  <text class="ui small muted" x="675" y="809" text-anchor="start">Shared link available · target unmeasured</text>
+  <text class="ui body muted" x="1138" y="784" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1138" y="809" text-anchor="start">Waiting for a fresh selection report</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="834" x2="1562" y2="834"/>
+  </g>
+  <g data-ui="path-candidate" data-candidate="demo-office-one-hop" data-selected="false">
+  <text class="ui body" x="47" y="864" text-anchor="start">One hop · fixed LAN gateway</text>
+  <text class="ui small muted" x="47" y="889" text-anchor="start">workstation → relay-west → 198.51.100.42</text>
+  <text class="ui body amber" x="675" y="864" text-anchor="start">Target unknown · entry unknown</text>
+  <text class="ui small muted" x="675" y="889" text-anchor="start">No matching first-hop or target observation</text>
+  <text class="ui body muted" x="1138" y="864" text-anchor="start">Unknown</text>
+  <text class="ui small muted" x="1138" y="889" text-anchor="start">Waiting for a fresh selection report</text>
+  <line data-ui="table-rule" class="rule" x1="24" y1="914" x2="1562" y2="914"/>
+  </g>
+  <text class="ui small muted" x="47" y="943" text-anchor="start">Viewing candidates does not change device traffic. Only a fresh device report confirms its selection.</text>
+  </g>
+  <g id="paths-lan-panel-history" class="path-panel path-panel-history" data-ui="path-panel" data-tab="history">
+  <text class="ui section" x="47" y="755" text-anchor="start">No matching target history in this view</text>
+  <text class="ui body muted" x="47" y="790" text-anchor="start">No observations for 198.51.100.42. Shared link measurements do not measure this LAN target.</text>
+  <text class="ui small muted" x="47" y="820" text-anchor="start">History follows the device, service, target and route being inspected.</text>
+  </g>
+  </g>
+  </g>
+  <style><![CDATA[.path-scene { display:none; }
+#paths-scene-current { display:inline; }
+svg:has(.path-scene-target:target) #paths-scene-current { display:none; }
+svg .path-panel-candidates { display:inline; }
+svg .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg .path-panel-history { display:none; }
+svg .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg .path-tab-history .path-tab-mark { stroke:transparent; }
+a:focus-visible { outline:2px solid #4D78D1; outline-offset:3px; }
+svg:has(#paths-current-candidates:target) #paths-scene-current { display:inline; }
+svg:has(#paths-current-candidates:target) #paths-scene-current .path-panel-candidates { display:inline; }
+svg:has(#paths-current-candidates:target) #paths-scene-current .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-current-candidates:target) #paths-scene-current .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-current-candidates:target) #paths-scene-current .path-panel-history { display:none; }
+svg:has(#paths-current-candidates:target) #paths-scene-current .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-current-candidates:target) #paths-scene-current .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-current-history:target) #paths-scene-current { display:inline; }
+svg:has(#paths-current-history:target) #paths-scene-current .path-panel-candidates { display:none; }
+svg:has(#paths-current-history:target) #paths-scene-current .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-current-history:target) #paths-scene-current .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-current-history:target) #paths-scene-current .path-panel-history { display:inline; }
+svg:has(#paths-current-history:target) #paths-scene-current .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-current-history:target) #paths-scene-current .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-candidates:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-panel-candidates { display:inline; }
+svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-panel-history { display:none; }
+svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-history:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-history:target) #paths-scene-failed .path-panel-candidates { display:none; }
+svg:has(#paths-failed-history:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-history:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-history:target) #paths-scene-failed .path-panel-history { display:inline; }
+svg:has(#paths-failed-history:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-history:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-candidates:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-panel-candidates { display:inline; }
+svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-panel-history { display:none; }
+svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-history:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-history:target) #paths-scene-direct .path-panel-candidates { display:none; }
+svg:has(#paths-direct-history:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-history:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-history:target) #paths-scene-direct .path-panel-history { display:inline; }
+svg:has(#paths-direct-history:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-history:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-candidates:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-panel-candidates { display:inline; }
+svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-panel-history { display:none; }
+svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-history:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-history:target) #paths-scene-pending .path-panel-candidates { display:none; }
+svg:has(#paths-pending-history:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-history:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-history:target) #paths-scene-pending .path-panel-history { display:inline; }
+svg:has(#paths-pending-history:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-history:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-expired-candidates:target) #paths-scene-expired { display:inline; }
+svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-panel-candidates { display:inline; }
+svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-panel-history { display:none; }
+svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-expired-history:target) #paths-scene-expired { display:inline; }
+svg:has(#paths-expired-history:target) #paths-scene-expired .path-panel-candidates { display:none; }
+svg:has(#paths-expired-history:target) #paths-scene-expired .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-expired-history:target) #paths-scene-expired .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-expired-history:target) #paths-scene-expired .path-panel-history { display:inline; }
+svg:has(#paths-expired-history:target) #paths-scene-expired .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-expired-history:target) #paths-scene-expired .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-denied-candidates:target) #paths-scene-denied { display:inline; }
+svg:has(#paths-denied-candidates:target) #paths-scene-denied .path-panel-candidates { display:inline; }
+svg:has(#paths-denied-candidates:target) #paths-scene-denied .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-denied-candidates:target) #paths-scene-denied .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-denied-candidates:target) #paths-scene-denied .path-panel-history { display:none; }
+svg:has(#paths-denied-candidates:target) #paths-scene-denied .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-denied-candidates:target) #paths-scene-denied .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-denied-history:target) #paths-scene-denied { display:inline; }
+svg:has(#paths-denied-history:target) #paths-scene-denied .path-panel-candidates { display:none; }
+svg:has(#paths-denied-history:target) #paths-scene-denied .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-denied-history:target) #paths-scene-denied .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-denied-history:target) #paths-scene-denied .path-panel-history { display:inline; }
+svg:has(#paths-denied-history:target) #paths-scene-denied .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-denied-history:target) #paths-scene-denied .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-unassigned-candidates:target) #paths-scene-unassigned { display:inline; }
+svg:has(#paths-unassigned-candidates:target) #paths-scene-unassigned .path-panel-candidates { display:inline; }
+svg:has(#paths-unassigned-candidates:target) #paths-scene-unassigned .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-unassigned-candidates:target) #paths-scene-unassigned .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-unassigned-candidates:target) #paths-scene-unassigned .path-panel-history { display:none; }
+svg:has(#paths-unassigned-candidates:target) #paths-scene-unassigned .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-unassigned-candidates:target) #paths-scene-unassigned .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-unassigned-history:target) #paths-scene-unassigned { display:inline; }
+svg:has(#paths-unassigned-history:target) #paths-scene-unassigned .path-panel-candidates { display:none; }
+svg:has(#paths-unassigned-history:target) #paths-scene-unassigned .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-unassigned-history:target) #paths-scene-unassigned .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-unassigned-history:target) #paths-scene-unassigned .path-panel-history { display:inline; }
+svg:has(#paths-unassigned-history:target) #paths-scene-unassigned .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-unassigned-history:target) #paths-scene-unassigned .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-candidates:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-candidates:target) #paths-scene-lan .path-panel-candidates { display:inline; }
+svg:has(#paths-lan-candidates:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-candidates:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-candidates:target) #paths-scene-lan .path-panel-history { display:none; }
+svg:has(#paths-lan-candidates:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-candidates:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-history:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-history:target) #paths-scene-lan .path-panel-candidates { display:none; }
+svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-history:target) #paths-scene-lan .path-panel-history { display:inline; }
+svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:#248F64; }]]></style>
+</svg>

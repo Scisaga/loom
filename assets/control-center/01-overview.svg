@@ -65,12 +65,16 @@
   <text class="ui nav muted" x="573" y="34" text-anchor="start">Live paths</text>
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-release" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Releases</text>
-  <use href="#icon-events" x="902" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="923" y="34" text-anchor="start">Events</text>
-  <use href="#icon-signed" x="996" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="1017" y="34" text-anchor="start">Signed state</text>
+  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
+  <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1023" y="34" text-anchor="start">Events</text>
+  <a href="09-administration.svg" data-ui="administration-entry">
+  <use href="#icon-signed" x="1095" y="20" width="15" height="15" class="nav-icon"/>
+  <text class="ui nav muted" x="1116" y="34" text-anchor="start">Administration</text>
+  </a>
   <use href="#icon-node" x="1285" y="22" width="14" height="14" class="nav-icon"/>
   <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
   <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
@@ -289,7 +293,7 @@
   <text class="ui small muted" x="1544" y="1043" text-anchor="end">View all events →</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="1060" x2="1562" y2="1060"/>
   <circle cx="51" cy="1088" r="3" fill="#28A472" stroke="none"/>
-  <text class="ui small" x="64" y="1092" text-anchor="start">Policy accepted locally · media-access</text>
+  <text class="ui small" x="64" y="1092" text-anchor="start">Device access saved · android-phone</text>
   <circle cx="559" cy="1088" r="3" fill="#28A472" stroke="none"/>
   <text class="ui small" x="572" y="1092" text-anchor="start">Member certificate verified · control-b</text>
   <circle cx="1067" cy="1088" r="3" fill="#C99A46" stroke="none"/>

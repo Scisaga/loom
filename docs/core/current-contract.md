@@ -11,8 +11,8 @@
 | 控制事实 `Material` | 一份规范签名的不可变事实；绑定网络、签发 control 及验证键、引用的成员表、该键连续序列与前哈希、因果依赖、稳定目标和操作。操作限于设备（含组合申请 control 时的条件授权事实）、网络意图、管理员证书、私有入口、Invite 生命周期与冲突解决。接收只判定事实自身及其声明依赖；设备授权携带的 `RuntimeKey` 使 Material 含秘密，只在 control 间加密同步。 | 当前 `Projection` 从有效事实与成员表确定性重建，不另存可写副本；依赖之外的并发事实只影响是否生效，不影响接收。 |
 | control 成员 `ControlConfig` | 首个受保护信任锚及引用前驱摘要的成员表链；后继表按全序轮次由旧成员在同一轮次多数签名，只封存失去资格的验证键；逐轮计算可能选定项后，仅在最高轮提案唯一时继承，同轮多个不同提案仍可能已选定则补取证据，封存点及 tip 摘要由首次合法提案所引多数签名前缀报告和完整原始事实链证明，后轮安全继承时不重算。增员证书绑定 Invite/事务 ID、目标设备 ID、首次 claim 的公钥，以及非 control 职责所需的条件授权事实 ID，并直接完成该事务；成员不变的作废证书绑定事务 ID 与取消/到期原因，阻止迟到增员。整体删除 control 节点时同一多数载荷带不可复活墓碑。只有成员表赋予 `control` 职责。 | 多数派从成员集合计算，不保存冗余阈值、连接或健康状态；整体删除原子收口其他职责和依赖。诚实成员遵守持久投票规则时防止分叉，不防御单个被攻破的 control。 |
 | 网络意图 `NetworkIntent` | 节点、稳定且不随每台设备参与而改写的 `TransportResource`、显式中继 `NetworkLink`、Service、Policy、共享 HTTPS 探测目标、精确 `.loom` DNS、局域网映射、公开信任材料和期望组件均随各自稳定 ID 的规范事实更新；不以全量 `network.update` 或全局 `base_head` 覆盖并发变化。 | 普通 access 首跳由授权及共享资源投影；中继候选引用 LinkID；观测按 Service、底层网络代与实际依赖摘要记录，不因无关事实变化全网失效。 |
-| 私有入口与 Invite | `EndpointGeneration` 定义入口身份和生命周期，只由承载它的 control 签发，承载者失去 control 资格时一并退出；Invite 是 control 签名的一次性受限能力，固定发行者、首次信任锚、目标设备、职责与授权。首次 claim 只由发行者处理；扫码签名内容限 `access`。 | 已加入设备以设备身份使用认证管理通道；入口可达不授予成员或业务权限；`control.loom` 解析为 web 模式入口。 |
-| 设备授权与视图 | `DeviceAuthorization` 是签名事实的有效结果；普通职责由有效 control 单签，`control` 只由成员表投影。`DeviceView` 由有效 control 对设备相关配置、成员证明和事实前沿签名；设备原子保存信任绑定、完整 LKG、不可回退 latch 与单调的已见高水位。连续多数证书仅可对明确封存的键把新 View 验收前沿降至封存序列，原高水位与 latch 保留，旧 LKG 只在验收失败时保留，成功时原子替换唯一 LKG；留任 control 在证书验收前已持久接受且可验证的超限撤权自动重签，原始证据全失时可能复权，必须标记可见差异和剩余未知风险。其他键、成员链和既有全局认证 floor 不回退。 | 运行时、报告和 UI 仅从获授权的视图与真实观测生成；不能由视图、报告或颜色倒写权威。 |
+| 私有入口与 Invite | `EndpointGeneration` 定义入口身份和生命周期，只由承载它的 control 签发，承载者失去 control 资格时一并退出；Invite 是 control 签名的一次性受限能力，固定发行者、首次信任锚、目标设备、职责与授权。首次 claim 只由发行者处理；纯 `access` 使用二维码，含其他职责使用 SSH/sh 脚本，三处入口均校验职责与媒介匹配。 | 已加入设备以设备身份使用认证管理通道；入口可达不授予成员或业务权限；`control.loom` 解析为 web 模式入口。 |
+| 设备授权与视图 | `DeviceAuthorization` 是签名事实的有效结果，`PolicyIDs` 保存设备选择的策略集合，每条 Policy 固定属于一个 Service，且同设备同服务最多选择一条；Service 不绑定全局 Policy，业务授权来自所分配的 allow Policy；普通职责由有效 control 单签，`control` 只由成员表投影。`DeviceView` 由有效 control 对设备相关配置、成员证明和事实前沿签名；设备原子保存信任绑定、完整 LKG、不可回退 latch 与单调的已见高水位。连续多数证书仅可对明确封存的键把新 View 验收前沿降至封存序列，原高水位与 latch 保留，旧 LKG 只在验收失败时保留，成功时原子替换唯一 LKG；留任 control 在证书验收前已持久接受且可验证的超限撤权自动重签，原始证据全失时可能复权，必须标记可见差异和剩余未知风险。其他键、成员链和既有全局认证 floor 不回退。 | 运行时、报告和 UI 仅从获授权的视图与真实观测生成；不能由视图、报告或颜色倒写权威。 |
 | 发布记录 | 发布签名密钥签署的不可变 release catalog 与制品 manifest；规范签名负载包含 schema 3、单调发布 generation，以及每项的组件 ID、目标平台、制品摘要、长度、媒体类型、受众、版本和可选最低兼容版本，签名覆盖所有这些字段及规范排序。发布私钥引用来自 `LocalDeploymentConfig.signing_key`（`LOOM_SIGNING_KEY`）；验签公钥由验证方受保护的安装信任输入固定，发布前须与签发密钥的公钥核对，不从待验 catalog 或 Web 响应取得。签名 release store 独立于控制事实；可变 `current` 指针只定位待验 catalog。 | `Projection` 只按摘要引用期望组件；Web 仅展示验签且逐文件核验通过的 catalog。公网 Nginx 只分发受众为通用公开的制品；设备与节点报告实际运行坐标，只有报告与期望摘要相符才能显示已应用。 |
 | 客户端本机值 | `DeviceIdentity` 私钥与信任绑定、已见 floor、完整 LKG、唯一 `Preference`，以及 Android/Windows 保存用户命名、稳定本机 ID 与恢复意图的 profile catalog；各自严格 schema、原子持久往返。 | 候选、Selection 与 UI 每次从这些值和宿主回读重建；这些值不作为网络权威上传。 |
 | 本机部署输入 | [配置模型](../operations/configuration-model.md)规定的六键白名单规范 `.env`；可选键缺席时不写该行，密钥和证书正文留在受保护本机输入。 | 只生成本次部署计划与脱敏结果，不保存 control 或 DNS overlay 的第二份事实。 |
@@ -68,13 +68,24 @@ envelope、Invite 与 claim/resume、设备 report——统一使用 schema **3*
 
 | 对象 | 必须封闭的字段语义 | 尚缺的字段级决定 |
 |---|---|---|
-| `Material` | 网络、签发 control 与验证键、所引成员表、该键序列和前事实 ID、因果依赖、稳定目标、操作及对应内容、签名；genesis 固定初始成员、网络意图和管理员信任。 | genesis 与普通事实的精确字段；每种操作的唯一内容形状；签名字段所在的完整事实形状；ID 哈希领域、哈希函数与输出文本格式；编码、排序、长度及拒绝向量。 |
+| `Material` | 网络、签发 control 与验证键、所引成员表、该键序列和前事实 ID、因果依赖、稳定目标、操作及对应内容、签名；genesis 固定初始成员、网络意图和管理员信任。 | genesis 与普通事实的精确字段；每种操作的唯一内容形状（含按 PolicyID 排序、拒绝同服务重复策略的 PolicyIDs；Policy 固定 ServiceID、allow/deny 及范围模式；不能沿用 DestinationGrants）；签名字段所在的完整事实形状；ID 哈希领域、哈希函数与输出文本格式；编码、排序、长度及拒绝向量。 |
 | 成员承诺、投票、证书 | 基础表、轮次、发起者、成员、完整投票史、按键已验证前缀、后继提案、封存点和同轮多数签名。 | 每种消息的精确字段、提案摘要输入、历史／前缀／签名集合的字节排序、空值及长度。 |
 | `DeviceView` 与 envelope | 单设备配置、签发者资格、连续成员证明、签发者事实前沿、View 摘要、设备绑定与签名。 | View 每种内层值、摘要输入、证明和签名封装的精确字段及规范字节。 |
-| Invite、claim、resume、report | Invite 的签发者/锚/设备/职责/入口/一次性约束；首次 claim 的设备公钥与 request ID；resume 同事务同密钥；report 的 View 摘要、按设备序列、真实观测与运行回读。 | 请求与响应逐字段表、签名覆盖范围、报告观测键与过期字段、排序和严格 decoder。 |
+| Invite、claim、resume、report | Invite 的签发者/锚/设备/职责/PolicyIDs/入口/一次性约束；首次 claim 的设备公钥、目标端识别的平台与 request ID；Invite 不预锁平台，平台随绑定事实及设备授权签名；resume 同事务同密钥同平台；report 的 View 摘要、按设备序列、真实观测与运行回读。 | 请求与响应逐字段表、签名覆盖范围、报告观测键与过期字段、排序和严格 decoder。 |
 | release catalog 与 manifest | generation、组件/平台、不可变文件摘要、长度、媒体类型、受众、版本和最低兼容约束，发布密钥签名。 | catalog 与 manifest 的分层字段、路径规则、排序、签名和摘要字节；旧 floor 与新发布坐标的迁移证明。 |
 
 任何对象的内层值、可选性或签名输入仍不明确时，生产 writer/decoder 不得自行发明格式。
+Policy 必须签名覆盖固定的 ServiceID、allow/deny、独立的入口与中间转发范围，以及互联网服务适用的
+出口范围、Direct 与设备限定本地出口许可。范围模式 any / only / none 不可混淆：any、none 的 ID
+集合为空，only 的集合非空并规范排序；模式缺失、未知模式、重复 ID 或矛盾组合拒绝。UI 的未设限制
+提交为显式 any，不能在 decoder 中把遗漏字段或旧空数组当不限。LAN Policy 不接受互联网出口、
+Direct 或本地互联网出网字段，终点从固定所属 Service 读取；Policy 创建后不得改属其他 Service。
+节点和 Invite 只保存规范 PolicyIDs，不再双写 ServicePolicies；重复 PolicyID、同一设备选择同 Service
+的两条策略、悬空/冲突引用、非 access 携带访问策略均拒绝。合法空 PolicyIDs 表示没有业务授权；
+deny 保留分配但无业务权限。解析到的 Service/Policy 对只是可重建投影，不成为另一份签名分配值。
+策略创建后再分配的部分失败与原请求重试见
+[策略创建、分配与复用](control-model.md#策略创建分配与复用)。这些同属 schema 3 的现行目标；
+旧 AllowedServers、Service.policy、DestinationGrants 和先前 ServicePolicies 目标不能通过改名继续运行。
 完成字段表时须给出接受和拒绝字节向量，验证 `decode(encode(D))=D`、`encode(decode(B))=B`；
 拒绝未知字段、重复字段、歧义空值、错误排序、错误签名目的、签名未覆盖字段及不规范输入。
 
@@ -132,6 +143,21 @@ DeviceView、客户端运行时和 Web 都是从已验证事实的单向投影�
 
 上述是证明义务，**尚不是一份已批准的迁移算法**：现网逐节点 floor、签名材料、公钥连续性、
 快照到 manifest 的对应和真实运行制品尚未在本轮只读核对，因此不能填写切换记录或声称生产可用。
+
+### 设备服务授权修订的切换边界
+
+用户已确认：Service 定义目标；每条 Policy 固定属于一个 Service、可复用；节点只选择 PolicyIDs。
+同一设备同服务最多一条策略，路径未设置限制规范表达为 any，没有分配策略不获得服务业务权限。
+这取代先前设备单独保存 ServicePolicies 配对的目标，也不恢复旧 Service 的全局唯一 Policy 绑定。
+此修订只改变尚待实现的 schema 3 目标契约，不重解释任何现网 `Service.policy`、DestinationGrants、
+已签 Invite、既存空数组或已部署持久字节。即使名字相近，旧 Policy ID 也不能直接视为具有固定
+ServiceID 与新范围语义的策略；每个旧目标范围及限制须单独证明保全。
+平台仍由目标识别、首次 claim 绑定；旧 Invite 固定平台的字节不视为跨平台邀请，设备身份、密钥、
+认证 floor 和 latch 均保持。实施前只读列出受保护现网材料中的逐设备实际服务范围、路径与 Direct
+权限，供操作者核对。旧空集合不得扩大为 any；一个旧通用策略涉及多个 Service 时，迁移必须为每个
+Service 明确构造所属策略及节点引用，保留同等范围，不能把一个 ID 自动授权到未来新增服务。
+未知、无法证明或可能扩权的映射停止写入并报告，原型样例不用于生成迁移值。沿用既定前向切换与
+现网保全门禁，获准并验证前不激活生产，不增加协议号、双读或第二份授权 store。
 
 ## 遇错时只修订这一份契约
 
