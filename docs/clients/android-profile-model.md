@@ -88,6 +88,10 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 本次连接已终止时清除持久 desired，运行投影暂保留失败的 requested ID 只用于给错误归属；
 它不是 active，也不得自动恢复或切换到 viewed/另一行。重试、删除该行或发出另一连接请求后替换该错误投影。
 
+加入中断后的重试复用保留的同一 Invite、request ID 和设备密钥。配置页的“放弃本机加入”
+沿用现有确认操作：只清理本机待加入资料，不删除 Keystore 设备密钥，也不撤销控制面设备。
+本机放弃不证明远端事务已取消、目标 ID 已释放或旧 Invite 可以重新使用。
+
 ## 正常业务链与最小测试
 
 一条正常链：用户在配置页创建“Loom B” → 为该行完成私有 Enrollment 并保存其 LKG

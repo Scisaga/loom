@@ -252,13 +252,31 @@
   <text class="ui small" x="1083" y="781" text-anchor="middle">Use destinations from B</text>
   </g>
   </a>
-  <text class="ui small muted" x="348" y="839" text-anchor="start">Select a final value before submitting. The service stays suspended until a resolution is accepted.</text>
+  <g data-ui="conflict-impact" data-service="demo-work" data-control="demo-control-a" data-scope="known-local-references">
+  <text class="ui body" x="348" y="831" text-anchor="start">Affected references known here</text>
+  <text class="ui small muted" x="1518" y="831" text-anchor="end">1 device · 1 unexpired invitation</text>
+  <text class="ui small mono" x="348" y="862" text-anchor="start">Policy · work-access → work-apps</text>
+  <text class="ui small muted" x="1518" y="862" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <g data-ui="affected-device" data-device="demo-laptop" data-policy="demo-work-access">
+  <text class="ui small muted" x="348" y="896" text-anchor="start">Device</text>
+  <text class="ui small mono" x="552" y="896" text-anchor="start">workstation · work-access</text>
+  <text class="ui small amber" x="1060" y="896" text-anchor="start">Service access paused by this conflict</text>
+  </g>
+  <g data-ui="affected-invite" data-invite="demo-work-phone-invite" data-device="demo-work-phone" data-policy="demo-work-access">
+  <text class="ui small muted" x="348" y="928" text-anchor="start">Invitation</text>
+  <text class="ui small mono" x="552" y="928" text-anchor="start">join-work-phone → work-phone</text>
+  <text class="ui small amber" x="1060" y="928" text-anchor="start">Open · claim paused by this conflict</text>
+  <text class="ui small muted" x="552" y="953" text-anchor="start">access · not bound · expires 2030-01-02 00:00 UTC</text>
+  </g>
+  <text class="ui small muted" x="348" y="982" text-anchor="start">Verified on control-a only. Other controls may hold additional references; their scope is unknown.</text>
+  </g>
+  <text class="ui small muted" x="348" y="1024" text-anchor="start">Select a final value before submitting. The service stays suspended until a resolution is accepted.</text>
   <a href="#overview" data-ui="administration-link">
-  <text class="ui small green" x="348" y="880" text-anchor="start">Cancel review</text>
+  <text class="ui small green" x="348" y="1065" text-anchor="start">Cancel review</text>
   </a>
   </g>
-  <line class="rule" x1="328" y1="915" x2="1538" y2="915"/>
-  <text class="ui small muted" x="348" y="948" text-anchor="start">Current state on control-a · historical changes remain in Events.</text>
+  <line class="rule" x1="328" y1="1100" x2="1538" y2="1100"/>
+  <text class="ui small muted" x="348" y="1133" text-anchor="start">Current state on control-a · historical changes remain in Events.</text>
   </g>
   <g id="review-a" class="administration-target"/>
   <g id="administration-review-a" class="administration-scene" data-ui="administration-scene" data-scene="review-a">
@@ -326,27 +344,44 @@
   <text class="ui small" x="1083" y="781" text-anchor="middle">Use destinations from B</text>
   </g>
   </a>
-  <text class="ui small muted" x="348" y="846" text-anchor="start">Final destinations · editable draft</text>
+  <g data-ui="conflict-impact" data-service="demo-work" data-control="demo-control-a" data-scope="known-local-references">
+  <text class="ui body" x="348" y="831" text-anchor="start">Affected references known here</text>
+  <text class="ui small muted" x="1518" y="831" text-anchor="end">1 device · 1 unexpired invitation</text>
+  <text class="ui small mono" x="348" y="862" text-anchor="start">Policy · work-access → work-apps</text>
+  <text class="ui small muted" x="1518" y="862" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <g data-ui="affected-device" data-device="demo-laptop" data-policy="demo-work-access">
+  <text class="ui small muted" x="348" y="896" text-anchor="start">Device</text>
+  <text class="ui small mono" x="552" y="896" text-anchor="start">workstation · work-access</text>
+  <text class="ui small amber" x="1060" y="896" text-anchor="start">Service access paused by this conflict</text>
+  </g>
+  <g data-ui="affected-invite" data-invite="demo-work-phone-invite" data-device="demo-work-phone" data-policy="demo-work-access">
+  <text class="ui small muted" x="348" y="928" text-anchor="start">Invitation</text>
+  <text class="ui small mono" x="552" y="928" text-anchor="start">join-work-phone → work-phone</text>
+  <text class="ui small amber" x="1060" y="928" text-anchor="start">Open · claim paused by this conflict</text>
+  <text class="ui small muted" x="552" y="953" text-anchor="start">access · not bound · expires 2030-01-02 00:00 UTC</text>
+  </g>
+  <text class="ui small muted" x="348" y="982" text-anchor="start">Verified on control-a only. Other controls may hold additional references; their scope is unknown.</text>
+  </g>
+  <text class="ui small muted" x="348" y="1014" text-anchor="start">Final destinations · editable draft</text>
   <g data-ui="conflict-final-value" data-target="demo-work" data-references="demo-work-update-a demo-work-update-b">
   <g data-ui="input">
-  <rect x="348" y="859" width="1170" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="362" y="886" text-anchor="start">work.example</text>
+  <rect x="348" y="1027" width="1170" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="362" y="1054" text-anchor="start">work.example</text>
   </g>
   </g>
-  <text class="ui small muted" x="348" y="930" text-anchor="start">This updates the shared service for every policy and device that uses it.</text>
-  <text class="ui small muted" x="348" y="958" text-anchor="start">Both conflicting references are included. A newer conflict requires another review.</text>
+  <text class="ui small muted" x="348" y="1094" text-anchor="start">Both conflicting facts are included. A newer conflict requires another review.</text>
   <a href="#resolved-a" data-ui="administration-action" data-action="submit-conflict-resolution">
   <g data-ui="button">
-  <rect x="1288" y="994" width="230" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1403" y="1019" text-anchor="middle">Save resolution</text>
+  <rect x="1288" y="1113" width="230" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1403" y="1138" text-anchor="middle">Save resolution</text>
   </g>
   </a>
   <a href="#compare" data-ui="administration-link">
-  <text class="ui small green" x="348" y="1021" text-anchor="start">Cancel</text>
+  <text class="ui small green" x="348" y="1140" text-anchor="start">Cancel</text>
   </a>
   </g>
-  <line class="rule" x1="328" y1="1066" x2="1538" y2="1066"/>
-  <text class="ui small muted" x="348" y="1099" text-anchor="start">Current state on control-a · historical changes remain in Events.</text>
+  <line class="rule" x1="328" y1="1174" x2="1538" y2="1174"/>
+  <text class="ui small muted" x="348" y="1207" text-anchor="start">Current state on control-a · historical changes remain in Events.</text>
   </g>
   <g id="review-b" class="administration-target"/>
   <g id="administration-review-b" class="administration-scene" data-ui="administration-scene" data-scene="review-b">
@@ -414,27 +449,44 @@
   <text class="ui small white" x="1083" y="781" text-anchor="middle">Use destinations from B</text>
   </g>
   </a>
-  <text class="ui small muted" x="348" y="846" text-anchor="start">Final destinations · editable draft</text>
+  <g data-ui="conflict-impact" data-service="demo-work" data-control="demo-control-a" data-scope="known-local-references">
+  <text class="ui body" x="348" y="831" text-anchor="start">Affected references known here</text>
+  <text class="ui small muted" x="1518" y="831" text-anchor="end">1 device · 1 unexpired invitation</text>
+  <text class="ui small mono" x="348" y="862" text-anchor="start">Policy · work-access → work-apps</text>
+  <text class="ui small muted" x="1518" y="862" text-anchor="end">As of 2030-01-01 00:00 UTC</text>
+  <g data-ui="affected-device" data-device="demo-laptop" data-policy="demo-work-access">
+  <text class="ui small muted" x="348" y="896" text-anchor="start">Device</text>
+  <text class="ui small mono" x="552" y="896" text-anchor="start">workstation · work-access</text>
+  <text class="ui small amber" x="1060" y="896" text-anchor="start">Service access paused by this conflict</text>
+  </g>
+  <g data-ui="affected-invite" data-invite="demo-work-phone-invite" data-device="demo-work-phone" data-policy="demo-work-access">
+  <text class="ui small muted" x="348" y="928" text-anchor="start">Invitation</text>
+  <text class="ui small mono" x="552" y="928" text-anchor="start">join-work-phone → work-phone</text>
+  <text class="ui small amber" x="1060" y="928" text-anchor="start">Open · claim paused by this conflict</text>
+  <text class="ui small muted" x="552" y="953" text-anchor="start">access · not bound · expires 2030-01-02 00:00 UTC</text>
+  </g>
+  <text class="ui small muted" x="348" y="982" text-anchor="start">Verified on control-a only. Other controls may hold additional references; their scope is unknown.</text>
+  </g>
+  <text class="ui small muted" x="348" y="1014" text-anchor="start">Final destinations · editable draft</text>
   <g data-ui="conflict-final-value" data-target="demo-work" data-references="demo-work-update-a demo-work-update-b">
   <g data-ui="input">
-  <rect x="348" y="859" width="1170" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="362" y="886" text-anchor="start">work.example, .cdn.work.example</text>
+  <rect x="348" y="1027" width="1170" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="362" y="1054" text-anchor="start">work.example, .cdn.work.example</text>
   </g>
   </g>
-  <text class="ui small muted" x="348" y="930" text-anchor="start">This updates the shared service for every policy and device that uses it.</text>
-  <text class="ui small muted" x="348" y="958" text-anchor="start">Both conflicting references are included. A newer conflict requires another review.</text>
+  <text class="ui small muted" x="348" y="1094" text-anchor="start">Both conflicting facts are included. A newer conflict requires another review.</text>
   <a href="#resolved-b" data-ui="administration-action" data-action="submit-conflict-resolution">
   <g data-ui="button">
-  <rect x="1288" y="994" width="230" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1403" y="1019" text-anchor="middle">Save resolution</text>
+  <rect x="1288" y="1113" width="230" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1403" y="1138" text-anchor="middle">Save resolution</text>
   </g>
   </a>
   <a href="#compare" data-ui="administration-link">
-  <text class="ui small green" x="348" y="1021" text-anchor="start">Cancel</text>
+  <text class="ui small green" x="348" y="1140" text-anchor="start">Cancel</text>
   </a>
   </g>
-  <line class="rule" x1="328" y1="1066" x2="1538" y2="1066"/>
-  <text class="ui small muted" x="348" y="1099" text-anchor="start">Current state on control-a · historical changes remain in Events.</text>
+  <line class="rule" x1="328" y1="1174" x2="1538" y2="1174"/>
+  <text class="ui small muted" x="348" y="1207" text-anchor="start">Current state on control-a · historical changes remain in Events.</text>
   </g>
   <g id="changed" class="administration-target"/>
   <g id="administration-changed" class="administration-scene" data-ui="administration-scene" data-scene="changed">

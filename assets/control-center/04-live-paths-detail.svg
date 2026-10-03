@@ -51,12 +51,34 @@
   </defs>
   <g id="paths-current-candidates" class="path-scene-target"/>
   <g id="paths-current-history" class="path-scene-target"/>
+  <g id="paths-current-candidates-from-media-all" class="path-scene-target"/>
+  <g id="paths-current-history-from-media-all" class="path-scene-target"/>
+  <g id="paths-current-candidates-from-media-wg" class="path-scene-target"/>
+  <g id="paths-current-history-from-media-wg" class="path-scene-target"/>
   <g id="paths-failed-candidates" class="path-scene-target"/>
   <g id="paths-failed-history" class="path-scene-target"/>
+  <g id="paths-failed-candidates-from-media-all" class="path-scene-target"/>
+  <g id="paths-failed-history-from-media-all" class="path-scene-target"/>
+  <g id="paths-failed-candidates-from-media-failed" class="path-scene-target"/>
+  <g id="paths-failed-history-from-media-failed" class="path-scene-target"/>
+  <g id="paths-failed-candidates-from-media-wg" class="path-scene-target"/>
+  <g id="paths-failed-history-from-media-wg" class="path-scene-target"/>
   <g id="paths-direct-candidates" class="path-scene-target"/>
   <g id="paths-direct-history" class="path-scene-target"/>
+  <g id="paths-direct-candidates-from-media-all" class="path-scene-target"/>
+  <g id="paths-direct-history-from-media-all" class="path-scene-target"/>
+  <g id="paths-direct-candidates-from-media-unknown" class="path-scene-target"/>
+  <g id="paths-direct-history-from-media-unknown" class="path-scene-target"/>
+  <g id="paths-direct-candidates-from-media-direct" class="path-scene-target"/>
+  <g id="paths-direct-history-from-media-direct" class="path-scene-target"/>
   <g id="paths-pending-candidates" class="path-scene-target"/>
   <g id="paths-pending-history" class="path-scene-target"/>
+  <g id="paths-pending-candidates-from-media-all" class="path-scene-target"/>
+  <g id="paths-pending-history-from-media-all" class="path-scene-target"/>
+  <g id="paths-pending-candidates-from-media-unknown" class="path-scene-target"/>
+  <g id="paths-pending-history-from-media-unknown" class="path-scene-target"/>
+  <g id="paths-pending-candidates-from-media-unconfirmed" class="path-scene-target"/>
+  <g id="paths-pending-history-from-media-unconfirmed" class="path-scene-target"/>
   <g id="paths-expired-candidates" class="path-scene-target"/>
   <g id="paths-expired-history" class="path-scene-target"/>
   <g id="paths-denied-candidates" class="path-scene-target"/>
@@ -65,6 +87,12 @@
   <g id="paths-unassigned-history" class="path-scene-target"/>
   <g id="paths-lan-candidates" class="path-scene-target"/>
   <g id="paths-lan-history" class="path-scene-target"/>
+  <g id="paths-lan-candidates-from-office-all" class="path-scene-target"/>
+  <g id="paths-lan-history-from-office-all" class="path-scene-target"/>
+  <g id="paths-lan-candidates-from-office-unknown" class="path-scene-target"/>
+  <g id="paths-lan-history-from-office-unknown" class="path-scene-target"/>
+  <g id="paths-lan-candidates-from-office-unconfirmed" class="path-scene-target"/>
+  <g id="paths-lan-history-from-office-unconfirmed" class="path-scene-target"/>
   <g id="paths-scene-current" class="path-scene">
   <rect width="1586" height="1224" fill="#FCFDFC"/>
   <rect x="0" y="0" width="1586" height="58" fill="#FFFFFF"/>
@@ -99,9 +127,21 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-wg" data-ui="path-return" data-service="demo-video" data-filter="wg">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=wg" href="04-live-paths.svg#paths-service-media-wg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
   <g data-ui="path-context" data-scene="current" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -190,16 +230,42 @@
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="current">
-  <a id="paths-current-tab-candidates" class="path-tab path-tab-candidates" href="#paths-current-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-current-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-current-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-current-tab-history" class="path-tab path-tab-history" href="#paths-current-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-current-tab-history-default" class="path-tab path-tab-history" href="#paths-current-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all">
+  <a id="paths-current-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-current-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-current-tab-history-media-all" class="path-tab path-tab-history" href="#paths-current-history-from-media-all" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-wg">
+  <a id="paths-current-tab-candidates-media-wg" class="path-tab path-tab-candidates" href="#paths-current-candidates-from-media-wg" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-current-tab-history-media-wg" class="path-tab path-tab-history" href="#paths-current-history-from-media-wg" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -419,9 +485,26 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-failed" data-ui="path-return" data-service="demo-video" data-filter="failed">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=failed" href="04-live-paths.svg#paths-service-media-failed">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-wg" data-ui="path-return" data-service="demo-video" data-filter="wg">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=wg" href="04-live-paths.svg#paths-service-media-wg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
   <g data-ui="path-context" data-scene="failed" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -510,16 +593,54 @@
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="failed">
-  <a id="paths-failed-tab-candidates" class="path-tab path-tab-candidates" href="#paths-failed-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-failed-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-failed-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-failed-tab-history" class="path-tab path-tab-history" href="#paths-failed-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-failed-tab-history-default" class="path-tab path-tab-history" href="#paths-failed-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all">
+  <a id="paths-failed-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-failed-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-failed-tab-history-media-all" class="path-tab path-tab-history" href="#paths-failed-history-from-media-all" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-failed">
+  <a id="paths-failed-tab-candidates-media-failed" class="path-tab path-tab-candidates" href="#paths-failed-candidates-from-media-failed" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-failed-tab-history-media-failed" class="path-tab path-tab-history" href="#paths-failed-history-from-media-failed" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-wg">
+  <a id="paths-failed-tab-candidates-media-wg" class="path-tab path-tab-candidates" href="#paths-failed-candidates-from-media-wg" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-failed-tab-history-media-wg" class="path-tab path-tab-history" href="#paths-failed-history-from-media-wg" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -609,9 +730,26 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-unknown" data-ui="path-return" data-service="demo-video" data-filter="unknown">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=unknown" href="04-live-paths.svg#paths-service-media-unknown">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-direct" data-ui="path-return" data-service="demo-video" data-filter="direct">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=direct" href="04-live-paths.svg#paths-service-media-direct">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
   <g data-ui="path-context" data-scene="direct" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -667,16 +805,54 @@
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="direct">
-  <a id="paths-direct-tab-candidates" class="path-tab path-tab-candidates" href="#paths-direct-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-direct-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-direct-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-direct-tab-history" class="path-tab path-tab-history" href="#paths-direct-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-direct-tab-history-default" class="path-tab path-tab-history" href="#paths-direct-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all">
+  <a id="paths-direct-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-direct-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-direct-tab-history-media-all" class="path-tab path-tab-history" href="#paths-direct-history-from-media-all" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-unknown">
+  <a id="paths-direct-tab-candidates-media-unknown" class="path-tab path-tab-candidates" href="#paths-direct-candidates-from-media-unknown" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-direct-tab-history-media-unknown" class="path-tab path-tab-history" href="#paths-direct-history-from-media-unknown" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-direct">
+  <a id="paths-direct-tab-candidates-media-direct" class="path-tab path-tab-candidates" href="#paths-direct-candidates-from-media-direct" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-direct-tab-history-media-direct" class="path-tab path-tab-history" href="#paths-direct-history-from-media-direct" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">1 authorized candidate · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -739,9 +915,26 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-unknown" data-ui="path-return" data-service="demo-video" data-filter="unknown">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=unknown" href="04-live-paths.svg#paths-service-media-unknown">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-unconfirmed" data-ui="path-return" data-service="demo-video" data-filter="unconfirmed">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=unconfirmed" href="04-live-paths.svg#paths-service-media-unconfirmed">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
+  </a>
+  </g>
   <g data-ui="path-context" data-scene="pending" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -828,16 +1021,54 @@
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="pending">
-  <a id="paths-pending-tab-candidates" class="path-tab path-tab-candidates" href="#paths-pending-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-pending-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-pending-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-pending-tab-history" class="path-tab path-tab-history" href="#paths-pending-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-pending-tab-history-default" class="path-tab path-tab-history" href="#paths-pending-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-all">
+  <a id="paths-pending-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-pending-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-pending-tab-history-media-all" class="path-tab path-tab-history" href="#paths-pending-history-from-media-all" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-unknown">
+  <a id="paths-pending-tab-candidates-media-unknown" class="path-tab path-tab-candidates" href="#paths-pending-candidates-from-media-unknown" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-pending-tab-history-media-unknown" class="path-tab path-tab-history" href="#paths-pending-history-from-media-unknown" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-media-unconfirmed">
+  <a id="paths-pending-tab-candidates-media-unconfirmed" class="path-tab path-tab-candidates" href="#paths-pending-candidates-from-media-unconfirmed" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-pending-tab-history-media-unconfirmed" class="path-tab path-tab-history" href="#paths-pending-history-from-media-unconfirmed" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">1 authorized candidate · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -898,9 +1129,11 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
+  </g>
   <g data-ui="path-context" data-scene="expired" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -987,16 +1220,18 @@
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="expired">
-  <a id="paths-expired-tab-candidates" class="path-tab path-tab-candidates" href="#paths-expired-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-expired-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-expired-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-expired-tab-history" class="path-tab path-tab-history" href="#paths-expired-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-expired-tab-history-default" class="path-tab path-tab-history" href="#paths-expired-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -1201,9 +1436,11 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-video" href="04-live-paths.svg">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
+  </g>
   <g data-ui="path-context" data-scene="denied" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -1251,16 +1488,18 @@
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="denied">
-  <a id="paths-denied-tab-candidates" class="path-tab path-tab-candidates" href="#paths-denied-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-denied-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-denied-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-denied-tab-history" class="path-tab path-tab-history" href="#paths-denied-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-denied-tab-history-default" class="path-tab path-tab-history" href="#paths-denied-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">0 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -1310,9 +1549,11 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-private" href="04-live-paths.svg#paths-service-private">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-private" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-private&amp;filter=all" href="04-live-paths.svg#paths-service-private">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← private-app devices</text>
   </a>
+  </g>
   <g data-ui="path-context" data-scene="unassigned" data-device="demo-phone-f" data-service="demo-private" data-policy="">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -1358,16 +1599,18 @@
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="unassigned">
-  <a id="paths-unassigned-tab-candidates" class="path-tab path-tab-candidates" href="#paths-unassigned-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-unassigned-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-unassigned-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-unassigned-tab-history" class="path-tab path-tab-history" href="#paths-unassigned-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-unassigned-tab-history-default" class="path-tab path-tab-history" href="#paths-unassigned-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">0 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -1417,9 +1660,26 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
-  <a data-ui="navigation" data-route="/routing?service=demo-office" href="04-live-paths.svg#paths-service-office">
+  <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-office" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-office&amp;filter=all" href="04-live-paths.svg#paths-service-office">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← office-network devices</text>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-office-all" data-ui="path-return" data-service="demo-office" data-filter="all">
+  <a data-ui="navigation" data-route="/routing?service=demo-office&amp;filter=all" href="04-live-paths.svg#paths-service-office">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← office-network devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-office-unknown" data-ui="path-return" data-service="demo-office" data-filter="unknown">
+  <a data-ui="navigation" data-route="/routing?service=demo-office&amp;filter=unknown" href="04-live-paths.svg#paths-service-office-unknown">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← office-network devices</text>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-office-unconfirmed" data-ui="path-return" data-service="demo-office" data-filter="unconfirmed">
+  <a data-ui="navigation" data-route="/routing?service=demo-office&amp;filter=unconfirmed" href="04-live-paths.svg#paths-service-office-unconfirmed">
+  <text class="ui small green" x="1562" y="97" text-anchor="end">← office-network devices</text>
+  </a>
+  </g>
   <g data-ui="path-context" data-scene="lan" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy">
   <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
@@ -1508,16 +1768,54 @@
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="lan">
-  <a id="paths-lan-tab-candidates" class="path-tab path-tab-candidates" href="#paths-lan-candidates" data-ui="path-tab" data-tab="candidates">
+  <g class="path-origin-navigation path-origin-default">
+  <a id="paths-lan-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-lan-candidates" data-ui="path-tab" data-tab="candidates">
   <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
   <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
   </a>
-  <a id="paths-lan-tab-history" class="path-tab path-tab-history" href="#paths-lan-history" data-ui="path-tab" data-tab="history">
+  <a id="paths-lan-tab-history-default" class="path-tab path-tab-history" href="#paths-lan-history" data-ui="path-tab" data-tab="history">
   <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
   <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
   </a>
+  </g>
+  <g class="path-origin-navigation path-origin-office-all">
+  <a id="paths-lan-tab-candidates-office-all" class="path-tab path-tab-candidates" href="#paths-lan-candidates-from-office-all" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-lan-tab-history-office-all" class="path-tab path-tab-history" href="#paths-lan-history-from-office-all" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-office-unknown">
+  <a id="paths-lan-tab-candidates-office-unknown" class="path-tab path-tab-candidates" href="#paths-lan-candidates-from-office-unknown" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-lan-tab-history-office-unknown" class="path-tab path-tab-history" href="#paths-lan-history-from-office-unknown" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
+  <g class="path-origin-navigation path-origin-office-unconfirmed">
+  <a id="paths-lan-tab-candidates-office-unconfirmed" class="path-tab path-tab-candidates" href="#paths-lan-candidates-from-office-unconfirmed" data-ui="path-tab" data-tab="candidates">
+  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  </a>
+  <a id="paths-lan-tab-history-office-unconfirmed" class="path-tab path-tab-history" href="#paths-lan-history-from-office-unconfirmed" data-ui="path-tab" data-tab="history">
+  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  </a>
+  </g>
   <text class="ui small muted" x="1562" y="691" text-anchor="end">2 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
@@ -1562,6 +1860,7 @@ svg .path-tab-candidates .path-tab-mark { stroke:#248F64; }
 svg .path-panel-history { display:none; }
 svg .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
 svg .path-tab-history .path-tab-mark { stroke:transparent; }
+.path-origin-navigation { display:none; } .path-origin-default { display:inline; }
 a:focus-visible { outline:2px solid #4D78D1; outline-offset:3px; }
 svg:has(#paths-current-candidates:target) #paths-scene-current { display:inline; }
 svg:has(#paths-current-candidates:target) #paths-scene-current .path-panel-candidates { display:inline; }
@@ -1577,6 +1876,42 @@ svg:has(#paths-current-history:target) #paths-scene-current .path-tab-candidates
 svg:has(#paths-current-history:target) #paths-scene-current .path-panel-history { display:inline; }
 svg:has(#paths-current-history:target) #paths-scene-current .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
 svg:has(#paths-current-history:target) #paths-scene-current .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current { display:inline; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-panel-candidates { display:inline; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-panel-history { display:none; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-origin-default { display:none; }
+svg:has(#paths-current-candidates-from-media-all:target) #paths-scene-current .path-origin-media-all { display:inline; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current { display:inline; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-panel-candidates { display:none; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-panel-history { display:inline; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-origin-default { display:none; }
+svg:has(#paths-current-history-from-media-all:target) #paths-scene-current .path-origin-media-all { display:inline; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current { display:inline; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-panel-candidates { display:inline; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-panel-history { display:none; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-origin-default { display:none; }
+svg:has(#paths-current-candidates-from-media-wg:target) #paths-scene-current .path-origin-media-wg { display:inline; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current { display:inline; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-panel-candidates { display:none; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-panel-history { display:inline; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-origin-default { display:none; }
+svg:has(#paths-current-history-from-media-wg:target) #paths-scene-current .path-origin-media-wg { display:inline; }
 svg:has(#paths-failed-candidates:target) #paths-scene-failed { display:inline; }
 svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-panel-candidates { display:inline; }
 svg:has(#paths-failed-candidates:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
@@ -1591,6 +1926,60 @@ svg:has(#paths-failed-history:target) #paths-scene-failed .path-tab-candidates .
 svg:has(#paths-failed-history:target) #paths-scene-failed .path-panel-history { display:inline; }
 svg:has(#paths-failed-history:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
 svg:has(#paths-failed-history:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-panel-candidates { display:inline; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-panel-history { display:none; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-origin-default { display:none; }
+svg:has(#paths-failed-candidates-from-media-all:target) #paths-scene-failed .path-origin-media-all { display:inline; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-panel-candidates { display:none; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-panel-history { display:inline; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-origin-default { display:none; }
+svg:has(#paths-failed-history-from-media-all:target) #paths-scene-failed .path-origin-media-all { display:inline; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-panel-candidates { display:inline; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-panel-history { display:none; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-origin-default { display:none; }
+svg:has(#paths-failed-candidates-from-media-failed:target) #paths-scene-failed .path-origin-media-failed { display:inline; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-panel-candidates { display:none; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-panel-history { display:inline; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-origin-default { display:none; }
+svg:has(#paths-failed-history-from-media-failed:target) #paths-scene-failed .path-origin-media-failed { display:inline; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-panel-candidates { display:inline; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-panel-history { display:none; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-origin-default { display:none; }
+svg:has(#paths-failed-candidates-from-media-wg:target) #paths-scene-failed .path-origin-media-wg { display:inline; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed { display:inline; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-panel-candidates { display:none; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-panel-history { display:inline; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-origin-default { display:none; }
+svg:has(#paths-failed-history-from-media-wg:target) #paths-scene-failed .path-origin-media-wg { display:inline; }
 svg:has(#paths-direct-candidates:target) #paths-scene-direct { display:inline; }
 svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-panel-candidates { display:inline; }
 svg:has(#paths-direct-candidates:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
@@ -1605,6 +1994,60 @@ svg:has(#paths-direct-history:target) #paths-scene-direct .path-tab-candidates .
 svg:has(#paths-direct-history:target) #paths-scene-direct .path-panel-history { display:inline; }
 svg:has(#paths-direct-history:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
 svg:has(#paths-direct-history:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-panel-candidates { display:inline; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-panel-history { display:none; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-origin-default { display:none; }
+svg:has(#paths-direct-candidates-from-media-all:target) #paths-scene-direct .path-origin-media-all { display:inline; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-panel-candidates { display:none; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-panel-history { display:inline; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-origin-default { display:none; }
+svg:has(#paths-direct-history-from-media-all:target) #paths-scene-direct .path-origin-media-all { display:inline; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-panel-candidates { display:inline; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-panel-history { display:none; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-origin-default { display:none; }
+svg:has(#paths-direct-candidates-from-media-unknown:target) #paths-scene-direct .path-origin-media-unknown { display:inline; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-panel-candidates { display:none; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-panel-history { display:inline; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-origin-default { display:none; }
+svg:has(#paths-direct-history-from-media-unknown:target) #paths-scene-direct .path-origin-media-unknown { display:inline; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-panel-candidates { display:inline; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-panel-history { display:none; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-origin-default { display:none; }
+svg:has(#paths-direct-candidates-from-media-direct:target) #paths-scene-direct .path-origin-media-direct { display:inline; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct { display:inline; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-panel-candidates { display:none; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-panel-history { display:inline; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-origin-default { display:none; }
+svg:has(#paths-direct-history-from-media-direct:target) #paths-scene-direct .path-origin-media-direct { display:inline; }
 svg:has(#paths-pending-candidates:target) #paths-scene-pending { display:inline; }
 svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-panel-candidates { display:inline; }
 svg:has(#paths-pending-candidates:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
@@ -1619,6 +2062,60 @@ svg:has(#paths-pending-history:target) #paths-scene-pending .path-tab-candidates
 svg:has(#paths-pending-history:target) #paths-scene-pending .path-panel-history { display:inline; }
 svg:has(#paths-pending-history:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
 svg:has(#paths-pending-history:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-panel-candidates { display:inline; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-panel-history { display:none; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-origin-default { display:none; }
+svg:has(#paths-pending-candidates-from-media-all:target) #paths-scene-pending .path-origin-media-all { display:inline; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-panel-candidates { display:none; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-panel-history { display:inline; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-origin-default { display:none; }
+svg:has(#paths-pending-history-from-media-all:target) #paths-scene-pending .path-origin-media-all { display:inline; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-panel-candidates { display:inline; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-panel-history { display:none; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-origin-default { display:none; }
+svg:has(#paths-pending-candidates-from-media-unknown:target) #paths-scene-pending .path-origin-media-unknown { display:inline; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-panel-candidates { display:none; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-panel-history { display:inline; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-origin-default { display:none; }
+svg:has(#paths-pending-history-from-media-unknown:target) #paths-scene-pending .path-origin-media-unknown { display:inline; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-panel-candidates { display:inline; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-panel-history { display:none; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-origin-default { display:none; }
+svg:has(#paths-pending-candidates-from-media-unconfirmed:target) #paths-scene-pending .path-origin-media-unconfirmed { display:inline; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending { display:inline; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-panel-candidates { display:none; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-panel-history { display:inline; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-origin-default { display:none; }
+svg:has(#paths-pending-history-from-media-unconfirmed:target) #paths-scene-pending .path-origin-media-unconfirmed { display:inline; }
 svg:has(#paths-expired-candidates:target) #paths-scene-expired { display:inline; }
 svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-panel-candidates { display:inline; }
 svg:has(#paths-expired-candidates:target) #paths-scene-expired .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
@@ -1674,5 +2171,59 @@ svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-candidates .path-t
 svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:transparent; }
 svg:has(#paths-lan-history:target) #paths-scene-lan .path-panel-history { display:inline; }
 svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
-svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:#248F64; }]]></style>
+svg:has(#paths-lan-history:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-panel-candidates { display:inline; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-panel-history { display:none; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-origin-default { display:none; }
+svg:has(#paths-lan-candidates-from-office-all:target) #paths-scene-lan .path-origin-office-all { display:inline; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-panel-candidates { display:none; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-panel-history { display:inline; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-origin-default { display:none; }
+svg:has(#paths-lan-history-from-office-all:target) #paths-scene-lan .path-origin-office-all { display:inline; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-panel-candidates { display:inline; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-panel-history { display:none; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-origin-default { display:none; }
+svg:has(#paths-lan-candidates-from-office-unknown:target) #paths-scene-lan .path-origin-office-unknown { display:inline; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-panel-candidates { display:none; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-panel-history { display:inline; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-origin-default { display:none; }
+svg:has(#paths-lan-history-from-office-unknown:target) #paths-scene-lan .path-origin-office-unknown { display:inline; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-panel-candidates { display:inline; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-panel-history { display:none; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-origin-default { display:none; }
+svg:has(#paths-lan-candidates-from-office-unconfirmed:target) #paths-scene-lan .path-origin-office-unconfirmed { display:inline; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan { display:inline; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-panel-candidates { display:none; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-tab-candidates .path-tab-label { fill:#79837D; font-weight:400; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-tab-candidates .path-tab-mark { stroke:transparent; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-panel-history { display:inline; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-tab-history .path-tab-label { fill:#248F64; font-weight:600; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-tab-history .path-tab-mark { stroke:#248F64; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-origin-default { display:none; }
+svg:has(#paths-lan-history-from-office-unconfirmed:target) #paths-scene-lan .path-origin-office-unconfirmed { display:inline; }]]></style>
 </svg>

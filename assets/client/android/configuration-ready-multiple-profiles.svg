@@ -17,7 +17,7 @@
 </g>
 <g id="page-heading">
 <text x="22" y="106" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="26" fill="#17211B" font-weight="700">配置</text>
-<text x="22" y="150" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="400">设备已加入 · 配置签名已验证</text>
+<text x="22" y="150" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="400">设备已加入 · 认证配置已保存</text>
 </g>
 <g id="profiles-card">
 <rect x="22" y="171" width="368" height="220" fill="#FFFFFF" rx="20"/>
@@ -36,7 +36,7 @@
 <rect x="22" y="407" width="368" height="107" fill="#FFFFFF" rx="16"/>
 <text x="38" y="445" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="700">连接配置</text>
 <text x="38" y="474" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="17" fill="#17211B" font-weight="700">Loom 演示网络</text>
-<text x="38" y="498" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="400">设备 demo-phone · 第 7 版 · 配置签名已验证</text>
+<text x="38" y="498" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="400">设备 demo-phone · 第 7 版 · 认证配置已保存</text>
 <text x="358" y="474" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#239B68" font-weight="500" text-anchor="end">检查更新</text>
 </g>
 <g id="route-mode-card">

@@ -1,7 +1,9 @@
 # Loom Windows client
 
-This document defines the client contract. Business acceptance and
-release status are tracked in [implementation status](../../docs/progress.md).
+This document defines the target client behavior. Implemented behavior, business
+acceptance, and release status are tracked in [implementation status](../../docs/progress.md).
+Target prototypes follow explicit requirements and the current models; existing
+code and native screenshots document implementation and its gaps, not limits on the design.
 
 `clients/windows` is the Windows HostAdapter for the shared client contract. The
 authoritative model is [Client runtime model](../../docs/clients/client-runtime-model.md);
@@ -30,7 +32,11 @@ Effective control signs an Invite for exact duties and grants
 
 There is no Windows `enroll` command and no join secret on the command line.
 The sidebar `+` action opens the import panel; **加入并保存** is the only normal
-join action. A pending join can be resumed with the same capability, request ID,
+join action. First use has an empty profile list and an **添加连接配置** action;
+it does not create an empty profile automatically. The `join-empty` screenshot
+is an exceptional existing-entry comparison, not the first-use screen or a step
+after the import draft. This differs from Android's nonempty local catalog.
+A pending join can be resumed with the same capability, request ID,
 and identity. A profile is added to the local index only after its protected
 authority has committed. The index contains UI names, ordering, selection, and
 the last requested profile for reconnect only; it is never network authority or
@@ -44,10 +50,14 @@ DPAPI; Portable editions use `%LocalAppData%\LoomPortable` with user DPAPI. The
 protected state contains the Ed25519 identity, stable claim request ID,
 capability, continuous member proof, signer fact frontier, rollback floor,
 irreversible anti-rollback latch, complete certified LKG, and preference.
-Plaintext private keys and partial LKGs are invalid. A new LKG is
-replaced only after signature, identity, floor, canonical runtime, component,
-and HostAdapter preflight checks succeed and the protected staging file reads
-back exactly.
+Plaintext private keys and partial LKGs are invalid. A new LKG replaces the old
+one after signature, identity, member proof, frontier, floor and canonical
+runtime checks succeed and the protected atomic write reads back exactly.
+Component verification and HostAdapter preflight belong to runtime application.
+Their failure retains the newly accepted LKG and floor; an older execution may
+continue only when every relevant input remains authorized by the new View.
+Otherwise the affected business traffic stops while the authenticated repair
+channel remains available. A runtime failure cannot restore revoked permissions.
 
 The UI displays only projections of this authority. `RouteCandidate` becomes a
 `RuntimeCandidate` through `internal/clientmodel`; the mapping is pure and
@@ -58,6 +68,15 @@ UDP/DNS—not by ICMP, process existence, a listener, or a UI color. One failed
 candidate may cause one same-exit fallback. Business observations bind Service,
 candidate, actual target and network generation; a result for one Service does
 not establish another Service's health.
+
+Ordinary Direct has `final_exit=direct` and no managed hops. A device authorized
+to execute as its own final egress keeps its NodeID in `final_exit` even though
+its network hop list is empty. Local egress has no entry hop, so entry-node scopes
+do not apply and it needs no self-dial or inbound resource.
+Where the HostAdapter supports local egress, Auto
+and a fixed preference for that NodeID can select this local candidate; Direct
+selects ordinary Direct only. The UI and profile reconstruction preserve the
+logical exit instead of inferring Direct from an empty hop list.
 
 The UI uses the native Direct2D/DirectWrite Misaka layout, profile
 interactions, favicon, tray behavior, DPI handling, and SCM broker. The EXE has
@@ -158,9 +177,16 @@ edition-specific logo.
 The committed PNGs in `testdata/ui-golden` come from the production
 `portableGUI`, Win32 controls, Direct2D/DirectWrite, and the existing
 `WM_PRINT` memory capture. They are not a second renderer. Linux cross-compiles
-the scenario test executable; the fixed same-host Windows 11 VM renders eight
+the scenario test executable; the current fixed same-host Windows 11 VM baseline contains eight
 synthetic `demo-*` scenes at 96 DPI and `876×614px`, without MSI installation or
 real identity data.
+
+The [target prototypes](../../docs/clients/prototype-review.md#windows原生场景与目标视觉设计)
+can add or revise scenes according to requirements. They include a first-use
+`profiles-empty` scene with no native baseline, distinguish import failure from
+runtime failure, and separate business sample times from selector readback.
+These changes do not update native PNGs; the eight existing baseline scenes do
+not freeze the target scene set or the future product behavior.
 
 From the repository root run:
 

@@ -180,7 +180,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy" data-scene="pending" href="04-live-paths-detail.svg#paths-pending-candidates">
+  <a data-ui="path-device-row" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy" data-scene="pending" href="04-live-paths-detail.svg#paths-pending-candidates-from-media-all">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">relay-west</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -192,7 +192,7 @@
   <text class="ui small muted" x="1540" y="456" text-anchor="end">No matching report</text>
   </a>
   <line data-ui="table-rule" class="rule" x1="362" y1="509" x2="1562" y2="509"/>
-  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy" data-scene="failed" href="04-live-paths-detail.svg#paths-failed-candidates">
+  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy" data-scene="failed" href="04-live-paths-detail.svg#paths-failed-candidates-from-media-all">
   <rect x="363" y="510" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="540" text-anchor="start">workstation</text>
   <text class="ui small green" x="386" y="564" text-anchor="start">Open path details →</text>
@@ -204,7 +204,7 @@
   <text class="ui small muted" x="1540" y="540" text-anchor="end">10s ago</text>
   </a>
   <line data-ui="table-rule" class="rule" x1="362" y1="593" x2="1562" y2="593"/>
-  <a data-ui="path-device-row" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy" data-scene="direct" href="04-live-paths-detail.svg#paths-direct-candidates">
+  <a data-ui="path-device-row" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy" data-scene="direct" href="04-live-paths-detail.svg#paths-direct-candidates-from-media-all">
   <rect x="363" y="594" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="624" text-anchor="start">new-phone</text>
   <text class="ui small green" x="386" y="648" text-anchor="start">Open path details →</text>
@@ -216,7 +216,7 @@
   <text class="ui small muted" x="1540" y="624" text-anchor="end">Selection · 15s ago</text>
   </a>
   <line data-ui="table-rule" class="rule" x1="362" y1="677" x2="1562" y2="677"/>
-  <a data-ui="path-device-row" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy" data-scene="current" href="04-live-paths-detail.svg">
+  <a data-ui="path-device-row" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy" data-scene="current" href="04-live-paths-detail.svg#paths-current-candidates-from-media-all">
   <rect x="363" y="678" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="708" text-anchor="start">android-phone</text>
   <text class="ui small green" x="386" y="732" text-anchor="start">Open path details →</text>
@@ -350,7 +350,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy" data-scene="failed" href="04-live-paths-detail.svg#paths-failed-candidates">
+  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy" data-scene="failed" href="04-live-paths-detail.svg#paths-failed-candidates-from-media-failed">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">workstation</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -484,7 +484,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy" data-scene="pending" href="04-live-paths-detail.svg#paths-pending-candidates">
+  <a data-ui="path-device-row" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy" data-scene="pending" href="04-live-paths-detail.svg#paths-pending-candidates-from-media-unknown">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">relay-west</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -496,7 +496,7 @@
   <text class="ui small muted" x="1540" y="456" text-anchor="end">No matching report</text>
   </a>
   <line data-ui="table-rule" class="rule" x1="362" y1="509" x2="1562" y2="509"/>
-  <a data-ui="path-device-row" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy" data-scene="direct" href="04-live-paths-detail.svg#paths-direct-candidates">
+  <a data-ui="path-device-row" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy" data-scene="direct" href="04-live-paths-detail.svg#paths-direct-candidates-from-media-unknown">
   <rect x="363" y="510" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="540" text-anchor="start">new-phone</text>
   <text class="ui small green" x="386" y="564" text-anchor="start">Open path details →</text>
@@ -630,7 +630,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy" data-scene="failed" href="04-live-paths-detail.svg#paths-failed-candidates">
+  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy" data-scene="failed" href="04-live-paths-detail.svg#paths-failed-candidates-from-media-wg">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">workstation</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -642,7 +642,7 @@
   <text class="ui small muted" x="1540" y="456" text-anchor="end">10s ago</text>
   </a>
   <line data-ui="table-rule" class="rule" x1="362" y1="509" x2="1562" y2="509"/>
-  <a data-ui="path-device-row" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy" data-scene="current" href="04-live-paths-detail.svg">
+  <a data-ui="path-device-row" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy" data-scene="current" href="04-live-paths-detail.svg#paths-current-candidates-from-media-wg">
   <rect x="363" y="510" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="540" text-anchor="start">android-phone</text>
   <text class="ui small green" x="386" y="564" text-anchor="start">Open path details →</text>
@@ -776,7 +776,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy" data-scene="direct" href="04-live-paths-detail.svg#paths-direct-candidates">
+  <a data-ui="path-device-row" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy" data-scene="direct" href="04-live-paths-detail.svg#paths-direct-candidates-from-media-direct">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">new-phone</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -910,7 +910,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy" data-scene="pending" href="04-live-paths-detail.svg#paths-pending-candidates">
+  <a data-ui="path-device-row" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy" data-scene="pending" href="04-live-paths-detail.svg#paths-pending-candidates-from-media-unconfirmed">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">relay-west</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -1036,7 +1036,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy" data-scene="lan" href="04-live-paths-detail.svg#paths-lan-candidates">
+  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy" data-scene="lan" href="04-live-paths-detail.svg#paths-lan-candidates-from-office-all">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">workstation</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -1276,7 +1276,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy" data-scene="lan" href="04-live-paths-detail.svg#paths-lan-candidates">
+  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy" data-scene="lan" href="04-live-paths-detail.svg#paths-lan-candidates-from-office-unknown">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">workstation</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -1402,7 +1402,7 @@
   <text class="ui eyebrow muted" x="805" y="407" text-anchor="start">CURRENT ROUTE</text>
   <text class="ui eyebrow muted" x="1140" y="407" text-anchor="start">TARGET / UPDATED</text>
   <line class="rule" x1="362" y1="425" x2="1562" y2="425"/>
-  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy" data-scene="lan" href="04-live-paths-detail.svg#paths-lan-candidates">
+  <a data-ui="path-device-row" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy" data-scene="lan" href="04-live-paths-detail.svg#paths-lan-candidates-from-office-unconfirmed">
   <rect x="363" y="426" width="1198" height="82" rx="0" fill="transparent" stroke="none"/>
   <text class="ui body mono" x="386" y="456" text-anchor="start">workstation</text>
   <text class="ui small green" x="386" y="480" text-anchor="start">Open path details →</text>
@@ -1610,6 +1610,7 @@ svg .path-tab-candidates .path-tab-mark { stroke:#248F64; }
 svg .path-panel-history { display:none; }
 svg .path-tab-history .path-tab-label { fill:#79837D; font-weight:400; }
 svg .path-tab-history .path-tab-mark { stroke:transparent; }
+.path-origin-navigation { display:none; } .path-origin-default { display:inline; }
 a:focus-visible { outline:2px solid #4D78D1; outline-offset:3px; }
 svg:has(#paths-service-media:target) #paths-scene-media-all { display:inline; }
 svg:has(#paths-service-media-failed:target) #paths-scene-media-failed { display:inline; }

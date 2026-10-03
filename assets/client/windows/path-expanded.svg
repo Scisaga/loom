@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="876" height="614" viewBox="0 0 876 614" role="img" aria-labelledby="scene-title scene-description" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif">
   <title id="scene-title">Loom Windows — path-expanded</title>
-  <desc id="scene-description">Editable Windows design prototype with demo fixtures. Android-aligned panel surfaces, status chips and active colors; 24px content insets, 16px panel insets and 32px desktop controls. Not a native Win32 screenshot or evidence of runtime health.</desc>
+  <desc id="scene-description">Editable Windows design prototype with demo fixtures. Android-aligned panel surfaces, status chips and active colors; 24px content insets, 16px panel insets and 32px desktop controls. Not a native Win32 screenshot or evidence of runtime health. Business outcome and selector readback are separate fixed demo observations. Illustrative current time is 2030-01-01T10:00:30Z, within the business observation's validity ending at 2030-01-01T10:05:00Z.</desc>
   <defs>
     <path id="loom-outline" d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z" />
     <path id="petal-opening" d="M628 1040C520 945 535 790 628 660C721 790 736 945 628 1040Z" />
@@ -161,10 +161,10 @@
           </g>
           <text x="796.0" y="440" font-size="11" fill="#627169" font-weight="400" text-anchor="middle" dominant-baseline="central">目标地址</text>
           <line x1="200" y1="456" x2="852" y2="456" stroke="#E1E8E3" stroke-width="0.75" data-ui="panel-divider" />
-          <text x="216" y="480" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">当前证据：真实业务成功；已测候选：当前 selector 候选</text>
-          <text x="216" y="504" font-size="12" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">选路说明</text>
-          <text x="216" y="528" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">selector 回读为当前候选</text>
-          <text x="216" y="552" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">读取时间：2026-01-02 03:04:05 UTC</text>
+          <text x="216" y="480" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">业务目标：https://web.example/ · HTTPS 成功</text>
+          <text x="216" y="504" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">观测范围：demo-web · 当前候选 · 当前网络</text>
+          <text x="216" y="528" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">业务采样：2030-01-01 10:00:00 UTC · 有效至 10:05:00 UTC</text>
+          <text x="216" y="552" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">selector 回读：当前候选 · 回读时间：2030-01-01 10:00:20 UTC</text>
         </g>
         <line x1="200" y1="576" x2="852" y2="576" stroke="#E1E8E3" stroke-width="0.75" data-ui="panel-divider" />
         <g data-ui="route-row" data-service="demo-api">

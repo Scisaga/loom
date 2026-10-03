@@ -32,9 +32,14 @@ amd64 必须完成原生 service 和业务验收，arm64 只做交叉构建、EL
 以下是隔离完成后的**目标流程**。当前 access/hybrid 安装在专用 namespace 生命周期及回读验收完成前
 失败关闭；安全暂停期间不按这些步骤启用正式 service。实际进度见[实施状态](../progress.md)。
 
-有效 control 在私有控制面签发 Linux Invite，签发即批准；设备在本机生成私钥，经签发者处理首次 claim。
+有效 control 在私有控制面按职责签发 Invite，签发即批准；平台由目标识别并在首次 claim 绑定，
+不预先把邀请写成 Linux 专用。纯 access 使用二维码媒介，其同一邀请文件也可交给 CLI 导入；
+组合职责使用 SSH 或 sh。设备在本机生成私钥，经签发者处理首次 claim。
 其 `DeviceView` 必须包含成员表证明、事实前沿、按稳定 ID 排序的授权候选和一份规范
-`sing_box` RuntimeProfile；Invite 只用于受限 bootstrap tunnel，不进入 shell history、公开站点或日志。
+`sing_box` RuntimeProfile；Invite 只用于受限 bootstrap tunnel，不进入公开站点、进程参数、环境变量或日志。
+以下文件导入方式不把 Invite 正文写入命令。Web 的一次粘贴脚本由节点管理员在目标机器的 root shell 中执行，按
+[Enrollment 交付契约](../core/enrollment-endpoint-model.md)先核验安装器摘要，再经标准输入传入 Invite；
+操作者已明确接受该完整命令可能被终端历史保存的风险，页面须在复制入口说明。
 
 ```bash
 tar -xzf loom-client-linux-amd64.tar.gz
@@ -49,54 +54,47 @@ installer 依次完成：
 3. 用精确 release 中的 sing-box 对 LKG RuntimeProfile 做 preflight；
 4. 对 access/hybrid 验证进程位于专用 network namespace；隔离缺失时在切换 `current` 或启用 unit 前失败；
 5. 隔离成立后切换 `/usr/local/lib/loom-client/current`，启动唯一正式 unit `loom-client.service`；
-6. 等待 selector 和宿主网络不变量实际回读。失败时只允许恢复已证明安全、同样隔离的先前 release/unit；
-   若旧 release 会在初始 netns 启动 access TUN，保持 service disabled/failed，不得为了“回滚成功”重施危险状态；
-7. 成功后停用旧 `loom-client-v2*` units；没有迁移 overlay 时，移除旧 unit 文件，把旧身份/store 和
-   配置移入 owner-only retired 目录并读回。有 overlay 时，旧 unit 保持停用，旧 unit 文件和源配置
-   暂留至 finalize 收尾，但唯一正式 service 不得读取它们或把它们当 fallback。
+6. 等待 selector 和宿主网络不变量实际回读。失败时只允许恢复已证明安全、同样隔离，且能执行当前
+   已接受授权的先前 release/unit；认证 LKG、floor 与撤权不能随运行失败回退。无法证明旧运行部分
+   仍获授权时停流，只保留认证修复通道。旧 release 会在初始 netns 启动 access TUN 时保持
+   service disabled/failed，不得为了“回滚成功”重施危险状态；
+7. 经批准的前向切换及新路径回读通过后，在同一工作项停用并移除旧 `loom-client-v2*` units，
+   将已替代且经所有权核对的旧配置/store 原始字节归档到 owner-only retired 目录。
+   现行身份、私钥、floor 和 latch 不属于清理对象；唯一正式 service 不读取旧配置或迁移 overlay。
 
 claim 尚未由签发者接受时，installer 不启用 service。使用同一 Invite 重跑会 resume 同一事务，不生成第二身份。
 `--no-enroll` 只安装已验证 release，不创建身份也不启动 service。已 Enrollment
 的机器升级时使用 `sudo ./install.sh --upgrade`；它复用现有 owner-only 身份与完整
 LKG，候选 preflight 或启动回读失败时按上述安全条件恢复；未证明旧 unit 安全时保留失活状态。
 
-既有承担 `forward`/`internet_egress` 的节点首次接管前，先在旧数据面仍受保护时暂存一次受限迁移 overlay。
-以下 `--server-migration-source` 是现有一次性命令参数名，不定义 `server` 职责：
+## 旧迁移 overlay 与现行切换的边界
 
-通过新 release 的 installer 在停止旧 unit 前执行提取：
+现有 `--server-migration-source`、`stage-server-migration` 和 `finalize-server-migration` 属于旧实现。
+它们曾从旧公网 listener 提取用户、`auth_user` ACL 及相关出站，保存到
+`/var/lib/loom-device/migration-overlay.json`，参与运行时合并并报告 `exact=false`。
+这里仅记录待退出的路径，不把它作为 schema 3 的安装步骤或授权来源；`exact=false` 也不授权
+继续把旧用户/ACL 加入现行运行投影。现有 finalize 只核对源摘要并删除 overlay，不完成身份、
+授权、floor 的前向迁移，也不删除旧 unit 或源配置。
 
-```bash
-sudo ./install.sh --upgrade \
-  --server-migration-source /etc/loom/sing-box/v2/config.json
-```
+目标切换必须遵守[唯一现行契约](../core/current-contract.md#现网字节与生产切换)，按以下顺序收口：
 
-该命令只接受 owner-only 旧配置，只提取旧公网 listener 的用户、属于该 listener 的 `auth_user` ACL、
-ACL 直接引用的 `direct` 出站及映射到新运行时 fail-closed 出站的 `block` 规则；同进程中其他认证入口的
-用户和规则不会迁入。输出固定为 `/var/lib/loom-device/migration-overlay.json`（`0600`），并打印不含秘密的源摘要。
-存在 overlay 时签名 runtime readback 必须为 `exact=false`。所有 access 已使用新凭据且真实业务、报告和重启
-恢复均通过后，操作者用 stage 时的精确摘要删除它，再重启唯一 service：
+1. 在受保护证据中核对旧身份、密钥引用、实际授权范围、原始材料、floor/latch 及部署坐标；
+   由操作者批准并验证它们到当前认证对象的前向对应。无法证明权限及不可回退约束保全时停止切换。
+2. 新运行时只消费通过当前契约验证的完整 DeviceView。检测到旧 overlay 或需要依赖旧 ACL 的
+   切换计划时，在激活 schema 3 前拒绝；保留原文件及受保护的最后可验证运行状态，不自动删除、
+   重签旧用户或把 overlay 改名成另一份 store。本规则不允许恢复被隔离的宿主 access runtime。
+3. 前向切换获准后，沿正式入口完成安装、认证授权、listener/ACL/链路与真实业务回读，重启后仍只
+   使用现行配置。确认不再依赖旧入口后，按批准清单及精确源路径/摘要将旧配置、overlay 和已替代
+   store 原始字节归档；清理不移走仍被当前身份引用的密钥文件，也不重置 floor/latch。
+4. 仅移除经所有权核实的旧 `loom-client-v2.service`、`loom-client-v2-agent.service`、
+   `loom-client-v2-sing-box.service` 和 `loom-client-v2-report.service` unit 文件，刷新并回读
+   systemd：四个旧 unit 不再运行、启用或可加载，旧源路径和 overlay 不再是正常入口。
+   唯一正式 unit 不引用这些路径；再次重启并回读纯认证运行配置、真实业务和签名报告。
 
-```bash
-sudo loom client finalize-server-migration -source-sha256 <stage 输出的摘要>
-sudo systemctl restart loom-client.service
-```
-
-`finalize-server-migration` 目前只核对 overlay 中的源摘要并删除 overlay；它不会删除旧 unit 文件，
-也不会移走 `/etc/loom/sing-box/v2/config.json`。因此这两条命令本身不构成迁移完成。
-重启后须先从唯一正式 service 回读纯认证转发/出网运行时的 listener、WG、selector、配置摘要及真实业务，
-确认报告不再引用 overlay 且 `exact=true`；失败则保持未完成，不恢复旧 unit 或读取旧 SSOT。
-随后按 stage 时的**同一源路径和摘要**核对旧源文件，再将原始配置连同旧身份/store 移入 owner-only
-retired 目录作为受保护历史材料；只删除列明的旧 `loom-client-v2.service`、
-`loom-client-v2-agent.service`、`loom-client-v2-sing-box.service` 和 `loom-client-v2-report.service`
-的旧 unit 文件，执行 `daemon-reload`。清理后须从 systemd 回读这四个旧 unit 均不再运行、启用或
-可加载，旧源路径和 overlay 均不存在，唯一正式 unit 不引用旧路径；再重启一次正式 service 并重复
-`exact=true`、真实业务和签名 report 回读。源摘要不符、retired 写入失败或旧入口仍可加载时，
-保留原始字节并报告收尾未完成，不以 `exact=true` 单项结果宣称迁移完成。
-
-上述旧文件与 unit 收尾是目标流程；当前 finalize 命令只删除 overlay，尚未实现这部分收尾，
-须在相同工作项补齐并按正式入口验收。
-清理只能处理这些明确列明且经所有权核实的对象，不 flush 共享 route/rule/firewall，也不得移除
-事故宿主的 `00-host-network-quarantine.conf` 或重新启用初始 namespace access TUN。
+这是尚待实现并验收的目标顺序，不是批准生产切换的记录。归档失败、摘要不符、旧入口仍可加载
+或新路径尚不能承担原业务时，保留证据并报告具体阻碍，不以 `exact=true` 单项结果宣称完成。
+清理不 flush 共享 route/rule/firewall，不移除事故宿主的 `00-host-network-quarantine.conf`，
+也不重新启用初始 namespace access TUN。
 
 ## 正式运行与回读
 
@@ -136,3 +134,6 @@ sudo loom client inspect
 
 service 重启会从同一身份、floor、v2 latch 和完整 LKG 恢复；底层网络代未变且 Observation 仍有效时不重复
 采样。网络代变化使旧 Observation 回到 unknown，但不阻塞合法候选启动。
+
+已认证的新 View 先按同一原子保存规则接受，再应用运行配置；应用失败不恢复旧授权。
+旧运行部分必须能证明仍符合当前已接受的 View，否则停止相关流量并保留修复配置的认证入口。

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-labelledby="title description" data-scene-id="diagnostics-connected">
-  <title id="title">Loom Android · diagnostics-connected</title>
-  <desc id="description">active=primary；固定合成时刻 2030-01-02 03:04:30 UTC。demo-web 对 web.example 的当前候选业务结果有效，demo-api 对 api.example 无当前网络有效观测；可信上报与 VPN 运行分别表达。此目标原型不证明原生界面或真实网络状态。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-labelledby="title description" data-scene-id="connection-business-failed">
+  <title id="title">Loom Android · connection-business-failed</title>
+  <desc id="description">目标状态稿；固定合成时刻 2030-01-01 10:45:20 UTC。viewed=requested=active=primary；认证配置已保存，VPN 与 selector 回读成功。demo-web 当前候选 demo-web-relay（本机经 demo-cn 至 demo-exit）已完成必要的同出口 fallback，所示 HTTPS 目标仍超时，观测从 10:45:12 至 10:46:12 UTC 有效；demo-media 当前候选 demo-media-direct-exit 的指定目标没有当前网络代观测，保持 unknown。路径来自各 Service 的 selector 回读，目标结果不代表逐跳健康、整个 Service 或其他 Service 的健康，单个目标失败不清除 active。</desc>
   <defs>
     <symbol id="loom-mark" viewBox="127 112 1000 1000">
       <g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)">
@@ -16,43 +16,51 @@
 <text x="63" y="47" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="9" fill="#647269" font-weight="400" letter-spacing="1">ANDROID · 已连接 · demo-phone · 第 7 版</text>
 </g>
 <g id="page-heading">
-<text x="22" y="106" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="26" fill="#17211B" font-weight="700">诊断</text>
-<text x="22" y="150" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="400">网络证据、可信上报与本机组件</text>
+<text x="22" y="106" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="26" fill="#17211B" font-weight="700">连接</text>
+<text x="22" y="150" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="400">连接状态与当前生效路径</text>
 </g>
-<g id="network-evidence-card">
-<rect x="22" y="171" width="368" height="568" fill="#FFFFFF" rx="20"/>
-<text x="38" y="205" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="17" fill="#17211B" font-weight="700">网络诊断</text>
-<text x="38" y="238" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269">配置：Loom 演示网络</text>
-<text x="38" y="263" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269">设备：demo-phone · VPN 已连接</text>
-<text x="38" y="290" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#17211B">可信上报：已签名上报</text>
-<line x1="38" y1="309" x2="374" y2="309" stroke="#E3E8E5" stroke-width="1"/>
-<text x="38" y="339" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="15" fill="#17211B" font-weight="700">demo-web</text>
-<rect x="313" y="318" width="61" height="28" fill="#EAF6F0" rx="14"/>
-<text x="343.5" y="337" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#239B68" text-anchor="middle">可用</text>
-<text x="38" y="364" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#17211B">目标 https://web.example/ · 当前所选路径</text>
-<text x="38" y="389" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#17211B">认证 DNS 查询成功 · HTTPS 业务成功</text>
-<text x="38" y="412" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269">采样 2030-01-02 03:04:05 UTC</text>
-<text x="38" y="432" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269">有效至 03:05:05 UTC · 当前底层网络</text>
-<line x1="38" y1="449" x2="374" y2="449" stroke="#E3E8E5" stroke-width="1"/>
-<text x="38" y="479" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="15" fill="#17211B" font-weight="700">demo-api</text>
-<rect x="313" y="458" width="61" height="28" fill="#F0F3F1" rx="14"/>
-<text x="343.5" y="477" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" text-anchor="middle">未知</text>
-<text x="38" y="504" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#17211B">目标 https://api.example/ · 当前所选路径</text>
-<text x="38" y="529" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269">尚无当前网络的有效业务观测</text>
-<text x="38" y="551" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269">暂无采样时间与有效期</text>
-<line x1="38" y1="570" x2="374" y2="570" stroke="#E3E8E5" stroke-width="1"/>
-<text x="38" y="600" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="700">状态说明</text>
-<text x="38" y="626" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269">VPN 已连接、上报成功都不代表所有服务可用。</text>
-<line x1="38" y1="646" x2="374" y2="646" stroke="#E3E8E5" stroke-width="1"/>
-<text x="38" y="675" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="700">本机组件</text>
-<text x="38" y="701" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#17211B">libbox demo-1.11.4 · core demo-v2</text>
-<text x="38" y="725" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269">Loom 0.5.0</text>
+<g id="connection-card">
+<rect x="22" y="171" width="368" height="242" fill="#F7FBF8" rx="20"/>
+<circle cx="45" cy="203" r="5.5" fill="#239B68"/>
+<text x="60" y="212" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="20" fill="#17211B" font-weight="700">已连接</text>
+<text x="40" y="244" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="400">当前连接 · Loom 演示网络</text>
+<text x="52" y="289" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#239B68" font-weight="400">选择配置</text>
+<text x="40" y="335" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="400">认证配置已保存 · VPN 已运行</text>
+<g>
+<rect x="40" y="345" width="332" height="50" fill="#239B68" rx="14"/>
+<text x="206.0" y="375.0" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="14" fill="#FFFFFF" font-weight="500" text-anchor="middle">断开</text>
+</g>
+</g>
+<g id="current-path-card">
+<rect x="22" y="429" width="368" height="384" fill="#FFFFFF" rx="16"/>
+<text x="38" y="474" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="17" fill="#17211B" font-weight="700">当前路径</text>
+<rect x="309" y="445" width="65" height="34" fill="#EAF6F0" rx="18"/>
+<text x="341.5" y="467" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#239B68" font-weight="700" text-anchor="middle">当前连接</text>
+<text x="38" y="512" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="400">Loom 演示网络 · 各服务当前选择已回读</text>
+<line x1="22" y1="523" x2="390" y2="523" stroke="#E3E8E5" stroke-width="1"/>
+<text x="38" y="552" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="15" fill="#17211B" font-weight="700">demo-web</text>
+<rect x="286" y="534" width="88" height="26" fill="#FBEDED" rx="13"/>
+<text x="330" y="552" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#B33A3A" font-weight="500" text-anchor="middle">目标不可用</text>
+<text x="38" y="576" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#17211B" font-weight="500">本机 → demo-cn → demo-exit</text>
+<text x="38" y="598" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269" font-weight="400">目标 https://web.example/check</text>
+<text x="38" y="620" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#B33A3A" font-weight="400">HTTPS 超时 · 采样 10:45:12 UTC</text>
+<text x="38" y="640" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269" font-weight="400">当前候选 · 有效至 10:46:12 UTC</text>
+<line x1="22" y1="653" x2="390" y2="653" stroke="#E3E8E5" stroke-width="1"/>
+<text x="38" y="682" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="15" fill="#17211B" font-weight="700">demo-media</text>
+<rect x="321" y="664" width="53" height="26" fill="#F0F2F1" rx="13"/>
+<text x="347.5" y="682" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269" font-weight="500" text-anchor="middle">未知</text>
+<text x="38" y="706" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#17211B" font-weight="500">本机 → demo-exit</text>
+<text x="38" y="728" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269" font-weight="400">目标 https://media.example/check</text>
+<text x="38" y="750" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269" font-weight="400">尚无当前网络代观测</text>
+<line x1="22" y1="767" x2="390" y2="767" stroke="#E3E8E5" stroke-width="1"/>
+<text x="38" y="794" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="11" fill="#647269" font-weight="400">单个目标失败不代表 VPN 或其他服务断开</text>
 </g>
 <g id="bottom-navigation">
 <rect x="0" y="835" width="412" height="80" fill="#FFFFFF"/>
-<circle cx="65" cy="862" r="7.2" fill="none" stroke="#647269" stroke-width="1.8"/>
-<path d="M65 853 V862" fill="none" stroke="#647269" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="65" y="899" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="500" text-anchor="middle">连接</text>
+<rect x="34" y="847" width="62" height="30" fill="#EAF6F0" rx="16"/>
+<circle cx="65" cy="862" r="7.2" fill="none" stroke="#239B68" stroke-width="1.8"/>
+<path d="M65 853 V862" fill="none" stroke="#239B68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="65" y="899" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#239B68" font-weight="500" text-anchor="middle">连接</text>
 <path d="M198 856 H214" fill="none" stroke="#647269" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 <circle cx="202" cy="856" r="2" fill="#647269"/>
 <path d="M198 862 H214" fill="none" stroke="#647269" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -60,8 +68,7 @@
 <path d="M198 868 H214" fill="none" stroke="#647269" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 <circle cx="203" cy="868" r="2" fill="#647269"/>
 <text x="206" y="899" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="500" text-anchor="middle">配置</text>
-<rect x="316" y="847" width="62" height="30" fill="#EAF6F0" rx="16"/>
-<path d="M337 862 H342 L345 855 L349 870 L352 862 H357" fill="none" stroke="#239B68" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="347" y="899" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#239B68" font-weight="500" text-anchor="middle">诊断</text>
+<path d="M337 862 H342 L345 855 L349 870 L352 862 H357" fill="none" stroke="#647269" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="347" y="899" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="500" text-anchor="middle">诊断</text>
 </g>
 </svg>

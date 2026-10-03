@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-labelledby="title description" data-scene-id="configuration-join-error">
   <title id="title">Loom Android · configuration-join-error</title>
-  <desc id="description">viewed=primary；同一加入事务已保留，尚无认证配置和 active VPN。</desc>
+  <desc id="description">viewed=primary；同一加入事务已保留，尚无认证配置和 active VPN。重试继续原事务；放弃只清理本机待加入资料，不撤销控制面设备。</desc>
   <defs>
     <symbol id="loom-mark" viewBox="127 112 1000 1000">
       <g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)">
@@ -40,7 +40,7 @@
 </g>
 <g>
 <rect x="210" y="495" width="164" height="40" fill="none" rx="25" stroke="#79747E" stroke-width="1.1"/>
-<text x="292.0" y="520.0" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="14" fill="#239B68" font-weight="500" text-anchor="middle">放弃事务</text>
+<text x="292.0" y="520.0" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="14" fill="#239B68" font-weight="500" text-anchor="middle">放弃本机加入</text>
 </g>
 </g>
 <g id="route-mode-card">
@@ -54,7 +54,8 @@
 <text x="321.0" y="649" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="14" fill="#9BA19D" font-weight="500" text-anchor="middle">指定出口</text>
 <text x="38" y="694" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="400">等待认证 DeviceView</text>
 </g>
-<text x="22" y="774" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="400">配置身份、签名运行配置与连接模式均保存在本机受保护存储中。</text>
+<text x="22" y="774" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269" font-weight="400">放弃只清理本机待加入资料，不撤销控制面设备。</text>
+<text x="22" y="800" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#647269">本机设备密钥保留；远端状态以管理端回读为准。</text>
 <g id="bottom-navigation">
 <rect x="0" y="835" width="412" height="80" fill="#FFFFFF"/>
 <circle cx="65" cy="862" r="7.2" fill="none" stroke="#647269" stroke-width="1.8"/>

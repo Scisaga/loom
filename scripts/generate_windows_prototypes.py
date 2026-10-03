@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the eight Windows design SVGs; never used by the native UI review.
+"""Render Windows design SVGs; never used by the native UI review.
 
 See docs/clients/prototype-review.md. Fixtures are illustrative, not live status.
 Rendering is deterministic: the canonical logo and the scene name are the only
@@ -47,7 +47,7 @@ GREEN_BG = "#EAF6F0"
 RED = "#B75C57"
 SCENES = (
     "connected", "fixed-tun", "path-expanded", "profile-rename",
-    "join-draft", "join-empty", "join-error", "viewport-bottom",
+    "profiles-empty", "join-draft", "join-empty", "join-error", "viewport-bottom",
 )
 
 
@@ -144,7 +144,7 @@ def frame(root, defs, scene):
     line(group, 0, 36, WIDTH, 36)
     line(group, 176, 36, 176, HEIGHT)
     element(group, "use", href="#loom-title-mark", x=14, y=9, width=18, height=18)
-    title = "Loom" if scene in ("join-empty", "join-error") else "Loom (Portable TUN) 已连接 · 演示网络甲"
+    title = "Loom" if scene in ("profiles-empty", "join-empty", "join-error") else "Loom (Portable TUN) 已连接 · 演示网络甲"
     text(group, 40, 18, title, 11, "#626E66")
     line(group, 790, 18, 802, 18, MUTED, 1)
     path(group, "M839 13l10 10m0-10l-10 10", MUTED)
@@ -162,6 +162,8 @@ def sidebar(parent, scene):
     plus = element(parent, "g", data_ui="icon-button")
     rect(plus, 132, 104, 32, 32, "#F7F9F7", radius=4)
     path(plus, "M142 120h12m-6-6v12", GREEN)
+    if scene == "profiles-empty":
+        return
     selected = 1 if scene in ("join-empty", "join-error") else 0
     for index in range(2):
         top = 144 + index * (PROFILE_ROW_HEIGHT + PROFILE_ROW_GAP)
@@ -170,7 +172,7 @@ def sidebar(parent, scene):
             rect(group, 12, top, 152, PROFILE_ROW_HEIGHT, GREEN_BG, radius=CONTROL_RADIUS)
             rect(group, 12, top + 20, 2, 24, GREEN, radius=1)
         title = "演示网络甲" if index == 0 else "演示空配置" if selected == 1 else "演示网络乙"
-        status = "已连接" if index == 0 else "连接错误" if scene == "join-error" else "未加入" if selected == 1 else "未连接"
+        status = "已连接" if index == 0 else "导入失败" if scene == "join-error" else "未加入" if selected == 1 else "未连接"
         color = GREEN_TEXT if index == 0 else RED if scene == "join-error" else MUTED
         circle(group, 28, top + 20, 3, color)
         if scene == "profile-rename" and index == 0:
@@ -280,10 +282,10 @@ def route_row(parent, top, service, healthy=True, expanded=False):
         # All evidence is a fixed demo fixture, never inferred from route preference.
         # Evidence stays in its Service, separated without another card.
         panel_divider(group, top + 112)
-        text(group, INNER_LEFT, top + 136, "当前证据：真实业务成功；已测候选：当前 selector 候选", 11, MUTED)
-        text(group, INNER_LEFT, top + 160, "选路说明", 12, weight=500)
-        text(group, INNER_LEFT, top + 184, "selector 回读为当前候选", 11, MUTED)
-        text(group, INNER_LEFT, top + 208, "读取时间：2026-01-02 03:04:05 UTC", 11, MUTED)
+        text(group, INNER_LEFT, top + 136, "业务目标：https://web.example/ · HTTPS 成功", 11, MUTED)
+        text(group, INNER_LEFT, top + 160, "观测范围：demo-web · 当前候选 · 当前网络", 11, MUTED)
+        text(group, INNER_LEFT, top + 184, "业务采样：2030-01-01 10:00:00 UTC · 有效至 10:05:00 UTC", 11, MUTED)
+        text(group, INNER_LEFT, top + 208, "selector 回读：当前候选 · 回读时间：2030-01-01 10:00:20 UTC", 11, MUTED)
     return DETAIL_HEIGHT if expanded else ROUTE_HEIGHT
 
 
@@ -353,6 +355,15 @@ def viewport_bottom(parent, defs):
     scrollbar(parent, content_bottom, at_bottom=True)
 
 
+def profiles_empty(parent):
+    heading(parent, "连接配置")
+    group = panel(parent, 104, 160, "profiles-empty")
+    status_icon(group, 232, 136, "empty")
+    text(group, 264, 136, "尚无连接配置", 20, weight=500)
+    text(group, 264, 176, "完成加入并保存后，配置才会出现在列表中。", 12)
+    button(group, 264, 208, 152, "添加连接配置", "primary")
+
+
 def join_draft(parent):
     heading(parent, "添加连接配置")
     group = panel(parent, 104, 336, "join-draft")
@@ -398,16 +409,36 @@ def render(scene, canonical):
         "font-family": "'Segoe UI', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif",
     })
     element(root, "title", id="scene-title").text = f"Loom Windows — {scene}"
-    element(root, "desc", id="scene-description").text = (
+    description = (
         "Editable Windows design prototype with demo fixtures. "
         "Android-aligned panel surfaces, status chips and active colors; "
         "24px content insets, 16px panel insets and 32px desktop controls. "
         "Not a native Win32 screenshot or evidence of runtime health."
     )
+    if scene == "profiles-empty":
+        description += (
+            " First-use state: the profile list is empty; the plus and Add connection profile "
+            "actions open the existing join-draft form. No identity or active connection exists."
+        )
+    elif scene == "join-empty":
+        description += (
+            " Exceptional comparison state: an existing profile entry lacks joined identity "
+            "or a complete certified LKG. This is neither first use nor the next step of "
+            "normal profile creation. The other profile's active connection continues."
+        )
+    elif scene == "path-expanded":
+        description += (
+            " Business outcome and selector readback are separate fixed demo observations. "
+            "Illustrative current time is 2030-01-01T10:00:30Z, within the business "
+            "observation's validity ending at 2030-01-01T10:05:00Z."
+        )
+    element(root, "desc", id="scene-description").text = description
     defs = element(root, "defs")
     logo_definitions(defs, canonical)
     window = frame(root, defs, scene)
-    if scene == "join-draft":
+    if scene == "profiles-empty":
+        profiles_empty(window)
+    elif scene == "join-draft":
         join_draft(window)
     elif scene in ("join-empty", "join-error"):
         join_unavailable(window, scene == "join-error")

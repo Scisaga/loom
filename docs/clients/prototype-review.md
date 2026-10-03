@@ -1,53 +1,56 @@
-# 界面原型与验收图对照
+# 目标原型与实现对照
 
 [设计入口](../README.md) · [客户端视觉审查](client-ui-visual-review.md) · [Web 投影](web-ui-projection.md)
 
-本目录中的 SVG 是可编辑的界面沟通稿。Android 与 Windows 的已实现内容以生产 UI 生成的原生截图为对照；
-Windows 的圆角外框、间距、线宽和控件布局表达目标设计，不再要求与原生截图的位置和像素一致。
-外框须另由 DWM 合成截图回读，内容变更须落到生产 UI 后重新审查。Web SVG 是现行模型的目标投影，
-现有浏览器截图仅记录实现差距。原型不读取 wire 或持久状态，也不参与客户端或 control 的运行判断：
+Web、Android、Windows 的目标原型均依据用户明确要求与现行模型制定。已有实现和原生截图用于核对
+有效交互、视觉延续和实现差距，不限定目标流程、业务状态、文案或场景数量。原型与模型不一致时，
+应在设计审查中明确修订；实现完成由正式业务入口和运行回读验证，原生截图负责视觉验证。
+SVG 是可编辑的界面沟通稿，不读取 wire 或持久状态，也不参与客户端或 control 的运行判断：
 
 ```text
-已认证领域值 + 有效运行观测 → 运行时/UI 单向投影 → 原生界面/截图 → 客户端原型
-现行 Web 模型 + 固定合成数据                     → Web 目标原型
+用户明确要求 + 现行模型 → 三端目标原型 → 正式实现 → 业务回读 / 原生视觉验收
+已有实现 + 原生截图 + 历史验收 → 有效能力与差距对照
 ```
 
 domain、wire、persistent 的可逆性仍由各自核心模型规定；SVG 只是有损展示，不存在从 SVG 反推授权、
-观测或部署完成的操作。生成器内部使用 `demo-*` 合成身份；按本轮明确的界面要求，Web 画面使用
+观测或部署完成的操作。已有有效交互和视觉尽量保留；场景增删或纠错按需求说明覆盖变化，允许目标稿
+暂无原生截图。原生 PNG 仍由生产 UI 渲染，不随 SVG 改稿更新。历史检查记录见
+[实施状态](../progress.md#文档与原型审查记录)。
+生成器内部使用 `demo-*` 合成身份；按已确认的界面要求，Web 画面使用
 `control-a`、`relay-west`、`media` 等显示别名，去掉 `Prototype`、`sample data` 和 `demo-*` 水印或占位名称。
 这些别名仍然不是现网身份；地址与域名继续使用 RFC 5737 和 `example`。
 
 ## Windows：原生场景与目标视觉设计
 
 基准目录为 [`clients/windows/testdata/ui-golden/`](../../clients/windows/testdata/ui-golden/)，截图由生产
-`portableGUI` 在 Windows 11 VM 上以 96 DPI、`876×614 DIP` 渲染。下表每行的 PNG 和 SVG 使用同一场景 ID；
-PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。SVG 保留同一场景的业务事实与有效操作，
-通过 [`scripts/generate_windows_prototypes.py`](../../scripts/generate_windows_prototypes.py) 生成目标视觉稿；
+`portableGUI` 在 Windows 11 VM 上以 96 DPI、`876×614 DIP` 渲染。当前有八张原生基准和九张目标 SVG；
+存在对应 PNG 时用场景 ID 关联，首次空态只有目标稿。PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。
+SVG 依据目标行为，通过 [`scripts/generate_windows_prototypes.py`](../../scripts/generate_windows_prototypes.py) 生成；
 它只读取固定合成内容和公开图形资源，不读取本机配置、身份、网络或时钟，不接入原生截图流程。
-本次只调整原型布局和样式，不修改原生 Windows 代码或 PNG 基准，不代表生产 UI 已完成这些调整。
+原生实现与目标布局的视觉差距须另行回读；下表列明行为及证据差异，截图存在不证明业务链已完成。
 
-此前记录的标题栏图标修复通过调整 `favicon.svg` 取景和资源栅格化消除了下缘裁切；当时由原生渲染器
-重新录制八张 PNG，每张与旧基准仅在标题栏图标区域有 338 个像素变化，侧栏图标没有变化。
-
-| 场景 | 原生 PNG | 可编辑 SVG | 应核对的状态和文案 |
-|---|---|---|---|
-| `connected` | [截图](../../clients/windows/testdata/ui-golden/connected.png) | [原型](../../assets/client/windows/connected.svg) | 已连接、自动模式、按 Service 分开的当前路径及真实/未知观测 |
-| `path-expanded` | [截图](../../clients/windows/testdata/ui-golden/path-expanded.png) | [原型](../../assets/client/windows/path-expanded.svg) | 展开详情、当前选择回读和测量范围 |
-| `profile-rename` | [截图](../../clients/windows/testdata/ui-golden/profile-rename.png) | [原型](../../assets/client/windows/profile-rename.svg) | 侧栏配置重命名及输入焦点 |
-| `join-draft` | [截图](../../clients/windows/testdata/ui-golden/join-draft.png) | [原型](../../assets/client/windows/join-draft.svg) | 正常新增表单；尚未进入正式配置列表，保留邀请文件/二维码入口 |
-| `join-empty` | [截图](../../clients/windows/testdata/ui-golden/join-empty.png) | [原型](../../assets/client/windows/join-empty.svg) | 已有条目未加入的特殊状态；原连接仍运行，不是新增流程的下一步 |
-| `join-error` | [截图](../../clients/windows/testdata/ui-golden/join-error.png) | [原型](../../assets/client/windows/join-error.svg) | 加入失败及可回读的错误提示 |
-| `viewport-bottom` | [截图](../../clients/windows/testdata/ui-golden/viewport-bottom.png) | [原型](../../assets/client/windows/viewport-bottom.svg) | 固定视口底部、滚动和控件位置 |
-| `fixed-tun` | [截图](../../clients/windows/testdata/ui-golden/fixed-tun.png) | [原型](../../assets/client/windows/fixed-tun.svg) | 指定最终出口、TUN 形态与当前选择 |
+| 场景 | 类别 | 原生 PNG | 可编辑 SVG | 目标行为与当前差距 |
+|---|---|---|---|---|
+| `profiles-empty` | 正常流程 | 暂无 | [原型](../../assets/client/windows/profiles-empty.svg) | 首次列表为空，只有添加入口；无设备身份、当前连接和删除操作；尚无对应原生基准 |
+| `connected` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/connected.png) | [原型](../../assets/client/windows/connected.svg) | 已连接、自动模式、按 Service 区分实际结果；目标布局待原生回读 |
+| `path-expanded` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/path-expanded.png) | [原型](../../assets/client/windows/path-expanded.svg) | 目标 URL、Service/候选范围、业务采样/有效期及 selector 回读时间分别表达；旧 PNG 未体现新增说明 |
+| `profile-rename` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/profile-rename.png) | [原型](../../assets/client/windows/profile-rename.svg) | 重命名保留输入及焦点；目标布局待原生回读 |
+| `join-draft` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/join-draft.png) | [原型](../../assets/client/windows/join-draft.svg) | 导入邀请并加入保存后才进列表；另一连接运行是示例上下文，不是新增前提 |
+| `join-empty` | 历史实现对照（异常条目） | [截图](../../clients/windows/testdata/ui-golden/join-empty.png) | [原型](../../assets/client/windows/join-empty.svg) | 已有条目缺加入身份或完整配置；原连接继续；不是首次使用或新增的下一步 |
+| `join-error` | 异常状态 | [截图](../../clients/windows/testdata/ui-golden/join-error.png) | [原型](../../assets/client/windows/join-error.svg) | 侧栏与主体均为导入失败；旧侧栏“连接错误”不再限制目标文案 |
+| `viewport-bottom` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/viewport-bottom.png) | [原型](../../assets/client/windows/viewport-bottom.svg) | 固定视口底部、滚动与完整服务行；目标布局待原生回读 |
+| `fixed-tun` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/fixed-tun.png) | [原型](../../assets/client/windows/fixed-tun.svg) | 指定最终出口、TUN 形态与当前选择；目标布局待原生回读 |
 
 `join-draft` 与 `join-empty` 不是连续两步。正常入口是侧栏“＋”→ 输入名称、导入邀请 →
 “加入并保存”→ 受保护的加入身份及认证配置提交后，新配置进入列表并保持断开；原有连接继续运行。
-首次启动的列表为空，不会自动创建空配置。具体入口约定见 [Windows 客户端](../../clients/windows/README.md#normal-user-flow)。
+首次启动由 `profiles-empty` 表达，点击添加进入相同的 `join-draft` 表单，不会自动创建空配置。
+草稿图中的另一条运行连接只是独立合成上下文，首次使用不要求它存在。
+具体入口约定见 [Windows 客户端](../../clients/windows/README.md#normal-user-flow)。
 
 `join-empty` 来自原生截图 fixture 直接构造的“列表已有条目，但未加入”状态；现有实现仍有读取既有条目后
 缺少加入身份或完整认证配置的显示分支。这不证明它属于正常新增链路，也不能把截图保留要求解释为
-“先保存空配置，再导入邀请”。本次保留该场景用于状态对照，未据此增加产品流程；真正的首次使用空态应表达
-“尚无连接配置 → 添加配置”，不能用当前 `join-empty` 图替代。
+“先保存空配置，再导入邀请”。该场景仅保留作异常条目对照，不能替代 `profiles-empty` 的正常首次空态。
+场景来源写入 SVG 元数据与本表，不把测试构造说明放进产品页面。
 
 ### 目标布局与线条
 
@@ -99,54 +102,60 @@ Windows 参考 Android [连接页](../../assets/client/android/connection-connec
 三个加入场景的右侧主体也各自使用一个白色圆角面板：新增页将说明、表单和提交操作归组，
 未加入与导入失败页将状态、导入或重试操作、当前连接提示归组。页标题及删除入口位于面板外；
 面板沿用 12 DIP 圆角、16 DIP 内边距和贯穿全宽的分隔线，空态与错误态的控件位置保持一致。
-此处只调整 Windows 原型，Android 原型、两端原生实现与 PNG 基准均不随组件样式对齐而改写。
+组件样式对齐不自动更新任何一端的原生实现或 PNG 基准。
 
 ### 原型最小核对
 
-- 八个场景 ID 和业务状态全部保留；选中配置与当前运行配置分别表达，不能把未加入配置画成已断开现有连接。
+- 按目标需求核对场景覆盖，不以原生基准数量冻结目标；选中配置与当前运行配置分别表达，不能把未加入配置画成已断开现有连接。
+- 首次空态不画配置行、设备身份、当前连接或删除操作；保留添加入口，与异常条目对照分开。
 - 新配置尚未导入邀请时保存不可用；保留邀请文件、二维码粘贴、导入失败后的重试，以及保存后保持断开的说明。
 - 重命名保留未提交输入及焦点；连接状态保留设备标识和断开入口；固定出口保留出口名称、前置路径自动选择和 TUN 说明。
-- 按 Service 展示路径，真实可用与测量未知不能合并；展开内容保留证据范围、当前选择回读和读取时间。
+- 按 Service 展示路径，真实可用与测量未知不能合并；展开内容区分业务目标、范围、采样时间/有效期与当前选择回读时间。
 - 固定视口中保留展开后的溢出及滚动底部场景；检查滚动范围、内容裁切和侧栏不随主区滚动。
   底部场景使用与首屏相同的完整面板和行高，完整显示服务 4–7，顶部可见服务 3 的路径尾部。
   未到内容末尾时，路径面板可以延伸并裁切于窗体底缘；不能在未显示完的服务下固定预留背景空带。
 - 重新生成应得到相同 SVG；逐页检查 XML、控件尺寸、等距内留白、文字溢出和遮挡，并在原始尺寸及放大后查看线条。
 
-本次已完成八张 SVG 的 XML、原有场景文案、控件几何、重复生成和文字重叠核对，并检查了 1×、1.5×、2× 渲染。
-展开详情与底部视图统一采用右侧主区滚动，侧栏和标题栏固定。这些检查只验证原型，不能替代原生内容或 DWM 验收。
+展开详情与底部视图统一采用右侧主区滚动，侧栏和标题栏固定。原型检查记录见[实施状态](../progress.md#文档与原型审查记录)，
+不能替代原生内容或 DWM 验收。
 
 ### 原生验收边界
 
-此前在同机 Windows 11 VM 的交互 RDP 桌面捕获了三档 DWM 合成窗口，`GetDpiForWindow` 分别实读
-96、144、192 DPI。96 与 192 DPI 截图可见较小的外角弧度，144 DPI 截图左上角接近直角；三档均未达到
-SVG 表达的 10 DIP 目标圆角。截图保存在被忽略的
-`deploy/evidence/ui-prototype-rebuild/rdp-window-{96,144,192}.png`。这些单帧只证明各自 RDP 会话中的合成结果，
-不抵扣实体显示器、跨屏移动或长期窗口行为的验收。当前源码已设置圆角偏好和非合成回退 region；
-`WM_PRINT` 只核对内容，不能用它的方角判断 DWM 外框。后续 Windows 产品实现须修复并再次回读外角差距，
-不能改写原生内容基准掩盖它。本次原型视觉调整没有重新执行这些 VM 或原生像素验收。
+`WM_PRINT` 只核对内容，不能用它的方角判断 DWM 外框；外框须由 DWM 合成截图回读。
+既有 RDP 合成结果与 10 DIP 目标圆角仍有差距，详细条件和证据范围见
+[历史视觉记录](../progress.md#既有-windows-视觉记录)。这些结果不抵扣实体显示器、跨屏移动或长期窗口行为验收，
+也不能通过改写原生内容基准掩盖差距。
 
 ## Android：Compose 场景
 
 提交的唯一原生基准目录为
 [`clients/android/app/src/screenshotTestDebug/reference/.../HomeScreenshotTestKt/`](../../clients/android/app/src/screenshotTestDebug/reference/io/github/scisaga/loom/HomeScreenshotTestKt/)。
-下表 PNG 列的模式在该目录内各匹配唯一文件，文件名含渲染器生成的哈希；使用
+下表已有 PNG 的模式在该目录内各匹配唯一文件，文件名含渲染器生成的哈希；使用
 `scripts/ui-review preview android` 可在 `out/ui-review/android/baseline/` 得到稳定场景名副本。
-所有场景固定为中文、浅色、`fontScale=1.0`、`412×915dp`。
+原生基准固定为中文、浅色、`fontScale=1.0`、`412×915dp`。当前有九个原生基准、十张目标 SVG。
 
-| 场景 | 原生 PNG 文件名模式 | 可编辑 SVG | 应核对的状态和文案 |
-|---|---|---|---|
-| `connection-disconnected-unjoined` | `*connection-disconnected-unjoined*.png` | [原型](../../assets/client/android/connection-disconnected-unjoined.svg) | 未加入/未连接及加入入口 |
-| `connection-connected-auto` | `*connection-connected-auto*.png` | [原型](../../assets/client/android/connection-connected-auto.svg) | 已连接、当前路径、按 Service 逐跳展示 |
-| `connection-error` | `*connection-error*.png` | [原型](../../assets/client/android/connection-error.svg) | 连接失败及错误回读 |
-| `configuration-not-joined` | `*configuration-not-joined*.png` | [原型](../../assets/client/android/configuration-not-joined.svg) | 尚未加入的配置页及添加入口 |
-| `configuration-ready-multiple-profiles` | `*configuration-ready-multiple-profiles*.png` | [原型](../../assets/client/android/configuration-ready-multiple-profiles.svg) | 多配置、当前连接、认证配置和 Direct/Auto/指定出口 |
-| `configuration-join-error` | `*configuration-join-error*.png` | [原型](../../assets/client/android/configuration-join-error.svg) | 加入失败的配置页 |
-| `diagnostics-connected` | `*diagnostics-connected*.png` | [原型](../../assets/client/android/diagnostics-connected.svg) | 诊断页的真实运行和观测范围 |
-| `profile-picker` | `*profile-picker*.png` | [原型](../../assets/client/android/profile-picker.svg) | 选择配置；截图标示当前连接和正在选择的配置，请求切换中的状态尚无原生截图 |
-| `notification-warning` | `*notification-warning*.png` | [原型](../../assets/client/android/notification-warning.svg) | 通知警告与连接状态，不以通知颜色补造健康 |
+| 场景 | 类别 | 原生 PNG 文件名模式 | 可编辑 SVG | 目标行为与当前差距 |
+|---|---|---|---|---|
+| `connection-disconnected-unjoined` | 正常流程 | `*connection-disconnected-unjoined*.png` | [原型](../../assets/client/android/connection-disconnected-unjoined.svg) | 未加入/未连接及加入入口；固定截图不证明加入链已完成 |
+| `connection-connected-auto` | 正常流程 | `*connection-connected-auto*.png` | [原型](../../assets/client/android/connection-connected-auto.svg) | 已连接、当前路径、按 Service 展示；目标运行规则仍待正式入口验收 |
+| `connection-error` | 异常状态 | `*connection-error*.png` | [原型](../../assets/client/android/connection-error.svg) | 认证配置已保存、VPN 启动失败，无 active；旧 PNG 的业务失败推导未连接不再作为目标 |
+| `connection-business-failed` | 异常业务观测 | 暂无 | [原型](../../assets/client/android/connection-business-failed.svg) | VPN 已连接，具体目标失败，另一 Service 独立为未知；同连接页状态，无对应原生基准 |
+| `configuration-not-joined` | 正常流程 | `*configuration-not-joined*.png` | [原型](../../assets/client/android/configuration-not-joined.svg) | Android 可先有未加入本机配置；区别于 Windows 正常新增流程 |
+| `configuration-ready-multiple-profiles` | 正常流程 | `*configuration-ready-multiple-profiles*.png` | [原型](../../assets/client/android/configuration-ready-multiple-profiles.svg) | 区分认证配置已保存、当前连接和模式；旧 PNG 未体现保存文案 |
+| `configuration-join-error` | 异常状态 | `*configuration-join-error*.png` | [原型](../../assets/client/android/configuration-join-error.svg) | 原事务重试；放弃本机资料不撤销远端设备；目标文案尚未落入原生基准 |
+| `diagnostics-connected` | 正常运行与未知观测 | `*diagnostics-connected*.png` | [原型](../../assets/client/android/diagnostics-connected.svg) | Service、目标、采样/有效期分别展示；旧原生诊断仍为汇总探测文案 |
+| `profile-picker` | 正常流程 | `*profile-picker*.png` | [原型](../../assets/client/android/profile-picker.svg) | 当前连接与浏览配置分开；请求切换中的状态尚无原生截图 |
+| `notification-warning` | 异常提示 | `*notification-warning*.png` | [原型](../../assets/client/android/notification-warning.svg) | 通知警告不改变连接和业务结果；截图不证明系统通知权限流程 |
 
 Android 的正式 Activity 与截图 fixture 共用 `LoomHomeScreen`。真机尺寸和系统栏可能不同，
 因此真机截图只用于设备交互回读，不与固定 Layoutlib PNG 逐像素比较。
+
+加入错误稿保留同一事务重试；“放弃本机加入”清理本机未完成的加入资料，不代表远端设备已撤销。
+诊断稿分别展示 `demo-web` 对 `web.example` 的有效观测，以及 `demo-api` 对 `api.example` 尚无当前网络
+有效观测的状态；局部成功不代表全部业务可用。连接错误稿表达 VPN 启动失败而认证配置保留；
+业务失败稿表达 VPN 仍运行、`demo-web` 的具体目标失败、`demo-media` 尚无有效观测，失败不传播到其他服务。
+这两种场景不新增页面导航；状态来自现有配置接受、运行回读和业务观测的不同输入。
+Android SVG 直接维护，无独立生成器；原型文案与原生截图的差异需在后续实现后验收。
 
 ## Web：目标页面与当前实现差距
 
@@ -157,8 +166,7 @@ Web 原型由 [`scripts/generate_control_center_prototypes.py`](../../scripts/ge
 目标原型保留控制中心原有的紧凑顶栏、分层信息布局、可辨识的筛选与编辑控件，以及有明确数据来源的图表；
 签名事实、实际观测与应用回读仍按现行模型分别呈现。示例图表不得用缺失数据补造健康或部署结果。
 
-本轮以 Git 中原有的 `misaka-v1` 图稿作视觉参照，并重新设计拓扑、按 Service 的路径详情和签名事实页。
-Overview 与 Topology 恢复原有的双圈构图：设备位于两条同心椭圆上，节点名称朝外排布，首跳和
+Overview 与 Topology 保留双圈构图：设备位于两条同心椭圆上，节点名称朝外排布，首跳和
 显式中继边分别绘制；Topology 保留 Service 筛选、链路选择和右侧详情。两条椭圆仅用于布局，
 不表示职责、授权等级或网络连接。蓝色表示设备报告的路径选择，节点圆点只表示运行报告是否新鲜。
 右侧小环形图表示九条 LinkID 中五条有当前可用观测。九条中继记录逐行保留，WG 与 hy2 的观测独立展示。
@@ -183,7 +191,7 @@ Overview 与 Topology 恢复原有的双圈构图：设备位于两条同心椭�
 | Administration | `09-administration.svg`、`09-administration-administrators.svg`、`09-administration-certificates.svg`、`09-administration-configuration.svg` | 同级的控制节点、管理员、网站证书、当前配置；操作与结果都在原视图展开 |
 | 无管理导航的私有入口 | `10-entry-guest.svg` | 未提供 admin 证书的入口 |
 
-### 本轮业务入口修订
+### 业务入口与职责
 
 按用户确认的关系，Service 定义互联网网址/地址范围或某节点共享的 LAN；Policy 固定属于一个
 Service、定义允许/拒绝及路径规则；节点只选择 Policy。同服务可以有多个策略，同一节点最多选一个。
@@ -200,7 +208,7 @@ claim 绑定。access 选择策略时标签同时显示服务；没有 access �
 LAN 策略终点只读固定为服务网关，不显示互联网出口或 Direct。
 二维码和重新添加仍遵循[二维码场景](../core/enrollment-endpoint-model.md#二维码的使用场景)。
 
-此次仅修订模型、生成器与 SVG。现有 `app.js`、`enrollmentOptions`、`inviteQR` 和
+现有 `app.js`、`enrollmentOptions`、`inviteQR` 和
 `createExistingNodeRejoin` 仍有旧模型，不能作为新业务链的验收证据；待实现范围见
 [实施状态](../progress.md)。原型最小检查为生成器重复生成一致、逐图 XML/浏览器渲染、文字边界及
 设备/服务/策略引用人工核对，不以伪造的扫码 payload 或旧 handler 测试宣称流程可用。
@@ -208,12 +216,12 @@ LAN 策略终点只读固定为服务网关，不显示互联网出口或 Direct
 ### 图表与数值的对照
 
 原有 SVG 与当前 [`app.js`](../../internal/control/static/app.js) 的 Overview、Topology 和设备详情均有
-流量展示，本轮保留这些能力。计数口径参考当前
+流量展示，目标保留这些能力。计数口径参考当前
 [`projectTraffic`](../../internal/control/observations.go)：来自有效报告的同端点、同接口、同 epoch
 相邻计数器增量；排除计数下降、epoch 变化和超过三分钟的间隔。已变更规范且只有旧范围报告的链路不填入
 新的流量序列，旧实现其他模型语义不随图表移入原型。
 
-| 页面 | 已恢复的图表/数值 | 范围与缺失展示 |
+| 页面 | 目标图表/数值 | 范围与缺失展示 |
 |---|---|---|
 | Overview | 24 小时 WireGuard TX 柱状图、已观测总量、逐设备 RX／TX | 逐发送端累加，重复的对端 RX 不再计入总量；未知设备显示 `unknown` |
 | Nodes | 每行当前状态、24 小时状态采样条、RX／TX 小柱图及总量 | 状态样本与流量分别取值；未知留空，明确失败才显示红色；流量柱按设备分别缩放 |
@@ -243,7 +251,21 @@ hy2 则是该传输自己的实测探测吞吐；都不是容量承诺。波动�
 当前 SPA 已有流量卡与柱状图，但 Topology 的流量卡取网络汇总，设备详情的柱图取发送量，缺失小时也未
 明确留位。当前 `Link` 投影只有延迟，`TrafficBucket` 只有小时字节数，不能据此计算五分钟有效覆盖速率或
 15 分钟 RTT 分位数；后续接线须从已核验报告投影足够的测量输入。设备行监控、所选 LinkID 双端图、
-RX／TX 分组图、未知占位和完整链路测量是界面迭代目标；本轮没有改动 SPA 或报告协议，不能把 SVG 当成产品验收。
+RX／TX 分组图、未知占位和完整链路测量是界面迭代目标，不能把 SVG 当成产品验收。
+
+下表只核对展示所需输入与当前差距，不从合成图表反推报告字段或补造采样；计算规则仍由
+[Web 投影](web-ui-projection.md#页面和状态)定义。
+
+| 指标 | 必要输入与范围 | 缺失时显示 | 当前实现差距 |
+|---|---|---|---|
+| 24 小时 RX／TX | 同端点、接口、epoch 的有效相邻计数器及时间；网络/链路按发送端 TX 聚合 | 无有效增量的小时留空，零值须有有效样本 | SPA 的网络/所选 LinkID、设备 RX/TX 范围尚未统一，缺失小时未明确留位 |
+| runtime／链路状态采样 | 每小时对应设备运行或 LinkID 范围内最后有效样本及时间 | 无样本为空心，明确失败才为失败色 | 目标小时状态条尚未接入当前 SPA，不能用流量或业务成功填充 |
+| 当前 transport RTT | 精确方向、LinkID、传输、规范摘要、网络代的最新有效 RTT | 缺失或过期为 unknown | 当前 Link 只有延迟投影，目标完整来源与范围仍须接通 |
+| WG 五分钟实测速率 | 同一发送端有效字节增量、实际覆盖秒数及五分钟窗口 | 无有效时间覆盖为 unknown | 当前小时 TrafficBucket 不足以还原五分钟覆盖时间 |
+| Hy2 探测吞吐 | 该传输真实单跳动作的字节、耗时及对应观测范围 | 无本传输结果为 unknown | WG 偏向的当前报告不能供给 Hy2 结果，不能借用 WG 数值 |
+| 十五分钟 RTT 波动 | 同范围成功 RTT 原始样本、时间与样本数 | 少于两个有效样本为 unknown | 单个 Link 延迟与小时流量都不足以求 P95−P50 |
+| 业务结果与 HTTPS 耗时 | 设备、Service、候选、实际目标、网络代、规范摘要、结果、采样/有效期 | 无有效结果为 unknown；失败没有成功耗时 | 当前路径页尚未接通逐设备/Service/目标结果及完整业务历史 |
+| 事件分桶 | 同查询窗口内的去重事件身份、类型、本 control 接收时间及保留覆盖 | 未覆盖留空；完整覆盖且无事件才为零 | 当前 SPA 尚未接入目标的完整筛选窗口聚合与连续加载 |
 
 ### 页面场景
 
@@ -259,9 +281,12 @@ RX／TX 分组图、未知占位和完整链路测量是界面迭代目标；本
 图中已有选择是场景输入，不是表单自动授权。原 SSH 的 LAN Tab 状态已移除，LAN 规则在策略页独立展示。
 三种添加结果分别复用各自草稿的名字、职责与策略选择。QR 对应 `demo-invite-qr` / `demo-access-g`，
 脚本对应 `demo-invite-script` / `demo-relay-g`；交付时均为 open，尚未收到 claim，“尚未授权”是已知状态。
-脚本稿提供一条带 HTTPS URL 的完整命令和“复制命令”，可在目标终端一次粘贴；无需先下载或传送脚本文件。
-命令从通用公开安装器 URL 自动下载，成功后才执行，并把本次 Invite 作为本地输入；URL 不携带邀请秘密。
-示例的 `download.example` URL 和 `demo-invite-payload` 都是不可用的占位值，不是已发布制品或规范 Invite，
+脚本稿提供一条带 HTTPS URL 的完整命令和“复制命令”，可在目标机器的 root shell 中一次粘贴；无需先下载或传送脚本文件。
+完整多行块从通用不可变 HTTPS URL 下载到私有临时目录，以受信发布清单中的精确摘要核验成功后才执行；
+quoted heredoc 将 Invite 经标准输入传入安装器，不放进其进程参数、环境变量或 URL。下载或校验失败均不执行，
+退出时只清理本次临时目录。显示与复制保留相同完整换行，不以省略号代替可执行内容。
+一次粘贴可能把 Invite 保存到终端历史；这是操作者已明确接受的取舍，复制入口同时提示该风险，不再要求第二次粘贴。
+示例的 `download.example` URL、固定合成摘要和 `demo-invite-payload` 都是不可用的占位值，不是已发布制品或规范 Invite，
 不能据此宣称 schema 3 安装器已实现。QR 图标同样不含可用 capability。两者后续都链接同一 DeviceID 的详情。
 SSH 对应 `demo-invite-ssh` / `demo-laptop`，默认稿展示实际执行成功且加入已完成、运行未报告；同文件还保留
 执行失败、连接中断未取得结果的独立场景。后两种不能靠重新签发重试，须先检查目标并继续原邀请。
@@ -270,8 +295,9 @@ SSH 对应 `demo-invite-ssh` / `demo-laptop`，默认稿展示实际执行成功
 原独立 enrollment 两张稿已合并进唯一节点详情。QR 随后 completed 时，new-phone 绑定并获授
 media/direct-access，平台由 claim 确定为 Android / arm64，运行与业务仍 unknown。脚本完成后的示例
 展示加入完成、已收到配置，但真实设备报告 runtime 启动失败；这不倒退加入，也不能反推缺失的安装日志。
-control-c 的脚本加入在多数证书前仅为 bound，forward + control 均未生效；证书形成后的场景在同一
-DeviceID 显示已加入、runtime unknown。原型不会把不同设备拼到同一可见页面，也不靠点击推进业务状态。
+control-c 的脚本加入在多数证书前仅为 bound，forward + control 均未生效；完整证书及其引用事实经本机验证后的场景在同一
+DeviceID 显示已加入、runtime unknown。设备尚未收到证明不撤销已经成立的资格，交付和本机运行分别回读。
+原型不会把不同设备拼到同一可见页面，也不靠点击推进业务状态。
 
 `02-nodes-access-edit` 展示 relay-west 将 media 的 media-access 替换为已有 direct-access；
 `02-nodes-access-result` 区分既有策略与已本地接受的设备授权，其他 control、配置、runtime 和业务
@@ -286,7 +312,8 @@ DeviceID 显示已加入、runtime unknown。原型不会把不同设备拼到�
 都等待新范围的回读，显示 unknown；原有有效接口流量仍作为历史观测展示。未变更的 WG 资源
 保持自己的当前可用观测，不能替代新配置应用。页面同时保留服务权限、当前路径、资源、LinkID、
 RX／TX 图表和共享 LAN，分别进入左栏的“概览 / 访问策略 / 转发与 LAN / 身份与操作”。
-默认概览直接展示状态与流量，切换时设备与策略引用不变。重新添加入口依据 access + forward 使用 SSH/sh。
+默认概览直接展示状态与流量，切换时设备与策略引用不变。组合职责节点丢失身份时使用现有删除、添加设备操作；
+重新添加快捷入口仅保留在纯 access 场景。
 同一 SVG 的其他 fragment 展示加入中的设备：概览突出等待条件，“身份与操作”回读具体执行与加入记录；
 只有尚未绑定且有效的交付物可重开。普通未知执行与 control 多数签名等待分别有恢复操作，无二次人工批准。
 
@@ -358,7 +385,7 @@ LAN 场景选中已加入的 `demo-laptop` 与 `demo-office / demo-lan-policy`�
 
 原 Observations 的通用矩阵和两块规则说明已移除；过期、缺失、不同传输不可互相代替等语义在对应
 候选和图表中保留。部署回读留在设备详情及 Releases。当前 SPA 的 `/routing` 仍按旧 policy scope
-组织路径，尚未接入本稿的服务汇总、实际路径归组、逐设备 Service/Policy、完整目标、业务历史和原位异常展示；本轮只修改原型。
+组织路径，尚未接入本稿的服务汇总、实际路径归组、逐设备 Service/Policy、完整目标、业务历史和原位异常展示。
 
 Services、DNS、Policies 及 `07` 至 `09` 的管理稿沿用这种组织方式。服务和策略目录分别保留
 四个与三个对象，选中有效对象时编辑草稿，使用者列表从设备授权派生；字段旁不另建 Policy 绑定。
@@ -389,6 +416,11 @@ Events 的筛选控件及 Apply/Clear 排在一行、统一高 42 px，默认 La
 后者保留五个目标和两个独立签发者前沿；列表优先显示影响，签发序号放入来源详情。
 `demo-work` 的对比状态展示两条冲突引用和目标差异，选择 A/B 后再确认提交；结果状态只确认本地
 恢复投影，不代替其他 control 接收或设备应用。默认与解决后的 fragment 是不同的合成时刻。
+对比与提交确认均展示本机已知的受影响引用：`demo-work-access` / work-access、已分配设备
+`demo-laptop` / workstation，以及未绑定 Invite `demo-work-phone-invite` / join-work-phone，
+其目标为 `demo-work-phone` / work-phone、职责 access、期限 `2030-01-02T00:00Z`。
+这些属于独立冲突场景，不加入主页面的设备计数；冲突期间相关设备授权投影与 Invite claim 暂停。
+页面明确已知范围，远端尚未同步的引用不能宣称已完整列出。
 证书按固定 `2030-01-01 00:00 UTC` 计算本机剩余 24 天，peer 回读陈旧而未知；成功续签场景的新叶
 有效至 `2031-01-01 00:00 UTC`。下载、请求、导入、预检、切换和浏览器回读分别绘图，不把尚未执行的
 步骤预先标为已完成。当前 SPA 的相应旧页面仍需按
@@ -429,8 +461,8 @@ Administration 的四个文件对应四个同级内容视图，均使用相同�
 当前 `internal/control/static/app.js` 的 `/ssot` 仍是旧 quorum/head 界面；当前 Web handler 没有这组证书
 下载、签回导入及续签交互。管理员本机补发的签发者、信任锚及多 control 签发能力仍待模型补齐，
 目标原型中的验链/授信合成结果不是已具备该能力的证明；用户已实际完成过管理员包取回、导入及登录
-的操作史继续保留，见[管理员交付模型](../operations/admin-access.md)。本轮不签发证书、不修改现网信任
-或管理入口，也不把原型按钮当作已实现的生产功能。
+的操作史继续保留，见[管理员交付模型](../operations/admin-access.md)。原型按钮不签发证书、不修改现网信任
+或管理入口，也不是已实现的生产功能。
 
 节点详情的加入状态均在同一 SVG 内预览，单独用浏览器打开下面的 fragment 链接；这只是固定场景，
 不是页面内的业务状态切换器：
@@ -453,7 +485,7 @@ Administration 的四个文件对应四个同级内容视图，均使用相同�
   报告的前缀，展示自动分配的等长虚拟前缀和固定网关；创建后进入统一 Services 目录。随后为该 Service 创建 Policy，
   再给访问节点分配策略；映射不绑定全局唯一策略。
 
-以上共 30 张路由页面及补充状态稿，均为可编辑矢量。Live paths 只保留两张稿，对应主页面与设备路径详情；
+以上共 32 张路由页面及补充状态稿，均为可编辑矢量。Live paths 只保留两张稿，对应主页面与设备路径详情；
 交付/加入分支及策略创建/编辑也是既有入口的状态，
 不增加独立产品导航或权威状态。生成器写入正式 SVG 后须逐图渲染核对，并再次运行
 比较文件摘要；只预览临时渲染图不能算更新了 README 引用的原型。程序解析、边界检查和仓库测试通过仅代表
@@ -484,9 +516,10 @@ Add Device 的三种媒介共用 880 px 宽的居中纵向表单，标题与字�
 列表和监测页面保留面板式布局。Nodes 在每行并列状态采样条与 RX／TX 小柱图；Topology 增加选中链路
 的三项测量，连线数字使用无背景、无边框的纯文字。链路表按链路、当前度量、状态历史、传输历史四列
 组织，合并端点与身份、合并三项度量；详细统计在悬停和右侧展示，每行保留小时采样。
-Live paths 默认显示服务汇总与有数量上限的关注设备预览，点击服务进入实际路径分组，点击数量筛选
-对应设备；问题设备可直接打开详情。详情只读显示已携带的设备/服务，当前路线下以候选/历史页签
-共用内容区。服务列表、路径组、设备清单使用开放分隔线，不嵌套面板；历史图和逐段度量保留。
+Live paths 只有两层：服务导航与设备表在同一主页面，切换服务或点击数量仅筛选右侧设备；设备行直接打开路径详情。
+详情只读显示已携带的设备/服务，当前路线下以候选/历史页签共用内容区；页签、返回主页面及浏览器前进/后退
+保留来源 Service 与筛选。直接打开详情而无来源时，返回该 Service 的全部设备。来源 fragment 只保存导航上下文，
+不决定授权、路径或健康。服务列表与设备清单使用开放分隔线，不嵌套面板；历史图和逐段度量保留。
 Services 与 Policies 的目录去掉逐项卡片外框，主编辑区保持开放，删除操作独立放在底部。
 DNS、Device versions、Events 和 Administration 合并成对象列表与原位展开内容；
 筛选只出现一次，状态、依据和关联入口跟随对应对象，不再旁置通用规则卡。
@@ -505,11 +538,14 @@ Releases 以验签摘要、三列文件列表、设备应用结果组织，取�
 所有图形、文字、柱状图、坐标轴和双圈拓扑均保留为 SVG 元素。正式文件须逐页渲染，检查正文与徽标对齐、
 行距、内边距、分隔线、SVG 边界、图例和节点标签；几何检查不能代替视觉复看。
 Overview 为 `1586×1140`，Nodes 为 `1586×1120`，Topology 为 `1586×1680`；流程稿宽 1586、高度随内容变化，
+一次粘贴脚本交付稿高 1112，为完整命令、历史风险提示与后续入口分别保留空间。
 Live paths 的服务与设备合并页高 944、路径详情高 1224，宽均为 1586；同页服务切换、筛选和详情页签共用对应文件。
 Services、Policies 的编辑状态高度随内容变化，DNS 高 1110；Linux / Android Releases
 高 1150，Windows 无目标场景高 1060，Device versions 高 1240；Events 高 1552；Administration 的
 控制节点高 984、管理员高 1160、网站证书高 1192、配置状态高 1224。同页结果共用对应视图高度。
 页面宽度均为 1586，不为凑齐统一高度添加无关面板。
+
+检查历史与原型修订范围统一记录在[实施状态](../progress.md#文档与原型审查记录)。
 
 Web 原型呈现现行模型目标，不表示当前 SPA、控制协议或生产切换已经完成。后续开发以正式私有 Web 入口
 提交 operation、control 持久接受、运行端消费和浏览器回读验收；不能以 SVG、Chrome fixture 或端口可达代替。

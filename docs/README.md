@@ -3,6 +3,23 @@
 本目录是 Loom 的唯一设计入口，规定业务模型、协议、持久化、运行时和界面的统一语义；
 [实施状态](progress.md)单独记录哪些业务链已经通过正式入口验收。
 
+用户明确要求与现行模型确定目标行为，三端原型表达对应交互和视觉；已有实现、原生截图和历史验收
+用于核对有效能力、回归风险及实现差距，不反向限定目标。原型与模型的差异须在设计审查中明确修订。
+原型完成不表示功能已经实现，以下概览均描述目标能力，实际结果以[实施状态](progress.md)为准。
+
+## 功能概览
+
+| 使用场景 | 目标能力与设计入口 |
+|---|---|
+| 管理网络节点 | 同一节点组合承担 access、forward、internet_egress、control；单个与多个 control 使用同一治理规则，见[控制模型](core/control-model.md) |
+| 添加和管理设备 | 按职责通过二维码、SSH 或脚本交付邀请；同事务恢复加入，后续改权与身份替换分开，见[加入模型](core/enrollment-endpoint-model.md) |
+| 授予服务访问 | Service 定义目标，Policy 固定所属服务并可复用，设备选择策略；共享修改与单设备替换分开，见[服务与策略](core/control-model.md#8-servicepolicy偏好与业务探测) |
+| 选择访问路径 | Direct、Auto、指定最终出口复用授权候选；一跳与同出口中继并存，实际选择与业务结果分别回读，见[客户端运行模型](clients/client-runtime-model.md) |
+| 访问私有名称与局域网 | 精确 `.loom` DNS、固定网关和虚拟 IPv4 前缀；授权设备主动访问 LAN，见[DNS overlay](core/control-model.md#9-dns-overlay)与[共享局域网](core/control-model.md#10-共享局域网映射) |
+| 使用客户端 | Android 多配置与单 VPN；Windows Installed、Portable TUN、Portable Mixed；Linux 显式代理与隔离 access，见[Android](../clients/android/README.md)、[Windows](../clients/windows/README.md)及[Linux](operations/linux-client-install.md) |
+| 观察和维护网络 | 设备、拓扑、服务路径、策略、事件、成员、管理员和证书统一管理，见[Web 投影](clients/web-ui-projection.md)与[管理员访问](operations/admin-access.md) |
+| 下载和发布组件 | 验签制品、期望组件和实际运行结果分别展示，见[签名发布流程](operations/configuration-model.md#签名发布记录到实际运行的闭环) |
+
 ## 核心模型
 
 - [控制权威模型](core/control-model.md)：签名事实、control 成员门禁、增量同步与业务投影。
@@ -39,8 +56,7 @@ LAN mapping 属于局域网 Service，Services 统一管理，节点详情按网
 - [控制面 Web 投影](clients/web-ui-projection.md)：认证状态到页面与管理操作的映射。
 - [客户端 UI 视觉审查](clients/client-ui-visual-review.md)、[Android 客户端](../clients/android/README.md)和
   [Windows 客户端](../clients/windows/README.md)。
-- [原型与验收图对照](clients/prototype-review.md)：客户端原生截图到可编辑原型的场景映射，以及
-  Web 目标原型与当前界面的差距。
+- [目标原型与实现对照](clients/prototype-review.md)：三端目标原型、业务场景及当前实现差距。
 
 ## 运维与验收
 

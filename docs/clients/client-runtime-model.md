@@ -15,7 +15,7 @@
 | 概念 | 唯一职责 | 不是 |
 |---|---|---|
 | `DeviceIdentity` | 标识设备、保存已认证的 `ControlConfig` 成员链信任绑定、已见事实前沿与不可回退 floor，并对私有请求签名 | 路由状态、网络测量或拓扑副本 |
-| `CertifiedLKG` | 最近一次验证通过、由有效 control 签名且可离线继续使用的完整设备视图 | 全网最新状态或当前网络是否可用的声明 |
+| `CertifiedLKG` | 最近一次通过认证并原子保存、由有效 control 签名的完整设备视图；决定离线可使用的授权范围 | 宿主应用成功、全网最新状态或当前网络是否可用的声明 |
 | `RouteCandidate` | 描述某一 Service 范围内从本机到目标的一条允许路径及其最终出口 | 节点类型、健康状态或平台进程 |
 | `RuntimeCandidate` | 将一条 `RouteCandidate` 化为宿主可执行且可稳定识别的运行描述 | 第二份拓扑、独立配置源或健康注册表 |
 | `Observation` | 记录特定底层网络代中实际 transport / business outcome 及有限提示 | 授权、期望状态或为了填满评分而生成的样本 |
@@ -55,7 +55,7 @@ Loom 管理的请求命中上述目标时须拒绝，不能因没有候选就回
 
 ### Direct 不等于一跳直达
 
-- **Direct** 的受管节点链为空：本机不经过任何受管节点，直接访问目标地址。
+- **普通 Direct** 的 `final_exit=direct` 且受管节点链为空：本机不以任何受管出口身份，直接访问目标地址。
 - **一跳直达** 的受管节点链包含一台具有 `internet_egress` 职责的节点：客户端经获授权的
   WG、hy2 等共享数据入口到该节点，再从它访问互联网目标。
 - **中继路径** 至少包含入口转发节点和最终出网节点：客户端接入首跳，再沿认证
@@ -82,10 +82,10 @@ any 表示所有符合资格的当前及未来节点；only 只允许非空的�
 范围模式缺失或仅有空数组不是 any，须在认证输入处拒绝。only 的节点失效后保留限制并移除相关候选，
 不自动变为 any。第一台受管节点须满足入口范围、有效资源及职责；中间节点须满足转发范围和显式
 LinkID 方向；最终节点须满足出口或固定 LAN 网关约束。一跳互联网候选的节点同时满足入口与出口范围。
-中间范围 none 仍可允许一跳，入口 none 则不产生受管路径。
+中间范围 none 仍可允许一跳，入口 none 则不产生经网络接入受管节点的路径。
 
 普通 Direct 独立由 `allow_direct` 控制，不经过受管首跳或出口。Direct 允许加出口 only 表示两种
-路径都允许；要求只经指定出口时必须关闭 Direct。纯 Direct 可用入口 none 表达，不能把旧空入口
+路径都允许；要求只经指定出口时必须关闭 Direct。没有设备限定本地出网许可时，纯 Direct 可用入口 none 表达，不能把旧空入口
 集合重解释为不限。LAN Policy 只含 allow/deny、入口及转发范围，没有互联网 Direct/出口字段，
 入口选择只能改变到固定网关的路径。这些检查均从所选 PolicyIDs 解析，不新增本机授权策略。
 
@@ -94,10 +94,13 @@ LinkID 方向；最终节点须满足出口或固定 LAN 网关约束。一跳�
 
 `NetworkPolicy.allow_direct` 表示选择该 Policy 的 access 才可为其固定的互联网 Service 产生 `final_exit=direct` 的普通 Direct
 候选。它不能表达“只有某个 hybrid access 在本机充当该 policy 的固定出口”。后一语义由规范排序的
-`local_egress_devices` 表达：成员必须同时是该 policy 的获准最终出口、具备 `access` 与 `internet_egress`
-能力；只有授权设备 ID 命中时才生成受管节点链为空、`final_exit=direct` 且候选 ID 绑定该设备的本地出口
-候选。其他设备仍把该节点当作一跳或中继出口。普通 Direct 与设备限定 Direct 的授权来源不同，不能在
-导入时把设备级许可提升成全 policy 的 `allow_direct`。
+`local_egress_devices` 表达：成员必须是该 policy 的获准最终出口、具备 `access` 与 `internet_egress`
+能力；只有授权设备 ID 命中时才生成受管节点链为空、`final_exit` 为该设备稳定 NodeID 的本地出口
+候选。空链表示本机执行、不经网络隧道，不能抹去逻辑最终出口身份。候选 ID 同样绑定该 NodeID；
+其他设备仍把该节点当作一跳或中继出口。普通 Direct 与设备限定本地出网的授权来源不同，不能在
+导入时把设备级许可提升成全 policy 的 `allow_direct`。Auto 可选择该本地候选，指定本机 NodeID
+作为最终出口时也保留它；Direct 模式只选择 `final_exit=direct` 的普通 Direct，不选择设备限定本地出网。
+本地出网没有业务首跳，不套用入口范围，也不要求回拨本机或提供入站资源。
 
 `NetworkIntent` 中的 `NetworkLink` 是有稳定 `LinkID` 的认证节点邻接，引用同一 `NetworkIntent`
 内有稳定 ID 的 `TransportResource`。资源明确表示 WireGuard、Hysteria2（hy2）或对现有私有 TLS tunnel
@@ -124,7 +127,9 @@ hybrid 节点开头，运行时跳过“拨回本机 inbound”，按 `LinkID` �
 ### 候选身份
 
 `RouteCandidate` 的稳定身份由 Service 范围、首跳资源 ID、规范化后的受管节点链、每条中继边按顺序排列的
-`LinkID` 及终点确定；互联网终点标明最终出口，`local_network` 终点标明固定网关。Direct 的首跳资源和链路序列均为空，一跳直达只有首跳资源、没有中继 LinkID。
+`LinkID` 及终点确定；互联网终点标明最终出口，`local_network` 终点标明固定网关。普通 Direct 和
+设备限定本地出网的首跳资源、节点链与链路序列均为空，但前者终点为 `direct`、后者为本机 NodeID，
+因此身份不同；不能仅凭空链重建为 Direct。一跳直达只有首跳资源、没有中继 LinkID。
 `RuntimeCandidate` 保留这个身份，并补充由对应
 `TransportResource` 投影的实际传输、入口和宿主执行引用。相同节点链若分别使用 WG 与 hy2，必须产生
 不同的候选 ID；一个传输的失败或成功不能改变另一传输的观测状态。同一获授权路径在 Android、Linux 与
@@ -253,20 +258,33 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
 
 ## Preference 与 Selection
 
-`Preference` 只裁剪和排序已获授权且平台可执行的候选：
+`Preference` 只表达 Direct、Auto 或指定最终出口三种意图，不包含延迟、吞吐等额外的用户排序目标或开关。
+选择函数先按授权与平台能力过滤候选，再按这三种意图限定范围：
 
 | 模式 | 候选范围 |
 |---|---|
-| `Direct` | 仅受管节点链为空的候选；不创建代理入口探测 |
-| `Auto` | 当前互联网 Service 范围内所有由 `CertifiedLKG` 授权且平台可执行的候选 |
-| 指定最终出口 | 所有最终出口相同的候选，包括一跳直达和境内中继 |
+| `Direct` | 仅 `final_exit=direct` 且受管节点链为空的普通 Direct 候选；不创建代理入口探测 |
+| `Auto` | 当前互联网 Service 范围内所有由 `CertifiedLKG` 授权且平台可执行的候选，包括设备限定本地出网 |
+| 指定最终出口 | 所有最终出口为指定 NodeID 的候选，包括一跳直达、中继，以及指定本机时获授权的本地出网 |
 
-在范围内，已知可用候选优先于未知候选，已知不可用候选不参与新选择；多个可用候选按
-`Preference` 指定的目标和同范围、仍有效的实际指标排序。不同观测范围的数字不能直接
-比较，缺失指标不能补零。没有可用候选时，允许确定性地尝试未知候选，而不是等待测量。
-没有更优的可比较证据时保持当前实际选择，避免无理由切换；排序是一次纯计算，不需要
-挑战者状态、采样收敛或额外状态机。ICMP RTT 最多只能为同类入口提供次级提示，不能覆盖
-真实 transport / business outcome。
+在范围内，已知可用候选优先于未知候选，已知不可用候选不参与新选择。比较只能使用同范围、
+仍有效的实际指标；不同观测范围的数字不能直接比较，缺失指标不能补零。没有可用候选时，
+允许确定性地尝试未知候选，而不是等待测量。当前实际选择仍符合授权、平台能力及偏好范围，
+且未被有效结果判定不可用时，没有更优的可比较证据就保持它，避免无理由切换。
+排序是一次纯计算，不需要挑战者状态、采样收敛或额外状态机。ICMP RTT 最多只能为同类入口
+提供次级提示，不能覆盖真实 transport / business outcome。
+
+上述原则已经确定，但尚不足以构成完整的选择算法。以下问题须在实现排序与归约前明确，
+不能由旧实现、测试或原型中的单个例子替代决定：
+
+| 待确认问题 | 已有约束 | 尚缺的决定及受影响行为 |
+|---|---|---|
+| 同 Service、同候选的多个目标结果如何归约 | 每条结果保留实际目标、动作、网络代与有效期；一个目标成功不证明其他目标成功。 | 同时存在成功、失败或未知目标时，如何形成供选择函数使用的候选结果；例如 `web.example` 成功而 `api.example` 失败，不能仅取最新一条就宣布整个 Service 可用或据此断开 VPN。此决定影响候选是否参与选择和必要 fallback。 |
+| 多项可比指标的优先级 | 只有同范围、仍有效且实际测得的值可比较；入口 RTT 不冒充完整 HTTPS 耗时，缺项不补零。 | 多个合法候选都有有效结果时，哪些指标用于排序、适用条件及优先顺序是什么；缺少足以比较的指标时不能宣称某候选“最快”。此决定不新增用户偏好选项。 |
+| 无可保持的当前选择时如何稳定打破平局 | 相同输入必须得到相同结果；候选遍历顺序、时钟和随机数不能决定选择。 | 多个候选等级相同、指标相同或不可比较时，使用哪些稳定身份字段及其顺序确定唯一候选。现有代码的平局规则不自动成为目标契约。 |
+
+观测时间、最大寿命与时钟偏差的字段边界另见[现行契约的字段级阻塞](../core/current-contract.md#已确定的签名边界与字段级阻塞)。
+这些缺项不改变三种 Preference、授权过滤和实际 selector 回读的边界，也不授权各平台各自补一套算法。
 
 指定 `demo-sv` 最终出口时，如果一跳直达候选被真实 transport 结果判定不可用，而
 `demo-cn → demo-sv` 仍可尝试或已经可用，选择后者。最终出口没有改变，改变的只是路径。
@@ -392,13 +410,16 @@ Android 在签名、成员链、设备绑定、floor 和受保护原子写入回
   `Selection`；旧配置的 readback 不能确认新 LKG 已运行。
 
 Linux daemon 在运行期间按已见事实前沿和 View 摘要获取差量或条件更新，不向每台设备广播全网
-事实集，也不在检测步骤保存新 envelope。
-变化发生时由同一进程监督器结束当前 sing-box 子进程并启动一个新的运行代：先对新 View 做完整
-preflight，按 `TransportResource` 类型事务应用实际需要的 WG interface/精确路由或 hy2、私有 TLS tunnel
-配置，启动 sing-box，再读取实际 listener、selector、链路资源和配置摘要；这些读回全部成功后才保存新
-LKG。若新代任一步失败，配置文件、CA 及本 generation 拥有的链路资源事务恢复为旧值，监督器
-立即从尚未提升的旧 LKG 重启旧运行代，下一次固定间隔才重试。这个“运行代”只是进程内调用边界，
-不持久化、不形成阶段表或第二份 authority。
+事实集。新 View 的签名、规范形状、设备绑定、成员证明与前沿校验通过后，先原子提交唯一新
+LKG、信任绑定及 floor，再按新授权收口运行投影。宿主 preflight、组件验证、进程启动和运行回读
+属于后续应用，失败不能撤销已经接受的认证状态或恢复旧授权。
+同一进程监督器按 `TransportResource` 类型应用需要的 WG interface/精确路由或 hy2、私有 TLS tunnel
+配置，启动新的运行代，再读取实际 listener、selector、链路资源和配置摘要；全部成功后才报告新 View 已运行。
+新代失败时只回收本 generation 的执行对象。旧配置或资源只能在逐项证明其候选、凭据、ACL、入口及
+其他执行输入仍符合新 LKG 时继续或恢复；不能证明时停止相关业务流量，保留设备认证的配置、报告及
+修复入口，显示“认证配置已更新，运行未应用”。下一次尝试继续消费同一新 LKG，重启也不恢复旧权限。
+例如新 View 撤销服务 A、同时更新资源 B，B 启动失败不得使 A 的旧路径重新接纳连接。
+这个“运行代”只是进程内调用边界，不持久化、不形成阶段表或第二份 authority。
 
 ### 撤权边界
 
@@ -498,7 +519,7 @@ Observation 所经链路的有序摘要一同纳入签名字节；接收方按�
 Linux 客户端制品同时为 amd64/arm64 生成、签名和逐文件验证。amd64 在原生宿主做业务验收；arm64
 只交叉构建和静态检查。installer 先把精确制品放入内容标识 release 目录，并在切换 `current` 前对现有
 LKG 执行 sing-box preflight；切换后若 service/selector 回读未成功，只有先前 release/unit 已证明不会在
-初始 netns 接管宿主流量时才可恢复运行，否则只恢复文件指针并保持 service disabled/failed。升级失败
+初始 netns 接管宿主流量，且能消费当前已接受授权、不恢复已撤销权限时才可恢复运行；否则只恢复文件指针并保持 service disabled/failed。升级失败
 不覆盖旧制品，也不得重新启用危险旧 unit。当前 installer 的失败路径尚需落实这一限制，见
 [实施状态](../progress.md)。
 
@@ -522,8 +543,10 @@ ID、BootstrapCapability 约束、已验证 `ControlConfig` 成员链、已见�
 SYSTEM/Administrators DACL；Portable TUN 与 Portable Mixed 使用 current-user DPAPI。磁盘上不得出现明文私钥、
 拆出的运行配置、hydrate 后候选或第二份 LKG。写入使用同目录临时文件、落盘、原子替换和替换后独立回读；
 任一步失败都保留旧 envelope。新 LKG 只有在 wire 规范、Ed25519 设备绑定、由当前信任绑定验证的
-连续多数签名成员链、签发 control 的签名与事实前沿、RuntimeProfile、floor 和宿主
-preflight 全部通过后，才能与提升后的已验证成员链信任绑定、事实前沿及 floor 一起替换旧值；不能拼接新旧字段。
+连续多数签名成员链、签发 control 的签名与事实前沿、规范 RuntimeProfile 和 floor 全部通过后，
+才能与提升后的已验证成员链信任绑定、事实前沿及 floor 一起替换旧值；不能拼接新旧字段。
+宿主 preflight、组件可用性及运行回读不决定认证 LKG 是否接受；应用失败遵循上述新认证配置规则，
+保留新 LKG 并收口已撤销授权，不把旧 envelope 恢复为运行权威。
 
 首次导入时先生成 Ed25519 身份并把 `v2_latch=true`、floor 0、capability 绑定和默认 Auto Preference 原子
 保护，再经受限 bootstrap tunnel claim/resume。同一事务恢复复用同一 identity/request ID；不同邀请不得接管。
@@ -559,7 +582,9 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
    已有共享首跳可按授权使用。
 2. **确定性派生**：相同 LKG 在 Android/Linux/Windows 纯核心得到相同授权候选身份和顺序；相同平台
    能力值生成相同可执行集合，重启结果不变；能力不足时不改变授权候选 ID。
-3. **Direct 语义**：Direct 的受管节点链为空，不产生代理入口检查；一跳直达包含最终出口，二者不混淆。
+3. **Direct 与本地出网语义**：普通 Direct 的终点为 `direct`、链为空；设备限定本地出网终点为本机
+   NodeID、链同样为空。两者身份不同，Direct 模式只取前者，Auto 与指定本机出口可取获授权的后者；
+   重建不丢失 NodeID，均不产生回拨本机的入口检查；一跳直达包含远端最终出口，不与二者混淆。
 4. **同出口多路径**：同一最终出口同时产生一跳直达和中继；不同 WG/hy2 首跳资源及同节点对的
    WG/hy2 中继 `LinkID` 分别形成候选 ID，资源可按 ID 复用；关闭
    `public_data_ingress` 只删除引用该入口的一跳候选，其他共享资源首跳仍保留；开启它不会自动得到
@@ -577,8 +602,10 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
    不把 Preference 显示为当前路径。
 8. **平台契约**：Android/Linux/Windows adapter 各用一个成功 outcome、一个失败 outcome、一次 apply/readback
    验证接口；真实验收各选一条可工作的正常路径和一条同出口 fallback 即可。
-9. **运行投影**：一份规范 RuntimeProfile 与 routes 逐项映射；缺候选、多余 selector 成员、非规范
-   JSON 或 libbox preflight 失败均不得替换旧可运行 LKG。
+9. **认证与运行应用分离**：一份规范 RuntimeProfile 与 routes 逐项映射；缺候选、多余 selector 成员或
+   非规范 JSON 使新 View 认证失败、保留旧 LKG。认证和原子提交成功后，即使宿主 preflight、组件或
+   启动失败也保留新 LKG/floor；仅允许仍符合新授权的旧执行，已撤销服务不得因其他资源失败恢复。
+   重启后继续以新 LKG 修复，UI 分别显示认证配置和实际应用结果。
 10. **Windows DPAPI 与 profile 隔离**：machine/user scope 不能互换；每个 profile 的 Ed25519 身份、floor、
     latch、完整 LKG 与 Preference 往返相等，原子替换失败保留旧值；索引损坏不能制造或覆盖网络权威。
 11. **Windows 严格 wire 与恢复**：`platform=windows` 缺 RuntimeProfile，或含未知/缺失/多余字段、重复键、

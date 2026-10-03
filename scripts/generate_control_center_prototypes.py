@@ -36,6 +36,8 @@ DISPLAY_NAMES = {
     "demo-video": "media", "demo-work": "work-apps", "demo-private": "private-app",
     "demo-private-access": "private-access",
     "demo-direct-policy": "direct-access", "demo-office": "office-network",
+    "demo-work-access": "work-access", "demo-work-phone": "work-phone",
+    "demo-work-phone-invite": "join-work-phone",
     "demo-policy": "media-access", "demo-lan-policy": "office-lan",
     "demo-printer.loom": "printer.loom", "demo-request-001": "request-001",
     "demo-link-wg": "link-wg", "demo-link-hy2": "link-hy2",
@@ -1161,6 +1163,22 @@ def live_path_history(c: Canvas, scene: str, context: dict) -> None:
     c.txt(47, 1020, "Historical window ends at the last report, 12m ago. These samples do not establish current reachability." if scene == "expired" else "Last matching sample each hour · full HTTPS request time · not request totals or continuous uptime.", "small muted")
 
 
+def path_workspace_filters(service: str) -> tuple[str, ...]:
+    return ("all", "failed", "unknown", *(group for group in PATH_GROUPS if path_members(service, group))) if path_members(service) else ("all",)
+
+
+def path_navigation_origins(scene: str) -> tuple[tuple[str, str], ...]:
+    """Presentation-only return locations for rows that open this detail."""
+    return tuple((key, group) for key, service, _ in PATH_SUMMARY_SERVICES
+                 for group in path_workspace_filters(service)
+                 if any(record["scene"] == scene for record in path_members(service, group)))
+
+
+def path_detail_fragment(scene: str, tab: str, origin: tuple[str, str] | None = None) -> str:
+    suffix = "-from-" + "-".join(origin) if origin else ""
+    return f"paths-{scene}-{tab}{suffix}"
+
+
 def live_path_view(scene: str) -> Canvas:
     c = Canvas("live-paths", "Path detail", "Inspect this device's route, policy and observations for a specific target.", "network / paths", "live-paths", height=1224, show_status=False)
     c.role = "group"
@@ -1184,7 +1202,14 @@ def live_path_view(scene: str) -> Canvas:
     device, service, policy = (context[key] for key in ("device", "service", "policy"))
     scope = f"device={device}&service={service}&policy={policy}"
     service_key = "office" if scene == "lan" else "private" if scene == "unassigned" else "media"
-    flow_link(c, 1562, 97, "← " + context["service"] + " devices", "/routing?service=" + service, anchor="end", href="#paths-service-" + service_key)
+    origins = (None, *path_navigation_origins(scene))
+    for origin in origins:
+        key, group = origin or (service_key, "all")
+        navigation = "-".join(origin) if origin else "default"
+        c.add(f'<g class="path-origin-navigation path-origin-{navigation}" data-ui="path-return" data-service="{service}" data-filter="{group}">')
+        target = "#paths-service-" + key + ("-" + group if group != "all" else "")
+        flow_link(c, 1562, 97, "← " + context["service"] + " devices", f"/routing?service={service}&filter={group}", anchor="end", href=target)
+        c.add('</g>')
     c.add(f'<g data-ui="path-context" data-scene="{scene}" data-device="{device}" data-service="{service}" data-policy="{policy}">')
     for x, label, value in ((24, "DEVICE", context["name"]), (358, "SERVICE", service)):
         c.txt(x, 205, label, "eyebrow muted")
@@ -1247,12 +1272,16 @@ def live_path_view(scene: str) -> Canvas:
     c.line(24, 650, 1562, 650)
 
     c.add(f'<g data-ui="path-tabs" data-scene="{scene}">')
-    for x, key, label, width in ((24, "candidates", "Candidate routes", 142), (201, "history", "History", 69)):
-        c.add(f'<a id="paths-{scene}-tab-{key}" class="path-tab path-tab-{key}" href="#paths-{scene}-{key}" data-ui="path-tab" data-tab="{key}">')
-        c.rect(x, 667, width, 38, "transparent", "none", 0)
-        c.txt(x + 4, 691, label, "body path-tab-label")
-        c.add(f'<line class="path-tab-mark" x1="{x}" y1="706" x2="{x+width}" y2="706" stroke-width="2"/>')
-        c.add('</a>')
+    for origin in origins:
+        navigation = "-".join(origin) if origin else "default"
+        c.add(f'<g class="path-origin-navigation path-origin-{navigation}">')
+        for x, key, label, width in ((24, "candidates", "Candidate routes", 142), (201, "history", "History", 69)):
+            c.add(f'<a id="paths-{scene}-tab-{key}-{navigation}" class="path-tab path-tab-{key}" href="#{path_detail_fragment(scene, key, origin)}" data-ui="path-tab" data-tab="{key}">')
+            c.rect(x, 667, width, 38, "transparent", "none", 0)
+            c.txt(x + 4, 691, label, "body path-tab-label")
+            c.add(f'<line class="path-tab-mark" x1="{x}" y1="706" x2="{x+width}" y2="706" stroke-width="2"/>')
+            c.add('</a>')
+        c.add('</g>')
     counts = {"current": 4, "failed": 4, "direct": 1, "expired": 4, "pending": 1, "lan": 2, "denied": 0, "unassigned": 0}
     count = counts[scene]
     c.txt(1562, 691, f'{count} authorized candidate{"s" if count != 1 else ""} · read only', "small muted", "end")
@@ -1266,14 +1295,14 @@ def live_path_view(scene: str) -> Canvas:
     return c
 
 
-def path_device_rows(c: Canvas, members: tuple[dict, ...], y: int) -> int:
+def path_device_rows(c: Canvas, members: tuple[dict, ...], y: int, *, origin: tuple[str, str]) -> int:
     for x, heading in ((386, "DEVICE"), (590, "POLICY"), (805, "CURRENT ROUTE"), (1140, "TARGET / UPDATED")):
         c.txt(x, y, heading, "eyebrow muted")
     top = y + 18
     c.line(362, top, 1562, top)
     for record in members:
         device, service, policy = (record[key] for key in ("device", "service", "policy"))
-        c.add(f'<a data-ui="path-device-row" data-device="{device}" data-service="{service}" data-policy="{policy}" data-scene="{record["scene"]}" href="#paths-{record["scene"]}-candidates">')
+        c.add(f'<a data-ui="path-device-row" data-device="{device}" data-service="{service}" data-policy="{policy}" data-scene="{record["scene"]}" href="#{path_detail_fragment(record["scene"], "candidates", origin)}">')
         c.rect(363, top + 1, 1198, 82, "transparent", "none", 0)
         c.txt(386, top + 31, record["name"], "body mono")
         c.txt(386, top + 55, "Open path details →", "small green")
@@ -1364,7 +1393,7 @@ def live_paths_workspace(key: str, group: str = "all") -> Canvas:
             c.add(f'<line x1="{x - 8}" y1="376" x2="{x + width - 8}" y2="376" stroke="#248F64" stroke-width="2"/>')
         c.add('</a>')
         x += width + (36 if value == "unknown" else 18)
-    bottom = path_device_rows(c, members, 407)
+    bottom = path_device_rows(c, members, 407, origin=(key, group))
     if not members:
         c.txt(386, bottom + 36, "No devices match this filter.", "body muted")
     else:
@@ -1385,13 +1414,13 @@ def live_path_targets() -> dict[str, tuple[str, str, str]]:
     # Fragment -> output file, drawing scene, detail tab. This is a drawing index.
     targets = {}
     for key, service, _ in PATH_SUMMARY_SERVICES:
-        groups = ("all", "failed", "unknown", *(g for g in PATH_GROUPS if path_members(service, g))) if path_members(service) else ("all",)
-        for group in groups:
+        for group in path_workspace_filters(service):
             fragment = "paths-service-" + key + ("-" + group if group != "all" else "")
             targets[fragment] = ("04-live-paths", f"{key}-{group}", "")
     for scene in ("current", "failed", "direct", "pending", "expired", "denied", "unassigned", "lan"):
-        for tab in ("candidates", "history"):
-            targets[f"paths-{scene}-{tab}"] = ("04-live-paths-detail", scene, tab)
+        for origin in (None, *path_navigation_origins(scene)):
+            for tab in ("candidates", "history"):
+                targets[path_detail_fragment(scene, tab, origin)] = ("04-live-paths-detail", scene, tab)
     return targets
 
 
@@ -1425,6 +1454,7 @@ def live_paths(page: str = "04-live-paths") -> Canvas:
         f"#paths-scene-{default_scene} {{ display:inline; }}",
         f"svg:has(.path-scene-target:target) #paths-scene-{default_scene} {{ display:none; }}",
         *tab_style("svg", default_tab or "candidates"),
+        ".path-origin-navigation { display:none; } .path-origin-default { display:inline; }",
         "a:focus-visible { outline:2px solid #4D78D1; outline-offset:3px; }",
     ]
     for fragment, (scene, tab) in local.items():
@@ -1433,6 +1463,10 @@ def live_paths(page: str = "04-live-paths") -> Canvas:
         css.append(f"{scope} {{ display:inline; }}")
         if tab:
             css.extend(tab_style(scope, tab))
+        if "-from-" in fragment:
+            origin = fragment.split("-from-", 1)[1]
+            css.extend((f"{scope} .path-origin-default {{ display:none; }}",
+                        f"{scope} .path-origin-{origin} {{ display:inline; }}"))
     for scene in dict.fromkeys(scene for scene, _ in local.values()):
         c.add(f'<g id="paths-scene-{scene}" class="path-scene">')
         c.parts.extend(default_parts if scene == default_scene else draw(scene).parts)
@@ -1770,9 +1804,9 @@ def node_lan_mapping() -> Canvas:
     c.txt(353, 515, "Address mapping", "section")
     c.txt(1233, 515, "Assigned automatically", "small muted", "end")
     c.txt(353, 552, "Virtual prefix", "small muted")
-    c.txt(761, 552, "Gateway address", "small muted")
+    c.txt(761, 552, "Gateway node", "small muted")
     c.txt(353, 581, "198.51.100.0/24", "body mono")
-    c.txt(761, 581, "198.51.100.1", "body mono")
+    c.txt(761, 581, "demo-forward-c", "body mono")
     c.txt(353, 629, "Example access address", "small muted")
     c.txt(916, 629, "LAN destination", "small muted")
     c.txt(353, 660, "198.51.100.42", "section mono")
@@ -2623,7 +2657,7 @@ def current_device_detail() -> Canvas:
     c.txt(right, 624, "Fixed gateway · this device", "small muted", "end")
     for x, label, value in ((left, "Reported local prefix", "192.0.2.0/24"),
                             (806, "Virtual prefix", "198.51.100.0/24"),
-                            (1166, "Gateway address", "198.51.100.1")):
+                            (1166, "Gateway node", device)):
         c.txt(x, 673, label, "small muted")
         c.txt(x, 708, value, "body mono")
     c.txt(left, 753, "Other devices select a policy for this LAN service to access the network behind this gateway.", "small muted")
@@ -2651,22 +2685,18 @@ def current_device_detail() -> Canvas:
     c.txt(746, 564, "Completed · invitation consumed", "small green")
     c.txt(left, 601, "Current configuration and runtime are shown in Overview. Joining stays completed.", "small muted")
     c.line(left, 630, right, 630)
-    c.txt(left, 671, "Re-add this device", "section")
-    flow_link(c, right, 671, "Review replacement →", f"/devices/{device}/rejoin", anchor="end")
-    c.txt(left, 707, "Use SSH or sh. Replacing a lost identity permanently retires it; reconnect if the identity still exists.", "small muted")
-    c.line(left, 738, right, 738)
-    c.txt(left, 779, "Revoke authorization", "section")
-    c.txt(left, 815, "Remove this device's permissions while retaining its identity.", "small muted")
+    c.txt(left, 671, "Revoke authorization", "section")
+    c.txt(left, 707, "Remove this device's permissions while retaining its identity.", "small muted")
     c.add(f'<g data-ui="device-action" data-action="review-revocation" data-device="{device}">')
-    c.txt(right, 779, "Review revocation →", "small red", "end")
+    c.txt(right, 671, "Review revocation →", "small red", "end")
     c.add('</g>')
-    c.line(left, 846, right, 846)
-    c.txt(left, 887, "Delete device identity", "section")
-    c.txt(left, 923, "Remove the device and its authorization. This identity cannot join again.", "small muted")
+    c.line(left, 738, right, 738)
+    c.txt(left, 779, "Delete device identity", "section")
+    c.txt(left, 815, "Remove the device and its authorization. This identity cannot join again.", "small muted")
     c.add(f'<g data-ui="device-action" data-action="review-deletion" data-device="{device}">')
-    c.txt(right, 887, "Review deletion →", "small red", "end")
+    c.txt(right, 779, "Review deletion →", "small red", "end")
     c.add('</g>')
-    c.txt(left, 957, "Reusing the device name does not restore a deleted identity.", "small muted")
+    c.txt(left, 849, "If the identity is lost, delete this node and use Add Device.", "small muted")
     c.add('</g></g>')
     return c
 
@@ -2721,7 +2751,7 @@ def join_device_detail(context: str, method: str, state: str) -> Canvas:
             c.button(left, y - 23, 212, "Request cancellation")
             c.add('</g>')
             c.txt(left, y + 37, "Cancellation also needs the current members' majority. The device ID stays reserved until confirmed.", "small muted")
-            c.txt(left, y + 66, "An already voted join may finish first; remove the member afterwards if that happens.", "small muted")
+            c.txt(left, y + 66, "If joining completes first, use Delete node to remove the node and all its roles.", "small muted")
         elif not joined:
             if method == "ssh":
                 label, fragment = "Check target and continue →", "#ssh-failed" if install_failed else "#ssh-unconfirmed"
@@ -2734,14 +2764,15 @@ def join_device_detail(context: str, method: str, state: str) -> Canvas:
             c.txt(left, y + 36, "Same invitation and device ID · expires 2030-01-02 00:00 UTC · issued by control-a", "small muted")
             c.txt(left, y + 66, "You can close this page. The client completes joining independently." if method == "qr" else "Closing this page does not cancel the invitation or stop an installation already in progress.", "small muted")
         else:
-            flow_link(c, left, y, "Review re-adding →", f"/devices/{device}/rejoin")
-            actions = ((right, "member-removal", "Review member removal →"),) if method == "control" else ((1110, "revocation", "Review revocation →"), (right, "deletion", "Review deletion →"))
+            if method == "qr":
+                flow_link(c, left, y, "Review re-adding →", f"/devices/{device}/rejoin")
+            actions = ((1110, "member-removal", "Review member removal →"), (right, "deletion", "Review node deletion →")) if method == "control" else ((1110, "revocation", "Review revocation →"), (right, "deletion", "Review deletion →"))
             for x, action, label in actions:
                 c.add(f'<g data-ui="device-action" data-action="review-{action}" data-device="{device}">')
                 c.txt(x, y, label, "small red", "end")
                 c.add('</g>')
             c.txt(left, y + 36, "Invitation consumed · it is no longer offered for another identity.", "small muted")
-            c.txt(left, y + 66, "Member removal requires a majority certificate." if method == "control" else "Reconnect with the existing identity. Re-adding is only for replacing a lost identity.", "small muted")
+            c.txt(left, y + 66, "Member removal keeps other roles; node deletion removes them all. Both need a majority certificate." if method == "control" else "Reconnect with the existing identity. Re-adding is only for replacing a lost identity." if method == "qr" else "If the identity is lost, delete this node and use Add Device. Otherwise reconnect with the existing identity.", "small muted")
 
     panel("overview", "Overview")
     c.txt(right, 228, "Joined · authorization verified" if joined else "Pending join · no active authorization", "small green" if joined else "small muted", "end")
@@ -2971,11 +3002,31 @@ def join_delivery(method: str = "qr") -> Canvas:
         c.txt(353, end + 48, "The client completes joining asynchronously. You do not need to keep this page open.", "small muted")
         action_y = end + 84
     else:
-        # Illustrative public installer URL and nonfunctional Invite placeholder.
-        # The public download request never includes this device's capability.
-        installer_url = "https://download.example/demo-install.sh"
-        command = f"curl -fsSLo loom-install.sh '{installer_url}' && sh loom-install.sh 'demo-invite-payload'"
-        command_attr = escape(command, {'"': '&quot;'})
+        # Synthetic manifest digest and nonfunctional Invite, never release material.
+        # The protected page fixes the verified digest before public download.
+        installer_digest = "0123456789abcdef" * 4
+        installer_url = f"https://download.example/{installer_digest}/demo-install.sh"
+        command_lines = [
+            "(",
+            "  set -eu",
+            "  umask 077",
+            "  loom_install_dir=$(mktemp -d)",
+            "  trap 'rm -rf -- \"$loom_install_dir\"' 0",
+            "  trap 'exit 1' 1 2 15",
+            "  curl --fail --silent --show-error --proto '=https' \\",
+            f"    '{installer_url}' \\",
+            '    -o "$loom_install_dir/installer.sh"',
+            "  printf '%s  %s\\n' \\",
+            f"    '{installer_digest}' \\",
+            '    "$loom_install_dir/installer.sh" | sha256sum --check --status -',
+            '  sh "$loom_install_dir/installer.sh" --invite-stdin <<\'LOOM_DEMO_INVITE\'',
+            "demo-invite-payload",
+            "LOOM_DEMO_INVITE",
+            ")",
+        ]
+        command = "\n".join(command_lines) + "\n"
+        # Character references preserve shell newlines through XML attribute parsing.
+        command_attr = escape(command, {'"': '&quot;'}).replace("\n", "&#10;")
         c.txt(353, 258, "Roles · " + " + ".join(scene["roles"]), "body")
         c.txt(1233, 258, "Issued by control-a", "small muted", "end")
         c.line(353, 283, 1233, 283)
@@ -2983,17 +3034,19 @@ def join_delivery(method: str = "qr") -> Canvas:
         c.add(f'<g data-ui="script-action" data-action="copy-command" data-invite="{scene["invite"]}" data-copy-value="{command_attr}">')
         c.button(1041, 302, 192, "Copy command", True)
         c.add('</g>')
-        c.add(f'<g data-ui="script-command" data-invite="{scene["invite"]}" data-device="{scene["device"]}" data-installer-url="{installer_url}" data-command="{command_attr}">')
-        c.rect(353, 352, 880, 78, "#F3F6F4", "none", 6)
-        c.txt(375, 397, command, "small mono")
+        c.add(f'<g data-ui="script-command" data-invite="{scene["invite"]}" data-device="{scene["device"]}" data-installer-url="{installer_url}" data-installer-digest="{installer_digest}" data-digest-source="verified-release-manifest" data-payload="illustration-only" data-command="{command_attr}">')
+        c.rect(353, 352, 880, 366, "#F3F6F4", "none", 6)
+        for index, line in enumerate(command_lines):
+            c.add(f'<text x="375" y="{378 + index * 21}" class="ui small mono" xml:space="preserve" data-ui="script-command-line">{escape(line)}</text>')
         c.add('</g>')
-        c.txt(353, 472, "Paste the full command on " + scene["name"] + ". It downloads the installer and starts this device's join.", "small muted")
-        c.txt(353, 507, "The installer checks the platform and existing identity before installing or continuing the same join.", "small muted")
-        c.line(353, 544, 1233, 544)
-        c.txt(353, 586, "Waiting for the device", "body amber")
-        c.txt(1233, 586, "No join request · not authorized", "small muted", "end")
-        c.txt(353, 624, "Copying the command does not run it. Joining and runtime results appear in device details.", "small muted")
-        action_y = 665
+        c.txt(353, 750, "This command contains the invitation and may be saved in your terminal history.", "small amber")
+        c.txt(353, 786, "Paste this block once in a root shell on " + scene["name"] + ". The installer digest is verified first.", "small muted")
+        c.txt(353, 817, "The invitation is read from stdin; the installer checks the platform and existing identity before joining.", "small muted")
+        c.line(353, 854, 1233, 854)
+        c.txt(353, 896, "Waiting for the device", "body amber")
+        c.txt(1233, 896, "No join request · not authorized", "small muted", "end")
+        c.txt(353, 934, "Copying the command does not run it. Joining and runtime results appear in device details.", "small muted")
+        action_y = 975
     open_join_details(c, method, method + "-waiting", action_y, primary=method != "script")
     c.add('</g>')
     c.fit_height(action_y + 136)
@@ -3192,6 +3245,28 @@ def administration_controls_draw(c: Canvas, state: str) -> None:
     c.txt(344, top + 164, "Membership changes need 2 signatures from the 2 current members. Ordinary changes do not.", "small muted")
 
 
+def configuration_impact(c: Canvas, y: int) -> None:
+    """Known local references in this conflict scene, not a global inventory."""
+    c.add('<g data-ui="conflict-impact" data-service="demo-work" data-control="demo-control-a" data-scope="known-local-references">')
+    c.txt(348, y, "Affected references known here", "body")
+    c.txt(1518, y, "1 device · 1 unexpired invitation", "small muted", "end")
+    c.txt(348, y + 31, "Policy · demo-work-access → demo-work", "small mono")
+    c.txt(1518, y + 31, "As of 2030-01-01 00:00 UTC", "small muted", "end")
+    c.add('<g data-ui="affected-device" data-device="demo-laptop" data-policy="demo-work-access">')
+    c.txt(348, y + 65, "Device", "small muted")
+    c.txt(552, y + 65, "demo-laptop · demo-work-access", "small mono")
+    c.txt(1060, y + 65, "Service access paused by this conflict", "small amber")
+    c.add('</g>')
+    c.add('<g data-ui="affected-invite" data-invite="demo-work-phone-invite" data-device="demo-work-phone" data-policy="demo-work-access">')
+    c.txt(348, y + 97, "Invitation", "small muted")
+    c.txt(552, y + 97, "demo-work-phone-invite → demo-work-phone", "small mono")
+    c.txt(1060, y + 97, "Open · claim paused by this conflict", "small amber")
+    c.txt(552, y + 122, "access · not bound · expires 2030-01-02 00:00 UTC", "small muted")
+    c.add('</g>')
+    c.txt(348, y + 151, "Verified on control-a only. Other controls may hold additional references; their scope is unknown.", "small muted")
+    c.add('</g>')
+
+
 def administration_configuration_draw(c: Canvas, state: str) -> None:
     resolved = state in ("resolved-a", "resolved-b")
     choice_b = state in ("review-b", "resolved-b")
@@ -3262,19 +3337,20 @@ def administration_configuration_draw(c: Canvas, state: str) -> None:
             administration_action(c, 348, 917, 220, "Refresh and review", "#compare", primary=True)
             end = 989
         elif state in ("review-a", "review-b"):
-            c.txt(348, 846, "Final destinations · editable draft", "small muted")
+            configuration_impact(c, 831)
+            c.txt(348, 1014, "Final destinations · editable draft", "small muted")
             c.add('<g data-ui="conflict-final-value" data-target="demo-work" data-references="demo-work-update-a demo-work-update-b">')
-            flow_input(c, 348, 859, 1170, "work.example, .cdn.work.example" if choice_b else "work.example")
+            flow_input(c, 348, 1027, 1170, "work.example, .cdn.work.example" if choice_b else "work.example")
             c.add('</g>')
-            c.txt(348, 930, "This updates the shared service for every policy and device that uses it.", "small muted")
-            c.txt(348, 958, "Both conflicting references are included. A newer conflict requires another review.", "small muted")
-            administration_action(c, 1288, 994, 230, "Save resolution", "#resolved-b" if choice_b else "#resolved-a", primary=True, action="submit-conflict-resolution")
-            administration_link(c, 348, 1021, "Cancel", "#compare")
-            end = 1066
+            c.txt(348, 1094, "Both conflicting facts are included. A newer conflict requires another review.", "small muted")
+            administration_action(c, 1288, 1113, 230, "Save resolution", "#resolved-b" if choice_b else "#resolved-a", primary=True, action="submit-conflict-resolution")
+            administration_link(c, 348, 1140, "Cancel", "#compare")
+            end = 1174
         else:
-            c.txt(348, 839, "Select a final value before submitting. The service stays suspended until a resolution is accepted.", "small muted")
-            administration_link(c, 348, 880, "Cancel review", "#overview")
-            end = 915
+            configuration_impact(c, 831)
+            c.txt(348, 1024, "Select a final value before submitting. The service stays suspended until a resolution is accepted.", "small muted")
+            administration_link(c, 348, 1065, "Cancel review", "#overview")
+            end = 1100
     else:
         c.txt(348, 519, "Two controls changed the same service independently.", "body")
         c.txt(348, 550, "Review the destination differences, choose a final value, then save a resolution.", "small muted")

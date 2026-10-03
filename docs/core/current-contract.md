@@ -17,6 +17,10 @@
 | 客户端本机值 | `DeviceIdentity` 私钥与信任绑定、已见 floor、完整 LKG、唯一 `Preference`，以及 Android/Windows 保存用户命名、稳定本机 ID 与恢复意图的 profile catalog；各自严格 schema、原子持久往返。 | 候选、Selection 与 UI 每次从这些值和宿主回读重建；这些值不作为网络权威上传。 |
 | 本机部署输入 | [配置模型](../operations/configuration-model.md)规定的六键白名单规范 `.env`；可选键缺席时不写该行，密钥和证书正文留在受保护本机输入。 | 只生成本次部署计划与脱敏结果，不保存 control 或 DNS overlay 的第二份事实。 |
 
+成员证书及所引事实一经某验收方验证，control 资格与组合职责即在该方投影中生效；交付丢失只影响设备
+获知证明，不改变这份权威结果。取消整次 control 加入若因安全继承被迫先完成，后续按既有节点整体删除
+规则撤去全部职责，不能用仅卸任 control 代替；原加入历史仍为 completed。
+
 正式入网的控制面 Web 使用网站服务端证书和 admin 客户端证书。网站根证书必须有 critical `.loom` DNS 约束和全 IPv4/IPv6 IP 排除，且目标浏览器已实测执行这些约束才可导入，根私钥不得进入 control；control 的正式 Web 入口仅持有 `control.loom` 网站叶私钥，网站根与成员/传输 CA 分离。普通已加入 access 可打开私有
 `control.loom` 入口页；管理数据和操作要求 admin 证书，受信 admin 名单由普通事实维护、所有 control
 一致。reader 证书、read capability 和对应的第二套页面权限不是本契约的一部分。
@@ -66,13 +70,23 @@ envelope、Invite 与 claim/resume、设备 report——统一使用 schema **3*
 
 现有模型已决定下列字段**语义**，但以下清单不等于可编码规格：
 
-| 对象 | 必须封闭的字段语义 | 尚缺的字段级决定 |
-|---|---|---|
-| `Material` | 网络、签发 control 与验证键、所引成员表、该键序列和前事实 ID、因果依赖、稳定目标、操作及对应内容、签名；genesis 固定初始成员、网络意图和管理员信任。 | genesis 与普通事实的精确字段；每种操作的唯一内容形状（含按 PolicyID 排序、拒绝同服务重复策略的 PolicyIDs；Policy 固定 ServiceID、allow/deny 及范围模式；不能沿用 DestinationGrants）；签名字段所在的完整事实形状；ID 哈希领域、哈希函数与输出文本格式；编码、排序、长度及拒绝向量。 |
-| 成员承诺、投票、证书 | 基础表、轮次、发起者、成员、完整投票史、按键已验证前缀、后继提案、封存点和同轮多数签名。 | 每种消息的精确字段、提案摘要输入、历史／前缀／签名集合的字节排序、空值及长度。 |
-| `DeviceView` 与 envelope | 单设备配置、签发者资格、连续成员证明、签发者事实前沿、View 摘要、设备绑定与签名。 | View 每种内层值、摘要输入、证明和签名封装的精确字段及规范字节。 |
-| Invite、claim、resume、report | Invite 的签发者/锚/设备/职责/PolicyIDs/入口/一次性约束；首次 claim 的设备公钥、目标端识别的平台与 request ID；Invite 不预锁平台，平台随绑定事实及设备授权签名；resume 同事务同密钥同平台；report 的 View 摘要、按设备序列、真实观测与运行回读。 | 请求与响应逐字段表、签名覆盖范围、报告观测键与过期字段、排序和严格 decoder。 |
-| release catalog 与 manifest | generation、组件/平台、不可变文件摘要、长度、媒体类型、受众、版本和最低兼容约束，发布密钥签名。 | catalog 与 manifest 的分层字段、路径规则、排序、签名和摘要字节；旧 floor 与新发布坐标的迁移证明。 |
+| 对象或既有值 | 已确定的字段语义 | 尚缺的字段级决定 | 受影响的业务行为 |
+|---|---|---|---|
+| `Material` | 网络、签发 control 与验证键、所引成员表、该键序列和前事实 ID、因果依赖、稳定目标、操作及对应内容、签名；genesis 固定初始成员、网络意图和管理员信任。 | genesis 与普通事实的精确字段；每种操作的唯一内容形状（含按 PolicyID 排序、拒绝同服务重复策略的 PolicyIDs；Policy 固定 ServiceID、allow/deny 及范围模式；不能沿用 DestinationGrants）；签名字段所在的完整事实形状；ID 哈希领域、哈希函数与输出文本格式；编码、排序、长度及拒绝向量。 | 管理 operation 的签名写入、事实同步、重启重建、授权与冲突解决不能仅凭领域描述实现互通。 |
+| 成员承诺、投票、证书 | 基础表、轮次、发起者、成员、完整投票史、按键已验证前缀、后继提案、封存点和同轮多数签名。 | 每种消息的精确字段、提案摘要输入、历史／前缀／签名集合的字节排序、空值及长度。 | control 加入、移除、换键及离线设备验证连续成员证明需要相同的签名字节。 |
+| `NetworkIntent` 内的 `TransportResource` | 稳定资源 ID、种类、承载节点、interface/listener 身份、拨号坐标和公开认证参数；共享首跳与中继复用同一资源，私钥留在本机。 | 按资源种类固定认证材料的具体形状、信任身份表达、字段及规范字节；不能由适配器临时选择证书链、SPKI 或其他身份表示。 | WG、Hy2、私有 TLS 的真实身份校验、资源复用和参数变化后的观测失效；无公网域名不能成为关闭 Hy2 验签的理由。 |
+| 设备授权内的 `RuntimeKey` 与凭据派生 | 只在 control 间保管根密钥；派生绑定设备、Service、Policy、用途、资源和接收节点，不向设备交付根密钥。 | 密钥长度、KDF、用途域、精确输入顺序、输出编码，以及更新失败时的原子替换规则。 | 同一授权在客户端与服务节点产生匹配且用途隔离的凭据；撤权、策略替换或换钥后旧凭据的拒绝不能依赖旧派生规则。 |
+| `DeviceView` 与 envelope | 单设备配置、签发者资格、连续成员证明、签发者事实前沿、View 摘要、设备绑定与签名。 | View 每种内层值、摘要输入、证明和签名封装的精确字段及规范字节。 | 配置领取、认证 LKG 原子保存、离线恢复与运行消费须验证同一完整 View，不能拼接或补造缺项。 |
+| Invite、claim、resume | Invite 的签发者/锚/设备/职责/PolicyIDs/入口/一次性约束；首次 claim 的设备公钥、目标端识别的平台与 request ID；Invite 不预锁平台，平台随绑定事实及设备授权签名；resume 同事务同密钥同平台。 | 请求与响应逐字段表、签名覆盖范围、排序和严格 decoder。 | SSH、脚本与二维码共用加入协议；目标平台绑定、同事务恢复和重复提交拒绝需要统一字节。 |
+| 设备 report 与逐条 Observation | 当前 View 摘要、按设备递增序列、真实观测与运行回读；观测绑定设备、网络代、层级、Service/候选或 LinkID、实际目标及规范摘要，缺失或失效为 unknown。 | 请求与响应逐字段表、签名覆盖范围、观测键、时间和有效期编码、最大可接受寿命、设备时钟偏差处理，以及相同序列不同签名内容的拒绝规则。 | 当前路径、业务状态、链路测量和部署回读的新鲜性及重放拒绝；不能由签名有效或单项成功推定其他范围仍可用。 |
+| release catalog 与 manifest | generation、组件/平台、不可变文件摘要、长度、媒体类型、受众、版本和最低兼容约束，发布密钥签名。 | catalog 与 manifest 的分层字段、路径规则、排序、签名和摘要字节；旧 floor 与新发布坐标的迁移证明。 | 精确制品验签、下载、期望摘要与实际应用对照，以及维持既有反重放边界的生产切换。 |
+
+资源身份与 KDF 的未决问题对应[控制模型的凭据派生](control-model.md#21-material规范签名事实)和
+[传输资源边界](control-model.md#7-networkintent传输资源和显式中继)；report 寿命与拒绝规则对应
+[Enrollment 的 Observation](enrollment-endpoint-model.md#observation)。表中的缺项是这些既有值的规范边界，
+不新增权威对象，不撤销已确定语义，也不构成另一份实施计划。选路中的多目标结果归约、指标优先级及
+稳定平局另由[Preference 与 Selection](../clients/client-runtime-model.md#preference-与-selection)列出；
+完成编码格式本身不能替代这些算法决定。
 
 任何对象的内层值、可选性或签名输入仍不明确时，生产 writer/decoder 不得自行发明格式。
 Policy 必须签名覆盖固定的 ServiceID、allow/deny、独立的入口与中间转发范围，以及互联网服务适用的
@@ -83,6 +97,9 @@ Direct 或本地互联网出网字段，终点从固定所属 Service 读取；P
 节点和 Invite 只保存规范 PolicyIDs，不再双写 ServicePolicies；重复 PolicyID、同一设备选择同 Service
 的两条策略、悬空/冲突引用、非 access 携带访问策略均拒绝。合法空 PolicyIDs 表示没有业务授权；
 deny 保留分配但无业务权限。解析到的 Service/Policy 对只是可重建投影，不成为另一份签名分配值。
+设备限定本地出网的逻辑最终出口为本机稳定 NodeID，空跳链仅表达本机执行；普通 Direct 的最终出口为
+`direct`。本机出口仍须满足设备限定许可、职责及出口范围；本地出网没有网络入口，不受入口范围限制，也不要求自拨或入站资源。
+两者不能靠空跳链混同，指定本机出口能匹配已获本地出口许可的候选，Direct 偏好不取得该许可。
 策略创建后再分配的部分失败与原请求重试见
 [策略创建、分配与复用](control-model.md#策略创建分配与复用)。这些同属 schema 3 的现行目标；
 旧 AllowedServers、Service.policy、DestinationGrants 和先前 ServicePolicies 目标不能通过改名继续运行。

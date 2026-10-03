@@ -322,8 +322,8 @@ svg:has(#detail-identity:target) #detail-nav-identity .detail-nav-label { font-w
   <text class="ui body mono" x="446" y="708" text-anchor="start">192.0.2.0/24</text>
   <text class="ui small muted" x="806" y="673" text-anchor="start">Virtual prefix</text>
   <text class="ui body mono" x="806" y="708" text-anchor="start">198.51.100.0/24</text>
-  <text class="ui small muted" x="1166" y="673" text-anchor="start">Gateway address</text>
-  <text class="ui body mono" x="1166" y="708" text-anchor="start">198.51.100.1</text>
+  <text class="ui small muted" x="1166" y="673" text-anchor="start">Gateway node</text>
+  <text class="ui body mono" x="1166" y="708" text-anchor="start">relay-west</text>
   <text class="ui small muted" x="446" y="753" text-anchor="start">Other devices select a policy for this LAN service to access the network behind this gateway.</text>
   <g data-ui="navigation" data-route="/services/demo-office">
   <text class="ui small green" x="446" y="795" text-anchor="start">Open office-network in Services →</text>
@@ -362,24 +362,18 @@ svg:has(#detail-identity:target) #detail-nav-identity .detail-nav-label { font-w
   <text class="ui small green" x="746" y="564" text-anchor="start">Completed · invitation consumed</text>
   <text class="ui small muted" x="446" y="601" text-anchor="start">Current configuration and runtime are shown in Overview. Joining stays completed.</text>
   <line class="rule" x1="446" y1="630" x2="1514" y2="630"/>
-  <text class="ui section" x="446" y="671" text-anchor="start">Re-add this device</text>
-  <g data-ui="navigation" data-route="/devices/demo-forward-c/rejoin">
-  <text class="ui small green" x="1514" y="671" text-anchor="end">Review replacement →</text>
-  </g>
-  <text class="ui small muted" x="446" y="707" text-anchor="start">Use SSH or sh. Replacing a lost identity permanently retires it; reconnect if the identity still exists.</text>
-  <line class="rule" x1="446" y1="738" x2="1514" y2="738"/>
-  <text class="ui section" x="446" y="779" text-anchor="start">Revoke authorization</text>
-  <text class="ui small muted" x="446" y="815" text-anchor="start">Remove this device's permissions while retaining its identity.</text>
+  <text class="ui section" x="446" y="671" text-anchor="start">Revoke authorization</text>
+  <text class="ui small muted" x="446" y="707" text-anchor="start">Remove this device's permissions while retaining its identity.</text>
   <g data-ui="device-action" data-action="review-revocation" data-device="demo-forward-c">
-  <text class="ui small red" x="1514" y="779" text-anchor="end">Review revocation →</text>
+  <text class="ui small red" x="1514" y="671" text-anchor="end">Review revocation →</text>
   </g>
-  <line class="rule" x1="446" y1="846" x2="1514" y2="846"/>
-  <text class="ui section" x="446" y="887" text-anchor="start">Delete device identity</text>
-  <text class="ui small muted" x="446" y="923" text-anchor="start">Remove the device and its authorization. This identity cannot join again.</text>
+  <line class="rule" x1="446" y1="738" x2="1514" y2="738"/>
+  <text class="ui section" x="446" y="779" text-anchor="start">Delete device identity</text>
+  <text class="ui small muted" x="446" y="815" text-anchor="start">Remove the device and its authorization. This identity cannot join again.</text>
   <g data-ui="device-action" data-action="review-deletion" data-device="demo-forward-c">
-  <text class="ui small red" x="1514" y="887" text-anchor="end">Review deletion →</text>
+  <text class="ui small red" x="1514" y="779" text-anchor="end">Review deletion →</text>
   </g>
-  <text class="ui small muted" x="446" y="957" text-anchor="start">Reusing the device name does not restore a deleted identity.</text>
+  <text class="ui small muted" x="446" y="849" text-anchor="start">If the identity is lost, delete this node and use Add Device.</text>
   </g></g>
   </g>
   <g id="detail-context-qr-waiting" class="detail-context" data-scene="qr-waiting">
@@ -1168,9 +1162,6 @@ svg:has(#detail-script-joined-identity:target) #detail-script-joined-nav-identit
   <text class="ui small muted" x="748" y="769" text-anchor="start">Device report: configured runtime process exited</text>
   <line class="rule" x1="446" y1="787" x2="1514" y2="787"/>
   </g>
-  <g data-ui="navigation" data-route="/devices/demo-relay-g/rejoin">
-  <text class="ui small green" x="446" y="844" text-anchor="start">Review re-adding →</text>
-  </g>
   <g data-ui="device-action" data-action="review-revocation" data-device="demo-relay-g">
   <text class="ui small red" x="1110" y="844" text-anchor="end">Review revocation →</text>
   </g>
@@ -1178,7 +1169,7 @@ svg:has(#detail-script-joined-identity:target) #detail-script-joined-nav-identit
   <text class="ui small red" x="1514" y="844" text-anchor="end">Review deletion →</text>
   </g>
   <text class="ui small muted" x="446" y="880" text-anchor="start">Invitation consumed · it is no longer offered for another identity.</text>
-  <text class="ui small muted" x="446" y="910" text-anchor="start">Reconnect with the existing identity. Re-adding is only for replacing a lost identity.</text>
+  <text class="ui small muted" x="446" y="910" text-anchor="start">If the identity is lost, delete this node and use Add Device. Otherwise reconnect with the existing identity.</text>
   </g></g></g>
   </g>
   <g id="detail-context-ssh-joined" class="detail-context" data-scene="ssh-joined">
@@ -1404,9 +1395,6 @@ svg:has(#detail-ssh-joined-identity:target) #detail-ssh-joined-nav-identity .det
   <text class="ui small muted" x="748" y="769" text-anchor="start">No current runtime report</text>
   <line class="rule" x1="446" y1="787" x2="1514" y2="787"/>
   </g>
-  <g data-ui="navigation" data-route="/devices/demo-laptop/rejoin">
-  <text class="ui small green" x="446" y="844" text-anchor="start">Review re-adding →</text>
-  </g>
   <g data-ui="device-action" data-action="review-revocation" data-device="demo-laptop">
   <text class="ui small red" x="1110" y="844" text-anchor="end">Review revocation →</text>
   </g>
@@ -1414,7 +1402,7 @@ svg:has(#detail-ssh-joined-identity:target) #detail-ssh-joined-nav-identity .det
   <text class="ui small red" x="1514" y="844" text-anchor="end">Review deletion →</text>
   </g>
   <text class="ui small muted" x="446" y="880" text-anchor="start">Invitation consumed · it is no longer offered for another identity.</text>
-  <text class="ui small muted" x="446" y="910" text-anchor="start">Reconnect with the existing identity. Re-adding is only for replacing a lost identity.</text>
+  <text class="ui small muted" x="446" y="910" text-anchor="start">If the identity is lost, delete this node and use Add Device. Otherwise reconnect with the existing identity.</text>
   </g></g></g>
   </g>
   <g id="detail-context-ssh-failed" class="detail-context" data-scene="ssh-failed">
@@ -2007,7 +1995,7 @@ svg:has(#detail-control-waiting-identity:target) #detail-control-waiting-nav-ide
   </g>
   </g>
   <text class="ui small muted" x="446" y="829" text-anchor="start">Cancellation also needs the current members' majority. The device ID stays reserved until confirmed.</text>
-  <text class="ui small muted" x="446" y="858" text-anchor="start">An already voted join may finish first; remove the member afterwards if that happens.</text>
+  <text class="ui small muted" x="446" y="858" text-anchor="start">If joining completes first, use Delete node to remove the node and all its roles.</text>
   </g>
   <g id="detail-control-waiting-panel-forwarding" class="detail-panel" data-ui="device-section" data-section="forwarding" role="region" aria-label="Forwarding &amp; LAN">
   <text class="ui section" x="446" y="228" text-anchor="start">Forwarding &amp; LAN</text>
@@ -2066,7 +2054,7 @@ svg:has(#detail-control-waiting-identity:target) #detail-control-waiting-nav-ide
   </g>
   </g>
   <text class="ui small muted" x="446" y="881" text-anchor="start">Cancellation also needs the current members' majority. The device ID stays reserved until confirmed.</text>
-  <text class="ui small muted" x="446" y="910" text-anchor="start">An already voted join may finish first; remove the member afterwards if that happens.</text>
+  <text class="ui small muted" x="446" y="910" text-anchor="start">If joining completes first, use Delete node to remove the node and all its roles.</text>
   </g></g></g>
   </g>
   <g id="detail-context-control-joined" class="detail-context" data-scene="control-joined">
@@ -2253,14 +2241,14 @@ svg:has(#detail-control-joined-identity:target) #detail-control-joined-nav-ident
   <text class="ui small muted" x="748" y="769" text-anchor="start">No current runtime report</text>
   <line class="rule" x1="446" y1="787" x2="1514" y2="787"/>
   </g>
-  <g data-ui="navigation" data-route="/devices/demo-control-c/rejoin">
-  <text class="ui small green" x="446" y="844" text-anchor="start">Review re-adding →</text>
-  </g>
   <g data-ui="device-action" data-action="review-member-removal" data-device="demo-control-c">
-  <text class="ui small red" x="1514" y="844" text-anchor="end">Review member removal →</text>
+  <text class="ui small red" x="1110" y="844" text-anchor="end">Review member removal →</text>
+  </g>
+  <g data-ui="device-action" data-action="review-deletion" data-device="demo-control-c">
+  <text class="ui small red" x="1514" y="844" text-anchor="end">Review node deletion →</text>
   </g>
   <text class="ui small muted" x="446" y="880" text-anchor="start">Invitation consumed · it is no longer offered for another identity.</text>
-  <text class="ui small muted" x="446" y="910" text-anchor="start">Member removal requires a majority certificate.</text>
+  <text class="ui small muted" x="446" y="910" text-anchor="start">Member removal keeps other roles; node deletion removes them all. Both need a majority certificate.</text>
   </g></g></g>
   </g>
   <style><![CDATA[.detail-context { display:none; } #detail-context-current { display:inline; }

@@ -1,7 +1,23 @@
 # Loom Android client
 
-This document defines the client contract. Business acceptance and
-release status are tracked in [implementation status](../../docs/progress.md).
+This document defines the target client behavior. Implemented behavior, business
+acceptance, and release status are tracked in [implementation status](../../docs/progress.md).
+Target prototypes follow explicit requirements and the current models; existing
+code and native screenshots document implementation and its gaps, not limits on the design.
+
+## Normal user flow
+
+Android keeps at least one named local profile, which may not have joined yet.
+Create or select a profile, import its access Invite through the file or QR UI,
+then complete the private join using that profile's identity. Browsing or renaming
+a profile does not switch the running VPN. An explicit connect/switch action
+changes the requested profile; only runtime and selector readback establish the
+active profile. Business observations follow separately, so absent probe targets
+leave business status unknown without preventing an active VPN. These Android
+catalog rules differ from Windows, which adds a new profile to its list only
+after joining and saving. See the [profile model](../../docs/clients/android-profile-model.md).
+
+## Shared client contract
 
 The Android app consumes a private `DeviceView` signed by an effective control,
 with a continuous control membership proof and signer fact frontier. The view
@@ -30,6 +46,14 @@ and network generation. Each result binds the actual target and candidate; a suc
 for one Service does not establish another Service's health.
 If the selected candidate is unavailable, the model may choose one same-exit fallback and
 the host performs one second business check—there is no full candidate scan.
+
+Ordinary Direct has `final_exit=direct` and no managed hops. An authorized local
+egress candidate also has no network hops, but retains this device's NodeID as
+its logical final exit. Local egress has no entry hop, so entry-node scopes do not
+apply and it needs no self-dial or inbound resource.
+Where the HostAdapter supports local egress, Auto and a
+fixed preference for that NodeID can select it; Direct mode selects only ordinary
+Direct. Rebuilding a candidate must preserve this distinction and its authorization source.
 
 A verified signed View becomes the `CertifiedLKG` when authentication, member
 proof, device binding, floor checks, and protected atomic write/readback succeed.
@@ -76,11 +100,23 @@ for runtime acceptance and is tracked in [implementation status](../../docs/prog
 
 ## Visual review in VS Code
 
-The production Compose tree is the design source. `LoomHomeRoute` owns
+The production Compose tree is the sole rendering source for native visual
+regression screenshots. `LoomHomeRoute` owns
 `StateFlow`, managers, Android permissions, and side effects;
 `LoomHomeScreen` consumes only an immutable UI projection and is shared by the
 Activity and screenshot fixtures. The nine committed references are rendered
 by Compose screenshot alpha16 at Chinese/light/`412×915dp`/font scale 1.0.
+
+The editable [Android SVGs](../../assets/client/android/) express target behavior.
+The connection error scene keeps an accepted configuration while VPN startup fails;
+the business-failure variant keeps the VPN connected and reports each Service's
+target separately. The configuration scene shows the authenticated configuration
+has been saved. Join errors distinguish retrying the same transaction from
+abandoning local pending join data; diagnostics labels each Service, actual target,
+result and observation time. Target scenes may differ from the existing native
+PNGs or have no native counterpart. Requirements determine scene coverage, not
+the current count of nine references. SVG changes do not update production UI
+or approve new screenshot baselines; those require implementation and native review.
 
 From the repository root run:
 

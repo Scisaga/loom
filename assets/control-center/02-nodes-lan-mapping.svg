@@ -101,9 +101,9 @@
   <text class="ui section" x="353" y="515" text-anchor="start">Address mapping</text>
   <text class="ui small muted" x="1233" y="515" text-anchor="end">Assigned automatically</text>
   <text class="ui small muted" x="353" y="552" text-anchor="start">Virtual prefix</text>
-  <text class="ui small muted" x="761" y="552" text-anchor="start">Gateway address</text>
+  <text class="ui small muted" x="761" y="552" text-anchor="start">Gateway node</text>
   <text class="ui body mono" x="353" y="581" text-anchor="start">198.51.100.0/24</text>
-  <text class="ui body mono" x="761" y="581" text-anchor="start">198.51.100.1</text>
+  <text class="ui body mono" x="761" y="581" text-anchor="start">relay-west</text>
   <text class="ui small muted" x="353" y="629" text-anchor="start">Example access address</text>
   <text class="ui small muted" x="916" y="629" text-anchor="start">LAN destination</text>
   <text class="ui section mono" x="353" y="660" text-anchor="start">198.51.100.42</text>

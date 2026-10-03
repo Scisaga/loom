@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="876" height="614" viewBox="0 0 876 614" role="img" aria-labelledby="scene-title scene-description" font-family="'Segoe UI', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif">
-  <title id="scene-title">Loom Windows — join-empty</title>
-  <desc id="scene-description">Editable Windows design prototype with demo fixtures. Android-aligned panel surfaces, status chips and active colors; 24px content insets, 16px panel insets and 32px desktop controls. Not a native Win32 screenshot or evidence of runtime health. Exceptional comparison state: an existing profile entry lacks joined identity or a complete certified LKG. This is neither first use nor the next step of normal profile creation. The other profile's active connection continues.</desc>
+  <title id="scene-title">Loom Windows — profiles-empty</title>
+  <desc id="scene-description">Editable Windows design prototype with demo fixtures. Android-aligned panel surfaces, status chips and active colors; 24px content insets, 16px panel insets and 32px desktop controls. Not a native Win32 screenshot or evidence of runtime health. First-use state: the profile list is empty; the plus and Add connection profile actions open the existing join-draft form. No identity or active connection exists.</desc>
   <defs>
     <path id="loom-outline" d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z" />
     <path id="petal-opening" d="M628 1040C520 945 535 790 628 660C721 790 736 945 628 1040Z" />
@@ -72,45 +72,17 @@
       <rect x="132" y="104" width="32" height="32" rx="4" fill="#F7F9F7" />
       <path d="M142 120h12m-6-6v12" fill="none" stroke="#239B68" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
     </g>
-    <g data-ui="profile-row" data-selected="false">
-      <circle cx="28" cy="164" r="3" fill="#22764F" />
-      <text x="40" y="164" font-size="12" fill="#17211B" font-weight="400" text-anchor="start" dominant-baseline="central">演示网络甲</text>
-      <text x="40" y="192" font-size="11" fill="#22764F" font-weight="400" text-anchor="start" dominant-baseline="central">已连接</text>
-    </g>
-    <g data-ui="profile-row" data-selected="true">
-      <rect x="12" y="216" width="152" height="64" rx="8" fill="#EAF6F0" />
-      <rect x="12" y="236" width="2" height="24" rx="1" fill="#239B68" />
-      <circle cx="28" cy="236" r="3" fill="#647269" />
-      <text x="40" y="236" font-size="12" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">演示空配置</text>
-      <text x="40" y="264" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">未加入</text>
-    </g>
-    <line x1="16" y1="542" x2="160" y2="542" stroke="#E1E8E3" stroke-width="0.75" />
-    <text x="16" y="566" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">双击名称可重命名</text>
-    <text x="16" y="590" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">同时只运行一个连接</text>
-    <text x="200" y="72" font-size="20" fill="#17211B" font-weight="600" text-anchor="start" dominant-baseline="central">演示空配置</text>
-    <g data-ui="button" data-state="secondary">
-      <rect x="756" y="56" width="96" height="32" rx="8" fill="#FFFFFF" stroke="#D7DFD9" stroke-width="0.75" />
-      <text x="804.0" y="72.0" font-size="12" fill="#17211B" font-weight="500" text-anchor="middle" dominant-baseline="central">删除配置</text>
-    </g>
-    <g data-ui="panel" data-kind="join-empty">
-      <rect x="200" y="104" width="652" height="256" rx="12" fill="#FFFFFF" />
+    <text x="200" y="72" font-size="20" fill="#17211B" font-weight="600" text-anchor="start" dominant-baseline="central">连接配置</text>
+    <g data-ui="panel" data-kind="profiles-empty">
+      <rect x="200" y="104" width="652" height="160" rx="12" fill="#FFFFFF" />
       <circle cx="232" cy="136" r="16" fill="#EFF2F0" />
       <path d="M227 130h7l3 3v9h-10zM234 130v3h3" fill="none" stroke="#647269" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
-      <text x="264" y="136" font-size="20" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">此配置尚未加入</text>
-      <text x="264" y="176" font-size="12" fill="#17211B" font-weight="400" text-anchor="start" dominant-baseline="central">导入此配置的加入邀请，加入后保持断开。</text>
-      <text x="264" y="200" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">支持二维码 PNG 或 .loom-invite 文件。</text>
-      <g data-ui="button" data-state="secondary">
-        <rect x="264" y="224" width="152" height="32" rx="8" fill="#FFFFFF" stroke="#D7DFD9" stroke-width="0.75" />
-        <text x="340.0" y="240.0" font-size="12" fill="#17211B" font-weight="500" text-anchor="middle" dominant-baseline="central">选择邀请文件</text>
+      <text x="264" y="136" font-size="20" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">尚无连接配置</text>
+      <text x="264" y="176" font-size="12" fill="#17211B" font-weight="400" text-anchor="start" dominant-baseline="central">完成加入并保存后，配置才会出现在列表中。</text>
+      <g data-ui="button" data-state="primary">
+        <rect x="264" y="208" width="152" height="32" rx="8" fill="#239B68" />
+        <text x="340.0" y="224.0" font-size="12" fill="#FFFFFF" font-weight="500" text-anchor="middle" dominant-baseline="central">添加连接配置</text>
       </g>
-      <g data-ui="button" data-state="secondary">
-        <rect x="428" y="224" width="152" height="32" rx="8" fill="#FFFFFF" stroke="#D7DFD9" stroke-width="0.75" />
-        <text x="504.0" y="240.0" font-size="12" fill="#17211B" font-weight="500" text-anchor="middle" dominant-baseline="central">粘贴二维码</text>
-      </g>
-      <text x="264" y="280" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">也可拖入邀请文件，或按 Ctrl+V 粘贴。</text>
-      <line x1="200" y1="312" x2="852" y2="312" stroke="#E1E8E3" stroke-width="0.75" data-ui="panel-divider" />
-      <circle cx="220" cy="336" r="3" fill="#239B68" />
-      <text x="232" y="336" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">当前连接：“演示网络甲”</text>
     </g>
   </g>
   <rect x="0.5" y="0.5" width="875" height="613" rx="10" fill="none" stroke="#CDD5CF" stroke-width="0.75" />

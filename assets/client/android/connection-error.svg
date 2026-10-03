@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="412" height="915" viewBox="0 0 412 915" role="img" aria-labelledby="title description" data-scene-id="connection-error">
   <title id="title">Loom Android · connection-error</title>
-  <desc id="description">viewed=primary，requested=primary，active=none；真实业务检查失败，当前路径未连接。</desc>
+  <desc id="description">目标状态稿；viewed=primary，requested=primary（仅错误归属），active=none；认证配置已保存，VPN 启动失败；保留该 profile 的 CertifiedLKG，没有当前路径或当前业务观测，用户可重试。</desc>
   <defs>
     <symbol id="loom-mark" viewBox="127 112 1000 1000">
       <g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)">
@@ -23,9 +23,9 @@
 <rect x="22" y="171" width="368" height="242" fill="#F7FBF8" rx="20"/>
 <circle cx="45" cy="203" r="5.5" fill="#B33A3A"/>
 <text x="60" y="212" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="20" fill="#17211B" font-weight="700">连接失败</text>
-<text x="40" y="244" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="400">连接失败 · Loom 演示网络</text>
+<text x="40" y="244" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#647269" font-weight="400">认证配置已保存 · Loom 演示网络</text>
 <text x="52" y="289" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="13" fill="#239B68" font-weight="400">选择配置</text>
-<text x="40" y="335" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#B33A3A" font-weight="400">demo-exit 的真实业务检查失败</text>
+<text x="40" y="335" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="12" fill="#B33A3A" font-weight="400">VPN 启动失败</text>
 <g>
 <rect x="40" y="345" width="332" height="50" fill="#239B68" rx="14"/>
 <text x="206.0" y="375.0" font-family="Noto Sans CJK SC, Roboto, sans-serif" font-size="14" fill="#FFFFFF" font-weight="500" text-anchor="middle">连接 Loom 演示网络</text>
