@@ -55,8 +55,12 @@ func TestWindowsCapturePreservesHy2TrustAndRelay(t *testing.T) {
 			t.Fatal(profile, err)
 		}
 		derived, err := decodeWindowsConfig(body)
+		servers := 1
+		if profile != WindowsPortableMixedProfile {
+			servers++
+		}
 		if err != nil || !reflect.DeepEqual(derived.Outbounds[:len(c.Outbounds)], c.Outbounds) ||
-			len(derived.DNS.Servers) != 1 || derived.DNS.Servers[0].Address != "192.0.2.53" {
+			len(derived.DNS.Servers) != servers || derived.DNS.Servers[0].Address != "192.0.2.53" {
 			t.Fatal("Windows capture changed Hy2 credentials, trust, chain or certified DNS", err)
 		}
 	}

@@ -149,18 +149,21 @@ func androidRuntimeConfig(view control.DeviceView, secret string) (string, error
 		prefixes = append(prefixes, prefix)
 	}
 	sort.Strings(prefixes)
-	document["inbounds"] = []any{map[string]any{"type": "tun", "tag": "tun-in", "address": []string{"192.0.2.1/30"}, "mtu": 1500, "auto_route": true, "stack": "system", "route_exclude_address": prefixes}}
+	document["inbounds"] = []any{map[string]any{"type": "tun", "tag": "tun-in", "address": []string{"192.0.2.1/30", "2001:db8::1/126"}, "mtu": 1500, "auto_route": true, "stack": "system", "route_exclude_address": prefixes}}
 	route := document["route"].(map[string]any)
 	// On Android this enables the existing VpnService.protect callback for
 	// libbox TCP/UDP sockets. It changes neither the signed ACL nor its grants.
 	route["auto_detect_interface"] = true
 	rules := route["rules"].([]any)
-	// Capture only supplies absent domain metadata; it cannot change destination
-	// IP or add an allow rule/outbound to the authenticated Service projection.
+	// Sniff only supplies absent metadata. Literal IP targets remain IP targets;
+	// TUN DNS restores its own domain requests separately before transport.
 	sniff := map[string]any{"type": "logical", "mode": "and", "rules": []any{map[string]any{"inbound": []string{"tun-in"}}, map[string]any{"domain_regex": []string{".+"}, "invert": true}, map[string]any{"port": []int{53}, "invert": true}}, "action": "sniff"}
 	route["rules"] = append([]any{sniff}, rules...)
 	body, err := json.Marshal(document)
-	return string(body), err
+	if err != nil {
+		return "", err
+	}
+	return clientadapter.WithTUNDomainDNS(string(body))
 }
 
 // The temporary adapter has no storage and performs no execution. Kotlin owns

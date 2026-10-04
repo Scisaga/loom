@@ -644,7 +644,7 @@ func removeWindowsProfileDataWithCommit(base, root string, commit func() error) 
 			return err
 		}
 		for _, entry := range entries {
-			if entry.Name() == "profiles" || entry.Name() == "client.log" {
+			if entry.Name() == "profiles" || entry.Name() == "client.log" || entry.Name() == "dataplane-cache" {
 				continue
 			}
 			path := filepath.Join(root, entry.Name())

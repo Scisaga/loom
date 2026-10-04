@@ -1,0 +1,239 @@
+--- a/transport/fakeip/store.go
++++ b/transport/fakeip/store.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"context"
+ 	"net/netip"
++	"sync"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
+ 	E "github.com/sagernet/sing/common/exceptions"
+@@ -13,6 +14,7 @@
+ var _ adapter.FakeIPStore = (*Store)(nil)
+ 
+ type Store struct {
++	allocation   sync.Mutex
+ 	ctx          context.Context
+ 	logger       logger.Logger
+ 	inet4Range   netip.Prefix
+@@ -41,7 +43,10 @@
+ 		storage = NewMemoryStorage()
+ 	}
+ 	metadata := storage.FakeIPMetadata()
+-	if metadata != nil && metadata.Inet4Range == s.inet4Range && metadata.Inet6Range == s.inet6Range {
++	if metadata != nil {
++		if metadata.Inet4Range != s.inet4Range || metadata.Inet6Range != s.inet6Range {
++			return E.New("fakeip cache address ranges changed")
++		}
+ 		s.inet4Current = metadata.Inet4Current
+ 		s.inet6Current = metadata.Inet6Current
+ 	} else {
+@@ -51,7 +56,6 @@
+ 		if s.inet6Range.IsValid() {
+ 			s.inet6Current = s.inet6Range.Addr().Next().Next()
+ 		}
+-		_ = storage.FakeIPReset()
+ 	}
+ 	s.storage = storage
+ 	return nil
+@@ -62,6 +66,8 @@
+ }
+ 
+ func (s *Store) Close() error {
++	s.allocation.Lock()
++	defer s.allocation.Unlock()
+ 	if s.storage == nil {
+ 		return nil
+ 	}
+@@ -74,38 +80,51 @@
+ }
+ 
+ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
++	s.allocation.Lock()
++	defer s.allocation.Unlock()
+ 	if address, loaded := s.storage.FakeIPLoadDomain(domain, isIPv6); loaded {
++		if !s.Contains(address) || address.Is6() != isIPv6 {
++			return netip.Addr{}, E.New("fakeip cache domain is outside its address pool")
++		}
+ 		return address, nil
+ 	}
+-	var address netip.Addr
+-	if !isIPv6 {
+-		if !s.inet4Current.IsValid() {
+-			return netip.Addr{}, E.New("missing IPv4 fakeip address range")
++	current, pool := &s.inet4Current, s.inet4Range
++	if isIPv6 {
++		current, pool = &s.inet6Current, s.inet6Range
++	}
++	if !current.IsValid() {
++		return netip.Addr{}, E.New("missing fakeip address range")
++	}
++	next := func(address netip.Addr) netip.Addr {
++		address = address.Next()
++		if !pool.Contains(address) {
++			address = pool.Addr().Next().Next()
+ 		}
+-		nextAddress := s.inet4Current.Next()
+-		if !s.inet4Range.Contains(nextAddress) {
+-			nextAddress = s.inet4Range.Addr().Next().Next()
++		return address
++	}
++	address := next(*current)
++	first := address
++	for {
++		if _, occupied := s.storage.FakeIPLoad(address); !occupied {
++			break
+ 		}
+-		s.inet4Current = nextAddress
+-		address = nextAddress
+-	} else {
+-		if !s.inet6Current.IsValid() {
+-			return netip.Addr{}, E.New("missing IPv6 fakeip address range")
++		address = next(address)
++		if address == first {
++			return netip.Addr{}, E.New("fakeip address pool exhausted")
+ 		}
+-		nextAddress := s.inet6Current.Next()
+-		if !s.inet6Range.Contains(nextAddress) {
+-			nextAddress = s.inet6Range.Addr().Next().Next()
+-		}
+-		s.inet6Current = nextAddress
+-		address = nextAddress
+ 	}
+-	s.storage.FakeIPStoreAsync(address, domain, s.logger)
+-	s.storage.FakeIPSaveMetadataAsync(&adapter.FakeIPMetadata{
+-		Inet4Range:   s.inet4Range,
+-		Inet6Range:   s.inet6Range,
+-		Inet4Current: s.inet4Current,
+-		Inet6Current: s.inet6Current,
+-	})
++	// A DNS answer may escape before the process closes. Commit the mapping
++	// before returning it, and never reuse an occupied address after a crash.
++	if err := s.storage.FakeIPStore(address, domain); err != nil {
++		return netip.Addr{}, err
++	}
++	*current = address
++	if err := s.storage.FakeIPSaveMetadata(&adapter.FakeIPMetadata{
++		Inet4Range: s.inet4Range, Inet6Range: s.inet6Range,
++		Inet4Current: s.inet4Current, Inet6Current: s.inet6Current,
++	}); err != nil {
++		return netip.Addr{}, err
++	}
+ 	return address, nil
+ }
+ 
+--- a/experimental/cachefile/fakeip.go
++++ b/experimental/cachefile/fakeip.go
+@@ -31,10 +31,6 @@
+ 		metadataBinary := bucket.Get(keyMetadata)
+ 		if len(metadataBinary) == 0 {
+ 			return os.ErrInvalid
+-		}
+-		err := bucket.Delete(keyMetadata)
+-		if err != nil {
+-			return err
+ 		}
+ 		return metadata.UnmarshalBinary(metadataBinary)
+ 	})
+--- a/experimental/cachefile/cache.go
++++ b/experimental/cachefile/cache.go
+@@ -105,7 +105,7 @@
+ 	if stage != adapter.StartStateInitialize {
+ 		return nil
+ 	}
+-	const fileMode = 0o666
++	const fileMode = 0o600
+ 	options := bbolt.Options{Timeout: time.Second}
+ 	var (
+ 		db  *bbolt.DB
+@@ -120,10 +120,7 @@
+ 			continue
+ 		}
+ 		if E.IsMulti(err, bboltErrors.ErrInvalid, bboltErrors.ErrChecksum, bboltErrors.ErrVersionMismatch) {
+-			rmErr := os.Remove(c.path)
+-			if rmErr != nil {
+-				return err
+-			}
++			return err
+ 		}
+ 		time.Sleep(100 * time.Millisecond)
+ 	}
+@@ -174,36 +171,15 @@
+ }
+ 
+ func (c *CacheFile) LoadMode() string {
+-	var mode string
+-	c.DB.View(func(t *bbolt.Tx) error {
+-		bucket := t.Bucket(bucketMode)
+-		if bucket == nil {
+-			return nil
+-		}
+-		var modeBytes []byte
+-		if len(c.cacheID) > 0 {
+-			modeBytes = bucket.Get(c.cacheID)
+-		} else {
+-			modeBytes = bucket.Get(cacheIDDefault)
+-		}
+-		mode = string(modeBytes)
+-		return nil
+-	})
+-	return mode
++	// Loom restores selection and mode from the current authenticated runtime.
++	// The DNS cache must not become a second source of routing decisions.
++	return ""
+ }
+ 
+ func (c *CacheFile) StoreMode(mode string) error {
+-	return c.DB.Batch(func(t *bbolt.Tx) error {
+-		bucket, err := t.CreateBucketIfNotExists(bucketMode)
+-		if err != nil {
+-			return err
+-		}
+-		if len(c.cacheID) > 0 {
+-			return bucket.Put(c.cacheID, []byte(mode))
+-		} else {
+-			return bucket.Put(cacheIDDefault, []byte(mode))
+-		}
+-	})
++	// Loom restores selection and mode from the current authenticated runtime.
++	// The DNS cache must not become a second source of routing decisions.
++	return nil
+ }
+ 
+ func (c *CacheFile) bucket(t *bbolt.Tx, key []byte) *bbolt.Bucket {
+@@ -229,29 +205,15 @@
+ }
+ 
+ func (c *CacheFile) LoadSelected(group string) string {
+-	var selected string
+-	c.DB.View(func(t *bbolt.Tx) error {
+-		bucket := c.bucket(t, bucketSelected)
+-		if bucket == nil {
+-			return nil
+-		}
+-		selectedBytes := bucket.Get([]byte(group))
+-		if len(selectedBytes) > 0 {
+-			selected = string(selectedBytes)
+-		}
+-		return nil
+-	})
+-	return selected
++	// Loom restores selection and mode from the current authenticated runtime.
++	// The DNS cache must not become a second source of routing decisions.
++	return ""
+ }
+ 
+ func (c *CacheFile) StoreSelected(group, selected string) error {
+-	return c.DB.Batch(func(t *bbolt.Tx) error {
+-		bucket, err := c.createBucket(t, bucketSelected)
+-		if err != nil {
+-			return err
+-		}
+-		return bucket.Put([]byte(group), []byte(selected))
+-	})
++	// Loom restores selection and mode from the current authenticated runtime.
++	// The DNS cache must not become a second source of routing decisions.
++	return nil
+ }
+ 
+ func (c *CacheFile) LoadGroupExpand(group string) (isExpand bool, loaded bool) {

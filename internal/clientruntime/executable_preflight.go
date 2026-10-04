@@ -2,6 +2,7 @@ package clientruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +28,9 @@ func RunSingBoxCheck(ctx context.Context, executable string, config []byte, runt
 		return errors.New("sing-box check context is nil")
 	}
 	if err := validateExecutable(executable); err != nil {
+		return err
+	}
+	if err := RequireTUNDNSExecutor(ctx, executable, config); err != nil {
 		return err
 	}
 	if runtimeDir == "" || !filepath.IsAbs(runtimeDir) || filepath.Clean(runtimeDir) != runtimeDir {
@@ -75,6 +79,34 @@ func RunSingBoxCheck(ctx context.Context, executable string, config []byte, runt
 			return errors.New("sing-box check timed out")
 		}
 		return fmt.Errorf("sing-box check failed (diagnostic output suppressed, %d bytes): %w", output.total, err)
+	}
+	return nil
+}
+
+// RequireTUNDNSExecutor excludes the upstream cache that can reassign an
+// application's cached address after abrupt exit. The version is an artifact
+// coordinate, not a control protocol or a source of permission.
+func RequireTUNDNSExecutor(ctx context.Context, executable string, config []byte) error {
+	var value struct {
+		DNS struct {
+			FakeIP *struct {
+				Enabled bool `json:"enabled"`
+			} `json:"fakeip"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(config, &value); err != nil {
+		return err
+	}
+	if value.DNS.FakeIP == nil || !value.DNS.FakeIP.Enabled {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, SingBoxCheckTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, executable, "version")
+	configureCheckCommand(command)
+	body, err := command.Output()
+	if err != nil || !strings.HasPrefix(string(body), "sing-box version 1.11.4-loom.1\n") {
+		return errors.New("TUN domain DNS requires the verified persistent-cache data-plane build")
 	}
 	return nil
 }

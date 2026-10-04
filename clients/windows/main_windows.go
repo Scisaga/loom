@@ -494,8 +494,12 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	planeDone := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {
+		base := root
+		if filepath.Base(filepath.Dir(root)) == "profiles" && validConnectionProfileID(filepath.Base(root)) {
+			base = filepath.Dir(filepath.Dir(root))
+		}
 		planeDone <- clientruntime.RunWindowsDataPlaneProfileStarted(ctx, components.SingBox, config,
-			filepath.Join(root, "runtime"), profile, func() { close(started) })
+			filepath.Join(root, "runtime"), filepath.Join(base, "dataplane-cache"), profile, func() { close(started) })
 	}()
 	select {
 	case <-ctx.Done():

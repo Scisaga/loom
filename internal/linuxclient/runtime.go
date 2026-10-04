@@ -23,6 +23,7 @@ import (
 
 	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
+	"loom/internal/clientruntime"
 	"loom/internal/control"
 	"loom/internal/deviceclient"
 )
@@ -169,7 +170,11 @@ func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpo
 		}
 	}
 	sort.Strings(endpointExclusions)
-	return deriveLinuxAccessRuntime(config, endpointExclusions)
+	config, err = deriveLinuxAccessRuntime(config, endpointExclusions)
+	if err != nil {
+		return "", err
+	}
+	return clientadapter.WithTUNDomainDNS(config)
 }
 
 func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution) (string, error) {
@@ -450,6 +455,18 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		command := exec.Command(options.SingBox, "run", "-c", options.Config)
+		if options.Capture == "tun" {
+			configPath, err := filepath.Abs(options.Config)
+			if err != nil {
+				return err
+			}
+			executable, err := filepath.Abs(command.Path)
+			if err != nil {
+				return err
+			}
+			command = exec.Command(executable, "run", "-c", configPath)
+			command.Dir = filepath.Dir(configPath)
+		}
 		command.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 		command.Stdout, command.Stderr = options.Log, options.Log
 		if err := command.Start(); err != nil {
@@ -725,7 +742,7 @@ func deriveLinuxAccessRuntime(config string, endpointExclusions []string) (strin
 		if _, found := inbound["route_exclude_address"]; found {
 			return "", errors.New("signed access runtime cannot define local endpoint route exclusions")
 		}
-		inbound["address"] = []string{"172.19.0.1/30"}
+		inbound["address"] = []string{"172.19.0.1/30", "2001:db8::1/126"}
 		inbound["stack"] = "system"
 		if len(endpointExclusions) != 0 {
 			inbound["route_exclude_address"] = append([]string(nil), endpointExclusions...)
@@ -798,6 +815,9 @@ func checkRuntime(singBox, config string) error {
 }
 
 func preflightRuntimeConfig(singBox, config string) error {
+	if err := clientruntime.RequireTUNDNSExecutor(context.Background(), singBox, []byte(config)); err != nil {
+		return err
+	}
 	directory, err := os.MkdirTemp("", "loom-runtime-preflight-*")
 	if err != nil {
 		return err

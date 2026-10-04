@@ -5,14 +5,13 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 android_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 repo_dir=$(CDPATH= cd -- "$android_dir/../.." && pwd)
 build_dir="$android_dir/.build"
-source_dir="$build_dir/sing-box"
+source_dir="$build_dir/sing-box-patched"
 go_bin="$build_dir/go/bin"
 go_path="$build_dir/go/path"
 go_cache="$build_dir/go/cache"
 output="$build_dir/loom-box.aar"
 
-sing_box_version="1.11.4"
-sing_box_commit="eb07c7a79eeca943370eafea601e87da76c0e57e"
+sing_box_version="1.11.4-loom.1"
 gomobile_version="v0.1.13"
 go_toolchain="go1.27.0"
 ndk_version="28.0.13004108"
@@ -37,24 +36,7 @@ if ! java --version 2>&1 | head -n 1 | grep -q '17'; then
 fi
 
 mkdir -p "$build_dir" "$go_bin" "$go_path" "$go_cache" "$android_dir/app/libs"
-if [[ ! -d "$source_dir/.git" ]]; then
-    git clone --filter=blob:none --no-checkout https://github.com/SagerNet/sing-box.git "$source_dir"
-fi
-git -C "$source_dir" fetch --depth=1 origin "$sing_box_commit"
-git -C "$source_dir" checkout --detach "$sing_box_commit"
-test "$(git -C "$source_dir" rev-parse HEAD)" = "$sing_box_commit"
-if ! git -C "$source_dir" diff --quiet "$sing_box_commit" -- . ':(exclude)go.mod' ':(exclude)go.sum'; then
-    echo "sing-box 构建目录含非 go.mod/go.sum 的本地修改；拒绝构建" >&2
-    exit 1
-fi
-if [[ -n "$(git -C "$source_dir" ls-files --others --exclude-standard)" ]]; then
-    echo "sing-box 构建目录含未跟踪源码；拒绝构建" >&2
-    exit 1
-fi
-# 前一次构建会为本地 Loom module 改写这两个文件。每次都从固定
-# commit 恢复原始输入，再应用同一组 module edits。
-git -C "$source_dir" show "$sing_box_commit:go.mod" >"$source_dir/go.mod"
-git -C "$source_dir" show "$sing_box_commit:go.sum" >"$source_dir/go.sum"
+python3 "$repo_dir/scripts/prepare-sing-box.py" "$source_dir"
 
 # Android uses the same schema-3 control/deviceclient source and canonical
 # codecs as desktop clients. Never generate a second reduced authority module.

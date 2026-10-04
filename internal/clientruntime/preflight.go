@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 
+	"loom/internal/clientadapter"
 	"loom/internal/control"
 )
 
@@ -41,15 +42,32 @@ type singBoxLog struct {
 }
 
 type singBoxDNS struct {
-	Servers        []singBoxDNSServer `json:"servers"`
-	Strategy       string             `json:"strategy,omitempty"`
-	ReverseMapping bool               `json:"reverse_mapping,omitempty"`
+	Servers          []singBoxDNSServer `json:"servers"`
+	Strategy         string             `json:"strategy,omitempty"`
+	ReverseMapping   bool               `json:"reverse_mapping,omitempty"`
+	IndependentCache bool               `json:"independent_cache,omitempty"`
+	Rules            []singBoxDNSRule   `json:"rules,omitempty"`
+	FakeIP           *singBoxFakeIP     `json:"fakeip,omitempty"`
+}
+
+type singBoxDNSRule struct {
+	Inbound      []string `json:"inbound"`
+	QueryType    []string `json:"query_type"`
+	Domain       []string `json:"domain,omitempty"`
+	DomainSuffix []string `json:"domain_suffix,omitempty"`
+	Server       string   `json:"server"`
+}
+
+type singBoxFakeIP struct {
+	Enabled    bool   `json:"enabled"`
+	Inet4Range string `json:"inet4_range"`
+	Inet6Range string `json:"inet6_range"`
 }
 
 type singBoxDNSServer struct {
 	Tag     string `json:"tag"`
 	Address string `json:"address"`
-	Detour  string `json:"detour"`
+	Detour  string `json:"detour,omitempty"`
 }
 
 type singBoxInbound struct {
@@ -119,7 +137,14 @@ type singBoxRule struct {
 }
 
 type singBoxExperimental struct {
-	ClashAPI *singBoxAPI `json:"clash_api,omitempty"`
+	ClashAPI  *singBoxAPI       `json:"clash_api,omitempty"`
+	CacheFile *singBoxCacheFile `json:"cache_file,omitempty"`
+}
+
+type singBoxCacheFile struct {
+	Enabled     bool   `json:"enabled"`
+	Path        string `json:"path"`
+	StoreFakeIP bool   `json:"store_fakeip"`
 }
 
 type singBoxAPI struct {
@@ -154,12 +179,12 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 	c.Inbounds = []singBoxInbound{{Type: "mixed", Tag: "in-1080", Listen: "127.0.0.1", ListenPort: 1080}}
 	tun := profile != WindowsPortableMixedProfile
 	if tun {
-		c.Inbounds = append(c.Inbounds, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30"}, AutoRoute: true, Stack: "system"})
+		c.Inbounds = append(c.Inbounds, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system"})
 		c.Route.AutoDetectInterface = true
 	}
 	prefix := []singBoxRule{}
 	if len(dnsServers) > 0 {
-		c.DNS = &singBoxDNS{ReverseMapping: tun, Servers: []singBoxDNSServer{}}
+		c.DNS = &singBoxDNS{Servers: []singBoxDNSServer{}}
 		for i, address := range dnsServers {
 			ip, err := netip.ParseAddr(address)
 			if err != nil || ip.String() != address {
@@ -179,6 +204,13 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 	if err != nil {
 		return nil, err
 	}
+	if tun && c.DNS != nil {
+		derived, err := clientadapter.WithTUNDomainDNS(string(result))
+		if err != nil {
+			return nil, err
+		}
+		result = []byte(derived)
+	}
 	if err = ValidateWindowsRuntimeConfig(result, profile); err != nil {
 		return nil, err
 	}
@@ -196,14 +228,42 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 	tun := profile != WindowsPortableMixedProfile
 	expected := []singBoxInbound{{Type: "mixed", Tag: "in-1080", Listen: "127.0.0.1", ListenPort: 1080}}
 	if tun {
-		expected = append(expected, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30"}, AutoRoute: true, Stack: "system"})
+		expected = append(expected, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system"})
 	}
 	if !reflect.DeepEqual(c.Inbounds, expected) || c.Log.Level != "warn" || c.Route.AutoDetectInterface != tun {
 		return errors.New("Windows runtime capture does not match its profile")
 	}
 	prefix := []singBoxRule{}
+	// Remove only the exact deterministic DNS projection before validating the
+	// original authorization. Cache paths, names and capture cannot be supplied
+	// independently of the Service rules.
+	if c.DNS != nil && tun {
+		if c.Experimental == nil {
+			return errors.New("invalid TUN domain DNS projection")
+		}
+		original, _ := json.Marshal(c)
+		if c.DNS.FakeIP != nil {
+			if len(c.DNS.Servers) < 2 {
+				return errors.New("invalid TUN domain DNS servers")
+			}
+			c.DNS.Servers = c.DNS.Servers[:len(c.DNS.Servers)-1]
+		}
+		c.DNS.FakeIP, c.DNS.Rules, c.DNS.IndependentCache = nil, nil, false
+		c.Experimental.CacheFile = nil
+		base, _ := json.Marshal(c)
+		derived, err := clientadapter.WithTUNDomainDNS(string(base))
+		if err != nil {
+			return err
+		}
+		var want, got any
+		_ = json.Unmarshal([]byte(derived), &want)
+		_ = json.Unmarshal(original, &got)
+		if !reflect.DeepEqual(want, got) {
+			return errors.New("TUN domain DNS differs from Service projection")
+		}
+	}
 	if c.DNS != nil {
-		if len(c.DNS.Servers) == 0 || c.DNS.ReverseMapping != tun || c.DNS.Strategy != "" {
+		if len(c.DNS.Servers) == 0 || c.DNS.ReverseMapping || c.DNS.Strategy != "" || c.DNS.FakeIP != nil || c.DNS.IndependentCache || len(c.DNS.Rules) != 0 {
 			return errors.New("invalid managed DNS")
 		}
 		for i, server := range c.DNS.Servers {
@@ -269,7 +329,7 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 	if c.Route.Final != "reject" || len(c.Outbounds) == 0 {
 		return errors.New("runtime must retain reject final")
 	}
-	if c.Experimental == nil || c.Experimental.ClashAPI == nil || c.Experimental.ClashAPI.ExternalController != "127.0.0.1:61800" || strings.TrimSpace(c.Experimental.ClashAPI.Secret) == "" {
+	if c.Experimental == nil || c.Experimental.CacheFile != nil || c.Experimental.ClashAPI == nil || c.Experimental.ClashAPI.ExternalController != "127.0.0.1:61800" || strings.TrimSpace(c.Experimental.ClashAPI.Secret) == "" {
 		return errors.New("runtime must have its local authenticated API")
 	}
 	tags := map[string]string{}

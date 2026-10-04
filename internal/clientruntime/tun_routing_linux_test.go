@@ -30,12 +30,12 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 	if executable == "" {
 		t.Skip("[§7.2.1] 设置 LOOM_TUN_ROUTING_EXECUTABLE 并在独立网络命名空间运行真实 TUN 测试")
 	}
-	mapping, err := os.ReadFile("/proc/self/uid_map")
-	fields := strings.Fields(string(mapping))
+	self, err := os.Stat("/proc/self/ns/net")
+	host, hostErr := os.Stat("/proc/1/ns/net")
 	interfaces, interfaceErr := net.Interfaces()
-	if err != nil || len(fields) != 3 || fields[0] != "0" || fields[1] == "0" || fields[2] != "1" ||
+	if err != nil || hostErr != nil || os.SameFile(self, host) ||
 		interfaceErr != nil || len(interfaces) != 1 || interfaces[0].Name != "lo" {
-		t.Fatal("[§7.2.1] 测试要求无宿主权限、仅有回环接口的独立用户/网络命名空间")
+		t.Fatal("测试要求仅有回环接口的独立网络命名空间")
 	}
 	if body, err := exec.Command("ip", "link", "set", "lo", "up").CombinedOutput(); err != nil {
 		t.Fatalf("[§7.2.1] 无法启用隔离回环接口：%v %s", err, body)
@@ -57,13 +57,17 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 			}
 			if !fixed {
 				// §7.2.1：复现修复前仅 DNS 接管、没有域名映射/识别的原样行为。
-				config["dns"].(map[string]any)["reverse_mapping"] = false
+				delete(config["dns"].(map[string]any), "fakeip")
+				delete(config["dns"].(map[string]any), "rules")
+				delete(config["dns"].(map[string]any), "independent_cache")
+				config["dns"].(map[string]any)["servers"] = config["dns"].(map[string]any)["servers"].([]any)[:1]
+				delete(config["experimental"].(map[string]any), "cache_file")
 				route := config["route"].(map[string]any)
 				rules := route["rules"].([]any)
 				route["rules"] = append(rules[:1], rules[2:]...)
 			}
 			// §7.2.1：只将测试地址送入隔离 TUN；回环上的目标和 DNS 不进入接管。
-			config["inbounds"].([]any)[1].(map[string]any)["route_address"] = []string{"192.0.2.0/24"}
+			config["inbounds"].([]any)[1].(map[string]any)["route_address"] = []string{"192.0.2.0/24", "198.18.0.0/15", "2001:db8:8000::/49"}
 			body, _ = json.Marshal(config)
 			stop := runRoutingSingBox(t, executable, body)
 			defer stop()
@@ -94,11 +98,11 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 				return (&net.Dialer{}).DialContext(ctx, network, "172.19.0.2:53")
 			}}
 			addresses, err := resolver.LookupIP(ctx, "ip4", "demo-service.example")
-			if err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.17" {
+			if err != nil || len(addresses) != 1 || (!fixed && addresses[0].String() != "192.0.2.17") || (fixed && !strings.HasPrefix(addresses[0].String(), "198.18.")) {
 				t.Fatalf("[§7.2.1] 受管 TUN DNS 查询失败：%v %v", addresses, err)
 			}
 			// §7.2.1：TLS ClientHello 没有 SNI；唯有此前经过 TUN 的 DNS 证据可恢复域名。
-			if got := routingRequest(t, "https", "192.0.2.17", tlsPort, false); got != want {
+			if got := routingRequestTo(t, "https", addresses[0].String(), tlsPort, addresses[0].String(), false); got != want {
 				t.Fatalf("[§7.2.1] DNS 映射后的无 SNI 连接进入 %q，预期 %q", got, want)
 			}
 		})
@@ -156,6 +160,10 @@ func routingTargetPair(t *testing.T, encrypted bool) string {
 }
 
 func routingRequest(t *testing.T, scheme, host, port string, mixed bool) string {
+	return routingRequestTo(t, scheme, host, port, "192.0.2.17", mixed)
+}
+
+func routingRequestTo(t *testing.T, scheme, host, port, address string, mixed bool) string {
 	t.Helper()
 	transport := &http.Transport{
 		DisableKeepAlives: true,
@@ -166,7 +174,7 @@ func routingRequest(t *testing.T, scheme, host, port string, mixed bool) string 
 		transport.Proxy = http.ProxyURL(&url.URL{Scheme: "http", Host: "127.0.0.1:1080"})
 	} else {
 		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("192.0.2.17", port))
+			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(address, port))
 		}
 	}
 	defer transport.CloseIdleConnections()
@@ -184,6 +192,10 @@ func routingRequest(t *testing.T, scheme, host, port string, mixed bool) string 
 }
 
 func runRoutingSingBox(t *testing.T, executable string, body []byte) func() {
+	return runRoutingSingBoxAt(t, executable, body, "127.0.0.1:1080")
+}
+
+func runRoutingSingBoxAt(t *testing.T, executable string, body []byte, ready string) func() {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, body, 0600); err != nil {
@@ -191,6 +203,7 @@ func runRoutingSingBox(t *testing.T, executable string, body []byte) func() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	command := exec.CommandContext(ctx, executable, "run", "-c", path)
+	command.Dir = filepath.Dir(path)
 	var log bytes.Buffer
 	command.Stdout, command.Stderr = &log, &log
 	if err := command.Start(); err != nil {
@@ -211,12 +224,31 @@ func runRoutingSingBox(t *testing.T, executable string, body []byte) func() {
 		}
 	}
 	t.Cleanup(stop)
+	var capture struct {
+		Inbounds []struct {
+			Type string `json:"type"`
+		} `json:"inbounds"`
+	}
+	_ = json.Unmarshal(body, &capture)
+	hasTUN := false
+	for _, inbound := range capture.Inbounds {
+		hasTUN = hasTUN || inbound.Type == "tun"
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:1080", 100*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", ready, 100*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
-			return stop
+			if !hasTUN {
+				return stop
+			}
+			// Mixed starts before the TUN routes. This is startup readiness only;
+			// the callers separately assert real DNS and application outcomes.
+			dns, err := net.DialTimeout("udp", "172.19.0.2:53", 100*time.Millisecond)
+			if err == nil {
+				_ = dns.Close()
+				return stop
+			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -226,6 +258,10 @@ func runRoutingSingBox(t *testing.T, executable string, body []byte) func() {
 }
 
 func routingDNSServer(t *testing.T) string {
+	return routingDNSServerAddress(t, net.IPv4(192, 0, 2, 17))
+}
+
+func routingDNSServerAddress(t *testing.T, address net.IP) string {
 	t.Helper()
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -247,15 +283,19 @@ func routingDNSServer(t *testing.T) string {
 				end += int(packet[end]) + 1
 			}
 			end += 5
-			if end > n || binary.BigEndian.Uint16(packet[end-4:end-2]) != 1 {
+			if end > n {
 				continue
 			}
 			response := append([]byte(nil), packet[:end]...)
 			binary.BigEndian.PutUint16(response[2:4], 0x8180)
-			binary.BigEndian.PutUint16(response[6:8], 1)
+			binary.BigEndian.PutUint16(response[6:8], 0)
 			binary.BigEndian.PutUint16(response[8:10], 0)
 			binary.BigEndian.PutUint16(response[10:12], 0)
-			response = append(response, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 17)
+			if binary.BigEndian.Uint16(packet[end-4:end-2]) == 1 {
+				binary.BigEndian.PutUint16(response[6:8], 1)
+				response = append(response, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4)
+				response = append(response, address.To4()...)
+			}
 			_, _ = listener.WriteTo(response, peer)
 		}
 	}()

@@ -2,6 +2,7 @@ package clientruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,17 +26,33 @@ func RunWindowsDataPlane(ctx context.Context, executable string, config []byte, 
 // derived Windows capture profile.
 func RunWindowsDataPlaneProfile(ctx context.Context, executable string, config []byte, runtimeDir string,
 	profile WindowsRuntimeProfile) (retErr error) {
-	return RunWindowsDataPlaneProfileStarted(ctx, executable, config, runtimeDir, profile, nil)
+	return RunWindowsDataPlaneProfileStarted(ctx, executable, config, runtimeDir, runtimeDir, profile, nil)
 }
 
 // §16.1：只有进程已创建且已受 Job Object 监督，宿主才可以开始启动稳定窗口。
-func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, config []byte, runtimeDir string,
+func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, config []byte, runtimeDir, cacheDir string,
 	profile WindowsRuntimeProfile, started func()) (retErr error) {
 	if ctx == nil {
 		return errors.New("sing-box supervisor context is nil")
 	}
 	if err := PreflightWindowsRuntime(ctx, executable, config, runtimeDir, profile); err != nil {
 		return err
+	}
+	derived, _ := decodeWindowsConfig(config)
+	if derived.Experimental.CacheFile != nil {
+		if !filepath.IsAbs(cacheDir) || filepath.Clean(cacheDir) != cacheDir {
+			return errors.New("TUN DNS cache directory must be absolute and clean")
+		}
+		if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+			return err
+		}
+		derived.Experimental.CacheFile.Path = filepath.Join(cacheDir, derived.Experimental.CacheFile.Path)
+		var err error
+		config, err = json.Marshal(derived)
+		if err != nil {
+			return err
+		}
+		defer clear(config)
 	}
 	if err := validateExecutable(executable); err != nil {
 		return err

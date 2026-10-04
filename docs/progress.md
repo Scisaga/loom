@@ -154,6 +154,22 @@ ARM64、物理切网、睡眠及其他实体机终验仍由用户执行。
 回读提交与摘要相符，VM 原有六份 DPAPI 文件逐字节保留。当前桌面回归中 deviceclient 14 项、client/broker 14 项、
 DPAPI 3 项和 GUI 54 项通过。安装本身不抵扣实际 TUN、重启/升级/卸载业务验收；这些验证继续进行。
 
+### TUN 域名传递与缓存恢复
+
+实际 Installed MSI 已经通过正常加入、Machine DPAPI、TUN 启动和签名运行报告；随后 HTTPS 暴露域名
+Service 被发送为 Hy2 IP 目标的问题。接收端按原 ACL 正确拒绝，没有放宽接收端、替换服务目标或改动宿主网络。
+VM service 已停止且 TUN 清理，原身份保留用于重试。此失败不等于 Windows TUN 已通过业务验收。
+
+共用 capture 现按 Service 域名 matcher 派生仅适用于 TUN A/AAAA 查询的地址映射，保持签名 View 和原 ACL；
+原始 IP 不因 SNI 变成域名。独立 user/network namespace 中，真实 TUN DNS、IPv4/IPv6 域名还原、Hy2 TLS、
+HTTPS、无 SNI 连接、字面 IP 和伪造 SNI 拒绝均通过；同名 underlay 查询仍到真实解析器，正常重启保留映射。
+实测原数据面在立即强制退出后重用了旧地址，新增窄源码补丁已通过三次异常恢复及损坏缓存拒绝测试。
+源码准备固定上游 module 校验和、commit 与补丁摘要；数据面制品修订不改变 schema 3。
+
+记录位于 `deploy/evidence/2026-10-04-tun-domain/`。修正版 Linux/Windows 双架构数据面和 Android 双 ABI AAR
+已构建；Windows 原组件打包入口尚不能签发该源码修订，正式签名制品、MSI/Android 原生复验及部署继续推进。
+尚未替换现网数据面，不能把隔离测试当作正式客户端或完整安装生命周期通过。
+
 ### 本轮实现与实际验证
 
 - [规范编码](../internal/control/contract_encoding.go)、[规范值](../internal/control/contract_values.go)和

@@ -39,7 +39,7 @@ fi
 source_commit=$(git -C "$repo_root" rev-parse HEAD)
 # The AAR directly imports the root module's control, deviceclient and transport
 # packages as well as the mobile module. Include staged edits and module inputs.
-release_inputs=(mobile/loomcore clients/android internal go.mod go.sum)
+release_inputs=(mobile/loomcore clients/android internal go.mod go.sum scripts/prepare-sing-box.py third_party/sing-box)
 if ! git -C "$repo_root" diff --quiet HEAD -- "${release_inputs[@]}"; then
     echo "Android release inputs differ from source commit $source_commit" >&2
     exit 1
