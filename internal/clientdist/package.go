@@ -675,8 +675,25 @@ install_atomic() {
 
 install_atomic "$base/platform.pub" /etc/loom/trust/platform.pub 0644
 
+verify_release() {
+    for release_file in loom sing-box manifest.json; do
+        release_mode=755
+        [ "$release_file" != manifest.json ] || release_mode=644
+        [ -f "$release/$release_file" ] && [ ! -L "$release/$release_file" ] &&
+            [ "$(stat -c '%u:%h:%a' "$release/$release_file")" = "0:1:$release_mode" ] &&
+            cmp -s "$base/$release_file" "$release/$release_file" || {
+                echo "existing release payload differs from the verified package" >&2
+                return 1
+            }
+    done
+}
+
 release_id=$(sha256sum "$base/manifest.json" | cut -d' ' -f1)
 release=/usr/local/lib/loom-client/releases/$release_id
+[ ! -L "$release" ] || {
+    echo "existing release directory must not be a symlink" >&2
+    exit 1
+}
 if [ ! -d "$release" ]; then
     staging=$(mktemp -d /usr/local/lib/loom-client/releases/.staging.XXXXXX)
     trap 'rm -rf "$staging"' EXIT HUP INT TERM
@@ -685,12 +702,8 @@ if [ ! -d "$release" ]; then
     install -m 0644 "$base/manifest.json" "$staging/manifest.json"
     mv "$staging" "$release"
     trap - EXIT HUP INT TERM
-else
-    cmp -s "$base/manifest.json" "$release/manifest.json" || {
-        echo "existing release directory does not match its content ID" >&2
-        exit 1
-    }
 fi
+verify_release
 
 if [ "$no_enroll" -eq 1 ]; then
     echo "Installed the verified release without binding a Device or starting a service."

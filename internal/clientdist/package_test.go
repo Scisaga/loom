@@ -450,3 +450,69 @@ func replaceManifest(t *testing.T, artifact Artifact, body []byte, private ed255
 	artifact.Checksum = []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), artifact.Name))
 	return artifact
 }
+
+func TestInstallerChecksExistingPayloadBeforeReuse(t *testing.T) {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		t.Skip("installer file ownership check requires Linux root")
+	}
+	start := strings.Index(installScript, "verify_release() {")
+	if start < 0 {
+		t.Fatal("missing release verification")
+	}
+	end := strings.Index(installScript[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("missing release verification")
+	}
+	function := installScript[start : start+end+3]
+	cases := []struct {
+		name   string
+		mutate func(string) error
+		valid  bool
+	}{
+		{name: "exact payload", valid: true},
+		{name: "changed executable", mutate: func(root string) error {
+			return os.WriteFile(filepath.Join(root, "sing-box"), []byte("demo damaged payload"), 0o755)
+		}},
+		{name: "writable executable", mutate: func(root string) error { return os.Chmod(filepath.Join(root, "loom"), 0o777) }},
+		{name: "linked executable", mutate: func(root string) error {
+			path := filepath.Join(root, "loom")
+			if err := os.Rename(path, path+".original"); err != nil {
+				return err
+			}
+			return os.Symlink(path+".original", path)
+		}},
+		{name: "hardlinked executable", mutate: func(root string) error {
+			return os.Link(filepath.Join(root, "sing-box"), filepath.Join(root, "extra-link"))
+		}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			base := t.TempDir()
+			release := t.TempDir()
+			for _, name := range []string{"loom", "sing-box", "manifest.json"} {
+				mode := os.FileMode(0o755)
+				if name == "manifest.json" {
+					mode = 0o644
+				}
+				for _, root := range []string{base, release} {
+					if err := os.WriteFile(filepath.Join(root, name), []byte("demo verified bytes for "+name), mode); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Chmod(filepath.Join(root, name), mode); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if test.mutate != nil {
+				if err := test.mutate(release); err != nil {
+					t.Fatal(err)
+				}
+			}
+			command := exec.Command("sh", "-c", "set -eu\nbase=$1\nrelease=$2\n"+function+"\nverify_release", "demo-installer", base, release)
+			output, err := command.CombinedOutput()
+			if (err == nil) != test.valid {
+				t.Fatalf("verify existing release: %v %s", err, output)
+			}
+		})
+	}
+}

@@ -59,7 +59,9 @@ sudo ./install.sh --invite-file ../client.loom-invite
 
 installer 依次完成：
 
-1. 核对 archive 内所有文件摘要，并把 Loom 与 sing-box 写入内容标识的 release 目录；
+1. 核对 archive 内所有文件摘要，并把 Loom 与 sing-box 写入内容标识的 release 目录；已有相同内容 ID 的
+   目录须逐项核对程序与 manifest 的字节、所有者、权限及普通单链接文件属性。仅 manifest 相同不能证明
+   已安装程序正确；损坏或链接替换拒绝，不覆盖现场内容，也不继续激活或改变设备身份；
 2. 通过 `loom client enroll` 在本机生成 Ed25519 身份，经私有 tunnel claim/resume，原子保存完整认证 LKG；
 3. 用精确 release 中的 sing-box 对 LKG RuntimeProfile 做 preflight；
 4. 对 access/hybrid 验证进程位于专用 network namespace；隔离缺失时在切换 `current` 或启用 unit 前失败；
