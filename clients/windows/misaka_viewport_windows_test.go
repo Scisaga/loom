@@ -300,7 +300,10 @@ func TestGUIMisakaViewportFixedTUNActualHintCapture(t *testing.T) {
 	for y := app.scale(3); y < comboBounds.bottom-app.scale(3); y++ {
 		for x := app.scale(8); x < comboBounds.right-app.scale(28); x++ {
 			pixel, _, _ := portableGDI32.NewProc("GetPixel").Call(dc, uintptr(x), uintptr(y))
-			if pixel&255 < 150 && pixel>>8&255 < 150 && pixel>>16&255 < 150 {
+			r, g, b := int(pixel&255), int(pixel>>8&255), int(pixel>>16&255)
+			// The confirmed exit label is green. Count its visible glyphs,
+			// excluding the pale green background and the arrow outside this area.
+			if g > r+30 && g > b+15 && g < 200 {
 				visibleInk++
 			}
 		}

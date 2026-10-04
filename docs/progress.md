@@ -25,7 +25,7 @@
   Android API 35 x86_64 临时模拟器也已从正常文件导入和系统 VPN 同意入口，完成 Hy2 HTTPS、撤权热替换、
   Keystore 重启恢复、重新授权及界面/私有签名报告回读。
   这是一条已运行的开发闭环，不是生产激活、全部传输能力或所有平台验收完成。
-- 仍须连续推进：Windows 当前 Hy2/DNS 制品的原生消费、正式交付验证、`.loom` overlay、
+- 仍须连续推进：Windows 三形态正式交付验证、`.loom` overlay、
   未实现的传输能力、动态成员及签名发布消费。Linux WG 中继、此次精确制品激活和旧运行入口退出已现场验证，见下文。
   动态成员多数链尚未实现，不能用初始成员表代替；Hy2、LAN、发布和全部平台能力不是简单 Direct 链的共同前置。
 - 生产状态：获准的 Linux client、control、私有 relay 和透明 endpoint edge 已使用本轮同一精确制品。
@@ -115,6 +115,27 @@
   本机正常停止、精确 WG 清理、同制品重启和认证报告通过；停止与恢复期间新建 SSH、LAN DNS、系统 DNS、
   默认公网和既有 WG 代理均通过。现网身份、RuntimeKey、密钥/证书、旧 floor 和认证原字节保持，宿主
   route/rule 配置值与基线一致。
+
+### Windows 认证 DNS、Hy2 与撤权恢复
+
+首次 bootstrap 原先验证 Invite 后仍调用系统 DNS，Windows 实际导入具名入口时失败；现已先验证 Invite，
+再经其中签名的解析器拨号。未配置解析器及篡改 DNS 拒绝，失败和继续加入保留同一身份与 request ID。
+加入后的私有通道使用当前 View 的 DNS，两条路径共用平台 underlay dialer；没有新增 wire 字段或重写认证材料。
+
+原生运行还揭示 Windows 的旧 Direct 校验器不能消费 Hy2，且 DNS 已被共用适配器提前添加，重复进入 capture
+派生。现在共用源只添加本机 API，Windows 按三种既定形态添加一次 DNS/capture，保留完整 Hy2 CA、名称、
+凭据和 detour；不安全 TLS、未知字段、循环 detour 及扩宽 capture 仍拒绝。
+
+同机 Windows 11 x64 的真实交互桌面已完成文件导入、同事务继续加入、CurrentUser DPAPI、具名 Hy2 HTTPS、
+撤权应用、正常断开、进程重启后仍拒绝、同身份重新授权后业务恢复、正常停止；各阶段私有签名报告、GUI
+及运行时回读相符，Mixed 前后路由不变。未配置业务探测池时 UI 保持 unknown；实际 HTTPS 由独立业务请求验证。
+证据在 `deploy/evidence/2026-10-04-windows-current/hy2-summary.json` 与 `hy2-initial/`、`hy2-final/`。
+原桌面 DPAPI 与 GUI 定向回归也已通过；固定出口文字的检查修正为识别现有绿色字形，没有修改产品样式或视觉基准。
+
+共用 Go 定向 race 及全仓 build/test/vet、安全和格式检查通过；Android 双 ABI 核心、JVM、lint 与调试制品
+构建通过。正式签名 APK、Windows 正式安装/TUN/升级卸载和本次源码的生产激活仍须继续；不能把此处
+Portable Mixed 的开发业务链当作三形态交付或实体机终验。Android release 输入检查已覆盖共享 Go 与 staged 修改，
+防止制品标注 HEAD 却包含未提交的共用修复。
 
 ### 本轮实现与实际验证
 
@@ -277,7 +298,7 @@
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
 | Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、34 项 JVM、lint 与 APK 构建通过。API 35 x86_64 模拟器已正常导入/私有加入、原生 VPN/Hy2 HTTPS、撤权热替换、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行、物理切网及正式签名发行；模拟器不能抵扣实体终验。 |
 | Linux | 获准节点正式服务已接管，Mixed、具名 Hy2/WG 中继、报告、停止/SIGKILL 清理和重新启动通过；开发宿主基础网络回读成立，初始 netns TUN 拒绝保留。 | 隔离 TUN capture 和自动安装失败流程；未实测物理网络变化不能由此次有限回读代替。 |
-| Windows 既定交付 | 双架构构建、共享 schema 3 运行时、VM 真实 Mixed/拒绝配置与 Installed Machine DPAPI 撤权恢复通过；较高前沿接受/并发拉取不重启已原生验证，VM 已正常停止并恢复 ACL。 | 已失败的 Portable CurrentUser DPAPI、有效桌面 GUI、三形态正式安装链；TUN 仅 check，未运行；ARM64/睡眠/物理切网/显示硬件仍需实体终验，外部签名未启用。 |
+| Windows 既定交付 | 双架构构建、桌面 CurrentUser/Machine DPAPI、GUI 回归及具名 Hy2/Mixed HTTPS、撤权/重启/再授权、签名报告与界面回读通过；本次使用同机 VM 持续验收。 | 三形态正式安装链；TUN 尚未实际运行；ARM64/睡眠/物理切网/显示硬件仍需实体终验，外部签名未启用。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
 | 签名发布闭环 | 旧发布/制品代码及 floor 保留独立取证边界，新二进制已禁旧 SSOT 发布激活入口；UI 无实际应用证据保持 unknown。 | schema 3 catalog/manifest、期望组件事实、节点实际坐标与旧发布 floor 的可验证前向映射及生产读回；不能用普通授权闭环声称发布已替换，也不将发布设为 Direct 前置。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |

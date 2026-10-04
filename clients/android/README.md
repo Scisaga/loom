@@ -81,8 +81,8 @@ ANDROID_HOME=/opt/android-sdk ./gradlew --no-daemon --max-workers=4 \
 ```
 
 Release signing uses the ignored operator-owned
-`../../deploy/android/android-signing.env`. `build-release.sh` refuses dirty or
-untracked Android inputs, rebuilds the AAR from `HEAD`, embeds the source commit
+`../../deploy/android/android-signing.env`. `build-release.sh` refuses staged,
+unstaged or untracked Android and shared Go inputs, rebuilds the AAR from `HEAD`, embeds the source commit
 and AAR digest, runs unit tests and release lint, signs the APK, verifies its
 signature, and confirms both APK native libraries are byte-identical to the
 audited AAR:

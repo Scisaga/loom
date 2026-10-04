@@ -119,7 +119,7 @@ func enroll(ctx context.Context, store IdentityStore, resume bool) (control.Enro
 	} else {
 		endpoint := payload.Endpoint
 		hello := control.TunnelHello{Schema: 3, Mode: "bootstrap", EndpointID: endpoint.ID, Generation: endpoint.Generation, Invite: &invite}
-		connection, err = control.DialEndpoint(ctx, endpoint, hello, nil)
+		connection, err = control.DialEndpoint(withCertifiedDNS(ctx, payload.DNSServers), endpoint, hello, nil)
 	}
 	if err != nil {
 		return control.EnrollmentResponse{}, err
@@ -144,29 +144,8 @@ func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error
 	if lkg == nil {
 		return nil, errors.New("device has no accepted LKG")
 	}
+	ctx = withCertifiedDNS(ctx, lkg.View.DNSServers)
 	var failures []error
-	underlay := control.EndpointDialer(ctx)
-	ctx = control.WithEndpointDialer(ctx, func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		addresses, err := netx.ResolveCertifiedIPs(ctx, host, lkg.View.DNSServers, underlay)
-		if err != nil {
-			return nil, err
-		}
-		var failures []error
-		for _, ip := range addresses {
-			attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
-			connection, err := underlay(attempt, network, net.JoinHostPort(ip.String(), port))
-			cancel()
-			if err == nil {
-				return connection, nil
-			}
-			failures = append(failures, err)
-		}
-		return nil, errors.Join(failures...)
-	})
 	for _, endpoint := range endpointOrder(lkg.View.Endpoints) {
 		if endpoint.State != "serving" {
 			continue
@@ -182,6 +161,33 @@ func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error
 		return nil, errors.New("device LKG has no serving endpoint")
 	}
 	return nil, errors.Join(failures...)
+}
+
+// Callers verify their Invite or LKG before supplying its DNS addresses. The
+// inherited dialer keeps Android socket protection on both DNS and TLS traffic.
+func withCertifiedDNS(ctx context.Context, servers []string) context.Context {
+	underlay := control.EndpointDialer(ctx)
+	return control.WithEndpointDialer(ctx, func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		addresses, err := netx.ResolveCertifiedIPs(ctx, host, servers, underlay)
+		if err != nil {
+			return nil, err
+		}
+		var failures []error
+		for _, ip := range addresses {
+			attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
+			connection, err := underlay(attempt, network, net.JoinHostPort(ip.String(), port))
+			cancel()
+			if err == nil {
+				return connection, nil
+			}
+			failures = append(failures, err)
+		}
+		return nil, errors.Join(failures...)
+	})
 }
 func endpointDialAddresses(ctx context.Context, address string, dnsAddresses []string) ([]string, error) {
 	host, port, err := net.SplitHostPort(address)

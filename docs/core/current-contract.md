@@ -464,8 +464,10 @@ Invite 可带相同约束的可选 `dns_servers`；首次 device.join 原样继�
 最小测试覆盖设备配置的值/字节往返及未配置历史字节不变、普通管理写入与重启投影、解析失败不借
 系统 DNS/hosts 回退、真实域名设备认证及错误 TLS 身份拒绝、Android underlay socket 的 protect 回调。
 DNS 修改后新 View 使旧运行与相关观测失效；认证接受必须先持久化，执行失败仍保留新授权。
-首次 bootstrap 未持有 View，继续使用 Invite 的既定地址与 TLS 边界；加入后的域名入口只使用
-该设备认证的解析器，地址是瞬时拨号参数，不能改写签名 EndpointGeneration。
+首次 bootstrap 未持有 View，先验证完整 Invite，再只用其中已签名的 dns_servers 解析其固定签发者入口；
+未配置解析器的具名入口拒绝，字面地址不需 DNS。已绑定但未取得 View 的 claim/resume 仍使用同一 Invite，
+不得因失败重建身份或换入口。加入后的域名入口只使用当前 View 的解析器；两者复用同一 underlay 拨号适配，
+保留平台 socket 保护。地址是瞬时拨号参数，不能改写 EndpointGeneration 的主机名、TLS 名称、SPKI 或签名字节。
 普通改权保持原 transaction、Invite、绑定、公钥和平台；这些引用沿事实依赖可验证，不由 UI 重建。
 id/transaction_id 为 ID，name 为 Text，公钥为 PublicKey；两个 material_id 为 Digest，policy_ids 为 ID 集合。
 

@@ -478,7 +478,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if _, err := rand.Read(localSecret); err != nil {
 		return err
 	}
-	source, err := clientadapter.ManagedRuntimeConfig(lkg.View, hex.EncodeToString(localSecret))
+	source, err := clientadapter.AccessRuntimeSource(lkg.View, hex.EncodeToString(localSecret))
 	clear(localSecret)
 	if err != nil {
 		return err

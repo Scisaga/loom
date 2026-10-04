@@ -32,6 +32,16 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 // adapters must complete this value before passing it to a process. It remains
 // disposable and must never replace the signed RuntimeProfile.
 func ManagedRuntimeConfig(view control.DeviceView, secret string) (string, error) {
+	config, err := AccessRuntimeSource(view, secret)
+	if err != nil {
+		return "", err
+	}
+	return WithManagedDNS(config, view.DNSServers, true)
+}
+
+// AccessRuntimeSource retains the complete certified authorization and adds
+// only the local API. Capture adapters add DNS once for their own inbounds.
+func AccessRuntimeSource(view control.DeviceView, secret string) (string, error) {
 	if _, _, err := AccessProjection(view); err != nil {
 		return "", err
 	}
@@ -60,7 +70,7 @@ func ManagedRuntimeConfig(view control.DeviceView, secret string) (string, error
 	if err != nil {
 		return "", err
 	}
-	return WithManagedDNS(string(body), view.DNSServers, true)
+	return string(body), nil
 }
 
 // WithManagedDNS projects the authenticated per-device resolver addresses into

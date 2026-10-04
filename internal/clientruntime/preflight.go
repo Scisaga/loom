@@ -9,6 +9,8 @@ import (
 	"net/netip"
 	"reflect"
 	"strings"
+
+	"loom/internal/control"
 )
 
 const (
@@ -73,6 +75,9 @@ type singBoxTLS struct {
 	CertificatePath string   `json:"certificate_path,omitempty"`
 	KeyPath         string   `json:"key_path,omitempty"`
 	ALPN            []string `json:"alpn,omitempty"`
+	Certificate     []string `json:"certificate,omitempty"`
+	Insecure        bool     `json:"insecure,omitempty"`
+	DisableSNI      bool     `json:"disable_sni,omitempty"`
 }
 
 type singBoxOutbound struct {
@@ -289,6 +294,13 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 			if len(o.Outbounds) == 0 {
 				return errors.New("empty selector")
 			}
+		case "hysteria2":
+			if o.Server == "" || o.ServerPort < 1 || o.ServerPort > 65535 || control.ValidatePublicKey(o.Password) != nil ||
+				o.TLS == nil || !o.TLS.Enabled || o.TLS.ServerName == "" || len(o.TLS.Certificate) == 0 {
+				return errors.New("incomplete authenticated Hy2 transport")
+			}
+			shape.Server, shape.ServerPort, shape.Password, shape.Detour = o.Server, o.ServerPort, o.Password, o.Detour
+			shape.TLS = &singBoxTLS{Enabled: true, ServerName: o.TLS.ServerName, Certificate: o.TLS.Certificate}
 		default:
 			return errors.New("unsupported authorization transport")
 		}
@@ -300,10 +312,25 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 		return errors.New("missing reject outbound")
 	}
 	for _, o := range c.Outbounds {
+		if o.Detour != "" {
+			seen := map[string]bool{o.Tag: true}
+			for next := o.Detour; next != ""; {
+				if seen[next] || tags[next] != "hysteria2" {
+					return errors.New("invalid Hy2 relay detour")
+				}
+				seen[next] = true
+				for _, peer := range c.Outbounds {
+					if peer.Tag == next {
+						next = peer.Detour
+						break
+					}
+				}
+			}
+		}
 		if o.Type == "selector" {
 			seen := map[string]bool{}
 			for _, member := range o.Outbounds {
-				if seen[member] || tags[member] != "direct" {
+				if seen[member] || (tags[member] != "direct" && tags[member] != "hysteria2") {
 					return errors.New("invalid selector member")
 				}
 				seen[member] = true

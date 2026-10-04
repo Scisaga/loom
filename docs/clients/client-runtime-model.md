@@ -209,7 +209,9 @@ DNS overlay 只接受精确 `.loom` A/AAAA 映射，`control.loom` 由已认证 
 解析结果不能扩大 Service/Policy ACL；在同一网络代内 DNS 映射改变，依赖该名称的旧连接与业务观测
 失效并重新解析。Loom 名称的解析不能反过来依赖尚未建立的自身 tunnel，亦不得把 `.loom` 规则
 安装为开发宿主初始 namespace 的全局 DNS 接管。
-尚未取得 View 的首次 bootstrap 维持 `EndpointGeneration` 原有拨号边界，不从业务运行时反推 bootstrap 权威。
+尚未取得 View 的首次 bootstrap 先验证完整 Invite，并使用其中已签名的解析器查询其固定签发者入口；
+同事务恢复复用原身份、request ID 和 Invite。具名入口缺解析器时拒绝，字面地址不查询 DNS；不从业务运行时
+反推 bootstrap 权威。取得 View 后改用当前 View 的解析器；两条连接共用保留平台 socket 保护的 underlay 适配。
 Android HostAdapter 在本机执行投影启用 libbox 的平台接口控制，使其 TCP/UDP underlay socket 实际调用
 `VpnService.protect`，否则隧道自身会重新进入 VPN。私有配置/报告使用的认证 Endpoint IP 还须以精确
 `/32` 或 `/128` 从 capture 中排除；这是从同一 View 单向派生的本机路由输入，不授予 Service 权限。
@@ -572,6 +574,11 @@ SYSTEM/Administrators DACL；Portable TUN 与 Portable Mixed 使用 current-user
 旧 bundle 或 v1 路径。未完成事务不是可连接 profile，UI 只能显示可继续恢复的加入状态。
 
 Windows HostAdapter 从 LKG 每次纯派生 `RouteCandidate` 与 `RuntimeCandidate`，启动签名包中的正式 sing-box，
+先由共用适配器校验 View 并保留完整授权 outbounds/route，再添加本机 API 输入；Windows capture 派生只添加一次
+认证 DNS、Mixed/TUN 和 sniff 规则。Hy2 的地址、凭据、CA、TLS 名称及中继 detour 必须原样保留；不能用仅接受
+Direct 的平台校验器拒绝已经支持的认证候选，也不能重复添加 DNS 绕过该校验。平台结构校验不产生新授权，
+未知字段、不安全 TLS、失效或循环 detour 与扩宽的 capture 仍须拒绝。派生值只随受监督子进程存在，停止后删除，
+重启从原 LKG 重建；UI 与签名报告继续回读真实 selector，不从配置文件推定连接成功。
 应用纯核心提出的候选后读取 Clash selector 的真实值。只有逐 scope 回读均映射到当前 LKG 的同名候选时才形成
 Selection；apply 成功但回读缺失、不一致或指向未授权 outbound 时不更新 Selection。TCP connect/TLS 成功、
 TCP 业务失败、UDP/DNS 成功或失败分别产生保留 action/scope 的真实 Observation；本机 listener、自检、ICMP、

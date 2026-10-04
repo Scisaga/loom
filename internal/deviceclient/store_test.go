@@ -16,7 +16,7 @@ import (
 	"loom/internal/control"
 )
 
-func schema3Fixture(t *testing.T, platform string) (control.BootstrapInvite, func(string, uint64, ...func(*control.DeviceView)) control.DeviceViewEnvelope) {
+func schema3Fixture(t *testing.T, platform string, changes ...func(*control.Invite)) (control.BootstrapInvite, func(string, uint64, ...func(*control.DeviceView)) control.DeviceViewEnvelope) {
 	t.Helper()
 	members := []control.Member{}
 	keys := []ed25519.PrivateKey{}
@@ -36,6 +36,9 @@ func schema3Fixture(t *testing.T, platform string) (control.BootstrapInvite, fun
 	configID, _ := control.ConfigID(config)
 	endpoint := control.EndpointGeneration{ID: "demo-entry", Generation: 1, OwnerControlID: members[1].ControlID, Host: "192.0.2.1", Port: 443, ServerName: "demo.example", SPKISHA256: "sha256:" + strings.Repeat("1", 64), CertificateDigest: "sha256:" + strings.Repeat("2", 64), Modes: []string{"bootstrap", "device"}, State: "serving"}
 	invitation := control.Invite{ID: "demo-transaction", GenesisDigest: anchor, IssuerControlID: members[1].ControlID, DeviceID: "demo-access", Name: "Demo access", Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, Medium: "qr", Endpoint: endpoint, ExpiresAt: 1893456000000}
+	for _, change := range changes {
+		change(&invitation)
+	}
 	material, err := control.SignMaterial(control.Material{Schema: 3, NetworkID: "demo-network", IssuerControlID: members[1].ControlID, IssuerKeyID: keyID, ControlConfigID: configID, Sequence: 1, PreviousMaterialID: control.EmptyMaterialChainID(), Dependencies: []string{}, RequestID: "demo-issue", TargetKind: "invite", TargetID: invitation.ID, Operation: "invite.issue", Payload: invitation}, keys[1])
 	if err != nil {
 		t.Fatal(err)

@@ -37,11 +37,14 @@ if [[ -z "$android_sdk" ]]; then
 fi
 
 source_commit=$(git -C "$repo_root" rev-parse HEAD)
-if ! git -C "$repo_root" diff --quiet -- mobile/loomcore clients/android internal/clientmodel; then
+# The AAR directly imports the root module's control, deviceclient and transport
+# packages as well as the mobile module. Include staged edits and module inputs.
+release_inputs=(mobile/loomcore clients/android internal go.mod go.sum)
+if ! git -C "$repo_root" diff --quiet HEAD -- "${release_inputs[@]}"; then
     echo "Android release inputs differ from source commit $source_commit" >&2
     exit 1
 fi
-if [[ -n "$(git -C "$repo_root" ls-files --others --exclude-standard -- mobile/loomcore clients/android internal/clientmodel)" ]]; then
+if [[ -n "$(git -C "$repo_root" ls-files --others --exclude-standard -- "${release_inputs[@]}")" ]]; then
     echo "Android release inputs contain untracked files" >&2
     exit 1
 fi
