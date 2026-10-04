@@ -1,12 +1,15 @@
 package clientcomponent
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"errors"
+	"loom/internal/control"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -42,14 +45,14 @@ func TestInstallAndLoadImmutableComponentSlot(t *testing.T) {
 	if again.Changed || again.Slot != result.Slot {
 		t.Fatalf("idempotent install changed slot: %+v", again)
 	}
-	loaded, err := loadWithPackageVerifier(root, key.Public().(ed25519.PublicKey), "amd64", "1.11.4", authenticode, verifyPackage)
+	loaded, err := loadWithPackageVerifier(root, key.Public().(ed25519.PublicKey), "amd64", DataPlaneVersion, authenticode, verifyPackage)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.SlotID != result.Slot.ID || loaded.SingBox != result.Paths.SingBox || loaded.Wintun != result.Paths.Wintun {
 		t.Fatalf("loaded paths do not match install: %+v", loaded)
 	}
-	if _, err := loadWithPackageVerifier(root, key.Public().(ed25519.PublicKey), "arm64", "1.11.4", authenticode, verifyPackage); err == nil {
+	if _, err := loadWithPackageVerifier(root, key.Public().(ed25519.PublicKey), "arm64", DataPlaneVersion, authenticode, verifyPackage); err == nil {
 		t.Fatal("wrong architecture selected a component slot")
 	}
 	if _, err := loadWithPackageVerifier(root, key.Public().(ed25519.PublicKey), "amd64", "1.11.5", authenticode, verifyPackage); err == nil {
@@ -101,7 +104,98 @@ func TestLoadRejectsTamperedInstalledSlot(t *testing.T) {
 	if err := os.WriteFile(result.Paths.SingBox, []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadWithPackageVerifier(root, key.Public().(ed25519.PublicKey), "amd64", "1.11.4", func(string) error { return nil }, verifyPackage); err == nil {
+	if _, err := loadWithPackageVerifier(root, key.Public().(ed25519.PublicKey), "amd64", DataPlaneVersion, func(string) error { return nil }, verifyPackage); err == nil {
 		t.Fatal("tampered immutable slot was loaded")
+	}
+}
+
+func TestComponentGenerationCannotRegressOrEquivocate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native package integration runs separately")
+	}
+	artifact, key := buildFixtureArtifact(t)
+	verify := func(body []byte, pub ed25519.PublicKey) (*Verified, error) {
+		return verifyWithInspect(body, pub, fixtureSingInspector(t, fixtureIdentity()), inspectWintun)
+	}
+	install := func(root string, body []byte) error {
+		_, err := installWithPackageVerifier(root, body, key.Public().(ed25519.PublicKey), func(string) error { return nil }, verify)
+		return err
+	}
+	change := func(generation control.U64, equivocate bool) []byte {
+		t.Helper()
+		files, err := readZip(artifact.Package)
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest := artifact.Manifest
+		manifest.Generation = generation
+		if equivocate {
+			files[SingBoxLicense] = []byte("demo other license")
+			manifest.Files = append([]File(nil), manifest.Files...)
+			for i := range manifest.Files {
+				if manifest.Files[i].Path == SingBoxLicense {
+					manifest.Files[i].Size = len(files[SingBoxLicense])
+					manifest.Files[i].SHA256 = sha256Hex(files[SingBoxLicense])
+				}
+			}
+		}
+		body, err := marshalManifest(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files["manifest.json"] = body
+		files["manifest.sig"] = ed25519.Sign(key, signatureMessage(body))
+		result, err := buildZip(files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	root := t.TempDir()
+	if err := install(root, artifact.Package); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := os.ReadFile(statePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := install(root, change(1, true)); err == nil {
+		t.Fatal("same-generation equivocation accepted")
+	}
+	after, _ := os.ReadFile(statePath(root))
+	if !bytes.Equal(initial, after) {
+		t.Fatal("rejected write changed accepted state")
+	}
+	second, third := change(2, false), change(3, false)
+	var group sync.WaitGroup
+	group.Add(2)
+	go func() { defer group.Done(); _ = install(root, second) }()
+	go func() {
+		defer group.Done()
+		if err := install(root, third); err != nil {
+			t.Error(err)
+		}
+	}()
+	group.Wait()
+	state, err := ReadState(root)
+	if err != nil || state.Current.Generation != 3 {
+		t.Fatalf("concurrent upgrade lost highest accepted generation: %v %v", state, err)
+	}
+	if err := install(root, artifact.Package); err == nil {
+		t.Fatal("old signed generation accepted")
+	}
+	if err := install(root, third); err != nil {
+		t.Fatal("same generation retry failed", err)
+	}
+	old := []byte(`{"schema":1,"current":{}}`)
+	if err := os.WriteFile(statePath(root), old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := install(root, third); err == nil {
+		t.Fatal("old state was silently migrated")
+	}
+	after, _ = os.ReadFile(statePath(root))
+	if !bytes.Equal(old, after) {
+		t.Fatal("old state bytes changed")
 	}
 }

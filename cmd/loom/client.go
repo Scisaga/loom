@@ -14,6 +14,7 @@ import (
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientdist"
+	"loom/internal/control"
 )
 
 const stagedBinary = "deploy/staging/loom"
@@ -33,7 +34,7 @@ const clientUsage = `loom client —— 客户端交付
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
   loom client package-windows -arch <amd64|arm64>
-      -sing-box-archive <官方 ZIP> -wintun-archive <官方 ZIP>
+      -dataplane-dir <构建目录> -generation <发布代> -wintun-archive <官方 ZIP>
                                                生成已签名的 Windows 数据面包
   loom client verify-windows -archive <zip> -pubkey <公钥> [-arch <amd64|arm64>]
                                                验签并检查 Windows 数据面包
@@ -80,19 +81,28 @@ func cmdClientPackageWindows(args []string) error {
 	fs := flag.NewFlagSet("client package-windows", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	arch := fs.String("arch", "", "目标架构:amd64 或 arm64")
-	singBoxPath := fs.String("sing-box-archive", "", "已审核的官方 sing-box Windows ZIP")
+	buildDir := fs.String("dataplane-dir", "", "已审核的数据面构建目录")
+	generationText := fs.String("generation", "", "本次签名发布代（非零规范 U64）")
 	wintunPath := fs.String("wintun-archive", "", "已审核的官方 Wintun ZIP")
 	keyPath := fs.String("key", "deploy/keys/platform-signing.key", "平台 Ed25519 签名私钥")
-	outPath := fs.String("o", "", "输出 ZIP；默认 deploy/staging/loom-windows-dataplane-1.11.4-<arch>.zip")
+	outPath := fs.String("o", "", "输出 ZIP；默认 deploy/staging/loom-windows-dataplane-1.11.4-loom.1-<arch>.zip")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("用法:loom client package-windows -arch <amd64|arm64> -sing-box-archive <zip> -wintun-archive <zip> [-key <私钥>] [-o <zip>]:%w", err)
+		return fmt.Errorf("用法:loom client package-windows -arch <amd64|arm64> -dataplane-dir <目录> -generation <发布代> -wintun-archive <zip> [-key <私钥>] [-o <zip>]:%w", err)
 	}
-	if fs.NArg() != 0 || (*arch != "amd64" && *arch != "arm64") || *singBoxPath == "" || *wintunPath == "" {
-		return fmt.Errorf("用法:loom client package-windows -arch <amd64|arm64> -sing-box-archive <zip> -wintun-archive <zip> [-key <私钥>] [-o <zip>]")
+	if fs.NArg() != 0 || (*arch != "amd64" && *arch != "arm64") || *buildDir == "" || *wintunPath == "" {
+		return fmt.Errorf("用法:loom client package-windows -arch <amd64|arm64> -dataplane-dir <目录> -generation <发布代> -wintun-archive <zip> [-key <私钥>] [-o <zip>]")
 	}
-	singBoxArchive, err := readRegularClientInput(*singBoxPath, false)
-	if err != nil {
-		return err
+	generation, err := control.ParseU64(*generationText)
+	if err != nil || generation == 0 {
+		return fmt.Errorf("发布代必须是非零规范 U64")
+	}
+	buildFiles := map[string][]byte{}
+	for _, name := range []string{"sing-box-windows-" + *arch + ".exe", "LICENSE", "source-provenance.json", "domain-cache.patch", "prepare-sing-box.py", "build-dataplane.sh"} {
+		body, err := readRegularClientInput(filepath.Join(*buildDir, name), false)
+		if err != nil {
+			return err
+		}
+		buildFiles[name] = body
 	}
 	wintunArchive, err := readRegularClientInput(*wintunPath, false)
 	if err != nil {
@@ -102,7 +112,7 @@ func cmdClientPackageWindows(args []string) error {
 	if err != nil {
 		return fmt.Errorf("读平台签名私钥:%w", err)
 	}
-	artifact, err := clientcomponent.BuildOfficial(*arch, singBoxArchive, wintunArchive, ed25519.PrivateKey(privateKey))
+	artifact, err := clientcomponent.Build(*arch, generation, buildFiles, wintunArchive, ed25519.PrivateKey(privateKey))
 	if err != nil {
 		return err
 	}

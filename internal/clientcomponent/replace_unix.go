@@ -2,7 +2,12 @@
 
 package clientcomponent
 
-import "os"
+import (
+	"os"
+	"syscall"
+)
+
+func lockComponentFile(file *os.File) error { return syscall.Flock(int(file.Fd()), syscall.LOCK_EX) }
 
 func replaceFile(source, target string) error { return os.Rename(source, target) }
 

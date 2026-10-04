@@ -128,6 +128,16 @@ Build all editions for amd64 and arm64 on the repository host:
 bash ./scripts/build-windows-clients.sh
 ```
 
+Build the reviewed data plane with `scripts/build-dataplane.sh`, then use
+`loom client package-windows -arch <arch> -generation <generation>
+-dataplane-dir out/dataplane -wintun-archive <pinned-archive>` for each architecture.
+The current package is `loom-windows-dataplane-1.11.4-loom.1-<arch>.zip`.
+Its schema 3 manifest binds the exact source build, patch, payloads and release
+generation. The client rejects older generations, same-generation conflicting
+content, and legacy component state. An explicit replacement must preserve old
+component evidence and all device identity before installing the new package;
+it does not reset a production release floor or activate a release catalog.
+
 The build verifies the platform-signed component ZIPs before compiling and
 publishes `out/windows-clients-SHA256SUMS` last. Each output ZIP contains the
 edition-specific EXE, fixed-name `windows-dataplane.zip`, notices, and licenses.

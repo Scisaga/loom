@@ -10,129 +10,95 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"loom/internal/control"
 )
 
-func TestBuildPinnedIsReproducibleAndVerifiable(t *testing.T) {
+func TestBuildSourcePackageAndCanonicalRejection(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("fixture compilation is covered by cross-builds; native Windows tests use the official PE files")
-	}
-	singBox := buildWindowsFixture(t)
-	identity := fixtureIdentity()
-	wintun := append([]byte(nil), singBox...)
-	markPEDLL(t, wintun)
-	singArchive, err := buildZip(map[string][]byte{
-		"sing-box-1.11.4-windows-amd64/LICENSE":      []byte("fixture sing-box license\n"),
-		"sing-box-1.11.4-windows-amd64/sing-box.exe": singBox,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wintunArchive, err := buildZip(map[string][]byte{
-		"wintun/LICENSE.txt":          []byte("fixture Wintun license\n"),
-		"wintun/bin/amd64/wintun.dll": wintun,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pin := releasePin{
-		arch: "amd64", singBoxVersion: identity.version, singBoxCommit: identity.commit,
-		singBoxReleaseID: 1, singBoxAssetID: 2,
-		singBoxURL:     "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-windows-amd64.zip",
-		singBoxArchive: sha256Hex(singArchive), wintunVersion: "0.14.1", wintunArchive: sha256Hex(wintunArchive),
-	}
-	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
-	one, err := buildPinnedWithInspect(pin, singArchive, wintunArchive, privateKey, fixtureSingInspector(t, identity), inspectWintun)
-	if err != nil {
-		t.Fatal(err)
-	}
-	two, err := buildPinnedWithInspect(pin, singArchive, wintunArchive, privateKey, fixtureSingInspector(t, identity), inspectWintun)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if one.Name != "loom-windows-dataplane-1.11.4-amd64.zip" || !bytes.Equal(one.Package, two.Package) || one.SHA256 != two.SHA256 {
-		t.Fatal("same pinned inputs did not produce an identical Windows package")
-	}
-	verified, err := verifyWithInspect(one.Package, privateKey.Public().(ed25519.PublicKey), fixtureSingInspector(t, identity), inspectWintun)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if verified.Manifest.Arch != "amd64" || verified.Manifest.Wintun.Source.AuthenticodePublisher != wintunPublisher ||
-		!bytes.Equal(verified.Files[SingBoxPath], singBox) || !bytes.Equal(verified.Files[WintunPath], wintun) {
-		t.Fatalf("unexpected verified package: %+v", verified.Manifest)
-	}
-}
-
-func TestVerifyRejectsTamperWrongKeyAndUnsafeSource(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fixture compilation is covered by cross-builds; native Windows tests use the official PE files")
+		t.Skip("native executable integration runs separately")
 	}
 	artifact, key := buildFixtureArtifact(t)
-	wrong := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x24}, ed25519.SeedSize))
-	if _, err := Verify(artifact.Package, wrong.Public().(ed25519.PublicKey)); err == nil {
-		t.Fatal("package signed by a different platform key was accepted")
+	verify := func(body []byte) (*Verified, error) {
+		return verifyWithInspect(body, key.Public().(ed25519.PublicKey), fixtureSingInspector(t, fixtureIdentity()), inspectWintun)
+	}
+	one, err := verify(artifact.Package)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Manifest.Generation != 1 || one.Manifest.SingBox.Version != DataPlaneVersion || one.Manifest.Schema != 3 {
+		t.Fatal("wrong manifest coordinates")
+	}
+	body, err := marshalManifest(one.Manifest)
+	if err != nil || !bytes.Equal(body, one.ManifestBody) {
+		t.Fatal("manifest did not round trip")
 	}
 	files, err := readZip(artifact.Package)
 	if err != nil {
 		t.Fatal(err)
 	}
+	again, err := buildZip(files)
+	if err != nil || !bytes.Equal(again, artifact.Package) {
+		t.Fatal("package is not reproducible")
+	}
+	cases := map[string][]byte{
+		"old schema":         bytes.Replace(body, []byte(`"schema":3`), []byte(`"schema":1`), 1),
+		"duplicate":          bytes.Replace(body, []byte(`"schema":3`), []byte(`"schema":3,"schema":3`), 1),
+		"unknown":            append([]byte(`{"unknown":true,`), body[1:]...),
+		"noncanonical":       append(append([]byte{}, body...), '\n'),
+		"missing generation": bytes.Replace(body, []byte(`"generation":"1",`), nil, 1),
+	}
+	for name, value := range cases {
+		t.Run(name, func(t *testing.T) {
+			changed := cloneFiles(files)
+			changed["manifest.json"] = value
+			changed["manifest.sig"] = ed25519.Sign(key, signatureMessage(value))
+			bad, e := buildZip(changed)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if _, e = verify(bad); e == nil {
+				t.Fatal("invalid signed bytes accepted")
+			}
+		})
+	}
+	wrong := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x24}, ed25519.SeedSize))
+	if _, err := verifyWithInspect(artifact.Package, wrong.Public().(ed25519.PublicKey), fixtureSingInspector(t, fixtureIdentity()), inspectWintun); err == nil {
+		t.Fatal("wrong key accepted")
+	}
 	files[WintunPath][len(files[WintunPath])/2] ^= 1
-	tampered, err := buildZip(files)
+	bad, err := buildZip(files)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Verify(tampered, key.Public().(ed25519.PublicKey)); err == nil || !strings.Contains(err.Error(), "does not match signed manifest") {
-		t.Fatalf("tampered package error = %v", err)
-	}
-	manifest := artifact.Manifest
-	manifest.SingBox.Source.URL = "https://example.invalid/sing-box.zip"
-	if err := manifest.Validate(); err == nil {
-		t.Fatal("non-official sing-box source URL was accepted")
-	}
-}
-
-func TestOfficialPinsDescribeReviewedAssets(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64"} {
-		pin := officialPins[arch]
-		if pin.arch != arch || pin.singBoxVersion != "v1.11.4" ||
-			pin.singBoxCommit != "eb07c7a79eeca943370eafea601e87da76c0e57e" ||
-			!validLowerHex(pin.singBoxArchive, 64) || pin.wintunArchive != "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51" {
-			t.Fatalf("invalid reviewed %s pin: %+v", arch, pin)
-		}
+	if _, err := verify(bad); err == nil || !strings.Contains(err.Error(), "does not match signed manifest") {
+		t.Fatalf("tamper accepted: %v", err)
 	}
 }
 
 func buildFixtureArtifact(t *testing.T) (Artifact, ed25519.PrivateKey) {
 	t.Helper()
-	singBox := buildWindowsFixture(t)
-	identity := fixtureIdentity()
-	wintun := append([]byte(nil), singBox...)
-	markPEDLL(t, wintun)
-	singArchive, err := buildZip(map[string][]byte{
-		"sing-box-1.11.4-windows-amd64/LICENSE":      []byte("fixture sing-box license\n"),
-		"sing-box-1.11.4-windows-amd64/sing-box.exe": singBox,
-	})
+	sing := buildWindowsFixture(t)
+	tun := append([]byte(nil), sing...)
+	markPEDLL(t, tun)
+	archive, err := buildZip(map[string][]byte{"wintun/LICENSE.txt": []byte("demo license"), "wintun/bin/amd64/wintun.dll": tun})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wintunArchive, err := buildZip(map[string][]byte{
-		"wintun/LICENSE.txt":          []byte("fixture Wintun license\n"),
-		"wintun/bin/amd64/wintun.dll": wintun,
-	})
+	patch, err := os.ReadFile("../../third_party/sing-box/domain-cache.patch")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pin := releasePin{
-		arch: "amd64", singBoxVersion: identity.version, singBoxCommit: identity.commit,
-		singBoxReleaseID: 1, singBoxAssetID: 2,
-		singBoxURL:     "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-windows-amd64.zip",
-		singBoxArchive: sha256Hex(singArchive), wintunVersion: "0.14.1", wintunArchive: sha256Hex(wintunArchive),
-	}
+	files := map[string][]byte{"sing-box-windows-amd64.exe": sing, "LICENSE": []byte("demo license"), "source-provenance.json": []byte("demo provenance"), "domain-cache.patch": patch, "prepare-sing-box.py": []byte("demo prepare"), "build-dataplane.sh": []byte("demo build")}
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x12}, ed25519.SeedSize))
-	artifact, err := buildPinnedWithInspect(pin, singArchive, wintunArchive, key, fixtureSingInspector(t, identity), inspectWintun)
+	if _, err := Build("amd64", 1, files, archive, key); err == nil {
+		t.Fatal("unreviewed executable accepted by production builder")
+	}
+	result, err := buildWithInspect("amd64", control.U64(1), files, archive, key, fixtureSingInspector(t, fixtureIdentity()), inspectWintun)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return artifact, key
+	return result, key
 }
 
 func buildWindowsFixture(t *testing.T) []byte {
@@ -166,7 +132,7 @@ func buildWindowsFixture(t *testing.T) []byte {
 }
 
 func fixtureIdentity() singBoxIdentity {
-	return singBoxIdentity{version: "v1.11.4", commit: strings.Repeat("a", 40)}
+	return singBoxIdentity{version: DataPlaneVersion, commit: upstreamCommit}
 }
 
 func fixtureSingInspector(t *testing.T, identity singBoxIdentity) func([]byte, string) (singBoxIdentity, error) {

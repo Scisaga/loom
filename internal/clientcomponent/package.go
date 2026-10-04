@@ -1,6 +1,6 @@
 // Package clientcomponent builds and verifies the Windows data-plane package.
 //
-// The platform signer consumes complete, pinned upstream archives. The client
+// The platform signer consumes the reviewed source build and pinned Wintun archive. The client
 // trusts neither an archive URL nor a mutable package manager: it accepts only
 // an exact file set covered by the locally pinned Loom Ed25519 public key.
 package clientcomponent
@@ -13,22 +13,22 @@ import (
 	"debug/buildinfo"
 	"debug/pe"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"path"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"loom/internal/control"
 )
 
 const (
-	Schema                 = 1
+	Schema                 = 3
 	Kind                   = "windows-dataplane"
-	signatureDomain        = "loom:windows-dataplane-package:v1"
+	signatureDomain        = "loom-release-manifest-v3"
 	maxPackageBytes        = 128 << 20
 	maxUpstreamArchiveSize = 128 << 20
 	maxEntryBytes          = 64 << 20
@@ -41,20 +41,20 @@ const (
 	WintunPath        = "bin/wintun.dll"
 	SingBoxLicense    = "licenses/sing-box-LICENSE"
 	WintunLicense     = "licenses/wintun-LICENSE.txt"
-	evidenceSingBox   = "github-release-asset+go-buildinfo"
+	evidenceSingBox   = "go-module+reviewed-patch"
 	evidenceWintun    = "publisher-sha256+authenticode"
 	wintunPublisher   = "WireGuard LLC"
 	officialWintunURL = "https://www.wintun.net/builds/wintun-0.14.1.zip"
 )
 
-// Source records the upstream evidence reviewed before the platform signed the
-// package. It is audit metadata, not a client-side trust root.
+// Source is signed provenance, not another trust root.
 type Source struct {
 	URL                   string `json:"url"`
 	ArchiveSHA256         string `json:"archive_sha256"`
 	Evidence              string `json:"evidence"`
-	ReleaseID             int64  `json:"release_id,omitempty"`
-	AssetID               int64  `json:"asset_id,omitempty"`
+	UpstreamVersion       string `json:"upstream_version,omitempty"`
+	ModuleSum             string `json:"module_sum,omitempty"`
+	PatchSHA256           string `json:"patch_sha256,omitempty"`
 	AuthenticodeRequired  bool   `json:"authenticode_required,omitempty"`
 	AuthenticodePublisher string `json:"authenticode_publisher,omitempty"`
 }
@@ -75,14 +75,17 @@ type File struct {
 }
 
 type Manifest struct {
-	Schema          int       `json:"schema"`
-	Kind            string    `json:"kind"`
-	OS              string    `json:"os"`
-	Arch            string    `json:"arch"`
-	SignatureDomain string    `json:"signature_domain"`
-	SingBox         Component `json:"sing_box"`
-	Wintun          Component `json:"wintun"`
-	Files           []File    `json:"files"`
+	Generation      control.U64 `json:"generation"`
+	Version         string      `json:"version"`
+	Audience        string      `json:"audience"`
+	Schema          int         `json:"schema"`
+	Kind            string      `json:"kind"`
+	OS              string      `json:"os"`
+	Arch            string      `json:"arch"`
+	SignatureDomain string      `json:"signature_domain"`
+	SingBox         Component   `json:"sing_box"`
+	Wintun          Component   `json:"wintun"`
+	Files           []File      `json:"files"`
 }
 
 type Artifact struct {
@@ -100,145 +103,128 @@ type Verified struct {
 	Files        map[string][]byte
 }
 
-type releasePin struct {
-	arch             string
-	singBoxVersion   string
-	singBoxCommit    string
-	singBoxReleaseID int64
-	singBoxAssetID   int64
-	singBoxURL       string
-	singBoxArchive   string
-	wintunVersion    string
-	wintunArchive    string
+const DataPlaneVersion = "1.11.4-loom.1"
+const upstreamCommit = "eb07c7a79eeca943370eafea601e87da76c0e57e"
+const upstreamVersion = "v1.11.4"
+const upstreamURL = "https://proxy.golang.org/github.com/sagernet/sing-box/@v/v1.11.4.zip"
+const upstreamArchive = "43928129d0aa0ecf6bc3bede60d805e918f3f1510e8a38612b7ccd78f3bc8bf2"
+const upstreamModuleSum = "h1:Z3xLwVJlTJfJ1p8R9M05aNJLFKRAwGebA5M/DFmr8p8="
+const patchDigest = "5c8a8b8403834dedfe35345aa914fda2c909cca5c89ffb06868d19f7c5c65b08"
+const wintunVersion = "0.14.1"
+const wintunArchiveDigest = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
+
+var reviewedBuilds = map[string]string{
+	"amd64": "59aa4de23625dfc309292a27363507687dfa5ed12e9095b190b4f3d9e6916218",
+	"arm64": "9c66eb2d9a828769f84e54be975cb51c41324c7f03aef0b0e91d2d97d27ba3a6",
 }
 
-var officialPins = map[string]releasePin{
-	"amd64": {
-		arch: "amd64", singBoxVersion: "v1.11.4",
-		singBoxCommit:    "eb07c7a79eeca943370eafea601e87da76c0e57e",
-		singBoxReleaseID: 201970450, singBoxAssetID: 232020341,
-		singBoxURL:     "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-windows-amd64.zip",
-		singBoxArchive: "8a681dbd6fa84f03d41e9e8637a8ff4df3d1d209556585ebf004b48325f9d70e",
-		wintunVersion:  "0.14.1", wintunArchive: "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51",
-	},
-	"arm64": {
-		arch: "arm64", singBoxVersion: "v1.11.4",
-		singBoxCommit:    "eb07c7a79eeca943370eafea601e87da76c0e57e",
-		singBoxReleaseID: 201970450, singBoxAssetID: 232020344,
-		singBoxURL:     "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-windows-arm64.zip",
-		singBoxArchive: "a0e3516a805774d1d671b3666e6b361f3f672e0a3926cfa99683be8b5076baeb",
-		wintunVersion:  "0.14.1", wintunArchive: "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51",
-	},
+var reviewedSources = map[string]string{
+	"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+	"source-provenance.json": "3272bb452fd24129d8d78ab8744b6d377990b236a79c576e9615728f1ade0dfe",
+	"domain-cache.patch":     patchDigest,
+	"prepare-sing-box.py":    "2cfcd7b16889f0ab7553b51253be4680f331d0c08ba6a7081653c8cb0a73daed",
+	"build-dataplane.sh":     "d2704928f0b9ceb3f5b01a458b0ad534e754d75039f234445705a3bfd323f337",
 }
 
-// BuildOfficial consumes the complete upstream archives whose identities were
-// reviewed and pinned in source. Updating either upstream is an explicit code
-// review, not a mutable runtime setting.
-func BuildOfficial(arch string, singBoxArchive, wintunArchive []byte, privateKey ed25519.PrivateKey) (Artifact, error) {
-	pin, ok := officialPins[arch]
-	if !ok {
-		return Artifact{}, fmt.Errorf("unsupported Windows component architecture %q", arch)
-	}
-	return buildPinned(pin, singBoxArchive, wintunArchive, privateKey)
-}
+const sourceBuildInstructions = `This package contains a modified sing-box 1.11.4, built with Go 1.27.0.
+The upstream source ZIP, checksum and module sum are in the signed manifest.
+The source-provenance.json file identifies the exact upstream commit and patch.
 
-func buildPinned(pin releasePin, singBoxArchive, wintunArchive []byte, privateKey ed25519.PrivateKey) (Artifact, error) {
-	return buildPinnedWithInspect(pin, singBoxArchive, wintunArchive, privateKey, inspectSingBox, inspectWintun)
-}
+To reproduce with Bash, Python 3, Git and Go available, in a new directory:
+  mkdir -p scripts third_party/sing-box
+  cp /path/to/package/source/prepare-sing-box.py scripts/
+  cp /path/to/package/source/build-dataplane.sh scripts/
+  cp /path/to/package/source/domain-cache.patch third_party/sing-box/
+  bash scripts/build-dataplane.sh
 
-func buildPinnedWithInspect(pin releasePin, singBoxArchive, wintunArchive []byte, privateKey ed25519.PrivateKey,
-	inspectSing func([]byte, string) (singBoxIdentity, error), inspectTun func([]byte, string) error) (Artifact, error) {
-	if len(privateKey) != ed25519.PrivateKeySize {
-		return Artifact{}, fmt.Errorf("platform signing private key has invalid length %d", len(privateKey))
+The script checks and downloads the pinned Go module source, applies the patch,
+and writes the four deterministic executables to out/dataplane. It does not
+require Loom's repository or any signing key. The upstream license is included
+in licenses/sing-box-LICENSE. Wintun is the unchanged signed publisher DLL;
+its source and license are described by its publisher and the signed manifest.
+`
+
+// Build consumes only explicit bytes. No clock, network or file reads occur.
+// The generation is selected by the release caller, never inferred from time.
+func Build(arch string, generation control.U64, buildFiles map[string][]byte, wintunArchive []byte, privateKey ed25519.PrivateKey) (Artifact, error) {
+	for name, digest := range reviewedSources {
+		if sha256Hex(buildFiles[name]) != digest {
+			return Artifact{}, fmt.Errorf("data-plane source file %s differs from reviewed inputs", name)
+		}
 	}
-	if len(singBoxArchive) == 0 || len(singBoxArchive) > maxUpstreamArchiveSize ||
-		len(wintunArchive) == 0 || len(wintunArchive) > maxUpstreamArchiveSize {
-		return Artifact{}, errors.New("upstream archive has invalid size")
+	if sha256Hex(buildFiles["sing-box-windows-"+arch+".exe"]) != reviewedBuilds[arch] || reviewedBuilds[arch] == "" {
+		return Artifact{}, errors.New("data-plane binary differs from the reviewed source build")
 	}
-	if sha256Hex(singBoxArchive) != pin.singBoxArchive {
-		return Artifact{}, errors.New("sing-box upstream archive does not match the reviewed pin")
-	}
-	if sha256Hex(wintunArchive) != pin.wintunArchive {
+	if sha256Hex(wintunArchive) != wintunArchiveDigest {
 		return Artifact{}, errors.New("Wintun upstream archive does not match the publisher SHA-256 pin")
 	}
-	singFiles, err := readZip(singBoxArchive)
-	if err != nil {
-		return Artifact{}, fmt.Errorf("read sing-box upstream archive: %w", err)
+	return buildWithInspect(arch, generation, buildFiles, wintunArchive, privateKey, inspectSingBox, inspectWintun)
+}
+
+func buildWithInspect(arch string, generation control.U64, buildFiles map[string][]byte, wintunArchive []byte, privateKey ed25519.PrivateKey,
+	inspectSing func([]byte, string) (singBoxIdentity, error), inspectTun func([]byte, string) error) (Artifact, error) {
+	if len(privateKey) != ed25519.PrivateKeySize || len(wintunArchive) == 0 || len(wintunArchive) > maxUpstreamArchiveSize {
+		return Artifact{}, errors.New("invalid platform key or Wintun archive bounds")
 	}
 	wintunFiles, err := readZip(wintunArchive)
 	if err != nil {
-		return Artifact{}, fmt.Errorf("read Wintun upstream archive: %w", err)
+		return Artifact{}, err
 	}
-	plainVersion := strings.TrimPrefix(pin.singBoxVersion, "v")
-	singRoot := "sing-box-" + plainVersion + "-windows-" + pin.arch
-	singBox, ok := singFiles[singRoot+"/sing-box.exe"]
-	if !ok {
-		return Artifact{}, errors.New("sing-box upstream archive is missing the pinned executable")
+	payload := map[string][]byte{
+		SingBoxPath:    buildFiles["sing-box-windows-"+arch+".exe"],
+		WintunPath:     wintunFiles["wintun/bin/"+arch+"/wintun.dll"],
+		SingBoxLicense: buildFiles["LICENSE"], WintunLicense: wintunFiles["wintun/LICENSE.txt"],
+		"source/source-provenance.json": buildFiles["source-provenance.json"],
+		"source/domain-cache.patch":     buildFiles["domain-cache.patch"],
+		"source/prepare-sing-box.py":    buildFiles["prepare-sing-box.py"],
+		"source/build-dataplane.sh":     buildFiles["build-dataplane.sh"],
+		"source/BUILD.txt":              []byte(sourceBuildInstructions),
 	}
-	singLicense, ok := singFiles[singRoot+"/LICENSE"]
-	if !ok {
-		return Artifact{}, errors.New("sing-box upstream archive is missing LICENSE")
+	for name, body := range payload {
+		if len(body) == 0 || len(body) > maxEntryBytes {
+			return Artifact{}, fmt.Errorf("missing or oversized component file %s", name)
+		}
 	}
-	wintunArch := pin.arch
-	if pin.arch == "arm64" {
-		wintunArch = "arm64"
+	if sha256Hex(payload["source/domain-cache.patch"]) != patchDigest {
+		return Artifact{}, errors.New("unreviewed data-plane patch")
 	}
-	wintun, ok := wintunFiles["wintun/bin/"+wintunArch+"/wintun.dll"]
-	if !ok {
-		return Artifact{}, errors.New("Wintun upstream archive is missing the pinned DLL")
-	}
-	wintunLicense, ok := wintunFiles["wintun/LICENSE.txt"]
-	if !ok {
-		return Artifact{}, errors.New("Wintun upstream archive is missing LICENSE.txt")
-	}
-
-	singIdentity, err := inspectSing(singBox, pin.arch)
+	identity, err := inspectSing(payload[SingBoxPath], arch)
 	if err != nil {
 		return Artifact{}, err
 	}
-	if singIdentity.version != pin.singBoxVersion || singIdentity.commit != pin.singBoxCommit {
-		return Artifact{}, fmt.Errorf("sing-box build identity is %s/%s, want %s/%s",
-			singIdentity.version, singIdentity.commit, pin.singBoxVersion, pin.singBoxCommit)
+	if identity.version != DataPlaneVersion || identity.commit != upstreamCommit {
+		return Artifact{}, errors.New("data-plane build identity differs from reviewed source")
 	}
-	if err := inspectTun(wintun, pin.arch); err != nil {
+	if err = inspectTun(payload[WintunPath], arch); err != nil {
 		return Artifact{}, err
 	}
-
-	payload := map[string][]byte{
-		SingBoxPath: singBox, WintunPath: wintun,
-		SingBoxLicense: singLicense, WintunLicense: wintunLicense,
-	}
-	manifest := Manifest{
-		Schema: Schema, Kind: Kind, OS: "windows", Arch: pin.arch, SignatureDomain: signatureDomain,
-		SingBox: Component{Path: SingBoxPath, SHA256: sha256Hex(singBox), Size: len(singBox),
-			Version: pin.singBoxVersion, Commit: pin.singBoxCommit,
-			Source: Source{URL: pin.singBoxURL, ArchiveSHA256: pin.singBoxArchive,
-				Evidence: evidenceSingBox, ReleaseID: pin.singBoxReleaseID, AssetID: pin.singBoxAssetID}},
-		Wintun: Component{Path: WintunPath, SHA256: sha256Hex(wintun), Size: len(wintun),
-			Version: pin.wintunVersion,
-			Source: Source{URL: officialWintunURL, ArchiveSHA256: pin.wintunArchive,
-				Evidence: evidenceWintun, AuthenticodeRequired: true, AuthenticodePublisher: wintunPublisher}},
+	manifest := Manifest{Schema: Schema, Kind: Kind, OS: "windows", Arch: arch, Generation: generation, Version: DataPlaneVersion, Audience: "public", SignatureDomain: signatureDomain,
+		SingBox: Component{Path: SingBoxPath, SHA256: sha256Hex(payload[SingBoxPath]), Size: len(payload[SingBoxPath]), Version: DataPlaneVersion, Commit: upstreamCommit,
+			Source: Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: patchDigest}},
+		Wintun: Component{Path: WintunPath, SHA256: sha256Hex(payload[WintunPath]), Size: len(payload[WintunPath]), Version: wintunVersion,
+			Source: Source{URL: officialWintunURL, ArchiveSHA256: wintunArchiveDigest, Evidence: evidenceWintun, AuthenticodeRequired: true, AuthenticodePublisher: wintunPublisher}},
 	}
 	for name, body := range payload {
 		manifest.Files = append(manifest.Files, File{Path: name, SHA256: sha256Hex(body), Size: len(body)})
 	}
 	sort.Slice(manifest.Files, func(i, j int) bool { return manifest.Files[i].Path < manifest.Files[j].Path })
-	if err := manifest.Validate(); err != nil {
-		return Artifact{}, err
-	}
 	manifestBody, err := marshalManifest(manifest)
 	if err != nil {
 		return Artifact{}, err
 	}
-	signature := ed25519.Sign(privateKey, signatureMessage(manifestBody))
 	payload["manifest.json"] = manifestBody
-	payload["manifest.sig"] = signature
+	payload["manifest.sig"] = ed25519.Sign(privateKey, signatureMessage(manifestBody))
 	body, err := buildZip(payload)
 	if err != nil {
 		return Artifact{}, err
 	}
-	name := fmt.Sprintf("loom-windows-dataplane-%s-%s.zip", strings.TrimPrefix(pin.singBoxVersion, "v"), pin.arch)
-	return Artifact{Name: name, Package: body, SHA256: sha256Hex(body), Manifest: manifest}, nil
+	return Artifact{Name: fmt.Sprintf("loom-windows-dataplane-%s-%s.zip", DataPlaneVersion, arch), Package: body, SHA256: sha256Hex(body), Manifest: manifest}, nil
+}
+
+func payloadNames() []string {
+	names := []string{SingBoxPath, WintunPath, SingBoxLicense, WintunLicense, "source/source-provenance.json", "source/domain-cache.patch", "source/prepare-sing-box.py", "source/build-dataplane.sh", "source/BUILD.txt"}
+	sort.Strings(names)
+	return names
 }
 
 func Verify(packageBody []byte, publicKey ed25519.PublicKey) (*Verified, error) {
@@ -258,7 +244,7 @@ func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
 		return nil, err
 	}
 	names := sortedNames(files)
-	wantNames := []string{SingBoxPath, WintunPath, SingBoxLicense, WintunLicense, "manifest.json", "manifest.sig"}
+	wantNames := append(payloadNames(), "manifest.json", "manifest.sig")
 	sort.Strings(wantNames)
 	if !slices.Equal(names, wantNames) {
 		return nil, fmt.Errorf("Windows component package file set is %v, want %v", names, wantNames)
@@ -268,18 +254,8 @@ func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
 		return nil, errors.New("component manifest has invalid size")
 	}
 	var manifest Manifest
-	if err := decodeStrict(manifestBody, &manifest); err != nil {
+	if err := control.DecodeCanonical(manifestBody, &manifest, control.ContractDecodeLimits{MaxBytes: maxManifestBytes, MaxDepth: 16, MaxItems: 4096}); err != nil {
 		return nil, fmt.Errorf("decode component manifest: %w", err)
-	}
-	if err := manifest.Validate(); err != nil {
-		return nil, err
-	}
-	canonical, err := marshalManifest(manifest)
-	if err != nil {
-		return nil, err
-	}
-	if !bytes.Equal(canonical, manifestBody) {
-		return nil, errors.New("component manifest is not in canonical form")
 	}
 	signature := files["manifest.sig"]
 	if len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, signatureMessage(manifestBody), signature) {
@@ -295,6 +271,9 @@ func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
 	if err != nil {
 		return nil, err
 	}
+	if sha256Hex(files["source/domain-cache.patch"]) != manifest.SingBox.Source.PatchSHA256 {
+		return nil, errors.New("source patch differs from signed provenance")
+	}
 	if singIdentity.version != manifest.SingBox.Version || singIdentity.commit != manifest.SingBox.Commit {
 		return nil, errors.New("sing-box executable identity does not match signed manifest")
 	}
@@ -307,7 +286,7 @@ func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
 }
 
 func (m Manifest) Validate() error {
-	if m.Schema != Schema || m.Kind != Kind || m.OS != "windows" || m.SignatureDomain != signatureDomain {
+	if m.Schema != Schema || m.Kind != Kind || m.OS != "windows" || m.SignatureDomain != signatureDomain || m.Generation == 0 || m.Audience != "public" || m.Version != DataPlaneVersion {
 		return errors.New("component manifest has invalid schema, kind, OS, or signature domain")
 	}
 	if m.Arch != "amd64" && m.Arch != "arm64" {
@@ -325,10 +304,10 @@ func (m Manifest) Validate() error {
 	if err := validateWintunSource(m.Wintun.Source, m.Wintun.Version); err != nil {
 		return err
 	}
-	if len(m.Files) != 4 {
-		return fmt.Errorf("component manifest must cover exactly four payload files, got %d", len(m.Files))
+	if len(m.Files) != len(payloadNames()) {
+		return errors.New("component manifest must cover the exact payload file set")
 	}
-	want := []string{SingBoxPath, WintunPath, SingBoxLicense, WintunLicense}
+	want := payloadNames()
 	sort.Strings(want)
 	seen := make([]string, 0, len(m.Files))
 	for i, file := range m.Files {
@@ -372,34 +351,17 @@ func validateComponent(component Component, wantPath string, requireCommit bool)
 }
 
 func validateSingSource(source Source, version, arch string) error {
-	if source.Evidence != evidenceSingBox || source.ReleaseID <= 0 || source.AssetID <= 0 ||
-		source.AuthenticodeRequired || source.AuthenticodePublisher != "" || !validLowerHex(source.ArchiveSHA256, 64) {
-		return errors.New("sing-box source evidence is incomplete or inconsistent")
-	}
-	wantSuffix := fmt.Sprintf("/SagerNet/sing-box/releases/download/%s/sing-box-%s-windows-%s.zip", version, strings.TrimPrefix(version, "v"), arch)
-	if err := validateHTTPSURL(source.URL, "github.com", wantSuffix); err != nil {
-		return fmt.Errorf("invalid sing-box source URL: %w", err)
+	want := Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: patchDigest}
+	if source != want || version != DataPlaneVersion || reviewedBuilds[arch] == "" {
+		return errors.New("sing-box source evidence differs from the reviewed source build")
 	}
 	return nil
 }
 
 func validateWintunSource(source Source, version string) error {
-	if source.Evidence != evidenceWintun || source.ReleaseID != 0 || source.AssetID != 0 ||
-		!source.AuthenticodeRequired || source.AuthenticodePublisher != wintunPublisher ||
-		!validLowerHex(source.ArchiveSHA256, 64) {
-		return errors.New("Wintun source evidence is incomplete or inconsistent")
-	}
-	if err := validateHTTPSURL(source.URL, "www.wintun.net", "/builds/wintun-"+version+".zip"); err != nil {
-		return fmt.Errorf("invalid Wintun source URL: %w", err)
-	}
-	return nil
-}
-
-func validateHTTPSURL(value, host, wantPath string) error {
-	u, err := url.Parse(value)
-	if err != nil || u.Scheme != "https" || u.Host != host || u.Path != wantPath ||
-		u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return errors.New("source must be the exact HTTPS release URL")
+	want := Source{URL: officialWintunURL, ArchiveSHA256: wintunArchiveDigest, Evidence: evidenceWintun, AuthenticodeRequired: true, AuthenticodePublisher: wintunPublisher}
+	if source != want || version != wintunVersion {
+		return errors.New("Wintun source evidence differs from the pinned publisher archive")
 	}
 	return nil
 }
@@ -410,6 +372,9 @@ type singBoxIdentity struct {
 }
 
 func inspectSingBox(body []byte, wantArch string) (singBoxIdentity, error) {
+	if reviewedBuilds[wantArch] == "" || sha256Hex(body) != reviewedBuilds[wantArch] {
+		return singBoxIdentity{}, errors.New("sing-box binary differs from the reviewed source build")
+	}
 	if err := inspectPE(body, wantArch, false); err != nil {
 		return singBoxIdentity{}, fmt.Errorf("invalid sing-box PE: %w", err)
 	}
@@ -418,24 +383,30 @@ func inspectSingBox(body []byte, wantArch string) (singBoxIdentity, error) {
 		return singBoxIdentity{}, fmt.Errorf("read sing-box Go build identity: %w", err)
 	}
 	if info.Path != "github.com/sagernet/sing-box/cmd/sing-box" || info.Main.Path != "github.com/sagernet/sing-box" ||
-		info.Main.Version == "" || info.Main.Version == "(devel)" {
-		return singBoxIdentity{}, errors.New("executable is not a versioned upstream sing-box command")
+		info.Main.Version != "(devel)" {
+		return singBoxIdentity{}, errors.New("executable is not the reviewed sing-box source build")
 	}
-	var goos, goarch, commit string
+	var goos, goarch, tags, cgo, trimpath string
 	for _, setting := range info.Settings {
 		switch setting.Key {
 		case "GOOS":
 			goos = setting.Value
 		case "GOARCH":
 			goarch = setting.Value
+		case "-tags":
+			tags = setting.Value
+		case "CGO_ENABLED":
+			cgo = setting.Value
+		case "-trimpath":
+			trimpath = setting.Value
 		case "vcs.revision":
-			commit = setting.Value
+			return singBoxIdentity{}, errors.New("patched source build must not claim upstream VCS identity")
 		}
 	}
-	if goos != "windows" || goarch != wantArch || !validLowerHex(commit, 40) {
+	if goos != "windows" || goarch != wantArch || tags != "with_gvisor,with_quic,with_wireguard,with_ech,with_utls,with_clash_api,http2legacy" || cgo != "0" || trimpath != "true" || info.GoVersion != "go1.27.0" {
 		return singBoxIdentity{}, errors.New("sing-box build settings do not contain the pinned Windows coordinates")
 	}
-	return singBoxIdentity{version: info.Main.Version, commit: commit}, nil
+	return singBoxIdentity{version: DataPlaneVersion, commit: upstreamCommit}, nil
 }
 
 func inspectWintun(body []byte, wantArch string) error {
@@ -483,7 +454,7 @@ func readZip(body []byte) (map[string][]byte, error) {
 	var total uint64
 	for _, entry := range reader.File {
 		name := entry.Name
-		if name == "" || path.Clean(name) != name || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") ||
+		if name == "" || path.Clean(name) != name || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "../") || strings.Contains(name, "\\") ||
 			!entry.Mode().IsRegular() {
 			return nil, fmt.Errorf("ZIP contains unsafe entry %q", name)
 		}
@@ -536,29 +507,7 @@ func buildZip(files map[string][]byte) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func marshalManifest(manifest Manifest) ([]byte, error) {
-	body, err := json.MarshalIndent(&manifest, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(body, '\n'), nil
-}
-
-func decodeStrict(body []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("JSON contains trailing value")
-		}
-		return err
-	}
-	return nil
-}
+func marshalManifest(manifest Manifest) ([]byte, error) { return control.CanonicalEncode(manifest) }
 
 func signatureMessage(manifestBody []byte) []byte {
 	message := make([]byte, 0, len(signatureDomain)+1+len(manifestBody))

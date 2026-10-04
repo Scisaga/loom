@@ -2,7 +2,14 @@
 
 package clientcomponent
 
-import "golang.org/x/sys/windows"
+import (
+	"golang.org/x/sys/windows"
+	"os"
+)
+
+func lockComponentFile(file *os.File) error {
+	return windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &windows.Overlapped{})
+}
 
 func replaceFile(source, target string) error {
 	from, err := windows.UTF16PtrFromString(source)

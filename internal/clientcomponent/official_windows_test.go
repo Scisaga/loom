@@ -6,35 +6,20 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"os"
 	"runtime"
 	"testing"
 
 	"loom/internal/clientruntime"
 )
 
-func TestOfficialComponentNativeInstall(t *testing.T) {
+func TestReviewedComponentNativeInstall(t *testing.T) {
 	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
 		t.Skip("unsupported native architecture")
 	}
-	singPath := os.Getenv("LOOM_SING_BOX_AMD64_ARCHIVE")
-	if runtime.GOARCH == "arm64" {
-		singPath = os.Getenv("LOOM_SING_BOX_ARM64_ARCHIVE")
-	}
-	wintunPath := os.Getenv("LOOM_WINTUN_ARCHIVE")
-	if singPath == "" || wintunPath == "" {
-		t.Skip("set official archive paths to run the native component probe")
-	}
-	singBody, err := os.ReadFile(singPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wintunBody, err := os.ReadFile(wintunPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	files := sourceBuildFiles(t, runtime.GOARCH)
+	wintunBody := pinnedWintun(t)
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x57}, ed25519.SeedSize))
-	artifact, err := BuildOfficial(runtime.GOARCH, singBody, wintunBody, key)
+	artifact, err := Build(runtime.GOARCH, 1, files, wintunBody, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +31,7 @@ func TestOfficialComponentNativeInstall(t *testing.T) {
 	if !installed.Changed {
 		t.Fatal("first native component install reported no change")
 	}
-	loaded, err := LoadWindows(root, key.Public().(ed25519.PublicKey), runtime.GOARCH, "1.11.4")
+	loaded, err := LoadWindows(root, key.Public().(ed25519.PublicKey), runtime.GOARCH, DataPlaneVersion)
 	if err != nil {
 		t.Fatal(err)
 	}

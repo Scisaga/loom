@@ -167,8 +167,15 @@ HTTPS、无 SNI 连接、字面 IP 和伪造 SNI 拒绝均通过；同名 underl
 源码准备固定上游 module 校验和、commit 与补丁摘要；数据面制品修订不改变 schema 3。
 
 记录位于 `deploy/evidence/2026-10-04-tun-domain/`。修正版 Linux/Windows 双架构数据面和 Android 双 ABI AAR
-已构建；Windows 原组件打包入口尚不能签发该源码修订，正式签名制品、MSI/Android 原生复验及部署继续推进。
-尚未替换现网数据面，不能把隔离测试当作正式客户端或完整安装生命周期通过。
+已构建。Android 正式签名 APK 已在干净 API 35 模拟器经正常文件导入和 VPN 同意完成仅域名 Service 的
+Hy2 HTTPS、撤权拒绝、Keystore 进程重启恢复、再授权、私有签名报告及界面回读；接收端确认收到域名目标。
+该包源码为 `a1392929`，双 ABI 库与审核的 AAR 逐项一致，实体机仍由用户验收。
+
+Windows 原版组件 writer 已替换为[规范 schema 3 manifest](core/current-contract.md#windows-数据面-manifest-的规范字段)：
+固定源码、补丁和精确双架构制品，附许可证与可独立复现的构建方法；发布代同值重试、同代异值和倒退拒绝。
+旧 schema 1 解码与 previous 运行回退删除，现有旧指针和签名包必须显式保全后替换，不自动重解释。
+独立空目录重建的四份数据面与审核摘要一致；同机 Windows 原生签名包安装、Wintun Authenticode、逐文件
+回读及数据面预检通过。正式 MSI 的升级、TUN 域名业务与恢复仍在推进；尚未替换现网数据面或启用生产 catalog。
 
 ### 本轮实现与实际验证
 

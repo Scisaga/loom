@@ -192,22 +192,9 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 }
 
 func loadWindowsRuntimeComponents(root string) (clientcomponent.RuntimePaths, error) {
-	componentState, err := clientcomponent.ReadState(root)
-	if err != nil {
-		return clientcomponent.RuntimePaths{}, fmt.Errorf("read signed component state: %w", err)
-	}
-	if componentState == nil {
-		return installBundledWindowsComponent(root)
-	}
-	publicKey, err := embeddedWindowsPlatformKey()
-	if err != nil {
-		return clientcomponent.RuntimePaths{}, err
-	}
-	components, err := clientcomponent.LoadWindows(root, publicKey, runtime.GOARCH, componentState.Current.SingBoxVersion)
-	if err != nil {
-		return clientcomponent.RuntimePaths{}, fmt.Errorf("load signed Windows component: %w", err)
-	}
-	return components, nil
+	// The exact bundle is selected by the installed application. Install performs
+	// signature, payload, native driver and monotonic generation checks before use.
+	return installBundledWindowsComponent(root)
 }
 
 func runtimeProfile(edition clientEdition) (clientruntime.WindowsRuntimeProfile, error) {

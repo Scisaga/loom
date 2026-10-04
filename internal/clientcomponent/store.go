@@ -1,9 +1,7 @@
 package clientcomponent
 
 import (
-	"bytes"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,26 +10,28 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"loom/internal/control"
 )
 
 const (
-	StateSchema = 1
+	StateSchema = 3
 	maxState    = 64 << 10
 )
 
 type AuthenticodeVerifier func(path string) error
 
 type SlotRef struct {
-	ID             string `json:"id"`
-	Arch           string `json:"arch"`
-	SingBoxVersion string `json:"sing_box_version"`
-	WintunVersion  string `json:"wintun_version"`
+	Generation     control.U64 `json:"generation"`
+	ID             string      `json:"id"`
+	Arch           string      `json:"arch"`
+	SingBoxVersion string      `json:"sing_box_version"`
+	WintunVersion  string      `json:"wintun_version"`
 }
 
 type State struct {
-	Schema   int      `json:"schema"`
-	Current  SlotRef  `json:"current"`
-	Previous *SlotRef `json:"previous,omitempty"`
+	Schema  int     `json:"schema"`
+	Current SlotRef `json:"current"`
 }
 
 type InstallResult struct {
@@ -73,7 +73,30 @@ func installWithPackageVerifier(root string, packageBody []byte, publicKey ed255
 	if err != nil {
 		return InstallResult{}, fmt.Errorf("verify Windows component package: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "state"), 0700); err != nil {
+		return InstallResult{}, err
+	}
+	lock, err := os.OpenFile(filepath.Join(root, "state", "components.lock"), os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	defer lock.Close()
+	info, statErr := lock.Stat()
+	entry, entryErr := os.Lstat(filepath.Join(root, "state", "components.lock"))
+	if statErr != nil || entryErr != nil || !info.Mode().IsRegular() || entry.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, entry) {
+		return InstallResult{}, errors.New("component lock is not a regular owned file")
+	}
+	if err = lockComponentFile(lock); err != nil {
+		return InstallResult{}, err
+	}
+	state, err := ReadState(root)
+	if err != nil {
+		return InstallResult{}, err
+	}
 	ref := slotRef(verified)
+	if state != nil && (ref.Arch != state.Current.Arch || ref.Generation < state.Current.Generation || ref.Generation == state.Current.Generation && ref.ID != state.Current.ID) {
+		return InstallResult{}, errors.New("component install would roll back or equivocate the accepted generation")
+	}
 	components := filepath.Join(root, "components")
 	if err := os.MkdirAll(components, 0o700); err != nil {
 		return InstallResult{}, err
@@ -92,28 +115,16 @@ func installWithPackageVerifier(root string, packageBody []byte, publicKey ed255
 		return InstallResult{}, err
 	}
 
-	state, err := ReadState(root)
-	if err != nil {
-		return InstallResult{}, err
-	}
 	changed := state == nil || state.Current.ID != ref.ID
 	next := State{Schema: StateSchema, Current: ref}
-	if state != nil {
-		if changed {
-			previous := state.Current
-			next.Previous = &previous
-		} else {
-			next.Previous = state.Previous
-		}
-	}
 	if err := next.Validate(); err != nil {
 		return InstallResult{}, err
 	}
-	body, err := json.MarshalIndent(&next, "", "  ")
+	body, err := control.CanonicalEncode(next)
 	if err != nil {
 		return InstallResult{}, err
 	}
-	if err := writeAtomic(statePath(root), append(body, '\n'), 0o600); err != nil {
+	if err := writeAtomic(statePath(root), body, 0o600); err != nil {
 		return InstallResult{}, fmt.Errorf("commit component pointer: %w", err)
 	}
 	paths, err := verifySlot(target, ref, publicKey, verifyAuthenticode, verifyPackage)
@@ -123,8 +134,7 @@ func installWithPackageVerifier(root string, packageBody []byte, publicKey ed255
 	return InstallResult{Slot: ref, Changed: changed, Paths: paths}, nil
 }
 
-// Load selects only current or previous, and only when its signed sing-box
-// version matches the version requested by the authenticated snapshot.
+// Load selects only the accepted current slot with the expected version.
 func Load(root string, publicKey ed25519.PublicKey, arch, singBoxVersion string,
 	verifyAuthenticode AuthenticodeVerifier) (RuntimePaths, error) {
 	return loadWithPackageVerifier(root, publicKey, arch, singBoxVersion, verifyAuthenticode, Verify)
@@ -152,18 +162,10 @@ func loadWithPackageVerifier(root string, publicKey ed25519.PublicKey, arch, sin
 	if wantVersion == "" {
 		return RuntimePaths{}, errors.New("snapshot does not declare a sing-box version")
 	}
-	var selected *SlotRef
-	for _, candidate := range []*SlotRef{&state.Current, state.Previous} {
-		if candidate != nil && candidate.Arch == arch && strings.TrimPrefix(candidate.SingBoxVersion, "v") == wantVersion {
-			copy := *candidate
-			selected = &copy
-			break
-		}
+	if state.Current.Arch != arch || strings.TrimPrefix(state.Current.SingBoxVersion, "v") != wantVersion {
+		return RuntimePaths{}, errors.New("accepted component does not match requested architecture and version")
 	}
-	if selected == nil {
-		return RuntimePaths{}, fmt.Errorf("no current/previous signed component slot matches windows/%s sing-box %s", arch, singBoxVersion)
-	}
-	return verifySlot(filepath.Join(root, "components", selected.ID), *selected, publicKey, verifyAuthenticode, verifyPackage)
+	return verifySlot(filepath.Join(root, "components", state.Current.ID), state.Current, publicKey, verifyAuthenticode, verifyPackage)
 }
 
 func ReadState(root string) (*State, error) {
@@ -178,18 +180,7 @@ func ReadState(root string) (*State, error) {
 		return nil, err
 	}
 	var state State
-	if err := decodeStrict(body, &state); err != nil {
-		return nil, err
-	}
-	canonical, err := json.MarshalIndent(&state, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	canonical = append(canonical, '\n')
-	if !bytes.Equal(body, canonical) {
-		return nil, errors.New("component state is not in canonical form")
-	}
-	if err := state.Validate(); err != nil {
+	if err := control.DecodeCanonical(body, &state, control.ContractDecodeLimits{MaxBytes: maxState, MaxDepth: 8, MaxItems: 128}); err != nil {
 		return nil, err
 	}
 	return &state, nil
@@ -202,20 +193,12 @@ func (state State) Validate() error {
 	if err := state.Current.Validate(); err != nil {
 		return fmt.Errorf("invalid current component slot: %w", err)
 	}
-	if state.Previous != nil {
-		if err := state.Previous.Validate(); err != nil {
-			return fmt.Errorf("invalid previous component slot: %w", err)
-		}
-		if *state.Previous == state.Current {
-			return errors.New("previous component slot must differ from current")
-		}
-	}
 	return nil
 }
 
 func (ref SlotRef) Validate() error {
-	if !validLowerHex(ref.ID, 64) || (ref.Arch != "amd64" && ref.Arch != "arm64") ||
-		ref.SingBoxVersion == "" || len(ref.SingBoxVersion) > 64 || ref.WintunVersion == "" || len(ref.WintunVersion) > 64 {
+	if ref.Generation == 0 || !validLowerHex(ref.ID, 64) || (ref.Arch != "amd64" && ref.Arch != "arm64") ||
+		ref.SingBoxVersion != DataPlaneVersion || ref.WintunVersion != wintunVersion {
 		return errors.New("component slot has invalid content coordinates")
 	}
 	return nil
@@ -292,7 +275,7 @@ func verifySlot(dir string, want SlotRef, publicKey ed25519.PublicKey,
 		return RuntimePaths{}, err
 	}
 	sort.Strings(diskNames)
-	wantNames := []string{SingBoxPath, WintunPath, SingBoxLicense, WintunLicense, "manifest.json", "manifest.sig"}
+	wantNames := append(payloadNames(), "manifest.json", "manifest.sig")
 	sort.Strings(wantNames)
 	if !slices.Equal(diskNames, wantNames) {
 		return RuntimePaths{}, fmt.Errorf("component slot file set is %v, want %v", diskNames, wantNames)
@@ -333,7 +316,7 @@ func verifySlot(dir string, want SlotRef, publicKey ed25519.PublicKey,
 }
 
 func slotRef(verified *Verified) SlotRef {
-	return SlotRef{ID: verified.ID, Arch: verified.Manifest.Arch,
+	return SlotRef{ID: verified.ID, Arch: verified.Manifest.Arch, Generation: verified.Manifest.Generation,
 		SingBoxVersion: verified.Manifest.SingBox.Version, WintunVersion: verified.Manifest.Wintun.Version}
 }
 

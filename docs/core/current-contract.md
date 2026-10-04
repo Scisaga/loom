@@ -732,6 +732,37 @@ resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，se
 
 ## 往返与拒绝
 
+### Windows 数据面 manifest 的规范字段
+
+修复后的 TUN 需要能在异常退出后保留域名地址对应的数据面。正式入口仍是 `loom client
+package-windows`、三种交付包及客户端自己的组件验证；不允许把带补丁的二进制声明成官方原版。
+该 manifest 是上述 release manifest 在 `windows-dataplane` 组件上的具体字段，不创建第二发布权威。
+本节不激活 catalog，不迁移生产 signed-current floor。
+
+| 值 | 唯一字段及约束 |
+|---|---|
+| manifest | `schema=3,kind="windows-dataplane",os="windows",arch,generation,version,audience="public",signature_domain="loom-release-manifest-v3",sing_box,wintun,files`；arch 仅 amd64/arm64，generation 为非零 U64，version 是修订后数据面制品坐标。当前组件不声明最低兼容版本。 |
+| component | `path,sha256,size,version,source`，sing_box 额外包含上游 `commit`；sha256 为 64 位小写 hex，size 为正的有界 JSON 整数。两个组件的路径、摘要和长度必须与 files 中的同名项一致。 |
+| sing_box source | `url,archive_sha256,evidence="go-module+reviewed-patch",upstream_version,module_sum,patch_sha256`；URL 定位固定上游 module ZIP，archive_sha256 是该 ZIP 的摘要，module_sum、上游 commit 和补丁摘要必须与审核的源码一致。制品 Go buildinfo 如实保留本地源码构建身份；不得伪造上游版本及 VCS 信息。 |
+| wintun source | `url,archive_sha256,evidence="publisher-sha256+authenticode",authenticode_required=true,authenticode_publisher="WireGuard LLC"`；固定发布包摘要、目标 PE 架构及原生 Authenticode 均须成立。 |
+| files | 按 path 严格升序排列的 `{path,sha256,size}`；精确覆盖两个运行文件、两个许可证及源码来源、补丁和构建方法。禁止额外成员、路径穿越、软链接及重复路径。 |
+
+manifest 使用 `C` 编码，签名严格覆盖 `loom-release-manifest-v3\0 || C(manifest)`，签名放在
+`manifest.sig`，自身不进入文件清单；ZIP 的摘要由外层发布记录覆盖，避免自哈希循环。相同输入产生相同
+manifest 和 ZIP。签发者以受审核的精确源码及制品摘要确认来源；客户端只信任安装时固定的发布公钥，
+验签后仍逐文件验长度、摘要、PE 架构及 Wintun 签名。
+
+组件本机接受值固定为 schema 3 的 `{schema,current}`；current 为
+`{id,arch,generation,sing_box_version,wintun_version}`，id 是原始规范 manifest 的 SHA-256。
+同 generation 只接受同 id；更低 generation 拒绝。先落盘并验证完整不可变 slot，再原子保存接受值，
+之后才允许运行；崩溃只能留下未选中的完整 slot，重复同一安装可恢复。不得根据旧版本偏好选择 previous。
+UI 和报告只从当前实际验证的文件投影组件摘要，不把签名有效解释为已运行。
+
+旧 schema 1 manifest 和组件指针不进入新解码或自动迁移。此次显式替换须先保全旧指针及签名包原始字节，
+再安装已核验的新组件；设备身份、DPAPI、认证 LKG、发布 floor 和 latch 不在组件目录中迁移或重置。
+源码、配置及实际入口中的旧组件 writer、旧包解码和 previous fallback 同项删除。最小测试覆盖规范往返、
+改包/错钥/旧格式拒绝、双架构 PE、签名来源、同代异值/回退拒绝、中断恢复和真实 Installed TUN 域名业务。
+
 对权威领域值 `D`、被接受的规范字节 `B` 与耐久值，必须满足：
 
 ```text
