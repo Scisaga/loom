@@ -14,7 +14,6 @@ import (
 
 	"loom/internal/control"
 	"loom/internal/deviceclient"
-	"loom/internal/linuxclient"
 )
 
 const defaultDeviceState = "/var/lib/loom-device/state.json"
@@ -46,12 +45,8 @@ func cmdClientEnrollMinimal(args []string) error {
 	inviteFile := fs.String("invite-file", "", "owner-only invite file")
 	stdin := fs.Bool("stdin", false, "read invite from stdin")
 	statePath := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
-	wait := fs.Duration("wait", 0, "wait for administrator approval")
+	wait := fs.Duration("wait", 0, "retry the same enrollment transaction")
 	retry := fs.Duration("retry", 2*time.Second, "resume interval while waiting")
-	serverEndpoint := fs.String("server-public-endpoint", "", "Linux server public endpoint from the approved deployment input")
-	serverPort := fs.Int("server-inbound-port", 0, "Linux server inbound data-plane port")
-	serverProtocol := fs.String("server-inbound-protocol", "", "Linux server inbound protocol")
-	wireGuardKey := fs.String("wireguard-private-key", "/etc/wireguard/node.key", "owner-only Linux WireGuard private key")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -62,7 +57,7 @@ func cmdClientEnrollMinimal(args []string) error {
 	if *stdin {
 		source = "-"
 	}
-	body, err := readBoundedRegular(source, 64<<10, true)
+	body, err := readBoundedRegular(source, 8<<20, true)
 	if err != nil {
 		return err
 	}
@@ -75,22 +70,6 @@ func cmdClientEnrollMinimal(args []string) error {
 		return err
 	}
 	deadline := time.Now().Add(*wait)
-	var serverClaim *control.ServerClaimV2
-	serverFields := *serverEndpoint != "" || *serverPort != 0 || *serverProtocol != ""
-	if serverFields {
-		if runtime.GOOS != "linux" || *serverEndpoint == "" || *serverPort == 0 || *serverProtocol == "" {
-			return errors.New("Linux server enrollment requires endpoint, inbound port and protocol together")
-		}
-		publicKey, keyErr := linuxclient.WireGuardPublicKey(*wireGuardKey)
-		if keyErr != nil {
-			return keyErr
-		}
-		serverClaim = &control.ServerClaimV2{PublicEndpoint: *serverEndpoint, InboundPort: *serverPort,
-			InboundProtocol: *serverProtocol, WGPublicKey: publicKey}
-		if err := serverClaim.Validate(); err != nil {
-			return err
-		}
-	}
 	claimed := false
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -99,22 +78,21 @@ func cmdClientEnrollMinimal(args []string) error {
 		if claimed {
 			response, claimErr = deviceclient.Resume(ctx, store)
 		} else {
-			response, claimErr = deviceclient.ClaimWithServer(ctx, store, serverClaim)
+			response, claimErr = deviceclient.Claim(ctx, store)
 		}
 		cancel()
 		if claimErr != nil {
 			return claimErr
 		}
-		if response.Transaction.State == "completed" {
+		if response.State == "completed" {
 			if response.DeviceView == nil {
 				return errors.New("completed enrollment response has no certified device view")
 			}
-			fmt.Printf("device enrollment completed: device=%s head=%s floor=%d\n", response.Transaction.Intent.DeviceID,
-				control.HeadID(response.DeviceView.Head), response.DeviceView.View.Floor)
+			fmt.Printf("device enrollment completed: device=%s view=%s\n", response.DeviceView.View.DeviceID, response.DeviceView.ViewDigest)
 			return nil
 		}
-		fmt.Printf("device enrollment %s: transaction=%s device=%s\n", response.Transaction.State,
-			response.Transaction.ID, response.Transaction.Intent.DeviceID)
+		fmt.Printf("device enrollment %s: transaction=%s device=%s\n", response.State,
+			response.TransactionID, invite.Material.Payload.(control.Invite).DeviceID)
 		claimed = true
 		if *wait == 0 || time.Now().Add(*retry).After(deadline) {
 			return nil
@@ -139,21 +117,11 @@ func cmdClientSync(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	var envelope control.DeviceViewEnvelope
-	if runtime.GOOS == "linux" {
-		envelope, err = deviceclient.Fetch(ctx, store)
-	} else {
-		envelope, err = deviceclient.Sync(ctx, store)
-	}
+	envelope, err := deviceclient.Sync(ctx, store)
 	if err != nil {
 		return err
 	}
-	action := "synchronized"
-	if runtime.GOOS == "linux" {
-		action = "validated; activation by loom-client.service is pending"
-	}
-	fmt.Printf("device view %s: device=%s head=%s floor=%d endpoints=%d routes=%d\n", action,
-		envelope.View.DeviceID, control.HeadID(envelope.Head), envelope.Head.Index, len(envelope.View.Endpoints), len(envelope.View.Routes))
+	fmt.Printf("authenticated device view saved; runtime application requires separate readback: device=%s view=%s endpoints=%d routes=%d\n", envelope.View.DeviceID, envelope.ViewDigest, len(envelope.View.Endpoints), len(envelope.View.Routes))
 	return nil
 }
 
@@ -173,16 +141,18 @@ func cmdClientInspect(args []string) error {
 	}
 	lkg := store.LKG()
 	result := struct {
-		Joined    bool   `json:"joined"`
-		DeviceID  string `json:"device_id,omitempty"`
-		Head      string `json:"head,omitempty"`
-		Floor     uint64 `json:"floor,omitempty"`
-		Endpoints int    `json:"endpoints,omitempty"`
-		Routes    int    `json:"routes,omitempty"`
-	}{Joined: lkg != nil}
+		Joined       bool                     `json:"joined"`
+		DeviceID     string                   `json:"device_id,omitempty"`
+		ViewDigest   string                   `json:"view_digest,omitempty"`
+		FactFrontier []control.FactFrontier   `json:"fact_frontier"`
+		Endpoints    int                      `json:"endpoints,omitempty"`
+		Routes       int                      `json:"routes,omitempty"`
+		Candidates   []control.RouteCandidate `json:"route_candidates"`
+	}{Joined: lkg != nil, Candidates: []control.RouteCandidate{}}
 	if lkg != nil {
-		result.DeviceID, result.Head, result.Floor = lkg.View.DeviceID, control.HeadID(lkg.Head), lkg.Head.Index
+		result.DeviceID, result.ViewDigest, result.FactFrontier = lkg.View.DeviceID, lkg.ViewDigest, lkg.FactFrontier
 		result.Endpoints, result.Routes = len(lkg.View.Endpoints), len(lkg.View.Routes)
+		result.Candidates = append(result.Candidates, lkg.View.Routes...)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }

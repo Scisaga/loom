@@ -2,6 +2,10 @@
 
 ## 状态
 
+以下是事故恢复时的状态。2026-10-04 的明确授权替换已使用显式 Mixed/service unit，完成正常停止、SIGKILL、
+精确 WG 清理及新建基础连接回读；旧 TUN unit 与隔离 drop-in 原件保存在受保护证据。此次替换没有开放
+初始 netns TUN，也没有完成默认 TUN installer。当前部署状态见[实施状态](../progress.md#已授权的正式服务替换)。
+
 - 严重级别：阻断开发宿主管理面与基础联网能力。
 - 当前状态：宿主已恢复；`loom-client.service` 为 disabled/inactive，并有持久 systemd quarantine drop-in；临时
   逃生 rule 已在基线验收后删除。

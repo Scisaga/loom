@@ -2,7 +2,12 @@
 
 package deviceclient
 
-import "os"
+import (
+	"os"
+	"syscall"
+)
+
+func lockProtectedFile(file *os.File) error { return syscall.Flock(int(file.Fd()), syscall.LOCK_EX) }
 
 func replaceProtectedFile(source, target string) error { return os.Rename(source, target) }
 

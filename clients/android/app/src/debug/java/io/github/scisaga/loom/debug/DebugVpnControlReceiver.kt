@@ -36,8 +36,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
             resultData = buildString {
                 append("phase=").append(status.phase.name)
                 append(";abandonable=").append(status.canAbandonPending)
-                append(";snapshot=").append(status.snapshot.isNotEmpty())
-                append(";generation=").append(status.generation)
+                append(";accepted_view=").append(status.viewDigest.isNotEmpty())
                 append(";diagnostic=").append(status.diagnostic.ifEmpty { "none" })
             }
             return

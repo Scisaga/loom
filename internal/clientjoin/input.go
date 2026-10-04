@@ -1,5 +1,5 @@
-// Package clientjoin adapts user-facing join-code inputs to the private v2
-// bootstrap capability. The QR is edition-neutral across Windows adapters.
+// Package clientjoin adapts user-facing join artifacts to the single signed
+// schema-3 BootstrapInvite. The QR is edition-neutral across Windows adapters.
 package clientjoin
 
 import (
@@ -43,11 +43,10 @@ func Read(source string, stdin io.Reader) (control.BootstrapInvite, error) {
 		if len(body) == 0 || len(body) > maxJoinInputBytes {
 			return control.BootstrapInvite{}, invalidJoinInput()
 		}
-		source = body
+		source = strings.TrimSuffix(strings.TrimSuffix(body, "\n"), "\r")
 	}
 
-	source = trimDroppedPath(source)
-	if strings.HasPrefix(source, "loom://") {
+	if strings.HasPrefix(strings.TrimSpace(source), "loom://") {
 		invite, err := control.DecodeInvite(source)
 		if err != nil {
 			return control.BootstrapInvite{}, invalidJoinInput()
@@ -57,7 +56,7 @@ func Read(source string, stdin io.Reader) (control.BootstrapInvite, error) {
 	if source == "" || len(source) > maxJoinInputBytes || strings.ContainsRune(source, '\x00') {
 		return control.BootstrapInvite{}, invalidJoinInput()
 	}
-	return readArtifact(filepath.Clean(source))
+	return readArtifact(filepath.Clean(trimDroppedPath(source)))
 }
 
 func readArtifact(path string) (control.BootstrapInvite, error) {
@@ -91,7 +90,7 @@ func readArtifact(path string) (control.BootstrapInvite, error) {
 	// The small text artifact is an accessibility/offline fallback for the QR.
 	// Trying it first avoids passing secret-bearing text through an image parser.
 	if len(body) <= maxJoinInputBytes {
-		if invite, parseErr := control.DecodeInvite(strings.TrimSpace(string(body))); parseErr == nil {
+		if invite, parseErr := control.DecodeInvite(strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")); parseErr == nil {
 			return invite, nil
 		}
 	}
@@ -134,6 +133,12 @@ func decodeQRImage(decoded image.Image) (control.BootstrapInvite, error) {
 		return control.BootstrapInvite{}, invalidJoinInput()
 	}
 	result, err := qrcode.NewQRCodeReader().Decode(bitmap, nil)
+	if err != nil {
+		// Dense exported QR bitmaps may contain false finder patterns. A
+		// direct module read decodes the same image and same authenticated URI;
+		// it does not admit another invitation representation.
+		result, err = qrcode.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_PURE_BARCODE: true})
+	}
 	if err != nil || result == nil {
 		return control.BootstrapInvite{}, invalidJoinInput()
 	}

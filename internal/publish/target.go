@@ -18,13 +18,11 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"loom/internal/netx"
-	"loom/internal/render"
 	"loom/internal/snapshot"
 )
 
@@ -1073,35 +1071,6 @@ func manifestAddressesNode(manifest *snapshot.Manifest, node string) bool {
 		}
 	}
 	return false
-}
-
-func decodeServedBundle(body []byte) (*Bundle, error) {
-	if err := rejectDuplicateJSONKeys(body); err != nil {
-		return nil, err
-	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	var bundle Bundle
-	if err := dec.Decode(&bundle); err != nil {
-		return nil, err
-	}
-	if err := requireJSONEOF(dec); err != nil {
-		return nil, err
-	}
-	return &bundle, nil
-}
-
-func servedBundleHash(files map[string]string) string {
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	bundle := render.Bundle{}
-	for _, p := range paths {
-		bundle.Files = append(bundle.Files, render.File{Path: p, Content: files[p]})
-	}
-	return bundle.Hash()
 }
 
 func verifyServedBlob(c *http.Client, base string, ref *snapshot.BinaryRef, expected []byte) error {

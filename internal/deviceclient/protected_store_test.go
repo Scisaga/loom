@@ -2,136 +2,129 @@ package deviceclient
 
 import (
 	"bytes"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"loom/internal/clientmodel"
+	"loom/internal/control"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
-
-	"loom/internal/clientmodel"
-	"loom/internal/control"
 )
 
 type testProtector struct{ fail bool }
 
-func (protector *testProtector) Protect(_ string, plaintext []byte) ([]byte, error) {
-	if protector.fail {
+func (p *testProtector) Protect(purpose string, plain []byte) ([]byte, error) {
+	if p.fail {
 		return nil, errors.New("injected protection failure")
 	}
-	return append([]byte("protected:"), plaintext...), nil
+	return append([]byte(purpose+":"), plain...), nil
 }
-
-func (*testProtector) Unprotect(_ string, ciphertext []byte) ([]byte, error) {
-	if !bytes.HasPrefix(ciphertext, []byte("protected:")) {
+func (*testProtector) Unprotect(purpose string, cipher []byte) ([]byte, error) {
+	prefix := []byte(purpose + ":")
+	if !bytes.HasPrefix(cipher, prefix) {
 		return nil, errors.New("invalid protected fixture")
 	}
-	return append([]byte(nil), ciphertext[len("protected:"):]...), nil
+	return append([]byte{}, cipher[len(prefix):]...), nil
 }
 
-func windowsProtectedFixture(t *testing.T) (control.BootstrapInvite, func(string, uint64) control.DeviceViewEnvelope) {
-	t.Helper()
-	memberPublic, memberPrivate, _ := ed25519.GenerateKey(rand.Reader)
-	memberID := "demo-control"
-	config := control.StableConfig([]control.Member{{ID: memberID, Node: "demo-node",
-		PublicKey: base64.RawURLEncoding.EncodeToString(memberPublic)}})
-	digest := "sha256:" + strings.Repeat("0", 64)
-	endpoint := control.EndpointReference{EndpointID: "demo-entry", Generation: 1, Transport: "tls_tunnel",
-		Address: "192.0.2.1:443", ServerName: "demo.example", SPKISHA256: strings.Repeat("1", 64), State: "serving"}
-	capability, err := control.SignBootstrapCapability(control.BootstrapCapability{Schema: 1, TransactionID: "demo-transaction",
-		IssuedHead: digest, ConfigMaterial: digest, ControlConfig: config, ExpiresAt: "2030-01-01T00:00:00Z",
-		Actions: []string{"claim", "resume"}, Endpoints: []control.EndpointReference{endpoint}, ConstraintDigest: digest,
-		IssuerMemberID: memberID}, control.NodeConfig{MemberID: memberID,
-		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(memberPrivate)})
+func TestProtectedProfileIndependentHandlesPreserveRevocationAndPreference(t *testing.T) {
+	invite, envelope := windowsProtectedFixture(t)
+	protector := &testProtector{}
+	path := filepath.Join(t.TempDir(), "profile.dpapi")
+	runtime, err := OpenProtected(path, invite, protector)
 	if err != nil {
 		t.Fatal(err)
 	}
-	makeEnvelope := func(publicKey string, floor uint64) control.DeviceViewEnvelope {
-		routes := []control.RouteCandidate{{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "internet"},
-			{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "internet"}}
-		raw := `{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],"outbounds":[{"type":"hysteria2","tag":"one-hop"},{"type":"hysteria2","tag":"relay"},{"type":"selector","tag":"internet","outbounds":["one-hop","relay"]}],"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}`
-		runtimeConfig, err := clientmodel.CanonicalizeRuntimeConfig([]byte(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-		view := control.DeviceView{Schema: 1, DeviceID: "demo-windows", Name: "Demo Windows", Platform: "windows",
-			Roles: []string{"access"}, DevicePublicKey: publicKey, Floor: floor, Endpoints: []control.EndpointReference{endpoint},
-			Routes: routes, Runtime: &control.RuntimeProfile{Kind: "sing_box", Config: runtimeConfig}}
-		head := control.GovernanceHead{Schema: 1, Index: floor, LogDigest: digest, ProjectionDigest: digest,
-			DeviceViewsDigest: singleViewRoot(t, view), ConfigMaterial: digest}
-		head = signTestHead(t, head, memberID, memberPrivate)
-		return control.DeviceViewEnvelope{Schema: 1, View: view, Head: head, ControlConfig: config,
-			Proof: control.DeviceViewProof{Index: 0, Size: 1}}
+	previous := envelope(runtime.PublicKey(), 7)
+	if err := runtime.SaveLKG(previous); err != nil {
+		t.Fatal(err)
 	}
-	return control.BootstrapInvite{Schema: 1, Capability: capability}, makeEnvelope
+	gui, err := LoadProtected(path, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := envelope(runtime.PublicKey(), 8, revokeView)
+	if err := runtime.SaveLKG(revoked); err != nil {
+		t.Fatal(err)
+	}
+	pref := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}
+	if err := gui.SetPreference(pref); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gui.LKG(), &revoked) {
+		t.Fatal("stale GUI overwrote revocation")
+	}
+	if err := gui.SaveLKG(previous); err == nil {
+		t.Fatal("old GUI revived permissions")
+	}
+	if err := runtime.SaveLKG(envelope(runtime.PublicKey(), 9, revokeView)); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadProtected(path, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Preference() != pref || loaded.state.HighWater[0].Sequence != 9 || !loaded.state.AuthenticatedLatch {
+		t.Fatal("reload lost preferences, identity or high-water")
+	}
 }
-
-func TestProtectedProfileRoundTripAndFailedReplacePreservesAuthority(t *testing.T) {
-	invite, makeEnvelope := windowsProtectedFixture(t)
+func TestProtectedProfilePersistenceFailureKeepsDiskAndStopsFurtherWrites(t *testing.T) {
+	invite, envelope := windowsProtectedFixture(t)
 	protector := &testProtector{}
-	path := filepath.Join(t.TempDir(), "profile.json.dpapi")
+	path := filepath.Join(t.TempDir(), "profile.dpapi")
 	store, err := OpenProtected(path, invite, protector)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.SetLKGPreflight(func(control.DeviceViewEnvelope) error { return nil })
-	envelope := makeEnvelope(store.PublicKey(), 7)
-	if err := store.SaveLKG(envelope); err != nil {
+	original := envelope(store.PublicKey(), 7)
+	if err := store.SaveLKG(original); err != nil {
 		t.Fatal(err)
 	}
-	preference := clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}
-	if err := store.SetPreference(preference); err != nil {
-		t.Fatal(err)
+	before, _ := os.ReadFile(path)
+	protector.fail = true
+	if err := store.SaveLKG(envelope(store.PublicKey(), 8, revokeView)); err == nil {
+		t.Fatal("protection failure accepted")
 	}
-	onDisk, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) || !reflect.DeepEqual(store.LKG(), &original) {
+		t.Fatal("failed replacement changed authority")
 	}
-	if bytes.Contains(onDisk, []byte(store.state.PrivateKey)) {
-		t.Fatal("protected profile exposed its Ed25519 private key")
+	protector.fail = false
+	if err := store.SaveLKG(envelope(store.PublicKey(), 9)); err == nil {
+		t.Fatal("failed handle continued writing")
+	}
+	if _, err := store.Reload(); err == nil {
+		t.Fatal("failed handle silently resumed")
 	}
 	reopened, err := LoadProtected(path, protector)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(reopened.LKG(), &envelope) || reopened.Preference() != preference ||
-		reopened.state.Floor != 7 || !reopened.state.V2Latch || reopened.PublicKey() != store.PublicKey() {
-		t.Fatal("protected profile did not round trip its authoritative state")
-	}
-	before := append([]byte(nil), onDisk...)
-	protector.fail = true
-	if err := reopened.SetPreference(clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}); err == nil {
-		t.Fatal("injected atomic replacement failure succeeded")
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
+	if err := reopened.SaveLKG(envelope(reopened.PublicKey(), 8, revokeView)); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(before, after) || reopened.Preference() != preference {
-		t.Fatal("failed protected replacement changed persisted or in-memory authority")
-	}
 }
-
-func TestProtectedProfileRejectsPlaintextAndUnknownState(t *testing.T) {
-	invite, _ := windowsProtectedFixture(t)
+func TestProtectedIdentityRejectsPlatformMismatchAndOldPlaintext(t *testing.T) {
+	invite, envelope := windowsProtectedFixture(t)
 	protector := &testProtector{}
-	path := filepath.Join(t.TempDir(), "profile.json.dpapi")
+	path := filepath.Join(t.TempDir(), "profile.dpapi")
 	store, err := OpenProtected(path, invite, protector)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := json.Marshal(store.state)
-	if err != nil {
-		t.Fatal(err)
+	wrong := envelope(store.PublicKey(), 7, func(v *control.DeviceView) { v.Platform = "linux" })
+	if err := store.SaveLKG(wrong); err == nil {
+		t.Fatal("Linux view accepted by Windows identity")
 	}
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	body := []byte(`{"schema":2,"v2_latch":true}`)
+	if err := os.WriteFile(path, body, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadProtected(path, protector); err == nil {
-		t.Fatal("plaintext profile state was accepted")
+		t.Fatal("plaintext historical identity accepted")
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(body, after) {
+		t.Fatal("rejection overwrote historical identity")
 	}
 }

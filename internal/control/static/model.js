@@ -11,3 +11,28 @@ export function topologyPositions(nodes){
   }));
   return positions;
 }
+
+// Canonical command encoding shares the contract's JSON rules. It does not
+// repair authority values: UI fields construct and sort their own draft sets.
+export function canonical(value){
+  if(typeof value==='string'){
+    if(value.isWellFormed&&!value.isWellFormed())throw Error('Text contains an invalid Unicode sequence.');
+    return '"'+value.replace(/["\\\u0000-\u001f]/g,c=>c==='"'?'\\"':c==='\\'?'\\\\':'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'))+'"';
+  }
+  if(typeof value==='boolean')return String(value);
+  if(typeof value==='number'&&Number.isSafeInteger(value)&&!Object.is(value,-0))return String(value);
+  if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
+  if(value&&Object.getPrototypeOf(value)===Object.prototype)return '{'+Object.keys(value).sort().map(key=>canonical(key)+':'+canonical(value[key])).join(',')+'}';
+  throw Error('Unsupported command value.');
+}
+export function targetDependencies(targets,kind,id,required=false){
+  const target=list(targets).find(v=>v.target_kind===kind&&v.target_id===id);
+  if(required&&(!target||target.deleted||target.conflicted))throw Error(`${kind} ${id} is unavailable in this reviewed draft.`);
+  return list(target?.material_ids);
+}
+export function parseMatchers(text){
+  return String(text).split(/\n/).map(v=>v.trim()).filter(Boolean).map(line=>{
+    const parts=line.split(/\s+/);if(parts.length!==2||!['dns_exact','dns_suffix','ip_prefix'].includes(parts[0]))throw Error('Use one “kind value” matcher per line.');
+    return {kind:parts[0],value:parts[1]};
+  }).sort((a,b)=>a.kind<b.kind?-1:a.kind>b.kind?1:a.value<b.value?-1:a.value>b.value?1:0);
+}

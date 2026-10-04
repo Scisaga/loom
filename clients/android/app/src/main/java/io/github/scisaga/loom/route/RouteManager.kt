@@ -46,6 +46,7 @@ data class RoutePathStatus(
     val service: String,
     val candidate: String,
     val serverChain: List<String>,
+    val finalExit: String,
     val state: String,
     val updatedAt: String,
 )
@@ -62,8 +63,35 @@ internal data class AppliedSelector(
     val selector: String,
     val candidate: String,
     val chain: List<String>,
+    val finalExit: String,
     val state: String = "unknown",
 )
+
+internal data class BusinessProbeInput(
+    val selector: AppliedSelector,
+    val networkGeneration: String,
+    val dns: String,
+    val target: String,
+)
+
+internal data class RuntimeReportData(
+    val observations: ByteArray,
+    val selections: ByteArray,
+    val networkGeneration: String,
+)
+
+internal fun singleBusinessProbeInput(
+    profile: ManagedProfile,
+    application: AppliedRoute?,
+    networkGeneration: String,
+): BusinessProbeInput? {
+    val selected = application?.selectors?.singleOrNull() ?: return null
+    val group = profile.businessProbeTargets.singleOrNull() ?: return null
+    if (selected.selector != "service:${group.serviceID}") return null
+    val target = group.targets.singleOrNull() ?: return null
+    val dns = profile.dns.firstOrNull() ?: return null
+    return BusinessProbeInput(selected, networkGeneration, dns, target)
+}
 
 /** Applies the shared pure selection and only publishes selector readback. */
 class RouteManager private constructor(context: Context) {
@@ -81,9 +109,22 @@ class RouteManager private constructor(context: Context) {
             operation.withLock {
                 if (!catalog.contains(profileId)) return@withLock
                 ensureNetworkGeneration(profileId, runtime)
+                if (runtime.availableProfile?.recordID != profile.recordID) {
+                    protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
+                }
                 runtime.availableProfile = profile
-                val projected = evaluate(profileId, runtime, profile, emptyMap())
-                publish(runtime, projected, running = runtime.runningProfile?.recordID == profile.recordID)
+                val current = if (runtime.runningProfile?.recordID == profile.recordID) runtime.actual else emptyMap()
+                runCatching { evaluate(profileId, runtime, profile, current) }
+                    .onSuccess { projected ->
+                        publish(runtime, projected, running = runtime.runningProfile?.recordID == profile.recordID)
+                    }
+                    .onFailure { error ->
+                        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(
+                            available = false, currentPaths = emptyList(), running = false,
+                            detail = "认证配置已保存；运行投影不可用：${error.message ?: error.javaClass.simpleName}",
+                            observationDetail = "业务结果尚未产生",
+                        )
+                    }
             }
         }
     }
@@ -106,6 +147,9 @@ class RouteManager private constructor(context: Context) {
     internal suspend fun applyToRunning(profileId: String, profile: ManagedProfile): AppliedRoute = operation.withLock {
         val runtime = runtime(profileId)
         ensureNetworkGeneration(profileId, runtime)
+        // Observations cannot carry across accepted Views without proving that every
+        // target and execution input is unchanged. No such projection exists yet.
+        protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
         runtime.mutableStatus.value = runtime.mutableStatus.value.copy(busy = true, detail = "正在应用候选并读回 selector…")
         val initial = evaluate(profileId, runtime, profile, runtime.actual)
         val client = SelectorClient(profile.config)
@@ -126,9 +170,7 @@ class RouteManager private constructor(context: Context) {
         scope.launch {
             operation.withLock {
                 if (!catalog.contains(profileId)) return@withLock
-                val preference = JSONObject().put("schema", 1).put("mode", mode.wire)
-                    .apply { if (mode == RouteMode.FIXED_EXIT) put("exit", exit) }
-                    .toString().encodeToByteArray()
+                val preference = Loomcore.newAndroidPreference(mode.wire, if (mode == RouteMode.FIXED_EXIT) exit else "")
                 protected.put(ProfileStorage.routePreference(profileId), preference)
                 val available = runtime.runningProfile ?: runtime.availableProfile ?: return@withLock
                 if (runtime.runningProfile != null) {
@@ -144,70 +186,87 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    /** Records at most one business result for each selected candidate in this network generation. */
+    internal suspend fun businessProbeInput(profileId: String, profile: ManagedProfile): BusinessProbeInput? = operation.withLock {
+        val runtime = runtime(profileId)
+        if (runtime.runningProfile?.recordID != profile.recordID) return@withLock null
+        val input = singleBusinessProbeInput(profile, runtime.application, runtime.generation) ?: return@withLock null
+        val now = Instant.now()
+        if (observations(profileId).objects().any {
+            it.getString("candidate_id") == input.selector.candidate &&
+                it.getString("network_generation") == input.networkGeneration &&
+                runCatching { Instant.parse(it.getString("valid_until")).isAfter(now) }.getOrDefault(false)
+        }) return@withLock null
+        val unknown = runtime.application!!.copy(selectors = listOf(input.selector.copy(state = "unknown")))
+        runtime.application = unknown
+        publish(runtime, unknown, running = true, observation = "${input.target} · 尚无有效观测")
+        input
+    }
+
     internal suspend fun recordBusinessOutcome(
         profileId: String,
         profile: ManagedProfile,
-        probe: ProbeResult,
-    ): AppliedRoute = operation.withLock {
+        input: BusinessProbeInput,
+        result: ProbeResult,
+        allowFallback: Boolean,
+        onRecorded: () -> Unit,
+    ): BusinessProbeInput? = operation.withLock {
         val runtime = runtime(profileId)
-        val currentApplication = checkNotNull(runtime.application) { "尚未应用候选" }
-        val observations = observations(profileId)
+        val current = runtime.application ?: return@withLock null
+        if (runtime.runningProfile?.recordID != profile.recordID || runtime.generation != input.networkGeneration ||
+            current.selectors.singleOrNull()?.candidate != input.selector.candidate || result.target != input.target
+        ) return@withLock null
         val now = Instant.now().truncatedTo(ChronoUnit.SECONDS)
-        val existing = observations.objects().map { it.getString("candidate_id") to it.getString("network_generation") }.toSet()
-        currentApplication.selectors.distinctBy(AppliedSelector::candidate).forEach { selected ->
-            // Direct participates in selection without a synthetic latency measurement.
-            if (selected.chain.isEmpty() || selected.candidate to runtime.generation in existing) return@forEach
-            observations.put(
-                JSONObject()
-                    .put("candidate_id", selected.candidate)
-                    .put("network_generation", runtime.generation)
-                    .put("scope", selected.selector)
-                    .put("result", if (probe.healthy) "available" else "unavailable")
-                    .put("action", "dns_https")
-                    .put("observed_at", now.toString())
-                    .put("valid_until", now.plus(10, ChronoUnit.MINUTES).toString()),
-            )
-        }
-        val sorted = observations.objects().sortedBy { it.getString("candidate_id") }
-        protected.put(ProfileStorage.observations(profileId), JSONArray(sorted).toString().encodeToByteArray())
-        val next = evaluate(profileId, runtime, profile, runtime.actual)
-        if (next.selectors != currentApplication.selectors) {
-            val client = SelectorClient(profile.config)
-            client.apply(next.selectors)
-            runtime.actual = LinkedHashMap(client.readCurrent(next.selectors))
-        }
+        val observation = JSONObject()
+            .put("candidate_id", input.selector.candidate)
+            .put("network_generation", input.networkGeneration)
+            .put("scope", input.selector.selector)
+            .put("result", if (result.healthy) "available" else "unavailable")
+            .put("action", "https_request")
+            .put("target", input.target)
+            .put("observed_at", now.toString())
+            .put("valid_until", now.plus(10, ChronoUnit.MINUTES).toString())
+        if (result.healthy) observation.put("metric_millis", result.metricMillis)
+        val retained = observations(profileId).objects().filter {
+            it.getString("candidate_id") != input.selector.candidate &&
+                it.getString("network_generation") == runtime.generation
+        } + observation
+        protected.put(ProfileStorage.observations(profileId), JSONArray(retained.sortedBy { it.getString("candidate_id") }).toString().encodeToByteArray())
+        val observed = current.copy(selectors = listOf(input.selector.copy(state = if (result.healthy) "available" else "unavailable")))
+        runtime.application = observed
+        val detail = "${input.selector.selector} · ${input.target} · ${if (result.healthy) "该目标成功" else "该目标失败"} · $now"
+        publish(runtime, observed, running = true, observation = detail)
+        onRecorded()
+        if (result.healthy || !allowFallback) return@withLock null
+        val next = runCatching { evaluate(profileId, runtime, profile, runtime.actual) }.getOrNull() ?: return@withLock null
+        if (next.selectors.singleOrNull()?.candidate == input.selector.candidate) return@withLock null
+        val selector = SelectorClient(profile.config)
+        selector.apply(next.selectors)
+        val actual = selector.readCurrent(next.selectors)
+        check(next.selectors.all { actual[it.selector] == it.candidate }) { "fallback selector 回读不一致" }
+        runtime.actual = LinkedHashMap(actual)
         runtime.application = next
-        publish(
-            runtime,
-            next,
-            running = true,
-            observation = if (probe.healthy) "真实 DNS/HTTPS 可用" else "真实 DNS/HTTPS 不可用；已切换候选",
-        )
-        next
+        publish(runtime, next, running = true, observation = detail)
+        singleBusinessProbeInput(profile, next, runtime.generation)
     }
 
-    fun reportObservations(profileId: String): ByteArray {
+    internal suspend fun reportData(profileId: String, acceptedView: String, appliedView: String): RuntimeReportData = operation.withLock {
         val runtime = runtime(profileId)
-        return synchronized(runtime) {
-            val currentGeneration = runtime.generation
-            val values = observations(profileId).objects().filter { it.getString("network_generation") == currentGeneration }
-                .sortedBy { it.getString("candidate_id") }
-            JSONArray(values).toString().encodeToByteArray()
-        }
-    }
-
-    fun selectedCandidate(profileId: String): String =
-        runtime(profileId).application?.selectors?.firstOrNull()?.candidate.orEmpty()
-
-    fun reportSelections(profileId: String): ByteArray {
-        val runtime = runtime(profileId)
-        return synchronized(runtime) {
-            val values = runtime.application?.selectors.orEmpty().sortedBy { it.selector }.map {
+        ensureNetworkGeneration(profileId, runtime)
+        val running = appliedView == acceptedView && runtime.runningProfile?.viewDigest == acceptedView
+        val selected = if (running) runtime.application?.selectors.orEmpty() else emptyList()
+        val now = Instant.now()
+        val values = if (running) observations(profileId).objects().filter { observation ->
+            observation.getString("network_generation") == runtime.generation &&
+                selected.any { it.selector == observation.getString("scope") && it.candidate == observation.getString("candidate_id") } &&
+                runCatching { Instant.parse(observation.getString("valid_until")).isAfter(now) }.getOrDefault(false)
+        }.sortedBy { it.getString("candidate_id") } else emptyList()
+        RuntimeReportData(
+            JSONArray(values).toString().encodeToByteArray(),
+            JSONArray(selected.sortedBy { it.selector }.map {
                 JSONObject().put("scope", it.selector).put("candidate_id", it.candidate)
-            }
-            JSONArray(values).toString().encodeToByteArray()
-        }
+            }).toString().encodeToByteArray(),
+            runtime.generation,
+        )
     }
 
     suspend fun tunnelStopped(profileId: String) = operation.withLock {
@@ -215,7 +274,8 @@ class RouteManager private constructor(context: Context) {
         runtime.runningProfile = null
         runtime.application = null
         runtime.actual = linkedMapOf()
-        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(running = false, busy = false)
+        protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
+        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(running = false, busy = false, currentPaths = emptyList(), observationDetail = "业务结果尚未产生")
     }
 
     suspend fun removeProfile(profileId: String) = operation.withLock {
@@ -256,6 +316,7 @@ class RouteManager private constructor(context: Context) {
                     it.getString("selector"),
                     it.getString("candidate"),
                     it.optJSONArray("chain")?.strings().orEmpty(),
+                    it.getString("final_exit"),
                     it.getString("state"),
                 )
             },
@@ -300,6 +361,7 @@ class RouteManager private constructor(context: Context) {
                     service = selected.selector,
                     candidate = selected.candidate,
                     serverChain = selected.chain,
+                    finalExit = selected.finalExit,
                     state = selected.state,
                     updatedAt = now,
                 )

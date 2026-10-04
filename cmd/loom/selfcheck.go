@@ -4,11 +4,8 @@ import (
 	"flag"
 	"fmt"
 
-	"loom/internal/publish"
 	"loom/internal/version"
 )
-
-const signedCurrentCapability = publish.SignedCurrentCapability
 
 // selfcheck 是二进制自我验证:**这个二进制在这台机器上能不能用**。
 //
@@ -51,7 +48,7 @@ func cmdSelfcheck(args []string) error {
 
 func requireSelfcheckCapability(name string) error {
 	switch name {
-	case "", signedCurrentCapability:
+	case "":
 		return nil
 	default:
 		return fmt.Errorf("这个二进制不具备要求的 capability %q", name)

@@ -3,1042 +3,321 @@ package control
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"math/big"
-	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"sort"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/hashicorp/raft"
-	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
 )
 
-const internalDomain = "loom-control-internal-v1\n"
-
+// Runtime uses the same local authority with or without an attached private
+// transport. Transport availability is not signing authority or a quorum.
 type Runtime struct {
 	Config    NodeConfig
 	Authority *Authority
-	Raft      *raft.Raft
 	Channel   *PrivateChannel
-	transport *raft.NetworkTransport
-	store     io.Closer
-	mu        sync.Mutex
-	statusMu  sync.Mutex
-	statusAt  time.Time
-	writable  bool
 	stop      chan struct{}
 	done      chan struct{}
-}
-
-type quorumStatus struct {
-	Writable bool `json:"writable"`
-}
-
-func (runtime *Runtime) verifyLocalLeader(ctx context.Context) bool {
-	if runtime == nil || runtime.Raft == nil || runtime.Raft.State() != raft.Leader {
-		return false
-	}
-	result := make(chan error, 1)
-	go func() { result <- runtime.Raft.VerifyLeader().Error() }()
-	select {
-	case err := <-result:
-		return err == nil
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// QuorumWritable is a short-lived runtime observation, not certified state.
-// The leader proves that it can still contact a voting quorum; followers read
-// that proof over the existing authenticated member channel. UI credentials
-// are deliberately not part of this result.
-func (runtime *Runtime) QuorumWritable(ctx context.Context) bool {
-	runtime.statusMu.Lock()
-	defer runtime.statusMu.Unlock()
-	now := time.Now()
-	if now.Sub(runtime.statusAt) < time.Second {
-		return runtime.writable
-	}
-	timeout := 750 * time.Millisecond
-	if runtime.Raft != nil && runtime.Raft.State() != raft.Leader {
-		// A follower may reach its leader across an inter-region private relay.
-		// The leader's own VerifyLeader remains bounded to 750 ms by the
-		// internal endpoint; the outer request also needs room for both network
-		// legs and TLS without turning a healthy quorum into a UI false negative.
-		timeout = 3 * time.Second
-	}
-	checkContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	writable := runtime.verifyLocalLeader(checkContext)
-	if runtime.Raft != nil && runtime.Raft.State() != raft.Leader {
-		if leader, ok := runtime.LeaderMember(); ok {
-			var status quorumStatus
-			writable = runtime.peerJSON(checkContext, leader, http.MethodGet, "/internal/quorum-writable", nil, &status) == nil && status.Writable
-		}
-	}
-	runtime.statusAt, runtime.writable = now, writable
-	return writable
-}
-
-type authorityFSM struct{ authority *Authority }
-
-func (fsm *authorityFSM) Apply(log *raft.Log) any {
-	if log.Type != raft.LogCommand {
-		return nil
-	}
-	_, err := fsm.authority.Append(string(log.Data), log.Term)
-	return err
-}
-func (fsm *authorityFSM) Snapshot() (raft.FSMSnapshot, error) { return &discardFSMSnapshot{}, nil }
-func (fsm *authorityFSM) Restore(io.ReadCloser) error {
-	return errors.New("control snapshots are disabled; replay the consensus log")
-}
-
-type discardFSMSnapshot struct{}
-
-func (*discardFSMSnapshot) Persist(sink raft.SnapshotSink) error { return sink.Cancel() }
-func (*discardFSMSnapshot) Release()                             {}
-
-type guardedLogStore struct {
-	raft.LogStore
-	authority *Authority
-}
-
-func (store guardedLogStore) StoreLog(log *raft.Log) error { return store.StoreLogs([]*raft.Log{log}) }
-func (store guardedLogStore) StoreLogs(logs []*raft.Log) error {
-	for _, log := range logs {
-		if log.Type == raft.LogCommand {
-			if _, err := store.authority.Material(string(log.Data)); err != nil {
-				return fmt.Errorf("raft entry references material not persisted locally: %w", err)
-			}
-		}
-	}
-	return store.LogStore.StoreLogs(logs)
+	wake      chan struct{}
+	once      sync.Once
 }
 
 func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
-	if channel == nil {
-		return nil, errors.New("private control channel is required")
-	}
 	config, err := LoadNodeConfig(root)
 	if err != nil {
 		return nil, err
 	}
-	authority, err := OpenAuthority(root)
+	a, err := OpenAuthority(root)
 	if err != nil {
 		return nil, err
 	}
-	_, projection, _ := authority.Snapshot()
-	memberOK := false
-	all := projection.Config.Members
-	if projection.Config.Mode == "joint" {
-		all = append(append([]Member{}, projection.Config.Old...), projection.Config.New...)
-	}
-	for _, member := range all {
-		if member.ID == config.MemberID && member.PublicKey == config.Member().PublicKey {
-			memberOK = true
-		}
-	}
-	if !memberOK && config.Bootstrap {
-		return nil, errors.New("bootstrap node identity is not present in the certified control config")
-	}
-
-	bolt, err := raftboltdb.NewBoltStore(filepath.Join(root, "consensus-raft.db"))
-	if err != nil {
+	if _, err := activeLocalMember(config, a.Snapshot().Config); err != nil {
 		return nil, err
 	}
-	channel.AttachAuthority(authority)
-	transport := raft.NewNetworkTransportWithConfig(&raft.NetworkTransportConfig{Stream: channel.RaftStream(), MaxPool: 4,
-		Timeout: 10 * time.Second, Logger: nil, ServerAddressProvider: memberAddressProvider{authority: authority, local: config}})
-	raftConfig := raft.DefaultConfig()
-	raftConfig.LocalID = raft.ServerID(config.MemberID)
-	// Control members use the existing authenticated private transport, which
-	// can cross regions. Its leader lease must cover a real inter-region RTT.
-	raftConfig.HeartbeatTimeout = 2 * time.Second
-	raftConfig.ElectionTimeout = 2 * time.Second
-	raftConfig.LeaderLeaseTimeout = 2 * time.Second
-	raftConfig.SnapshotThreshold = math.MaxUint64
-	raftConfig.SnapshotInterval = 24 * time.Hour
-	raftConfig.LogOutput = io.Discard
-	logs := guardedLogStore{LogStore: bolt, authority: authority}
-	hasState, err := raft.HasExistingState(logs, bolt, raft.NewInmemSnapshotStore())
-	if err != nil {
-		transport.Close()
-		return nil, err
+	runtime := &Runtime{Config: config, Authority: a, Channel: channel, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
+	if channel != nil {
+		channel.AttachAuthority(a)
+		go runtime.reconcileLoop()
+	} else {
+		close(runtime.done)
 	}
-	if !hasState && config.Bootstrap {
-		bootstrap := raft.Configuration{Servers: []raft.Server{{ID: raft.ServerID(config.MemberID), Address: raft.ServerAddress(config.Node), Suffrage: raft.Voter}}}
-		if err := raft.BootstrapCluster(raftConfig, logs, bolt, raft.NewInmemSnapshotStore(), transport, bootstrap); err != nil {
-			transport.Close()
-			return nil, err
-		}
-	}
-	instance, err := raft.NewRaft(raftConfig, &authorityFSM{authority}, logs, bolt, raft.NewInmemSnapshotStore(), transport)
-	if err != nil {
-		transport.Close()
-		return nil, err
-	}
-	runtime := &Runtime{Config: config, Authority: authority, Raft: instance, Channel: channel, transport: transport, store: bolt, stop: make(chan struct{}), done: make(chan struct{})}
-	go runtime.reconcileLoop()
 	return runtime, nil
 }
-
-type memberAddressProvider struct {
-	authority *Authority
-	local     NodeConfig
-}
-
-func (provider memberAddressProvider) ServerAddr(id raft.ServerID) (raft.ServerAddress, error) {
-	_, projection, _ := provider.authority.Snapshot()
-	for _, member := range uniqueMembers(projection.Config) {
-		if member.ID != string(id) {
-			continue
-		}
-		if member.Node != "" {
-			return raft.ServerAddress(member.Node), nil
-		}
-		if member.ID == provider.local.MemberID {
-			return raft.ServerAddress(provider.local.Node), nil
-		}
-		return "", errors.New("legacy control member has no private channel node")
-	}
-	return "", errors.New("raft member is absent from ControlConfig")
-}
-
 func (runtime *Runtime) Close() error {
-	if runtime.stop != nil {
+	runtime.once.Do(func() { close(runtime.stop) })
+	<-runtime.done
+	return nil
+}
+func (runtime *Runtime) Writable() bool {
+	return runtime.Authority != nil && runtime.Authority.signingReady(runtime.Config)
+}
+func (runtime *Runtime) Submit(ctx context.Context, body []byte) (Submission, error) {
+	operation, err := DecodeOperation(body)
+	if err != nil {
+		return Submission{}, err
+	}
+	result, err := runtime.Authority.Submit(ctx, operation, runtime.Config)
+	if err != nil {
+		return Submission{}, err
+	}
+	if runtime.Channel != nil {
 		select {
-		case <-runtime.stop:
+		case runtime.wake <- struct{}{}:
 		default:
-			close(runtime.stop)
-		}
-		<-runtime.done
-	}
-	if runtime.Raft != nil {
-		_ = runtime.Raft.Shutdown().Error()
-	}
-	var result error
-	if runtime.transport != nil {
-		result = runtime.transport.Close()
-	}
-	if runtime.store != nil {
-		if err := runtime.store.Close(); result == nil {
-			result = err
 		}
 	}
-	return result
+	return result, nil
 }
-
-func (runtime *Runtime) reconcileLoop() {
-	defer close(runtime.done)
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-runtime.stop:
-			return
-		case <-ticker.C:
-			// Materials are immutable and a CertifiedHead is independently
-			// quorum-verifiable, so direct neighbors may relay both.
-			runtime.reconcilePeers()
-		}
-	}
-}
-
-func (runtime *Runtime) reconcilePeers() {
-	localIDs, err := runtime.Authority.MaterialIDs()
+func (a *Authority) signingReady(config NodeConfig) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	member, err := activeLocalMember(config, a.projection.Config)
 	if err != nil {
-		return
-	}
-	_, projection, certified := runtime.Authority.Snapshot()
-	var peers sync.WaitGroup
-	for _, member := range uniqueMembers(projection.Config) {
-		if member.ID == runtime.Config.MemberID {
-			continue
-		}
-		peers.Add(1)
-		go func(member Member) {
-			defer peers.Done()
-			runtime.reconcilePeer(member, localIDs, certified.Head)
-		}(member)
-	}
-	peers.Wait()
-}
-
-func (runtime *Runtime) reconcilePeer(member Member, localIDs []string, certified GovernanceHead) {
-	// A control peer may be reached through an inter-region authenticated
-	// relay. Give each immutable transfer its own bounded deadline: sharing one
-	// short context across inventory, missing materials, and the certified head
-	// let a successful inventory consume the entire budget and permanently
-	// strand the peer with an applied Raft log but an older certified head.
-	call := func(method, path string, body []byte, result any) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		return runtime.peerJSON(ctx, member, method, path, body, result)
-	}
-	var remoteIDs []string
-	if err := call(http.MethodGet, "/internal/materials", nil, &remoteIDs); err != nil {
-		return
-	}
-	remote := map[string]bool{}
-	for _, id := range remoteIDs {
-		remote[id] = true
-	}
-	for _, id := range localIDs {
-		if remote[id] {
-			continue
-		}
-		body, err := runtime.Authority.Material(id)
-		if err != nil || call(http.MethodPut, "/internal/materials/"+strings.TrimPrefix(id, "sha256:"), body, nil) != nil {
-			return
-		}
-	}
-	_ = call(http.MethodPut, "/internal/certified", mustJSON(certified), nil)
-}
-
-func (runtime *Runtime) LeaderMember() (Member, bool) {
-	_, id := runtime.Raft.LeaderWithID()
-	_, projection, _ := runtime.Authority.Snapshot()
-	all := projection.Config.Members
-	if projection.Config.Mode == "joint" {
-		all = append(append([]Member{}, projection.Config.Old...), projection.Config.New...)
-	}
-	for _, member := range all {
-		if member.ID == string(id) {
-			return member, true
-		}
-	}
-	return Member{}, false
-}
-
-func (runtime *Runtime) Submit(ctx context.Context, body []byte) (CertifiedState, error) {
-	return runtime.submit(ctx, body, false)
-}
-
-func (runtime *Runtime) SubmitForwarded(ctx context.Context, body []byte) (CertifiedState, error) {
-	return runtime.submit(ctx, body, true)
-}
-
-func (runtime *Runtime) submit(ctx context.Context, body []byte, forwarded bool) (CertifiedState, error) {
-	material, id, err := EncodeMaterialFromBytes(body)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	consensus, projection, certified := runtime.Authority.Snapshot()
-	if contains(projection.Applied, material.RequestID) {
-		existingID, _, lookupErr := runtime.Authority.MaterialForRequest(material.RequestID)
-		if lookupErr != nil || existingID != id {
-			return CertifiedState{}, errors.New("request ID is already bound to different material")
-		}
-		if certified.Head.Index == uint64(len(consensus.Entries)) && len(uniqueMembers(projection.Config)) == 1 {
-			return certified, nil
-		}
-		if runtime.Raft.State() != raft.Leader {
-			return runtime.forwardSubmit(ctx, body, forwarded)
-		}
-		runtime.mu.Lock()
-		defer runtime.mu.Unlock()
-		if material.Kind == "control.config" && material.ControlConfig.Mode == "joint" {
-			if err := runtime.applyRaftMembership(material.ControlConfig.New); err != nil {
-				return CertifiedState{}, err
-			}
-		}
-		if _, err := runtime.certify(ctx); err != nil {
-			return CertifiedState{}, err
-		}
-		if material.Kind == "control.config" && material.ControlConfig.Mode == "stable" {
-			if err := runtime.removeOldRaftMembers(material.ControlConfig.Members); err != nil {
-				return CertifiedState{}, err
-			}
-		}
-		_, _, result := runtime.Authority.Snapshot()
-		return result, nil
-	}
-	if material.BaseHead != HeadID(certified.Head) {
-		return CertifiedState{}, errors.New("base head is stale")
-	}
-	if err := validateSubmission(projection, material, id); err != nil {
-		return CertifiedState{}, err
-	}
-	if _, err := runtime.Authority.PutMaterial(body); err != nil {
-		return CertifiedState{}, err
-	}
-	if runtime.Raft.State() != raft.Leader {
-		return runtime.forwardSubmit(ctx, body, forwarded)
-	}
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	return runtime.submitLeader(ctx, material, id, body)
-}
-
-func validateSubmission(projection Projection, material Material, id string) error {
-	if (material.Kind == "service.put" || material.Kind == "service.delete") && projection.NetworkIntent == nil {
-		return errors.New("network intent is unavailable")
-	}
-	_, err := Reduce(projection, material, id)
-	return err
-}
-
-func (runtime *Runtime) forwardSubmit(ctx context.Context, body []byte, forwarded bool) (CertifiedState, error) {
-	leader, ok := runtime.LeaderMember()
-	if !ok {
-		return CertifiedState{}, errors.New("write quorum is unavailable")
-	}
-	var result CertifiedState
-	leaderErr := runtime.peerJSON(ctx, leader, http.MethodPost, "/internal/submit", body, &result)
-	if leaderErr == nil {
-		return result, nil
-	}
-	if forwarded {
-		return CertifiedState{}, leaderErr
-	}
-	_, projection, _ := runtime.Authority.Snapshot()
-	for _, relay := range uniqueMembers(projection.Config) {
-		if relay.ID == runtime.Config.MemberID || relay.ID == leader.ID || relay.Node == "" {
-			continue
-		}
-		if err := runtime.peerJSON(ctx, relay, http.MethodPost, "/internal/submit", body, &result); err == nil {
-			return result, nil
-		}
-	}
-	return CertifiedState{}, leaderErr
-}
-
-func (runtime *Runtime) submitLeader(ctx context.Context, material Material, id string, body []byte) (CertifiedState, error) {
-	if err := runtime.syncMaterialToVoters(ctx, id, body); err != nil {
-		return CertifiedState{}, err
-	}
-	future := runtime.Raft.Apply([]byte(id), 15*time.Second)
-	if err := future.Error(); err != nil {
-		return CertifiedState{}, fmt.Errorf("raft commit: %w", err)
-	}
-	if applyErr, ok := future.Response().(error); ok && applyErr != nil {
-		return CertifiedState{}, applyErr
-	}
-	if material.Kind == "control.config" && material.ControlConfig.Mode == "joint" {
-		for _, member := range material.ControlConfig.New {
-			if member.ID == runtime.Config.MemberID {
-				continue
-			}
-			if err := runtime.peerJSON(ctx, member, http.MethodPut, "/internal/materials/"+strings.TrimPrefix(id, "sha256:"), body, nil); err != nil {
-				return CertifiedState{}, fmt.Errorf("stage material on joining member %s: %w", member.ID, err)
-			}
-		}
-		if err := runtime.applyRaftMembership(material.ControlConfig.New); err != nil {
-			return CertifiedState{}, err
-		}
-	}
-	head, err := runtime.certify(ctx)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	if material.Kind == "control.config" && material.ControlConfig.Mode == "stable" {
-		if err := runtime.removeOldRaftMembers(material.ControlConfig.Members); err != nil {
-			return CertifiedState{}, err
-		}
-	}
-	_, _, certified := runtime.Authority.Snapshot()
-	if HeadID(certified.Head) != HeadID(head) {
-		return CertifiedState{}, errors.New("certified store did not advance")
-	}
-	return certified, nil
-}
-
-func (runtime *Runtime) ReplaceMembers(ctx context.Context, requestID, baseHead string, members []Member) (CertifiedState, error) {
-	if runtime.Raft.State() != raft.Leader {
-		leader, ok := runtime.LeaderMember()
-		if !ok {
-			return CertifiedState{}, errors.New("write quorum is unavailable")
-		}
-		request := memberReplacementRequest{RequestID: requestID, BaseHead: baseHead, Members: members}
-		var result CertifiedState
-		if err := runtime.peerJSON(ctx, leader, http.MethodPost, "/internal/members/replace", mustJSON(request), &result); err != nil {
-			return CertifiedState{}, err
-		}
-		return result, nil
-	}
-	_, projection, _ := runtime.Authority.Snapshot()
-	if projection.Config.Mode != "stable" {
-		return CertifiedState{}, errors.New("member replacement requires a stable current config")
-	}
-	for _, member := range members {
-		if !member.current() {
-			return CertifiedState{}, errors.New("replacement members must use the existing private channel")
-		}
-	}
-	joint := JointConfig(projection.Config.Members, members)
-	jointMaterial := Material{Schema: MaterialSchema, Kind: "control.config", RequestID: requestID + ":joint", BaseHead: baseHead, ControlConfig: &joint}
-	body, _, err := EncodeMaterial(jointMaterial)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	jointResult, err := runtime.Submit(ctx, body)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	stable := StableConfig(members)
-	stableMaterial := Material{Schema: MaterialSchema, Kind: "control.config", RequestID: requestID + ":stable", BaseHead: HeadID(jointResult.Head), ControlConfig: &stable}
-	body, _, err = EncodeMaterial(stableMaterial)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	localRemains := false
-	for _, member := range stable.Members {
-		if member.ID == runtime.Config.MemberID && member.PublicKey == runtime.Config.Member().PublicKey {
-			localRemains = true
-			break
-		}
-	}
-	if !localRemains {
-		// A completely disjoint replacement cannot be certified by the former
-		// leader after the stable material takes effect: that node is no longer
-		// an authorized head signer. Hand leadership to a member of the new set
-		// while the joint config still authorizes both sides, then ask that member
-		// to submit the final stable material.
-		target := stable.Members[0]
-		if err := runtime.Raft.LeadershipTransferToServer(raft.ServerID(target.ID), raft.ServerAddress(target.Node)).Error(); err != nil {
-			return CertifiedState{}, fmt.Errorf("transfer leadership to replacement member %s: %w", target.ID, err)
-		}
-		var result CertifiedState
-		if err := runtime.peerJSON(ctx, target, http.MethodPost, "/internal/submit", body, &result); err != nil {
-			return CertifiedState{}, fmt.Errorf("submit stable config through replacement member %s: %w", target.ID, err)
-		}
-		return result, nil
-	}
-	return runtime.Submit(ctx, body)
-}
-
-type memberReplacementRequest struct {
-	RequestID string   `json:"request_id"`
-	BaseHead  string   `json:"base_head"`
-	Members   []Member `json:"members"`
-}
-
-func (runtime *Runtime) syncMaterialToVoters(ctx context.Context, id string, body []byte) error {
-	configuration := runtime.Raft.GetConfiguration()
-	if err := configuration.Error(); err != nil {
-		return err
-	}
-	_, projection, _ := runtime.Authority.Snapshot()
-	byID := memberMap(projection.Config)
-	for _, server := range configuration.Configuration().Servers {
-		if string(server.ID) == runtime.Config.MemberID {
-			continue
-		}
-		member, ok := byID[string(server.ID)]
-		if !ok {
-			return errors.New("raft voter is absent from ControlConfig")
-		}
-		if err := runtime.peerJSON(ctx, member, http.MethodPut, "/internal/materials/"+strings.TrimPrefix(id, "sha256:"), body, nil); err != nil {
-			// A missing minority is allowed. The guarded follower log store will
-			// refuse to acknowledge this entry until its material arrives.
-			continue
-		}
-	}
-	return nil
-}
-
-func (runtime *Runtime) applyRaftMembership(members []Member) error {
-	current := runtime.Raft.GetConfiguration()
-	if err := current.Error(); err != nil {
-		return err
-	}
-	present := map[string]bool{}
-	for _, server := range current.Configuration().Servers {
-		present[string(server.ID)] = true
-	}
-	for _, member := range members {
-		if present[member.ID] {
-			continue
-		}
-		if err := runtime.Raft.AddVoter(raft.ServerID(member.ID), raft.ServerAddress(member.Node), 0, 30*time.Second).Error(); err != nil {
-			return fmt.Errorf("add raft voter %s: %w", member.ID, err)
-		}
-	}
-	return nil
-}
-
-func (runtime *Runtime) removeOldRaftMembers(members []Member) error {
-	want := map[string]bool{}
-	for _, member := range members {
-		want[member.ID] = true
-	}
-	current := runtime.Raft.GetConfiguration()
-	if err := current.Error(); err != nil {
-		return err
-	}
-	for _, server := range current.Configuration().Servers {
-		if want[string(server.ID)] {
-			continue
-		}
-		if err := runtime.Raft.RemoveServer(server.ID, 0, 30*time.Second).Error(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (runtime *Runtime) certify(ctx context.Context) (GovernanceHead, error) {
-	head, projection, err := runtime.Authority.CandidateHead()
-	if err != nil {
-		return head, err
-	}
-	local, err := runtime.Authority.SignCandidate(runtime.Config, head)
-	if err != nil {
-		return head, err
-	}
-	signatures := []HeadSignature{local}
-	seen := map[string]bool{local.MemberID: true}
-	type signatureResult struct {
-		signature HeadSignature
-	}
-	signatureContext, stopSignatures := context.WithCancel(ctx)
-	defer stopSignatures()
-	signatureResults := make(chan signatureResult, len(uniqueMembers(projection.Config)))
-	pendingSignatures := 0
-	for _, member := range uniqueMembers(projection.Config) {
-		if seen[member.ID] {
-			continue
-		}
-		pendingSignatures++
-		go func(member Member) {
-			var signature HeadSignature
-			for attempt := 0; attempt < 10; attempt++ {
-				if err := runtime.peerJSON(signatureContext, member, http.MethodPost, "/internal/head/sign", mustJSON(head), &signature); err == nil {
-					signatureResults <- signatureResult{signature: signature}
-					return
-				}
-				select {
-				case <-signatureContext.Done():
-					signatureResults <- signatureResult{}
-					return
-				case <-time.After(100 * time.Millisecond):
-				}
-			}
-			signatureResults <- signatureResult{}
-		}(member)
-	}
-	for pendingSignatures > 0 && !controlQuorumSatisfied(projection.Config, seen) {
-		select {
-		case result := <-signatureResults:
-			pendingSignatures--
-			if result.signature.MemberID != "" && !seen[result.signature.MemberID] {
-				signatures = append(signatures, result.signature)
-				seen[result.signature.MemberID] = true
-			}
-		case <-ctx.Done():
-			return head, ctx.Err()
-		}
-	}
-	stopSignatures()
-	sort.Slice(signatures, func(i, j int) bool { return signatures[i].MemberID < signatures[j].MemberID })
-	head.Signatures = signatures
-	if err := VerifyHead(head, projection, func() []ConsensusEntry { c, _, _ := runtime.Authority.Snapshot(); return c.Entries }()); err != nil {
-		return head, err
-	}
-	if err := runtime.Authority.InstallCertified(head); err != nil {
-		return head, err
-	}
-	installed := map[string]bool{runtime.Config.MemberID: true}
-	installContext, stopInstall := context.WithCancel(ctx)
-	defer stopInstall()
-	installResults := make(chan string, len(uniqueMembers(projection.Config)))
-	pendingInstall := 0
-	for _, member := range uniqueMembers(projection.Config) {
-		if member.ID == runtime.Config.MemberID {
-			continue
-		}
-		pendingInstall++
-		go func(member Member) {
-			if err := runtime.peerJSON(installContext, member, http.MethodPut, "/internal/certified", mustJSON(head), nil); err == nil {
-				installResults <- member.ID
-				return
-			}
-			installResults <- ""
-		}(member)
-	}
-	for pendingInstall > 0 && !controlQuorumSatisfied(projection.Config, installed) {
-		select {
-		case memberID := <-installResults:
-			pendingInstall--
-			if memberID != "" {
-				installed[memberID] = true
-			}
-		case <-ctx.Done():
-			return head, ctx.Err()
-		}
-	}
-	stopInstall()
-	if !controlQuorumSatisfied(projection.Config, installed) {
-		return head, errors.New("certified head was not installed on the required quorum")
-	}
-	return head, nil
-}
-
-func controlQuorumSatisfied(config ControlConfig, present map[string]bool) bool {
-	count := func(members []Member) int {
-		total := 0
-		for _, member := range members {
-			if present[member.ID] {
-				total++
-			}
-		}
-		return total
-	}
-	if config.Mode == "stable" {
-		return count(config.Members) >= config.Quorum
-	}
-	return count(config.Old) >= config.OldQuorum && count(config.New) >= config.NewQuorum
-}
-
-func memberMap(config ControlConfig) map[string]Member {
-	result := map[string]Member{}
-	for _, member := range uniqueMembers(config) {
-		result[member.ID] = member
-	}
-	return result
-}
-func uniqueMembers(config ControlConfig) []Member {
-	all := config.Members
-	if config.Mode == "joint" {
-		all = append(append([]Member{}, config.Old...), config.New...)
-	}
-	byID := map[string]Member{}
-	for _, member := range all {
-		byID[member.ID] = member
-	}
-	result := make([]Member, 0, len(byID))
-	for _, member := range byID {
-		result = append(result, member)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-	return result
-}
-
-func mustJSON(value any) []byte { body, _ := json.Marshal(value); return body }
-
-func (runtime *Runtime) peerJSON(ctx context.Context, member Member, method, path string, body []byte, result any) error {
-	if member.Node == "" {
-		return errors.New("control member has no private channel node")
-	}
-	call := func(client *http.Client, host string) error {
-		request, err := http.NewRequestWithContext(ctx, method, "https://"+host+path, bytes.NewReader(body))
-		if err != nil {
-			return err
-		}
-		runtime.signRequest(request, body)
-		response, err := client.Do(request)
-		if err != nil {
-			return err
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
-			return fmt.Errorf("peer %s: %s: %s", member.ID, response.Status, strings.TrimSpace(string(message)))
-		}
-		if result == nil {
-			return nil
-		}
-		decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(result)
-	}
-	var failures []error
-	// Keep the original address-form Host on direct links so a rolling update
-	// can still call a peer whose handler predates node-name Host support.
-	for _, endpoint := range runtime.Channel.endpoints(member.Node) {
-		if err := call(runtime.Channel.directPeerClient(endpoint), endpoint); err == nil {
-			return nil
-		} else {
-			failures = append(failures, err)
-		}
-	}
-	client, err := runtime.Channel.peerClient(member.Node)
-	if err == nil {
-		if err = call(client, member.Node); err == nil {
-			return nil
-		}
-	}
-	if err != nil {
-		failures = append(failures, err)
-	}
-	if len(failures) == 0 {
-		return fmt.Errorf("control member %s has no private route", member.ID)
-	}
-	return errors.Join(failures...)
-}
-
-func requestBytes(method, path string, body []byte) []byte {
-	sum := sha256.Sum256(body)
-	return []byte(internalDomain + method + "\n" + path + "\n" + hex.EncodeToString(sum[:]))
-}
-func (runtime *Runtime) signRequest(request *http.Request, body []byte) {
-	request.Header.Set("X-Loom-Member", runtime.Config.MemberID)
-	request.Header.Set("X-Loom-Signature", base64.RawURLEncoding.EncodeToString(ed25519.Sign(runtime.Config.PrivateKey(), requestBytes(request.Method, request.URL.Path, body))))
-}
-func (runtime *Runtime) verifyRequest(request *http.Request, body []byte) bool {
-	member, ok := memberMap(func() ControlConfig { _, p, _ := runtime.Authority.Snapshot(); return p.Config }())[request.Header.Get("X-Loom-Member")]
-	if !ok {
 		return false
 	}
-	key, _ := base64.RawURLEncoding.DecodeString(member.PublicKey)
-	signature, err := base64.RawURLEncoding.DecodeString(request.Header.Get("X-Loom-Signature"))
-	return err == nil && ed25519.Verify(key, requestBytes(request.Method, request.URL.Path, body), signature)
-}
-
-func browserTLSConfig(config NodeConfig) (*tls.Config, error) {
-	certificate, err := tls.X509KeyPair([]byte(config.BrowserTLS.CertificateChainPEM), []byte(config.BrowserTLS.PrivateKeyPKCS8PEM))
+	keyID, err := KeyID(member.PublicKey)
 	if err != nil {
-		return nil, err
+		return false
 	}
-	if len(certificate.Certificate) < 2 {
-		return nil, errors.New("browser TLS identity is not a leaf/root chain")
-	}
-	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-	if err != nil {
-		return nil, err
-	}
-	public, ok := leaf.PublicKey.(*ecdsa.PublicKey)
-	if !ok || public.Curve != elliptic.P256() {
-		return nil, errors.New("browser TLS leaf is not P-256; run control migrate-browser-tls")
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM([]byte(config.BrowserTLS.CertificateChainPEM)) {
-		return nil, errors.New("control TLS trust chain is invalid")
-	}
-	for _, encoded := range append(append([]string(nil), config.ReadCertDER...), config.AdminCertDER...) {
-		raw, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
-		authorized, parseErr := x509.ParseCertificate(raw)
-		if decodeErr != nil || parseErr != nil || len(authorized.RawIssuer) == 0 {
-			return nil, errors.New("authorized browser certificate is invalid")
-		}
-		// ClientAuth is RequireAnyClientCert, so this pool is an issuer-name hint,
-		// not the read/admin authority. HTTP still matches the exact leaf DER.
-		pool.AddCert(&x509.Certificate{Raw: append([]byte("loom-client-issuer-hint\x00"), authorized.RawIssuer...),
-			RawSubject: append([]byte(nil), authorized.RawIssuer...)})
-	}
-	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate},
-		ClientCAs: pool, RootCAs: pool, ClientAuth: tls.RequireAnyClientCert}, nil
-}
-
-func peerTLSConfig(config NodeConfig) (*tls.Config, error) {
-	certificate, err := tls.X509KeyPair([]byte(config.PeerTLS.CertificateChainPEM), []byte(config.PeerTLS.PrivateKeyPKCS8PEM))
-	if err != nil {
-		return nil, err
-	}
-	if len(certificate.Certificate) < 2 {
-		return nil, errors.New("control peer TLS identity is not a leaf/root chain")
-	}
-	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
-	if err != nil {
-		return nil, err
-	}
-	public, ok := leaf.PublicKey.(ed25519.PublicKey)
-	if !ok || !config.PrivateKey().Public().(ed25519.PublicKey).Equal(public) || leaf.Subject.CommonName != config.MemberID {
-		return nil, errors.New("control peer TLS identity does not match the member identity")
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM([]byte(config.PeerTLS.CertificateChainPEM)) {
-		return nil, errors.New("control peer TLS trust chain is invalid")
-	}
-	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate},
-		ClientCAs: pool, RootCAs: pool, ClientAuth: tls.RequireAnyClientCert}, nil
-}
-
-func PrepareMember(root, sourceRoot, memberID, node string, listen []string) (NodeConfig, error) {
-	source, err := LoadNodeConfig(sourceRoot)
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	authority, err := OpenAuthority(sourceRoot)
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	_, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	config := source
-	config.MemberID = memberID
-	config.Node = node
-	config.Bootstrap = false
-	config.IdentityPrivateKey = base64.RawURLEncoding.EncodeToString(private)
-	config.PeerTLS, err = issuePeerTLS(source.BrowserTLS, memberID, listen, private)
-	if err == nil {
-		config.BrowserTLS, err = issueBrowserTLS(source.BrowserTLS, memberID, listen)
-	}
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	if err := os.MkdirAll(filepath.Join(root, "materials"), 0o700); err != nil {
-		return NodeConfig{}, err
-	}
-	ids, err := authority.MaterialIDs()
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	for _, id := range ids {
-		body, _ := authority.Material(id)
-		target := &Authority{root: root}
-		if _, err := target.PutMaterial(body); err != nil {
-			return NodeConfig{}, err
+	sequence := U64(0)
+	for _, frontier := range a.projection.Frontier {
+		if frontier.KeyID == keyID {
+			sequence = frontier.Sequence
 		}
 	}
-	for _, name := range []string{"consensus.json", "certified.json"} {
-		body, err := os.ReadFile(filepath.Join(sourceRoot, name))
-		if err != nil {
-			return NodeConfig{}, err
-		}
-		if err := atomicWrite(filepath.Join(root, name), body); err != nil {
-			return NodeConfig{}, err
+	for _, m := range a.materials {
+		if m.IssuerKeyID == keyID && m.Sequence > sequence {
+			return false
 		}
 	}
-	if err := config.Validate(); err != nil {
-		return NodeConfig{}, err
-	}
-	if err := atomicJSON(filepath.Join(root, "node.json"), config); err != nil {
-		return NodeConfig{}, err
-	}
-	return config, nil
+	return true
 }
-
-func browserTLSAuthority(source BrowserTLS) (crypto.Signer, *x509.Certificate, []byte, error) {
-	block, _ := pem.Decode([]byte(source.RootPrivateKeyPKCS8PEM))
-	if block == nil || block.Type != "PRIVATE KEY" {
-		return nil, nil, nil, errors.New("browser root private key is invalid")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	signer, ok := parsed.(crypto.Signer)
-	if !ok {
-		return nil, nil, nil, errors.New("browser root key cannot sign")
-	}
-	wantPublic, err := x509.MarshalPKIXPublicKey(signer.Public())
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	remaining := []byte(source.CertificateChainPEM)
-	var authority *x509.Certificate
-	caPEM := []byte{}
+func (runtime *Runtime) reconcileLoop() {
+	defer close(runtime.done)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
-		certificateBlock, rest := pem.Decode(remaining)
-		if certificateBlock == nil {
-			break
+		runtime.reconcilePeers()
+		select {
+		case <-runtime.stop:
+			return
+		case <-runtime.wake:
+		case <-ticker.C:
 		}
-		remaining = rest
-		certificate, parseErr := x509.ParseCertificate(certificateBlock.Bytes)
-		if parseErr != nil {
-			return nil, nil, nil, parseErr
+	}
+}
+func (runtime *Runtime) reconcilePeers() {
+	for _, member := range runtime.Authority.Snapshot().Config.Members {
+		if member.ControlID == runtime.Config.ControlID {
+			continue
 		}
-		if certificate.IsCA {
-			caPEM = append(caPEM, pem.EncodeToMemory(certificateBlock)...)
-			public, marshalErr := x509.MarshalPKIXPublicKey(certificate.PublicKey)
-			if marshalErr == nil && bytes.Equal(public, wantPublic) {
-				authority = certificate
+		select {
+		case <-runtime.stop:
+			return
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = runtime.reconcilePeer(ctx, member)
+		cancel()
+	}
+}
+func frontierFor(values []FactFrontier, keyID string) FactFrontier {
+	for _, value := range values {
+		if value.KeyID == keyID {
+			return value
+		}
+	}
+	return FactFrontier{KeyID: keyID, Sequence: 0, TipMaterialID: emptyAuthorityChainID()}
+}
+func validateRemoteFrontier(values []FactFrontier) error {
+	for i, value := range values {
+		if ValidateDigest(value.KeyID) != nil || ValidateDigest(value.TipMaterialID) != nil || i > 0 && values[i-1].KeyID >= value.KeyID || value.Sequence == 0 && value.TipMaterialID != emptyAuthorityChainID() {
+			return errors.New("peer fact frontier is invalid")
+		}
+	}
+	return nil
+}
+func (runtime *Runtime) reconcilePeer(ctx context.Context, member Member) error {
+	var remote []FactFrontier
+	if err := runtime.peerJSON(ctx, member, http.MethodGet, "/internal/frontier", nil, &remote); err != nil {
+		return err
+	}
+	if remote == nil {
+		return errors.New("peer frontier is missing")
+	}
+	if err := validateRemoteFrontier(remote); err != nil {
+		return err
+	}
+	for _, tip := range remote {
+		local := frontierFor(runtime.Authority.Frontier(), tip.KeyID)
+		if tip.Sequence > 0 && tip.Sequence <= local.Sequence {
+			id, err := runtime.Authority.materialAtSequence(tip.KeyID, tip.Sequence)
+			if err != nil {
+				return err
+			}
+			if id != tip.TipMaterialID {
+				if err := runtime.fetchMaterial(ctx, member, tip.TipMaterialID); err != nil {
+					return err
+				}
+				return errors.New("peer has a conflicting signed fact frontier")
+			}
+		}
+		for tip.Sequence > local.Sequence {
+			path := "/internal/materials?key_id=" + url.QueryEscape(tip.KeyID) + "&after=" + fmt.Sprint(uint64(local.Sequence))
+			var batch struct {
+				Materials []json.RawMessage `json:"materials"`
+				More      bool              `json:"more"`
+			}
+			if err := runtime.peerJSON(ctx, member, http.MethodGet, path, nil, &batch); err != nil {
+				return err
+			}
+			if len(batch.Materials) == 0 {
+				return errors.New("peer material batch made no progress")
+			}
+			last := local.Sequence
+			for _, body := range batch.Materials {
+				material, err := DecodeMaterial(body)
+				if err != nil {
+					return err
+				}
+				if material.IssuerKeyID != tip.KeyID || material.Sequence <= last {
+					return errors.New("peer material batch is not ordered for the requested signing key")
+				}
+				last = material.Sequence
+				if _, err := runtime.Authority.PutMaterial(body); err != nil {
+					return err
+				}
+			}
+			if err := runtime.fillDependencies(ctx, member); err != nil {
+				return err
+			}
+			next := frontierFor(runtime.Authority.Frontier(), tip.KeyID)
+			if next.Sequence <= local.Sequence {
+				return errors.New("peer material prefix remains unresolved")
+			}
+			local = next
+			if !batch.More {
+				if local.Sequence < tip.Sequence {
+					return errors.New("peer batch ended before its advertised frontier")
+				}
+				break
+			}
+		}
+		if tip.Sequence > 0 {
+			id, err := runtime.Authority.materialAtSequence(tip.KeyID, tip.Sequence)
+			if err != nil {
+				return err
+			}
+			if id != tip.TipMaterialID {
+				if err := runtime.fetchMaterial(ctx, member, tip.TipMaterialID); err != nil {
+					return err
+				}
+				return errors.New("peer batch does not match its advertised signed frontier")
 			}
 		}
 	}
-	if authority == nil {
-		return nil, nil, nil, errors.New("browser root certificate does not match retained root key")
-	}
-	return signer, authority, caPEM, nil
+	return runtime.fillDependencies(ctx, member)
 }
-
-func nodeTLSLeaf(purpose, memberID string, listen []string, authority *x509.Certificate, signer crypto.Signer,
-	public crypto.PublicKey) ([]byte, error) {
-	if purpose == "" || len(listen) == 0 || public == nil {
-		return nil, errors.New("private channel listeners or TLS key are invalid")
+func (runtime *Runtime) fillDependencies(ctx context.Context, member Member) error {
+	fetched := map[string]bool{}
+	for {
+		missing, err := runtime.Authority.PendingDependencies()
+		if err != nil {
+			return err
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		progress := false
+		for _, id := range missing {
+			if fetched[id] {
+				continue
+			}
+			fetched[id] = true
+			if err := runtime.fetchMaterial(ctx, member, id); err != nil {
+				return err
+			}
+			progress = true
+		}
+		if !progress {
+			return errors.New("peer dependencies remain unresolved")
+		}
 	}
-	addresses := append([]string(nil), listen...)
-	sort.Strings(addresses)
-	publicDER, err := x509.MarshalPKIXPublicKey(public)
+}
+func (runtime *Runtime) fetchMaterial(ctx context.Context, member Member, id string) error {
+	if ValidateDigest(id) != nil {
+		return errors.New("invalid missing material ID")
+	}
+	body, err := runtime.peerBody(ctx, member, http.MethodGet, "/internal/materials/"+strings.TrimPrefix(id, "sha256:"), nil)
+	if err != nil {
+		return err
+	}
+	_, actual, err := EncodeMaterialFromBytes(body)
+	if err != nil || actual != id {
+		return errors.New("peer material does not match requested ID")
+	}
+	_, err = runtime.Authority.PutMaterial(body)
+	return err
+}
+func (runtime *Runtime) peerJSON(ctx context.Context, member Member, method, path string, body []byte, result any) error {
+	raw, err := runtime.peerBody(ctx, member, method, path, body)
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return nil
+	}
+	parsed, err := parseContractJSON(raw, ContractDecodeLimits{MaxBytes: 64 << 20, MaxDepth: 256, MaxItems: 1 << 20})
+	if err != nil || !bytes.Equal(appendContractJSON(nil, parsed), raw) {
+		return errors.New("peer response is not canonical JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(result)
+}
+func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, path string, body []byte) ([]byte, error) {
+	if runtime.Channel == nil {
+		return nil, errors.New("private member transport is unavailable")
+	}
+	current := false
+	for _, candidate := range runtime.Authority.Snapshot().Config.Members {
+		if candidate == member {
+			current = true
+			break
+		}
+	}
+	if !current {
+		return nil, errors.New("peer is no longer a control member")
+	}
+	client, err := runtime.Channel.peerClient(member.NodeID)
 	if err != nil {
 		return nil, err
 	}
-	serialInput := append([]byte("loom-control-"+purpose+"-leaf-v3\n"+memberID+"\n"+strings.Join(addresses, "\n")+"\n"), publicDER...)
-	serialSeed := sha256.Sum256(serialInput)
-	serial := new(big.Int).SetBytes(serialSeed[:20])
-	serial.SetBit(serial, 159, 0)
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: memberID}, NotBefore: authority.NotBefore,
-		NotAfter: authority.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}
-	for _, address := range addresses {
-		host, _, splitErr := net.SplitHostPort(address)
-		if splitErr != nil {
-			return nil, errors.New("private channel listen address is invalid")
-		}
-		if ip := net.ParseIP(host); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, host)
-		}
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, template, authority, public, signer)
+	// NodeID is an opaque domain ID, not a DNS name or a URL component. The
+	// member is already fixed by peerClient and its authenticated dial closure.
+	request, err := http.NewRequestWithContext(ctx, method, "https://control.loom"+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	return leafDER, nil
-}
-
-func issuePeerTLS(source BrowserTLS, memberID string, listen []string, private ed25519.PrivateKey) (TLSIdentity, error) {
-	signer, authority, caPEM, err := browserTLSAuthority(source)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
 	if err != nil {
-		return TLSIdentity{}, err
+		return nil, err
 	}
-	if len(private) != ed25519.PrivateKeySize {
-		return TLSIdentity{}, errors.New("control peer identity key is invalid")
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("private member request failed: HTTP %d", response.StatusCode)
 	}
-	leafDER, err := nodeTLSLeaf("peer", memberID, listen, authority, signer, private.Public())
+	raw, err := io.ReadAll(io.LimitReader(response.Body, (64<<20)+1))
 	if err != nil {
-		return TLSIdentity{}, err
+		return nil, err
 	}
-	privateDER, err := x509.MarshalPKCS8PrivateKey(private)
-	if err != nil {
-		return TLSIdentity{}, err
+	if len(raw) > 64<<20 {
+		return nil, errors.New("peer response exceeds the current reader resource bound")
 	}
-	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), caPEM...)
-	return TLSIdentity{CertificateChainPEM: string(chain), PrivateKeyPKCS8PEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}))}, nil
-}
-
-func issueBrowserTLS(source BrowserTLS, memberID string, listen []string) (BrowserTLS, error) {
-	signer, authority, caPEM, err := browserTLSAuthority(source)
-	if err != nil {
-		return BrowserTLS{}, err
-	}
-	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return BrowserTLS{}, err
-	}
-	leafDER, err := nodeTLSLeaf("browser", memberID, listen, authority, signer, private.Public())
-	if err != nil {
-		return BrowserTLS{}, err
-	}
-	privateDER, err := x509.MarshalPKCS8PrivateKey(private)
-	if err != nil {
-		return BrowserTLS{}, err
-	}
-	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), caPEM...)
-	return BrowserTLS{CertificateChainPEM: string(chain), PrivateKeyPKCS8PEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})), RootPrivateKeyPKCS8PEM: source.RootPrivateKeyPKCS8PEM}, nil
+	return raw, nil
 }

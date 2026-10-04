@@ -3,11 +3,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -56,25 +54,15 @@ type brokerResponse struct {
 
 func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	var req brokerRequest
-	if len(body) == 0 || len(body) > 16<<10 || !utf8.Valid(body) {
+	if len(body) == 0 || len(body) > maxBrokerMessage || !utf8.Valid(body) {
 		return req, errors.New("服务请求长度无效")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	// §13.5：encoding/json 忽略字段大小写；同一字段的不同拼写也不能覆盖操作或邀请。
-	// BootstrapInvite 的最深规范路径是
-	// request → invite → capability → control_config → members → member → field。
-	// 连接配置索引的四层限制不能套到这个不同的 wire 模型上。
-	if err := rejectJSONDuplicateFields(decoder, 0, 6); err != nil {
-		return req, errors.New("服务请求字段重复或结构无效")
-	}
-	decoder = json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
+	// BootstrapInvite contains the sole closed Material union. Use its
+	// canonical codec across the pipe; encoding/json cannot decode that union.
+	if err := control.DecodeCanonical(body, &req, control.ContractDecodeLimits{MaxBytes: maxBrokerMessage, MaxDepth: 16, MaxItems: 16384}); err != nil {
 		return req, errors.New("服务请求格式无效")
 	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return req, errors.New("服务请求含多余数据")
-	}
+
 	if req.ProfileID != "" && !validConnectionProfileID(req.ProfileID) {
 		return req, errors.New("连接配置标识无效")
 	}
@@ -87,7 +75,7 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 			return req, errors.New("关闭加入面板不接受附加参数")
 		}
 	case "join_profile":
-		if req.ProfileID != "" || req.Preference != nil || (req.Invite != nil && (req.Invite.Schema != 1 || req.Invite.Capability.Validate() != nil)) {
+		if req.ProfileID != "" || req.Preference != nil || (req.Invite != nil && (req.Invite.Validate() != nil)) {
 			return req, errors.New("新增连接配置的加入参数无效")
 		}
 	case "status", "connect", "disconnect", "delete", "select_profile":
@@ -95,7 +83,7 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 			return req, errors.New("服务操作不接受附加参数")
 		}
 	case "join":
-		if req.Invite == nil || req.Preference != nil || req.Name != "" || req.Invite.Schema != 1 || req.Invite.Capability.Validate() != nil {
+		if req.Invite == nil || req.Preference != nil || req.Name != "" || req.Invite.Validate() != nil {
 			return req, errors.New("加入二维码无效")
 		}
 	case "preference":
@@ -268,7 +256,7 @@ func callInstalledBroker(ctx context.Context, request brokerRequest) (brokerResp
 	if err := verifyBrokerServer(pipe); err != nil {
 		return response, errors.New("无法验证 Loom 后台服务身份；请修复安装")
 	}
-	body, err := json.Marshal(request)
+	body, err := control.CanonicalEncode(request)
 	if err != nil {
 		return response, err
 	}

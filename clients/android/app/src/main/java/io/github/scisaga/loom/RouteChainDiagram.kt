@@ -32,7 +32,8 @@ import io.github.scisaga.loom.route.RoutePathStatus
 @Composable
 internal fun RouteChainDiagram(path: RoutePathStatus) {
     Column(Modifier.fillMaxWidth().testTag("route-chain-diagram")) {
-        RouteNode("本机", "Android", RouteNodeType.PHONE, "route-node-phone")
+        val localExit = path.serverChain.isEmpty() && path.finalExit != "direct"
+        RouteNode("本机", if (localExit) "出口 ${path.finalExit}" else "Android", RouteNodeType.PHONE, "route-node-phone")
         path.serverChain.forEachIndexed { index, node ->
             RouteEdge(
                 label = if (index == 0) "当前认证路径" else "继续中继",
@@ -53,8 +54,12 @@ internal fun RouteChainDiagram(path: RoutePathStatus) {
             )
         }
         RouteEdge(
-            label = if (path.serverChain.isEmpty()) "Direct · 本机直连" else "前往目标地址",
-            detail = if (path.serverChain.isEmpty()) "不执行路径测量" else "按实际请求访问",
+            label = when {
+                path.finalExit == "direct" -> "Direct · 本机直连"
+                localExit -> "经本机出口"
+                else -> "前往目标地址"
+            },
+            detail = "按实际请求访问",
             available = path.state == "available",
             tag = "route-edge-${path.serverChain.size}",
         )

@@ -1,210 +1,116 @@
 package control
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/skip2/go-qrcode"
 )
 
 type enrollmentPlatformOption struct {
-	ID                   string   `json:"id"`
-	Responsibilities     []string `json:"responsibilities"`
-	RequiredServerFields []string `json:"required_server_fields,omitempty"`
-	DisabledReason       string   `json:"disabled_reason,omitempty"`
+	ID               string   `json:"id"`
+	Responsibilities []string `json:"responsibilities"`
+}
+type enrollmentPolicyOption struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	ServiceID string `json:"service_id"`
+	Action    string `json:"action"`
 }
 
-func (server *Server) inviteValue(request *http.Request) (EnrollmentOpen, string, error) {
-	if !server.admin(request) {
-		return EnrollmentOpen{}, "", fmt.Errorf("administrator certificate required")
-	}
-	open, err := server.Runtime.Authority.EnrollmentOpen(request.PathValue("transaction"))
-	if err != nil {
-		return EnrollmentOpen{}, "", err
-	}
-	invite, err := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
-	return open, invite, err
-}
-
-type enrollmentGrantOption struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	CoveredServices []string `json:"covered_services"`
-	DisabledReason  string   `json:"disabled_reason,omitempty"`
-}
-
-func (server *Server) enrollmentOptions(writer http.ResponseWriter, request *http.Request) {
-	_, projection, certified := server.Runtime.Authority.Snapshot()
-	platforms := []enrollmentPlatformOption{
-		{ID: "android", Responsibilities: []string{"use_loom"}},
-		{ID: "linux", Responsibilities: []string{"forward", "internet_egress", "use_loom"},
-			RequiredServerFields: []string{"public_endpoint", "inbound_port", "inbound_protocol", "wg_public_key"}},
-		{ID: "windows", Responsibilities: []string{"use_loom"}},
-	}
-	grants := []enrollmentGrantOption{}
-	if projection.NetworkIntent == nil {
-		for index := range platforms {
-			platforms[index].DisabledReason = "Network intent has not been imported."
-		}
-	} else {
-		for _, policy := range projection.NetworkIntent.Policies {
-			services := []string{}
-			for _, service := range projection.NetworkIntent.Services {
-				if service.Policy == policy.ID {
-					services = append(services, service.ID)
-				}
-			}
-			sort.Strings(services)
-			option := enrollmentGrantOption{ID: policy.ID, Name: policy.Name, CoveredServices: services}
-			if !policy.AllowDirect && len(policy.AllowedExits) == 0 {
-				option.DisabledReason = "Policy has no authorized route."
-			}
-			grants = append(grants, option)
-		}
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{
-		"schema": 2, "head": HeadID(certified.Head), "platforms": platforms, "grants": grants,
-		"directions":         []string{"bidirectional", "direct_only", "reverse_only"},
-		"expires_in_seconds": 900,
-	})
-}
-
-func (server *Server) inviteReadback(writer http.ResponseWriter, request *http.Request) {
-	transactionID := request.PathValue("transaction")
-	open, invite, err := server.inviteValue(request)
-	if err != nil {
-		http.Error(writer, "invite readback unavailable", http.StatusForbidden)
-		return
-	}
-	_, projection, _ := server.Runtime.Authority.Snapshot()
-	_, transaction := findEnrollment(&projection, transactionID)
-	if transaction == nil {
-		http.NotFound(writer, request)
-		return
-	}
-	readiness, waiting := "awaiting_claim", []string{}
-	if snapshot, snapshotErr := server.snapshotValue(request); snapshotErr == nil {
-		for _, device := range snapshot.Devices {
-			if device.EnrollmentID == transactionID {
-				readiness, waiting = device.EnrollmentReadiness, append([]string(nil), device.WaitingFor...)
+func (server *Server) enrollmentOptions(w http.ResponseWriter, r *http.Request) {
+	projection := server.Runtime.Authority.Snapshot()
+	policies := []enrollmentPolicyOption{}
+	for _, policy := range projection.NetworkIntent.Policies {
+		for _, service := range projection.NetworkIntent.Services {
+			if service.ID == policy.ServiceID {
+				policies = append(policies, enrollmentPolicyOption{ID: policy.ID, Name: policy.Name, ServiceID: policy.ServiceID, Action: policy.Action})
 				break
 			}
 		}
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{
-		"schema": 2, "transaction": transaction, "invite": invite,
-		"expires_at": open.Capability.ExpiresAt, "readiness": readiness, "waiting_for": waiting,
-	})
+	endpoints := []EndpointGeneration{}
+	for _, endpoint := range projection.EndpointGenerations {
+		if endpoint.OwnerControlID == server.Runtime.Config.ControlID && endpoint.State == "serving" && containsString(endpoint.Modes, "bootstrap") {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "genesis_digest": server.Runtime.Config.GenesisID, "issuer_control_id": server.Runtime.Config.ControlID, "platforms": []enrollmentPlatformOption{
+		{ID: "android", Responsibilities: []string{"access"}}, {ID: "linux", Responsibilities: []string{"access", "control", "forward", "internet_egress"}}, {ID: "windows", Responsibilities: []string{"access"}},
+	}, "policies": policies, "endpoints": endpoints, "targets": projection.Targets})
 }
 
-// projectEnrollmentReadiness is a disposable UI projection. Completion of the
-// enrollment Material proves authorization only; it does not prove that the
-// device and every server whose users/ACL changed have consumed the resulting
-// exact DeviceView. Only fresh signed schema-2 runtime readback can advance the
-// product state to ready.
-func projectEnrollmentReadiness(web *WebProjection, authority Projection, reports []DeviceReport, now time.Time) {
-	if web == nil {
-		return
+// Re-displaying an open Invite uses the same persisted signed Material. A
+// completed or terminated transaction cannot issue a fresh-looking QR code.
+func (server *Server) inviteValue(r *http.Request) (Invite, string, error) {
+	if !server.admin(r) {
+		return Invite{}, "", errors.New("administrator certificate required")
 	}
-	latest := map[string]DeviceReport{}
-	for _, report := range reports {
-		reportedAt, err := time.Parse(time.RFC3339, report.ReportedAt)
-		if err != nil || now.Before(reportedAt) || now.Sub(reportedAt) > 3*time.Minute {
-			continue
-		}
-		previous, found := latest[report.DeviceID]
-		if !found || previous.ReportedAt < report.ReportedAt {
-			latest[report.DeviceID] = report
-		}
+	transactionID := r.PathValue("transaction")
+	state, err := server.Runtime.Authority.EnrollmentState(transactionID)
+	if err != nil {
+		return Invite{}, "", err
 	}
-	exact := func(deviceID string) bool {
-		report, found := latest[deviceID]
-		if !found || report.Schema != enrollmentSchemaV2 || report.Runtime == nil ||
-			report.Runtime.State != "running" || !report.Runtime.Exact {
-			return false
-		}
-		view, found := projectDeviceView(authority, deviceID)
-		if !found {
-			return false
-		}
-		digest, err := DeviceViewDigest(view)
-		return err == nil && report.ViewDigest == digest && report.Runtime.AppliedViewDigest == digest
+	bootstrap, err := server.bootstrapInvite(transactionID)
+	if err != nil {
+		return Invite{}, "", err
 	}
-	for index := range web.Devices {
-		device := &web.Devices[index]
-		if device.EnrollmentID == "" {
-			continue
-		}
-		switch device.Enrollment {
-		case "open":
-			device.EnrollmentReadiness = "awaiting_claim"
-		case "bound":
-			device.EnrollmentReadiness = "awaiting_approval"
-		case "completed":
-			authorization, found := authorizationFor(authority, device.ID)
-			if !found || authorization.Schema != enrollmentSchemaV2 {
-				device.EnrollmentReadiness = "awaiting_deployment"
-				device.WaitingFor = []string{device.ID}
-				continue
-			}
-			dependencies := map[string]bool{device.ID: true}
-			routes, _, err := projectAuthorizationRuntime(authority, authorization)
-			if err != nil {
-				device.EnrollmentReadiness = "awaiting_deployment"
-				device.WaitingFor = []string{device.ID}
-				continue
-			}
-			for _, route := range routes {
-				for _, serverID := range route.Chain {
-					dependencies[serverID] = true
-				}
-			}
-			waiting := make([]string, 0, len(dependencies))
-			for deviceID := range dependencies {
-				if !exact(deviceID) {
-					waiting = append(waiting, deviceID)
-				}
-			}
-			sort.Strings(waiting)
-			device.WaitingFor = waiting
-			if len(waiting) == 0 {
-				device.EnrollmentReadiness = "ready"
-			} else {
-				device.EnrollmentReadiness = "awaiting_deployment"
-			}
-		default:
-			device.EnrollmentReadiness = "unknown"
-		}
+	invite := bootstrap.Material.Payload.(Invite)
+	if state != "open" || !server.now().Before(time.UnixMilli(invite.ExpiresAt)) {
+		return Invite{}, "", errors.New("invite is not open for a new claim")
 	}
+	encoded, err := EncodeInvite(bootstrap)
+	return invite, encoded, err
 }
-
-func (server *Server) inviteQR(writer http.ResponseWriter, request *http.Request) {
-	_, invite, err := server.inviteValue(request)
+func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
+	transactionID := r.PathValue("transaction")
+	material, err := server.Runtime.Authority.Invite(transactionID)
 	if err != nil {
-		http.Error(writer, "invite unavailable", http.StatusForbidden)
+		http.Error(w, "invite readback unavailable", http.StatusNotFound)
 		return
 	}
-	png, err := qrcode.Encode(invite, qrcode.Medium, 384)
+	state, err := server.Runtime.Authority.EnrollmentState(transactionID)
 	if err != nil {
-		http.Error(writer, "invite QR unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "invite state unavailable", http.StatusConflict)
 		return
 	}
-	writer.Header().Set("Content-Type", "image/png")
-	writer.Header().Set("Content-Disposition", "inline; filename=loom-enrollment.png")
-	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(png)
+	value := material.Payload.(Invite)
+	encoded := ""
+	if state == "open" && server.now().Before(time.UnixMilli(value.ExpiresAt)) {
+		_, encoded, err = server.inviteValue(r)
+		if err != nil {
+			http.Error(w, "invite readback unavailable", http.StatusConflict)
+			return
+		}
+	}
+	id, _ := MaterialID(material)
+	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt})
 }
-
-func (server *Server) inviteDownload(writer http.ResponseWriter, request *http.Request) {
-	open, invite, err := server.inviteValue(request)
-	if err != nil {
-		http.Error(writer, "invite unavailable", http.StatusForbidden)
+func (server *Server) inviteQR(w http.ResponseWriter, r *http.Request) {
+	value, invite, err := server.inviteValue(r)
+	if err != nil || value.Medium != "qr" {
+		http.Error(w, "QR invite unavailable", http.StatusForbidden)
 		return
 	}
-	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=loom-enrollment-%s.txt", open.TransactionID))
-	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write([]byte(invite + "\n"))
+	png, err := qrcode.Encode(invite, qrcode.Medium, -5)
+	if err != nil {
+		http.Error(w, "invite QR unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Disposition", "inline; filename=loom-enrollment.png")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(png)
+}
+func (server *Server) inviteDownload(w http.ResponseWriter, r *http.Request) {
+	_, invite, err := server.inviteValue(r)
+	if err != nil {
+		http.Error(w, "invite unavailable", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=loom-enrollment.txt")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(invite + "\n"))
 }

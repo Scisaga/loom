@@ -60,7 +60,7 @@ func TestGUIVisualScenarios(t *testing.T) {
 		app := newProfileGUITestWindow(t)
 		app.routeOptions = append(app.routeOptions, portableRouteOption{
 			Label:      "直连",
-			Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect},
+			Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect},
 		})
 		app.routeSelected = 1
 		app.paths = app.paths[:1]

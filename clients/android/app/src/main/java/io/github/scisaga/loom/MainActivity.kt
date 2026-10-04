@@ -512,7 +512,6 @@ internal fun LoomHeader(profileName: String, status: VpnStatus) {
                     append("ANDROID · ")
                     append(phaseText(status.phase))
                     if (status.deviceName.isNotBlank()) append(" · ${status.deviceName}")
-                    if (status.generation > 0) append(" · 第 ${status.generation} 版")
                 },
                 color = Muted,
                 fontSize = 9.sp,
@@ -622,8 +621,8 @@ private fun HomeTabIcon(tab: HomeTab, selected: Boolean) {
 internal fun enrollmentSummary(join: EnrollmentStatus): String = when {
     join.phase == EnrollmentPhase.READY -> "设备已加入 · 配置签名已验证"
     join.phase == EnrollmentPhase.PULLING -> "正在下载并验证配置更新"
-    join.phase == EnrollmentPhase.ERROR && join.snapshot.isNotEmpty() -> "更新未完成 · 已安装配置保留"
-    join.snapshot.isNotEmpty() -> "设备已加入 · 已安装配置保留"
+    join.phase == EnrollmentPhase.ERROR && join.viewDigest.isNotEmpty() -> "更新未完成 · 已安装配置保留"
+    join.viewDigest.isNotEmpty() -> "设备已加入 · 已安装配置保留"
     else -> "加入网络、管理配置与本机信息"
 }
 
@@ -746,7 +745,6 @@ internal fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStat
                     Text(
                         buildString {
                             if (status.deviceName.isNotBlank()) append("设备 ${status.deviceName} · ")
-                            if (status.generation > 0) append("第 ${status.generation} 版 · ")
                             append("配置签名已验证")
                         },
                         color = Muted,
@@ -799,7 +797,7 @@ internal fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean, pro
             }
             if (summaries.isEmpty()) {
                 Text(
-                    if (running) "当前路径尚未确认" else "连接后显示各服务的实际路径",
+                    if (running) "当前没有已选业务路径" else "连接后显示各服务的实际路径",
                     color = Muted,
                     fontSize = 13.sp,
                 )
@@ -904,7 +902,7 @@ internal fun NetworkEvidenceCard(
             Text("信任边界", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text(diagnostics, color = Ink, fontSize = 13.sp, modifier = Modifier.testTag("device-info-card"))
             Text(
-                "每个底层网络代只测量授权入口一次；\n入口之后复用可信服务器观测，\n不探测完整业务路径。",
+                "业务结果按服务、目标和当前网络分别记录；\n未配置获授权探测目标时保持未知。",
                 color = Muted,
                 fontSize = 12.sp,
             )
@@ -986,7 +984,6 @@ internal fun EnrollmentCard(
                 Text(
                     buildString {
                         append(profile.name)
-                        if (status.generation > 0) append(" · 第 ${status.generation} 版")
                         append(" · 设备 ${status.deviceName}")
                     },
                     color = Ink,

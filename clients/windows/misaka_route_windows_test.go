@@ -29,9 +29,9 @@ func newMisakaRouteGUITestWindow(t *testing.T) (*portableGUI, *windowsProfileMan
 	child.mu.Lock()
 	child.joined, child.state, child.routeSelected = true, guiStopped, 0
 	child.routeOptions = []portableRouteOption{
-		{Label: "自动", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}},
-		{Label: "固定出口 · demo-exit", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}},
-		{Label: "直连", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}},
+		{Label: "自动", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}},
+		{Label: "固定出口 · demo-exit", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}},
+		{Label: "直连", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}},
 	}
 	child.mu.Unlock()
 	app.renderControls()
@@ -151,7 +151,7 @@ func TestGUIMisakaRouteFocusLossRestoresUnconfirmedExit(t *testing.T) {
 	app, m, child := newMisakaRouteGUITestWindow(t)
 	child.mu.Lock()
 	child.routeOptions = append(child.routeOptions, portableRouteOption{
-		Label: "固定出口 · demo-other", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: "demo-other"},
+		Label: "固定出口 · demo-other", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-other"},
 	})
 	child.routeSelected = 1
 	child.mu.Unlock()
@@ -217,7 +217,7 @@ func TestGUIMisakaRouteRevokedFixedOptionsCloseTheEditor(t *testing.T) {
 func TestWindowsProfilePreferenceBusyCoversTheWholeWorker(t *testing.T) {
 	m := newProfileManagerFixture(t)
 	child := m.children[legacyConnectionProfile]
-	preference := clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}
+	preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}
 	child.joined, child.state = true, guiStopped
 	child.routeOptions = []portableRouteOption{{Label: "直连", Preference: preference}}
 	child.routeSelected = -1

@@ -484,13 +484,12 @@ Description=Loom certified Linux client runtime
 Documentation=file:/opt/loom/docs/clients/client-runtime-model.md
 After=network-online.target
 Wants=network-online.target
-Conflicts=loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service
 
 [Service]
 Type=simple
 WorkingDirectory=/var/lib/loom-device
 ExecStartPre=/usr/bin/rm -f /run/loom-client/status.json
-ExecStart=/usr/local/lib/loom-client/current/loom client run
+ExecStart=/usr/local/lib/loom-client/current/loom client run -capture tun
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=no
 TimeoutStopSec=20s
@@ -504,10 +503,9 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-# HostAdapter applies and rolls back WireGuard as one transaction.  Its only
-# persistent /etc write surface is the existing owner-only WireGuard directory;
-# the rendered sing-box config and public CA remain ephemeral under /run.
-ReadWritePaths=/var/lib/loom-device /run/loom-client /etc/wireguard
+# Runtime configuration is disposable; authenticated identity stays in the
+# protected device directory. TUN still requires an isolated network namespace.
+ReadWritePaths=/var/lib/loom-device /run/loom-client
 DeviceAllow=/dev/net/tun rw
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
@@ -527,7 +525,7 @@ set -eu
 
 usage() {
     echo "usage: sudo ./install.sh --invite-file PATH [--state PATH]" >&2
-    echo "       sudo ./install.sh --upgrade [--state PATH] [--server-migration-source PATH]" >&2
+    echo "       sudo ./install.sh --upgrade [--state PATH]" >&2
     echo "       sudo ./install.sh --no-enroll" >&2
     exit 2
 }
@@ -536,14 +534,12 @@ invite_file=
 state=/var/lib/loom-device/state.json
 no_enroll=0
 upgrade=0
-server_migration_source=
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --invite-file) [ "$#" -ge 2 ] || usage; invite_file=$2; shift 2 ;;
         --state) [ "$#" -ge 2 ] || usage; state=$2; shift 2 ;;
         --no-enroll) no_enroll=1; shift ;;
         --upgrade) upgrade=1; shift ;;
-        --server-migration-source) [ "$#" -ge 2 ] || usage; server_migration_source=$2; shift 2 ;;
         -h|--help) usage ;;
         *) usage ;;
     esac
@@ -554,7 +550,6 @@ modes=$no_enroll
 [ "$upgrade" -eq 0 ] || modes=$((modes + 1))
 [ -z "$invite_file" ] || modes=$((modes + 1))
 [ "$modes" -eq 1 ] || usage
-[ -z "$server_migration_source" ] || [ "$upgrade" -eq 1 ] || usage
 
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 (cd "$base" && sha256sum -c checksums.txt)
@@ -564,6 +559,25 @@ for file in loom sing-box platform.pub manifest.json systemd/loom-client.service
         exit 1
     }
 done
+
+if [ -e /etc/loom/trust/platform.pub ] && ! cmp -s "$base/platform.pub" /etc/loom/trust/platform.pub; then
+    echo "existing platform trust cannot be replaced by an installer" >&2
+    exit 1
+fi
+if [ "$no_enroll" -eq 0 ]; then
+    for protected_path in /var/lib/loom-device/migration-overlay.json /var/lib/loom/client-v2 /etc/loom/agent/v2 /etc/loom/sing-box/v2 /etc/systemd/system/loom-client.service.d/00-host-network-quarantine.conf; do
+        if [ -e "$protected_path" ] || [ -L "$protected_path" ]; then
+            echo "protected prior deployment requires a verified forward cutover before activation" >&2
+            exit 1
+        fi
+    done
+    for old in loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service; do
+        if [ "$(systemctl show "$old" --property=LoadState --value)" != "not-found" ]; then
+            echo "prior runtime entry remains; verified cutover must remove it before activation" >&2
+            exit 1
+        fi
+    done
+fi
 
 install -d -m 0755 /usr/local/bin /usr/local/lib/loom-client/releases /etc/loom/trust
 install -d -m 0700 "$(dirname -- "$state")" /var/lib/loom-device
@@ -606,10 +620,7 @@ fi
 if [ "$upgrade" -eq 0 ]; then
     "$release/loom" client enroll -invite-file "$invite_file" -state "$state" -wait 5m
 fi
-if [ -n "$server_migration_source" ]; then
-    "$release/loom" client stage-server-migration -source "$server_migration_source"
-fi
-"$release/loom" client preflight -state "$state" -sing-box "$release/sing-box"
+"$release/loom" client preflight -state "$state" -sing-box "$release/sing-box" -capture tun
 
 unit=/etc/systemd/system/loom-client.service
 unit_backup=
@@ -621,11 +632,6 @@ previous=
 if [ -L /usr/local/lib/loom-client/current ]; then
     previous=$(readlink /usr/local/lib/loom-client/current)
 fi
-old_active=
-for old in loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service; do
-    if systemctl is-active --quiet "$old"; then old_active="$old_active $old"; fi
-done
-systemctl stop loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service 2>/dev/null || true
 
 link_tmp=/usr/local/lib/loom-client/.current.$$
 ready=0
@@ -667,37 +673,14 @@ if [ "$ready" -ne 1 ]; then
         rm -f "$unit"
     fi
     systemctl daemon-reload
-    if [ -n "$previous" ]; then systemctl enable --now loom-client.service >/dev/null 2>&1 || true; fi
-    for old in $old_active; do systemctl enable --now "$old" >/dev/null 2>&1 || true; done
-    echo "new runtime failed readback; previous runnable release was restored" >&2
+    # Restoring files does not prove that an old unit is isolated or that its
+    # runtime still satisfies the newly accepted authorization. Keep execution
+    # disabled; identity, LKG and floor are never rolled back with the package.
+    echo "new runtime failed readback; package files restored, services remain disabled; certified configuration and floor retained" >&2
     exit 1
 fi
 
 [ -z "$unit_backup" ] || rm -f "$unit_backup"
-migration_overlay=/var/lib/loom-device/migration-overlay.json
-for old in loom-client-v2.service loom-client-v2-agent.service loom-client-v2-sing-box.service loom-client-v2-report.service; do
-    systemctl disable "$old" >/dev/null 2>&1 || true
-    if [ ! -e "$migration_overlay" ]; then rm -f "/etc/systemd/system/$old"; fi
-done
-systemctl daemon-reload
-
-if [ ! -e "$migration_overlay" ]; then
-    install -d -m 0700 /var/lib/loom-retired /etc/loom/retired-v2 /usr/local/lib/loom-client/retired
-    if [ -d /var/lib/loom/client-v2 ] && [ ! -e /var/lib/loom-retired/client-v2 ]; then
-        mv /var/lib/loom/client-v2 /var/lib/loom-retired/client-v2
-    fi
-    for old_config in /etc/loom/agent/v2 /etc/loom/sing-box/v2; do
-        name=$(basename "$(dirname "$old_config")")-$(basename "$old_config")
-        if [ -d "$old_config" ] && [ ! -e "/etc/loom/retired-v2/$name" ]; then
-            mv "$old_config" "/etc/loom/retired-v2/$name"
-        fi
-    done
-    if [ -e /usr/local/bin/loom ] && [ ! -L /usr/local/bin/loom ] && [ ! -e /usr/local/lib/loom-client/retired/loom ]; then
-        mv /usr/local/bin/loom /usr/local/lib/loom-client/retired/loom
-    fi
-else
-    echo "Migration overlay remains active; old unit/config files are retained disabled until fleet finalization."
-fi
 cli_tmp=/usr/local/bin/.loom.$$
 ln -s /usr/local/lib/loom-client/current/loom "$cli_tmp"
 mv -Tf "$cli_tmp" /usr/local/bin/loom

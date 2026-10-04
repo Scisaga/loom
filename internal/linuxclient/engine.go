@@ -13,6 +13,7 @@ type ProbeResult struct {
 	Available   bool
 	Metric      time.Duration
 	Description string
+	Action      string
 }
 
 type Probe func(context.Context) ProbeResult
@@ -35,9 +36,7 @@ func scopesFor(routes []clientmodel.RouteCandidate) ([]string, map[string][]clie
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
-	if len(scopes) == 0 {
-		return nil, nil, errors.New("certified LKG contains no route candidates")
-	}
+
 	return scopes, byScope, nil
 }
 
@@ -87,6 +86,10 @@ func missingObservation(selections map[string]string, observations []clientmodel
 }
 
 func recordOutcome(state LocalState, selections map[string]string, result ProbeResult, now time.Time) LocalState {
+	action := result.Action
+	if action == "" {
+		action = "tcp_udp_dns"
+	}
 	byID := map[string]clientmodel.Observation{}
 	for _, observation := range state.Observations {
 		byID[observation.CandidateID] = observation
@@ -101,7 +104,7 @@ func recordOutcome(state LocalState, selections map[string]string, result ProbeR
 			metric = 0
 		}
 		byID[candidate] = clientmodel.Observation{CandidateID: candidate, NetworkGeneration: state.NetworkGeneration,
-			Scope: scope, Result: outcome, Action: "tcp_udp_dns", ObservedAt: now.UTC().Format(time.RFC3339),
+			Scope: scope, Result: outcome, Action: action, ObservedAt: now.UTC().Format(time.RFC3339),
 			ValidUntil: now.Add(10 * time.Minute).UTC().Format(time.RFC3339), MetricMillis: metric}
 	}
 	state.Observations = state.Observations[:0]
@@ -128,7 +131,7 @@ func selectionStatuses(routes []clientmodel.RouteCandidate, observations []clien
 	statuses := make([]SelectionStatus, 0, len(scopes))
 	for _, scope := range scopes {
 		candidate := byID[selected[scope]]
-		statuses = append(statuses, SelectionStatus{Scope: scope, CandidateID: candidate.ID,
+		statuses = append(statuses, SelectionStatus{Scope: scope, CandidateID: candidate.ID, FinalExit: candidate.FinalExit,
 			Chain: append([]string(nil), candidate.Chain...), State: observationState(observations, candidate.ID, generation, now)})
 	}
 	return statuses
@@ -155,10 +158,13 @@ func Activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 	if err != nil {
 		return Activation{}, err
 	}
-	if !missingObservation(readback, state.Observations, state.NetworkGeneration, at) {
+	if probe == nil || !missingObservation(readback, state.Observations, state.NetworkGeneration, at) {
 		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, at)}, nil
 	}
 	first := probe(ctx)
+	if err := ctx.Err(); err != nil {
+		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, at)}, err
+	}
 	state = recordOutcome(state, readback, first, at)
 	if first.Available {
 		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, at)}, nil
@@ -181,6 +187,9 @@ func Activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 	}
 	secondAt := now().UTC().Truncate(time.Second)
 	second := probe(ctx)
+	if err := ctx.Err(); err != nil {
+		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, secondAt)}, err
+	}
 	state = recordOutcome(state, readback, second, secondAt)
 	activation := Activation{State: state,
 		Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, secondAt)}

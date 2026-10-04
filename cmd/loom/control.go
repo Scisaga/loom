@@ -10,396 +10,174 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"loom/internal/control"
+	"loom/internal/localconfig"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"syscall"
 	"time"
-
-	"loom/internal/control"
-	"loom/internal/localconfig"
-	"loom/internal/publish"
-	"loom/internal/report"
 )
 
-const minimalStateName = "state.json"
-
 func cmdConfig(args []string) error {
-	if len(args) == 0 || args[0] != "check" && args[0] != "migrate" {
-		return errors.New("用法: loom config <check|migrate> [-env .env]")
+	if len(args) == 0 || args[0] != "check" {
+		return errors.New("用法: loom config check [-env .env]")
 	}
-	action := args[0]
-	fs := flag.NewFlagSet("config "+action, flag.ContinueOnError)
-	path := fs.String("env", ".env", "六项部署输入")
+	fs := flag.NewFlagSet("config check", flag.ContinueOnError)
+	path := fs.String("env", ".env", "引用唯一部署 YAML 的 dotenv 文件")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("config %s 不接受位置参数", action)
-	}
-	if action == "migrate" {
-		if err := localconfig.Migrate(*path); err != nil {
-			return err
-		}
-		fmt.Println("deployment config migrated to the canonical six-key representation")
-		return nil
+		return errors.New("config check 不接受位置参数")
 	}
 	config, err := localconfig.Load(*path)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("deployment config valid: hosts=%d outputs=%d local=%t provider_secret=present\n",
-		len(config.DeployHosts), len(config.PublishOutputs), config.LocalNode != "")
+	mappings := 0
+	for _, node := range config.Nodes {
+		mappings += len(node.Ingress)
+	}
+	fmt.Printf("deployment config valid: hosts=%d nodes=%d ingress=%d outputs=%d local=%t provider_secret_present=%t\n",
+		len(config.DeployHosts), len(config.Nodes), mappings, len(config.PublishOutputs), config.LocalNode != "", config.GandiPATToken != "")
 	return nil
 }
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <import|import-network|activate|prepare|prepare-relay|project-endpoint-edge|migrate-browser-tls|serve|relay|inspect|write>")
+		return errors.New("用法: loom control <init|serve|relay|edge|inspect|endpoint-inputs|write>")
 	}
 	switch args[0] {
-	case "import":
-		return cmdControlImport(args[1:])
-	case "import-network":
-		return cmdControlImportNetwork(args[1:])
+	case "init":
+		return cmdControlInit(args[1:])
 	case "serve":
 		return cmdControlServe(args[1:])
-	case "activate":
-		return cmdControlActivate(args[1:])
-	case "prepare":
-		return cmdControlPrepare(args[1:])
-	case "prepare-relay":
-		return cmdControlPrepareRelay(args[1:])
-	case "project-endpoint-edge":
-		return cmdControlProjectEndpointEdge(args[1:])
-	case "migrate-browser-tls":
-		return cmdControlMigrateBrowserTLS(args[1:])
-	case "inspect":
-		return cmdControlInspect(args[1:])
 	case "relay":
 		return cmdControlRelay(args[1:])
+	case "edge":
+		return cmdControlEdge(args[1:])
+	case "inspect":
+		return cmdControlInspect(args[1:])
+	case "endpoint-inputs":
+		return cmdControlEndpointInputs(args[1:])
 	case "write":
 		return cmdControlWrite(args[1:])
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
 }
-
-func cmdControlImportNetwork(args []string) error {
-	fs := flag.NewFlagSet("control import-network", flag.ContinueOnError)
-	sourceDir := fs.String("source-dir", "/var/lib/loom-control", "受保护旧控制状态目录")
-	floor := fs.String("release-floor", "/var/lib/loom/release-floor.json", "release anti-rollback floor")
-	observation := fs.String("observation", "", "可选的认证 Web 观测快照")
-	dataPlaneCA := fs.String("public-data-plane-ca", "", "认证的数据面公共 CA bundle")
-	socket := fs.String("socket", "/run/loom-control/admin.sock", "本机管理员 Unix socket")
-	requestID := fs.String("request-id", "", "稳定幂等请求 ID")
-	baseHead := fs.String("base-head", "", "当前 certified head")
-	dryRun := fs.Bool("dry-run", false, "只验证并输出非敏感摘要")
+func readCanonicalControlInput(path string, value any) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return errors.New("control input must be an owner-only regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	current, err := file.Stat()
+	if err != nil || !os.SameFile(info, current) {
+		return errors.New("control input changed while opening")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, (8<<20)+1))
+	if err != nil {
+		return err
+	}
+	return control.DecodeCanonical(body, value, control.ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20})
+}
+func cmdControlInit(args []string) error {
+	fs := flag.NewFlagSet("control init", flag.ContinueOnError)
+	root := fs.String("state-dir", "", "新空权威目录（绝对路径）")
+	nodePath := fs.String("node-config", "", "受保护本机身份和文件引用")
+	genesisPath := fs.String("genesis", "", "已签名 schema 3 genesis Material")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *dataPlaneCA == "" || !*dryRun && (*requestID == "" || *baseHead == "" || *socket == "") {
-		return errors.New("control import-network 缺少 public-data-plane-ca，提交时还需要 socket/request-id/base-head")
+	if fs.NArg() != 0 || *root == "" || *nodePath == "" || *genesisPath == "" {
+		return errors.New("control init 需要 state-dir、node-config、genesis")
 	}
-	ca, err := os.ReadFile(*dataPlaneCA)
+	var config control.NodeConfig
+	var genesis control.Material
+	if err := readCanonicalControlInput(*nodePath, &config); err != nil {
+		return err
+	}
+	if err := readCanonicalControlInput(*genesisPath, &genesis); err != nil {
+		return err
+	}
+	authority, err := control.InitializeAuthority(*root, config, genesis)
 	if err != nil {
 		return err
 	}
-	_, payload, err := control.PrepareLegacyNetworkImport(control.ImportInput{
-		ConfigPath: filepath.Join(*sourceDir, "config.json"), CertifiedPath: filepath.Join(*sourceDir, "control-state.json"),
-		OperationsPath: filepath.Join(*sourceDir, "operations.json"), BrowserTLSPath: filepath.Join(*sourceDir, "browser-tls.json"),
-		ReleaseFloorPath: *floor, ObservationPath: *observation,
-	}, ca)
-	if err != nil {
-		return err
-	}
-	intentBody, err := json.Marshal(payload.Intent)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("network import validated: nodes=%d links=%d policies=%d services=%d components=%d intent=sha256:%s\n",
-		len(payload.Intent.Nodes), len(payload.Intent.Links), len(payload.Intent.Policies), len(payload.Intent.Services),
-		len(payload.Intent.Components), control.SHA256(intentBody))
-	if *dryRun {
-		return nil
-	}
-	operation, err := json.Marshal(struct {
-		Schema    int                   `json:"schema"`
-		Kind      string                `json:"kind"`
-		RequestID string                `json:"request_id"`
-		BaseHead  string                `json:"base_head"`
-		Payload   control.NetworkImport `json:"payload"`
-	}{Schema: 2, Kind: "network.import", RequestID: *requestID, BaseHead: *baseHead, Payload: payload})
-	if err != nil {
-		return err
-	}
-	client := &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{Proxy: nil,
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", *socket)
-		}}}
-	request, err := http.NewRequest(http.MethodPost, "http://loom.local/api/control/operations", bytes.NewReader(operation))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil {
-		return err
-	}
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("network import: %s: %s", response.Status, strings.TrimSpace(string(responseBody)))
-	}
-	_, err = os.Stdout.Write(responseBody)
-	return err
+	snapshot := authority.Snapshot()
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "network_id": snapshot.NetworkID, "genesis_id": config.GenesisID, "control_config_id": snapshot.ControlConfigID, "members": len(snapshot.Config.Members)})
 }
-
-func cmdControlMigrateBrowserTLS(args []string) error {
-	fs := flag.NewFlagSet("control migrate-browser-tls", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "控制状态目录")
-	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("control migrate-browser-tls 不接受位置参数")
-	}
-	private, _, err := loadPrivateChannelConfig(*networkConfig)
-	if err != nil {
-		return err
-	}
-	changed, err := control.MigrateBrowserTLS(*stateDir, private.Listen)
-	if err != nil {
-		return err
-	}
-	if changed {
-		fmt.Println("browser TLS identity separated from the control member identity")
-	} else {
-		fmt.Println("browser TLS identity already uses the separated P-256 profile")
-	}
-	return nil
-}
-
-func cmdControlActivate(args []string) error {
-	fs := flag.NewFlagSet("control activate", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "控制状态目录")
-	memberID := fs.String("member-id", "", "稳定 control 成员 ID")
-	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 || *memberID == "" {
-		return errors.New("control activate 需要 -member-id")
-	}
-	private, _, err := loadPrivateChannelConfig(*networkConfig)
-	if err != nil {
-		return err
-	}
-	legacyPath := filepath.Join(*stateDir, minimalStateName)
-	legacy, err := control.LoadState(legacyPath)
-	if err != nil {
-		return err
-	}
-	config, err := control.ActivateLegacy(*stateDir, legacy, *memberID, private.Node, private.Listen)
-	if err != nil {
-		return err
-	}
-	if _, err := control.OpenAuthority(*stateDir); err != nil {
-		return fmt.Errorf("激活后回读失败: %w", err)
-	}
-	if err := os.Remove(legacyPath); err != nil {
-		return fmt.Errorf("删除已被 genesis Material 取代的恢复缓存: %w", err)
-	}
-	return json.NewEncoder(os.Stdout).Encode(config.Member())
-}
-
-func cmdControlPrepare(args []string) error {
-	fs := flag.NewFlagSet("control prepare", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "新成员控制状态目录")
-	sourceDir := fs.String("source-state-dir", "", "已认证源控制状态目录")
-	memberID := fs.String("member-id", "", "稳定 control 成员 ID")
-	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "新成员既有私有通道配置")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 || *sourceDir == "" || *memberID == "" {
-		return errors.New("control prepare 缺少 source/member 参数")
-	}
-	private, _, err := loadPrivateChannelConfig(*networkConfig)
-	if err != nil {
-		return err
-	}
-	config, err := control.PrepareMember(*stateDir, *sourceDir, *memberID, private.Node, private.Listen)
-	if err != nil {
-		return err
-	}
-	return json.NewEncoder(os.Stdout).Encode(config.Member())
-}
-
-func cmdControlPrepareRelay(args []string) error {
-	fs := flag.NewFlagSet("control prepare-relay", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-control-relay", "纯 transport relay 身份目录")
-	sourceDir := fs.String("source-state-dir", "/var/lib/loom-minimal", "迁出前本节点控制身份目录")
-	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("control prepare-relay 不接受位置参数")
-	}
-	private, _, err := loadPrivateChannelConfig(*networkConfig)
-	if err != nil {
-		return err
-	}
-	identity, err := control.PrepareRelayIdentity(*stateDir, *sourceDir, private.Node, private.Listen)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("private relay identity prepared: node=%s listeners=%d\n", identity.Node, len(private.Listen))
-	return nil
-}
-
-func cmdControlProjectEndpointEdge(args []string) error {
-	fs := flag.NewFlagSet("control project-endpoint-edge", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "当前认证 control 状态目录")
-	edgeNode := fs.String("edge-node", "", "承载既有公网映射的纯 transport 节点")
-	output := fs.String("out", "", "owner-only endpoint edge 运行时投影")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 || *edgeNode == "" || *output == "" {
-		return errors.New("control project-endpoint-edge 缺少 edge-node/out")
-	}
-	authority, err := control.OpenAuthority(*stateDir)
-	if err != nil {
-		return err
-	}
-	_, _, certified := authority.Snapshot()
-	plan, err := control.ProjectEndpointEdge(certified, *edgeNode)
-	if err != nil {
-		return err
-	}
-	if err := control.SaveEndpointEdgePlan(*output, plan); err != nil {
-		return err
-	}
-	fmt.Printf("endpoint edge projected: node=%s generations=%d head=%s\n",
-		plan.EdgeNode, len(plan.Generations), plan.CertifiedHead)
-	return nil
-}
-
-func cmdControlImport(args []string) error {
-	fs := flag.NewFlagSet("control import", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "最小控制状态目录")
-	sourceDir := fs.String("source-dir", "/var/lib/loom-control", "受保护旧控制状态目录")
-	floor := fs.String("release-floor", "/var/lib/loom/release-floor.json", "release anti-rollback floor")
-	observation := fs.String("observation", "", "可选的认证 Web 观测快照")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("control import 不接受位置参数")
-	}
-	state, err := control.Import(control.ImportInput{
-		ConfigPath: filepath.Join(*sourceDir, "config.json"), CertifiedPath: filepath.Join(*sourceDir, "control-state.json"),
-		OperationsPath: filepath.Join(*sourceDir, "operations.json"), BrowserTLSPath: filepath.Join(*sourceDir, "browser-tls.json"),
-		ReleaseFloorPath: *floor, ObservationPath: *observation,
-	})
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(*stateDir, minimalStateName)
-	if existing, loadErr := control.LoadState(path); loadErr == nil {
-		if !reflect.DeepEqual(existing, state) {
-			return errors.New("已存在的最小状态与导入结果不同；拒绝覆盖")
-		}
-		fmt.Printf("minimal control state already matches: head=%s revision=%d\n", state.Head.Hash, state.Head.Revision)
-		return nil
-	} else if !errors.Is(loadErr, os.ErrNotExist) {
-		return fmt.Errorf("读取已有最小状态: %w", loadErr)
-	}
-	if err := control.SaveState(path, state); err != nil {
-		return err
-	}
-	fmt.Printf("minimal control state imported: head=%s revision=%d\n", state.Head.Hash, state.Head.Revision)
-	return nil
-}
-
-func cmdControlServe(args []string) error {
+func cmdControlServe(args []string) (retErr error) {
 	fs := flag.NewFlagSet("control serve", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "最小控制状态目录")
-	releaseRoot := fs.String("release-root", "/var/lib/loom/client-dist/releases", "客户端 release 根目录")
-	releaseKey := fs.String("release-key", "/etc/loom/trust/platform.pub", "catalog 验签公钥")
-	publisherObservation := fs.String("publisher-observation", publish.HealthPath+".signed", "平台密钥签名的 publisher observation")
-	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
-	adminSocket := fs.String("admin-socket", "/run/loom-control/admin.sock", "本机管理员 Unix socket")
+	root := fs.String("state-dir", "/var/lib/loom-control", "现行权威目录")
+	privatePath := fs.String("private-inputs", "", "可选的受保护私有监听/成员拨号输入")
+	socket := fs.String("admin-socket", "", "本机管理 Unix socket；默认由 state-dir 派生")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("control serve 不接受位置参数")
 	}
-	private, reportConfig, err := loadPrivateChannelConfig(*networkConfig)
+	node, err := control.LoadNodeConfig(*root)
 	if err != nil {
 		return err
 	}
-	node, err := control.LoadNodeConfig(*stateDir)
+	var channel *control.PrivateChannel
+	if *privatePath != "" {
+		private, err := control.LoadPrivateChannelConfig(*privatePath)
+		if err != nil {
+			return err
+		}
+		channel, err = control.OpenPrivateChannel(private, node)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, channel.Close()) }()
+	}
+	runtime, err := control.OpenRuntime(*root, channel)
 	if err != nil {
 		return err
 	}
-	channel, err := control.OpenPrivateChannel(private, node)
+	defer func() { retErr = errors.Join(retErr, runtime.Close()) }()
+	reports, err := control.OpenObservationStore(*root)
 	if err != nil {
 		return err
 	}
-	defer channel.Close()
-	runtime, err := control.OpenRuntime(*stateDir, channel)
-	if err != nil {
-		return err
+	admin := *socket
+	if admin == "" {
+		admin = filepath.Join(*root, "admin.sock")
 	}
-	defer runtime.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	reportRuntime, err := report.Start(ctx, reportConfig, func() time.Time { return time.Now() }, os.Stdout)
-	if err != nil {
-		return err
-	}
-	reports, err := control.OpenObservationStore(*stateDir)
-	if err != nil {
-		return err
-	}
-	err = (&control.Server{Runtime: runtime, Channel: channel, Config: runtime.Config, ReleaseRoot: *releaseRoot,
-		ReleaseKey: *releaseKey, PublisherObservationPath: *publisherObservation,
-		AdminSocket: *adminSocket, Reports: reports}).Serve(ctx, reportRuntime.Handler())
-	stop()
-	if reportErr := reportRuntime.Wait(); err == nil {
-		err = reportErr
-	}
-	return err
+	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Reports: reports}).Serve(ctx)
 }
-
-func cmdControlRelay(args []string) error {
+func cmdControlRelay(args []string) (retErr error) {
 	fs := flag.NewFlagSet("control relay", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-control-relay", "纯 transport relay 身份目录")
-	networkConfig := fs.String("network-config", "/etc/loom/report/v2/config.json", "既有私有通道配置")
-	edgePlan := fs.String("endpoint-edge-plan", "/var/lib/loom-control-relay/endpoint-edge.json", "可选的认证 endpoint edge 运行时投影")
+	root := fs.String("state-dir", "/var/lib/loom-control-relay", "受保护 transport relay 身份目录")
+	inputs := fs.String("private-inputs", "", "受保护私有监听/拨号输入")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return errors.New("control relay 不接受位置参数")
+	if fs.NArg() != 0 || *inputs == "" {
+		return errors.New("control relay 需要 private-inputs")
 	}
-	private, _, err := loadPrivateChannelConfig(*networkConfig)
+	private, err := control.LoadPrivateChannelConfig(*inputs)
 	if err != nil {
 		return err
 	}
-	identity, err := control.LoadRelayIdentity(*stateDir, private.Listen)
+	identity, err := control.LoadRelayIdentity(*root, private.Listen)
 	if err != nil {
 		return err
 	}
@@ -407,85 +185,76 @@ func cmdControlRelay(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer channel.Close()
-	plan, err := control.LoadEndpointEdgePlan(*edgePlan, identity.Node)
-	var edge *control.EndpointEdgeRuntime
-	if err == nil {
-		edge, err = control.OpenEndpointEdge(plan, identity.Node)
-		if err != nil {
-			return err
-		}
-		defer edge.Close()
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
+	defer func() { retErr = errors.Join(retErr, channel.Close()) }()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	<-ctx.Done()
 	return nil
 }
-
-func loadPrivateChannelConfig(path string) (control.PrivateChannelConfig, *report.Config, error) {
-	body, err := os.ReadFile(path)
+func cmdControlEdge(args []string) (retErr error) {
+	fs := flag.NewFlagSet("control edge", flag.ContinueOnError)
+	listen := fs.String("listen", "", "操作者提供的本机 TCP 监听地址")
+	target := fs.String("target", "", "既有 control 私有 TCP 目标地址")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *listen == "" || *target == "" {
+		return errors.New("control edge 需要 listen 和 target")
+	}
+	edge, err := control.OpenEndpointEdge(*listen, *target)
 	if err != nil {
-		return control.PrivateChannelConfig{}, nil, err
+		return err
 	}
-	reportConfig, err := report.Load(body)
-	if err != nil {
-		return control.PrivateChannelConfig{}, nil, err
-	}
-	peers := map[string][]string{}
-	for _, neighbor := range reportConfig.Neighbors {
-		peers[neighbor.Node] = append(peers[neighbor.Node], neighbor.Addr)
-	}
-	private := control.PrivateChannelConfig{Node: reportConfig.Node, Listen: append([]string(nil), reportConfig.Listen...), Peers: peers}
-	if err := private.Validate(); err != nil {
-		return control.PrivateChannelConfig{}, nil, err
-	}
-	return private, reportConfig, nil
+	defer func() { retErr = errors.Join(retErr, edge.Close()) }()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	return nil
 }
-
+func cmdControlEndpointInputs(args []string) error {
+	fs := flag.NewFlagSet("control endpoint-inputs", flag.ContinueOnError)
+	root := fs.String("state-dir", "/var/lib/loom-control", "现行权威目录")
+	endpointPath := fs.String("endpoint", "", "完整规范 EndpointGeneration")
+	inputsPath := fs.String("inputs", "", "本机 listen/certificate_file/key_file 规范值")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *endpointPath == "" || *inputsPath == "" {
+		return errors.New("endpoint-inputs 需要 endpoint 和 inputs")
+	}
+	var endpoint control.EndpointGeneration
+	var inputs control.EndpointLocalInputs
+	if err := readCanonicalControlInput(*endpointPath, &endpoint); err != nil {
+		return err
+	}
+	if err := readCanonicalControlInput(*inputsPath, &inputs); err != nil {
+		return err
+	}
+	if err := control.InstallEndpointInputs(*root, endpoint, inputs); err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "endpoint_id": endpoint.ID, "generation": endpoint.Generation, "inputs_installed": true})
+}
 func cmdControlInspect(args []string) error {
 	fs := flag.NewFlagSet("control inspect", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "/var/lib/loom-minimal", "最小控制状态目录")
+	root := fs.String("state-dir", "/var/lib/loom-control", "现行权威目录")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("control inspect 不接受位置参数")
 	}
-	config, err := control.LoadNodeConfig(*stateDir)
+	node, err := control.LoadNodeConfig(*root)
 	if err != nil {
 		return err
 	}
-	authority, err := control.OpenAuthority(*stateDir)
+	authority, err := control.OpenAuthority(*root)
 	if err != nil {
 		return err
 	}
-	consensus, projection, certified := authority.Snapshot()
-	return json.NewEncoder(os.Stdout).Encode(struct {
-		Head          control.GovernanceHead `json:"certified_head"`
-		Floor         uint64                 `json:"release_floor_generation"`
-		V2Latch       bool                   `json:"v2_latch"`
-		Members       int                    `json:"members"`
-		Devices       int                    `json:"devices"`
-		Endpoints     int                    `json:"endpoint_generations"`
-		Enrollments   int                    `json:"enrollments"`
-		DeviceViews   int                    `json:"device_views"`
-		Services      int                    `json:"services"`
-		AdminBindings int                    `json:"admin_bindings"`
-		Entries       int                    `json:"consensus_entries"`
-	}{certified.Head, config.Recovery.ReleaseFloor.Generation, config.Recovery.V2Latch,
-		len(controlMembers(projection.Config)), len(certified.Projection.Web.Devices), len(certified.Projection.EndpointGenerations),
-		len(certified.Projection.Enrollments), len(certified.Projection.DeviceAuthorizations), len(certified.Projection.Web.Services),
-		len(config.AdminCertDER), len(consensus.Entries)})
-}
-
-func controlMembers(config control.ControlConfig) []control.Member {
-	if config.Mode == "stable" {
-		return config.Members
-	}
-	return config.New
+	p := authority.Snapshot()
+	// Never return the complete Projection: device authorizations contain RuntimeKey.
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "network_id": p.NetworkID, "genesis_id": node.GenesisID, "control_config_id": p.ControlConfigID, "members": p.Config.Members, "fact_frontier": p.Frontier, "targets": p.Targets, "pending_material_ids": p.PendingMaterialIDs, "invalid_materials": p.InvalidMaterials, "devices": len(p.DeviceAuthorizations), "endpoints": p.EndpointGenerations, "services": p.NetworkIntent.Services, "policies": p.NetworkIntent.Policies, "resources": p.NetworkIntent.Resources, "links": p.NetworkIntent.Links, "business_probe_targets": p.NetworkIntent.BusinessProbeTargets})
 }
 
 func cmdControlWrite(args []string) error {
@@ -495,38 +264,24 @@ func cmdControlWrite(args []string) error {
 	certPath := fs.String("cert", "", "管理员客户端证书")
 	keyPath := fs.String("key", "", "管理员客户端私钥")
 	caPath := fs.String("ca", "", "control TLS 根证书")
-	kind := fs.String("kind", "", "existing-node.rejoin、service.put、service.delete、members.replace、endpoint.put、enrollment.create、enrollment.approve、device.put 或 device.revoke")
-	payloadPath := fs.String("payload", "", "operation payload JSON")
-	requestID := fs.String("request-id", "", "稳定幂等请求 ID")
-	baseHead := fs.String("base-head", "", "读取到的 certified head")
+	requestPath := fs.String("request", "", "schema 3 规范 operation JSON 文件")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *kind == "" || *payloadPath == "" || *requestID == "" || *baseHead == "" {
-		return errors.New("control write 缺少 kind/payload/request-id/base-head 参数")
-	}
-	if *kind == "network.import" {
-		return errors.New("network.import 只能通过专用的一次性导入命令提交")
+	if fs.NArg() != 0 || *requestPath == "" {
+		return errors.New("control write 需要 request 文件")
 	}
 	local := *socket != ""
 	remote := *endpoint != "" && *certPath != "" && *keyPath != "" && *caPath != ""
 	if local == remote || local && (*endpoint != "" || *certPath != "" || *keyPath != "" || *caPath != "") {
 		return errors.New("control write 必须选择 socket，或完整的 url/cert/key/ca")
 	}
-	payload, err := os.ReadFile(*payloadPath)
+	body, err := os.ReadFile(*requestPath)
 	if err != nil {
 		return err
 	}
-	var raw json.RawMessage = payload
-	body, err := json.Marshal(struct {
-		Schema    int             `json:"schema"`
-		Kind      string          `json:"kind"`
-		Payload   json.RawMessage `json:"payload"`
-		RequestID string          `json:"request_id"`
-		BaseHead  string          `json:"base_head"`
-	}{2, *kind, raw, *requestID, *baseHead})
-	if err != nil {
-		return err
+	if _, err := control.DecodeOperation(body); err != nil {
+		return fmt.Errorf("invalid canonical operation: %w", err)
 	}
 	var client *http.Client
 	origin := strings.TrimRight(*endpoint, "/")
@@ -562,9 +317,12 @@ func cmdControlWrite(args []string) error {
 		return err
 	}
 	defer response.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
 	if err != nil {
 		return err
+	}
+	if len(responseBody) > 8<<20 {
+		return errors.New("control response exceeds reader resource boundary")
 	}
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("control write: %s: %s", response.Status, strings.TrimSpace(string(responseBody)))

@@ -2,342 +2,349 @@ package control
 
 import (
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/netip"
-	"sort"
-	"time"
-
-	"loom/internal/clientmodel"
+	"strconv"
+	"strings"
 )
 
 const (
-	claimDomain    = "loom-enrollment-claim-v1\n"
-	claimDomainV2  = "loom-enrollment-claim-v2\n"
-	resumeDomain   = "loom-enrollment-resume-v1\n"
-	resumeDomainV2 = "loom-enrollment-resume-v2\n"
-	reportDomain   = "loom-device-report-v1\n"
-	reportDomainV2 = "loom-device-report-v2\n"
+	claimDomain  = "loom-claim-v3\x00"
+	resumeDomain = "loom-resume-v3\x00"
+	reportDomain = "loom-report-v3\x00"
 )
 
 type EnrollmentClaimRequest struct {
-	Schema          int                 `json:"schema"`
-	Capability      BootstrapCapability `json:"capability"`
-	RequestID       string              `json:"request_id"`
-	DevicePublicKey string              `json:"device_public_key"`
-	Server          *ServerClaimV2      `json:"server,omitempty"`
-	Signature       string              `json:"signature"`
+	Schema           int    `json:"schema"`
+	NetworkID        string `json:"network_id"`
+	GenesisDigest    string `json:"genesis_digest"`
+	TransactionID    string `json:"transaction_id"`
+	InviteMaterialID string `json:"invite_material_id"`
+	RequestID        string `json:"request_id"`
+	DevicePublicKey  string `json:"device_public_key"`
+	Platform         string `json:"platform"`
+	Signature        string `json:"signature"`
 }
 
-type EnrollmentResumeRequest struct {
-	Schema          int    `json:"schema"`
-	TransactionID   string `json:"transaction_id"`
-	RequestID       string `json:"request_id"`
-	DevicePublicKey string `json:"device_public_key"`
-	Signature       string `json:"signature"`
+type EnrollmentResumeRequest EnrollmentClaimRequest
+
+func (request EnrollmentClaimRequest) unsigned() map[string]any {
+	return map[string]any{"schema": request.Schema, "network_id": request.NetworkID, "genesis_digest": request.GenesisDigest,
+		"transaction_id": request.TransactionID, "invite_material_id": request.InviteMaterialID, "request_id": request.RequestID,
+		"device_public_key": request.DevicePublicKey, "platform": request.Platform}
 }
 
-type EnrollmentResponse struct {
-	Schema      int                   `json:"schema"`
-	Transaction EnrollmentTransaction `json:"transaction"`
-	DeviceView  *DeviceViewEnvelope   `json:"device_view,omitempty"`
+func (request EnrollmentClaimRequest) validateFields() error {
+	if request.Schema != 3 || ValidateID(request.NetworkID) != nil || ValidateDigest(request.GenesisDigest) != nil ||
+		ValidateID(request.TransactionID) != nil || ValidateDigest(request.InviteMaterialID) != nil || ValidateID(request.RequestID) != nil ||
+		ValidatePublicKey(request.DevicePublicKey) != nil || !validatePlatform(request.Platform) {
+		return errors.New("enrollment request is invalid")
+	}
+	return nil
 }
 
-type Observation = clientmodel.Observation
-
-type DeviceReport struct {
-	Schema       int                 `json:"schema"`
-	DeviceID     string              `json:"device_id"`
-	ViewDigest   string              `json:"view_digest"`
-	Selection    string              `json:"selection,omitempty"`
-	ReportedAt   string              `json:"reported_at"`
-	Observations []Observation       `json:"observations"`
-	Signature    string              `json:"signature"`
-	Selections   []ReportSelection   `json:"selections,omitempty"`
-	Runtime      *RuntimeReadback    `json:"runtime,omitempty"`
-	Components   []ComponentReadback `json:"components,omitempty"`
-	Links        []LinkReadback      `json:"links,omitempty"`
-	Deployment   *DeploymentReadback `json:"deployment,omitempty"`
-}
-
-type ReportSelection struct {
-	Scope       string `json:"scope"`
-	CandidateID string `json:"candidate_id"`
-}
-
-type RuntimeReadback struct {
-	State             string `json:"state"`
-	AppliedViewDigest string `json:"applied_view_digest"`
-	Exact             bool   `json:"exact"`
-	StartedAt         string `json:"started_at,omitempty"`
-	ErrorCode         string `json:"error_code,omitempty"`
-}
-
-type ComponentReadback struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Digest  string `json:"digest,omitempty"`
-}
-
-type LinkReadback struct {
-	LinkID            string `json:"link_id"`
-	Peer              string `json:"peer"`
-	Interface         string `json:"interface"`
-	Epoch             string `json:"epoch"`
-	ProbeTarget       string `json:"probe_target"`
-	Result            string `json:"result"`
-	LatencyMS         int64  `json:"latency_ms,omitempty"`
-	LatestHandshakeAt string `json:"latest_handshake_at,omitempty"`
-	TXBytes           uint64 `json:"tx_bytes"`
-	RXBytes           uint64 `json:"rx_bytes"`
-}
-
-type DeploymentReadback struct {
-	Generation       uint64 `json:"generation"`
-	PayloadSHA256    string `json:"payload_sha256"`
-	SelectedSnapshot string `json:"selected_snapshot"`
-	AppliedSnapshot  string `json:"applied_snapshot"`
-	Version          string `json:"version"`
-	RolloutVerified  bool   `json:"rollout_verified"`
-}
-
-func signedBytes(domain string, value any) ([]byte, error) {
-	body, err := canonical(value)
+func signedContractBytes(domain string, value any) ([]byte, error) {
+	body, err := CanonicalEncode(value)
 	if err != nil {
 		return nil, err
 	}
 	return append([]byte(domain), body...), nil
 }
 
-func (request EnrollmentClaimRequest) signingBytes() ([]byte, error) {
-	copy := request
-	copy.Signature = ""
-	domain := claimDomain
-	if request.Schema == enrollmentSchemaV2 {
-		domain = claimDomainV2
+func verifyContractSignature(domain string, value any, encodedSignature, encodedKey string) error {
+	key, err := base64.RawURLEncoding.DecodeString(encodedKey)
+	if err != nil || len(key) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(key) != encodedKey {
+		return errors.New("signature public key is invalid")
 	}
-	return signedBytes(domain, copy)
+	signature, err := base64.RawURLEncoding.DecodeString(encodedSignature)
+	if err != nil || len(signature) != ed25519.SignatureSize || base64.RawURLEncoding.EncodeToString(signature) != encodedSignature {
+		return errors.New("signature is not canonical")
+	}
+	message, err := signedContractBytes(domain, value)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(ed25519.PublicKey(key), message, signature) {
+		return errors.New("signature does not verify")
+	}
+	return nil
+}
+
+func (request EnrollmentClaimRequest) Validate() error {
+	if err := request.validateFields(); err != nil {
+		return err
+	}
+	return verifyContractSignature(claimDomain, request.unsigned(), request.Signature, request.DevicePublicKey)
+}
+func (request EnrollmentResumeRequest) Validate() error {
+	value := EnrollmentClaimRequest(request)
+	if err := value.validateFields(); err != nil {
+		return err
+	}
+	return verifyContractSignature(resumeDomain, value.unsigned(), value.Signature, value.DevicePublicKey)
 }
 
 func SignEnrollmentClaim(request EnrollmentClaimRequest, private ed25519.PrivateKey) (EnrollmentClaimRequest, error) {
-	request.Signature = ""
-	if err := request.validate(false); err != nil {
-		return request, err
+	if len(private) != ed25519.PrivateKeySize {
+		return EnrollmentClaimRequest{}, errors.New("claim signing key is invalid")
 	}
-	body, err := request.signingBytes()
+	if err := request.validateFields(); err != nil {
+		return EnrollmentClaimRequest{}, err
+	}
+	message, err := signedContractBytes(claimDomain, request.unsigned())
 	if err != nil {
-		return request, err
+		return EnrollmentClaimRequest{}, err
 	}
-	request.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, body))
-	return request, request.Validate()
+	request.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, message))
+	if err := request.Validate(); err != nil {
+		return EnrollmentClaimRequest{}, err
+	}
+	return request, nil
 }
-
-func (request EnrollmentClaimRequest) validate(requireSignature bool) error {
-	if request.Schema != enrollmentSchema && request.Schema != enrollmentSchemaV2 || request.Capability.Validate() != nil ||
-		!validName(request.RequestID) || !validRawKey(request.DevicePublicKey) {
-		return errors.New("enrollment claim is invalid")
-	}
-	if request.Schema == enrollmentSchema && request.Server != nil {
-		return errors.New("legacy enrollment claim cannot carry schema-2 server facts")
-	}
-	if request.Server != nil && request.Server.Validate() != nil {
-		return errors.New("enrollment server claim is invalid")
-	}
-	if requireSignature {
-		key, _ := base64.RawURLEncoding.DecodeString(request.DevicePublicKey)
-		signature, err := base64.RawURLEncoding.DecodeString(request.Signature)
-		body, bodyErr := request.signingBytes()
-		if err != nil || bodyErr != nil || !ed25519.Verify(key, body, signature) {
-			return errors.New("enrollment claim signature is invalid")
-		}
-	}
-	return nil
-}
-
-func (request EnrollmentClaimRequest) Validate() error { return request.validate(true) }
-
-func (request EnrollmentResumeRequest) signingBytes() ([]byte, error) {
-	copy := request
-	copy.Signature = ""
-	domain := resumeDomain
-	if request.Schema == enrollmentSchemaV2 {
-		domain = resumeDomainV2
-	}
-	return signedBytes(domain, copy)
-}
-
 func SignEnrollmentResume(request EnrollmentResumeRequest, private ed25519.PrivateKey) (EnrollmentResumeRequest, error) {
-	request.Signature = ""
-	if err := request.validate(false); err != nil {
-		return request, err
+	if len(private) != ed25519.PrivateKeySize {
+		return EnrollmentResumeRequest{}, errors.New("resume signing key is invalid")
 	}
-	body, err := request.signingBytes()
+	value := EnrollmentClaimRequest(request)
+	if err := value.validateFields(); err != nil {
+		return EnrollmentResumeRequest{}, err
+	}
+	message, err := signedContractBytes(resumeDomain, value.unsigned())
 	if err != nil {
-		return request, err
+		return EnrollmentResumeRequest{}, err
 	}
-	request.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, body))
-	return request, request.Validate()
+	request.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, message))
+	if err := request.Validate(); err != nil {
+		return EnrollmentResumeRequest{}, err
+	}
+	return request, nil
 }
 
-func (request EnrollmentResumeRequest) validate(requireSignature bool) error {
-	if request.Schema != enrollmentSchema && request.Schema != enrollmentSchemaV2 || !validName(request.TransactionID) ||
-		!validName(request.RequestID) || !validRawKey(request.DevicePublicKey) {
-		return errors.New("enrollment resume is invalid")
+type EnrollmentResponse struct {
+	Schema        int                 `json:"schema"`
+	TransactionID string              `json:"transaction_id"`
+	State         string              `json:"state"`
+	DeviceView    *DeviceViewEnvelope `json:"device_view,omitempty"`
+}
+
+func (response EnrollmentResponse) Validate() error {
+	if response.Schema != 3 || ValidateID(response.TransactionID) != nil {
+		return errors.New("enrollment response is invalid")
 	}
-	if requireSignature {
-		key, _ := base64.RawURLEncoding.DecodeString(request.DevicePublicKey)
-		signature, err := base64.RawURLEncoding.DecodeString(request.Signature)
-		body, bodyErr := request.signingBytes()
-		if err != nil || bodyErr != nil || !ed25519.Verify(key, body, signature) {
-			return errors.New("enrollment resume signature is invalid")
+	switch response.State {
+	case "open", "bound", "completed", "cancelled", "expired":
+	default:
+		return errors.New("enrollment response state is invalid")
+	}
+	if (response.State == "completed") != (response.DeviceView != nil) {
+		return errors.New("enrollment response view does not match completion")
+	}
+	if response.DeviceView != nil {
+		return response.DeviceView.Validate()
+	}
+	return nil
+}
+
+type ReportSelection struct {
+	ServiceID   string `json:"service_id"`
+	CandidateID string `json:"candidate_id"`
+}
+type RuntimeReadback struct {
+	State             string              `json:"state"`
+	AppliedViewDigest string              `json:"applied_view_digest"`
+	ErrorCode         string              `json:"error_code"`
+	Resources         *[]ResourceReadback `json:"resources,omitempty"`
+}
+
+type ResourceReadback struct {
+	ResourceID        string `json:"resource_id"`
+	ListenerID        string `json:"listener_id"`
+	Listen            string `json:"listen"`
+	CertificateDigest string `json:"certificate_digest"`
+	ACLDigest         string `json:"acl_digest"`
+}
+
+func (value ResourceReadback) Validate() error {
+	host, port, err := net.SplitHostPort(value.Listen)
+	ip, ipErr := netip.ParseAddr(host)
+	number, numberErr := strconv.Atoi(port)
+	if ValidateID(value.ResourceID) != nil || ValidateID(value.ListenerID) != nil || ValidateDigest(value.CertificateDigest) != nil || ValidateDigest(value.ACLDigest) != nil ||
+		err != nil || ipErr != nil || ip.Zone() != "" || ip.String() != host || numberErr != nil || number < 1 || number > 65535 || net.JoinHostPort(host, strconv.Itoa(number)) != value.Listen {
+		return errors.New("resource execution readback is invalid")
+	}
+	return nil
+}
+
+type ComponentReadback struct {
+	ComponentID    string `json:"component_id"`
+	Platform       string `json:"platform"`
+	Version        string `json:"version"`
+	ArtifactDigest string `json:"artifact_digest"`
+}
+
+func (component ComponentReadback) Validate() error {
+	if ValidateID(component.ComponentID) != nil || ValidateText(component.Platform) != nil || ValidateText(component.Version) != nil || ValidateDigest(component.ArtifactDigest) != nil {
+		return errors.New("component readback is invalid")
+	}
+	return nil
+}
+
+func (runtime RuntimeReadback) Validate() error {
+	switch runtime.State {
+	case "running", "error", "stopped", "unknown":
+	default:
+		return errors.New("runtime readback state is invalid")
+	}
+	if runtime.AppliedViewDigest != "" && ValidateDigest(runtime.AppliedViewDigest) != nil || runtime.ErrorCode != "" && ValidateID(runtime.ErrorCode) != nil {
+		return errors.New("runtime readback value is invalid")
+	}
+	if runtime.State == "running" && (runtime.AppliedViewDigest == "" || runtime.ErrorCode != "") {
+		return errors.New("running readback requires an applied digest and no error")
+	}
+	if runtime.Resources != nil {
+		if runtime.State != "running" || len(*runtime.Resources) == 0 {
+			return errors.New("resource readback requires actual running resources")
+		}
+		for index, value := range *runtime.Resources {
+			if value.Validate() != nil || index > 0 && (*runtime.Resources)[index-1].ResourceID >= value.ResourceID {
+				return errors.New("resource readbacks are invalid or not uniquely sorted")
+			}
 		}
 	}
 	return nil
 }
 
-func (request EnrollmentResumeRequest) Validate() error { return request.validate(true) }
-
-func (report DeviceReport) signingBytes() ([]byte, error) {
-	copy := report
-	copy.Signature = ""
-	domain := reportDomain
-	if report.Schema == enrollmentSchemaV2 {
-		domain = reportDomainV2
-	}
-	return signedBytes(domain, copy)
+type Observation struct {
+	Level             string `json:"level"`
+	ServiceID         string `json:"service_id"`
+	CandidateID       string `json:"candidate_id"`
+	ResourceID        string `json:"resource_id"`
+	LinkID            string `json:"link_id"`
+	Target            string `json:"target"`
+	Action            string `json:"action"`
+	SpecDigest        string `json:"spec_digest"`
+	NetworkGeneration string `json:"network_generation"`
+	Result            string `json:"result"`
+	ObservedAt        int64  `json:"observed_at"`
+	ValidUntil        int64  `json:"valid_until"`
+	DurationMS        *int64 `json:"duration_ms,omitempty"`
 }
 
+func (observation Observation) Validate() error {
+	if ValidateDigest(observation.SpecDigest) != nil || ValidateID(observation.NetworkGeneration) != nil || !validateTime(observation.ObservedAt) || !validateTime(observation.ValidUntil) || observation.ObservedAt >= observation.ValidUntil || observation.DurationMS != nil && *observation.DurationMS < 0 {
+		return errors.New("observation identity or time is invalid")
+	}
+	switch observation.Result {
+	case "available", "unavailable", "unknown":
+	default:
+		return errors.New("observation result is invalid")
+	}
+	switch observation.Level {
+	case "service":
+		if ValidateID(observation.ServiceID) != nil || ValidateDigest(observation.CandidateID) != nil || observation.ResourceID != "" || observation.LinkID != "" || observation.Action != "https_request" || ValidateHTTPSURL(observation.Target) != nil {
+			return errors.New("service observation is invalid")
+		}
+	case "resource", "link":
+		return errors.New("transport observation actions are not yet specified")
+	default:
+		return errors.New("observation level is invalid")
+	}
+	return nil
+}
+
+func observationOrder(value Observation) string {
+	return strings.Join([]string{value.NetworkGeneration, value.Level, value.ServiceID, value.CandidateID, value.ResourceID, value.LinkID, value.Target, value.Action, value.SpecDigest}, "\x00")
+}
+
+type DeviceReport struct {
+	Schema            int                 `json:"schema"`
+	NetworkID         string              `json:"network_id"`
+	DeviceID          string              `json:"device_id"`
+	ReportSequence    U64                 `json:"report_sequence"`
+	ViewDigest        string              `json:"view_digest"`
+	NetworkGeneration string              `json:"network_generation"`
+	ReportedAt        int64               `json:"reported_at"`
+	Selections        []ReportSelection   `json:"selections"`
+	Observations      []Observation       `json:"observations"`
+	Runtime           RuntimeReadback     `json:"runtime"`
+	Components        []ComponentReadback `json:"components"`
+	Signature         string              `json:"signature"`
+}
+
+func (report DeviceReport) unsigned() map[string]any {
+	return map[string]any{"schema": report.Schema, "network_id": report.NetworkID, "device_id": report.DeviceID, "report_sequence": report.ReportSequence, "view_digest": report.ViewDigest, "network_generation": report.NetworkGeneration, "reported_at": report.ReportedAt, "selections": report.Selections, "observations": report.Observations, "runtime": report.Runtime, "components": report.Components}
+}
+
+func (report DeviceReport) validateFields() error {
+	if report.Schema != 3 || ValidateID(report.NetworkID) != nil || ValidateID(report.DeviceID) != nil || report.DeviceID == "direct" || report.ReportSequence == 0 || ValidateDigest(report.ViewDigest) != nil || ValidateID(report.NetworkGeneration) != nil || !validateTime(report.ReportedAt) || report.Selections == nil || report.Observations == nil || report.Components == nil || report.Runtime.Validate() != nil {
+		return errors.New("device report is invalid")
+	}
+	for index, selection := range report.Selections {
+		if ValidateID(selection.ServiceID) != nil || ValidateDigest(selection.CandidateID) != nil || index > 0 && report.Selections[index-1].ServiceID >= selection.ServiceID {
+			return errors.New("report selections are invalid or not uniquely sorted")
+		}
+	}
+	for index, observation := range report.Observations {
+		if observation.Validate() != nil || observation.NetworkGeneration != report.NetworkGeneration || index > 0 && observationOrder(report.Observations[index-1]) >= observationOrder(observation) {
+			return errors.New("report observations are invalid or not uniquely sorted")
+		}
+	}
+	for index, component := range report.Components {
+		if component.Validate() != nil {
+			return errors.New("report component is invalid")
+		}
+		if index > 0 {
+			previous := report.Components[index-1]
+			if previous.ComponentID > component.ComponentID || previous.ComponentID == component.ComponentID && previous.Platform >= component.Platform {
+				return errors.New("report components are not uniquely sorted")
+			}
+		}
+	}
+	return nil
+}
+
+func (report DeviceReport) Validate() error {
+	if err := report.validateFields(); err != nil {
+		return err
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(report.Signature)
+	if err != nil || len(signature) != ed25519.SignatureSize || base64.RawURLEncoding.EncodeToString(signature) != report.Signature {
+		return errors.New("report signature is not canonical")
+	}
+	return nil
+}
+func (report DeviceReport) Verify(publicKey string) error {
+	if err := report.Validate(); err != nil {
+		return err
+	}
+	return verifyContractSignature(reportDomain, report.unsigned(), report.Signature, publicKey)
+}
 func SignDeviceReport(report DeviceReport, private ed25519.PrivateKey) (DeviceReport, error) {
-	report.Signature = ""
-	if err := report.validate(false, ""); err != nil {
-		return report, err
+	if len(private) != ed25519.PrivateKeySize {
+		return DeviceReport{}, errors.New("report signing key is invalid")
 	}
-	body, err := report.signingBytes()
+	if err := report.validateFields(); err != nil {
+		return DeviceReport{}, err
+	}
+	message, err := signedContractBytes(reportDomain, report.unsigned())
 	if err != nil {
-		return report, err
+		return DeviceReport{}, err
 	}
-	report.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, body))
+	report.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, message))
 	return report, nil
 }
 
-func (report DeviceReport) validate(requireSignature bool, publicKey string) error {
-	if report.Schema != enrollmentSchema && report.Schema != enrollmentSchemaV2 || !validName(report.DeviceID) || !validDigest(report.ViewDigest) {
-		return errors.New("device report is incomplete")
-	}
-	if _, err := time.Parse(time.RFC3339, report.ReportedAt); err != nil {
-		return errors.New("device report time is invalid")
-	}
-	if report.Selection != "" && !validName(report.Selection) {
-		return errors.New("device report selection is invalid")
-	}
-	if report.Schema == enrollmentSchemaV2 {
-		if report.Selection != "" || report.Runtime == nil {
-			return errors.New("schema-2 device report contains legacy selection or no runtime readback")
-		}
-		for index, selection := range report.Selections {
-			if !validName(selection.Scope) || !validName(selection.CandidateID) ||
-				index > 0 && report.Selections[index-1].Scope >= selection.Scope {
-				return errors.New("device report selections are not uniquely sorted")
-			}
-		}
-		if report.Runtime.AppliedViewDigest != report.ViewDigest {
-			return errors.New("device runtime readback does not cover report view")
-		}
-		switch report.Runtime.State {
-		case "running", "stopped", "error":
-		default:
-			return errors.New("device runtime state is invalid")
-		}
-		if report.Runtime.StartedAt != "" {
-			started, err := time.Parse(time.RFC3339, report.Runtime.StartedAt)
-			if err != nil || started.UTC().Format(time.RFC3339) != report.Runtime.StartedAt {
-				return errors.New("device runtime start time is invalid")
-			}
-		}
-		if report.Runtime.ErrorCode != "" && !validName(report.Runtime.ErrorCode) {
-			return errors.New("device runtime error code is invalid")
-		}
-		if report.Runtime.State != "error" && report.Runtime.ErrorCode != "" {
-			return errors.New("device runtime error is inconsistent")
-		}
-		if err := validateComponentReadbacks(report.Components); err != nil {
-			return err
-		}
-		for index, link := range report.Links {
-			probe, probeErr := netip.ParseAddr(link.ProbeTarget)
-			if !validName(link.LinkID) || !validName(link.Peer) || !validName(link.Interface) || !validName(link.Epoch) ||
-				probeErr != nil || probe.String() != link.ProbeTarget || link.LatencyMS < 0 || index > 0 && report.Links[index-1].LinkID >= link.LinkID {
-				return errors.New("device link readbacks are not uniquely sorted")
-			}
-			if link.LatestHandshakeAt != "" {
-				handshake, err := time.Parse(time.RFC3339, link.LatestHandshakeAt)
-				if err != nil || handshake.UTC().Format(time.RFC3339) != link.LatestHandshakeAt {
-					return errors.New("device link handshake time is invalid")
-				}
-			}
-			switch link.Result {
-			case "available", "unavailable", "unknown":
-			default:
-				return errors.New("device link result is invalid")
-			}
-		}
-		if report.Deployment != nil {
-			deployment := report.Deployment
-			if deployment.Generation == 0 || !validLowerHex(deployment.PayloadSHA256, sha256.Size) ||
-				!validLowerHex(deployment.SelectedSnapshot, 6) || !validLowerHex(deployment.AppliedSnapshot, 6) ||
-				!validName(deployment.Version) {
-				return errors.New("device deployment readback is invalid")
-			}
-		}
-	} else if len(report.Selections) != 0 || report.Runtime != nil || len(report.Components) != 0 || len(report.Links) != 0 || report.Deployment != nil {
-		return errors.New("schema-1 device report contains schema-2 fields")
-	}
-	for index, observation := range report.Observations {
-		if observation.Validate() != nil || index > 0 && report.Observations[index-1].CandidateID >= observation.CandidateID {
-			return errors.New("device report observations are not uniquely sorted")
-		}
-	}
-	if requireSignature {
-		if !validRawKey(publicKey) {
-			return errors.New("device report key is invalid")
-		}
-		key, _ := base64.RawURLEncoding.DecodeString(publicKey)
-		signature, err := base64.RawURLEncoding.DecodeString(report.Signature)
-		body, bodyErr := report.signingBytes()
-		if err != nil || bodyErr != nil || !ed25519.Verify(key, body, signature) {
-			return errors.New("device report signature is invalid")
-		}
-	}
-	return nil
+type DeviceReportResponse struct {
+	Schema         int    `json:"schema"`
+	ReportSequence U64    `json:"report_sequence"`
+	Status         string `json:"status"`
 }
 
-func validateComponentReadbacks(values []ComponentReadback) error {
-	if !sort.SliceIsSorted(values, func(i, j int) bool { return values[i].Name < values[j].Name }) {
-		return errors.New("device component readbacks are not sorted")
-	}
-	for index, component := range values {
-		if !validName(component.Name) || !validName(component.Version) || index > 0 && values[index-1].Name == component.Name ||
-			component.Digest != "" && !validDigest(component.Digest) {
-			return errors.New("device component readbacks are invalid")
-		}
+func (response DeviceReportResponse) Validate() error {
+	if response.Schema != 3 || response.ReportSequence == 0 || response.Status != "accepted" {
+		return errors.New("report response is invalid")
 	}
 	return nil
-}
-
-func (report DeviceReport) Verify(publicKey string) error { return report.validate(true, publicKey) }
-
-func SelectRoute(routes []RouteCandidate, observations []Observation, finalExit, current string, now time.Time) (string, error) {
-	preference := clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}
-	if finalExit == "direct" {
-		preference.Mode = clientmodel.ModeDirect
-	} else if finalExit != "" && finalExit != "auto" {
-		preference.Mode, preference.Exit = clientmodel.ModeFixed, finalExit
-	}
-	generation := "unknown"
-	if len(observations) > 0 {
-		generation = observations[0].NetworkGeneration
-	}
-	selection, err := clientmodel.Select(routes, observations, preference, current, generation, now)
-	return selection.CandidateID, err
 }

@@ -6,14 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"reflect"
-	"slices"
 	"strings"
 )
 
 const (
-	WindowsInstalledCAPath = `C:\ProgramData\Loom\tls\ca.crt`
-	maxSingBoxBytes        = 16 << 20
+	maxSingBoxBytes = 16 << 20
 )
 
 // WindowsRuntimeProfile 按 §7.2.1 从同一签名策略派生本地接管面。
@@ -27,8 +26,8 @@ const (
 )
 
 type singBoxConfig struct {
-	Log          singBoxLog           `json:"log"`
-	DNS          *singBoxDNS          `json:"dns"`
+	Log          singBoxLog           `json:"log,omitempty"`
+	DNS          *singBoxDNS          `json:"dns,omitempty"`
 	Inbounds     []singBoxInbound     `json:"inbounds"`
 	Outbounds    []singBoxOutbound    `json:"outbounds"`
 	Route        singBoxRoute         `json:"route"`
@@ -123,80 +122,230 @@ type singBoxAPI struct {
 	Secret             string `json:"secret"`
 }
 
+// ValidateWindowsSingBox accepts only the current hydrated authorization source.
+// Platform capture is derived separately; no CA or DNS defaults are supplied.
 func ValidateWindowsSingBox(body []byte) error {
-	return validateWindowsSingBox(body, WindowsInstalledProfile, WindowsInstalledCAPath, false)
+	c, err := decodeWindowsConfig(body)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(c.Inbounds, []singBoxInbound{{Type: "tun", Tag: "tun-in", AutoRoute: true}}) || c.DNS != nil || c.Log.Level != "" || c.Route.AutoDetectInterface {
+		return errors.New("Windows source contains platform capture facilities")
+	}
+	return validateWindowsAuthorization(c)
 }
 
-// DeriveWindowsRuntimeConfig 按 §7.2.1 先验证完整签名策略，再派生本机接管面。
-// Mixed 删除 TUN 及仅匹配 TUN 的规则，避免移除匹配条件后扩大规则范围。
-// TUN 将 DNS 交给签名配置中的解析器，并绑定默认网卡以防底层连接重新进入 TUN。
-func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, caPath string) ([]byte, error) {
+// DeriveWindowsRuntimeConfig preserves the authenticated routes and adds only
+// local capture and explicitly supplied authenticated DNS infrastructure.
+func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsServers []string) ([]byte, error) {
 	if err := ValidateWindowsSingBox(body); err != nil {
-		return nil, fmt.Errorf("validate signed Windows source config: %w", err)
-	}
-	if err := validateRuntimeTarget(profile, caPath); err != nil {
 		return nil, err
 	}
-	var config singBoxConfig
-	if err := json.Unmarshal(body, &config); err != nil {
+	if err := validateRuntimeTarget(profile); err != nil {
 		return nil, err
 	}
-	for index := range config.Outbounds {
-		if config.Outbounds[index].TLS != nil {
-			config.Outbounds[index].TLS.CertificatePath = caPath
-		}
+	c, _ := decodeWindowsConfig(body)
+	c.Log.Level = "warn"
+	c.Inbounds = []singBoxInbound{{Type: "mixed", Tag: "in-1080", Listen: "127.0.0.1", ListenPort: 1080}}
+	tun := profile != WindowsPortableMixedProfile
+	if tun {
+		c.Inbounds = append(c.Inbounds, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30"}, AutoRoute: true, Stack: "system"})
+		c.Route.AutoDetectInterface = true
 	}
-	if profile == WindowsPortableMixedProfile {
-		inbounds := config.Inbounds[:0]
-		for _, inbound := range config.Inbounds {
-			if inbound.Tag != "tun-in" {
-				inbounds = append(inbounds, inbound)
+	prefix := []singBoxRule{}
+	if len(dnsServers) > 0 {
+		c.DNS = &singBoxDNS{ReverseMapping: tun, Servers: []singBoxDNSServer{}}
+		for i, address := range dnsServers {
+			ip, err := netip.ParseAddr(address)
+			if err != nil || ip.String() != address {
+				return nil, errors.New("authenticated DNS must be a canonical IP")
 			}
+			c.DNS.Servers = append(c.DNS.Servers, singBoxDNSServer{Tag: fmt.Sprintf("dns-%d", i), Address: address, Detour: "dns-underlay"})
 		}
-		config.Inbounds = inbounds
-		rules := config.Route.Rules[:0]
-		for _, rule := range config.Route.Rules {
-			hadInbound := len(rule.Inbound) > 0
-			selected := rule.Inbound[:0]
-			for _, inbound := range rule.Inbound {
-				if inbound != "tun-in" {
-					selected = append(selected, inbound)
-				}
-			}
-			rule.Inbound = selected
-			if hadInbound && len(rule.Inbound) == 0 {
-				continue
-			}
-			rules = append(rules, rule)
-		}
-		config.Route.Rules = rules
-	} else {
-		config.Route.AutoDetectInterface = true
-		// §7.2.1：TUN 只收到目标 IP；复用受管 DNS 的域名映射，并从可见的
-		// HTTP/TLS/QUIC 元数据补充域名，才能执行原签名 Service 规则。
-		config.DNS.ReverseMapping = true
-		config.Route.Rules = append([]singBoxRule{windowsTUNDNSRule(), windowsTUNSniffRule()}, config.Route.Rules...)
+		c.Outbounds = append(c.Outbounds, singBoxOutbound{Type: "direct", Tag: "dns-underlay"})
+		prefix = append(prefix, windowsDNSRule(tun))
 	}
-	derived, err := json.MarshalIndent(&config, "", "  ")
+	if tun {
+		prefix = append(prefix, windowsSniffRule("tun-in"))
+	}
+	prefix = append(prefix, windowsMixedSniffRule())
+	c.Route.Rules = append(prefix, c.Route.Rules...)
+	result, err := json.Marshal(c)
 	if err != nil {
 		return nil, err
 	}
-	derived = append(derived, '\n')
-	if err := ValidateWindowsRuntimeConfig(derived, profile, caPath); err != nil {
-		clear(derived)
-		return nil, fmt.Errorf("validate derived Windows runtime config: %w", err)
+	if err = ValidateWindowsRuntimeConfig(result, profile); err != nil {
+		return nil, err
 	}
-	return derived, nil
+	return result, nil
 }
 
-// ValidateWindowsRuntimeConfig validates a derived local runtime shape. Callers
-// must still use DeriveWindowsRuntimeConfig rather than accepting this as a
-// second unsigned policy input.
-func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, caPath string) error {
-	if err := validateRuntimeTarget(profile, caPath); err != nil {
+func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) error {
+	if err := validateRuntimeTarget(profile); err != nil {
 		return err
 	}
-	return validateWindowsSingBox(body, profile, caPath, true)
+	c, err := decodeWindowsConfig(body)
+	if err != nil {
+		return err
+	}
+	tun := profile != WindowsPortableMixedProfile
+	expected := []singBoxInbound{{Type: "mixed", Tag: "in-1080", Listen: "127.0.0.1", ListenPort: 1080}}
+	if tun {
+		expected = append(expected, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30"}, AutoRoute: true, Stack: "system"})
+	}
+	if !reflect.DeepEqual(c.Inbounds, expected) || c.Log.Level != "warn" || c.Route.AutoDetectInterface != tun {
+		return errors.New("Windows runtime capture does not match its profile")
+	}
+	prefix := []singBoxRule{}
+	if c.DNS != nil {
+		if len(c.DNS.Servers) == 0 || c.DNS.ReverseMapping != tun || c.DNS.Strategy != "" {
+			return errors.New("invalid managed DNS")
+		}
+		for i, server := range c.DNS.Servers {
+			ip, err := netip.ParseAddr(server.Address)
+			if err != nil || ip.String() != server.Address || server.Tag != fmt.Sprintf("dns-%d", i) || server.Detour != "dns-underlay" {
+				return errors.New("invalid managed DNS server")
+			}
+		}
+		last := len(c.Outbounds) - 1
+		if last < 0 || !reflect.DeepEqual(c.Outbounds[last], singBoxOutbound{Type: "direct", Tag: "dns-underlay"}) {
+			return errors.New("missing managed DNS underlay")
+		}
+		c.Outbounds = c.Outbounds[:last]
+		prefix = append(prefix, windowsDNSRule(tun))
+	}
+	if tun {
+		prefix = append(prefix, windowsSniffRule("tun-in"))
+	}
+	prefix = append(prefix, windowsMixedSniffRule())
+	if len(c.Route.Rules) < len(prefix) || !reflect.DeepEqual(c.Route.Rules[:len(prefix)], prefix) {
+		return errors.New("managed DNS/sniff rules are missing, reordered or broadened")
+	}
+	c.Route.Rules = c.Route.Rules[len(prefix):]
+	return validateWindowsAuthorization(c)
+}
+func decodeWindowsConfig(body []byte) (singBoxConfig, error) {
+	var c singBoxConfig
+	if len(body) == 0 || len(body) > maxSingBoxBytes {
+		return c, errors.New("invalid config size")
+	}
+	if bytes.Contains(body, []byte("${secret:")) {
+		return c, errors.New("unresolved runtime secret")
+	}
+	if err := rejectDuplicateJSONKeys(body); err != nil {
+		return c, err
+	}
+	d := json.NewDecoder(bytes.NewReader(body))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&c); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+func validateRuntimeTarget(profile WindowsRuntimeProfile) error {
+	switch profile {
+	case WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile:
+		return nil
+	}
+	return errors.New("unsupported Windows runtime profile")
+}
+func windowsDNSRule(tun bool) singBoxRule {
+	inbound := []string{"in-1080"}
+	if tun {
+		inbound = append(inbound, "tun-in")
+	}
+	return singBoxRule{Inbound: inbound, Port: []int{53}, Action: "hijack-dns"}
+}
+func windowsSniffRule(inbound string) singBoxRule {
+	return singBoxRule{Type: "logical", Mode: "and", Rules: []singBoxRule{{Inbound: []string{inbound}}, {Port: []int{53}, Invert: true}, {DomainRegex: []string{".+"}, Invert: true}}, Action: "sniff"}
+}
+func windowsMixedSniffRule() singBoxRule { return windowsSniffRule("in-1080") }
+func validateWindowsAuthorization(c singBoxConfig) error {
+	if c.Route.Final != "reject" || len(c.Outbounds) == 0 {
+		return errors.New("runtime must retain reject final")
+	}
+	if c.Experimental == nil || c.Experimental.ClashAPI == nil || c.Experimental.ClashAPI.ExternalController != "127.0.0.1:61800" || strings.TrimSpace(c.Experimental.ClashAPI.Secret) == "" {
+		return errors.New("runtime must have its local authenticated API")
+	}
+	tags := map[string]string{}
+	for _, o := range c.Outbounds {
+		if o.Tag == "" || tags[o.Tag] != "" {
+			return errors.New("duplicate or missing outbound tag")
+		}
+		tags[o.Tag] = o.Type
+		shape := singBoxOutbound{Type: o.Type, Tag: o.Tag}
+		switch o.Type {
+		case "block":
+			if o.Tag != "reject" {
+				return errors.New("invalid block")
+			}
+		case "direct":
+			if o.Tag == "dns-underlay" {
+				return errors.New("DNS underlay cannot enter authorization")
+			}
+		case "selector":
+			shape.Outbounds = o.Outbounds
+			shape.Default = o.Default
+			if len(o.Outbounds) == 0 {
+				return errors.New("empty selector")
+			}
+		default:
+			return errors.New("unsupported authorization transport")
+		}
+		if !reflect.DeepEqual(o, shape) {
+			return errors.New("unsupported authorization outbound fields")
+		}
+	}
+	if tags["reject"] != "block" {
+		return errors.New("missing reject outbound")
+	}
+	for _, o := range c.Outbounds {
+		if o.Type == "selector" {
+			seen := map[string]bool{}
+			for _, member := range o.Outbounds {
+				if seen[member] || tags[member] != "direct" {
+					return errors.New("invalid selector member")
+				}
+				seen[member] = true
+			}
+			if !seen[o.Default] {
+				return errors.New("invalid selector default")
+			}
+		}
+	}
+	for _, r := range c.Route.Rules {
+		if err := validateServiceRule(r, tags, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func validateServiceRule(r singBoxRule, tags map[string]string, top bool) error {
+	if r.Action != "" || r.Invert || len(r.Inbound) > 0 || len(r.AuthUser) > 0 || len(r.DomainRegex) > 0 || len(r.Port) > 0 {
+		return errors.New("authorization contains capture rule")
+	}
+	if top {
+		if r.Outbound != "reject" && tags[r.Outbound] != "selector" {
+			return errors.New("unknown service selector")
+		}
+	} else if r.Outbound != "" {
+		return errors.New("nested authorization outbound")
+	}
+	if r.Type == "logical" {
+		if (r.Mode != "and" && r.Mode != "or") || len(r.Rules) == 0 || len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 {
+			return errors.New("invalid logical Service match")
+		}
+		for _, child := range r.Rules {
+			if err := validateServiceRule(child, tags, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if r.Type != "" || r.Mode != "" || len(r.Rules) > 0 || len(r.Domain)+len(r.DomainSuffix)+len(r.IPCIDR) == 0 {
+		return errors.New("invalid Service match")
+	}
+	return nil
 }
 
 // HasServerInbound reports whether an already-installed sing-box configuration
@@ -237,272 +386,6 @@ func HasServerInbound(body []byte) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func windowsTUNDNSRule() singBoxRule {
-	return singBoxRule{Inbound: []string{"tun-in"}, Port: []int{53}, Action: "hijack-dns"}
-}
-
-func isWindowsTUNDNSRule(rule singBoxRule) bool {
-	return reflect.DeepEqual(rule, windowsTUNDNSRule())
-}
-
-func windowsTUNSniffRule() singBoxRule {
-	// §7.2.1：1.11.4 的无 SNI TLS 嗅探会清空已恢复的 DNS 域名；只补充未知域名。
-	return singBoxRule{Type: "logical", Mode: "and", Rules: []singBoxRule{
-		{Inbound: []string{"tun-in"}},
-		{DomainRegex: []string{".+"}, Invert: true},
-	}, Action: "sniff"}
-}
-
-func isWindowsTUNSniffRule(rule singBoxRule) bool {
-	return reflect.DeepEqual(rule, windowsTUNSniffRule())
-}
-
-func validateRuntimeTarget(profile WindowsRuntimeProfile, caPath string) error {
-	switch profile {
-	case WindowsInstalledProfile:
-		if !validInstalledWindowsCAPath(caPath) {
-			return errors.New("[§7.2.1 / §13.5] Installed CA 路径必须属于受保护的本地连接配置")
-		}
-	case WindowsPortableMixedProfile, WindowsPortableTUNProfile:
-		if !validAbsoluteWindowsPath(caPath) || !strings.HasSuffix(strings.ToLower(caPath), `\tls\ca.crt`) {
-			return fmt.Errorf("portable Windows CA path is not an absolute managed path: %q", caPath)
-		}
-	default:
-		return fmt.Errorf("unsupported Windows runtime profile %q", profile)
-	}
-	return nil
-}
-
-// §13.5：签名源仍使用统一的 CA 占位路径；只有本机派生配置可定位到独立身份根。
-// 用固定目录与精确标识校验，不将 GUI 名称、相对路径或规范化别名当作可信路径。
-func validInstalledWindowsCAPath(path string) bool {
-	if path == WindowsInstalledCAPath {
-		return true
-	}
-	id, ok := strings.CutPrefix(path, `C:\ProgramData\Loom\profiles\`)
-	if !ok {
-		return false
-	}
-	id, ok = strings.CutSuffix(id, `\tls\ca.crt`)
-	if !ok || len(id) != 32 {
-		return false
-	}
-	for _, character := range id {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-func validAbsoluteWindowsPath(value string) bool {
-	if len(value) < 4 || len(value) > 1024 || ((value[0] < 'A' || value[0] > 'Z') && (value[0] < 'a' || value[0] > 'z')) ||
-		value[1] != ':' || value[2] != '\\' || strings.Contains(value, "/") || strings.ContainsAny(value, "\x00\r\n") {
-		return false
-	}
-	for _, part := range strings.Split(value[3:], `\`) {
-		if part == "" || part == "." || part == ".." {
-			return false
-		}
-	}
-	return true
-}
-
-func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath string, derived bool) error {
-	if len(body) == 0 || len(body) > maxSingBoxBytes {
-		return errors.New("sing-box config has invalid size")
-	}
-	if bytes.Contains(body, []byte("${secret:")) {
-		return errors.New("sing-box config contains an unresolved secret")
-	}
-	if bytes.Contains(bytes.ToLower(body), []byte("/etc/loom")) {
-		return errors.New("sing-box config contains a Linux Loom path")
-	}
-	if err := rejectDuplicateJSONKeys(body); err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	var config singBoxConfig
-	if err := decoder.Decode(&config); err != nil {
-		return fmt.Errorf("decode sing-box config: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("sing-box config has trailing content")
-	}
-	if strings.TrimSpace(config.Log.Level) == "" || config.DNS == nil || len(config.DNS.Servers) == 0 ||
-		len(config.Inbounds) == 0 || len(config.Outbounds) == 0 {
-		return errors.New("sing-box config is missing log, dns, inbounds, or outbounds")
-	}
-	if config.Route.Final != "block" {
-		return fmt.Errorf("route.final must remain block, got %q", config.Route.Final)
-	}
-	localTUNCapture := derived && profile != WindowsPortableMixedProfile
-	if config.Route.AutoDetectInterface != localTUNCapture {
-		return errors.New("[§7.2.1] Windows 网卡绑定与本地接管形态不一致")
-	}
-	if config.DNS.ReverseMapping != localTUNCapture {
-		return errors.New("[§7.2.1] DNS 域名映射只属于本机 TUN 接管，不属于远端签名策略")
-	}
-	if localTUNCapture && (len(config.Route.Rules) < 2 || !isWindowsTUNDNSRule(config.Route.Rules[0]) || !isWindowsTUNSniffRule(config.Route.Rules[1])) {
-		return errors.New("[§7.2.1] Windows TUN 必须在出口规则之前接管 DNS 并识别域名")
-	}
-
-	inboundTags := map[string]bool{}
-	tunCount, managedMixedCount := 0, 0
-	for _, inbound := range config.Inbounds {
-		if inbound.Tag == "" || inboundTags[inbound.Tag] {
-			return fmt.Errorf("empty or duplicate inbound tag %q", inbound.Tag)
-		}
-		inboundTags[inbound.Tag] = true
-		switch inbound.Type {
-		case "tun":
-			tunCount++
-			if inbound.Tag != "tun-in" || !inbound.AutoRoute || inbound.Stack != "system" ||
-				!slices.Equal(inbound.Address, []string{"172.19.0.1/30"}) || inbound.Listen != "" || inbound.ListenPort != 0 ||
-				len(inbound.Users) != 0 || inbound.TLS != nil {
-				return errors.New("Windows TUN inbound does not match the managed platform shape")
-			}
-		case "mixed":
-			if inbound.Listen != "127.0.0.1" || inbound.ListenPort < 1 || inbound.ListenPort > 65535 ||
-				len(inbound.Address) != 0 || inbound.AutoRoute || inbound.Stack != "" || inbound.TLS != nil {
-				return fmt.Errorf("mixed inbound %q must listen on IPv4 loopback", inbound.Tag)
-			}
-			for _, user := range inbound.Users {
-				if user.Username == "" || user.Password == "" {
-					return fmt.Errorf("mixed inbound %q has an incomplete local user", inbound.Tag)
-				}
-			}
-			if inbound.Tag == "in-1080" && inbound.ListenPort == 1080 {
-				managedMixedCount++
-			}
-		default:
-			return fmt.Errorf("unsupported Windows inbound type %q", inbound.Type)
-		}
-	}
-	wantTun := 1
-	if profile == WindowsPortableMixedProfile {
-		wantTun = 0
-	}
-	if tunCount != wantTun || managedMixedCount != 1 {
-		return fmt.Errorf("Windows %s config requires %d managed TUN and one 1080 mixed inbound, got %d/%d",
-			profile, wantTun, tunCount, managedMixedCount)
-	}
-
-	outboundTags := map[string]bool{}
-	block := false
-	for _, outbound := range config.Outbounds {
-		if outbound.Tag == "" || outboundTags[outbound.Tag] {
-			return fmt.Errorf("empty or duplicate outbound tag %q", outbound.Tag)
-		}
-		outboundTags[outbound.Tag] = true
-		switch outbound.Type {
-		case "direct":
-			if outbound.Server != "" || outbound.ServerPort != 0 || outbound.Password != "" ||
-				outbound.Version != "" || outbound.TLS != nil || len(outbound.Outbounds) != 0 || outbound.Default != "" {
-				return fmt.Errorf("direct outbound %q contains proxy or selector fields", outbound.Tag)
-			}
-		case "hysteria2", "trojan":
-			if strings.TrimSpace(outbound.Server) == "" || outbound.ServerPort < 1 || outbound.ServerPort > 65535 ||
-				outbound.Password == "" || outbound.TLS == nil || len(outbound.Outbounds) != 0 || outbound.Default != "" ||
-				outbound.BindInterface != "" || outbound.OverrideAddress != "" || outbound.OverridePort != 0 {
-				return fmt.Errorf("proxy outbound %q is missing its server, password, or TLS", outbound.Tag)
-			}
-		case "selector":
-			if len(outbound.Outbounds) == 0 || outbound.Default == "" || outbound.Server != "" ||
-				outbound.ServerPort != 0 || outbound.Password != "" || outbound.Version != "" || outbound.TLS != nil ||
-				outbound.Detour != "" || outbound.BindInterface != "" || outbound.OverrideAddress != "" || outbound.OverridePort != 0 {
-				return fmt.Errorf("selector outbound %q has an invalid shape", outbound.Tag)
-			}
-		case "block":
-			if outbound.Tag != "block" || outbound.Server != "" || outbound.ServerPort != 0 ||
-				outbound.Password != "" || outbound.Version != "" || outbound.TLS != nil || outbound.Detour != "" ||
-				len(outbound.Outbounds) != 0 || outbound.Default != "" || outbound.BindInterface != "" ||
-				outbound.OverrideAddress != "" || outbound.OverridePort != 0 {
-				return fmt.Errorf("block outbound %q has an invalid fail-closed shape", outbound.Tag)
-			}
-		default:
-			return fmt.Errorf("unsupported Windows outbound type %q", outbound.Type)
-		}
-		if outbound.Type == "block" && outbound.Tag == "block" {
-			block = true
-		}
-		if outbound.TLS != nil {
-			if !outbound.TLS.Enabled || outbound.TLS.ServerName == "" ||
-				outbound.TLS.CertificatePath != caPath || outbound.TLS.KeyPath != "" || len(outbound.TLS.ALPN) == 0 {
-				return fmt.Errorf("outbound %q does not use the managed Windows CA path", outbound.Tag)
-			}
-		}
-	}
-	if !block {
-		return errors.New("Windows config is missing the fail-closed block outbound")
-	}
-	for _, outbound := range config.Outbounds {
-		if outbound.Detour != "" && (outbound.Detour == outbound.Tag || !outboundTags[outbound.Detour]) {
-			return fmt.Errorf("outbound %q has an unknown or recursive detour %q", outbound.Tag, outbound.Detour)
-		}
-		if outbound.Type == "selector" {
-			members := map[string]bool{}
-			for _, member := range outbound.Outbounds {
-				if member == outbound.Tag || !outboundTags[member] || members[member] {
-					return fmt.Errorf("selector %q contains an invalid member %q", outbound.Tag, member)
-				}
-				members[member] = true
-			}
-			if !members[outbound.Default] {
-				return fmt.Errorf("selector %q default is not one of its members", outbound.Tag)
-			}
-		}
-	}
-	dnsTags := map[string]bool{}
-	for index, server := range config.DNS.Servers {
-		if server.Tag == "" || dnsTags[server.Tag] || strings.TrimSpace(server.Address) == "" ||
-			server.Detour == "" || !outboundTags[server.Detour] || server.Detour == "block" {
-			return fmt.Errorf("DNS server %d has an invalid tag, address, or detour", index)
-		}
-		dnsTags[server.Tag] = true
-	}
-	managedRule := false
-	for index, rule := range config.Route.Rules {
-		if rule.Action != "" {
-			if localTUNCapture && (index == 0 && isWindowsTUNDNSRule(rule) || index == 1 && isWindowsTUNSniffRule(rule)) {
-				continue
-			}
-			return fmt.Errorf("[§7.2.1] 路由规则 %d 包含非托管 action", index)
-		}
-		if rule.Type != "" || rule.Mode != "" || len(rule.Rules) != 0 || len(rule.DomainRegex) != 0 || rule.Invert {
-			return fmt.Errorf("[§7.2.1] 路由规则 %d 包含本地接管专用匹配字段", index)
-		}
-		if rule.Outbound == "" || !outboundTags[rule.Outbound] {
-			return fmt.Errorf("route rule %d references unknown outbound %q", index, rule.Outbound)
-		}
-		seenManagedTun, seenManagedMixed := false, false
-		for _, inbound := range rule.Inbound {
-			if !inboundTags[inbound] {
-				return fmt.Errorf("route rule %d references unknown inbound %q", index, inbound)
-			}
-			seenManagedTun = seenManagedTun || inbound == "tun-in"
-			seenManagedMixed = seenManagedMixed || inbound == "in-1080"
-		}
-		if seenManagedMixed && (wantTun == 0 || seenManagedTun) {
-			managedRule = true
-		}
-	}
-	if !managedRule {
-		if wantTun == 0 {
-			return errors.New("Windows Portable Mixed config does not route the managed mixed inbound")
-		}
-		return errors.New("Windows TUN and managed mixed inbound do not share a routing rule")
-	}
-	if config.Experimental == nil || config.Experimental.ClashAPI == nil ||
-		config.Experimental.ClashAPI.ExternalController != "127.0.0.1:61800" ||
-		strings.TrimSpace(config.Experimental.ClashAPI.Secret) == "" {
-		return errors.New("Windows config is missing the authenticated loopback selector API")
-	}
-	return nil
 }
 
 func rejectDuplicateJSONKeys(body []byte) error {

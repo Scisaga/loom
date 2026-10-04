@@ -39,6 +39,7 @@ private val demoPaths = listOf(
         service = "demo-web",
         candidate = "demo-candidate-direct",
         serverChain = listOf("demo-cn", "demo-exit"),
+        finalExit = "demo-exit",
         state = "available",
         updatedAt = "2026-01-02T03:04:05Z",
     ),
@@ -46,6 +47,7 @@ private val demoPaths = listOf(
         service = "demo-api",
         candidate = "demo-candidate-fallback",
         serverChain = listOf("demo-exit"),
+        finalExit = "demo-exit",
         state = "unknown",
         updatedAt = "2026-01-02T03:04:06Z",
     ),
@@ -56,8 +58,7 @@ private val readyEnrollment = EnrollmentStatus(
     detail = "认证配置已验证",
     nodeID = "demo-node",
     deviceName = "demo-phone",
-    snapshot = "demo-certified-lkg",
-    generation = 7,
+    viewDigest = "demo-certified-lkg",
 )
 
 private val connectedStatus = VpnStatus(
@@ -66,7 +67,7 @@ private val connectedStatus = VpnStatus(
     requestedProfileId = "primary",
     activeProfileId = "primary",
     deviceName = "demo-phone",
-    generation = 7,
+    viewDigest = "demo-certified-lkg",
     dnsProbe = "成功",
     httpsProbe = "成功",
     trustedReport = "已签名上报",

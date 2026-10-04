@@ -25,9 +25,10 @@ material_id = Hash(material_id_domain || CanonicalEncode(Material))
 ```
 
 `material_id` 不写入被哈希的完整事实，签名也不覆盖自己；签名使用本机签发私钥，载荷绑定对应验证键，
-覆盖全部无签名业务字段。`material_id_domain`、哈希算法与文本格式尚未固定，不能把签名域直接用于 ID。
-规范字节、完整字段及哈希文本格式仍须按[唯一现行契约的字段级阻塞](current-contract.md#已确定的签名边界与字段级阻塞)
-补齐，不能根据这个公式猜测 schema 3 的 JSON 字段。相同规范事实字节必有相同 ID。
+覆盖全部无签名业务字段。`material_id_domain` 已由[现行字段契约](current-contract.md#规范编码标量与内容摘要)
+固定为 `loom-material-id-v3\0`，算法为 SHA-256，文本为 `sha256:` 加小写十六进制；不能把签名域直接用于 ID。
+普通授权链与 genesis 使用该契约规定的精确字段和规范 JSON；其他仍缺字段的操作须先补齐同一契约，
+不能根据这个公式猜测载荷。相同规范事实字节必有相同 ID，文档固定字节不表示源码或现网已经完成替换。
 普通事实的操作只有以下几类，每类按稳定目标 ID 创建、修改或撤销：
 
 - 设备：加入（身份、显示名、平台、职责与所选 PolicyIDs）、职责与授权修改、撤销或删除（留下防复活墓碑）；组合申请 `control` 时还有绑定 Invite、设备公钥和普通职责的条件授权事实，成员证书形成前不投影；
@@ -44,8 +45,10 @@ material_id = Hash(material_id_domain || CanonicalEncode(Material))
 两个不同接收方不得因同一设备/Service/Policy 获得可互用的凭据。凭据只对当前有效授权及相应资源/服务节点有效：授权撤销、
 设备所选 Policy 移除或替换、`RuntimeKey` 轮换或资源认证身份变化时，相关客户端和服务节点执行投影须移除旧凭据，
 并在真实入站认证回读中拒绝旧值。分区中尚未收到撤权的节点可能暂时仍接受旧值，不能把签名撤权描述为
-立即全网断开。现行源码的旧派生域及其隐式用途字符串不是 schema 3 规范；密钥长度、KDF、每个用途的
-精确输入顺序、输出编码和更新失败时的原子替换规则尚须补入字段级契约，未补齐前不得实现新凭据 writer。
+立即全网断开。现行源码的旧派生域及其隐式用途字符串不是 schema 3 规范；[现行字段契约](current-contract.md#资源与用途隔离凭据)
+已固定本业务链的 32 字节根密钥、HKDF-SHA256、用途及最小绑定集、规范输入/输出和应用失败时的收口规则。
+改名或新增另一 Service 授权不改变本服务凭据；相关撤权仍须移除客户端与接收节点权限并真实拒绝旧值。
+实际凭据/ACL 替换、其他未定资源认证值及生产旧凭据前向映射仍未完成，不能因 KDF 字段已定就称撤权闭环成立。
 
 接收只判定这条事实本身能否成立：网络、规范编码、内容 ID、签名、签发者是否属于其引用的成员表、序列与前一事实哈希是否衔接；目标存在与权限只在**该事实声明的因果依赖闭包及同一验证键的此前事实**内判定。声明的因果依赖或前一序列事实**尚未到达**时暂存为待补齐，不得投影。上述任一项不成立，或输入未知、非规范，即拒绝且不进入权威集合；这些判定只取决于事实自身及其因果历史，所有 control 对同一事实得出相同结论。在自身因果历史内就不成立的事实说明签发者有缺陷或已被攻破，其后续序列在所有 control 上同样停止，按成员问题处理（强制撤销或换键）。依赖闭包之外的并发事实——例如并发撤销了它引用的对象——不影响接收：事实照常保存，是否生效由 `Projection` 按 §2.3 计算，因此到达顺序不改变有效事实集合，签发链也不会因此中断。同 ID 不同内容、同一验证键在同一序列下签出不同内容都不得择一覆盖。事实已知、已同步并不等于事实有效或生效。
 
@@ -260,7 +263,21 @@ sequenceDiagram
 
 新设备先凭 Invite 指定的签发者 `EndpointGeneration` 受限入口完成 claim/resume；事务完成后，该签发者的设备认证入口成为首个管理、配置和报告入口，设备自动尝试连接，无须先创建 NetworkLink。其他 control 同步到该设备的绑定、授权事实（如需）及成员证书（如需）后也可提供相同的端到端认证服务。端点代际细节见[Enrollment 与 Endpoint 模型](enrollment-endpoint-model.md)。
 
+genesis 中已有的初始成员取得同 NodeID 的首次设备身份时，也沿同一 Invite/claim/设备事实链：由该成员
+自己经私有管理入口签发含已有 control 及所需普通职责的 SSH/sh Invite，核对目标无设备授权、已绑定
+身份、其他未终结事务或墓碑，再接受本机独立设备密钥的 claim。成员自签 Invite、绑定和 device.join
+建立身份关联；既有 control 资格不重新增员，不改变成员表，普通职责从授权事实生效。纯 control 的
+普通职责数组可为空。已绑定后只恢复同一事务或修改普通授权，不能借重邀覆盖身份；撤销或删除成员仍按
+成员门禁。这里补齐的是初始节点在既有模型内的转换，不是另一种加入模式；前文条件授权与多数增员针对
+尚未取得 control 资格的目标。精确谓词及旧入口替换见[初始成员绑定](current-contract.md#genesis-与初始成员表)。
+
 ## 7. NetworkIntent、传输资源和显式中继
+
+节点公开分发地址 distribution_urls 保存在同一 DeviceAuthorization，经现有 device.put 修改，初次
+device.join 取空集合；纯 control 初始节点先按上文取得设备绑定，不需为此授予其他职责。
+NetworkIntent.nodes 与 PublisherInput 从有效设备事实单向投影该列表，空列表不阻止 Service/Policy
+和普通 access 加入。完整字段、规范 URL 和撤销规则见[设备授权](current-contract.md#servicepolicy-与设备授权)。
+不增加 node.put、属性 store 或旧 network.import 来源，也不把发布定位当业务权限、KDF 输入或发布签名。
 
 `NetworkIntent` 是 Projection 中的规范值，保存节点、Service、Policy、TransportResource、NetworkLink、共享 HTTPS 探测目标、overlay DNS、局域网映射、公开信任材料（数据面 TLS 身份与网站证书信任根的公开证书）及各节点期望组件（按发布记录摘要引用，不复制制品内容）。每项按稳定 ID 签发修改或撤销事实，先整体验证该目标规范值和引用，再投影；不得以网络全量替换覆盖并发写入。`Projection` 另含设备授权、管理员证书名单和 `EndpointGeneration`，它们与 NetworkIntent 一样只由签名事实确定。
 
@@ -277,11 +294,38 @@ sequenceDiagram
 | `tls_tunnel` | 资源 ID、承载 NodeID、listener 身份、TCP 拨号坐标、固定服务端 SPKI、服务 ALPN，以及需要时附加的 TLS 名称和成员或设备端到端身份。 | 引导和设备私有隧道必须验 SPKI 与专用 ALPN，再完成对应私有服务的认证请求和响应；握手只证明该入口，不证明治理、设备授权或任何 Service 已可用。 | TLS 私钥、成员/设备私钥及本机 listener 输入 |
 
 没有域名或 `GANDI_PAT_TOKEN` 不得自动禁用 Hy2；但没有可验证的服务端身份、有效证书/信任材料或
-设备可执行的 Hy2 凭据时，Hy2 候选必须失败关闭，不能以关闭证书校验换取可达。签名资源需进一步
-逐字段固定认证材料是证书链、SPKI 固定值还是其他已受信身份、各自的实际字段和规范字节，
-否则不能由适配器临时猜测并写入 schema 3。
+设备可执行的 Hy2 凭据时，Hy2 候选必须失败关闭，不能以关闭证书校验换取可达。
+Hy2 的唯一规范认证形状为公开 CA DER 集合和 server_name，见[现行资源契约](current-contract.md#资源与用途隔离凭据)。
+接入端与接收端使用同一 RuntimeKey 派生结果；接收端只获得其资源所需的设备/Service/Policy 凭据及
+允许、排除目标，不获得根密钥或来源设备的 access 分配。另一已选 Service 的重叠目标必须排除，
+即使该 Service 选择的是 deny 策略。接收端以请求实际 FQDN/IP 执行 ACL，不用 TLS SNI 为任意 IP 扩权。
+撤权和 ACL 改变必须关闭旧认证会话；固定传输实现不能撤销缓存会话时，终止旧 generation 后再应用新值。
+同一共享 listener 的合法连接因而可能短暂重连，但失败不能恢复已接受的新授权之前的进程。
 
 `NetworkLink` 有独立 LinkID，记录需显式固定的**中继邻接**两端、资源引用、发起方向、用途和真实探测动作。同一节点对可并存 WG 与 hy2 LinkID，各自观测。首次引导、加入后的认证管理/配置/报告、control 事实同步可以使用已有认证连接及共享资源，无须先为每对节点建 NetworkLink。删除 LinkID 只撤销引用它的候选，不连带删除共享资源；撤销资源时所有引用它的首跳与中继候选都立即退出投影，残留 Link 不再生效并须清理。节点、control 资格或公钥出现都不自动创建中继链路。
+
+本次部署补齐既有 WG 中继的必要映射，不创建新的权威实体。WG Link 的 `from_resource_id` 和
+`resource_id` 分别引用两端已有 WG 资源，解决单个接收资源无法表达发起端公钥和本机地址的问题；
+`initiator_node_id` 决定 UDP 建连方向，From/To 决定业务方向，两者分离。双向业务由两个有向 Link
+表达，端点资源相同的反向 Link 复用同一接口和 peer。资源保存单个 /32 或 /128 地址；执行只安装
+对端的精确地址路由，不获得默认路由、LAN 或宿主 DNS 权限。现有本机 WG 私钥继续由文件引用提供。
+
+Hy2 的 `link_only=true` 表示该 listener 只能经显式 Link 使用，不能被投影为普通公开首跳。
+省略该字段维持现行公开首跳字节。Policy 可用正整数 `max_hops` 保留已有受管节点链长度限制；
+省略表示不额外限制，但候选永不重复节点。新增字段均在 schema 3 内修订；已有未包含字段的规范字节不变。
+
+数据转发采用已有 Hy2 的认证 UDP 能力：access 为每条候选建立按 Link 顺序连接的 Hy2 outbound，
+前一跳只允许该 Link 对端 WG 地址上的后续 Hy2 UDP 端口，最后一跳才执行 Service 目标 ACL。
+中间接收凭据的 `relay_target` 固定 LinkID 与下一资源；KDF 的 `relay-auth` 用途另外绑定这两项，
+不能与最终出口的 `service-auth` 互换。中继收到的仅是本 listener 的入站凭据，不能得到根密钥或下一跳凭据。
+hybrid 从本机 Link 起步时不生成回环入站用户，并绑定该 WG 接口。一次普通 HTTPS 请求须经完整候选
+返回后才能报告 Service 成功；WG 接口、握手及 Hy2 TLS 回读均不代替业务结果。
+
+Link 的精确动作 `hysteria2_tls` 检查对端 WG 地址上指定的 Hy2 listener，按对端资源的 CA 和名称完成
+真实 QUIC/TLS 请求返回，仅证明该 Link 的传输可用。未执行或无可验证返回时保持 unknown。
+正常停止和更新先终止旧数据进程，再 compare-and-delete 本 generation 的 WG 对象；失败时不自动反复重施。
+最小验证覆盖双向 Link 共用接口、同出口一跳与中继并存、本机起点、端口 ACL、不同用途凭据隔离、
+资源或 Link 撤销、Service 分别探测、停止/异常退出后的所有权清理，以及正式服务重启恢复。
 
 ```mermaid
 flowchart LR

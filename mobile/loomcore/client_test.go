@@ -1,132 +1,226 @@
 package loomcore
 
 import (
-	"crypto/ecdsa"
+	"bytes"
 	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
-	"math/big"
+	"fmt"
 	"strings"
 	"testing"
-	"time"
 
-	"loom/internal/clientmodel"
+	"loom/internal/control"
+	"loom/internal/deviceclient"
 )
 
-func TestAndroidRuntimeConfigUsesCertifiedPublicCA(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func androidFixture(t *testing.T, sequence uint64, deny bool) (deviceclient.State, []byte) {
+	t.Helper()
+	members := []control.Member{}
+	keys := []ed25519.PrivateKey{}
+	for _, suffix := range []string{"a", "b"} {
+		seed := sha256.Sum256([]byte("demo-mobile-control-" + suffix))
+		key := ed25519.NewKeyFromSeed(seed[:])
+		keys = append(keys, key)
+		members = append(members, control.Member{ControlID: "demo-control-" + suffix, NodeID: "demo-node-" + suffix, PublicKey: base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))})
+	}
+	keyID, _ := control.KeyID(members[1].PublicKey)
+	config := control.ControlConfig{Schema: 3, NetworkID: "demo-network", Operation: "genesis", Members: members, SealedKeys: []control.ControlSealedKey{}}
+	genesis, err := control.SignMaterial(control.Material{Schema: 3, NetworkID: "demo-network", IssuerControlID: members[1].ControlID, IssuerKeyID: keyID, Operation: "genesis", Payload: control.Genesis{ControlConfig: config, NetworkIntent: control.EmptyNetworkIntent(), AdminCertificates: []control.AdminCertificate{}}}, keys[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "demo-data-plane-ca"},
-		NotBefore: time.Unix(1, 0), NotAfter: time.Unix(4102444800, 0), IsCA: true,
-		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	anchor, _ := control.MaterialID(genesis)
+	configID, _ := control.ConfigID(config)
+	endpoint := control.EndpointGeneration{ID: "demo-entry", Generation: 1, OwnerControlID: members[1].ControlID, Host: "192.0.2.1", Port: 443, ServerName: "demo.example", SPKISHA256: "sha256:" + strings.Repeat("1", 64), CertificateDigest: "sha256:" + strings.Repeat("2", 64), Modes: []string{"bootstrap", "device"}, State: "serving"}
+	invitation := control.Invite{ID: "demo-transaction", GenesisDigest: anchor, IssuerControlID: members[1].ControlID, DeviceID: "demo-access", Name: "Demo Android", Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, Medium: "qr", Endpoint: endpoint, ExpiresAt: 1893456000000}
+	material, err := control.SignMaterial(control.Material{Schema: 3, NetworkID: "demo-network", IssuerControlID: members[1].ControlID, IssuerKeyID: keyID, ControlConfigID: configID, Sequence: 1, PreviousMaterialID: control.EmptyMaterialChainID(), Dependencies: []string{}, RequestID: "demo-issue", TargetKind: "invite", TargetID: invitation.ID, Operation: "invite.issue", Payload: invitation}, keys[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	body, err := androidRuntimeConfig(`{"outbounds":[{"type":"hysteria2","tag":"exit","tls":{"enabled":true,"server_name":"exit.example"}}]}`, ca)
+	invite := control.BootstrapInvite{Schema: 3, NetworkID: "demo-network", GenesisDigest: anchor, ControlProof: control.ControlProof{Genesis: genesis, Successors: []control.ControlCertificate{}}, Material: material}
+	seed := sha256.Sum256([]byte("demo-mobile-device"))
+	private := ed25519.NewKeyFromSeed(seed[:])
+	state, err := deviceclient.NewIdentityState(invite, "android", private, "demo-claim")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var document struct {
-		Outbounds []struct {
-			TLS map[string]any `json:"tls"`
-		} `json:"outbounds"`
-	}
-	if err := json.Unmarshal([]byte(body), &document); err != nil {
+	p, err := control.Project(genesis, nil, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(document.Outbounds) != 1 || document.Outbounds[0].TLS["certificate"] != ca {
-		t.Fatal("Android runtime did not consume the certified public CA")
+	scope := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
+	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo.example"}}}}
+	action := "allow"
+	if deny {
+		action = "deny"
 	}
+	p.NetworkIntent.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: action, EntryScope: scope, RelayScope: scope, ExitScope: scope, AllowDirect: true, LocalEgressDevices: []string{}}}
+	inviteID, _ := control.MaterialID(material)
+	p.DeviceAuthorizations = []control.DeviceAuthorization{{ID: invitation.DeviceID, Name: invitation.Name, Platform: "android", DevicePublicKey: state.PublicKey, Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, DistributionURLs: []string{}, RuntimeKey: members[0].PublicKey, TransactionID: invitation.ID, InviteMaterialID: inviteID, BindingMaterialID: anchor}}
+	p.EndpointGenerations = []control.EndpointGeneration{endpoint}
+	p.NetworkIntent.BusinessProbeTargets = []control.BusinessProbeTarget{{ID: "demo-probe", URL: "https://demo.example:8443/health"}}
+	view, err := control.ProjectDeviceView(p, invitation.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("demo-prefix-%d", sequence)))
+	envelope, err := control.SignDeviceViewEnvelope(control.DeviceViewEnvelope{Schema: 3, NetworkID: "demo-network", GenesisDigest: anchor, IssuerControlID: members[1].ControlID, IssuerKeyID: keyID, ControlProof: invite.ControlProof, FactFrontier: []control.FactFrontier{{KeyID: keyID, Sequence: control.U64(sequence), TipMaterialID: "sha256:" + hex.EncodeToString(sum[:])}}, View: view}, keys[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = deviceclient.AcceptLKG(state, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := deviceclient.EncodeIdentityState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state, body
 }
-
-func TestAndroidDeviceProfileProjectsCertifiedName(t *testing.T) {
-	controlPublic, controlPrivate, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	devicePublic, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodeKey := func(key []byte) string { return base64.RawURLEncoding.EncodeToString(key) }
-	digest := "sha256:" + strings.Repeat("0", 64)
-	endpoint := endpointReference{
-		EndpointID: "demo-endpoint", Generation: 1, Transport: "tls_tunnel",
-		Address: "192.0.2.1:443", ServerName: "control.example",
-		SPKISHA256: strings.Repeat("0", 64), State: "serving",
-	}
-	config := controlConfig{Mode: "stable", Members: []member{{
-		ID: "demo-control", PublicKey: encodeKey(controlPublic), Node: "demo-server",
-	}}, Quorum: 1}
-	capability := bootstrapCapability{
-		Schema: 1, TransactionID: "demo-enrollment", IssuedHead: digest,
-		ConfigMaterial: digest, ControlConfig: config, ExpiresAt: "2030-01-01T00:00:00Z",
-		Actions: []string{"claim", "resume"}, Endpoints: []endpointReference{endpoint},
-		ConstraintDigest: digest, IssuerMemberID: "demo-control",
-	}
-	if err := signValue(capabilityDomain, capability, &capability.Signature, controlPrivate); err != nil {
-		t.Fatal(err)
-	}
-	runtimeConfig, err := clientmodel.CanonicalizeRuntimeConfig([]byte(`{
-		"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],
-		"outbounds":[{"type":"direct","tag":"direct"},{"type":"selector","tag":"default","outbounds":["direct"]}],
-		"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}
-	}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	routes := []clientmodel.RouteCandidate{{ID: "direct", FinalExit: "direct", Scope: "default"}}
-	view := deviceView{
-		Schema: 1, DeviceID: "demo-android", Name: "Loom A", Platform: "android",
-		DevicePublicKey: encodeKey(devicePublic), Floor: 1, Endpoints: []endpointReference{endpoint},
-		Routes: routes, Runtime: &clientmodel.RuntimeProfile{Kind: "sing_box", Config: runtimeConfig},
-	}
-	leaf, err := viewLeaf(view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	head := governanceHead{
-		Schema: 1, Index: 1, LogDigest: digest, ProjectionDigest: digest,
-		DeviceViewsDigest: "sha256:" + hex.EncodeToString(leaf), ConfigMaterial: digest,
-	}
-	message, err := signingBytes(headDomain, head)
-	if err != nil {
-		t.Fatal(err)
-	}
-	head.Signatures = []headSignature{{
-		MemberID: "demo-control",
-		Value:    base64.RawURLEncoding.EncodeToString(ed25519.Sign(controlPrivate, message)),
-	}}
-	stateBody, err := encodeState(deviceState{
-		Schema: 1, PrivateKey: encodeKey(devicePrivate), PublicKey: encodeKey(devicePublic),
-		ClaimRequestID: "demo-request", Capability: capability, Claimed: true, Floor: 1,
-		LKG: &deviceViewEnvelope{
-			Schema: 1, View: view, Head: head, ControlConfig: config,
-			Proof: deviceViewProof{Index: 0, Size: 1},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	profileBody, err := AndroidDeviceProfile(stateBody)
+func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
+	state, body := androidFixture(t, 7, false)
+	profileBody, err := AndroidDeviceProfile(body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var profile androidProfile
-	if err := decodeStrictJSON(profileBody, 8<<20, &profile); err != nil {
+	if err := json.Unmarshal(profileBody, &profile); err != nil {
 		t.Fatal(err)
 	}
-	if profile.Name != "Loom A" {
-		t.Fatalf("certified display name was not projected: %q", profile.Name)
+	if profile.Schema != 3 || profile.Name != "Demo Android" || profile.RecordID != state.LKG.ViewDigest || len(profile.Routes) != 1 || len(profile.DNS) != 0 || len(profile.BusinessProbeTargets) != 1 || profile.BusinessProbeTargets[0].Targets[0] != "https://demo.example:8443/health" {
+		t.Fatal("Android authority projection changed or invented inputs")
+	}
+	if bytes.Contains(profileBody, []byte(`"head"`)) || bytes.Contains(profileBody, []byte(`"generation"`)) {
+		t.Fatal("Android manufactured global head/floor")
+	}
+	var original, derived map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(state.LKG.View.RuntimeProfile.Config), &original)
+	_ = json.Unmarshal([]byte(profile.Config), &derived)
+	if !bytes.Equal(original["outbounds"], derived["outbounds"]) || len(derived["inbounds"]) == 0 || len(derived["experimental"]) == 0 || derived["dns"] != nil {
+		t.Fatal("Android host adapter changed authorization or invented DNS")
+	}
+	var capture struct {
+		Inbounds []struct {
+			Exclusions []string `json:"route_exclude_address"`
+		} `json:"inbounds"`
+		Route struct {
+			Protect bool `json:"auto_detect_interface"`
+		} `json:"route"`
+	}
+	if json.Unmarshal([]byte(profile.Config), &capture) != nil || !capture.Route.Protect || len(capture.Inbounds) != 1 ||
+		len(capture.Inbounds[0].Exclusions) != 1 || capture.Inbounds[0].Exclusions[0] != state.LKG.View.Endpoints[0].Host+"/32" {
+		t.Fatal("Android captured its libbox or private management underlay")
+	}
+	after, err := deviceclient.EncodeIdentityState(state)
+	if err != nil || !bytes.Equal(body, after) {
+		t.Fatal("host projection changed authoritative state")
+	}
+	state.LKG.View.Endpoints[0].Host = "demo-entry.example"
+	if _, err := androidRuntimeConfig(state.LKG.View, "demo-selector"); err == nil || !strings.Contains(err.Error(), "authenticated endpoint address resolution") {
+		t.Fatal("Android used unresolved management names or an implicit host resolver")
+	}
+}
+func TestAndroidReportReservationDoesNotChangeActiveProfileOrPermitStaleWrites(t *testing.T) {
+	_, body := androidFixture(t, 7, false)
+	reserved, err := ReserveAndroidReportSequence(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := AndroidDeviceProfile(body)
+	second, _ := AndroidDeviceProfile(reserved)
+	if !bytes.Equal(first, second) {
+		t.Fatal("reserving report restarted Android runtime")
+	}
+	if err := CheckAndroidDeviceStateAdvance(reserved, body); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckAndroidDeviceStateAdvance(body, reserved); err == nil {
+		t.Fatal("stale enrollment write reused report sequence")
+	}
+	state, err := decodeState(reserved)
+	if err != nil || state.ReportSequence != 1 {
+		t.Fatal("report reservation not represented in shared State")
+	}
+	before := append([]byte{}, reserved...)
+	if _, err := (&androidIdentity{state: state}).ReserveReportSequence(); err == nil {
+		t.Fatal("temporary Android adapter reserved without protected persistence")
+	}
+	if !bytes.Equal(before, reserved) {
+		t.Fatal("reservation mutated caller bytes")
+	}
+}
+func TestAndroidAcceptsRevokedViewAndRejectsSameFrontierChange(t *testing.T) {
+	before, body := androidFixture(t, 7, false)
+	revoked, next := androidFixture(t, 8, true)
+	if err := CheckAndroidDeviceStateAdvance(next, body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AndroidDeviceProfile(next); err != nil {
+		t.Fatal("empty routes were rejected by host projection")
+	}
+	if err := CheckAndroidDeviceStateAdvance(body, next); err == nil {
+		t.Fatal("revocation rolled back")
+	}
+	fork, _ := androidFixture(t, 8, false)
+	if _, err := deviceclient.AcceptLKG(revoked, *fork.LKG); err == nil {
+		t.Fatal("same facts restored withdrawn permission")
+	}
+	if _, err := deviceclient.AcceptLKG(before, *revoked.LKG); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestAndroidReportsActualRuntimeAndActualScopedProbe(t *testing.T) {
+	_, body := androidFixture(t, 7, false)
+	reserved, err := ReserveAndroidReportSequence(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _ := decodeState(reserved)
+	route := state.LKG.View.Routes[0]
+	observations, _ := json.Marshal([]androidObservation{{CandidateID: route.ID, NetworkGeneration: "demo-network-generation", Scope: route.Scope, Result: "available", Action: "https_request", Target: "https://demo.example:8443/health", ObservedAt: "2030-01-01T00:00:00Z", ValidUntil: "2030-01-01T00:10:00Z"}})
+	selections, _ := json.Marshal([]androidSelection{{Scope: route.Scope, CandidateID: route.ID}})
+	runtime, _ := json.Marshal(control.RuntimeReadback{State: "running", AppliedViewDigest: state.LKG.ViewDigest})
+	report, err := androidReport(state, observations, selections, runtime, "demo-network-generation", "2030-01-01T00:01:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ReportSequence != 1 || report.Observations[0].SpecDigest != route.SpecDigest || report.Observations[0].Target != "https://demo.example:8443/health" || len(report.Components) != 0 {
+		t.Fatal("report replaced actual inputs with declarations")
+	}
+	if err := report.Verify(state.PublicKey); err != nil {
+		t.Fatal(err)
+	}
+	runtime, _ = json.Marshal(control.RuntimeReadback{State: "error", ErrorCode: "demo-start-failed"})
+	report, err = androidReport(state, []byte("[]"), []byte("[]"), runtime, "demo-network-generation", "2030-01-01T00:01:00Z")
+	if err != nil || report.Runtime.AppliedViewDigest != "" {
+		t.Fatal("failed runtime manufactured applied digest")
+	}
+	bad := bytes.ReplaceAll(observations, []byte("demo.example:8443"), []byte("other.example:8443"))
+	if _, err := androidReport(state, bad, selections, runtime, "demo-network-generation", "2030-01-01T00:01:00Z"); err == nil {
+		t.Fatal("report accepted undeclared probe target")
+	}
+}
+func TestAndroidRejectsHistoricalStateAndUsesSingleCompressedInviteCodec(t *testing.T) {
+	if ValidateAndroidDeviceState([]byte(`{"schema":1,"floor":1}`)) == nil {
+		t.Fatal("historical state accepted")
+	}
+	state, _ := androidFixture(t, 7, false)
+	uri, err := control.EncodeInvite(state.Invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := NewAndroidDeviceState(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newState, err := deviceclient.DecodeIdentityState(body)
+	if err != nil || newState.LKG != nil || newState.Platform != "android" {
+		t.Fatalf("Android created another authority shape: %v", err)
+	}
+	if strings.Contains(string(body), `"capability"`) {
+		t.Fatal("old capability persisted")
 	}
 }

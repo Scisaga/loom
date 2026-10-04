@@ -1,20 +1,21 @@
 package control
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,186 +93,423 @@ func waitChromeEvaluation(t *testing.T, client *chromeDevTools, expression strin
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("Chrome condition did not become true: %s", expression)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	diagnostic, _ := client.evaluate(ctx, `document.body.innerText`)
+	cancel()
+	t.Fatalf("Chrome condition did not become true: %s; page: %v", expression, diagnostic)
 	return nil
 }
 
-func openChromeDevTools(t *testing.T, chrome string, rootPEM []byte, identity chromeClientIdentity, target string) *chromeDevTools {
+func openCommandChrome(t *testing.T, target string) *chromeDevTools {
 	t.Helper()
-	home, profile, autoSelect := chromeIdentityProfile(t, rootPEM, identity)
+	chrome, err := exec.LookPath("google-chrome")
+	if err != nil {
+		t.Skip("Chrome is not installed")
+	}
+	profile := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
-	command := exec.CommandContext(ctx, chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
-		"--remote-debugging-port=0", "--remote-allow-origins=*", "--user-data-dir="+profile,
-		"--auto-select-certificate-for-urls="+autoSelect, target)
-	command.Env = append(os.Environ(), "HOME="+home)
-	var output bytes.Buffer
-	command.Stdout, command.Stderr = &output, &output
+	command := exec.CommandContext(ctx, chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-background-networking", "--no-proxy-server", "--remote-debugging-port=0", "--remote-allow-origins=*", "--user-data-dir="+profile, target)
 	if err := command.Start(); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cancel()
-		_ = command.Wait()
-	})
-	active := filepath.Join(profile, "DevToolsActivePort")
-	var port int
+	processDone := make(chan struct{})
+	go func() { _ = command.Wait(); close(processDone) }()
+	t.Cleanup(func() { cancel(); <-processDone })
+	port := 0
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		body, err := os.ReadFile(active)
+		body, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
 		if err == nil {
-			lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-			if len(lines) >= 1 {
-				port, _ = strconv.Atoi(lines[0])
-				if port > 0 {
-					break
-				}
+			port, _ = strconv.Atoi(strings.Split(string(body), "\n")[0])
+			if port > 0 {
+				break
 			}
-		}
-		if command.ProcessState != nil && command.ProcessState.Exited() {
-			t.Fatalf("Chrome exited before DevTools became ready: %s", boundedText(output.String()))
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	if port == 0 {
-		t.Fatalf("Chrome DevTools port was not published: %s", boundedText(output.String()))
+		t.Fatal("Chrome did not publish its loopback debugging port")
 	}
-	var socketURL string
-	client := &http.Client{Timeout: 2 * time.Second}
-	deadline = time.Now().Add(10 * time.Second)
+	client := &http.Client{Timeout: time.Second}
+	var socket string
 	for time.Now().Before(deadline) {
 		response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", port))
 		if err == nil {
 			var targets []chromeDebugTarget
-			decodeErr := json.NewDecoder(response.Body).Decode(&targets)
+			_ = json.NewDecoder(response.Body).Decode(&targets)
 			response.Body.Close()
-			if decodeErr == nil {
-				for _, current := range targets {
-					if current.Type == "page" && strings.HasPrefix(current.URL, target) {
-						socketURL = current.WebSocketDebuggerURL
-					}
+			for _, item := range targets {
+				if item.Type == "page" && strings.HasPrefix(item.URL, target) {
+					socket = item.WebSocketDebuggerURL
 				}
 			}
 		}
-		if socketURL != "" {
+		if socket != "" {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if socketURL == "" {
-		t.Fatalf("Chrome page target was not found: %s", boundedText(output.String()))
+	if socket == "" {
+		t.Fatal("Chrome page debugger unavailable")
 	}
-	dialContext, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	connection, _, err := websocket.Dial(dialContext, socketURL, nil)
-	dialCancel()
+	connection, _, err := websocket.Dial(ctx, socket, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { connection.CloseNow() })
-	return &chromeDevTools{connection: connection}
+	debug := &chromeDevTools{connection: connection}
+	t.Cleanup(func() {
+		shutdown, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stop()
+		_ = debug.call(shutdown, "Browser.close", map[string]any{}, nil)
+		connection.CloseNow()
+		select {
+		case <-processDone:
+		case <-shutdown.Done():
+			cancel()
+			<-processDone
+		}
+	})
+	return debug
+}
+func chromeDo(t *testing.T, client *chromeDevTools, expression string) any {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := client.evaluate(ctx, expression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
-// TestWebTLSChromePreservesDraftAcrossLiveConflict exercises the real SPA,
-// TLS 1.3, an exact admin client certificate, WebSocket snapshot updates and
-// the normal typed operation endpoint. A live head change must not replace the
-// focused form node, and the subsequent stale submission must keep the draft.
-func TestWebTLSChromePreservesDraftAcrossLiveConflict(t *testing.T) {
-	if os.Getenv("LOOM_WEB_TLS_CHROME_TEST") != "1" {
-		t.Skip("set LOOM_WEB_TLS_CHROME_TEST=1 to run the Chrome mTLS interaction acceptance")
+// This exercises the unmodified SPA and actual administrator command handler
+// against durable signed facts. Browser certificate import is a separate check.
+func TestWebChromeServicePolicyAndStaleDraft(t *testing.T) {
+	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
+		t.Skip("set LOOM_WEB_CHROME_TEST=1 for browser command acceptance")
 	}
-	chrome := requireExecutable(t, "google-chrome")
-	requireExecutable(t, "certutil")
-	requireExecutable(t, "pk12util")
-	requireExecutable(t, "openssl")
-	installChromeClientCertificatePolicy(t)
-	fixture := newChromeTLSFixture(t)
-	state := testState()
-	state.Projection = visualWebProjection()
-	state.BrowserTLS = fixture.browser
-	state.ReadCertDER = []string{base64.RawURLEncoding.EncodeToString(fixture.admin.certDER)}
-	state.AdminCertDER = append([]string(nil), state.ReadCertDER...)
-	server := testWritableRuntimeServer(t, state)
-	server.Config.BrowserTLS = fixture.browser
-	server.Config.ReadCertDER = append([]string(nil), state.ReadCertDER...)
-	server.Config.AdminCertDER = append([]string(nil), state.AdminCertDER...)
-	intent := testNetworkIntent(t)
-	server.Runtime.Authority.mu.Lock()
-	server.Runtime.Authority.projection.NetworkIntent = &intent
-	server.Runtime.Authority.certified.Projection.NetworkIntent = &intent
-	server.Runtime.Authority.mu.Unlock()
+	root, config, genesis := authorityFixture(t)
+	if _, err := InitializeAuthority(root, config, genesis); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := OpenRuntime(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	server := &Server{Runtime: runtime, Config: config}
+	httpServer := httptest.NewServer(server.AdminHandler())
+	defer httpServer.Close()
+	debug := openCommandChrome(t, httpServer.URL+"/services?new=1")
+	waitChromeEvaluation(t, debug, `document.querySelector('#service-form')&&document.querySelector('#connection').textContent.includes('local writes available')`)
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#service-form');f.elements.id.value='demo-web-service';f.elements.name.value='Demo Web';f.elements.matchers.value='dns_exact demo.example';f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')`)
+	projection := runtime.Authority.Snapshot()
+	if len(projection.NetworkIntent.Services) != 1 {
+		t.Fatal("browser command did not persist Service")
+	}
+	// Navigate using the existing SPA, then create a Policy referencing its fact.
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/policies?new=1');dispatchEvent(new PopStateEvent('popstate'));const f=document.querySelector('#policy-form');f.elements.id.value='demo-web-policy';f.elements.name.value='Demo Policy';f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('.service-item').length===1&&document.querySelector('.service-item').textContent.includes('Demo Policy')`)
+	projection = runtime.Authority.Snapshot()
+	if len(projection.NetworkIntent.Policies) != 1 || projection.NetworkIntent.Policies[0].ServiceID != "demo-web-service" {
+		t.Fatal("browser Policy did not resolve Service")
+	}
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/services?service=demo-web-service');dispatchEvent(new PopStateEvent('popstate'));window.demoDraft=document.querySelector('#service-form');window.demoName=demoDraft.elements.name;demoName.value='Unsaved demo';demoName.focus();demoName.setSelectionRange(2,5);return true})()`)
+	current, _ := projection.CurrentTarget("service", "demo-web-service")
+	edit := authorityService("demo-web-service", "demo-concurrent-edit")
+	edit.Dependencies = current.MaterialIDs
+	value := edit.Payload.(Service)
+	value.Name = "Demo concurrent"
+	edit.Payload = value
+	submitAuthority(t, runtime, edit)
+	time.Sleep(2200 * time.Millisecond)
+	if chromeDo(t, debug, `demoDraft===document.querySelector('#service-form')&&demoName===document.activeElement&&demoName.value==='Unsaved demo'&&demoName.selectionStart===2`) != true {
+		t.Fatal("live snapshot replaced focused draft")
+	}
+	chromeDo(t, debug, `(()=>{demoDraft.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#operation-status').textContent.includes('stale')`)
+	if chromeDo(t, debug, `demoName.value==='Unsaved demo'`) != true {
+		t.Fatal("stale command destroyed draft")
+	}
+	reopened, err := OpenAuthority(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Snapshot().NetworkIntent.Services[0].Name != "Demo concurrent" || len(reopened.Snapshot().NetworkIntent.Policies) != 1 {
+		t.Fatal("browser or stale retry changed durable results")
+	}
+}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func TestWebChromeDevicePolicyRevocationPreservesIdentity(t *testing.T) {
+	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
+		t.Skip("set LOOM_WEB_CHROME_TEST=1 for browser command acceptance")
+	}
+	server, invite, _, claim, _, _ := enrollmentAuthorityFixture(t)
+	response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite))
+	if response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	original := server.Runtime.Authority.Snapshot().DeviceAuthorizations[0]
+	httpServer := httptest.NewServer(server.AdminHandler())
+	defer httpServer.Close()
+	debug := openCommandChrome(t, httpServer.URL+"/devices/"+invite.DeviceID)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form')`)
+	chromeDo(t, debug, `(()=>{window.demoDeviceDraft=document.querySelector('#device-policy-form');demoDeviceDraft.elements.name.value='Unsaved device draft';document.querySelector('[data-invite-refresh]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='completed'`)
+	if chromeDo(t, debug, `document.querySelector('#device-policy-form')===demoDeviceDraft&&demoDeviceDraft.elements.name.value==='Unsaved device draft'`) != true {
+		t.Fatal("transaction refresh replaced the device authorization draft")
+	}
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#device-policy-form');for(const input of f.querySelectorAll('[name=policy_id]'))input.checked=false;f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')`)
+	projection := server.Runtime.Authority.Snapshot()
+	if len(projection.DeviceAuthorizations) != 1 || len(projection.DeviceAuthorizations[0].PolicyIDs) != 0 || projection.DeviceAuthorizations[0].RuntimeKey != original.RuntimeKey || projection.DeviceAuthorizations[0].DevicePublicKey != original.DevicePublicKey {
+		t.Fatal("browser public operation did not revoke policy while preserving identity")
+	}
+	view, err := server.deviceEnvelope(invite.DeviceID)
+	if err != nil || len(view.View.Routes) != 0 || view.View.RuntimeProfile == nil {
+		t.Fatal("browser revoke did not produce deny-only runtime", err)
+	}
+	reopened, err := OpenAuthority(server.Runtime.Authority.root)
+	if err != nil || len(reopened.Snapshot().DeviceAuthorizations[0].PolicyIDs) != 0 {
+		t.Fatal("browser revoked policy returned after reopen", err)
+	}
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='completed'`)
+	if chromeDo(t, debug, `document.body.innerText.includes('runtime_key')||!!document.querySelector('#invite-uri')`) == true {
+		t.Fatal("completed Invite leaked keys or issued a new capability")
+	}
+}
+
+func TestWebChromeLocalEgressAuthorizationAndRevocation(t *testing.T) {
+	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
+		t.Skip("set LOOM_WEB_CHROME_TEST=1 for browser command acceptance")
+	}
+	server, invite, _, claim, _, _ := enrollmentAuthorityFixture(t)
+	if response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	original := server.Runtime.Authority.Snapshot().DeviceAuthorizations[0]
+	httpServer := httptest.NewServer(server.AdminHandler())
+	defer httpServer.Close()
+	debug := openCommandChrome(t, httpServer.URL+"/devices/"+invite.DeviceID)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form')`)
+	chromeDo(t, debug, `(()=>{window.demoHybridForm=document.querySelector('#device-policy-form');demoHybridForm.querySelector('[name=responsibility][value=internet_egress]').checked=true;demoHybridForm.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form')!==demoHybridForm&&document.querySelector('#device-policy-form [name=responsibility][value=internet_egress]')?.checked`)
+	policyPath, _ := json.Marshal("/policies?policy=" + original.PolicyIDs[0])
+	deviceID, _ := json.Marshal(invite.DeviceID)
+	chromeDo(t, debug, `(()=>{history.pushState({},'',`+string(policyPath)+`);dispatchEvent(new PopStateEvent('popstate'));window.demoLocalForm=document.querySelector('#policy-form');demoLocalForm.elements.allow_direct.checked=false;demoLocalForm.elements.entry_scope_mode.value='none';demoLocalForm.elements.exit_scope_mode.value='only';demoLocalForm.elements.exit_scope_ids.value=`+string(deviceID)+`;demoLocalForm.elements.local_egress_devices.value=`+string(deviceID)+`;demoLocalForm.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#policy-form')!==demoLocalForm&&!document.querySelector('#policy-form').elements.allow_direct.checked`)
+	view, err := server.deviceEnvelope(invite.DeviceID)
+	if err != nil || len(view.View.Routes) != 1 || view.View.Routes[0].FinalExit != invite.DeviceID || len(view.View.Routes[0].NodeChain) != 0 {
+		t.Fatal("formal local-only policy did not produce the local exit", err)
+	}
+	devicePath, _ := json.Marshal("/devices/" + invite.DeviceID)
+	chromeDo(t, debug, `(()=>{history.pushState({},'',`+string(devicePath)+`);dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#app').innerText.includes('local egress: '+`+string(deviceID)+`)`)
+	if chromeDo(t, debug, `document.querySelector('#app').innerText.includes('target (Direct)')`) == true {
+		t.Fatal("browser mislabelled local egress as ordinary Direct")
+	}
+	chromeDo(t, debug, `(()=>{window.demoRevokeForm=document.querySelector('#device-policy-form');demoRevokeForm.querySelector('[name=responsibility][value=internet_egress]').checked=false;demoRevokeForm.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form')!==demoRevokeForm&&!document.querySelector('#device-policy-form [name=responsibility][value=internet_egress]')?.checked&&!document.querySelector('#app').innerText.includes('local egress:')`)
+	reopened, err := OpenAuthority(server.Runtime.Authority.root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := listener.Addr().String()
-	server.Channel.config.Listen = []string{address}
-	tlsConfig, err := browserTLSConfig(server.Config)
-	if err != nil {
-		listener.Close()
-		t.Fatal(err)
+	denied, err := ProjectDeviceView(reopened.Snapshot(), invite.DeviceID)
+	if err != nil || len(denied.Routes) != 0 || len(denied.PolicyIDs) != 1 || denied.DevicePublicKey != original.DevicePublicKey {
+		t.Fatal("removing the exit role failed to persist revocation or damaged identity/assignment", err)
 	}
-	tlsConfig.NextProtos = []string{"http/1.1"}
-	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	served := make(chan error, 1)
-	go func() { served <- httpServer.Serve(tls.NewListener(listener, tlsConfig)) }()
-	t.Cleanup(func() {
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdown)
-		<-served
-	})
-	target := "https://" + address + "/services?new=1"
-	debug := openChromeDevTools(t, chrome, fixture.rootPEM, fixture.admin, target)
-	waitChromeEvaluation(t, debug, `document.querySelector('#service-form input[name=name]') !== null`)
-	value, err := debug.evaluate(context.Background(), `(()=>{window.__loomErrors=[];addEventListener('error',event=>window.__loomErrors.push(String(event.error||event.message)));addEventListener('unhandledrejection',event=>window.__loomErrors.push(String(event.reason)));const form=document.querySelector('#service-form'),input=form.querySelector('input[name=name]');form.querySelector('input[name=id]').value='demo-draft';form.querySelector('input[name=matchers]').value='draft.example';input.value='Preserved draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();window.__loomHeldInput=input;return input.value})()`)
-	if err != nil || value != "Preserved draft" {
-		t.Fatalf("failed to create browser draft: value=%v err=%v", value, err)
+}
+
+func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
+	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
+		t.Skip("set LOOM_WEB_CHROME_TEST=1 for browser command acceptance")
 	}
-	baseHead := currentHead(server.Runtime)
-	status, body := postAdminOperation(t, server, "service.put", "live-conflict", baseHead,
-		Service{ID: "demo-live", Name: "Live update", Matchers: []string{"live.example"}, Policy: "demo-policy"}, nil)
-	if status != http.StatusOK {
-		t.Fatalf("live operation status=%d body=%s", status, body)
-	}
-	waitChromeEvaluation(t, debug, `window.__loomHeldInput===document.activeElement&&window.__loomHeldInput.isConnected&&window.__loomHeldInput.value==='Preserved draft'`)
-	submission, err := debug.evaluate(context.Background(), `(()=>{const form=document.querySelector('#service-form'),button=form.querySelector('button[type=submit]');button.scrollIntoView({block:'center'});const rect=button.getBoundingClientRect(),hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);return JSON.stringify({valid:form.checkValidity(),disabled:button.disabled,x:rect.left+rect.width/2,y:rect.top+rect.height/2,hit:hit?.outerHTML?.slice(0,160)||'',associated:button.form===form})})()`)
+	fixture := newEndpointFixture(t)
+	server := fixture.server
+	var err error
+	server.Reports, err = OpenObservationStore(server.Runtime.Authority.root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var point struct {
-		Valid      bool    `json:"valid"`
-		Disabled   bool    `json:"disabled"`
-		X          float64 `json:"x"`
-		Y          float64 `json:"y"`
-		Hit        string  `json:"hit"`
-		Associated bool    `json:"associated"`
+	service := submitAuthority(t, server.Runtime, authorityService("demo-service", "demo-browser-service"))
+	anyScope := PolicyScope{Mode: "any", NodeIDs: []string{}}
+	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-browser-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo browser policy", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: anyScope, AllowDirect: true, LocalEgressDevices: []string{}}})
+	for _, target := range []BusinessProbeTarget{{ID: "demo-no-duration", URL: "https://demo-service.example/no-duration"}, {ID: "demo-zero-duration", URL: "https://demo-service.example/zero-duration"}} {
+		submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-create-" + target.ID, Operation: "probe_target.put", TargetKind: "probe_target", TargetID: target.ID, Dependencies: []string{}, Payload: target})
 	}
-	if err := json.Unmarshal([]byte(fmt.Sprint(submission)), &point); err != nil || !point.Valid || point.Disabled {
-		t.Fatalf("browser draft has no clickable valid submit control: value=%v err=%v", submission, err)
+	// Let authenticated enrollment options arrive first. The normal form must
+	// wait for its snapshot rather than preserve a draft missing those Policies.
+	allowSnapshot := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseSnapshot := func() { releaseOnce.Do(func() { close(allowSnapshot) }) }
+	var delayNextSnapshot atomic.Bool
+	snapshotCaptured, delayedSnapshot := make(chan struct{}), make(chan struct{})
+	var releaseDelayedOnce sync.Once
+	releaseDelayed := func() { releaseDelayedOnce.Do(func() { close(delayedSnapshot) }) }
+	adminHandler := server.AdminHandler()
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/control/ui/snapshot" {
+			<-allowSnapshot
+			if delayNextSnapshot.CompareAndSwap(true, false) {
+				response := httptest.NewRecorder()
+				adminHandler.ServeHTTP(response, r)
+				close(snapshotCaptured)
+				<-delayedSnapshot
+				for key, values := range response.Header() {
+					w.Header()[key] = values
+				}
+				w.WriteHeader(response.Code)
+				_, _ = w.Write(response.Body.Bytes())
+				return
+			}
+		}
+		adminHandler.ServeHTTP(w, r)
+	}))
+	defer httpServer.Close()
+	defer releaseSnapshot()
+	defer releaseDelayed()
+	debug := openCommandChrome(t, httpServer.URL+"/devices?new=1")
+	waitChromeEvaluation(t, debug, `document.querySelector('#app').textContent.includes('Authenticated enrollment options are not ready.')`)
+	if chromeDo(t, debug, `document.querySelector('#enrollment-form')===null`) != true {
+		t.Fatal("form was created before its authenticated policy snapshot arrived")
 	}
-	clickContext, clickCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer clickCancel()
-	if !strings.Contains(point.Hit, "type=\"submit\"") {
-		t.Fatalf("submit button is not the pointer hit target: %+v", point)
+	releaseSnapshot()
+	waitChromeEvaluation(t, debug, `document.querySelector('#enrollment-form [name=endpoint]')?.options.length>0&&document.querySelector('#connection').textContent.includes('local writes available')`)
+	transactionID, ok := chromeDo(t, debug, `document.querySelector('#enrollment-form').dataset.transactionId`).(string)
+	if !ok {
+		t.Fatal("browser form has no stable transaction ID")
 	}
-	if err := debug.call(clickContext, "Page.bringToFront", map[string]any{}, nil); err != nil {
-		t.Fatal(err)
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.device_id.value='demo-browser-device';f.elements.name.value='Demo browser device';f.querySelector('[name=policy_id][value=demo-policy]').checked=true;f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `location.pathname.startsWith('/devices/invites/')&&document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='open'&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
+	if chromeDo(t, debug, `location.pathname`) != "/devices/invites/"+transactionID {
+		t.Fatal("initial delivery did not retain the issued transaction route")
 	}
-	for _, kind := range []string{"mousePressed", "mouseReleased"} {
-		if err := debug.call(clickContext, "Input.dispatchMouseEvent", map[string]any{
-			"type": kind, "x": point.X, "y": point.Y, "button": "left", "clickCount": 1,
-		}, nil); err != nil {
-			t.Fatal(err)
+	encoded, ok := chromeDo(t, debug, `document.querySelector('#invite-uri').value`).(string)
+	if !ok {
+		t.Fatal("delivery view did not show its signed invitation")
+	}
+	bootstrap, err := DecodeInvite(encoded)
+	if err != nil || bootstrap.Material.TargetID != transactionID || bootstrap.Material.Payload.(Invite).DeviceID != "demo-browser-device" {
+		t.Fatal("device detail invitation does not match its persisted transaction", err)
+	}
+	if chromeDo(t, debug, `(async()=>{const a=document.querySelector('#device-enrollment a[download]');return (await (await fetch(a.href)).text()).trim()===document.querySelector('#invite-uri').value})()`) != true {
+		t.Fatal("download and device detail produced different invitations")
+	}
+	chromeDo(t, debug, `(()=>{document.querySelector('a[data-nav][href="/devices/demo-browser-device"]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `location.pathname==='/devices/demo-browser-device'&&document.querySelector('#invite-uri')&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
+	if chromeDo(t, debug, `document.querySelector('#invite-uri').value`) != encoded {
+		t.Fatal("continuing into device detail changed the delivered transaction")
+	}
+	before := server.Runtime.Authority.Frontier()
+	chromeDo(t, debug, `(()=>{document.querySelector('[data-invite-refresh]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#invite-uri')&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
+	if chromeDo(t, debug, `document.querySelector('#invite-uri').value`) != encoded {
+		t.Fatal("transaction refresh generated another invitation")
+	}
+	chromeDo(t, debug, `(()=>{location.reload();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#invite-uri')&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
+	if chromeDo(t, debug, `document.querySelector('#invite-uri').value`) != encoded {
+		t.Fatal("reopening device detail changed the pending transaction")
+	}
+	reopened, err := OpenAuthority(server.Runtime.Authority.root)
+	if err != nil || len(reopened.Snapshot().DeviceAuthorizations) != 0 || fmt.Sprint(reopened.Frontier()) != fmt.Sprint(before) {
+		t.Fatal("delivery readback changed authority or manufactured a joined device", err)
+	}
+	for _, device := range projectWebDevices(reopened.Snapshot()) {
+		if device.ID == "demo-browser-device" && (device.Authorized || len(device.Roles) != 1 || device.Roles[0] != "access") {
+			t.Fatal("pending device lost its requested responsibility or gained authorization")
 		}
 	}
-	time.Sleep(time.Second)
-	statusValue, statusErr := debug.evaluate(context.Background(), `document.querySelector('#operation-status')?.textContent||''`)
-	if statusErr != nil {
-		t.Fatal(statusErr)
+	// Hold the post-command HTTP snapshot while the live stream accepts the
+	// actual claim below. Its old open transaction must not overwrite completed.
+	delayNextSnapshot.Store(true)
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/services?new=1');dispatchEvent(new PopStateEvent('popstate'));const f=document.querySelector('#service-form');f.elements.id.value='demo-unrelated-service';f.elements.name.value='Demo unrelated';f.elements.matchers.value='dns_exact unrelated.example';f.requestSubmit();return true})()`)
+	select {
+	case <-snapshotCaptured:
+	case <-time.After(3 * time.Second):
+		t.Fatal("browser command did not request its post-command snapshot")
 	}
-	if !strings.Contains(strings.ToLower(fmt.Sprint(statusValue)), "stale") {
-		t.Fatalf("stale browser operation did not expose a conflict: form=%v status=%v", submission, statusValue)
+	key := testKey(t)
+	inviteID, _ := MaterialID(bootstrap.Material)
+	claim, err := SignEnrollmentClaim(EnrollmentClaimRequest{Schema: 3, NetworkID: server.Config.NetworkID, GenesisDigest: server.Config.GenesisID, TransactionID: transactionID, InviteMaterialID: inviteID, RequestID: "demo-browser-claim", DevicePublicKey: base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)), Platform: "linux"}, key)
+	if err != nil {
+		t.Fatal(err)
 	}
-	waitChromeEvaluation(t, debug, `window.__loomHeldInput.isConnected&&window.__loomHeldInput.value==='Preserved draft'`)
+	status, body := endpointPost(t, fixture.dialBootstrap(t, bootstrap), "/enrollment/claim", claim)
+	if status != http.StatusOK {
+		t.Fatalf("private claim failed: %s", body)
+	}
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	waitChromeEvaluation(t, debug, `location.pathname==='/devices/demo-browser-device'&&document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='completed'&&!document.querySelector('#invite-uri')&&!document.querySelector('#device-enrollment img.qr')`)
+	chromeDo(t, debug, `(()=>{window.demoSnapshotRegressed=false;window.demoSnapshotObserver=new MutationObserver(()=>{if(!document.querySelector('#device-policy-form')||document.querySelector('#invite-uri'))demoSnapshotRegressed=true});demoSnapshotObserver.observe(document.querySelector('#app'),{childList:true,subtree:true});return true})()`)
+	releaseDelayed()
+	waitChromeEvaluation(t, debug, `!document.querySelector('#notice').hidden&&document.querySelector('#notice').textContent.includes('Accepted locally')`)
+	if chromeDo(t, debug, `(()=>{demoSnapshotObserver.disconnect();return !demoSnapshotRegressed&&!!document.querySelector('#device-policy-form')&&!document.querySelector('#invite-uri')})()`) != true {
+		t.Fatal("late HTTP snapshot overwrote the accepted live completion or revived delivery")
+	}
+	if chromeDo(t, debug, `!!document.querySelector('#device-enrollment a[download]')||document.body.innerText.includes('runtime_key')`) == true {
+		t.Fatal("completed device detail still delivered a capability or exposed private material")
+	}
+	invitePath, _ := json.Marshal("/devices/invites/" + transactionID)
+	chromeDo(t, debug, `(()=>{history.pushState({},'',`+string(invitePath)+`);dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='completed'&&!document.querySelector('#invite-uri')&&!document.querySelector('#device-enrollment img.qr')`)
+	if chromeDo(t, debug, `!!document.querySelector('a[data-nav][href="/devices/demo-browser-device"]')&&!document.querySelector('#device-enrollment a[download]')`) != true {
+		t.Fatal("completed delivery view did not lead to the same device without a capability")
+	}
+	chromeDo(t, debug, `(()=>{document.querySelector('a[data-nav][href="/devices/demo-browser-device"]').click();return true})()`)
+	view, err := server.deviceEnvelope("demo-browser-device")
+	if err != nil || len(view.View.Routes) != 1 {
+		t.Fatal("joined device has no expected service route", err)
+	}
+	route := view.View.Routes[0]
+	zero := int64(0)
+	report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: "demo-browser-device", ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-network-generation", ReportedAt: server.now().UnixMilli(), Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}
+	// These signed samples test the UI mapping, not a live request to the example targets.
+	for index, target := range []string{"https://demo-service.example/no-duration", "https://demo-service.example/zero-duration"} {
+		observation := Observation{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: target, Action: "https_request", SpecDigest: route.SpecDigest, NetworkGeneration: report.NetworkGeneration, Result: "unknown", ObservedAt: report.ReportedAt, ValidUntil: report.ReportedAt + 60000}
+		if index == 1 {
+			observation.Result, observation.DurationMS = "available", &zero
+		}
+		report.Observations = append(report.Observations, observation)
+	}
+	sendReport := func(value DeviceReport) {
+		t.Helper()
+		value, err := SignDeviceReport(value, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		connection, err := DialEndpoint(ctx, fixture.endpoint, TunnelHello{Schema: 3, Mode: "device", EndpointID: fixture.endpoint.ID, Generation: fixture.endpoint.Generation, DeviceID: value.DeviceID}, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer connection.Close()
+		status, body := endpointPost(t, connection, "/device/report", value)
+		if status != http.StatusOK {
+			t.Fatalf("private signed report failed: %s", body)
+		}
+	}
+	sendReport(report)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime [data-runtime-state]')?.textContent==='running'&&document.querySelector('#device-measurements')?.innerText.includes('https://demo-service.example/zero-duration')`)
+	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('#device-measurements tbody tr')];return rows[0].cells[1].textContent==='https://demo-service.example/no-duration'&&rows[0].cells[3].textContent==='—'&&rows[1].cells[1].textContent==='https://demo-service.example/zero-duration'&&rows[1].cells[3].textContent==='0 ms'})()`) != true {
+		t.Fatal("measurements confused target/candidate or zero/missing duration")
+	}
+	if chromeDo(t, debug, `(()=>{const fields=[...document.querySelectorAll('#device-runtime dt')].map(v=>v.textContent);return fields.join('|')==='State|Applied view|Error code'&&!document.querySelector('.device-status').textContent.includes('overlay')})()`) != true {
+		t.Fatal("current runtime report was interpreted with legacy execution fields")
+	}
+	report.ReportSequence++
+	report.Runtime = RuntimeReadback{State: "error", ErrorCode: "demo-execution-failed"}
+	report.Selections, report.Observations = []ReportSelection{}, []Observation{}
+	sendReport(report)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime [data-runtime-state]')?.textContent==='error'&&document.querySelector('#device-runtime').textContent.includes('demo-execution-failed')`)
+	if chromeDo(t, debug, `document.querySelector('#device-runtime dd.mono').textContent==='—'&&!document.querySelector('.device-status').textContent.includes('overlay')`) != true {
+		t.Fatal("failed execution manufactured an applied view or legacy overlay")
+	}
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	if chromeDo(t, debug, `[...document.querySelector('select[name=role]').options].map(v=>v.value).join('|')`) != "|access|control|forward|internet_egress" {
+		t.Fatal("node filter lost one of the four model responsibilities")
+	}
 }

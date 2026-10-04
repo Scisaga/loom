@@ -38,9 +38,9 @@ type windowsPathDisplay struct {
 func windowsObservationDisplay(result string) (health, summary, selected string) {
 	switch result {
 	case "available":
-		return "可用", "TCP/TLS 与 UDP/DNS 已验证", "真实业务成功"
+		return "可用", "已配置目标的真实探测成功", "真实业务成功"
 	case "unavailable":
-		return "不可用", "TCP/TLS 或 UDP/DNS 失败", "真实业务失败"
+		return "不可用", "已配置目标的真实探测失败", "真实业务失败"
 	default:
 		return "未知", "尚无真实业务结果", "未知"
 	}
@@ -58,7 +58,7 @@ func readWindowsRuntimeStatus(root string) (windowsRuntimeStatus, error) {
 		return status, err
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || status.Schema != 1 {
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || status.Schema != 3 {
 		return windowsRuntimeStatus{}, errors.New("Windows runtime status is invalid")
 	}
 	return status, nil
@@ -69,30 +69,38 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 	defer ticker.Stop()
 	for {
 		status, err := readWindowsRuntimeStatus(app.root)
+
+		store, loadErr := deviceclient.LoadProtected(windowsProfileStatePath(app.root), app.protector())
+		if err == nil && (loadErr != nil || store.LKG() == nil || store.LKG().ViewDigest != status.ViewDigest) {
+			err = errors.New("runtime status does not match accepted View")
+		}
 		var rows []windowsPathDisplay
 		if err == nil {
 			byID := map[string]string{}
 			observed := map[string]string{}
 			updated := map[string]string{}
 			for _, observation := range status.Observations {
+				until, parseErr := time.Parse(time.RFC3339, observation.ValidUntil)
+				if parseErr != nil || !time.Now().Before(until) {
+					continue
+				}
 				observed[observation.CandidateID] = observation.Result
 				updated[observation.CandidateID] = observation.ObservedAt
 			}
-			store, loadErr := deviceclient.LoadProtected(windowsProfileStatePath(app.root), app.protector())
 			if loadErr == nil && store.LKG() != nil {
 				for _, route := range store.LKG().View.Routes {
 					chain := "本机 → 目标（直连）"
-					if len(route.Chain) > 0 {
-						chain = "本机 → " + strings.Join(route.Chain, " → ") + " → 目标"
+					if route.FinalExit != "direct" && len(route.NodeChain) == 0 {
+						chain = "本机（出口 " + route.FinalExit + "）→ 目标"
+					} else if len(route.NodeChain) > 0 {
+						chain = "本机 → " + strings.Join(route.NodeChain, " → ") + " → 目标"
 					}
 					byID[route.ID] = chain
 				}
 			}
 			for _, selection := range status.Selections {
 				result := observed[selection.CandidateID]
-				if result == "" {
-					result = selection.State
-				}
+
 				health, summary, selected := windowsObservationDisplay(result)
 				rows = append(rows, windowsPathDisplay{Service: selection.Scope, Candidate: selection.CandidateID,
 					Chain: byID[selection.CandidateID], Health: health, MeasurementSummary: summary, SelectedQuality: selected,
@@ -108,8 +116,17 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 		if changed {
 			app.paths = slices.Clone(rows)
 		}
+		ready := err == nil && status.DeviceID != "" && status.ViewDigest != "" && status.RuntimeState == "running"
+		becameReady := ready && app.state == guiStarting && !app.stopRequested
+		if !ready && app.state == guiConnected && !app.stopRequested {
+			app.state = guiStarting
+			app.detail = "认证配置已保存；正在等待运行路径回读…"
+			changed = true
+		}
 		app.mu.Unlock()
-		if changed {
+		if becameReady {
+			app.runtimeReady(sequence)
+		} else if changed {
 			app.repaint()
 		}
 		select {

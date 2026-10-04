@@ -66,7 +66,7 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
     val activeProfile = profiles.profiles.firstOrNull { it.id == status.activeProfileId }
     val requestedProfile = profiles.profiles.firstOrNull { it.id == status.requestedProfileId }
     val headerProfile = activeProfile ?: requestedProfile ?: viewedProfile
-    val hasManagedProfile = state.join.snapshot.isNotEmpty()
+    val hasManagedProfile = state.join.viewDigest.isNotEmpty()
     val connectionScroll = rememberScrollState()
     val configurationScroll = rememberScrollState()
     val diagnosticsScroll = rememberScrollState()

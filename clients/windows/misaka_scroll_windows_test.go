@@ -19,7 +19,7 @@ func TestGUIMisakaRouteWheelOutsidePopupScrollsPageWithoutSelecting(t *testing.T
 	app := newMisakaViewportTestWindow(t)
 	for index := 0; index < 12; index++ {
 		name := fmt.Sprintf("demo-wheel-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: name}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: name}})
 	}
 	app.renderControls()
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)
@@ -74,7 +74,7 @@ func TestGUIMisakaRouteWheelInsidePopupKeepsNativeListNavigation(t *testing.T) {
 	app := newMisakaViewportTestWindow(t)
 	for index := 0; index < 80; index++ {
 		name := fmt.Sprintf("demo-menu-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: name}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: name}})
 	}
 	app.renderControls()
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)

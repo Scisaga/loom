@@ -8,10 +8,10 @@ internal data class RoutePathSummary(
     val stateLabel: String,
 )
 
-/** Groups selectors only when their applied, read-back server chain is identical. */
+/** Groups selectors only when their read-back path and logical exit agree. */
 internal fun summarizeRoutePaths(paths: List<RoutePathStatus>): List<RoutePathSummary> = paths
-    .groupBy { it.serverChain }
-    .map { (serverChain, groupedPaths) ->
+    .groupBy { it.serverChain to it.finalExit }
+    .map { (path, groupedPaths) ->
         val services = groupedPaths.map { displayRouteService(it.service) }.distinct()
         val states = groupedPaths.map { displayRouteState(it.state) }.distinct()
         RoutePathSummary(
@@ -20,15 +20,15 @@ internal fun summarizeRoutePaths(paths: List<RoutePathStatus>): List<RoutePathSu
                 services.size <= 2 -> services.joinToString("、")
                 else -> "${services.take(2).joinToString("、")} 等 ${services.size} 项"
             },
-            chainLabel = displayRouteChain(serverChain),
+            chainLabel = displayRouteChain(path.first, path.second),
             stateLabel = "业务结果：${states.joinToString(" / ")}",
         )
     }
 
-internal fun displayRouteChain(serverChain: List<String>): String = if (serverChain.isEmpty()) {
-    "本机 → 目标地址（Direct）"
-} else {
-    (listOf("本机") + serverChain + "目标地址").joinToString(" → ")
+internal fun displayRouteChain(serverChain: List<String>, finalExit: String): String = when {
+    finalExit == "direct" -> "本机 → 目标地址（Direct）"
+    serverChain.isEmpty() -> "本机（出口 $finalExit）→ 目标地址"
+    else -> (listOf("本机") + serverChain + "目标地址").joinToString(" → ")
 }
 
 internal fun displayRouteService(service: String): String = when {

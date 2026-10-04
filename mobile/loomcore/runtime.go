@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"loom/internal/clientmodel"
+	"loom/internal/control"
 )
 
 type runtimeApplication struct {
@@ -21,6 +22,7 @@ type runtimeApplication struct {
 type runtimeSelection struct {
 	Selector  string   `json:"selector"`
 	Candidate string   `json:"candidate"`
+	FinalExit string   `json:"final_exit"`
 	Chain     []string `json:"chain,omitempty"`
 	State     string   `json:"state"`
 }
@@ -29,6 +31,7 @@ type runtimeSelection struct {
 func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, currentBody []byte,
 	generation, nowRFC3339 string) ([]byte, error) {
 	var routes []clientmodel.RouteCandidate
+	var measured []androidObservation
 	var observations []clientmodel.Observation
 	var preference clientmodel.Preference
 	current := map[string]string{}
@@ -38,13 +41,20 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 	if len(observationsBody) == 0 {
 		observationsBody = []byte("[]")
 	}
-	if err := decodeStrictJSON(observationsBody, 1<<20, &observations); err != nil {
+	if err := decodeStrictJSON(observationsBody, 1<<20, &measured); err != nil {
 		return nil, err
 	}
-	if len(preferenceBody) == 0 {
-		preferenceBody = []byte(`{"schema":1,"mode":"auto"}`)
+	for _, item := range measured {
+		metric := int64(0)
+		if item.MetricMillis != nil {
+			metric = *item.MetricMillis
+		}
+		observations = append(observations, clientmodel.Observation{CandidateID: item.CandidateID, NetworkGeneration: item.NetworkGeneration, Scope: item.Scope, Result: item.Result, Action: item.Action, ObservedAt: item.ObservedAt, ValidUntil: item.ValidUntil, MetricMillis: metric})
 	}
-	if err := decodeStrictJSON(preferenceBody, 1<<20, &preference); err != nil {
+	if len(preferenceBody) == 0 {
+		preferenceBody, _ = NewAndroidPreference("auto", "")
+	}
+	if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
 		return nil, err
 	}
 	if len(currentBody) > 0 {
@@ -63,7 +73,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 			return nil, err
 		}
 		byScope[route.Scope] = append(byScope[route.Scope], route)
-		if len(route.Chain) == 0 {
+		if route.FinalExit == "direct" {
 			direct = true
 		} else {
 			exits[route.FinalExit] = true
@@ -74,8 +84,8 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
-	application := runtimeApplication{Schema: 1, Mode: string(preference.Mode), Exit: preference.Exit,
-		DirectAvailable: direct, Exits: make([]string, 0, len(exits))}
+	application := runtimeApplication{Schema: 3, Mode: string(preference.Mode), Exit: preference.Exit,
+		DirectAvailable: direct, Exits: make([]string, 0, len(exits)), Selections: []runtimeSelection{}}
 	for exit := range exits {
 		application.Exits = append(application.Exits, exit)
 	}
@@ -86,10 +96,12 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 			return nil, err
 		}
 		var chain []string
+		var finalExit string
 		state := "unknown"
 		for _, route := range byScope[scope] {
 			if route.ID == selection.CandidateID {
 				chain = append([]string(nil), route.Chain...)
+				finalExit = route.FinalExit
 				break
 			}
 		}
@@ -102,7 +114,13 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 			}
 		}
 		application.Selections = append(application.Selections, runtimeSelection{Selector: scope,
-			Candidate: selection.CandidateID, Chain: chain, State: state})
+			Candidate: selection.CandidateID, FinalExit: finalExit, Chain: chain, State: state})
 	}
 	return json.Marshal(application)
+}
+
+// NewAndroidPreference emits the single canonical local preference value.
+func NewAndroidPreference(mode, exit string) ([]byte, error) {
+	preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.Mode(mode), Exit: exit}
+	return control.CanonicalEncode(preference)
 }

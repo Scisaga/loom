@@ -2,11 +2,13 @@ package main
 
 import "testing"
 
-func TestSelfcheckSignedCurrentCapability(t *testing.T) {
-	if err := requireSelfcheckCapability(signedCurrentCapability); err != nil {
+func TestSelfcheckDoesNotAdvertiseRetiredReleaseActivation(t *testing.T) {
+	if err := requireSelfcheckCapability(""); err != nil {
 		t.Fatal(err)
 	}
-	if err := requireSelfcheckCapability("future-capability"); err == nil {
-		t.Fatal("未知 capability 被 selfcheck 接受")
+	for _, capability := range []string{"signed-current-v1", "future-capability"} {
+		if err := requireSelfcheckCapability(capability); err == nil {
+			t.Fatalf("unsupported release activation capability accepted: %s", capability)
+		}
 	}
 }

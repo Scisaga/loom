@@ -8,19 +8,8 @@ import (
 	"io"
 )
 
-const (
-	maxInviteBytes   = 16 << 10
-	maxResponseBytes = 4 << 20
-	maxCurrentBytes  = 1 << 20
-	maxManifestBytes = 4 << 20
-	maxBundleBytes   = 16 << 20
-	maxBundleFiles   = 64
-)
-
-// decodeStrictJSON is shared by every authenticated or persisted JSON
-// boundary in this package. encoding/json normally accepts duplicate keys and
-// keeps the last value, which lets different readers disagree about what was
-// signed. Walking first makes that ambiguity fail closed at every depth.
+// decodeStrictJSON reads disposable host measurements and execution inputs.
+// Authoritative values always use control/deviceclient canonical codecs.
 func decodeStrictJSON(body []byte, maximum int, target any) error {
 	if len(body) == 0 || len(body) > maximum {
 		return fmt.Errorf("JSON size must be between 1 and %d bytes", maximum)
@@ -39,20 +28,6 @@ func decodeStrictJSON(body []byte, maximum int, target any) error {
 			err = errors.New("additional JSON value")
 		}
 		return fmt.Errorf("trailing content: %w", err)
-	}
-	return nil
-}
-
-func decodeCanonical(body []byte, target any) error {
-	if err := decodeStrictJSON(body, 8<<20, target); err != nil {
-		return err
-	}
-	want, err := json.Marshal(target)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(body, want) {
-		return errors.New("non-canonical JSON")
 	}
 	return nil
 }
@@ -126,33 +101,4 @@ func walkJSONValue(decoder *json.Decoder) error {
 		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
 	}
 	return nil
-}
-
-func validNodeID(id string) bool {
-	if len(id) == 0 || len(id) > 63 {
-		return false
-	}
-	for i := 0; i < len(id); i++ {
-		character := id[i]
-		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
-			continue
-		}
-		if character != '-' || i == 0 || i == len(id)-1 {
-			return false
-		}
-	}
-	return true
-}
-
-func validLowerHex(value string, length int) bool {
-	if len(value) != length {
-		return false
-	}
-	for i := 0; i < len(value); i++ {
-		character := value[i]
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
 }

@@ -1,8 +1,9 @@
 package control
 
 import (
+	"bytes"
+	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -12,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,145 +22,315 @@ import (
 
 const NodeSchema = 3
 
-type NodeConfig struct {
-	Schema             int              `json:"schema"`
-	ClusterID          string           `json:"cluster_id"`
-	MemberID           string           `json:"member_id"`
-	Node               string           `json:"node"`
-	IdentityPrivateKey string           `json:"identity_private_key"`
-	Bootstrap          bool             `json:"bootstrap"`
-	Recovery           RecoveryEvidence `json:"recovery"`
-	BrowserTLS         BrowserTLS       `json:"browser_tls"`
-	PeerTLS            TLSIdentity      `json:"peer_tls"`
-	ReadCertDER        []string         `json:"read_cert_der"`
-	AdminCertDER       []string         `json:"admin_cert_der"`
+type TLSFiles struct {
+	CertificateFile string `json:"certificate_file"`
+	KeyFile         string `json:"key_file"`
+	TrustFile       string `json:"trust_file"`
 }
 
-type legacyNodeConfigV2 struct {
-	Schema             int              `json:"schema"`
-	ClusterID          string           `json:"cluster_id"`
-	MemberID           string           `json:"member_id"`
-	Node               string           `json:"node"`
-	IdentityPrivateKey string           `json:"identity_private_key"`
-	Bootstrap          bool             `json:"bootstrap"`
-	Recovery           RecoveryEvidence `json:"recovery"`
-	BrowserTLS         BrowserTLS       `json:"browser_tls"`
-	ReadCertDER        []string         `json:"read_cert_der"`
-	AdminCertDER       []string         `json:"admin_cert_der"`
-}
-
-func (config NodeConfig) Validate() error {
-	key, err := base64.RawURLEncoding.DecodeString(config.IdentityPrivateKey)
-	if config.Schema != NodeSchema || config.ClusterID == "" || config.MemberID == "" || config.Node == "" || err != nil || len(key) != ed25519.PrivateKeySize {
-		return errors.New("control node config is incomplete")
-	}
-	if !config.Recovery.V2Latch || config.BrowserTLS.CertificateChainPEM == "" || config.BrowserTLS.PrivateKeyPKCS8PEM == "" ||
-		config.PeerTLS.CertificateChainPEM == "" || config.PeerTLS.PrivateKeyPKCS8PEM == "" ||
-		len(config.ReadCertDER) == 0 || len(config.AdminCertDER) == 0 {
-		return errors.New("control node recovery boundary is incomplete")
+func (files TLSFiles) Validate() error {
+	for _, path := range []string{files.CertificateFile, files.KeyFile, files.TrustFile} {
+		if !absoluteControlPath(path) {
+			return errors.New("TLS inputs require canonical absolute file references")
+		}
 	}
 	return nil
 }
 
-func (config NodeConfig) PrivateKey() ed25519.PrivateKey {
-	key, _ := base64.RawURLEncoding.DecodeString(config.IdentityPrivateKey)
-	return ed25519.PrivateKey(key)
+// NodeConfig contains local execution references and the protected genesis
+// anchor, never a second projection, old recovery floor, or CA private key.
+type NodeConfig struct {
+	Schema         int       `json:"schema"`
+	NetworkID      string    `json:"network_id"`
+	ControlID      string    `json:"control_id"`
+	NodeID         string    `json:"node_id"`
+	GenesisID      string    `json:"genesis_id"`
+	SigningKeyFile string    `json:"signing_key_file"`
+	BrowserTLS     *TLSFiles `json:"browser_tls,omitempty"`
+	PeerTLS        *TLSFiles `json:"peer_tls,omitempty"`
 }
 
-func (config NodeConfig) Member() Member {
-	public := config.PrivateKey().Public().(ed25519.PublicKey)
-	return Member{ID: config.MemberID, Node: config.Node, PublicKey: base64.RawURLEncoding.EncodeToString(public)}
+func absoluteControlPath(path string) bool {
+	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) == path
+}
+func (config NodeConfig) Validate() error {
+	if config.Schema != NodeSchema || ValidateID(config.NetworkID) != nil || ValidateID(config.ControlID) != nil || ValidateID(config.NodeID) != nil || config.NodeID == "direct" || ValidateDigest(config.GenesisID) != nil || !absoluteControlPath(config.SigningKeyFile) {
+		return errors.New("control node identity or anchor is invalid")
+	}
+	for _, files := range []*TLSFiles{config.BrowserTLS, config.PeerTLS} {
+		if files != nil {
+			if err := files.Validate(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+func (config NodeConfig) PrivateKey() (ed25519.PrivateKey, error) {
+	body, err := readProtectedControlFile(config.SigningKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load control signing key: %w", err)
+	}
+	block, rest := pem.Decode(body)
+	if block == nil || block.Type != "PRIVATE KEY" || len(block.Headers) != 0 || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, errors.New("control signing key must be one PKCS8 PEM value")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, errors.New("control signing key is not valid PKCS8")
+	}
+	key, ok := parsed.(ed25519.PrivateKey)
+	if !ok || len(key) != ed25519.PrivateKeySize {
+		return nil, errors.New("control signing key must be Ed25519")
+	}
+	return key, nil
+}
+func (config NodeConfig) PublicKey() (ed25519.PublicKey, error) {
+	key, err := config.PrivateKey()
+	if err != nil {
+		return nil, err
+	}
+	return key.Public().(ed25519.PublicKey), nil
+}
+func (config NodeConfig) Member() (Member, error) {
+	key, err := config.PublicKey()
+	if err != nil {
+		return Member{}, err
+	}
+	return Member{ControlID: config.ControlID, NodeID: config.NodeID, PublicKey: base64.RawURLEncoding.EncodeToString(key)}, nil
+}
+func LoadNodeConfig(root string) (NodeConfig, error) {
+	var config NodeConfig
+	body, err := readProtectedControlFile(filepath.Join(root, "node.json"))
+	if err != nil {
+		return config, err
+	}
+	err = DecodeCanonical(body, &config, ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 128})
+	return config, err
 }
 
+type Submission struct {
+	MaterialID string
+	Projection Projection
+}
 type Authority struct {
 	root       string
 	mu         sync.RWMutex
-	consensus  ConsensusState
+	genesis    Material
+	materials  []Material
 	projection Projection
-	certified  CertifiedState
 }
 
 func OpenAuthority(root string) (*Authority, error) {
-	authority := &Authority{root: root}
-	if err := readStrict(filepath.Join(root, "consensus.json"), &authority.consensus); err != nil {
+	if err := validateControlRoot(root); err != nil {
 		return nil, err
 	}
-	if authority.consensus.Schema != 1 || len(authority.consensus.Entries) == 0 {
-		return nil, errors.New("consensus store is empty")
-	}
-	projection, err := authority.rebuildLocked()
+	lock, err := lockAuthority(context.Background(), root)
 	if err != nil {
 		return nil, err
 	}
-	authority.projection = projection
-	if err := readStrict(filepath.Join(root, "certified.json"), &authority.certified); err != nil {
+	defer lock.Close()
+	a := &Authority{root: root}
+	if err := a.reloadLocked(); err != nil {
 		return nil, err
 	}
-	if authority.certified.Schema != 1 {
-		return nil, errors.New("certified store schema is invalid")
-	}
-	if err := VerifyHead(authority.certified.Head, authority.certified.Projection, authority.consensus.Entries); err != nil {
-		return nil, err
-	}
-	certifiedProjection, err := authority.rebuildPrefixLocked(int(authority.certified.Head.Index))
-	if err != nil {
-		return nil, err
-	}
-	want, _ := projectionDigest(certifiedProjection)
-	got, _ := projectionDigest(authority.certified.Projection)
-	if want != got {
-		return nil, fmt.Errorf("certified projection does not match rebuilt projection: rebuilt=%s certified=%s index=%d entries=%d", want, got, authority.certified.Head.Index, len(authority.consensus.Entries))
-	}
-	authority.projection.Web.UIState = authority.certified.Projection.Web.UIState
-	return authority, nil
+	return a, nil
 }
 
-func jsonEqual(left, right []byte) bool { return string(left) == string(right) }
-
-func (authority *Authority) materialPath(id string) (string, error) {
-	if !strings.HasPrefix(id, "sha256:") || len(id) != 71 {
-		return "", errors.New("material ID is invalid")
+// Initialization is explicit and never overwrites a partial or historical store.
+func InitializeAuthority(root string, config NodeConfig, genesis Material) (*Authority, error) {
+	if !absoluteControlPath(root) || config.Validate() != nil {
+		return nil, errors.New("explicit initialization requires an absolute root and valid identity")
 	}
-	digest := strings.TrimPrefix(id, "sha256:")
-	if _, err := hex.DecodeString(digest); err != nil {
-		return "", errors.New("material ID is invalid")
+	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return nil, err
 	}
-	return filepath.Join(authority.root, "materials", digest+".json"), nil
-}
-
-func (authority *Authority) PutMaterial(body []byte) (string, error) {
-	material, err := DecodeMaterial(body)
+	if err := validateControlRoot(root); err != nil {
+		return nil, err
+	}
+	lock, err := lockAuthority(context.Background(), root)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	canonicalBody, id, err := EncodeMaterial(material)
+	defer lock.Close()
+	entries, err := os.ReadDir(root)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	path, _ := authority.materialPath(id)
-	if existing, err := os.ReadFile(path); err == nil {
-		if !jsonEqual(existing, canonicalBody) {
-			return "", errors.New("material ID collision")
+	for _, entry := range entries {
+		if entry.Name() != ".authority.lock" {
+			return nil, errors.New("control initialization requires an empty authority directory")
 		}
-		return id, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", err
+	body, id, err := EncodeMaterial(genesis)
+	if err != nil || genesis.Operation != "genesis" || id != config.GenesisID || genesis.NetworkID != config.NetworkID {
+		return nil, errors.New("genesis does not match the protected network anchor")
 	}
-	if err := atomicWrite(path, canonicalBody); err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
-func (authority *Authority) Material(id string) ([]byte, error) {
-	path, err := authority.materialPath(id)
+	projection, err := Project(genesis, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	body, err := os.ReadFile(path)
+	if _, err := activeLocalMember(config, projection.Config); err != nil {
+		return nil, err
+	}
+	a := &Authority{root: root}
+	path, _ := a.materialPath(id)
+	if err := os.Mkdir(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	if err := putControlBytes(path, body); err != nil {
+		return nil, err
+	}
+	observations, err := CanonicalEncode(observationState{Schema: 3, Reports: []DeviceReport{}})
+	if err != nil {
+		return nil, err
+	}
+	if err := putControlBytes(filepath.Join(root, "observations.json"), observations); err != nil {
+		return nil, err
+	}
+	encoded, err := CanonicalEncode(config)
+	if err != nil {
+		return nil, err
+	}
+	if err := putControlBytes(filepath.Join(root, "node.json"), encoded); err != nil {
+		return nil, err
+	}
+	if err := syncControlDirectory(root); err != nil {
+		return nil, err
+	}
+	if err := syncControlDirectory(filepath.Dir(root)); err != nil {
+		return nil, err
+	}
+	if err := a.reloadLocked(); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+func validateControlRoot(root string) error {
+	if !absoluteControlPath(root) {
+		return errors.New("control root must be a canonical absolute path")
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+		return errors.New("control root must be an owner-only directory")
+	}
+	return nil
+}
+func lockAuthority(ctx context.Context, root string) (*os.File, error) {
+	return lockProtectedControlPath(ctx, filepath.Join(root, ".authority.lock"))
+}
+func lockProtectedControlPath(ctx context.Context, path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	info, a := file.Stat()
+	entry, b := os.Lstat(path)
+	if a != nil || b != nil || !controlPrivateRegular(info) || !os.SameFile(info, entry) || entry.Mode()&os.ModeSymlink != 0 {
+		file.Close()
+		return nil, errors.New("control lock is not a protected regular file")
+	}
+	if err := lockControlFile(ctx, file); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+func (a *Authority) reloadLocked() error {
+	entries, err := os.ReadDir(a.root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		switch entry.Name() {
+		case "consensus.json", "certified.json", "consensus-raft.db", "state.json", "recovery.json", "floor.json", "latch.json":
+			return errors.New("legacy authority and recovery evidence cannot enter the current decoder")
+		}
+	}
+	config, err := LoadNodeConfig(a.root)
+	if err != nil {
+		return err
+	}
+	path, err := a.materialPath(config.GenesisID)
+	if err != nil {
+		return err
+	}
+	body, err := readProtectedControlFile(path)
+	if err != nil {
+		return fmt.Errorf("read fixed genesis: %w", err)
+	}
+	genesis, id, err := EncodeMaterialFromBytes(body)
+	if err != nil || id != config.GenesisID || genesis.Operation != "genesis" || genesis.NetworkID != config.NetworkID {
+		return errors.New("genesis anchor does not match original signed bytes")
+	}
+	materials, err := a.readMaterialsLocked(config.GenesisID)
+	if err != nil {
+		return err
+	}
+	projection, err := Project(genesis, nil, materials)
+	if err != nil {
+		return err
+	}
+	if err := syncControlDirectory(filepath.Join(a.root, "materials")); err != nil {
+		return err
+	}
+	a.genesis, a.materials, a.projection = genesis, materials, projection
+	return nil
+}
+func (a *Authority) materialPath(id string) (string, error) {
+	if ValidateDigest(id) != nil {
+		return "", errors.New("material ID is invalid")
+	}
+	return filepath.Join(a.root, "materials", strings.TrimPrefix(id, "sha256:")+".json"), nil
+}
+func (a *Authority) readMaterialsLocked(genesisID string) ([]Material, error) {
+	directory := filepath.Join(a.root, "materials")
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("material directory is missing or not protected")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	result := []Material{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			return nil, errors.New("unexpected object in material directory")
+		}
+		id := "sha256:" + strings.TrimSuffix(entry.Name(), ".json")
+		path, err := a.materialPath(id)
+		if err != nil {
+			return nil, err
+		}
+		body, err := readProtectedControlFile(path)
+		if err != nil {
+			return nil, err
+		}
+		material, actual, err := EncodeMaterialFromBytes(body)
+		if err != nil || actual != id {
+			return nil, errors.New("material filename does not match its signed bytes")
+		}
+		if id == genesisID {
+			continue
+		}
+		if material.Operation == "genesis" {
+			return nil, errors.New("another genesis cannot enter the fixed network")
+		}
+		result = append(result, material)
+	}
+	return result, nil
+}
+
+func (a *Authority) Material(id string) ([]byte, error) {
+	path, err := a.materialPath(id)
+	if err != nil {
+		return nil, err
+	}
+	body, err := readProtectedControlFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -170,476 +340,385 @@ func (authority *Authority) Material(id string) ([]byte, error) {
 	}
 	return body, nil
 }
-
-func EncodeMaterialFromBytes(body []byte) (Material, string, error) {
-	material, err := DecodeMaterial(body)
-	if err != nil {
-		return material, "", err
-	}
-	_, id, err := EncodeMaterial(material)
-	return material, id, err
+func (a *Authority) Snapshot() Projection {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return cloneAuthorityProjection(a.projection)
 }
-
-func (authority *Authority) MaterialIDs() ([]string, error) {
-	entries, err := os.ReadDir(filepath.Join(authority.root, "materials"))
+func cloneAuthorityProjection(p Projection) Projection {
+	body, err := json.Marshal(p)
+	var copy Projection
+	if err == nil {
+		err = json.Unmarshal(body, &copy)
+	}
+	if err != nil {
+		return Projection{}
+	}
+	return copy
+}
+func (a *Authority) Genesis() (Material, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	body, _, err := EncodeMaterial(a.genesis)
+	if err != nil {
+		return Material{}, err
+	}
+	return DecodeMaterial(body)
+}
+func (a *Authority) Frontier() []FactFrontier { p := a.Snapshot(); return p.Frontier }
+func (a *Authority) MaterialsAfter(keyID string, after U64) ([][]byte, error) {
+	if ValidateDigest(keyID) != nil {
+		return nil, errors.New("invalid signing key ID")
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	values := []Material{}
+	limit := frontierFor(a.projection.Frontier, keyID).Sequence
+	for _, m := range a.materials {
+		if m.IssuerKeyID == keyID && m.Sequence > after && m.Sequence <= limit {
+			values = append(values, m)
+		}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].Sequence != values[j].Sequence {
+			return values[i].Sequence < values[j].Sequence
+		}
+		a, _ := MaterialID(values[i])
+		b, _ := MaterialID(values[j])
+		return a < b
+	})
+	result := [][]byte{}
+	for _, m := range values {
+		body, _, err := EncodeMaterial(m)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, body)
+	}
+	return result, nil
+}
+func (a *Authority) materialAtSequence(keyID string, sequence U64) (string, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	id := ""
+	for _, material := range a.materials {
+		if material.IssuerKeyID != keyID || material.Sequence != sequence {
+			continue
+		}
+		if id != "" {
+			return "", ErrMaterialEquivocation
+		}
+		id, _ = MaterialID(material)
+	}
+	if id == "" {
+		return "", os.ErrNotExist
+	}
+	return id, nil
+}
+func (a *Authority) PendingDependencies() ([]string, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	known := map[string]bool{}
+	id, err := MaterialID(a.genesis)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+	known[id] = true
+	for _, m := range a.materials {
+		id, err := MaterialID(m)
+		if err != nil {
+			return nil, err
+		}
+		known[id] = true
+	}
+	missing := map[string]bool{}
+	for _, m := range a.materials {
+		refs := append([]string{}, m.Dependencies...)
+		if m.Sequence > 1 {
+			refs = append(refs, m.PreviousMaterialID)
+		}
+		for _, id := range refs {
+			if !known[id] {
+				missing[id] = true
+			}
+		}
+	}
+	result := []string{}
+	for id := range missing {
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+func (a *Authority) PutMaterial(body []byte) (string, error) {
+	material, id, err := EncodeMaterialFromBytes(body)
+	if err != nil {
+		return "", err
+	}
+	lock, err := lockAuthority(context.Background(), a.root)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.reloadLocked(); err != nil {
+		return "", err
+	}
+	path, _ := a.materialPath(id)
+	if existing, err := readProtectedControlFile(path); err == nil {
+		if !bytes.Equal(existing, body) {
+			return "", errors.New("material ID collision")
+		}
+		if err := syncControlDirectory(filepath.Dir(path)); err != nil {
+			return "", err
+		}
+		if err := ValidateAdmission(material, a.genesis, nil, a.materials); errors.Is(err, ErrMaterialEquivocation) {
+			return id, err
+		}
+		return id, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if material.Operation == "genesis" {
+		return "", errors.New("another genesis cannot replace the fixed network")
+	}
+	admissionErr := ValidateAdmission(material, a.genesis, nil, a.materials)
+	if admissionErr != nil && !errors.Is(admissionErr, ErrMissingDependencies) && !errors.Is(admissionErr, ErrMaterialEquivocation) {
+		return "", admissionErr
+	}
+	next := append(append([]Material{}, a.materials...), material)
+	projection, err := Project(a.genesis, nil, next)
+	if err != nil {
+		return "", err
+	}
+	if err := putControlBytes(path, body); err != nil {
+		return "", err
+	}
+	a.materials, a.projection = next, projection
+	if errors.Is(admissionErr, ErrMaterialEquivocation) {
+		return id, admissionErr
+	}
+	return id, nil
+}
+func activeLocalMember(config NodeConfig, membership ControlConfig) (Member, error) {
+	local, err := config.Member()
+	if err != nil {
+		return Member{}, err
+	}
+	for _, member := range membership.Members {
+		if member.ControlID == local.ControlID && member.NodeID == local.NodeID && member.PublicKey == local.PublicKey {
+			return member, nil
+		}
+	}
+	return Member{}, errors.New("local signing identity is not an active control member")
+}
+func emptyAuthorityChainID() string {
+	value := sha256.Sum256([]byte("loom-empty-material-chain-v3\x00"))
+	return "sha256:" + hex.EncodeToString(value[:])
+}
+func (a *Authority) Submit(ctx context.Context, op Operation, local NodeConfig) (Submission, error) {
+	if _, err := EncodeOperation(op); err != nil {
+		return Submission{}, err
+	}
+	lock, err := lockAuthority(ctx, a.root)
+	if err != nil {
+		return Submission{}, err
+	}
+	defer lock.Close()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.reloadLocked(); err != nil {
+		return Submission{}, err
+	}
+	return a.submitOperationLocked(ctx, op, local)
+}
+
+// The caller owns both the operating-system writer lock and a.mu. Enrollment
+// uses this same signer for its two individually durable facts.
+func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, local NodeConfig) (Submission, error) {
+	requested, err := EncodeOperation(op)
+	if err != nil {
+		return Submission{}, err
+	}
+	config, err := LoadNodeConfig(a.root)
+	if err != nil {
+		return Submission{}, err
+	}
+	if config.NetworkID != local.NetworkID || config.GenesisID != local.GenesisID || config.ControlID != local.ControlID || config.NodeID != local.NodeID || config.SigningKeyFile != local.SigningKeyFile {
+		return Submission{}, errors.New("local signing identity changed; reopen the control runtime")
+	}
+	member, err := activeLocalMember(config, a.projection.Config)
+	if err != nil {
+		return Submission{}, err
+	}
+	keyID, err := KeyID(member.PublicKey)
+	if err != nil {
+		return Submission{}, err
+	}
+	for _, m := range a.materials {
+		if m.IssuerKeyID != keyID || m.RequestID != op.RequestID {
 			continue
 		}
-		id := "sha256:" + strings.TrimSuffix(entry.Name(), ".json")
-		if _, err := authority.Material(id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids, nil
-}
-
-func (authority *Authority) MaterialForRequest(requestID string) (string, Material, error) {
-	consensus, _, _ := authority.Snapshot()
-	for _, entry := range consensus.Entries {
-		body, err := authority.Material(entry.MaterialID)
+		prior, err := m.OperationRequest()
 		if err != nil {
-			return "", Material{}, err
+			return Submission{}, err
 		}
-		material, err := DecodeMaterial(body)
-		if err != nil {
-			return "", Material{}, err
+		previous, err := EncodeOperation(prior)
+		if err != nil || !bytes.Equal(previous, requested) {
+			return Submission{}, errors.New("request ID is already bound to another operation")
 		}
-		if material.RequestID == requestID {
-			return entry.MaterialID, material, nil
+		id, _ := MaterialID(m)
+		return Submission{MaterialID: id, Projection: cloneAuthorityProjection(a.projection)}, nil
+	}
+	for _, target := range a.projection.Targets {
+		if target.TargetKind != op.TargetKind || target.TargetID != op.TargetID {
+			continue
+		}
+		for _, id := range target.MaterialIDs {
+			index := sort.SearchStrings(op.Dependencies, id)
+			if index == len(op.Dependencies) || op.Dependencies[index] != id {
+				return Submission{}, errors.New("target dependencies are stale")
+			}
 		}
 	}
-	return "", Material{}, os.ErrNotExist
-}
-
-func (authority *Authority) Append(materialID string, term uint64) (Projection, error) {
-	authority.mu.Lock()
-	defer authority.mu.Unlock()
-	body, err := authority.Material(materialID)
-	if err != nil {
-		return Projection{}, err
-	}
-	material, err := DecodeMaterial(body)
-	if err != nil {
-		return Projection{}, err
-	}
-	if contains(authority.projection.Applied, material.RequestID) {
-		return authority.projection, nil
-	}
-	next, err := Reduce(authority.projection, material, materialID)
-	if err != nil {
-		return Projection{}, err
-	}
-	entry := ConsensusEntry{Index: uint64(len(authority.consensus.Entries) + 1), Term: term, MaterialID: materialID}
-	previous := ""
-	if len(authority.consensus.Entries) != 0 {
-		previous = authority.consensus.Entries[len(authority.consensus.Entries)-1].PrefixDigest
-	}
-	seed, _ := canonical(struct {
-		Index                uint64 `json:"index"`
-		Term                 uint64 `json:"term"`
-		MaterialID, Previous string
-	}{entry.Index, entry.Term, entry.MaterialID, previous})
-	sum := sha256.Sum256(seed)
-	entry.PrefixDigest = "sha256:" + hex.EncodeToString(sum[:])
-	authority.consensus.Entries = append(authority.consensus.Entries, entry)
-	if err := atomicJSON(filepath.Join(authority.root, "consensus.json"), authority.consensus); err != nil {
-		authority.consensus.Entries = authority.consensus.Entries[:len(authority.consensus.Entries)-1]
-		return Projection{}, err
-	}
-	authority.projection = next
-	return next, nil
-}
-
-func (authority *Authority) rebuildLocked() (Projection, error) {
-	return authority.rebuildPrefixLocked(len(authority.consensus.Entries))
-}
-
-func (authority *Authority) rebuildPrefixLocked(count int) (Projection, error) {
-	var projection Projection
-	if count < 0 || count > len(authority.consensus.Entries) {
-		return projection, errors.New("consensus prefix is invalid")
-	}
-	for index, entry := range authority.consensus.Entries[:count] {
-		if entry.Index != uint64(index+1) {
-			return Projection{}, errors.New("consensus indexes are not contiguous")
-		}
-		previous := ""
-		if index > 0 {
-			previous = authority.consensus.Entries[index-1].PrefixDigest
-		}
-		seed, _ := canonical(struct {
-			Index                uint64 `json:"index"`
-			Term                 uint64 `json:"term"`
-			MaterialID, Previous string
-		}{entry.Index, entry.Term, entry.MaterialID, previous})
-		sum := sha256.Sum256(seed)
-		if entry.PrefixDigest != "sha256:"+hex.EncodeToString(sum[:]) {
-			return Projection{}, errors.New("consensus prefix digest is invalid")
-		}
-		body, err := authority.Material(entry.MaterialID)
-		if err != nil {
-			return Projection{}, err
-		}
-		material, err := DecodeMaterial(body)
-		if err != nil {
-			return Projection{}, err
-		}
-		projection, err = Reduce(projection, material, entry.MaterialID)
-		if err != nil {
-			return Projection{}, err
+	sequence, previous := U64(0), emptyAuthorityChainID()
+	for _, frontier := range a.projection.Frontier {
+		if frontier.KeyID == keyID {
+			sequence, previous = frontier.Sequence, frontier.TipMaterialID
 		}
 	}
-	return projection, nil
-}
-
-func (authority *Authority) Snapshot() (ConsensusState, Projection, CertifiedState) {
-	authority.mu.RLock()
-	defer authority.mu.RUnlock()
-	return authority.consensus, authority.projection, authority.certified
-}
-
-// HistoricalReportKeys reconstructs every certified DeviceView identity up to
-// the current certified head. It lets members authenticate immutable report
-// history after a device floor/view has advanced without making old reports
-// current again.
-func (authority *Authority) HistoricalReportAuthorities() (map[string]reportAuthority, error) {
-	authority.mu.RLock()
-	entries := append([]ConsensusEntry(nil), authority.consensus.Entries...)
-	limit := int(authority.certified.Head.Index)
-	certifiedProjection := authority.certified.Projection
-	authority.mu.RUnlock()
-	// Some package-level protocol tests use an in-memory certified projection
-	// without a disk consensus log. A real opened authority can never take this
-	// branch because OpenAuthority rejects an empty consensus store.
-	if len(entries) == 0 && certifiedProjection.Schema == 1 {
-		return currentReportAuthorities(certifiedProjection), nil
+	for _, m := range a.materials {
+		if m.IssuerKeyID == keyID && m.Sequence > sequence {
+			return Submission{}, errors.New("local signing history is unresolved; signing is stopped")
+		}
 	}
-	if limit < 1 || limit > len(entries) {
-		return nil, errors.New("certified report history boundary is invalid")
+	if sequence == ^U64(0) {
+		return Submission{}, errors.New("signing sequence is exhausted")
 	}
-	identities := map[string]reportAuthority{}
-	var projection Projection
-	for _, entry := range entries[:limit] {
-		body, err := authority.Material(entry.MaterialID)
-		if err != nil {
-			return nil, err
+	if err := ctx.Err(); err != nil {
+		return Submission{}, err
+	}
+	payload := op.Payload
+	if op.Operation == "device.put" {
+		public := op.Payload.(DevicePut)
+		var original *DeviceAuthorization
+		excluded := map[string]bool{}
+		for _, id := range a.projection.PendingMaterialIDs {
+			excluded[id] = true
 		}
-		material, err := DecodeMaterial(body)
-		if err != nil {
-			return nil, err
+		for _, rejected := range a.projection.InvalidMaterials {
+			excluded[rejected.MaterialID] = true
 		}
-		projection, err = Reduce(projection, material, entry.MaterialID)
-		if err != nil {
-			return nil, err
-		}
-		for _, authorization := range projection.DeviceAuthorizations {
-			view, found := projectDeviceView(projection, authorization.DeviceID)
-			if !found {
+		for _, fact := range a.materials {
+			if fact.Operation != "device.join" || fact.TargetID != op.TargetID {
 				continue
 			}
-			digest, digestErr := DeviceViewDigest(view)
-			if digestErr != nil {
-				return nil, digestErr
+			id, _ := MaterialID(fact)
+			if excluded[id] {
+				continue
 			}
-			key := authorization.DeviceID + "\x00" + digest
-			identity := reportAuthority{PublicKey: authorization.DevicePublicKey, View: view}
-			if previous, exists := identities[key]; exists && previous.PublicKey != identity.PublicKey {
-				return nil, errors.New("historical device view digest has conflicting keys")
+			value := fact.Payload.(DeviceAuthorization)
+			if original != nil {
+				return Submission{}, errors.New("device has no unique original identity binding")
 			}
-			identities[key] = identity
+			original = &value
 		}
+		if original == nil {
+			return Submission{}, errors.New("device update has no verified original binding")
+		}
+		original.Name, original.Responsibilities, original.PolicyIDs, original.DistributionURLs = public.Name,
+			append([]string{}, public.Responsibilities...), append([]string{}, public.PolicyIDs...), append([]string{}, public.DistributionURLs...)
+		payload = *original
 	}
-	return identities, nil
+	material := Material{Schema: MaterialSchema, NetworkID: config.NetworkID, IssuerControlID: config.ControlID, IssuerKeyID: keyID, ControlConfigID: a.projection.ControlConfigID, Sequence: sequence + 1, PreviousMaterialID: previous, Dependencies: append([]string{}, op.Dependencies...), RequestID: op.RequestID, TargetKind: op.TargetKind, TargetID: op.TargetID, Operation: op.Operation, Payload: payload}
+	private, err := config.PrivateKey()
+	if err != nil {
+		return Submission{}, err
+	}
+	material, err = SignMaterial(material, private)
+	if err != nil {
+		return Submission{}, err
+	}
+	if err := ValidateAdmission(material, a.genesis, nil, a.materials); err != nil {
+		return Submission{}, err
+	}
+	next := append(append([]Material{}, a.materials...), material)
+	projection, err := Project(a.genesis, nil, next)
+	if err != nil {
+		return Submission{}, err
+	}
+	body, id, err := EncodeMaterial(material)
+	if err != nil {
+		return Submission{}, err
+	}
+	path, _ := a.materialPath(id)
+	if err := putControlBytes(path, body); err != nil {
+		return Submission{}, err
+	}
+	a.materials, a.projection = next, projection
+	return Submission{MaterialID: id, Projection: cloneAuthorityProjection(projection)}, nil
+}
+func readProtectedControlFile(path string) ([]byte, error) {
+	entry, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !controlPrivateRegular(entry) || entry.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("control input must be an owner-only regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !os.SameFile(entry, info) {
+		return nil, errors.New("control input changed while opening")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, (64<<20)+1))
+	if len(body) > 64<<20 {
+		return nil, errors.New("control input exceeds the current reader resource bound")
+	}
+	return body, err
 }
 
-func (authority *Authority) CandidateHead() (GovernanceHead, Projection, error) {
-	authority.mu.RLock()
-	defer authority.mu.RUnlock()
-	logHash, err := logDigest(authority.consensus.Entries)
+// Hard-link publication is atomic put-if-absent, including against writers
+// that do not cooperate with the advisory process lock.
+func putControlBytes(path string, body []byte) error {
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, ".material-*")
 	if err != nil {
-		return GovernanceHead{}, Projection{}, err
-	}
-	projectionHash, err := projectionDigest(authority.projection)
-	if err != nil {
-		return GovernanceHead{}, Projection{}, err
-	}
-	viewsHash, err := deviceViewsDigest(authority.projection)
-	if err != nil {
-		return GovernanceHead{}, Projection{}, err
-	}
-	head := GovernanceHead{Schema: HeadSchema, Index: uint64(len(authority.consensus.Entries)), LogDigest: logHash,
-		ProjectionDigest: projectionHash, DeviceViewsDigest: viewsHash,
-		ConfigMaterial: authority.projection.ConfigMaterial, Signatures: []HeadSignature{}}
-	return head, authority.projection, nil
-}
-
-func (authority *Authority) InstallCertified(head GovernanceHead) error {
-	authority.mu.Lock()
-	defer authority.mu.Unlock()
-	if err := VerifyHead(head, authority.projection, authority.consensus.Entries); err != nil {
 		return err
 	}
-	if authority.certified.Head.Index > head.Index {
-		return errors.New("certified head cannot move backwards")
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err = file.Chmod(0o600); err == nil {
+		_, err = file.Write(body)
 	}
-	projection := authority.projection
-	projection.Web.UIState.Head = HeadID(head)
-	projection.Web.UIState.Revision = int64(head.Index)
-	projection.Web.UIState.Writable = true
-	projection.Web.UIState.Warnings = []string{}
-	state := CertifiedState{Schema: 1, Head: head, Projection: projection}
-	if err := atomicJSON(filepath.Join(authority.root, "certified.json"), state); err != nil {
-		return err
-	}
-	authority.projection = projection
-	authority.certified = state
-	return nil
-}
-
-func (authority *Authority) SignCandidate(config NodeConfig, head GovernanceHead) (HeadSignature, error) {
-	_, projection, _ := authority.Snapshot()
-	members := projection.Config.Members
-	if projection.Config.Mode == "joint" {
-		members = append(append([]Member{}, projection.Config.Old...), projection.Config.New...)
-	}
-	found := false
-	for _, member := range members {
-		if member.ID == config.MemberID && member.PublicKey == config.Member().PublicKey {
-			found = true
-		}
-	}
-	if !found {
-		return HeadSignature{}, errors.New("local signer is not in the active control config")
-	}
-	candidate, _, err := authority.CandidateHead()
-	if err != nil {
-		return HeadSignature{}, err
-	}
-	left, _ := headSigningBytes(candidate)
-	right, _ := headSigningBytes(head)
-	if !jsonEqual(left, right) {
-		return HeadSignature{}, errors.New("candidate head does not match local committed state")
-	}
-	return HeadSignature{MemberID: config.MemberID, Value: base64.RawURLEncoding.EncodeToString(ed25519.Sign(config.PrivateKey(), right))}, nil
-}
-
-func ActivateLegacy(root string, legacy State, memberID, node string, listen []string) (NodeConfig, error) {
-	if err := legacy.Validate(); err != nil {
-		return NodeConfig{}, err
-	}
-	if _, err := os.Stat(filepath.Join(root, "node.json")); err == nil {
-		return NodeConfig{}, errors.New("control authority is already activated")
-	}
-	_, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: memberID, Node: node,
-		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(private), Bootstrap: true,
-		Recovery: legacy.Recovery, BrowserTLS: legacy.BrowserTLS, ReadCertDER: legacy.ReadCertDER, AdminCertDER: legacy.AdminCertDER}
-	config.PeerTLS, err = issuePeerTLS(config.BrowserTLS, memberID, listen, private)
 	if err == nil {
-		config.BrowserTLS, err = issueBrowserTLS(config.BrowserTLS, memberID, listen)
+		err = file.Sync()
 	}
-	if err != nil {
-		return NodeConfig{}, err
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
 	}
-	if err := config.Validate(); err != nil {
-		return NodeConfig{}, err
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return NodeConfig{}, err
-	}
-	genesis := Material{Schema: MaterialSchema, Kind: "genesis", RequestID: "genesis:" + legacy.Head.Hash,
-		Genesis: &Genesis{LegacyHead: legacy.Head.Hash, ControlConfig: StableConfig([]Member{config.Member()}), Projection: legacy.Projection}}
-	body, id, err := EncodeMaterial(genesis)
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	authority := &Authority{root: root, consensus: ConsensusState{Schema: 1, Entries: []ConsensusEntry{}}, projection: Projection{}}
-	if _, err := authority.PutMaterial(body); err != nil {
-		return NodeConfig{}, err
-	}
-	if err := atomicJSON(filepath.Join(root, "consensus.json"), authority.consensus); err != nil {
-		return NodeConfig{}, err
-	}
-	if _, err := authority.Append(id, 1); err != nil {
-		return NodeConfig{}, err
-	}
-	head, _, err := authority.CandidateHead()
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	signature, err := authority.SignCandidate(config, head)
-	if err != nil {
-		return NodeConfig{}, err
-	}
-	head.Signatures = []HeadSignature{signature}
-	if err := authority.InstallCertified(head); err != nil {
-		return NodeConfig{}, err
-	}
-	if err := atomicJSON(filepath.Join(root, "node.json"), config); err != nil {
-		return NodeConfig{}, err
-	}
-	return config, nil
-}
-
-func LoadNodeConfig(root string) (NodeConfig, error) {
-	var config NodeConfig
-	if err := readStrict(filepath.Join(root, "node.json"), &config); err != nil {
-		return config, err
-	}
-	return config, config.Validate()
-}
-
-// MigrateBrowserTLS separates the browser-compatible P-256 server identity
-// from the Ed25519 member identity used by Raft. It preserves the retained
-// browser root, certified authority, member key, and exact read/admin leaves.
-func MigrateBrowserTLS(root string, listen []string) (bool, error) {
-	path := filepath.Join(root, "node.json")
-	info, err := os.Lstat(path)
-	if err != nil {
-		return false, err
-	}
-	if !controlPrivateRegular(info) {
-		return false, errors.New("node.json must be an owner-only regular file")
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
-	}
-	var header struct {
-		Schema int `json:"schema"`
-	}
-	if err := json.Unmarshal(body, &header); err != nil {
-		return false, err
-	}
-	if header.Schema == NodeSchema {
-		config, loadErr := LoadNodeConfig(root)
-		if loadErr != nil {
-			return false, loadErr
-		}
-		if _, configErr := browserTLSConfig(config); configErr != nil {
-			return false, configErr
-		}
-		if _, configErr := peerTLSConfig(config); configErr != nil {
-			return false, configErr
-		}
-		if err := verifyTLSListeners(config.BrowserTLS.CertificateChainPEM, listen); err != nil {
-			return false, err
-		}
-		if err := verifyTLSListeners(config.PeerTLS.CertificateChainPEM, listen); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-	if header.Schema != 2 {
-		return false, errors.New("control node schema cannot be migrated")
-	}
-	var legacy legacyNodeConfigV2
-	if err := readStrict(path, &legacy); err != nil {
-		return false, err
-	}
-	key, err := base64.RawURLEncoding.DecodeString(legacy.IdentityPrivateKey)
-	if err != nil || len(key) != ed25519.PrivateKeySize || legacy.ClusterID == "" || legacy.MemberID == "" || legacy.Node == "" ||
-		!legacy.Recovery.V2Latch || len(legacy.ReadCertDER) == 0 || len(legacy.AdminCertDER) == 0 {
-		return false, errors.New("legacy control node is incomplete")
-	}
-	config := NodeConfig{Schema: NodeSchema, ClusterID: legacy.ClusterID, MemberID: legacy.MemberID, Node: legacy.Node,
-		IdentityPrivateKey: legacy.IdentityPrivateKey, Bootstrap: legacy.Bootstrap, Recovery: legacy.Recovery,
-		PeerTLS: TLSIdentity{CertificateChainPEM: legacy.BrowserTLS.CertificateChainPEM,
-			PrivateKeyPKCS8PEM: legacy.BrowserTLS.PrivateKeyPKCS8PEM},
-		ReadCertDER: append([]string(nil), legacy.ReadCertDER...), AdminCertDER: append([]string(nil), legacy.AdminCertDER...)}
-	config.BrowserTLS, err = issueBrowserTLS(legacy.BrowserTLS, legacy.MemberID, listen)
-	if err != nil {
-		return false, err
-	}
-	if err := config.Validate(); err != nil {
-		return false, err
-	}
-	if _, err := browserTLSConfig(config); err != nil {
-		return false, err
-	}
-	if _, err := peerTLSConfig(config); err != nil {
-		return false, err
-	}
-	if err := verifyTLSListeners(config.BrowserTLS.CertificateChainPEM, listen); err != nil {
-		return false, err
-	}
-	if err := verifyTLSListeners(config.PeerTLS.CertificateChainPEM, listen); err != nil {
-		return false, err
-	}
-	if err := atomicJSON(path, config); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func verifyTLSListeners(chain string, listen []string) error {
-	block, _ := pem.Decode([]byte(chain))
-	if block == nil {
-		return errors.New("control TLS leaf is missing")
-	}
-	leaf, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return err
 	}
-	for _, address := range listen {
-		host, _, splitErr := net.SplitHostPort(address)
-		if splitErr != nil || leaf.VerifyHostname(host) != nil {
-			return errors.New("control TLS leaf does not cover a private listener")
+	if err := os.Link(temporary, path); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		existing, readErr := readProtectedControlFile(path)
+		if readErr != nil || !bytes.Equal(existing, body) {
+			return errors.New("immutable control bytes already exist with different content")
 		}
 	}
-	return nil
+	if err := os.Remove(temporary); err != nil {
+		return err
+	}
+	return syncControlDirectory(dir)
 }
-
-func readStrict(path string, value any) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !controlPrivateRegular(info) {
-		return fmt.Errorf("%s must be an owner-only regular file", filepath.Base(path))
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%s has trailing content", filepath.Base(path))
-	}
-	want, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	want = append(want, '\n')
-	if !jsonEqual(body, want) {
-		return fmt.Errorf("%s is not canonical", filepath.Base(path))
-	}
-	return nil
-}
-
-func atomicJSON(path string, value any) error {
-	body, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(path, append(body, '\n'))
-}
-
 func atomicWrite(path string, body []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

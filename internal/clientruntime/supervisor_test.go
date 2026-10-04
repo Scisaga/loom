@@ -25,7 +25,7 @@ func TestRunWindowsDataPlanePreflightsAndStopsChild(t *testing.T) {
 		"${secret:vault:cred/win01}", "fixture-password",
 		"${secret:api/win01}", "fixture-api",
 	).Replace(validWindowsConfig("warn"))
-	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, WindowsInstalledCAPath)
+	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestRunWindowsDataPlaneRemovesStalePlaintextConfigBeforeStart(t *testing.T)
 		"${secret:vault:cred/win01}", "fixture-password",
 		"${secret:api/win01}", "fixture-api",
 	).Replace(validWindowsConfig("warn"))
-	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, WindowsInstalledCAPath)
+	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,8 +121,8 @@ check|run) ;;
 esac
 [ "$2" = -c ] || exit 91
 [ -f "$3" ] || exit 92
-grep -q '"type": "tun"' "$3" && exit 93
-grep -q '"tag": "in-1080"' "$3" || exit 94
+grep -q '"type":[[:space:]]*"tun"' "$3" && exit 93
+grep -q '"tag":[[:space:]]*"in-1080"' "$3" || exit 94
 if [ "$1" = check ]; then exit 0; fi
 while :; do sleep 1; done
 `
@@ -133,8 +133,7 @@ while :; do sleep 1; done
 		"${secret:vault:cred/win01}", "fixture-password",
 		"${secret:api/win01}", "fixture-api",
 	).Replace(validWindowsConfig("warn"))
-	caPath := `C:\Users\fixture\AppData\Local\LoomPortable\tls\ca.crt`
-	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsPortableMixedProfile, caPath)
+	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsPortableMixedProfile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +142,7 @@ while :; do sleep 1; done
 	done := make(chan error, 1)
 	runtimeDir := filepath.Join(root, "runtime-mixed")
 	go func() {
-		done <- RunWindowsDataPlaneProfile(ctx, executable, config, runtimeDir, WindowsPortableMixedProfile, caPath)
+		done <- RunWindowsDataPlaneProfile(ctx, executable, config, runtimeDir, WindowsPortableMixedProfile)
 	}()
 	deadline := time.Now().Add(3 * time.Second)
 	for {

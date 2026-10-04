@@ -4,10 +4,8 @@
 package linuxclient
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,20 +19,23 @@ import (
 	"time"
 
 	"loom/internal/clientmodel"
+	"loom/internal/control"
 )
 
-const localStateSchema = 1
+const localStateSchema = 3
 
 type LocalState struct {
-	Schema            int                       `json:"schema"`
-	Preference        clientmodel.Preference    `json:"preference"`
-	NetworkGeneration string                    `json:"network_generation"`
-	Observations      []clientmodel.Observation `json:"observations"`
+	Schema                int                       `json:"schema"`
+	Preference            clientmodel.Preference    `json:"preference"`
+	NetworkGeneration     string                    `json:"network_generation"`
+	ObservationViewDigest string                    `json:"observation_view_digest,omitempty"`
+	Observations          []clientmodel.Observation `json:"observations"`
 }
 
 type SelectionStatus struct {
 	Scope       string   `json:"scope"`
 	CandidateID string   `json:"candidate_id"`
+	FinalExit   string   `json:"final_exit"`
 	Chain       []string `json:"chain,omitempty"`
 	State       string   `json:"state"`
 }
@@ -42,21 +43,22 @@ type SelectionStatus struct {
 // Status is a deletable readback projection. It is written under /run by the
 // service and never used as authority on the next start.
 type Status struct {
-	Schema            int                       `json:"schema"`
-	DeviceID          string                    `json:"device_id"`
-	Head              string                    `json:"head"`
-	Floor             uint64                    `json:"floor"`
-	Preference        clientmodel.Preference    `json:"preference"`
-	NetworkGeneration string                    `json:"network_generation"`
-	Selections        []SelectionStatus         `json:"selections"`
-	Observations      []clientmodel.Observation `json:"observations"`
-	Runtime           string                    `json:"runtime"`
-	Reported          bool                      `json:"reported"`
+	Schema            int                        `json:"schema"`
+	DeviceID          string                     `json:"device_id"`
+	ViewDigest        string                     `json:"view_digest"`
+	FactFrontier      []control.FactFrontier     `json:"fact_frontier"`
+	Preference        clientmodel.Preference     `json:"preference"`
+	NetworkGeneration string                     `json:"network_generation"`
+	Selections        []SelectionStatus          `json:"selections"`
+	Observations      []clientmodel.Observation  `json:"observations"`
+	Runtime           string                     `json:"runtime"`
+	Reported          bool                       `json:"reported"`
+	Resources         []control.ResourceReadback `json:"resources,omitempty"`
 }
 
 func defaultState(generation string) LocalState {
 	return LocalState{Schema: localStateSchema,
-		Preference:        clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto},
+		Preference:        clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto},
 		NetworkGeneration: generation, Observations: []clientmodel.Observation{}}
 }
 
@@ -64,6 +66,12 @@ func (state LocalState) validate() error {
 	if state.Schema != localStateSchema || state.Preference.Validate() != nil || state.NetworkGeneration == "" ||
 		len(state.NetworkGeneration) > 128 || strings.TrimSpace(state.NetworkGeneration) != state.NetworkGeneration {
 		return errors.New("Linux client local state is invalid")
+	}
+	if state.ObservationViewDigest != "" {
+		digest, err := hex.DecodeString(strings.TrimPrefix(state.ObservationViewDigest, "sha256:"))
+		if err != nil || len(digest) != sha256.Size || state.ObservationViewDigest != "sha256:"+hex.EncodeToString(digest) {
+			return errors.New("Linux observation view binding is invalid")
+		}
 	}
 	for index, observation := range state.Observations {
 		if observation.Validate() != nil || observation.NetworkGeneration != state.NetworkGeneration ||
@@ -83,28 +91,27 @@ func readStrict(path string, maximum int64, value any) error {
 		runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return errors.New("Linux client state must be an owner-only bounded regular file")
 	}
-	body, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return errors.New("Linux client state changed while opening")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil {
 		return err
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("Linux client state has trailing content")
-	}
-	return nil
+	return control.DecodeCanonical(body, value, control.ContractDecodeLimits{MaxBytes: int(maximum), MaxDepth: 32, MaxItems: 100000})
 }
 
 func atomicJSON(path string, value any) (retErr error) {
-	body, err := json.MarshalIndent(value, "", "  ")
+	body, err := control.CanonicalEncode(value)
 	if err != nil {
 		return err
 	}
-	body = append(body, '\n')
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
@@ -162,6 +169,13 @@ func withLock(path string, action func() error) error {
 // LoadLocalState resets observations when the host-provided underlay
 // generation changes. It never manufactures an availability result.
 func LoadLocalState(path, generation string) (LocalState, error) {
+	return loadLocalState(path, generation, "")
+}
+
+// loadLocalState binds disposable observations to the exact authenticated view.
+// A cache without that binding cannot prove that a reused candidate ID still
+// describes the same authorization, targets and runtime inputs.
+func loadLocalState(path, generation, viewDigest string) (LocalState, error) {
 	var result LocalState
 	err := withLock(path, func() error {
 		var state LocalState
@@ -176,8 +190,9 @@ func LoadLocalState(path, generation string) (LocalState, error) {
 		} else if err := state.validate(); err != nil {
 			return err
 		}
-		if state.NetworkGeneration != generation {
+		if state.NetworkGeneration != generation || viewDigest != "" && state.ObservationViewDigest != viewDigest {
 			state.NetworkGeneration = generation
+			state.ObservationViewDigest = viewDigest
 			state.Observations = []clientmodel.Observation{}
 			if err := atomicJSON(path, state); err != nil {
 				return err
@@ -211,10 +226,10 @@ func SaveObservations(path string, state LocalState) (LocalState, error) {
 		if err := current.validate(); err != nil {
 			return err
 		}
-		if current.NetworkGeneration != state.NetworkGeneration {
-			return errors.New("network generation changed while recording observations")
+		if current.NetworkGeneration != state.NetworkGeneration || current.ObservationViewDigest != state.ObservationViewDigest {
+			return errors.New("network generation or certified view changed while recording observations")
 		}
-		current.Observations = append([]clientmodel.Observation(nil), state.Observations...)
+		current.Observations = append([]clientmodel.Observation{}, state.Observations...)
 		if err := atomicJSON(path, current); err != nil {
 			return err
 		}
@@ -248,11 +263,25 @@ func SetPreference(path, generation string, preference clientmodel.Preference) e
 }
 
 func WriteStatus(path string, status Status) error {
-	if status.Schema != 1 || status.DeviceID == "" || status.Head == "" || status.Floor == 0 ||
-		status.Preference.Validate() != nil || status.NetworkGeneration == "" {
-		return errors.New("Linux client status is incomplete")
+	if err := status.validate(); err != nil {
+		return err
 	}
 	return atomicJSON(path, status)
+}
+
+func (status Status) validate() error {
+	if status.Schema != 3 || status.DeviceID == "" || control.ValidateDigest(status.ViewDigest) != nil || status.FactFrontier == nil ||
+		status.Preference.Validate() != nil || status.NetworkGeneration == "" ||
+		status.Runtime != "running" && status.Runtime != "error" && status.Runtime != "stopped" ||
+		status.Runtime != "running" && (len(status.Selections) != 0 || len(status.Observations) != 0) {
+		return errors.New("Linux client status is incomplete")
+	}
+	for index, value := range status.Resources {
+		if status.Runtime != "running" || value.Validate() != nil || index > 0 && status.Resources[index-1].ResourceID >= value.ResourceID {
+			return errors.New("Linux resource status is invalid")
+		}
+	}
+	return nil
 }
 
 func ReadStatus(path string) (Status, error) {
@@ -260,9 +289,8 @@ func ReadStatus(path string) (Status, error) {
 	if err := readStrict(path, 1<<20, &status); err != nil {
 		return status, err
 	}
-	if status.Schema != 1 || status.Preference.Validate() != nil || status.DeviceID == "" || status.Head == "" ||
-		status.NetworkGeneration == "" || status.Runtime != "running" {
-		return Status{}, errors.New("Linux client runtime is not running")
+	if err := status.validate(); err != nil {
+		return Status{}, err
 	}
 	return status, nil
 }

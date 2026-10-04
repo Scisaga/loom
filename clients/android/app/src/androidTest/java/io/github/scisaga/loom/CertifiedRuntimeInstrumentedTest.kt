@@ -1,0 +1,169 @@
+package io.github.scisaga.loom
+
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.StaleObjectException
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
+import io.github.scisaga.loom.enrollment.EnrollmentManager
+import io.github.scisaga.loom.enrollment.EnrollmentPhase
+import io.github.scisaga.loom.profiles.ProfileCatalog
+import io.github.scisaga.loom.route.RouteManager
+import io.github.scisaga.loom.vpn.ConnectionPhase
+import io.github.scisaga.loom.vpn.VpnRuntime
+import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.TrustManagerFactory
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Rule
+import org.junit.Test
+
+/** Opt-in real daemon fixture; no fabricated View, identity, runtime or health. */
+class CertifiedRuntimeInstrumentedTest {
+    @get:Rule
+    val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test
+    fun formalJoinVpnAndWithdrawal() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue("requires the isolated demo control fixture", args.getString("demoFixture") == "true")
+        val device = UiDevice.getInstance(instrumentation)
+        assertEquals("1", device.executeShellCommand("getprop ro.kernel.qemu").trim())
+        val context = instrumentation.targetContext
+        val directory = checkNotNull(context.getExternalFilesDir(null))
+        val fixture = JSONObject(File(directory, "demo-runtime.json").readText())
+        val resume = args.getString("demoResume") == "true"
+        val profileID = ProfileCatalog.get(context).state.value.viewedProfileId
+        val enrollment = EnrollmentManager.get(context)
+        val routing = RouteManager.get(context)
+        fun click(tag: String) = compose.onNodeWithTag(tag).performScrollTo().performClick()
+        fun await(label: String, condition: () -> Boolean) {
+            val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+            while (!condition() && System.nanoTime() < end) Thread.sleep(100)
+            assertTrue(label + "; enrollment=" + enrollment.status(profileID).value + "; runtime=" + VpnRuntime.status.value, condition())
+        }
+        fun clickSystem(selector: BySelector, label: String) {
+            val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while (System.nanoTime() < end) {
+                device.waitForIdle(1_000)
+                val node = device.wait(Until.findObject(selector), 1_000) ?: continue
+                try {
+                    node.click()
+                    return
+                } catch (_: StaleObjectException) {
+                    // DocumentsUI replaces its loading rows; resolve the real row again.
+                }
+            }
+            error(label)
+        }
+        fun mark(name: String) {
+            compose.waitForIdle()
+            compose.onNodeWithTag("connection-toggle").assertTextEquals("断开")
+            if (routing.status(profileID).value.currentPaths.isEmpty()) {
+                compose.onNodeWithText("当前没有已选业务路径").assertIsDisplayed()
+            }
+            File(directory, name).writeText(JSONObject().put("view_digest", enrollment.status(profileID).value.viewDigest)
+                .put("phase", VpnRuntime.status.value.phase.name).toString())
+        }
+        fun awaitConnected() {
+            await("VPN must be backed by libbox and selector readback") {
+                val runtime = VpnRuntime.status.value
+                runtime.phase == ConnectionPhase.CONNECTED && runtime.viewDigest == enrollment.status(profileID).value.viewDigest &&
+                    routing.status(profileID).value.running
+            }
+        }
+        fun connect() {
+            compose.onNodeWithTag("tab-connection").performClick()
+            click("connection-toggle")
+            // Consent is exercised on this disposable emulator's system UI.
+            device.wait(Until.findObject(By.res("android:id/button1")), 3_000)?.click()
+            awaitConnected()
+        }
+        val ca = CertificateFactory.getInstance("X.509").generateCertificate(File(directory, "demo-ca.pem").inputStream())
+        val trust = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("demo", ca) }
+        val managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(trust) }
+        val tls = SSLContext.getInstance("TLS").apply { init(null, managers.trustManagers, null) }
+        fun business(): Boolean = runCatching {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(fixture.getString("target_ip"), fixture.getInt("target_port")), 3_000)
+                socket.soTimeout = 3_000
+                (tls.socketFactory.createSocket(socket, "demo.example", fixture.getInt("target_port"), false) as SSLSocket).use { stream ->
+                    stream.sslParameters = stream.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
+                    stream.startHandshake()
+                    stream.outputStream.write("GET /demo-android-business HTTP/1.1\r\nHost: demo.example\r\nConnection: close\r\n\r\n".toByteArray())
+                    val body = stream.inputStream.bufferedReader().readText()
+                    body.startsWith("HTTP/1.0 200") && body.endsWith("demo-android-business")
+                }
+            }
+        }.getOrDefault(false)
+
+        if (!resume) {
+            compose.onNodeWithTag("tab-configuration").performClick()
+            click("import-invite")
+            clickSystem(By.desc("Show roots"), "normal document picker did not open")
+            assertTrue("document picker drawer did not open", device.wait(Until.hasObject(By.text("Open from")), 10_000))
+            clickSystem(By.res("android:id/title").text("Downloads"), "Downloads root is absent")
+            assertTrue("Downloads navigation did not finish", device.wait(Until.gone(By.text("Open from")), 10_000))
+            clickSystem(By.res("android:id/title").text("demo-android.loom-invite"), "normal document picker did not expose the demo invitation")
+        }
+        await("private join or protected restart must restore the certified profile") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
+        connect()
+        if (!resume) {
+            val path = routing.status(profileID).value.currentPaths.single()
+            assertEquals("demo-exit", path.finalExit)
+            assertEquals(listOf("demo-exit"), path.serverChain)
+            assertEquals("unknown", path.state)
+            assertTrue("real application TLS must traverse the VPN", business())
+            val previous = enrollment.status(profileID).value.viewDigest
+            mark("demo-allowed.json")
+            await("formal control must publish withdrawal") { File(directory, "demo-withdrawn").isFile }
+            compose.onNodeWithTag("tab-configuration").performClick()
+            click("refresh-config")
+            await("accepted withdrawal must replace the encrypted LKG") {
+                enrollment.status(profileID).value.phase == EnrollmentPhase.READY && enrollment.status(profileID).value.viewDigest != previous
+            }
+            compose.onNodeWithTag("tab-connection").performClick()
+            awaitConnected()
+        }
+        assertTrue("withdrawal left a selectable path", routing.status(profileID).value.currentPaths.isEmpty())
+        assertFalse("withdrawn target remained reachable through the running VPN", business())
+        mark(if (resume) "demo-restarted.json" else "demo-revoked.json")
+        if (resume) {
+            val previous = enrollment.status(profileID).value.viewDigest
+            await("formal control must publish reauthorization") { File(directory, "demo-regranted").isFile }
+            compose.onNodeWithTag("tab-configuration").performClick()
+            click("refresh-config")
+            await("new permission must replace the withdrawn LKG") {
+                enrollment.status(profileID).value.phase == EnrollmentPhase.READY && enrollment.status(profileID).value.viewDigest != previous
+            }
+            compose.onNodeWithTag("tab-connection").performClick()
+            awaitConnected()
+            assertEquals("demo-exit", routing.status(profileID).value.currentPaths.single().finalExit)
+            assertTrue("reauthorization did not restore real VPN business", business())
+            mark("demo-regranted.json")
+        }
+        // The controller reads the private signed report before allowing exit.
+        await("private control report readback must finish") { File(directory, if (resume) "demo-resume-finish" else "demo-finish").isFile }
+        click("connection-toggle")
+        await("normal disconnect must release the VPN") { VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED }
+    }
+}

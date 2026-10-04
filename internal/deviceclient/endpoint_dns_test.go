@@ -8,13 +8,12 @@ import (
 	"loom/internal/control"
 )
 
-func TestEndpointDialAddressesPreservesLiteralAndLegacyAddress(t *testing.T) {
+func TestEndpointDialAddressesPreservesCertifiedLiteral(t *testing.T) {
 	for _, test := range []struct {
 		address string
 		dns     []string
 	}{
 		{address: "192.0.2.10:443", dns: []string{"not-an-ip"}},
-		{address: "control.example:443"},
 	} {
 		got, err := endpointDialAddresses(context.Background(), test.address, test.dns)
 		if err != nil || !reflect.DeepEqual(got, []string{test.address}) {
@@ -24,9 +23,9 @@ func TestEndpointDialAddressesPreservesLiteralAndLegacyAddress(t *testing.T) {
 }
 
 func TestEndpointRouteExclusionsAreExactCertifiedHostPrefixes(t *testing.T) {
-	endpoints := []control.EndpointReference{
-		{EndpointID: "demo-serving", Generation: 1, State: "serving", Preference: 1, Address: "192.0.2.10:443"},
-		{EndpointID: "demo-draining", Generation: 1, State: "draining", Preference: 2, Address: "192.0.2.20:443"},
+	endpoints := []control.EndpointGeneration{
+		{ID: "demo-serving", Generation: 1, State: "serving", Preference: 1, Host: "192.0.2.10", Port: 443},
+		{ID: "demo-draining", Generation: 1, State: "draining", Preference: 2, Host: "192.0.2.20", Port: 443},
 	}
 	got, err := EndpointRouteExclusions(context.Background(), endpoints, nil)
 	if err != nil || !reflect.DeepEqual(got, []string{"192.0.2.10/32"}) {

@@ -210,6 +210,11 @@ DNS overlay 只接受精确 `.loom` A/AAAA 映射，`control.loom` 由已认证 
 失效并重新解析。Loom 名称的解析不能反过来依赖尚未建立的自身 tunnel，亦不得把 `.loom` 规则
 安装为开发宿主初始 namespace 的全局 DNS 接管。
 尚未取得 View 的首次 bootstrap 维持 `EndpointGeneration` 原有拨号边界，不从业务运行时反推 bootstrap 权威。
+Android HostAdapter 在本机执行投影启用 libbox 的平台接口控制，使其 TCP/UDP underlay socket 实际调用
+`VpnService.protect`，否则隧道自身会重新进入 VPN。私有配置/报告使用的认证 Endpoint IP 还须以精确
+`/32` 或 `/128` 从 capture 中排除；这是从同一 View 单向派生的本机路由输入，不授予 Service 权限。
+当前尚未接入认证名称解析的 capture 路径遇到 Endpoint 主机名须明确失败，不借系统 resolver 猜地址。
+这项 Android 平台 socket 控制不证明 Linux 初始 namespace 的 auto_route 安全，不能用于绕过宿主门禁。
 Linux HostAdapter 只在隔离 capture namespace 内将这些 underlay endpoint 的解析结果以逐主机 `/32` 或
 `/128` 投影为 TUN 的本机 `route_exclude_address`，使私有控制、引导、
 报告和 tunnel 连接不依赖某条业务 policy；认证 RuntimeProfile 不得自行提供或扩大该字段。DNS 变化时重新

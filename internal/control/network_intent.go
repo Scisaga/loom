@@ -1,485 +1,301 @@
 package control
 
 import (
-	"bytes"
 	"crypto/x509"
-	"encoding/pem"
+	"encoding/base64"
 	"errors"
-	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
-	"sort"
+	"strconv"
 	"strings"
 )
 
-const networkIntentSchema = 2
+type Service struct {
+	ID       string           `json:"id"`
+	Name     string           `json:"name"`
+	Kind     string           `json:"kind"`
+	Matchers []ServiceMatcher `json:"matchers"`
+}
 
-// NetworkIntent is the canonical, secret-free network value certified by the
-// control log. DeviceView and WebProjection are derived from it; neither is an
-// input when the network is changed.
+// NetworkIntent is reconstructed from signed facts. Empty unsupported
+// collections mean unconfigured; every non-empty unsupported input is rejected.
 type NetworkIntent struct {
-	Schema            int                    `json:"schema"`
-	Nodes             []NetworkNode          `json:"nodes"`
-	Links             []NetworkLink          `json:"links"`
-	Policies          []NetworkPolicy        `json:"policies"`
-	Services          []Service              `json:"services"`
-	DNS               []string               `json:"dns"`
-	Components        []ComponentExpectation `json:"components"`
-	PublicDataPlaneCA string                 `json:"public_data_plane_ca"`
+	Schema               int                     `json:"schema"`
+	Services             []Service               `json:"services"`
+	Policies             []NetworkPolicy         `json:"policies"`
+	Resources            []TransportResource     `json:"resources"`
+	Links                []NetworkLink           `json:"links"`
+	BusinessProbeTargets []BusinessProbeTarget   `json:"business_probe_targets"`
+	DNSRecords           []undefinedNetworkValue `json:"dns_records"`
+	PublicTrust          []undefinedNetworkValue `json:"public_trust"`
+	ExpectedComponents   []undefinedNetworkValue `json:"expected_components"`
 }
 
-type NetworkNode struct {
-	ID               string                 `json:"id"`
-	Name             string                 `json:"name"`
-	Platform         string                 `json:"platform,omitempty"`
-	Roles            []string               `json:"roles"`
-	Server           *ServerIntent          `json:"server,omitempty"`
-	DNS              []string               `json:"dns,omitempty"`
-	Components       []ComponentExpectation `json:"components,omitempty"`
-	ProbeTargets     []string               `json:"probe_targets,omitempty"`
-	DistributionURLs []string               `json:"distribution_urls,omitempty"`
+// No non-empty value of this type is valid. It preserves the already defined
+// empty-array bytes without inventing fields for an undefined sub-contract.
+type undefinedNetworkValue struct{}
+
+func (undefinedNetworkValue) Validate() error {
+	return errors.New("network sub-value contract is undefined")
 }
 
-type ServerIntent struct {
-	Direction         string `json:"direction"`
-	PublicDataIngress bool   `json:"public_data_ingress"`
-	PublicEndpoint    string `json:"public_endpoint"`
-	InboundPort       int    `json:"inbound_port"`
-	InboundProtocol   string `json:"inbound_protocol"`
-	EgressCapable     bool   `json:"egress_capable"`
-	WGPublicKey       string `json:"wg_public_key,omitempty"`
-	Country           string `json:"country,omitempty"`
-	City              string `json:"city,omitempty"`
-	Provider          string `json:"provider,omitempty"`
+type TransportResource struct {
+	ID             string                 `json:"id"`
+	Kind           string                 `json:"kind"`
+	OwnerNodeID    string                 `json:"owner_node_id"`
+	ListenerID     string                 `json:"listener_id"`
+	DialHost       string                 `json:"dial_host"`
+	DialPort       int                    `json:"dial_port"`
+	Authentication ResourceAuthentication `json:"authentication"`
+	LinkOnly       bool                   `json:"link_only,omitempty"`
+}
+
+// The containing resource kind selects one complete authentication shape.
+type ResourceAuthentication struct {
+	PublicKey      *string   `json:"public_key,omitempty"`
+	LocalAddresses *[]string `json:"local_addresses,omitempty"`
+	SPKISHA256     *string   `json:"spki_sha256,omitempty"`
+	ALPN           *string   `json:"alpn,omitempty"`
+	ServerName     *string   `json:"server_name,omitempty"`
+	CACertificates *[]string `json:"ca_certificates,omitempty"`
 }
 
 type NetworkLink struct {
-	ID                 string                   `json:"id"`
-	From               string                   `json:"from"`
-	To                 string                   `json:"to"`
-	Transport          string                   `json:"transport"`
-	FromAddress        string                   `json:"from_address"`
-	ToAddress          string                   `json:"to_address"`
-	ListenPort         int                      `json:"listen_port"`
-	RetiredListenPorts []int                    `json:"retired_listen_ports,omitempty"`
-	ProbeTargets       []NetworkLinkProbeTarget `json:"probe_targets"`
-}
-
-type NetworkLinkProbeTarget struct {
-	Reporter string `json:"reporter"`
-	Target   string `json:"target"`
-}
-
-type NetworkPolicy struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	AllowedServers     []string `json:"allowed_servers"`
-	AllowedExits       []string `json:"allowed_exits"`
-	LocalEgressDevices []string `json:"local_egress_devices,omitempty"`
-	AllowDirect        bool     `json:"allow_direct"`
-	MaxHops            int      `json:"max_hops"`
-}
-
-type ComponentExpectation struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Digest  string `json:"digest,omitempty"`
+	ID              string          `json:"id"`
+	FromNodeID      string          `json:"from_node_id"`
+	ToNodeID        string          `json:"to_node_id"`
+	ResourceID      string          `json:"resource_id"`
+	FromResourceID  string          `json:"from_resource_id"`
+	InitiatorNodeID string          `json:"initiator_node_id"`
+	Purpose         string          `json:"purpose"`
+	ProbeTarget     LinkProbeTarget `json:"probe_target"`
 }
 
 type LinkProbeTarget struct {
-	LinkID          string `json:"link_id"`
-	Peer            string `json:"peer"`
-	Transport       string `json:"transport"`
-	Target          string `json:"target"`
-	PeerWGPublicKey string `json:"peer_wg_public_key,omitempty"`
+	ResourceID string `json:"resource_id"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Action     string `json:"action"`
 }
 
-type NetworkImport struct {
-	Intent               NetworkIntent `json:"intent"`
-	RecoveryEvidenceHash string        `json:"recovery_evidence_hash"`
-}
-
-func validateSortedNames(values []string, field string) error {
-	for index, value := range values {
-		if !validName(value) || index > 0 && values[index-1] >= value {
-			return fmt.Errorf("%s are not uniquely sorted", field)
+func (resource TransportResource) Validate() error {
+	for _, id := range []string{resource.ID, resource.OwnerNodeID, resource.ListenerID} {
+		if ValidateID(id) != nil {
+			return errors.New("transport resource identity is invalid")
 		}
 	}
-	return nil
-}
-
-func validateComponents(values []ComponentExpectation) error {
-	for index, component := range values {
-		if !validName(component.Name) || !validName(component.Version) ||
-			index > 0 && values[index-1].Name >= component.Name {
-			return errors.New("component expectations are not uniquely sorted")
+	if resource.OwnerNodeID == "direct" || !contractHost(resource.DialHost) || resource.DialPort < 1 || resource.DialPort > 65535 {
+		return errors.New("transport resource destination is invalid")
+	}
+	auth := resource.Authentication
+	if resource.LinkOnly && resource.Kind != "hysteria2" {
+		return errors.New("link_only is only defined for Hy2 listeners")
+	}
+	switch resource.Kind {
+	case "wireguard":
+		if auth.PublicKey == nil || auth.LocalAddresses == nil || *auth.LocalAddresses == nil || ValidatePublicKey(*auth.PublicKey) != nil ||
+			auth.SPKISHA256 != nil || auth.ALPN != nil || auth.ServerName != nil || auth.CACertificates != nil {
+			return errors.New("WireGuard authentication shape is invalid")
 		}
-		if component.Digest != "" && !validDigest(component.Digest) {
-			return errors.New("component expectation digest is invalid")
+		var previous netip.Prefix
+		for index, text := range *auth.LocalAddresses {
+			prefix, err := netip.ParsePrefix(text)
+			if err != nil || prefix.String() != text || index > 0 && (previous.Addr().Compare(prefix.Addr()) > 0 || previous.Addr() == prefix.Addr() && previous.Bits() >= prefix.Bits()) {
+				return errors.New("WireGuard interface addresses are not canonical or uniquely sorted")
+			}
+			previous = prefix
 		}
-	}
-	return nil
-}
-
-func validatePublicDataPlaneCA(value string) error {
-	if len(value) == 0 || len(value) > 1<<20 {
-		return errors.New("public data-plane CA is invalid")
-	}
-	rest := []byte(value)
-	previous := []byte(nil)
-	seen := map[string]bool{}
-	count := 0
-	for len(rest) > 0 {
-		block, remainder := pem.Decode(rest)
-		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
-			return errors.New("public data-plane CA is not a canonical certificate bundle")
+	case "tls_tunnel":
+		if auth.PublicKey != nil || auth.LocalAddresses != nil || auth.CACertificates != nil || auth.SPKISHA256 == nil || auth.ALPN == nil ||
+			ValidateDigest(*auth.SPKISHA256) != nil || ValidateID(*auth.ALPN) != nil || auth.ServerName != nil && !contractHost(*auth.ServerName) {
+			return errors.New("TLS resource authentication shape is invalid")
 		}
-		certificate, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || !certificate.IsCA {
-			return errors.New("public data-plane CA certificate is invalid")
+	case "hysteria2":
+		if auth.PublicKey != nil || auth.LocalAddresses != nil || auth.SPKISHA256 != nil || auth.ALPN != nil || auth.ServerName == nil || !contractHost(*auth.ServerName) || auth.CACertificates == nil || len(*auth.CACertificates) == 0 {
+			return errors.New("Hy2 authentication shape is invalid")
 		}
-		if seen[string(block.Bytes)] || previous != nil && bytes.Compare(previous, block.Bytes) >= 0 {
-			return errors.New("public data-plane CA certificates are not uniquely sorted")
-		}
-		encoded := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes})
-		consumed := len(rest) - len(remainder)
-		if !bytes.Equal(rest[:consumed], encoded) {
-			return errors.New("public data-plane CA is not canonically encoded")
-		}
-		seen[string(block.Bytes)] = true
-		previous = block.Bytes
-		count++
-		rest = remainder
-	}
-	if count == 0 {
-		return errors.New("public data-plane CA is empty")
-	}
-	return nil
-}
-
-func validIPList(values []string, field string) error {
-	for index, value := range values {
-		address, err := netip.ParseAddr(value)
-		if err != nil || address.String() != value || index > 0 && values[index-1] >= value {
-			return fmt.Errorf("%s are not canonical and uniquely sorted", field)
-		}
-	}
-	return nil
-}
-
-func validateProbeTargets(values []string) error {
-	for index, value := range values {
-		parsed, err := url.Parse(value)
-		if err != nil || parsed.String() != value || parsed.User != nil || parsed.Fragment != "" ||
-			(parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" ||
-			index > 0 && values[index-1] >= value {
-			return errors.New("network node probe targets are not canonical and uniquely sorted")
-		}
-	}
-	return nil
-}
-
-func validateDistributionURLs(values []string) error {
-	for index, value := range values {
-		parsed, err := url.Parse(value)
-		if err != nil || parsed.String() != value || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.Host == "" ||
-			parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || index > 0 && values[index-1] >= value {
-			return errors.New("network distribution URLs are invalid or not uniquely sorted")
-		}
-	}
-	return nil
-}
-
-func validServiceMatcher(value string) bool {
-	if value == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, " /@:") {
-		return false
-	}
-	if strings.HasPrefix(value, ".") {
-		value = value[1:]
-	}
-	if address, err := netip.ParseAddr(value); err == nil {
-		return address.String() == value
-	}
-	if len(value) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(value, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, character := range label {
-			letter := character >= 'a' && character <= 'z'
-			digit := character >= '0' && character <= '9'
-			if !letter && !digit && character != '-' {
-				return false
+		for index, encoded := range *auth.CACertificates {
+			der, err := base64.RawURLEncoding.DecodeString(encoded)
+			if err != nil || base64.RawURLEncoding.EncodeToString(der) != encoded || index > 0 && (*auth.CACertificates)[index-1] >= encoded {
+				return errors.New("Hy2 CA certificates are not canonical or uniquely sorted")
+			}
+			certificate, err := x509.ParseCertificate(der)
+			if err != nil || !certificate.IsCA || !certificate.BasicConstraintsValid || certificate.KeyUsage&x509.KeyUsageCertSign == 0 {
+				return errors.New("Hy2 trust requires CA certificates with signing usage")
 			}
 		}
+	default:
+		return errors.New("transport resource kind is unsupported")
 	}
-	return true
+	return nil
 }
 
-func validateServiceMatchers(values []string) error {
-	for index, value := range values {
-		if !validServiceMatcher(value) || index > 0 && values[index-1] >= value {
-			return errors.New("service matchers are not canonical and uniquely sorted")
+func (link NetworkLink) Validate() error {
+	for _, id := range []string{link.ID, link.FromNodeID, link.ToNodeID, link.ResourceID, link.FromResourceID, link.InitiatorNodeID} {
+		if ValidateID(id) != nil || id == "direct" {
+			return errors.New("Link identity is invalid")
+		}
+	}
+	if link.FromNodeID == link.ToNodeID || link.ResourceID == link.FromResourceID ||
+		link.InitiatorNodeID != link.FromNodeID && link.InitiatorNodeID != link.ToNodeID || link.Purpose != "relay" {
+		return errors.New("Link endpoints, initiator or purpose are invalid")
+	}
+	address, err := netip.ParseAddr(link.ProbeTarget.Host)
+	if err != nil || address.Zone() != "" || address.String() != link.ProbeTarget.Host || ValidateID(link.ProbeTarget.ResourceID) != nil || link.ProbeTarget.Port < 1 || link.ProbeTarget.Port > 65535 || link.ProbeTarget.Action != "hysteria2_tls" {
+		return errors.New("Link requires an exact authenticated Hy2 TLS probe through its WireGuard peer")
+	}
+	return nil
+}
+
+func contractHost(host string) bool {
+	if address, err := netip.ParseAddr(host); err == nil {
+		return address.Zone() == "" && address.String() == host
+	}
+	return contractDNSName(host)
+}
+
+type NetworkPolicy struct {
+	ID                 string      `json:"id"`
+	Name               string      `json:"name"`
+	ServiceID          string      `json:"service_id"`
+	Action             string      `json:"action"`
+	EntryScope         PolicyScope `json:"entry_scope"`
+	RelayScope         PolicyScope `json:"relay_scope"`
+	ExitScope          PolicyScope `json:"exit_scope"`
+	AllowDirect        bool        `json:"allow_direct"`
+	LocalEgressDevices []string    `json:"local_egress_devices"`
+	MaxHops            int         `json:"max_hops,omitempty"`
+}
+
+type BusinessProbeTarget struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+func (service Service) Validate() error {
+	if ValidateID(service.ID) != nil || ValidateText(service.Name) != nil || service.Kind != "internet" || len(service.Matchers) == 0 {
+		return errors.New("internet Service is incomplete; other kinds require their complete contract")
+	}
+	for index, matcher := range service.Matchers {
+		if matcher.Validate() != nil || index > 0 && !serviceMatcherLess(service.Matchers[index-1], matcher) {
+			return errors.New("Service matchers are invalid or not uniquely sorted")
 		}
 	}
 	return nil
 }
 
-func validPublicHost(value string) bool {
-	if value == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, " /@") {
-		return false
-	}
-	if address, err := netip.ParseAddr(value); err == nil {
-		return address.String() == value
-	}
-	return !strings.Contains(value, ":") && net.ParseIP(value) == nil && validName(value) && strings.Contains(value, ".")
+func serviceMatcherLess(left, right ServiceMatcher) bool {
+	return left.Kind < right.Kind || left.Kind == right.Kind && left.Value < right.Value
 }
 
-func canonicalTunnelPrefix(value string) (netip.Prefix, bool) {
-	prefix, err := netip.ParsePrefix(value)
-	if err != nil || prefix.String() != value || prefix.Addr().Is4() && prefix.Bits() != 32 || prefix.Addr().Is6() && prefix.Bits() != 128 {
-		return netip.Prefix{}, false
+func (policy NetworkPolicy) Validate() error {
+	if ValidateID(policy.ID) != nil || ValidateText(policy.Name) != nil || ValidateID(policy.ServiceID) != nil ||
+		policy.Action != "allow" && policy.Action != "deny" || policy.EntryScope.Validate() != nil ||
+		policy.RelayScope.Validate() != nil || policy.ExitScope.Validate() != nil || policy.MaxHops < 0 {
+		return errors.New("internet Policy is invalid")
 	}
-	return prefix, true
+	return validateContractIDs(policy.LocalEgressDevices, true)
 }
 
-// resolveLinkDirection converts the two certified per-node directions into
-// one deterministic initiator and acceptor. It contains no reachability
-// fallback: temporary transport failure remains an Observation.
-func resolveLinkDirection(from, to NetworkNode) (initiator, acceptor string, err error) {
-	if from.Server == nil || to.Server == nil {
-		return "", "", errors.New("wireguard link endpoints must be servers")
+func validateContractIDs(ids []string, nodes bool) error {
+	if ids == nil {
+		return errors.New("ID collection must be explicit")
 	}
-	left, right := from.Server.Direction, to.Server.Direction
-	if left == "reverse_only" && right == "reverse_only" || left == "direct_only" && right == "direct_only" {
-		return "", "", errors.New("wireguard link directions cannot establish a connection")
-	}
-	switch {
-	case left == "reverse_only":
-		return from.ID, to.ID, nil
-	case right == "reverse_only":
-		return to.ID, from.ID, nil
-	case left == "direct_only":
-		return to.ID, from.ID, nil
-	case right == "direct_only":
-		return from.ID, to.ID, nil
-	case left == "bidirectional" && right == "bidirectional":
-		if from.ID < to.ID {
-			return from.ID, to.ID, nil
+	for index, id := range ids {
+		if ValidateID(id) != nil || nodes && id == "direct" || index > 0 && ids[index-1] >= id {
+			return errors.New("IDs are invalid or not uniquely sorted")
 		}
-		return to.ID, from.ID, nil
-	default:
-		return "", "", errors.New("wireguard link direction is invalid")
 	}
+	return nil
+}
+
+func (target BusinessProbeTarget) Validate() error {
+	if ValidateID(target.ID) != nil {
+		return errors.New("business probe target ID is invalid")
+	}
+	return ValidateHTTPSURL(target.URL)
+}
+
+// ValidateHTTPSURL verifies original authority bytes, without normalization.
+func ValidateHTTPSURL(value string) error {
+	for index := range len(value) {
+		if value[index] < 0x21 || value[index] > 0x7e || value[index] == '\\' {
+			return errors.New("HTTPS target must be an ASCII URL")
+		}
+		if value[index] == '%' && (index+2 >= len(value) || !contractUpperHex(value[index+1]) || !contractUpperHex(value[index+2])) {
+			return errors.New("HTTPS target escapes are not canonical")
+		}
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Opaque != "" || parsed.User != nil ||
+		parsed.Fragment != "" || strings.Contains(value, "#") || parsed.Host == "" || parsed.Path == "" || parsed.String() != value {
+		return errors.New("HTTPS target is not canonical")
+	}
+	host := parsed.Hostname()
+	address, addressErr := netip.ParseAddr(host)
+	if addressErr == nil {
+		if address.Zone() != "" || address.String() != host {
+			return errors.New("HTTPS target IP is not canonical")
+		}
+	} else if !contractDNSName(host) {
+		return errors.New("HTTPS target DNS name is not canonical")
+	}
+	port := parsed.Port()
+	wantHost := host
+	if addressErr == nil && address.Is6() {
+		wantHost = "[" + host + "]"
+	}
+	if port != "" {
+		number, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || number == 0 || number == 443 || strconv.FormatUint(number, 10) != port {
+			return errors.New("HTTPS target port is not canonical")
+		}
+		wantHost = net.JoinHostPort(host, port)
+	}
+	if parsed.Host != wantHost {
+		return errors.New("HTTPS target authority is not canonical")
+	}
+	return nil
+}
+
+func contractUpperHex(value byte) bool {
+	return value >= '0' && value <= '9' || value >= 'A' && value <= 'F'
+}
+
+func EmptyNetworkIntent() NetworkIntent {
+	return NetworkIntent{Schema: 3, Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{},
+		BusinessProbeTargets: []BusinessProbeTarget{}, DNSRecords: []undefinedNetworkValue{}, PublicTrust: []undefinedNetworkValue{}, ExpectedComponents: []undefinedNetworkValue{}}
 }
 
 func (intent NetworkIntent) Validate() error {
-	if intent.Schema != networkIntentSchema || validatePublicDataPlaneCA(intent.PublicDataPlaneCA) != nil {
-		return errors.New("network intent is incomplete")
+	if intent.Schema != 3 || intent.Services == nil || intent.Policies == nil || intent.Resources == nil || intent.Links == nil ||
+		intent.BusinessProbeTargets == nil || intent.DNSRecords == nil || intent.PublicTrust == nil || intent.ExpectedComponents == nil {
+		return errors.New("NetworkIntent schema or explicit collections are invalid")
 	}
-	if err := validIPList(intent.DNS, "network DNS servers"); err != nil {
-		return err
+	if len(intent.Resources)+len(intent.Links)+len(intent.DNSRecords)+len(intent.PublicTrust)+len(intent.ExpectedComponents) != 0 {
+		return errors.New("non-empty resources, links, DNS, trust or component expectations require their complete contracts")
 	}
-	if err := validateComponents(intent.Components); err != nil {
-		return err
-	}
-	nodes := map[string]NetworkNode{}
-	for index, node := range intent.Nodes {
-		if !validName(node.ID) || !validName(node.Name) || index > 0 && intent.Nodes[index-1].ID >= node.ID {
-			return errors.New("network nodes are not uniquely sorted")
-		}
-		if node.Platform != "" && node.Platform != "android" && node.Platform != "linux" && node.Platform != "windows" {
-			return errors.New("network node platform is invalid")
-		}
-		if err := validateSortedNames(node.Roles, "network node roles"); err != nil {
-			return err
-		}
-		if err := validIPList(node.DNS, "network node DNS servers"); err != nil {
-			return err
-		}
-		if err := validateProbeTargets(node.ProbeTargets); err != nil {
-			return err
-		}
-		if err := validateDistributionURLs(node.DistributionURLs); err != nil {
-			return err
-		}
-		if err := validateComponents(node.Components); err != nil {
-			return err
-		}
-		hasServer := false
-		for _, role := range node.Roles {
-			switch role {
-			case "access":
-			case "server":
-				hasServer = true
-			default:
-				return errors.New("network node role is invalid")
-			}
-		}
-		if hasServer != (node.Server != nil) {
-			return errors.New("network node server role and attributes disagree")
-		}
-		if hasServer && node.Platform != "linux" || !hasServer && node.Server != nil ||
-			(node.Platform == "android" || node.Platform == "windows") && hasServer {
-			return errors.New("network node platform cannot provide the declared server role")
-		}
-		if node.Server != nil {
-			server := node.Server
-			if !validName(server.Direction) || !validPublicHost(server.PublicEndpoint) || server.InboundPort < 1 || server.InboundPort > 65535 ||
-				!validName(server.InboundProtocol) || validateServerIntent(server) != nil {
-				return errors.New("network server attributes are incomplete")
-			}
-		}
-		nodes[node.ID] = node
-	}
-	addresses := map[netip.Addr]bool{}
-	for index, link := range intent.Links {
-		from, fromOK := nodes[link.From]
-		to, toOK := nodes[link.To]
-		fromPrefix, fromAddressOK := canonicalTunnelPrefix(link.FromAddress)
-		toPrefix, toAddressOK := canonicalTunnelPrefix(link.ToAddress)
-		if !validName(link.ID) || !validName(link.From) || !validName(link.To) || link.From >= link.To ||
-			link.Transport != "wireguard" || index > 0 && intent.Links[index-1].ID >= link.ID ||
-			!fromOK || !toOK || from.Server == nil || to.Server == nil ||
-			!fromAddressOK || !toAddressOK || fromPrefix.Addr() == toPrefix.Addr() ||
-			addresses[fromPrefix.Addr()] || addresses[toPrefix.Addr()] || link.ListenPort < 1 || link.ListenPort > 65535 ||
-			len("wg-"+link.From) > 15 || len("wg-"+link.To) > 15 {
-			return errors.New("network links are not uniquely sorted")
-		}
-		if _, _, err := resolveLinkDirection(from, to); err != nil {
-			return err
-		}
-		previousPort := 0
-		for _, port := range link.RetiredListenPorts {
-			if port < 1 || port > 65535 || port == link.ListenPort || previousPort >= port {
-				return errors.New("network link retired ports are invalid")
-			}
-			previousPort = port
-		}
-		if len(link.ProbeTargets) != 2 || link.ProbeTargets[0].Reporter != link.From ||
-			link.ProbeTargets[0].Target != toPrefix.Addr().String() || link.ProbeTargets[1].Reporter != link.To ||
-			link.ProbeTargets[1].Target != fromPrefix.Addr().String() {
-			return errors.New("network link probe targets do not match tunnel endpoints")
-		}
-		addresses[fromPrefix.Addr()] = true
-		addresses[toPrefix.Addr()] = true
-	}
-	policies := map[string]bool{}
-	for index, policy := range intent.Policies {
-		if !validName(policy.ID) || !validName(policy.Name) || policy.MaxHops < 0 || policy.MaxHops > 2 ||
-			index > 0 && intent.Policies[index-1].ID >= policy.ID {
-			return errors.New("network policies are not uniquely sorted")
-		}
-		if err := validateSortedNames(policy.AllowedServers, "policy servers"); err != nil {
-			return err
-		}
-		if err := validateSortedNames(policy.AllowedExits, "policy exits"); err != nil {
-			return err
-		}
-		if err := validateSortedNames(policy.LocalEgressDevices, "policy local egress devices"); err != nil {
-			return err
-		}
-		if !policy.AllowDirect && len(policy.AllowedExits) == 0 && len(policy.LocalEgressDevices) == 0 {
-			return errors.New("network policy has no allowed route")
-		}
-		for _, serverID := range policy.AllowedServers {
-			node, ok := nodes[serverID]
-			if !ok || node.Server == nil {
-				return errors.New("network policy server is not a server node")
-			}
-		}
-		for _, exit := range policy.AllowedExits {
-			node, ok := nodes[exit]
-			if !ok || node.Server == nil || !node.Server.EgressCapable || !contains(policy.AllowedServers, exit) {
-				return errors.New("network policy exit is not egress capable")
-			}
-		}
-		for _, deviceID := range policy.LocalEgressDevices {
-			node, ok := nodes[deviceID]
-			if !ok || node.Server == nil || !node.Server.EgressCapable || !contains(node.Roles, "access") ||
-				!contains(node.Roles, "server") || !contains(policy.AllowedServers, deviceID) ||
-				!contains(policy.AllowedExits, deviceID) {
-				return errors.New("network policy local egress device is not an allowed hybrid exit")
-			}
-		}
-		policies[policy.ID] = true
-	}
+	services := map[string]Service{}
 	for index, service := range intent.Services {
-		if !validName(service.ID) || !validName(service.Name) || !policies[service.Policy] ||
-			index > 0 && intent.Services[index-1].ID >= service.ID {
-			return errors.New("network services are invalid or not uniquely sorted")
+		if service.Validate() != nil || index > 0 && intent.Services[index-1].ID >= service.ID {
+			return errors.New("initial Services are invalid or not uniquely sorted")
 		}
-		if err := validateServiceMatchers(service.Matchers); err != nil {
-			return err
+		services[service.ID] = service
+	}
+	for index, policy := range intent.Policies {
+		service, found := services[policy.ServiceID]
+		if policy.Validate() != nil || index > 0 && intent.Policies[index-1].ID >= policy.ID || !found || service.Kind != "internet" {
+			return errors.New("initial Policies are invalid, unsorted or have no Service")
+		}
+		if policy.EntryScope.Mode == "only" || policy.RelayScope.Mode == "only" || policy.ExitScope.Mode == "only" || len(policy.LocalEgressDevices) != 0 {
+			return errors.New("initial Policy references a node without ordinary responsibilities")
+		}
+	}
+	for index, target := range intent.BusinessProbeTargets {
+		if target.Validate() != nil || index > 0 && intent.BusinessProbeTargets[index-1].ID >= target.ID {
+			return errors.New("initial business targets are invalid or not uniquely sorted")
 		}
 	}
 	return nil
-}
-
-func (value NetworkImport) Validate() error {
-	if !validDigest(value.RecoveryEvidenceHash) || value.Intent.Validate() != nil {
-		return errors.New("network import is invalid")
-	}
-	return nil
-}
-
-func projectNetworkWeb(projection *Projection) {
-	if projection.NetworkIntent == nil {
-		return
-	}
-	intent := projection.NetworkIntent
-	devices := make([]Device, 0, len(intent.Nodes))
-	for _, node := range intent.Nodes {
-		device := Device{ID: node.ID, Name: node.Name, Platform: node.Platform,
-			Roles: append([]string(nil), node.Roles...), Authorized: false, Availability: "unknown",
-			ExpectedComponents: append([]ComponentExpectation(nil), intent.Components...)}
-		for _, override := range node.Components {
-			index := sort.Search(len(device.ExpectedComponents), func(index int) bool {
-				return device.ExpectedComponents[index].Name >= override.Name
-			})
-			if index < len(device.ExpectedComponents) && device.ExpectedComponents[index].Name == override.Name {
-				device.ExpectedComponents[index] = override
-			} else {
-				device.ExpectedComponents = append(device.ExpectedComponents, ComponentExpectation{})
-				copy(device.ExpectedComponents[index+1:], device.ExpectedComponents[index:])
-				device.ExpectedComponents[index] = override
-			}
-		}
-		if node.Server != nil {
-			device.Direction = node.Server.Direction
-			device.EgressCapable = node.Server.EgressCapable
-			device.Endpoint = node.Server.PublicEndpoint
-			device.Location = node.Server.Country
-			if node.Server.City != "" {
-				device.Location += " " + node.Server.City
-			}
-		}
-		devices = append(devices, device)
-	}
-	links := make([]Link, 0, len(intent.Links))
-	for _, link := range intent.Links {
-		links = append(links, Link{ID: link.ID, From: link.From, To: link.To, Transport: link.Transport,
-			Authorized: true, Availability: "unknown"})
-	}
-	projection.Web.Devices = devices
-	projection.Web.Links = links
-	projection.Web.Services = append([]Service(nil), intent.Services...)
-	projection.Web.Paths = nil
-	for _, authorization := range projection.DeviceAuthorizations {
-		routes, _, err := projectAuthorizationRuntime(*projection, authorization)
-		if err != nil {
-			continue
-		}
-		for _, route := range routes {
-			projection.Web.Paths = append(projection.Web.Paths, Path{CandidateID: route.ID, Device: authorization.DeviceID,
-				Scope: route.Scope, FinalExit: route.FinalExit, Chain: append([]string(nil), route.Chain...), Availability: "unknown"})
-		}
-	}
-	sort.Slice(projection.Web.Paths, func(i, j int) bool {
-		return projection.Web.Paths[i].Device+"\x00"+projection.Web.Paths[i].CandidateID <
-			projection.Web.Paths[j].Device+"\x00"+projection.Web.Paths[j].CandidateID
-	})
 }

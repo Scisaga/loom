@@ -91,8 +91,8 @@ func PreflightWindowsCandidate(ctx context.Context, executable string, config []
 // PreflightWindowsRuntime validates the exact derived profile before invoking
 // the pinned upstream syntax and feature checker.
 func PreflightWindowsRuntime(ctx context.Context, executable string, config []byte, runtimeDir string,
-	profile WindowsRuntimeProfile, caPath string) error {
-	if err := ValidateWindowsRuntimeConfig(config, profile, caPath); err != nil {
+	profile WindowsRuntimeProfile) error {
+	if err := ValidateWindowsRuntimeConfig(config, profile); err != nil {
 		return fmt.Errorf("Windows sing-box structural preflight: %w", err)
 	}
 	return RunSingBoxCheck(ctx, executable, config, runtimeDir)

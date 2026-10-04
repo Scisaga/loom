@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"loom/internal/control"
 )
 
 // TestRealReverseWireGuardTransport is intentionally opt-in: it needs root,
@@ -113,26 +111,28 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	acceptorOptions := Options{IP: makeWrapper("ip-a", acceptorNS, "/usr/sbin/ip"),
 		WireGuard: makeWrapper("wg-a", acceptorNS, "/usr/bin/wg"), WireGuardPrivateKey: acceptorKey}
 	const listenPort = 51888 // isolated namespace only; deliberately not a production/public port
-	acceptorProfile := &control.ServerRuntimeProfile{WireGuard: []control.ServerWireGuardRuntime{{
+	acceptorProfile := &wireGuardExecution{WireGuard: []wireGuardExecutionLink{{
 		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.2/32", PeerID: "demo-i",
 		PeerPublicKey: initiatorPublic, AllowedIP: "10.20.0.1/32", Mode: "acceptor", ListenPort: listenPort,
 		ProbeTarget: "10.20.0.1",
 	}}}
-	initiatorProfile := &control.ServerRuntimeProfile{WireGuard: []control.ServerWireGuardRuntime{{
+	initiatorProfile := &wireGuardExecution{WireGuard: []wireGuardExecutionLink{{
 		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.1/32", PeerID: "demo-a",
 		PeerPublicKey: acceptorPublic, AllowedIP: "10.20.0.2/32", Mode: "initiator",
 		Endpoint: "192.0.2.2:51888", PersistentKeepalive: 25, ProbeTarget: "10.20.0.2",
 	}}}
 	acceptorTransaction, err := applyWireGuard(acceptorProfile, nil,
-		&control.ServerIntent{WGPublicKey: acceptorPublic}, acceptorOptions)
+		&wireGuardIdentity{WGPublicKey: acceptorPublic}, acceptorOptions)
 	if err != nil {
 		arguments, _ := os.ReadFile(acceptorOptions.WireGuard + ".args")
 		stderr, _ := os.ReadFile(acceptorOptions.WireGuard + ".stderr")
-		t.Fatalf("%v; wg commands=%q stderr=%q", err, arguments, stderr)
+		links, _ := exec.Command("ip", "-n", acceptorNS, "-json", "-details", "link", "show").Output()
+		routes, _ := exec.Command("ip", "-n", acceptorNS, "-json", "route", "show", "table", "all", "dev", "wg-demo").Output()
+		t.Fatalf("%v; wg commands=%q stderr=%q namespace links=%s routes=%s", err, arguments, stderr, links, routes)
 	}
 	defer acceptorTransaction.Rollback()
 	initiatorTransaction, err := applyWireGuard(initiatorProfile, nil,
-		&control.ServerIntent{WGPublicKey: initiatorPublic}, initiatorOptions)
+		&wireGuardIdentity{WGPublicKey: initiatorPublic}, initiatorOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,19 +190,22 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	initiatorTransaction.Commit()
 	acceptorTransaction.Commit()
 
-	// Simulate a host reboot: kernel interfaces disappear while the certified
-	// previous profile remains. HostAdapter must recreate both sides from that
-	// profile without changing authority and traffic must recover.
-	run("-n", initiatorNS, "link", "delete", "dev", "wg-demo")
-	run("-n", acceptorNS, "link", "delete", "dev", "wg-demo")
+	// A committed runtime retains its cleanup handle. Stop it before creating
+	// the next generation; a previous profile never permits blind host adoption.
+	if err := initiatorTransaction.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if err := acceptorTransaction.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
 	acceptorRestart, err := applyWireGuard(acceptorProfile, acceptorProfile,
-		&control.ServerIntent{WGPublicKey: acceptorPublic}, acceptorOptions)
+		&wireGuardIdentity{WGPublicKey: acceptorPublic}, acceptorOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer acceptorRestart.Rollback()
 	initiatorRestart, err := applyWireGuard(initiatorProfile, initiatorProfile,
-		&control.ServerIntent{WGPublicKey: initiatorPublic}, initiatorOptions)
+		&wireGuardIdentity{WGPublicKey: initiatorPublic}, initiatorOptions)
 	if err != nil {
 		t.Fatal(err)
 	}

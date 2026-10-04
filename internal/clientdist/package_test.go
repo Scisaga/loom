@@ -107,7 +107,7 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("installer syntax: %v\n%s", err, output)
 	}
-	for _, forbidden := range []string{" client serve-v2", " loom agent ", " loom pull ", " loom report "} {
+	for _, forbidden := range []string{" client serve-v2", " loom agent ", " loom pull ", " loom report ", "--server-migration-source", "stage-server-migration", "finalize-server-migration"} {
 		if strings.Contains(installScript, forbidden) || strings.Contains(systemdService, forbidden) {
 			t.Fatalf("legacy runtime entry remains: %q", forbidden)
 		}
@@ -115,10 +115,10 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 	if strings.Contains(systemdService, "Restart=always") || !strings.Contains(systemdService, "Restart=no") {
 		t.Fatal("Linux client service may retry a failed host network activation")
 	}
-	for _, required := range []string{"client run", "client preflight", "--upgrade", "--server-migration-source",
-		"client stage-server-migration", "migration_overlay=/var/lib/loom-device/migration-overlay.json",
-		"WorkingDirectory=/var/lib/loom-device", "ReadWritePaths=/var/lib/loom-device /run/loom-client /etc/wireguard",
-		"previous runnable release was restored"} {
+	for _, required := range []string{"client run -capture tun", "client preflight", "--upgrade",
+		"protected prior deployment requires a verified forward cutover before activation",
+		"WorkingDirectory=/var/lib/loom-device", "ReadWritePaths=/var/lib/loom-device /run/loom-client",
+		"services remain disabled; certified configuration and floor retained"} {
 		if !strings.Contains(installScript+systemdService, required) {
 			t.Fatalf("installer is missing %q", required)
 		}
@@ -126,17 +126,82 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 	if strings.Contains(systemdService, "ReadWritePaths=/etc ") || strings.Contains(systemdService, "ReadWritePaths=/etc\n") {
 		t.Fatal("runtime service may not make all of /etc writable")
 	}
-	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl stop loom-client-v2.service") {
-		t.Fatal("installer stops the previous runtime before the ownership preflight")
-	}
 	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl enable loom-client.service") {
 		t.Fatal("installer enables the runtime before the network namespace preflight")
 	}
-	if strings.Index(installScript, "client stage-server-migration") > strings.Index(installScript, "client preflight") {
-		t.Fatal("installer preflights before staging the bounded migration overlay")
+	if strings.Contains(installScript, "systemctl stop loom-client-v2.service") || strings.Contains(installScript, "mv /var/lib/loom/client-v2") {
+		t.Fatal("installer must not replace a verified forward cutover with automatic legacy cleanup")
 	}
-	if !strings.Contains(installScript, `if [ ! -e "$migration_overlay" ]; then rm -f "/etc/systemd/system/$old"; fi`) {
-		t.Fatal("installer deletes rollback unit files while a migration overlay is active")
+}
+
+// Execute the generated installer's failure branch with every host path replaced
+// and systemctl intercepted. A failed activation may restore package files, but
+// must never restart an older executable with revoked authorization.
+func TestInstallerFailurePreservesAuthorityAndLeavesExecutionDisabled(t *testing.T) {
+	start := strings.Index(installScript, "if [ \"$ready\" -ne 1 ]; then")
+	if start < 0 {
+		t.Fatal("installer failure branch is missing")
+	}
+	end := strings.Index(installScript[start:], "\n[ -z \"$unit_backup\" ]")
+	if end < 0 {
+		t.Fatal("installer failure branch is missing")
+	}
+	root := t.TempDir()
+	packageDir := filepath.Join(root, "packages")
+	if err := os.MkdirAll(packageDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(packageDir, "current")
+	if err := os.Symlink("demo-new-release", current); err != nil {
+		t.Fatal(err)
+	}
+	unit, backup := filepath.Join(root, "service"), filepath.Join(root, "service.backup")
+	writeTestBytes(t, unit, []byte("demo-new-unit"))
+	writeTestBytes(t, backup, []byte("demo-previous-unit"))
+	state := filepath.Join(root, "device-state")
+	authority := []byte("demo-identity; accepted-revocation; floor=8")
+	writeTestBytes(t, state, authority)
+	log := filepath.Join(root, "systemctl.log")
+	script := "set -eu\n" + `
+systemctl() { printf '%s\n' "$*" >> "$DEMO_SYSTEMCTL_LOG"; }
+ready=0
+previous=demo-previous-release
+unit=$DEMO_UNIT
+unit_backup=$DEMO_BACKUP
+state=$DEMO_STATE
+` + strings.ReplaceAll(installScript[start:start+end], "/usr/local/lib/loom-client", packageDir)
+	command := exec.Command("sh")
+	command.Stdin = strings.NewReader(script)
+	command.Env = append(os.Environ(), "DEMO_UNIT="+unit, "DEMO_BACKUP="+backup,
+		"DEMO_STATE="+state, "DEMO_SYSTEMCTL_LOG="+log)
+	output, err := command.CombinedOutput()
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 ||
+		!bytes.Contains(output, []byte("services remain disabled")) {
+		t.Fatalf("failure branch exit=%v output=%s", err, output)
+	}
+	readback, err := os.ReadFile(state)
+	if err != nil || !bytes.Equal(readback, authority) {
+		t.Fatal("package failure changed accepted device authority")
+	}
+	readback, err = os.ReadFile(unit)
+	if err != nil || string(readback) != "demo-previous-unit" {
+		t.Fatal("previous package files were not restored")
+	}
+	target, err := os.Readlink(current)
+	if err != nil || target != "demo-previous-release" {
+		t.Fatal("previous package link was not restored")
+	}
+	readback, err = os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(readback)), "\n") {
+		if line != "daemon-reload" && !strings.HasPrefix(line, "disable --now ") {
+			t.Fatalf("failed activation attempted an execution change: %s", line)
+		}
+	}
+	if !bytes.Contains(readback, []byte("disable --now loom-client.service")) {
+		t.Fatal("failed activation left a runtime eligible for automatic restart")
 	}
 }
 

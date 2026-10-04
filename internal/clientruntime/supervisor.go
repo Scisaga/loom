@@ -18,23 +18,23 @@ const supervisorStopTimeout = 10 * time.Second
 // function preflights first, keeps hydrated configuration only for the child
 // lifetime, and kills the process (and on Windows its Job Object) on shutdown.
 func RunWindowsDataPlane(ctx context.Context, executable string, config []byte, runtimeDir string) (retErr error) {
-	return RunWindowsDataPlaneProfile(ctx, executable, config, runtimeDir, WindowsInstalledProfile, WindowsInstalledCAPath)
+	return RunWindowsDataPlaneProfile(ctx, executable, config, runtimeDir, WindowsInstalledProfile)
 }
 
 // RunWindowsDataPlaneProfile is the process-lifecycle boundary for one exact
 // derived Windows capture profile.
 func RunWindowsDataPlaneProfile(ctx context.Context, executable string, config []byte, runtimeDir string,
-	profile WindowsRuntimeProfile, caPath string) (retErr error) {
-	return RunWindowsDataPlaneProfileStarted(ctx, executable, config, runtimeDir, profile, caPath, nil)
+	profile WindowsRuntimeProfile) (retErr error) {
+	return RunWindowsDataPlaneProfileStarted(ctx, executable, config, runtimeDir, profile, nil)
 }
 
 // §16.1：只有进程已创建且已受 Job Object 监督，宿主才可以开始启动稳定窗口。
 func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, config []byte, runtimeDir string,
-	profile WindowsRuntimeProfile, caPath string, started func()) (retErr error) {
+	profile WindowsRuntimeProfile, started func()) (retErr error) {
 	if ctx == nil {
 		return errors.New("sing-box supervisor context is nil")
 	}
-	if err := PreflightWindowsRuntime(ctx, executable, config, runtimeDir, profile, caPath); err != nil {
+	if err := PreflightWindowsRuntime(ctx, executable, config, runtimeDir, profile); err != nil {
 		return err
 	}
 	if err := validateExecutable(executable); err != nil {

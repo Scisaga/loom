@@ -8,8 +8,8 @@ func TestWindowsObservationDisplayUsesBusinessOutcomes(t *testing.T) {
 	for _, test := range []struct {
 		result, health, summary string
 	}{
-		{"available", "可用", "TCP/TLS 与 UDP/DNS 已验证"},
-		{"unavailable", "不可用", "TCP/TLS 或 UDP/DNS 失败"},
+		{"available", "可用", "已配置目标的真实探测成功"},
+		{"unavailable", "不可用", "已配置目标的真实探测失败"},
 		{"unknown", "未知", "尚无真实业务结果"},
 	} {
 		health, summary, _ := windowsObservationDisplay(test.result)

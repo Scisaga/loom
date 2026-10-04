@@ -127,7 +127,7 @@ func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected 
 		name = m.draft.display.Name
 	}
 	if req.Invite != nil {
-		if req.Invite.Schema != 1 || req.Invite.Capability.Validate() != nil {
+		if req.Invite.Validate() != nil {
 			return nil, nil, errors.New("加入二维码无效；请导入中控生成的二维码")
 		}
 	} else if !m.draft.display.Recoverable {

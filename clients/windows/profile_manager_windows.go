@@ -123,7 +123,7 @@ func (m *windowsProfileManager) makeProfileChild(root string) *portableGUI {
 	if err == nil {
 		lkg := store.LKG()
 		if lkg == nil {
-			child.state, child.detail = guiNeedsJoin, "加入事务已保存；等待中控审批。"
+			child.state, child.detail = guiNeedsJoin, "加入事务已保存；等待中控完成加入。"
 			return child
 		}
 		child.joined, child.deviceID, child.state = true, lkg.View.DeviceID, guiStopped
@@ -140,7 +140,7 @@ func (app *portableGUI) loadOfflineProfileRoutes() {
 	if err != nil || store.LKG() == nil {
 		return
 	}
-	options, err := routeOptions(store.LKG().View.Routes)
+	options, err := windowsRouteOptions(store.LKG().View)
 	if err != nil {
 		return
 	}

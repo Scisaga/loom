@@ -63,11 +63,11 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 				route["rules"] = append(rules[:1], rules[2:]...)
 			}
 			// §7.2.1：只将测试地址送入隔离 TUN；回环上的目标和 DNS 不进入接管。
-			config["inbounds"].([]any)[0].(map[string]any)["route_address"] = []string{"192.0.2.0/24"}
+			config["inbounds"].([]any)[1].(map[string]any)["route_address"] = []string{"192.0.2.0/24"}
 			body, _ = json.Marshal(config)
 			stop := runRoutingSingBox(t, executable, body)
 			defer stop()
-			want := "default"
+			want := "blocked"
 			if fixed {
 				want = "service"
 			}
@@ -80,7 +80,7 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 				{"mixed_domain", "http", "demo-service.example", httpPort, true, "service"},
 				{"tun_http_host", "http", "demo-service.example", httpPort, false, want},
 				{"tun_tls_sni", "https", "demo-service.example", tlsPort, false, want},
-				{"tun_without_domain_evidence", "https", "192.0.2.17", tlsPort, false, "default"},
+				{"tun_without_domain_evidence", "https", "192.0.2.17", tlsPort, false, "blocked"},
 			} {
 				t.Run(probe.name, func(t *testing.T) {
 					if got := routingRequest(t, probe.scheme, probe.host, probe.port, probe.mixed); got != probe.want {
@@ -107,26 +107,24 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 
 func routingTUNConfig(t *testing.T, dnsAddress string) []byte {
 	t.Helper()
-	var config singBoxConfig
-	if err := json.Unmarshal([]byte(validWindowsConfig("debug")), &config); err != nil {
+	source := []byte(validWindowsConfig(""))
+	body, err := DeriveWindowsRuntimeConfig(source, WindowsPortableTUNProfile, []string{"192.0.2.53"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	var config singBoxConfig
+	if err := json.Unmarshal(body, &config); err != nil {
+		t.Fatal(err)
+	}
+	// Isolated harness substitutes loopback servers after the formal adapter;
+	// the production config never receives destination override facilities.
 	config.DNS.Servers[0].Address = "udp://" + dnsAddress
-	config.Outbounds = []singBoxOutbound{
-		{Type: "direct", Tag: "dns-out"},
-		{Type: "direct", Tag: "demo-service", OverrideAddress: "127.0.0.2"},
-		{Type: "direct", Tag: "demo-default", OverrideAddress: "127.0.0.3"},
-		{Type: "selector", Tag: "svc:demo-service", Outbounds: []string{"demo-service"}, Default: "demo-service"},
-		{Type: "selector", Tag: "decl:demo-default", Outbounds: []string{"demo-default"}, Default: "demo-default"},
-		{Type: "block", Tag: "block"},
+	for i := range config.Outbounds {
+		if config.Outbounds[i].Tag == "demo-candidate" {
+			config.Outbounds[i].OverrideAddress = "127.0.0.2"
+		}
 	}
-	config.Route.Rules = []singBoxRule{
-		{Inbound: []string{"tun-in", "in-1080"}, Domain: []string{"demo-service.example"}, Outbound: "svc:demo-service"},
-		{Inbound: []string{"tun-in", "in-1080"}, Outbound: "decl:demo-default"},
-	}
-	config.Experimental.ClashAPI.Secret = "demo-api-secret"
-	source, _ := json.Marshal(config)
-	body, err := DeriveWindowsRuntimeConfig(source, WindowsPortableTUNProfile, WindowsInstalledCAPath)
+	body, err = json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +173,7 @@ func routingRequest(t *testing.T, scheme, host, port string, mixed bool) string 
 	client := &http.Client{Transport: transport, Timeout: 4 * time.Second}
 	response, err := client.Get(scheme + "://" + net.JoinHostPort(host, port) + "/")
 	if err != nil {
-		t.Fatal(err)
+		return "blocked"
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)

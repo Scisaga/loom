@@ -1,477 +1,408 @@
 package control
 
 import (
-	"crypto/hmac"
+	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"net"
+	"net/netip"
+	"net/url"
 	"sort"
-	"strings"
-
-	"loom/internal/clientmodel"
 )
 
-func normalizedDataPlaneProtocol(value string) string {
-	if value == "hy2" {
-		return "hysteria2"
+func digestContractValue(domain string, value any) (string, error) {
+	body, err := CanonicalEncode(value)
+	if err != nil {
+		return "", err
 	}
-	return value
+	sum := sha256.Sum256(append([]byte(domain), body...))
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-// dataPlaneServerName is the stable certificate identity for a server.  The
-// public endpoint and a WireGuard next-hop address are only transport
-// addresses; neither is an authenticated identity and both may change while
-// the same server certificate remains valid.
-func dataPlaneServerName(nodeID string) string {
-	return nodeID + ".node.internal"
+func localCandidate(service Service, policy NetworkPolicy, finalExit string) (RouteCandidate, error) {
+	identity := map[string]any{"service_id": service.ID, "first_resource_id": "", "node_chain": []string{}, "link_ids": []string{}, "final_exit": finalExit}
+	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
+	if err != nil {
+		return RouteCandidate{}, err
+	}
+	spec, err := digestContractValue("loom-candidate-spec-v3\x00", map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{}, "links": []NetworkLink{}})
+	if err != nil {
+		return RouteCandidate{}, err
+	}
+	return RouteCandidate{ID: id, SpecDigest: spec, Scope: "service:" + service.ID, ServiceID: service.ID,
+		FirstResourceID: "", NodeChain: []string{}, LinkIDs: []string{}, FinalExit: finalExit}, nil
 }
 
-func deriveRuntimeSecret(runtimeKey, deviceID, policyID, purpose string) (string, error) {
-	key, err := base64.RawURLEncoding.DecodeString(runtimeKey)
-	if err != nil || len(key) != 32 {
-		return "", errors.New("runtime key is invalid")
+// servicePermissionValues verifies the selected current values without requiring
+// a deleted Policy or Service to reappear. Missing references grant nothing.
+func servicePermissionValues(view DeviceView) (map[string]Service, map[string]NetworkPolicy, error) {
+	if validateIDSet(view.PolicyIDs) != nil || view.Services == nil || view.Policies == nil {
+		return nil, nil, errors.New("service permission values are incomplete")
 	}
-	// RFC 5869 HKDF-SHA256 with a fixed product domain. The salt is public;
-	// separation comes from the device, policy and purpose-bound info value.
-	extract := hmac.New(sha256.New, []byte("loom-runtime-key-v2"))
-	extract.Write(key)
-	prk := extract.Sum(nil)
-	info := []byte(deviceID + "\x00" + policyID + "\x00" + purpose)
-	expand := hmac.New(sha256.New, prk)
-	expand.Write(info)
-	expand.Write([]byte{1})
-	return base64.RawURLEncoding.EncodeToString(expand.Sum(nil)), nil
-}
-
-func networkNode(intent *NetworkIntent, id string) (NetworkNode, bool) {
-	if intent == nil {
-		return NetworkNode{}, false
-	}
-	index := sort.Search(len(intent.Nodes), func(index int) bool { return intent.Nodes[index].ID >= id })
-	if index == len(intent.Nodes) || intent.Nodes[index].ID != id {
-		return NetworkNode{}, false
-	}
-	return intent.Nodes[index], true
-}
-
-func networkPolicy(intent *NetworkIntent, id string) (NetworkPolicy, bool) {
-	if intent == nil {
-		return NetworkPolicy{}, false
-	}
-	index := sort.Search(len(intent.Policies), func(index int) bool { return intent.Policies[index].ID >= id })
-	if index == len(intent.Policies) || intent.Policies[index].ID != id {
-		return NetworkPolicy{}, false
-	}
-	return intent.Policies[index], true
-}
-
-func networkLinkBetween(intent *NetworkIntent, left, right string) (NetworkLink, bool) {
-	if intent == nil {
-		return NetworkLink{}, false
-	}
-	if left > right {
-		left, right = right, left
-	}
-	for _, link := range intent.Links {
-		if link.From == left && link.To == right {
-			return link, true
+	services := map[string]Service{}
+	for index, service := range view.Services {
+		if service.Validate() != nil || index > 0 && view.Services[index-1].ID >= service.ID {
+			return nil, nil, errors.New("view Services are invalid or not uniquely sorted")
 		}
+		services[service.ID] = service
 	}
-	return NetworkLink{}, false
+	byService := map[string]NetworkPolicy{}
+	inboundPolicies := map[string]bool{}
+	for _, credential := range view.InboundCredentials {
+		inboundPolicies[credential.PolicyID] = true
+	}
+	for index, policy := range view.Policies {
+		selected := containsString(view.PolicyIDs, policy.ID)
+		if policy.Validate() != nil || index > 0 && view.Policies[index-1].ID >= policy.ID || !selected && !inboundPolicies[policy.ID] {
+			return nil, nil, errors.New("view Policies are invalid, unassigned or not uniquely sorted")
+		}
+		if !selected {
+			continue
+		}
+		if _, found := byService[policy.ServiceID]; found {
+			return nil, nil, errors.New("device selected multiple Policies for one Service")
+		}
+		byService[policy.ServiceID] = policy
+	}
+	return services, byService, nil
 }
 
-func linkAddresses(link NetworkLink, local string) (localAddress, peerAddress string, ok bool) {
-	switch local {
-	case link.From:
-		return link.FromAddress, strings.Split(link.ToAddress, "/")[0], true
-	case link.To:
-		return link.ToAddress, strings.Split(link.FromAddress, "/")[0], true
+func matcherRule(matcher ServiceMatcher) map[string]any {
+	switch matcher.Kind {
+	case "dns_exact":
+		return map[string]any{"domain": []string{matcher.Value}}
+	case "dns_suffix":
+		return map[string]any{"domain_suffix": []string{matcher.Value}}
+	case "ip_prefix":
+		return map[string]any{"ip_cidr": []string{matcher.Value}}
 	default:
-		return "", "", false
+		panic("validated Service matcher has an unknown kind")
 	}
 }
 
-func policyRelayChains(intent *NetworkIntent, policy NetworkPolicy, accessID, exit string) [][]string {
-	if policy.MaxHops < 2 {
-		return nil
+func serviceRule(service Service) map[string]any {
+	rules := make([]any, 0, len(service.Matchers))
+	for _, matcher := range service.Matchers {
+		rules = append(rules, matcherRule(matcher))
 	}
-	chains := [][]string{}
-	for _, entryID := range policy.AllowedServers {
-		if entryID == exit || entryID == accessID {
-			continue
-		}
-		entry, ok := networkNode(intent, entryID)
-		if !ok || entry.Server == nil || !entry.Server.PublicDataIngress {
-			continue
-		}
-		if _, ok := networkLinkBetween(intent, entryID, exit); ok {
-			chains = append(chains, []string{entryID, exit})
-		}
-	}
-	return chains
+	return map[string]any{"type": "logical", "mode": "or", "rules": rules}
 }
 
-type runtimeOutbound struct {
-	Type          string         `json:"type"`
-	Tag           string         `json:"tag"`
-	Outbounds     []string       `json:"outbounds,omitempty"`
-	Server        string         `json:"server,omitempty"`
-	ServerPort    int            `json:"server_port,omitempty"`
-	Password      string         `json:"password,omitempty"`
-	Detour        string         `json:"detour,omitempty"`
-	BindInterface string         `json:"bind_interface,omitempty"`
-	TLS           map[string]any `json:"tls,omitempty"`
+// ProjectAccessRuntime is the sole permission-to-runtime projection. Host capture,
+// listeners and the local API secret are added later by the platform adapter.
+// Only the outbound passwords are private inputs of the certified profile;
+// identities, transport parameters and ACLs are always rebuilt from the View.
+func ProjectAccessRuntime(view DeviceView) ([]RouteCandidate, *RuntimeProfile, error) {
+	credentials, err := profileCredentials(view)
+	if err != nil {
+		return nil, nil, err
+	}
+	return projectAccessRuntime(view, credentials)
 }
 
-func projectAuthorizationRuntime(projection Projection, authorization DeviceAuthorization) ([]RouteCandidate, *RuntimeProfile, error) {
-	if authorization.Schema == enrollmentSchema {
-		return append([]RouteCandidate(nil), authorization.Routes...), cloneRuntimeProfile(authorization.Runtime), nil
+func projectAccessRuntime(view DeviceView, credentials map[string]string) ([]RouteCandidate, *RuntimeProfile, error) {
+	services, policies, err := servicePermissionValues(view)
+	if err != nil {
+		return nil, nil, err
 	}
-	if authorization.Schema != enrollmentSchemaV2 || projection.NetworkIntent == nil {
-		return nil, nil, errors.New("schema-2 authorization has no network intent")
+	if !containsString(view.Responsibilities, "access") {
+		if len(view.PolicyIDs) != 0 {
+			return nil, nil, errors.New("non-access device has access policies")
+		}
+		return []RouteCandidate{}, nil, nil
 	}
-	node, found := networkNode(projection.NetworkIntent, authorization.DeviceID)
-	if !found {
-		return nil, nil, errors.New("schema-2 authorization has no certified network node")
+	if err := validateViewResources(view); err != nil {
+		return nil, nil, err
 	}
-	if !contains(node.Roles, "access") {
-		return nil, nil, nil
+	ids := make([]string, 0, len(policies))
+	for id := range policies {
+		if _, found := services[id]; found {
+			ids = append(ids, id)
+		}
 	}
+	sort.Strings(ids)
 	routes := []RouteCandidate{}
-	for _, grant := range authorization.DestinationGrants {
-		policy, found := networkPolicy(projection.NetworkIntent, grant)
-		if !found {
-			return nil, nil, errors.New("authorization references an unknown policy")
+	outbounds := []any{map[string]any{"type": "block", "tag": "reject"}}
+	rules := []any{}
+	// A request that simultaneously identifies two Services is ambiguous. Keep
+	// the rejection before every allow rule, including deny-assigned Services.
+	for left := range ids {
+		for right := left + 1; right < len(ids); right++ {
+			rules = append(rules, map[string]any{"type": "logical", "mode": "and", "rules": []any{serviceRule(services[ids[left]]), serviceRule(services[ids[right]])}, "outbound": "reject"})
 		}
-		scope := "policy:" + policy.ID
+	}
+	for _, id := range ids {
+		policy := policies[id]
+		if policy.Action != "allow" {
+			continue
+		}
+		exits := []string{}
 		if policy.AllowDirect {
-			routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":direct", FinalExit: "direct", Scope: scope})
-		} else if contains(policy.LocalEgressDevices, authorization.DeviceID) {
-			routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":local:" + authorization.DeviceID,
-				FinalExit: "direct", Scope: scope})
+			exits = append(exits, "direct")
 		}
-		for _, exit := range policy.AllowedExits {
-			exitNode, found := networkNode(projection.NetworkIntent, exit)
-			if !found || exitNode.Server == nil {
-				return nil, nil, errors.New("policy exit is not a certified server")
+		// The local hybrid is a logical exit even without a network hop. It
+		// has no entry resource and must not inherit the ordinary Direct grant.
+		if containsString(view.Responsibilities, "internet_egress") && containsString(policy.LocalEgressDevices, view.DeviceID) && policy.ExitScope.Allows(view.DeviceID) {
+			exits = append(exits, view.DeviceID)
+		}
+		candidates := make([]RouteCandidate, 0, len(exits))
+		for _, exit := range exits {
+			candidate, err := localCandidate(services[id], policy, exit)
+			if err != nil {
+				return nil, nil, err
 			}
-			if exit == authorization.DeviceID && contains(policy.LocalEgressDevices, authorization.DeviceID) {
-				continue
-			}
-			if policy.MaxHops >= 1 && exitNode.Server.PublicDataIngress {
-				routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":" + exit, FinalExit: exit,
-					Chain: []string{exit}, Scope: scope})
-			}
-			for _, chain := range policyRelayChains(projection.NetworkIntent, policy, authorization.DeviceID, exit) {
-				routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":" + strings.Join(chain, "+"),
-					FinalExit: exit, Chain: chain, Scope: scope})
-			}
-			if policy.MaxHops >= 2 && contains(policy.AllowedServers, authorization.DeviceID) &&
-				contains(node.Roles, "server") && node.Server != nil {
-				if _, linked := networkLinkBetween(projection.NetworkIntent, authorization.DeviceID, exit); linked {
-					chain := []string{authorization.DeviceID, exit}
-					routes = append(routes, RouteCandidate{ID: "route:" + policy.ID + ":" + strings.Join(chain, "+"),
-						FinalExit: exit, Chain: chain, Scope: scope})
+			candidates = append(candidates, candidate)
+		}
+		paths, err := transportPaths(view.DeviceID, containsString(view.Responsibilities, "forward"), services[id], policy, view.Resources, view.Links)
+		if err != nil {
+			return nil, nil, err
+		}
+		byPath := map[string]transportPath{}
+		for _, path := range paths {
+			candidates = append(candidates, path.candidate)
+			byPath[path.candidate.ID] = path
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+		members := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			routes = append(routes, candidate)
+			members = append(members, candidate.ID)
+			if candidate.FirstResourceID == "" {
+				outbounds = append(outbounds, map[string]any{"type": "direct", "tag": candidate.ID})
+			} else {
+				values, err := renderTransportPath(byPath[candidate.ID], view.Resources, credentials)
+				if err != nil {
+					return nil, nil, err
 				}
+				outbounds = append(outbounds, values...)
 			}
 		}
+		scope := candidates[0].Scope
+		outbounds = append(outbounds, map[string]any{"type": "selector", "tag": scope, "outbounds": members, "default": members[0]})
+		rule := serviceRule(services[id])
+		rule["outbound"] = scope
+		rules = append(rules, rule)
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].ID < routes[j].ID })
-	apiSecret, err := deriveRuntimeSecret(authorization.RuntimeKey, authorization.DeviceID, "host", "local-api")
+	body, err := CanonicalEncode(map[string]any{"outbounds": outbounds, "route": map[string]any{"rules": rules, "final": "reject"}})
 	if err != nil {
 		return nil, nil, err
 	}
-	outbounds := make([]runtimeOutbound, 0, len(routes)*2+len(authorization.DestinationGrants))
-	selectors := map[string][]string{}
-	for _, route := range routes {
-		selectors[route.Scope] = append(selectors[route.Scope], route.ID)
-		if len(route.Chain) == 0 {
-			outbounds = append(outbounds, runtimeOutbound{Type: "direct", Tag: route.ID})
+	return routes, &RuntimeProfile{Kind: "sing_box", Config: string(body)}, nil
+}
+
+func targetMatchesService(target string, service Service) bool {
+	if ValidateHTTPSURL(target) != nil {
+		return false
+	}
+	parsed, _ := url.Parse(target)
+	for _, matcher := range service.Matchers {
+		if matcher.Matches(parsed.Hostname()) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateDeviceViewAuthorization(view DeviceView) error {
+	services, policies, err := servicePermissionValues(view)
+	if err != nil {
+		return err
+	}
+	for index, endpoint := range view.Endpoints {
+		if endpoint.Validate() != nil {
+			return errors.New("view endpoint is invalid")
+		}
+		if index > 0 {
+			previous := view.Endpoints[index-1]
+			if previous.ID > endpoint.ID || previous.ID == endpoint.ID && previous.Generation >= endpoint.Generation {
+				return errors.New("view endpoints are not uniquely sorted")
+			}
+		}
+	}
+	for index, group := range view.BusinessProbeTargets {
+		service, exists := services[group.ServiceID]
+		policy, assigned := policies[group.ServiceID]
+		if !exists || !assigned || policy.Action != "allow" || group.Targets == nil || index > 0 && view.BusinessProbeTargets[index-1].ServiceID >= group.ServiceID {
+			return errors.New("business probe group is unauthorized or not uniquely sorted")
+		}
+		for targetIndex, target := range group.Targets {
+			if !targetMatchesService(target, service) || targetIndex > 0 && group.Targets[targetIndex-1] >= target {
+				return errors.New("business probe target is unauthorized or not uniquely sorted")
+			}
+			for otherID, other := range services {
+				if otherID != service.ID {
+					if _, chosen := policies[otherID]; chosen && targetMatchesService(target, other) {
+						return errors.New("business probe target belongs to multiple Services")
+					}
+				}
+			}
+		}
+	}
+	for index, component := range view.ExpectedComponents {
+		if component.Validate() != nil {
+			return errors.New("expected component is invalid")
+		}
+		if index > 0 {
+			previous := view.ExpectedComponents[index-1]
+			if previous.ComponentID > component.ComponentID || previous.ComponentID == component.ComponentID && previous.Platform >= component.Platform {
+				return errors.New("expected components are not uniquely sorted")
+			}
+		}
+	}
+	if err := validateViewResources(view); err != nil {
+		return err
+	}
+	routes, profile, err := ProjectAccessRuntime(view)
+	if err != nil {
+		return err
+	}
+	actualRoutes, err := CanonicalEncode(view.Routes)
+	if err != nil {
+		return err
+	}
+	wantedRoutes, err := CanonicalEncode(routes)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(actualRoutes, wantedRoutes) {
+		return errors.New("view candidates do not match its Service permissions")
+	}
+	if (profile == nil) != (view.RuntimeProfile == nil) || profile != nil && *profile != *view.RuntimeProfile {
+		return errors.New("view runtime does not match its Service permissions")
+	}
+	return nil
+}
+
+// ProjectDeviceView consumes only the authenticated disposable projection. The
+// envelope signer attaches the actual member proof and verified fact frontier.
+func ProjectDeviceView(projection Projection, deviceID string) (DeviceView, error) {
+	var authorization DeviceAuthorization
+	found := false
+	for _, value := range projection.DeviceAuthorizations {
+		if value.ID == deviceID {
+			if found {
+				return DeviceView{}, errors.New("device authorization is ambiguous")
+			}
+			authorization, found = value, true
+		}
+	}
+	if !found || authorization.Validate() != nil {
+		return DeviceView{}, errors.New("device authorization is unavailable")
+	}
+	view := DeviceView{Schema: 3, DeviceID: authorization.ID, Name: authorization.Name, Platform: authorization.Platform, DevicePublicKey: authorization.DevicePublicKey,
+		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
+		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
+		DNSServers: []string{}, BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}
+	for _, member := range projection.Config.Members {
+		if member.NodeID == deviceID {
+			view.Responsibilities = append(view.Responsibilities, "control")
+			break
+		}
+	}
+	sort.Strings(view.Responsibilities)
+	serviceIDs := map[string]bool{}
+	for _, policy := range projection.NetworkIntent.Policies {
+		if !containsString(view.PolicyIDs, policy.ID) {
 			continue
 		}
-		var detour string
-		for index, nodeID := range route.Chain {
-			node, found := networkNode(projection.NetworkIntent, nodeID)
-			if !found || node.Server == nil {
-				return nil, nil, errors.New("route references a server without certified attributes")
+		for _, service := range projection.NetworkIntent.Services {
+			if service.ID == policy.ServiceID {
+				view.Policies = append(view.Policies, policy)
+				serviceIDs[service.ID] = true
+				break
 			}
-			if index == 0 && nodeID == authorization.DeviceID {
-				if !contains(node.Roles, "server") || len(route.Chain) < 2 {
-					return nil, nil, errors.New("route local WireGuard entry is not a hybrid server")
-				}
-				continue
-			}
-			tag := route.ID
-			if index != len(route.Chain)-1 {
-				tag = route.ID + "/hop:" + nodeID
-			}
-			password, deriveErr := deriveRuntimeSecret(authorization.RuntimeKey, authorization.DeviceID, route.Scope, "data:"+nodeID)
-			if deriveErr != nil {
-				return nil, nil, deriveErr
-			}
-			protocol := normalizedDataPlaneProtocol(node.Server.InboundProtocol)
-			if protocol != "hysteria2" && protocol != "trojan" {
-				return nil, nil, errors.New("route references an unsupported server protocol")
-			}
-			serverAddress := node.Server.PublicEndpoint
-			bindInterface := ""
-			if index == 0 {
-				if !node.Server.PublicDataIngress {
-					return nil, nil, errors.New("route first hop has no certified public data ingress")
-				}
-			} else {
-				previousID := route.Chain[index-1]
-				link, found := networkLinkBetween(projection.NetworkIntent, previousID, nodeID)
-				if !found {
-					return nil, nil, errors.New("route next hop has no certified WireGuard link")
-				}
-				_, peerAddress, ok := linkAddresses(link, previousID)
-				if !ok {
-					return nil, nil, errors.New("route WireGuard addresses are invalid")
-				}
-				serverAddress = peerAddress
-				if previousID == authorization.DeviceID {
-					bindInterface = "wg-" + nodeID
-				}
-			}
-			serverName := node.Server.PublicEndpoint
-			if authorization.RuntimeContract >= runtimeContractNodeTLS {
-				serverName = dataPlaneServerName(node.ID)
-			}
-			outbounds = append(outbounds, runtimeOutbound{Type: protocol, Tag: tag,
-				Server: serverAddress, ServerPort: node.Server.InboundPort, Password: password,
-				Detour: detour, BindInterface: bindInterface,
-				TLS: map[string]any{"enabled": true, "server_name": serverName}})
-			detour = tag
 		}
 	}
-	for scope, members := range selectors {
-		sort.Strings(members)
-		outbounds = append(outbounds, runtimeOutbound{Type: "selector", Tag: scope, Outbounds: members})
+	for _, service := range projection.NetworkIntent.Services {
+		if serviceIDs[service.ID] {
+			view.Services = append(view.Services, service)
+		}
 	}
-	sort.Slice(outbounds, func(i, j int) bool { return outbounds[i].Tag < outbounds[j].Tag })
-	document := struct {
-		Inbounds     []map[string]any  `json:"inbounds"`
-		Outbounds    []runtimeOutbound `json:"outbounds"`
-		Experimental map[string]any    `json:"experimental"`
-	}{
-		Inbounds:  []map[string]any{{"type": "tun", "tag": "tun-in", "auto_route": true}},
-		Outbounds: outbounds,
-		Experimental: map[string]any{"clash_api": map[string]any{
-			"external_controller": "127.0.0.1:61800", "secret": apiSecret,
-		}},
-	}
-	body, err := json.Marshal(document)
+	sort.Slice(view.Policies, func(i, j int) bool { return view.Policies[i].ID < view.Policies[j].ID })
+	sort.Slice(view.Services, func(i, j int) bool { return view.Services[i].ID < view.Services[j].ID })
+	credentials, err := projectViewResources(projection, &view)
 	if err != nil {
-		return nil, nil, err
+		return DeviceView{}, err
 	}
-	config, err := clientmodel.CanonicalizeRuntimeConfig(body)
-	if err != nil {
-		return nil, nil, err
-	}
-	profile := &RuntimeProfile{Kind: "sing_box", Config: config}
-	if err := profile.Validate(routes); err != nil {
-		return nil, nil, err
-	}
-	return routes, profile, nil
-}
-
-func serverRuntimeUserName(deviceID, scope, serverID string) string {
-	sum := sha256.Sum256([]byte(deviceID + "\x00" + scope + "\x00" + serverID))
-	return "u-" + hex.EncodeToString(sum[:10])
-}
-
-func policyMatchers(intent *NetworkIntent, policyID string) []string {
-	matchers := []string{}
-	for _, service := range intent.Services {
-		if service.Policy == policyID {
-			matchers = append(matchers, service.Matchers...)
-		}
-	}
-	sort.Strings(matchers)
-	result := matchers[:0]
-	for _, matcher := range matchers {
-		if len(result) == 0 || result[len(result)-1] != matcher {
-			result = append(result, matcher)
-		}
-	}
-	return result
-}
-
-func deviceDNSAddresses(intent *NetworkIntent, deviceID string) []string {
-	addresses := append([]string(nil), intent.DNS...)
-	if node, found := networkNode(intent, deviceID); found {
-		addresses = append(addresses, node.DNS...)
-	}
-	sort.Strings(addresses)
-	result := addresses[:0]
-	for _, address := range addresses {
-		if len(result) == 0 || result[len(result)-1] != address {
-			result = append(result, address)
-		}
-	}
-	return result
-}
-
-func serverRuntimeACLKey(rule ServerRuntimeACL) string {
-	return fmt.Sprintf("%s\x00%s\x00%s\x00%05d\x00%s\x00%s\x00%s", rule.User, rule.Action, rule.NextHost,
-		rule.NextPort, rule.BindInterface, strings.Join(rule.DestinationMatchers, "\x00"), strings.Join(rule.DNSAddresses, "\x00"))
-}
-
-func projectServerWireGuard(intent *NetworkIntent, serverID string) ([]ServerWireGuardRuntime, error) {
-	local, found := networkNode(intent, serverID)
-	if !found || local.Server == nil {
-		return nil, errors.New("server WireGuard projection has no certified node")
-	}
-	result := []ServerWireGuardRuntime{}
-	for _, link := range intent.Links {
-		peerID := ""
-		if link.From == serverID {
-			peerID = link.To
-		} else if link.To == serverID {
-			peerID = link.From
-		} else {
+	for _, endpoint := range projection.EndpointGenerations {
+		if endpoint.State != "serving" && endpoint.State != "draining" || !containsString(endpoint.Modes, "device") {
 			continue
 		}
-		peer, ok := networkNode(intent, peerID)
-		if !ok || peer.Server == nil {
-			return nil, errors.New("server WireGuard peer is not certified")
+		if _, member := proofMember(projection.Config, endpoint.OwnerControlID); member {
+			view.Endpoints = append(view.Endpoints, endpoint)
 		}
-		localAddress, peerAddress, ok := linkAddresses(link, serverID)
-		if !ok {
-			return nil, errors.New("server WireGuard link addresses are invalid")
-		}
-		initiator, acceptor, err := resolveLinkDirection(local, peer)
-		if err != nil {
-			return nil, err
-		}
-		allowedIP := link.ToAddress
-		if serverID == link.To {
-			allowedIP = link.FromAddress
-		}
-		value := ServerWireGuardRuntime{LinkID: link.ID, Interface: "wg-" + peerID, LocalAddress: localAddress,
-			PeerID: peerID, PeerPublicKey: peer.Server.WGPublicKey, AllowedIP: allowedIP, ProbeTarget: peerAddress}
-		if initiator == serverID {
-			value.Mode = "initiator"
-			value.Endpoint = net.JoinHostPort(peer.Server.PublicEndpoint, fmt.Sprint(link.ListenPort))
-			value.PersistentKeepalive = 25
-		} else if acceptor == serverID {
-			value.Mode = "acceptor"
-			value.ListenPort = link.ListenPort
-		} else {
-			return nil, errors.New("server WireGuard direction does not include local node")
-		}
-		result = append(result, value)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].LinkID+"\x00"+result[i].PeerID < result[j].LinkID+"\x00"+result[j].PeerID
+	sort.Slice(view.Endpoints, func(i, j int) bool {
+		return view.Endpoints[i].ID < view.Endpoints[j].ID || view.Endpoints[i].ID == view.Endpoints[j].ID && view.Endpoints[i].Generation < view.Endpoints[j].Generation
 	})
-	return result, nil
-}
-
-// projectServerRuntime derives the complete inbound user set and its narrow
-// forwarding ACL from NetworkIntent + DeviceAuthorization. An intermediate
-// hop may reach only the next certified server endpoint; a selected final exit
-// receives an egress rule. No mutable registry participates in this result.
-func projectServerRuntime(projection Projection, serverID string, server ServerIntent) (*ServerRuntimeProfile, error) {
-	protocol := normalizedDataPlaneProtocol(server.InboundProtocol)
-	if protocol != "hysteria2" && protocol != "trojan" {
-		return nil, errors.New("server runtime protocol is unsupported")
-	}
-	users := map[string]ServerRuntimeUser{}
-	rules := map[string]ServerRuntimeACL{}
-	for _, authorization := range projection.DeviceAuthorizations {
-		roles := authorization.Roles
-		if authorization.Schema == enrollmentSchemaV2 {
-			if node, ok := networkNode(projection.NetworkIntent, authorization.DeviceID); ok {
-				roles = node.Roles
+	for _, service := range view.Services {
+		var policy NetworkPolicy
+		for _, selected := range view.Policies {
+			if selected.ServiceID == service.ID && containsString(view.PolicyIDs, selected.ID) {
+				policy = selected
+				break
 			}
 		}
-		if authorization.Schema != enrollmentSchemaV2 || !contains(roles, "access") {
+		if policy.Action != "allow" {
 			continue
 		}
-		routes, _, err := projectAuthorizationRuntime(projection, authorization)
-		if err != nil {
-			return nil, err
+		group := ServiceProbeTargets{ServiceID: service.ID, Targets: []string{}}
+		for _, target := range projection.NetworkIntent.BusinessProbeTargets {
+			unique := true
+			for _, otherPolicy := range view.Policies {
+				if !containsString(view.PolicyIDs, otherPolicy.ID) || otherPolicy.ServiceID == service.ID {
+					continue
+				}
+				for _, otherService := range view.Services {
+					if otherService.ID == otherPolicy.ServiceID && targetMatchesService(target.URL, otherService) {
+						unique = false
+					}
+				}
+			}
+			if unique && targetMatchesService(target.URL, service) {
+				group.Targets = append(group.Targets, target.URL)
+			}
 		}
-		for _, route := range routes {
-			for index, hop := range route.Chain {
-				if hop != serverID {
-					continue
+		sort.Strings(group.Targets)
+		unique := group.Targets[:0]
+		for _, target := range group.Targets {
+			if len(unique) == 0 || unique[len(unique)-1] != target {
+				unique = append(unique, target)
+			}
+		}
+		group.Targets = unique
+		view.BusinessProbeTargets = append(view.BusinessProbeTargets, group)
+	}
+	view.Routes, view.RuntimeProfile, err = projectAccessRuntime(view, credentials)
+	if err != nil {
+		return DeviceView{}, err
+	}
+	if err := view.Validate(); err != nil {
+		return DeviceView{}, err
+	}
+	return view, nil
+}
+
+// ServicesOverlap proves overlaps available from the certified matcher values;
+// it never resolves DNS to invent a relation between a name and an IP prefix.
+func ServicesOverlap(left, right Service) bool {
+	for _, a := range left.Matchers {
+		for _, b := range right.Matchers {
+			if a.Kind == "ip_prefix" && b.Kind == "ip_prefix" {
+				pa, ea := netip.ParsePrefix(a.Value)
+				pb, eb := netip.ParsePrefix(b.Value)
+				if ea == nil && eb == nil && (pa.Contains(pb.Addr()) || pb.Contains(pa.Addr())) {
+					return true
 				}
-				if index == 0 && hop == authorization.DeviceID {
-					// A hybrid access node originates this candidate directly on
-					// its certified WG interface; there is no inbound credential
-					// or ACL for traffic entering the same local process.
-					continue
-				}
-				name := serverRuntimeUserName(authorization.DeviceID, route.Scope, serverID)
-				password, err := deriveRuntimeSecret(authorization.RuntimeKey, authorization.DeviceID, route.Scope, "data:"+serverID)
-				if err != nil {
-					return nil, err
-				}
-				users[name] = ServerRuntimeUser{Name: name, Password: password}
-				rule := ServerRuntimeACL{User: name}
-				if index == len(route.Chain)-1 {
-					if route.FinalExit != serverID || !server.EgressCapable {
-						return nil, errors.New("route terminates at a server that is not an authorized exit")
-					}
-					rule.Action = "egress"
-					policyID := strings.TrimPrefix(route.Scope, "policy:")
-					rule.DestinationMatchers = policyMatchers(projection.NetworkIntent, policyID)
-					if len(rule.DestinationMatchers) == 0 {
-						return nil, errors.New("route exit policy has no certified service matchers")
-					}
-				} else {
-					next, found := networkNode(projection.NetworkIntent, route.Chain[index+1])
-					if !found || next.Server == nil {
-						return nil, errors.New("server ACL references an unknown next hop")
-					}
-					link, found := networkLinkBetween(projection.NetworkIntent, serverID, next.ID)
-					if !found {
-						return nil, errors.New("server ACL next hop has no certified WireGuard link")
-					}
-					_, peerAddress, ok := linkAddresses(link, serverID)
-					if !ok {
-						return nil, errors.New("server ACL next-hop address is invalid")
-					}
-					rule.Action = "next_hop"
-					rule.NextHost = peerAddress
-					rule.NextPort = next.Server.InboundPort
-					rule.BindInterface = "wg-" + next.ID
-				}
-				rules[serverRuntimeACLKey(rule)] = rule
-				if rule.Action == "egress" && authorization.RuntimeContract >= runtimeContractDNSACL {
-					dns := deviceDNSAddresses(projection.NetworkIntent, authorization.DeviceID)
-					if len(dns) == 0 {
-						return nil, errors.New("runtime DNS contract has no certified DNS addresses")
-					}
-					dnsRule := ServerRuntimeACL{User: name, Action: "egress", DNSAddresses: dns}
-					rules[serverRuntimeACLKey(dnsRule)] = dnsRule
-				}
+			}
+			if a.Kind == "dns_exact" && b.Matches(a.Value) || b.Kind == "dns_exact" && a.Matches(b.Value) || a.Kind == "dns_suffix" && b.Kind == "dns_suffix" && (a.Matches(b.Value) || b.Matches(a.Value)) {
+				return true
 			}
 		}
 	}
-	wireGuard, err := projectServerWireGuard(projection.NetworkIntent, serverID)
-	if err != nil {
-		return nil, err
-	}
-	profile := &ServerRuntimeProfile{Kind: "sing_box", Protocol: protocol, ListenPort: server.InboundPort, WireGuard: wireGuard}
-	for _, user := range users {
-		profile.Users = append(profile.Users, user)
-	}
-	sort.Slice(profile.Users, func(i, j int) bool { return profile.Users[i].Name < profile.Users[j].Name })
-	keys := make([]string, 0, len(rules))
-	for key := range rules {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		profile.ACL = append(profile.ACL, rules[key])
-	}
-	return profile, profile.Validate()
+	return false
 }

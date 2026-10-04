@@ -127,6 +127,15 @@ func WaitSelector(ctx context.Context, selector Selector, scopes []string) error
 	var last error
 	for {
 		ready := true
+		if len(scopes) == 0 {
+			health, ok := selector.(interface{ Health(context.Context) error })
+			if !ok {
+				return errors.New("empty selection requires actual runtime API readback")
+			}
+			if err := health.Health(ctx); err != nil {
+				last, ready = err, false
+			}
+		}
 		for _, scope := range scopes {
 			if _, err := selector.Read(ctx, scope); err != nil {
 				last, ready = err, false
@@ -201,4 +210,18 @@ func ApplySelections(ctx context.Context, selector Selector, desired map[string]
 		readback[scope] = actual
 	}
 	return readback, nil
+}
+
+func (selector *HTTPSelector) Health(ctx context.Context) error {
+	body, err := selector.request(ctx, http.MethodGet, "/version", nil)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(body, &result) != nil || result.Version == "" {
+		return errors.New("runtime API readback is invalid")
+	}
+	return nil
 }

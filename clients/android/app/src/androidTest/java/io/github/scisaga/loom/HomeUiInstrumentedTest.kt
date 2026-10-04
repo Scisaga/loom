@@ -8,6 +8,10 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import kotlin.math.abs
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -19,6 +23,9 @@ class HomeUiInstrumentedTest {
 
     @Test
     fun retainedUiRequiresCertifiedProfileBeforeConnecting() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        device.wait(Until.findObject(By.res("com.android.permissioncontroller:id/permission_allow_button")), 3_000)?.click()
+        assertTrue("normal application UI did not open", device.wait(Until.hasObject(By.desc("Loom")), 10_000))
         compose.onNodeWithContentDescription("Loom").assertIsDisplayed()
         compose.onNodeWithText("LOOM · Loom A").assertIsDisplayed()
         val logoTop = compose.onNodeWithTag("loom-mark").fetchSemanticsNode().boundsInRoot.top

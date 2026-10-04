@@ -32,16 +32,22 @@ func cmdClientRun(args []string) error {
 	status := fs.String("status", defaultLinuxStatus, "deletable selector readback")
 	config := fs.String("runtime-config", defaultLinuxConfig, "ephemeral config projected from the LKG")
 	singBox := fs.String("sing-box", defaultLinuxSingBox, "exact packaged sing-box executable")
+	capture := fs.String("capture", "mixed", "tun (isolated namespace required) or mixed (explicit loopback proxy)")
+	resources := fs.String("resource-inputs", "", "protected local server listener/TLS input file")
+	wgKey := fs.String("wireguard-private-key", "/etc/wireguard/node.key", "protected WireGuard private key file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("client run does not accept positional arguments")
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	reload := make(chan os.Signal, 1)
+	signal.Notify(reload, syscall.SIGHUP)
+	defer signal.Stop(reload)
 	return linuxclient.Run(ctx, linuxclient.Options{DeviceState: *state, LocalState: *local, Status: *status,
-		Config: *config, SingBox: *singBox, Log: os.Stderr})
+		Config: *config, SingBox: *singBox, Capture: *capture, ResourceInputs: *resources, WireGuardPrivateKey: *wgKey, Reload: reload, Log: os.Stderr})
 }
 
 func cmdClientPreflight(args []string) error {
@@ -49,54 +55,32 @@ func cmdClientPreflight(args []string) error {
 	fs.SetOutput(io.Discard)
 	state := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
 	singBox := fs.String("sing-box", defaultLinuxSingBox, "exact packaged sing-box executable")
+	capture := fs.String("capture", "mixed", "tun (isolated namespace required) or mixed (explicit loopback proxy)")
+	resources := fs.String("resource-inputs", "", "protected local server listener/TLS input file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("client preflight does not accept positional arguments")
 	}
-	if err := linuxclient.Preflight(*state, *singBox); err != nil {
+	if err := linuxclient.PreflightResources(*state, *singBox, *capture, *resources); err != nil {
 		return err
 	}
 	fmt.Println("Linux certified LKG and sing-box preflight passed")
 	return nil
 }
 
-func cmdClientStageServerMigration(args []string) error {
-	fs := flag.NewFlagSet("client stage-server-migration", flag.ContinueOnError)
+func cmdClientCleanup(args []string) error {
+	fs := flag.NewFlagSet("client cleanup", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	source := fs.String("source", "/etc/loom/sing-box/v2/config.json", "owner-only active legacy sing-box config")
-	destination := fs.String("output", linuxclient.DefaultMigrationOverlay, "owner-only normalized migration overlay")
+	config := fs.String("runtime-config", defaultLinuxConfig, "runtime configuration whose owned network objects must be cleaned")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("client stage-server-migration does not accept positional arguments")
+		return errors.New("client cleanup does not accept positional arguments")
 	}
-	digest, err := linuxclient.StageMigrationOverlay(*source, *destination)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("server migration overlay staged: source_sha256=%s\n", digest)
-	return nil
-}
-
-func cmdClientFinalizeServerMigration(args []string) error {
-	fs := flag.NewFlagSet("client finalize-server-migration", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	overlay := fs.String("overlay", linuxclient.DefaultMigrationOverlay, "owner-only normalized migration overlay")
-	digest := fs.String("source-sha256", "", "exact source digest printed by the stage command")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 || *digest == "" {
-		return errors.New("client finalize-server-migration requires -source-sha256")
-	}
-	if err := linuxclient.FinalizeMigrationOverlay(*overlay, *digest); err != nil {
-		return err
-	}
-	fmt.Println("server migration overlay removed; restart loom-client.service and verify exact runtime readback")
-	return nil
+	return linuxclient.CleanupWireGuard(linuxclient.Options{Config: *config})
 }
 
 func cmdClientRoute(args []string) error {
@@ -109,7 +93,7 @@ func cmdClientRoute(args []string) error {
 		return err
 	}
 	rest := fs.Args()
-	preference := clientmodel.Preference{Schema: 1}
+	preference := clientmodel.Preference{Schema: 3}
 	switch {
 	case len(rest) == 1 && rest[0] == "direct":
 		preference.Mode = clientmodel.ModeDirect
@@ -125,7 +109,7 @@ func cmdClientRoute(args []string) error {
 		return err
 	}
 	lkg := store.LKG()
-	if lkg == nil || lkg.View.Platform != "linux" || lkg.View.Runtime == nil {
+	if lkg == nil || lkg.View.Platform != "linux" || lkg.View.RuntimeProfile == nil {
 		return errors.New("Linux device has no certified runtime profile")
 	}
 	if preference.Mode == clientmodel.ModeFixed {
@@ -147,7 +131,7 @@ func cmdClientRoute(args []string) error {
 	if output, err := exec.Command("systemctl", "reload", *unit).CombinedOutput(); err != nil {
 		return fmt.Errorf("preference saved but service reload failed: %w: %s", err, string(output))
 	}
-	fmt.Printf("Linux route preference saved and service reloaded: %s", preference.Mode)
+	fmt.Printf("Linux route preference saved and runtime refresh requested; verify with client status: %s", preference.Mode)
 	if preference.Exit != "" {
 		fmt.Printf(" %s", preference.Exit)
 	}
@@ -171,5 +155,11 @@ func cmdClientStatus(args []string) error {
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(status)
+	if err := encoder.Encode(status); err != nil {
+		return err
+	}
+	if status.Runtime != "running" {
+		return errors.New("certified configuration is saved; Linux client runtime is not running")
+	}
+	return nil
 }

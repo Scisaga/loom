@@ -26,8 +26,6 @@ import (
 
 type portableGUIState uint8
 
-const dataPlaneStartupGrace = 1500 * time.Millisecond
-
 const (
 	guiLoading portableGUIState = iota
 	guiNeedsJoin
@@ -443,31 +441,13 @@ func (app *portableGUI) startRuntime() {
 func waitForPortableRuntime(ctx context.Context, root string) bool {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
-	var firstSeen time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return false
 		case <-ticker.C:
-			active := false
-			entries, err := os.ReadDir(filepath.Join(root, "runtime"))
-			if err == nil {
-				for _, entry := range entries {
-					if !entry.IsDir() && strings.HasPrefix(entry.Name(), ".sing-box-active-") {
-						active = true
-						break
-					}
-				}
-			}
-			if !active {
-				firstSeen = time.Time{}
-				continue
-			}
-			if firstSeen.IsZero() {
-				firstSeen = time.Now()
-				continue
-			}
-			if time.Since(firstSeen) >= dataPlaneStartupGrace {
+			status, err := readWindowsRuntimeStatus(root)
+			if err == nil && status.DeviceID != "" && status.ViewDigest != "" && status.RuntimeState == "running" {
 				return true
 			}
 		}

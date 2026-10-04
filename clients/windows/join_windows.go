@@ -19,7 +19,6 @@ import (
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientjoin"
-	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
 	"loom/internal/control"
 	"loom/internal/deviceclient"
@@ -81,40 +80,16 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 			return windowsJoinResult{}, err
 		}
 	} else if loadErr == nil {
-		invite = control.BootstrapInvite{Schema: 1, Capability: existing.Capability()}
+		invite = existing.Invite()
 	} else {
 		return windowsJoinResult{}, errWindowsJoinInputRequired
 	}
 
-	progress.report("正在验证发行包并准备本机设备身份…")
-	component, err := installBundledWindowsComponent(root)
-	if err != nil {
-		return windowsJoinResult{}, err
-	}
+	progress.report("正在准备本机设备身份…")
 	store, err := deviceclient.OpenProtected(statePath, invite, protector)
 	if err != nil {
 		return windowsJoinResult{}, fmt.Errorf("准备 DPAPI profile: %w", err)
 	}
-	profile, err := configuredEdition()
-	if err != nil {
-		return windowsJoinResult{}, err
-	}
-	runtimeTarget, err := runtimeProfile(profile)
-	if err != nil {
-		return windowsJoinResult{}, err
-	}
-	caPath := windowsClientCAPath(root, profile)
-	store.SetLKGPreflight(func(envelope control.DeviceViewEnvelope) error {
-		if err := deviceclient.SavePublicDataPlaneCA(caPath, envelope.View.PublicDataPlaneCA); err != nil {
-			return fmt.Errorf("保存认证数据面 CA: %w", err)
-		}
-		derived, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(envelope.View.Runtime.Config), runtimeTarget, caPath)
-		if err != nil {
-			return err
-		}
-		defer clear(derived)
-		return clientruntime.PreflightWindowsRuntime(ctx, component.SingBox, derived, filepath.Join(root, "runtime"), runtimeTarget, caPath)
-	})
 	joinContext, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	progress.report("正在通过私有 bootstrap tunnel 提交设备身份…")
@@ -123,13 +98,13 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 		return windowsJoinResult{}, err
 	}
 	for response.DeviceView == nil {
-		switch response.Transaction.State {
-		case "bound", "approved":
-			progress.report("中控已绑定设备，正在等待审批和完整运行配置…")
+		switch response.State {
+		case "bound":
+			progress.report("中控已绑定设备，正在等待完整运行配置…")
 		case "completed":
 			return windowsJoinResult{}, errors.New("已完成的 Enrollment 未返回完整 DeviceView")
 		default:
-			return windowsJoinResult{}, fmt.Errorf("非规范 Enrollment 状态 %q", response.Transaction.State)
+			return windowsJoinResult{}, fmt.Errorf("非规范 Enrollment 状态 %q", response.State)
 		}
 		timer := time.NewTimer(3 * time.Second)
 		select {
@@ -144,10 +119,10 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 		}
 	}
 	lkg := store.LKG()
-	if lkg == nil || lkg.View.Platform != "windows" || lkg.View.Runtime == nil {
+	if lkg == nil || lkg.View.Platform != "windows" {
 		return windowsJoinResult{}, errors.New("Enrollment 未持久化完整 Windows LKG")
 	}
-	progress.report("设备身份和完整运行配置已由 DPAPI 原子保存。")
+	progress.report("设备身份和认证配置已由 DPAPI 原子保存。")
 	return windowsJoinResult{NodeID: lkg.View.DeviceID}, nil
 }
 

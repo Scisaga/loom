@@ -18,6 +18,7 @@ type State struct {
 type SelectionStatus struct {
 	Scope       string   `json:"scope"`
 	CandidateID string   `json:"candidate_id"`
+	FinalExit   string   `json:"final_exit"`
 	Chain       []string `json:"chain,omitempty"`
 	State       string   `json:"state"`
 }
@@ -48,9 +49,7 @@ func Scopes(routes []clientmodel.RouteCandidate) ([]string, map[string][]clientm
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
-	if len(scopes) == 0 {
-		return nil, nil, errors.New("certified LKG contains no route candidates")
-	}
+
 	return scopes, byScope, nil
 }
 
@@ -130,14 +129,15 @@ func selectionStatuses(routes []clientmodel.RouteCandidate, observations []clien
 				state = observation.Result
 			}
 		}
-		statuses = append(statuses, SelectionStatus{Scope: scope, CandidateID: candidate.ID,
+		statuses = append(statuses, SelectionStatus{Scope: scope, CandidateID: candidate.ID, FinalExit: candidate.FinalExit,
 			Chain: append([]string(nil), candidate.Chain...), State: state})
 	}
 	return statuses
 }
 
-// Activate accepts only selector readback as Selection and performs one real
-// outcome probe followed by at most one fallback.
+// Activate accepts only selector readback as Selection. A nil probe returns
+// that running selection without inventing a business outcome. Otherwise it
+// performs one real outcome probe followed by at most one fallback.
 func Activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
 	probe Probe, now func() time.Time) (Activation, error) {
 	scopes, _, err := Scopes(routes)
@@ -157,7 +157,13 @@ func Activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 	if err != nil {
 		return Activation{}, err
 	}
+	if probe == nil {
+		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, at)}, nil
+	}
 	first := probe(ctx)
+	if err := ctx.Err(); err != nil {
+		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, at)}, err
+	}
 	state = recordOutcome(state, readback, first, at)
 	if first.Available {
 		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, at)}, nil
@@ -180,6 +186,9 @@ func Activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 	}
 	secondAt := now().UTC().Truncate(time.Second)
 	second := probe(ctx)
+	if err := ctx.Err(); err != nil {
+		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, secondAt)}, err
+	}
 	state = recordOutcome(state, readback, second, secondAt)
 	activation := Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, secondAt)}
 	if !second.Available {

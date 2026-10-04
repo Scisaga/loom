@@ -11,7 +11,7 @@ data class VpnStatus(
     val requestedProfileId: String = "",
     val activeProfileId: String = "",
     val deviceName: String = "",
-    val generation: Long = 0,
+    val viewDigest: String = "",
     val dnsProbe: String = "未检查",
     val httpsProbe: String = "未检查",
     val trustedReport: String = "未上报",
@@ -29,4 +29,14 @@ object VpnRuntime {
     fun transform(block: (VpnStatus) -> VpnStatus) {
         mutable.value = block(mutable.value)
     }
+}
+
+/** The authentication write and runtime stop have independent outcomes; both are attempted. */
+internal suspend fun <T> acceptAuthorityAndStopRuntime(
+    accept: () -> T,
+    stop: suspend () -> Unit,
+): Pair<Result<T>, Result<Unit>> {
+    val accepted = runCatching(accept)
+    val stopped = runCatching { stop() }
+    return accepted to stopped
 }

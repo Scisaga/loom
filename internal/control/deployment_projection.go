@@ -40,8 +40,9 @@ func (server *Server) registerPublisherRoutes(mux *http.ServeMux) {
 }
 
 func (server *Server) internalPublisherObservation(writer http.ResponseWriter, request *http.Request) {
-	body, ok := server.internalBody(writer, request)
-	if !ok {
+	body, readErr := boundedBody(writer, request)
+	if readErr != nil {
+		http.Error(writer, "publisher observation exceeds entry-point bounds", http.StatusRequestEntityTooLarge)
 		return
 	}
 	if request.Method == http.MethodPost {
@@ -109,9 +110,9 @@ func (server *Server) syncPublisherOnce(ctx context.Context) {
 		return
 	}
 	local, localBody, localErr := server.verifiedPublisherObservation()
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	for _, member := range uniqueMembers(certified.Projection.Config) {
-		if member.ID == server.Config.MemberID {
+	projection := server.Runtime.Authority.Snapshot()
+	for _, member := range projection.Config.Members {
+		if member.ControlID == server.Config.ControlID {
 			continue
 		}
 		var remoteBody json.RawMessage
@@ -142,89 +143,34 @@ func (server *Server) syncPublisherOnce(ctx context.Context) {
 	}
 }
 
-func (server *Server) projectDeployments(projection *WebProjection, reports []DeviceReport) error {
+func (server *Server) projectDeployments(projection *WebSnapshot) error {
 	observation, _, err := server.verifiedPublisherObservation()
 	if err != nil {
 		return err
-	}
-	observedAt, _ := time.Parse(time.RFC3339Nano, observation.ObservedAt)
-	freshFor := 3 * time.Duration(observation.IntervalSeconds) * time.Second
-	if freshFor < 3*time.Minute {
-		freshFor = 3 * time.Minute
-	}
-	if server.now().Before(observedAt) || server.now().Sub(observedAt) > freshFor {
-		return errors.New("publisher observation is stale")
-	}
-	payloadDigest, err := observation.Current.PayloadSHA256()
-	if err != nil {
-		return err
-	}
-	latest := make(map[string]DeviceReport, len(reports))
-	for _, report := range reports {
-		reportedAt, parseErr := time.Parse(time.RFC3339, report.ReportedAt)
-		if parseErr != nil || server.now().Before(reportedAt) || server.now().Sub(reportedAt) > 3*time.Minute {
-			continue
-		}
-		previous, found := latest[report.DeviceID]
-		if !found || previous.ReportedAt < report.ReportedAt {
-			latest[report.DeviceID] = report
-		}
 	}
 	checksOK := observation.Success && len(observation.DistributionChecks) > 0
 	for _, check := range observation.DistributionChecks {
 		checksOK = checksOK && check.Success
 	}
-	distribution := "verified"
-	if !checksOK {
-		distribution = "incomplete"
+	distribution := "incomplete"
+	if checksOK {
+		distribution = "verified"
 	}
-	projection.Publisher = &PublisherStatus{ObservedAt: observation.ObservedAt,
-		IntervalSeconds: observation.IntervalSeconds, Generation: observation.Current.Generation,
-		Snapshot: observation.Current.Snapshot, Commit: observation.Version.Commit,
-		Binary: observation.Version.Binary, Status: map[bool]string{true: "healthy", false: "error"}[observation.Success],
-		Distribution: distribution}
-	projection.Deployments = make([]Deployment, 0, len(projection.Devices))
+	status := "error"
+	if observation.Success {
+		status = "healthy"
+	}
+	projection.Publisher = &PublisherStatus{ObservedAt: observation.ObservedAt, IntervalSeconds: observation.IntervalSeconds, Generation: observation.Current.Generation, Snapshot: observation.Current.Snapshot, Commit: observation.Version.Commit, Binary: observation.Version.Binary, Status: status, Distribution: distribution}
 	for index := range projection.Devices {
 		device := &projection.Devices[index]
 		target, selectErr := observation.Current.Select(device.ID)
-		state := Deployment{Device: device.ID, Generation: observation.Current.Generation,
-			TargetSnapshot: target, PublisherAt: observation.ObservedAt, Stage: "signed",
-			Status: "waiting", Detail: "signed deployment target has not been distributed"}
+		detail := "Device application readback is not defined in the current report contract."
 		if selectErr != nil {
-			state.Stage, state.Status, state.Detail = "unknown", "unknown", "publisher target has no assignment for this device"
-		} else if !checksOK {
-			state.Status, state.Detail = "unknown", "publisher distribution verification is incomplete"
-		} else {
-			state.Stage, state.Detail = "distributed", "waiting for a current device readback"
+			target = ""
+			detail = "Publisher target has no assignment for this device."
 		}
-		if state.Stage == "distributed" {
-			report, found := latest[device.ID]
-			if !found || report.Deployment == nil {
-				device.Deployment = state.Status
-				projection.Deployments = append(projection.Deployments, state)
-				continue
-			}
-			readback := report.Deployment
-			state.DeviceReportedAt, state.AppliedSnapshot = report.ReportedAt, readback.AppliedSnapshot
-			switch {
-			case readback.Generation != observation.Current.Generation:
-				state.Stage, state.Status, state.Detail = "unknown", "mismatch", "device generation does not match the publisher target"
-			case readback.PayloadSHA256 != payloadDigest:
-				state.Stage, state.Status, state.Detail = "unknown", "mismatch", "device payload digest does not match the signed pointer"
-			case readback.SelectedSnapshot != target:
-				state.Stage, state.Status, state.Detail = "unknown", "mismatch", "device selected a different snapshot"
-			case readback.AppliedSnapshot != target:
-				state.Stage, state.Status, state.Detail = "selected", "waiting", "signed target is selected but not applied"
-			case !readback.RolloutVerified:
-				state.Stage, state.Status, state.Detail = "applied", "waiting", "target is applied but the rollout is not verified"
-			case report.Runtime == nil || report.Runtime.State != "running" || !report.Runtime.Exact:
-				state.Stage, state.Status, state.Detail = "applied", "waiting", "device runtime has not read back the exact certified view"
-			default:
-				state.Stage, state.Status, state.Detail = "verified", "current", "signed target and device application readback match"
-			}
-		}
-		device.Deployment = state.Status
-		projection.Deployments = append(projection.Deployments, state)
+		projection.Deployments = append(projection.Deployments, Deployment{Device: device.ID, Generation: observation.Current.Generation, TargetSnapshot: target, PublisherAt: observation.ObservedAt, Stage: "unknown", Status: "unknown", Detail: detail})
+		device.Deployment = "unknown"
 	}
 	return nil
 }

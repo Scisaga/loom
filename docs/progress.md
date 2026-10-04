@@ -1,68 +1,245 @@
 # 实施状态
 
-文档与原型复核日期：2026-10-03；既有实现缺口沿用 2026-09-30 的核对范围，新增目标另列。原生截图、VM 和生产证据保留各自的记录日期与范围。本文只记录已核实结果与缺口，不定义第二套协议。完成须满足
-[正式入口与回读门禁](README.md#完成判定)。本轮修订设计文档、原型及其生成器，没有修改业务实现、执行生产部署、
-读取生产私有证据或重做实体机验收；文档、组件、测试和页面存在均不等于业务完成。
+实现与文档核对日期：2026-10-04。本文记录本轮代码、正式开发入口与实际运行证据；原生截图、VM 和
+生产证据分别保留各自日期及范围，不定义第二套协议。完成须满足[正式入口与回读门禁](README.md#完成判定)。
+本轮已按用户授权激活 schema 3 Linux 正式服务，完成节点配置、控制同步、业务及恢复回读；实体机终验仍未完成。
+组件、测试和页面存在均不等于整个业务完成。
+
+## 当前工作项：普通设备服务授权与撤权
+
+状态：进行中，未通过完整业务验收，不能关闭。用户已授权按同一业务闭环连续推进实现。
+
+- 必须结果：正式管理入口创建 Service 与固定所属 Policy，设备选择 Policy 并完成私有加入；认证 View
+  原子持久化后由客户端及服务节点实际消费，运行、业务和管理页面分别回读；修改、deny、策略替换与撤权
+  在应用失败和重启后均不恢复旧权限。
+- 保留边界：现网身份、密钥、认证原始字节、floor、latch、既有管理员访问，以及三端有效交互和视觉资产。
+  本项不新增协议号、第二权威、长期兼容路径、DNS provider 或 ACME。用户已于 2026-10-04 授权逐节点部署、
+  检查运行、修复缺口并再次部署验证；现网保全、宿主网络与生产前向切换的门禁继续适用。
+- 当前结果：同一 schema 3 的普通事实、唯一 Authority、正式 CLI/daemon 和 Web 授权入口已替换旧链；
+  Service → Policy → 设备 PolicyIDs → 私有加入 → 认证 View/LKG → Linux 实际 Direct、本机出口及一跳 Hy2/Mixed 业务 →
+  撤权后的拒绝配置 → 重启/执行失败 → 签名报告和管理 API 回读已在临时隔离环境实证。
+  Android API 35 x86_64 临时模拟器也已从正常文件导入和系统 VPN 同意入口，完成 Hy2 HTTPS、撤权热替换、
+  Keystore 重启恢复、重新授权及界面/私有签名报告回读。
+  这是一条已运行的开发闭环，不是生产激活、全部传输能力或所有平台验收完成。
+- 仍须连续推进：Windows 当前 Hy2 制品的原生消费、各平台实体机与正式交付验证、资源主机名与认证 DNS 接线、
+  未实现的传输能力、动态成员及签名发布消费。Linux WG 中继、此次精确制品激活和旧运行入口退出已现场验证，见下文。
+  动态成员多数链尚未实现，不能用初始成员表代替；Hy2、LAN、发布和全部平台能力不是简单 Direct 链的共同前置。
+- 生产状态：获准的 Linux client、control、私有 relay 和透明 endpoint edge 已使用本轮同一精确制品。
+  本机 access 使用显式 Mixed；初始 netns TUN 拒绝门禁保留。历史只读检查不是当前部署状态，
+  切换、端口修复、恢复和删旧证据保存在被忽略的 `deploy/evidence/2026-10-04-service-switch/`。
+
+完成时仍须逐项给出正式入口、认证处理、持久/重启、实际消费、用户回读、获准部署和删旧证据；
+缺一项即保留本工作项未完成，不把内部检查点拆成可分别关闭的工作项。
+
+### 已授权的正式服务替换
+
+前期只读检查与候选自检保存在 `deploy/evidence/2026-10-04-node-rollout/`；用户随后明确要求解决客户端、
+正式切换、真实业务验证，并确认 `.env` 指向 YAML。此次执行及原始回读均在受保护的
+`deploy/evidence/2026-10-04-service-switch/`，节点别名、映射、摘要、原始材料和运行指标不进入本文。
+
+- 正式 `loom config check -env .env` 已严格读取既存 YAML，原输入保持；六键 reader 和相应迁移入口删除。
+  `.env` 只保留文件定位和可选 provider secret，不能改写控制权威。
+- 旧设备签名密钥、control 签名密钥、管理员证书、数据面证书与 WG 密钥逐项核对保留；旧认证原字节、
+  floor 和 latch 保全。经本次明确替换授权建立现行信任材料，沿正式 Invite/claim 完成原设备身份绑定及
+  Service/Policy/资源/Link 映射。新旧签名域与序列不以数字相等替代证明，旧发布 floor 原文件摘要保持。
+- 同一精确制品已接管正式 client、control、relay 和 endpoint edge。所有获准节点经正式公网设备认证
+  入口取得 View，运行时实际消费并提交签名报告；临时加入入口经 draining/retired 退出，临时 SSH 通道移除。
+  原管理员证书通过 mTLS 正式 CLI 写入、成员同步、重启持久回读和原值恢复；真实 Chrome 已打开回环管理页。
+- 客户端 WG 所有权和异常清理已修复；真实隔离环境完成 WG TCP/UDP 与 Hy2→WG→Hy2→HTTPS。
+  生产端口问题通过同轮双端抓包及普通 UDP 对照定位：旧端口回复缺失，操作者确认云端无出站 UDP 限制；
+  从既有 YAML 映射区间选取经对端验证的空闲端口，通过管理员 `resource.put` 修正后恢复握手和私有传输。
+  未登录或修改云网络、NAT、路由器或防火墙，也未把推测写成丢包原因。
+- 生产 Mixed 已实际访问授权 HTTPS，固定出口与 Auto 分别回读。一个首跳失败后，同出口中继被自动选择，
+  后续业务成功；经修复节点的中继业务也成功。个别固定出口对部分互联网目标仍返回真实失败，
+  不扩大 ACL、不把它们标成可用；固定出口不是目标网站可达保证。
+- 故障节点及开发宿主完成正常停止、SIGKILL、精确 WG/子进程清理和重新启动。本机每阶段新建 SSH、
+  LAN DNS、默认公网 HTTPS、经既有 WireGuard 的 HTTP proxy 均通过；非本 generation 的 route/rule、
+  resolver、密钥和发布 floor 不变。当前 unit 使用 `Restart=no`，不以反复重启掩盖清理失败。
+- 已替代的 helper、候选及旧 control/WG timer 启动项从 systemd 退出；旧安装目录中的可执行文件删除，
+  正常 `loom` 命令指向当前制品。旧 authority、report 输入和必要签名原件移到受保护证据，不能再作运行输入。
+  旧公网制品 handler 和静态分发树已退出实际入口；Nginx 配置检查、reload 与读回通过，既有网站/TLS 保留。
+
+本轮未完成 `control.loom`：现有网站叶证书缺该 DNS SAN，认证 DNS overlay 也尚未接线。
+回环浏览器成功不能抵扣它，也不改写用户已确认的笔记本访问历史。旧 HTTP 分发 URL 未伪装成 HTTPS；
+原值留证据，新发布 catalog/floor 消费仍未实现。本次直接激活不声称该发布链或 Android/Windows 实体机完成。
+
+### 本轮实现与实际验证
+
+- [规范编码](../internal/control/contract_encoding.go)、[规范值](../internal/control/contract_values.go)和
+  [Material](../internal/control/model.go)使用唯一 schema 3、严格规范 JSON、逐事实签名及领域分隔符；
+  未知/重复字段、非规范整数/转义、缺字段、null、非法集合顺序和旧格式均拒绝，不自动修复或重解释旧字节。
+  Policy 固定 ServiceID，设备只选 PolicyIDs；同服务重复策略、无效引用和未经依赖证明的修改拒绝。
+- [Authority](../internal/control/store.go)以系统排他锁保护签发序列及请求幂等，持久保存同一原始签名事实，
+  文件和目录耐久提交后才回复；重启从完整事实重建唯一 Projection。初始化只接受显式新空目录和完整
+  genesis，缺失/损坏或旧权威材料不自动初始化。初始任意成员数共用同一验证，第二个有效成员已实际签发普通事实。
+- [同步与提交](../internal/control/cluster.go)已删除普通写入的 Raft/QC、全量 ID 轮询和旧 State 重放依赖，
+  使用按签发键前沿的完整事实差量及精确依赖补取。真实双成员私有 TLS 同步通过；传输 CA 本身不授予成员资格。
+  已认证缺依赖事实和同键分叉证据保留，受影响授权失败关闭，不选一个分叉赢家或复活祖先权限。
+  新二进制已移除旧 SSOT 渲染、写入、发布激活、安装及回滚命令分派；离线验签/旧 current 取证和受保护
+  备份恢复工具仍保留原字节，不授予新 Authority 重放资格；旧 client publish-linux catalog writer 也已从新 CLI
+  删除。新签名发布能力尚不可用；现网已按本次直接替换授权切换，不以它冒充发布器验收。
+- [正式设备链](../internal/control/device_http.go)接通 invite.issue、私有 claim/resume、绑定和 device.join；
+  RuntimeKey 只在首次加入生成并随原事实持久化，同事务重试/重启复用原身份。device.put 只接公开字段，
+  保留已验证的私钥关联和 RuntimeKey；内部 bind/join/expire 不能由通用管理请求伪造。
+  初始 control 的同 NodeID 首次普通职责绑定已验证，设备签名键不得复用 control 键；distribution_urls 归设备授权。
+- Invite 携带完整 genesis/成员证明和签名 Material，唯一交付编码为完整规范值经固定 zlib 压缩后 base64url，
+  不裁剪证明、不接受旧未压缩 fallback。真实双成员及管理员叶证书的 URI、文件、二维码和剪贴板回读通过；
+  QR 以整数像素模块生成，超过媒介容量明确拒绝。SSH/sh 目前交付签名邀请，自动安装执行仍未接通。
+- [设备 View 与运行投影](../internal/control/runtime_projection.go)按 Service/Policy 生成 Direct、本机出口、一跳 Hy2 和显式 WG 中继候选，
+  默认拒绝业务；最后一项授权移除、deny 或无分配产生合法拒绝配置。设备验证完整证明、签名、View 摘要和逐键前沿，
+  同前沿不同 View 拒绝；唯一 LKG、高水位、latch、Preference 先耐久保存再执行，新配置执行失败不恢复旧权限。
+  Linux、Windows 与 mobile 已改为消费同一 schema 3，旧 Head/runtime_contract/capability 运行分支不再作为 fallback。
+  本机出口即使节点链为空，也保留本节点 FinalExit；只有 Direct 许可才满足 Direct 偏好，入口范围不伪限制本机出口。
+  Android、Windows、Linux 与 Web 保留候选和选中结果的真实出口身份，未配置业务探测时路径仍为 unknown。
+  客户端配置验证复用控制契约的唯一规范编码，证书 PEM 的换行不再被普通 JSON 的另一种转义形式误拒绝。
+- [报告](../internal/control/observations.go)保存设备签名原值与单调序列；同序列不同内容保全为分叉，不能覆盖，
+  索引可重建。当前报告必须与有效设备、认证 View 和精确观测范围一致才能进入当前 Web 投影；旧报告只作诊断。
+  schema 3 区分认证 View 与实际 applied View，可真实表达运行错误，不伪造新配置 running 或已应用摘要。
+- Web 保留样式、keyed DOM、草稿焦点及有效交互，Service、Policy、设备公开职责/PolicyIDs/distribution_urls、
+  Invite 和报告已从唯一 Projection 接线；去掉旧 Head/State/SSOT/approve/base_head/quorum 投影。
+  Chrome 正式 UI → AdminHandler → Authority 的测试已验证 Service/Policy 创建、草稿不被实时刷新覆盖、
+  陈旧依赖拒绝及重新打开；邀请选项先于管理快照到达的反例也已验证，表单不会保留缺策略的初始草稿。
+  真实 claim 后清空设备 PolicyIDs 会生成拒绝 View且不改变设备秘密，completed 邀请
+  不再回吐可复用交付物。首次签发按模型进入邀请交付视图，再从明确链接进入同一 DeviceID 详情；两处复用
+  同一个可丢弃交付/状态组件，没有独立进度或加入成功页。Chrome 验证首次交付→设备详情继续同一事务，
+  二维码、下载、刷新/重开保持一致，实际私有加入后两处均移除交付并指向设备详情。事务刷新保留设备改权草稿，
+  迟到 HTTP 快照不覆盖期间已接受的实时完成状态；这些交错已由真实 handler/Chrome 验证。设备详情只消费 schema 3 runtime
+  的 state/applied_view_digest/error_code；签名 running/error、目标 URL、零/缺失 duration_ms 和四职责过滤
+  均已浏览器回读，不再显示旧 overlay/exact/started 字段。部署 applied 无证据保持 unknown，业务观测不作全局健康归约。
+- [Endpoint](../internal/control/endpoint_runtime.go)通过真实 advertised TLS 预检才允许 serving；
+  prepared 新证书不挤掉有效旧 serving，draining 拒新连接并在明确期限关闭旧会话，retired 要求实际 Active 为零。
+  取消、open 到期、设备撤权与证书到期会关闭既有连接；challenge 期间撤权也不能完成旧授权认证。
+  completed 同绑定在 Invite 期限后仍可恢复，真实终结后拒绝。退出关闭未完成握手和本进程持有的连接；
+  [TCP edge](../internal/control/endpoint_edge.go)也取消拨号并等待转发退出，清理错误传回调用方。
+- [凭据派生](../internal/control/service_credential.go)的固定 HKDF-SHA256、规范输入与独立 HMAC 向量已验证，
+  按网络、设备、Service、Policy、资源和接收节点隔离。[一跳投影](../internal/control/runtime_resources.go)把同一
+  派生凭据交给 access outbound 和资源接收端，接收端不获得来源设备 RuntimeKey 或自身 access 分配。
+  [Linux 服务端](../internal/linuxclient/resources.go)使用签名 CA/校验名与显式受保护本机证书引用；入站用户先排除
+  其他已选 Service 的重叠目标，再执行允许范围，默认拒绝，不能以 SNI 扩大 IP 目标权限。
+  接受新 View 后关闭旧进程及已认证 QUIC 会话；真实 owned UDP、TLS/认证和当前 ACL 摘要进入私有签名报告。
+  父进程异常退出也终止子进程。删除资源停止数据面，空入站权限拒绝旧口令；运行失败与重启保留新 LKG。
+  未新增授权 store、并行 writer 或版本，纯 server 不启动 access capture，server 与 access TUN 组合仍拒绝。
+
+### 本轮检查及平台边界
+
+- 正式 CLI 用真实随机测试密钥、双成员完整 genesis 和本地受保护输入执行 control init/serve/write/inspect、
+  endpoint prepared→serving、client enroll/sync/inspect，验证请求幂等、daemon 重启、撤权与显式重新授权。
+  证据：`deploy/evidence/demo-control-cli-20261003T191000Z.json`。测试 daemon 已按精确 PID 和程序路径核验后正常停止。
+- Linux 在专用 user/network namespace 中，用同一正式 CLI、私有设备通道和真实 sing-box Mixed 执行授权业务、
+  无关事实提高前沿且 sing-box 进程不重启、撤权拒绝、重启保留撤权、执行故障保留新 LKG、签名 runtime/error
+  报告和 admin API 回读；停止后端口释放，
+  隔离区路由不变，无配置业务目标仍为 unknown。证据：
+  `deploy/evidence/demo-linux-formal-runtime-20261003T212743Z.json`；此前本轮记录保留其较早范围。没有在宿主初始 netns 启动 access TUN；
+  此证据不抵扣 TUN、WireGuard 崩溃恢复、宿主安全或生产激活。
+- 本机出口的正式隔离链还验证：Direct 偏好无法借空节点链使用本机出口，重启保持拒绝；指定本机出口通过显式
+  reload 从同一 View 恢复，Auto 正常消费，撤销出网职责收口候选。偏好由正式 CLI 保存，reload 通知使用只指向
+  该测试 PID 的临时适配器，没有调用宿主 systemd。证据：`deploy/evidence/demo-linux-local-egress-20261003T212737Z.json`。
+- Hy2 的正式隔离链覆盖两节点私有加入、resource/Service/Policy 写入、一跳 HTTPS、selector/CLI/admin API 回读、
+  错误 TLS 名/口令、越权 IP、借用合法 SNI 的 IP 请求，以及后来 Service 重叠时仍有效的旧凭据被接收端拒绝。
+  旧 QUIC 会话及已打开流随 ACL 替换关闭；父进程 SIGKILL 后子进程退出，重启恢复当前 ACL；撤权和故障均不复权。
+  资源删除后报告 stopped，监听释放，隔离路由不变。证据：`deploy/evidence/demo-linux-hy2-20261003T212729Z.json`。
+  当前实测为 IP 资源拨号和 IP 业务，域名资源解析、跨实体网络、Android/Windows 原生 Hy2、安装与生产均未由此证明。
+- control、deviceclient、clientjoin、mobile 和共享 clientruntime 的相关测试/race 检查已通过；mobile test/vet 通过。
+  本轮 Go 全仓 build/test/vet 的检查记录在 `deploy/evidence/demo-schema3-go-final.json`；control、Linux、
+  clientadapter、clientmodel、deviceclient 的 race 全部通过，其中 control 启用真实 Chrome 的正式 UI 入口。
+  记录在 `deploy/evidence/demo-schema3-hy2-race.json`，不借此前检查点的旧通过记录抵扣。
+  控制端连接级测试还覆盖成员身份验证、端点轮换/排空/撤销、认证中撤权、退出清理和失败关闭。
+- Android 双 ABI AAR 与当前 Kotlin 的 34 项 JVM、lint、debug APK 构建通过；lint 为 11 warning、1 info、
+  无 error，AAR/APK 内两 ABI libbox 的摘要逐项一致。证据：
+  `deploy/evidence/2026-10-03-schema3-android/gradle-native.json`。
+  原生测试发现并修复 Hy2 的 UDP underlay 重新进入 VPN：本机投影启用 libbox 平台接口控制，实际调用
+  `VpnService.protect`；认证私有 Endpoint IP 精确排除，撤权后的更新和报告仍能通过同一私有通道。
+  未接认证解析的 Endpoint 主机名明确拒绝，不借系统 resolver 绕过；此修复不放宽 Linux 初始 netns 门禁。
+- Android 在专用 user/network namespace 中启动全新临时 API 35 x86_64 模拟器，保留已有 AVD；正常
+  DocumentsUI 导入、私有加入、系统 VPN 同意、真实 Hy2 HTTPS 与接收端业务记录均通过。撤权后 VPN 自动
+  应用拒绝 View、业务失败、选择清空；强制退出应用再启动恢复同一撤权 LKG，重新授权后同一身份恢复真实业务。
+  各阶段都有私有签名报告和可见 UI 回读，最后正常断开；隔离路由恢复。
+  证据：`deploy/evidence/2026-10-03-schema3-android/native-hy2-222242.json`；脚本、报告回读和原生截图保留在
+  同目录 `native-hy2-method/`，所验 APK 摘要与上述构建记录一致。
+  空路径已改为明确显示没有已选业务路径，诊断文字按 Service/目标/网络说明真实业务观测；样式与截图基准未重写。
+  空配置原生 UI 回归也已通过首次通知同意入口；冒烟脚本删除已失效的旧测试入口、代理/DNS 修改与 VPN
+  appops 授权。记录在同目录 `ui-smoke-native.json`。模拟器、独立 adb 和 fixture 进程已退出，专用 namespace
+  无存活进程；清理回读在 `cleanup-final.json`，没有启停生产 service 或修改既有 AVD。
+  实体机 Keystore、ARM64 原生运行、IPv6、物理切网和正式签名发行仍未验收，模拟器结果不抵扣这些边界。
+- Windows amd64/arm64 应用及测试制品构建通过；VM 的 deviceclient 12 项、共享运行时 9 项通过，
+  包含真实 Mixed 授权 TLS、错误 SNI 拒绝、拒绝配置替换及 Job 清理。最终 Windows 支持范围内 12 项通过，
+  覆盖正式 broker 规范编码、Installed Machine DPAPI 撤权/无 access 恢复、同 View 更高前沿持久接受且不重启。
+  该结果明确排除此前已记录失败的两项 Portable User DPAPI 测试，不能称整个客户端通过。
+  另一个原生反例验证：配置拉取期间另一正式句柄先接受较高前沿，同 View 的旧网络响应不打断有效运行。
+  证据分别位于 `deploy/evidence/windows-vm/demo-schema3-windows-final/evidence.zip` 与
+  `deploy/evidence/windows-vm/demo-schema3-windows-frontier/evidence.zip`。CurrentUser DPAPI 在 SSH 会话被拒绝，
+  现场没有已登录桌面，GUI/交互会话仍未验证；不改用机器 scope 绕过。VM 已正常 inactive，临时 ACL 精确恢复，
+  无活跃测试。TUN 仅做三形态配置 check，未实际执行；VM 也不能抵扣 ARM64、睡眠、物理切网和实体显示器终验。
+  本次 Hy2 共用源码更新后已重建双架构应用及测试制品，记录在 `deploy/evidence/demo-schema3-windows-hy2-build.json`；
+  上述 VM 原生记录早于这次 Hy2 更新，不能声称新制品已在 Windows 原生执行 Hy2。
+- 前期六键 loader 误拒绝用户已有的 `.env`→YAML，历史只读失败记录在
+  `deploy/evidence/demo-config-readonly-20261003T200424Z/result.json`。该实现漂移现已删除；当前正式 loader
+  严格解码唯一 YAML 引用并已消费原部署输入，定向测试及全仓检查通过。历史失败不再表示当前配置不可用。
+- 本轮仓库安全及 diff 格式检查通过；现存控制 Go 文件格式检查无输出。最终提交仍须复核实际变更和制品范围。
+
+### 前一检查点的独立记录
+
+以下记录属于同日较早的 LKG 接受/纯函数阶段，不是本轮替换后源码或制品的复验：
+
+- 当时已分离三端认证接受、preflight 与运行结果；新 LKG/floor 先提交，运行失败不复权。Linux/Windows
+  持久读写共用文件锁，GUI Preference 不回写旧授权，Linux reader 不自动重写历史格式。
+  删除硬编码公网探测回退；无目标/歧义保持 unknown，主动取消不记成业务失败。
+- Linux WG 仅清理本进程创建且精确回读的对象，不恢复旧快照或接管未知既存接口；安装失败不自动启动旧 service。
+  该内存所有权不能证明 SIGKILL、主进程崩溃、外部 namespace 清理与重启恢复安全。
+- 当次 Go 全仓 build/test/vet、相关 race、格式、安全与 diff 检查通过；纯函数阶段另验证规范往返、严格拒绝、
+  DNS/IP matcher 及 KDF，所引 `golang.org/x/net` 只用于严格 A-label 校验。这些结果不代表当时已有新普通控制链。
+- 当次 Linux Mixed 的隔离 selector、DNS/TLS 名、授权/未授权目标、HUP 和退出检查保存在
+  `deploy/evidence/linux-mixed-runtime/`，范围独立于上方本轮正式 CLI 链。
+- 当次 Android 使用重建 AAR 完成 31 项 JVM、lint、debug APK 和 mobile Go test/vet；不包括真机或当前最终 APK。
+- 当次 Windows 原生 deviceclient 18 项、客户端 15 项与 Machine DPAPI 2 项通过；CurrentUser DPAPI 在 SSH
+  会话返回 Access is denied，交互任务没有完成标记。证据在 `deploy/evidence/windows-lkg-runtime/`，只对应当次制品。
+  当次 VM 最初的磁盘路径错误实际为测试用户权限，按既有文档修复精确归属与父目录搜索权限后 verify 通过；
+  当次结束已正常停机、读回 inactive 并恢复原 ACL/模式。该记录不推定其他时刻的 VM 或生产 service 状态；
+  本轮最终 VM 回读见上文，生产服务以本轮正式替换证据为准。
 
 ## 已完成的局部结果
 
 | 结果 | 已核实的范围 | 不代表 |
 |---|---|---|
-| 设计入口与单一目标契约 | [设计入口](README.md)、[控制模型](core/control-model.md)及[现行契约](core/current-contract.md)描述一套目标语义；[项目指引](../AGENTS.md)同步了四项职责、普通事实同步、成员多数门禁及旧材料拒绝规则。 | 源码、已签名现网数据或正式入口已按新模型运行。 |
-| 客户端与 Web 产品资产 | Web、Android、Windows 界面源码及既有视觉基准仍在工作树；[视觉审查模型](clients/client-ui-visual-review.md)规定回读办法。 | 真机交互、签名发行或线上运行验收。 |
-| 2026-10-02 文档与原型修订 | 澄清成员资格与交付、整次加入取消、本机出口身份、LKG 接受与运行失败及旧 overlay 退出边界。Web 原型补全冲突影响引用、修正 LAN 网关与详情返回；Android 明确放弃本机加入的范围，诊断按 Service/目标展示有效观测。脚本保留 root shell 中一次粘贴，先校验摘要再执行，并提示已接受的终端历史风险。撤回离线 View 导入、持久暂停及额外提交门槛。 | 原生交互、安装器或生产运行已实现。 |
-| 2026-10-03 文档与原型审查修订 | 三端统一由明确需求与现行模型确定目标，旧截图只作差距对照；补 Windows 首次空态、Android 业务失败仍连接状态，区分导入、运行与业务结果；集中列明算法、字段和证书未决点。检查范围见下方审查记录。 | 已决定未决方案、更新原生基准、修改业务实现或完成新的业务验收。 |
-| 管理员现有访问 | 用户已明确报告：管理员笔记本保存由 control 生成的 `admin.p12` 与密码文件，已安装相关证书且能正常访问现有中控；SSH 转发到本机 `127.0.0.1` 是其明确的开发调试路径。 | 当前重建分支具备等价领证命令、目标 schema 3 管理员名单和 `control.loom` 网站证书已部署；本轮没有读回笔记本证书属性或重做浏览器登录。 |
-| Linux 宿主事故处置 | [事故记录](incidents/2026-09-21-host-network-takeover.md#已落地防复发措施)记录了宿主恢复、初始 netns 拒绝、service quarantine 与禁自动重启。 | 专用 capture namespace、无 TUN 转发/出网恢复或 Linux 客户端完成；本轮未重新读回宿主生产状态。 |
+| 设计入口与单一目标契约 | [设计入口](README.md)、[控制模型](core/control-model.md)及[现行契约](core/current-contract.md)描述同一目标；schema 3 的普通链字段和严格往返已由当前实现消费。 | 动态成员、非 Direct 资源或已签名现网数据已经前向迁移。 |
+| 普通授权开发闭环 | 正式 CLI/daemon、Chrome 管理操作、私有加入、耐久事实与 LKG、Linux 隔离 Mixed 和 Android 模拟器原生 Hy2 业务、撤权/重启/再授权、报告及管理 API 回读；Linux 另有执行失败保全。 | 生产激活、所有传输/中继或全部平台完成。 |
+| 客户端与 Web 产品资产 | Web、Android、Windows 界面源码及既有视觉基准保留；本轮 Web 正式 Service/Policy/设备交互已验证。 | 三端所有目标稿、真机交互、签名发行或线上运行已验收。 |
+| 2026-10-02 与 2026-10-03 文档/原型修订 | 职责、PolicyIDs、加入恢复、LKG/运行/业务分离及目标视觉已统一；详细历史记录见下方。 | 当时已执行业务实现或本轮重录原生视觉基准。 |
+| 管理员现有访问 | 用户已确认原 P12/密码交付、证书安装及访问；本轮原证书通过新正式服务的 mTLS 写入、同步、重启回读和真实 Chrome 回环页面。 | 笔记本本轮复验、新领证交付或 control.loom 已可用；现有叶缺该名称的 DNS SAN。 |
+| Linux 宿主事故处置 | [事故记录](incidents/2026-09-21-host-network-takeover.md#已落地防复发措施)的 TUN 门禁保留；本轮显式 Mixed 正式服务完成停止、SIGKILL、WG 清理和基础网络回读。 | 初始 netns TUN 可以启用、完整隔离 TUN installer 已完成，或有限连接覆盖所有物理网络情形。 |
 
 ## 未完成的业务结果
 
 | 工作项 | 当前可确认的基础 | 尚缺的完成证据或结果 |
 |---|---|---|
-| 设备服务授权与管理原型 | 用户明确要求 Policy 固定属于一个 Service、节点仅选 PolicyIDs；核心、Enrollment、运行时和 Web 文档已修订目标关系，二维码限定为纯 access，并区分继续加入与重新添加；通用添加页先多选角色，再确定交付：纯 access 仅二维码，含其他角色仅 SSH/sh；平台改为目标端识别、claim 绑定。 | 当前 Service.policy、DestinationGrants、Enrollment 选项和 QR/rejoin handler 仍是旧实现，尚未完成 Policy.ServiceID、allow/deny、any/only/none 范围、PolicyIDs、平台识别与绑定的规范字节、正式写入、View/ACL 消费及生产前向切换；SVG 仅为目标设计，不证明功能已上线。 |
-| 签名事实与大规模同步 | 现有 Material 存储、控制通信和[目标模型](core/control-model.md)可供改造。 | 当前控制实现仍以 Raft 日志和 QC 决定普通写入，并按完整材料 ID 列表轮询；尚无单 control 签发的规范事实、逐签发键序列/前哈希、只按自身声明依赖判定的接收规则、因果依赖、差量前沿、确定性并发处理（撤权优先、冲突目标暂停投影）、加密的事实同步、分区/重启恢复及只向受影响设备分发视图的正式闭环。 |
-| control 成员门禁 | 现有成员身份和验证键有代码基础。 | 旧成员按轮次多数签名的后继表链、持久承诺与完整投票历史、作废提案、失格键封存序列与原始 tip/多数前缀证明、仅对该键的多数证书前沿例外与原已见高水位保全、证书前已持久接受且证据完整的超限撤权自动重签、整体删除的同证书节点墓碑、双签分叉失败关闭、N=1/2/3、离线设备成员证明及生产回读均未按目标模型实现；现有 joint/Raft/QC 不能抵扣。 |
-| Invite 与节点生命周期 | 私有 claim/resume/report、Endpoint 入口及平台加入代码存在。 | SSH、bootstrap 脚本、扫码共用规范 Invite；扫码签名内容及服务端仅许 `access`；首次 claim 只由签发者处理；无第二次人工批准；组合职责的条件授权事实与成员证书绑定、跨事务设备 ID 冲突收口；加入时申请 control 自动收集多数签名；任一后续 control 可改权或删除、普通节点墓碑与依赖投影清理，以及正式持久/运行时回读尚未闭环。 |
-| 可复用传输与中继链路 | 现有 WG `NetworkLink`、设备报告和部分私有 TLS/Hy2 adapter 存在；Enrollment 不自动添加 WG 链路。 | 不随逐设备参与而改写的稳定 `TransportResource`、普通 access 按授权复用首跳、仅中继需显式 LinkID、同节点对 WG/hy2 并存、链路规范摘要、每链路真实探测和运行时读回尚未接通。现有报告字段偏向 WG，不能填造 Hy2 的 WG interface/handshake。 |
-| Direct／Auto／指定出口与业务探测 | [客户端模型](clients/client-runtime-model.md)规定同出口一跳和中继并存、真实观测与 selector 回读。 | 一份认证 HTTPS 目标池按 Service 和授权派生目标集合、不同设备/Service/Policy 范围各自探测/选路、无目标 `unknown` 及最小真实探测尚未实现；当前 DeviceView 仍是平铺列表，Linux 运行时只取首项目标并有硬编码公网回退。不得把传输成功或 ICMP 提示冒充业务成功。 |
-| DNS overlay | 目标只允许精确 `.loom` A/AAAA，`control.loom` 指向私有 Web 入口，解析不授予权限。 | 规范签名记录、冲突拒绝、按设备投影、私有解析器、网站根 critical `.loom` DNS 约束与全 IPv4/IPv6 IP 排除、根私钥脱离 control 并由操作者离线保管、各 control 本机 CSR 与手工续签、仅含 `control.loom` 的网站叶、受保护安装及新入口代切换、目标模型的 admin 页面逐入口 30 天提醒、过期失败关闭、浏览器实际验链、隔离运行与正式回读均未实现；DNS provider、DNS-01 和 ACME 自动签发/续期仍不在本工作项。 |
-| 共享局域网 | 目标由 `forward` 声明、control 签发等长 IPv4 虚拟映射，经所属 Policy 与节点 PolicyIDs 投影授权。 | 自动无池分配与三次冲突重分配、已入网 access 授权编辑、CIDR Service 匹配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除回读与隔离运行均未实现；不得修改宿主初始 netns 或 LAN 路由器。 |
-| 控制面 Web 与管理员领证 | 页面与[Web 投影模型](clients/web-ui-projection.md)保留；用户已确认 `admin.p12`/密码文件和现有中控登录可用，并将 SSH 回环访问定为开发调试路径。 | 当前重建命令缺 control 生成与交付管理员 P12 的等价入口；SSH 调试链须与入网后 DNS `control.loom` 访问分别验收。既有部署记录显示网站 CA 私钥曾复制到 control、回环入口依赖 IP SAN；当前安装材料属性和私钥位置待读回。目标仅含 `control.loom` SAN 的网站叶无法验证浏览器的 `https://127.0.0.1` 调试 URL，其持续调试证书边界未定。新网站根切换须单独核对并读回，不提前破坏已可用管理员入口。代码仍有 reader 证书和 read capability，受信 admin 名单仍是本地配置；签名事实写入、成员门禁、敏感数据权限和旧 SSOT/registry 路径退出均缺正式闭环。 |
-| Android | 界面源码和[本机配置模型](clients/android-profile-model.md)已有；文档已区分认证 LKG、运行 active 与后续业务观测。 | 当前 Android 运行代码仍在 DNS/HTTPS 探测成功后才接受候选，与无目标时保持 `unknown`、认证运行可先成立的目标规则不符；签名 Release、私有入网、一跳与同出口中继 fallback、切网/重启/撤权及真实设备显示回读仍缺；历史 debug 包或旧勾选不能抵扣。 |
-| Linux | 本机身份/LKG、runtime 与 fail-closed 门禁已有代码基础。 | 无 TUN 的转发/出网平面恢复；专用 namespace 内 access capture、精确清理、异常退出/重启以及 SSH、LAN、WG、DNS、代理和公网返回路径回读。[installer 失败路径](../internal/clientdist/package.go)仍可能重新 `enable --now` 先前 unit，必须加安全所有权及现行授权门禁；旧 migration overlay 不再列作目标安装流程，schema 3 激活须拒绝依赖它的计划，前向映射获准且新路径回读后才能按所有权归档和删除旧入口；现有 finalize 仅删除 overlay 不能抵扣；正式 access service 维持安全暂停。 |
-| Windows 既定客户端交付 | 三种交付形态的源码、UI 基准和[同机 VM](operations/windows-test-vm.md)流程存在。 | 私有入网到运行、报告、安装的正式入口与生产读回；VM 不能替代 ARM64、真实睡眠、物理网络切换和显示硬件实体机验收。外部签名尚未启用。 |
-| 本机 `.env` 瘦身 | [配置模型](operations/configuration-model.md)定义严格六键白名单目标，其中 Gandi token、本机节点键和默认 SSH 配置可省略。 | 现有私有配置的一次性迁移、可选键规范编码的严格 loader、正式部署结果及受保护读回；模型写好不等于迁移完成。 |
-| 签名发布闭环 | [配置模型](operations/configuration-model.md)已有操作者、部署计划、publisher 与逐节点执行的目标流程；现有代码有旧 signed-current 发布和节点 floor。 | schema 3 catalog/manifest 的规范字节与验签、不可变分发到 `current` 指针原子推进、控制事实中的组件期望摘要更新、节点实际运行坐标报告及用户回读均未闭环；旧 floor 到新发布记录的反重放证明并入生产切换，不由这条流程重置。 |
-| 唯一规范输入 | [现行契约](core/current-contract.md)规定规范字节、严格拒绝和单向投影。 | [Material 解码器](../internal/control/model.go)仍接受旧格式，[控制存储](../internal/control/store.go)仍有旧初始化/恢复路径；[设备代码](../internal/control/enrollment.go)的 `runtime_contract` 仍有多个值和投影分支，发布 catalog 仍为旧 schema。需收为各目标对象唯一的 schema 3 语义，拒绝旧材料及分支，且不重放历史格式。 |
-| 字段级同构 | 文档已规定 domain、wire、persistent、runtime、UI 的边界，并列出[字段级阻塞](core/current-contract.md#已确定的签名边界与字段级阻塞)。 | schema 3 的 `Material` 各操作、成员证明、`DeviceView`、claim/resume/report、发布 catalog/manifest、按 Service 探测、DNS 与局域网映射仍缺完整字段表、规范字节、拒绝向量与往返验证；这同时是文档和代码阻塞，不能凭语义描述开始生产 writer。 |
-| 生产切换 | 现网身份、密钥、认证字节、floor 与不可回退 latch 受保护；目标对象编号已定为 schema 3。 | 目标模型与已签名材料不兼容，现网 signed-current 的 generation/载荷摘要/快照反重放 floor 也没有与 schema 3 catalog 可验证的前向映射；尚无用户决定并验证的切换办法、受保护证据和生产读回。必须停止冲突写入并保持切换受阻，不能自动生成空 genesis、重置 floor 或以旧格式作长期 fallback。 |
+| 设备服务授权与管理 | Policy.ServiceID、allow/deny、any/only/none、PolicyIDs 和正式写入已接通；开发环境实际撤权、生产既有授权及 WG 中继消费通过。 | 完整 GUI revoke/regrant、其余传输和各平台原生端到端；不能为生产验证随意撤销用户正在使用的权限。 |
+| 签名事实与同步 | 单 control 普通签名、每键序列/前哈希、声明依赖接收、差量前沿、真实成员 TLS、重启恢复和冲突失败关闭已实现；旧 Raft/QC 普通权威路径已替换。 | 分区/大规模反熵、双方已截断前沿时的完整分叉证据传播、只向受影响设备分发及生产多 control 长期回读；局部同步测试不抵扣这些结果。 |
+| control 成员门禁 | 完整 genesis、任意 N 初始成员验证和唯一 ControlProof 已实现，成员数不是模式；后继消息字段已列明。 | 后继多数证书验证、持久承诺/票史、作废提案、封存证明、前沿例外、高水位保全、超限撤权重签和整体删除仍未执行实现。正式入口拒绝非空后继，不能用初表冒充。 |
+| Invite 与节点生命周期 | 真实签名 Invite、私有绑定/加入、同事务恢复、RuntimeKey 一次生成、公开改权与初始 control 同 NodeID 绑定已接通；取消/撤权与跨事务身份冲突失败关闭有测试。 | SSH/sh 自动安装执行、申请新增 control 的多数链及所有节点删除依赖回读；open 邀请到期只失去连接资格，不凭时钟释放 ID，自动生成终结事实尚未接通。 |
+| Endpoint 轮换与退出 | prepared→serving、draining/retired、撤销关连接已验证；生产设备入口已沿原映射激活并由所有获准节点认证，临时入口正式退休。 | 同监听不同证书并存、生产网站叶续签、control.loom；同代不能改写认证坐标，也不修改路由器。 |
+| 可复用传输与中继链路 | 规范 KDF、共享 Hy2 listener、显式 WG LinkID、精确中继目标和真实 Hy2→WG→Hy2 HTTPS 已在隔离及生产执行。 | 域名资源拨号、全部 transport 组合、逐 Link 签名观测及实体平台；握手不替代业务健康。 |
+| Direct／Auto／指定出口与业务探测 | 单个授权 HTTPS 目标按 Service 实测；生产 Auto、固定出口及首跳失败后同出口中继成功已回读。 | 多目标归约、其余观测算法和平台原生结果；固定出口中真实不可达的目标不会因授权而变绿。 |
+| DNS overlay | 精确 .loom、控制入口与权限分离的目标模型保留；端点 TLS/过期执行已有窄实现。 | 规范 DNS 事实/设备投影、私有解析器、受约束网站根与叶证书交付、CSR/手工续签、逐入口提醒、正式/回环两路径浏览器验链及生产读回。DNS provider、DNS-01 和 ACME 不在本项。 |
+| 共享局域网 | 目标由 forward 声明、control 签发 IPv4 虚拟映射，经所属 Policy 与 PolicyIDs 授权；不作为简单 Direct 链前置。 | 分配/冲突重分配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除及隔离实际运行。不得修改宿主初始 netns 或 LAN 路由器。 |
+| 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
+| Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、34 项 JVM、lint 与 APK 构建通过。API 35 x86_64 模拟器已正常导入/私有加入、原生 VPN/Hy2 HTTPS、撤权热替换、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行、物理切网及正式签名发行；模拟器不能抵扣实体终验。 |
+| Linux | 获准节点正式服务已接管，Mixed、Hy2/WG 中继、报告、停止/SIGKILL 清理和重新启动通过；开发宿主基础网络回读成立，初始 netns TUN 拒绝保留。 | 域名资源解析、隔离 TUN capture 和自动安装失败流程；未实测物理网络变化不能由此次有限回读代替。 |
+| Windows 既定交付 | 双架构构建、共享 schema 3 运行时、VM 真实 Mixed/拒绝配置与 Installed Machine DPAPI 撤权恢复通过；较高前沿接受/并发拉取不重启已原生验证，VM 已正常停止并恢复 ACL。 | 已失败的 Portable CurrentUser DPAPI、有效桌面 GUI、三形态正式安装链；TUN 仅 check，未运行；ARM64/睡眠/物理切网/显示硬件仍需实体终验，外部签名未启用。 |
+| 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
+| 签名发布闭环 | 旧发布/制品代码及 floor 保留独立取证边界，新二进制已禁旧 SSOT 发布激活入口；UI 无实际应用证据保持 unknown。 | schema 3 catalog/manifest、期望组件事实、节点实际坐标与旧发布 floor 的可验证前向映射及生产读回；不能用普通授权闭环声称发布已替换，也不将发布设为 Direct 前置。 |
+| 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
+| 字段级同构 | Direct/本机出口/Hy2/WG 中继已定义并消费跨层对应与严格往返；初始成员、节点绑定及 distribution_urls 已落实。 | 其他传输、动态成员和未定观测算法；旧 HTTP 分发坐标不自动转换成 HTTPS。 |
+| 生产切换 | 本次明确授权的精确制品已接管正式服务，原身份/密钥/管理员/认证原件和 floor/latch 保全，旧运行入口退出。 | schema 3 签名发布 catalog 的单调消费、全部功能或全部平台已完成；旧证据不能恢复成运行权威。 |
 
-## 反复投入仍未闭环的部分
+## 后续连续推进边界
 
-1. **版本与权威分叉。** 多套状态曾各自充当“当前”；现有 `runtime_contract` 继续在同一格式内承载多套投影语义。
-   需要统一写入、解码、持久恢复与客户端消费；除用户已批准的 schema 3 外不再添格式号，也不用兼容分支绕开已签名字节冲突。
-2. **控制治理。** 已有 Raft/QC、成员转换及 Enrollment 局部实现，但它们未形成用户确认的单 control 普通治理、
-   多数成员门禁和大规模差量传播；继续保留并行权威会延长混乱。生产迁移未解决前不能宣称完成。
-3. **Linux capture 安全。** 宿主网络接管表明报告变绿、endpoint 排除与临时路由不能证明 underlay 安全；
-   专用 namespace、所有权清理与真实新连接验收仍缺，正式 service 继续 disabled/inactive。
-4. **客户端正式运行闭环。** Android、Windows 有源码、debug 包和 VM 投入，真机切网、ARM64、正式发行及
-   同一私有模型的运行读回仍缺，不能把局部结果记为完成。
-
-Service 定义目标、Policy 固定所属服务且可复用、节点只选 PolicyIDs 已进入目标文档与原型。
-“不限”只用于已分配策略的路径条件，无分配/deny 不产生业务授权；限定出口删除不会放宽为不限。
-完整规则编辑集中在 Policies，节点页仅选择、移除或替换；同节点同服务拒绝重复策略。
-LAN mapping 仍是同一 local_network Service，终点固定为所属网关。当前 SPA、Service.policy、
-AllowedServers 与 DestinationGrants 尚未表达这些值；规范字节、持久/运行消费、重试及生产前向
-切换都待正式入口验收，不以 SVG 宣称上线。
-
-节点流程保持同一设备/邀请上下文：SSH 提交后显示执行结果，sh/QR 提供本次交付物，后续加入和运行
-统一回读节点详情；原独立 enrollment 原型已合并为详情中的状态。待加入记录仅投影预留身份，不产生授权。
-control 多数签名等待、执行失败/未知与加入完成均保留，关闭网页不取消异步执行；当前 SPA 尚未接入。
-SSH 中断继续原邀请；修改设备复用既有策略时只保存设备授权，不宣称创建了新策略。配置、runtime、
-业务和历史流量分别回读。旧服务 Tab 和节点内嵌规则表单已移出目标稿。没有执行真实安装、加入或生产切换。
-
-具名局域网和 DNS overlay 已纳入当前设计但仍未实现；公网 DNS provider/ACME 不属于当前核心范围。
-更早设计只可作取证，不能成为现行规范或正常解码输入。
+1. 当前生产普通控制链已替换旧 Raft/QC 权威；维持受保护前向映射及精确制品证据，不恢复旧协议作为 fallback。
+2. 继续沿同一 Service/Policy 授权业务补实际平台与服务节点消费，按新增风险做必要验证；动态成员多数门禁
+   保持明确未实现，不以新增治理模式、store 或另一版本绕开。
+3. Linux 初始 netns 不能运行 access TUN。显式 Mixed 与仅有精确所有权的 WG 已通过此次宿主回读；隔离 TUN
+   和未实测网络变化仍须按[事故门禁](incidents/2026-09-21-host-network-takeover.md)验证。
+4. 管理页面、配置接受、运行、业务观测和发布应用分别回读；多目标算法未定时保持缺项可见。
+   LAN、Hy2、发布和原型的全部场景不作为简单 Direct 链前置，也不能因该链通过就称它们完成。
 
 ## 文档与原型审查记录
 

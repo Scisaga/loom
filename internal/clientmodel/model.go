@@ -4,15 +4,15 @@
 package clientmodel
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
+
+	"loom/internal/control"
 )
 
 const (
@@ -69,8 +69,7 @@ type Selection struct {
 }
 
 func validName(value string) bool {
-	return value != "" && len(value) <= 128 && strings.TrimSpace(value) == value &&
-		strings.IndexFunc(value, unicode.IsControl) < 0
+	return value != "" && utf8.ValidString(value) && strings.IndexFunc(value, unicode.IsControl) < 0
 }
 
 func (candidate RouteCandidate) Validate() error {
@@ -87,9 +86,7 @@ func (candidate RouteCandidate) Validate() error {
 	if len(candidate.Chain) > 0 && candidate.Chain[len(candidate.Chain)-1] != candidate.FinalExit {
 		return errors.New("route candidate final exit does not match its chain")
 	}
-	if len(candidate.Chain) == 0 && candidate.FinalExit != "direct" {
-		return errors.New("empty route candidate chain must be Direct")
-	}
+
 	return nil
 }
 
@@ -115,7 +112,7 @@ func (observation Observation) Validate() error {
 }
 
 func (preference Preference) Validate() error {
-	if preference.Schema != 1 {
+	if preference.Schema != 3 {
 		return errors.New("preference schema is invalid")
 	}
 	switch preference.Mode {
@@ -167,7 +164,7 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		}
 		seen[candidate.ID] = true
 		allowed := preference.Mode == ModeAuto ||
-			preference.Mode == ModeDirect && len(candidate.Chain) == 0 ||
+			preference.Mode == ModeDirect && candidate.FinalExit == "direct" ||
 			preference.Mode == ModeFixed && candidate.FinalExit == preference.Exit
 		if !allowed || byID[candidate.ID].Result == "unavailable" {
 			continue
@@ -226,105 +223,21 @@ type runtimeDocument struct {
 	} `json:"experimental"`
 }
 
-// CanonicalizeRuntimeConfig rejects duplicate/trailing JSON and returns the
-// unique compact representation stored inside a certified DeviceView.
-func CanonicalizeRuntimeConfig(body []byte) (string, error) {
-	if len(body) == 0 || len(body) > 4<<20 {
-		return "", errors.New("runtime config exceeds boundary")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return "", err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return "", errors.New("runtime config has trailing content")
-	}
-	canonical, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	// Decode through the typed boundary too; duplicate keys are rejected by
-	// comparing each object key while walking the original input.
-	if err := rejectDuplicateKeys(body); err != nil {
-		return "", err
-	}
-	return string(canonical), nil
-}
-
-func rejectDuplicateKeys(body []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var walk func() error
-	walk = func() error {
-		token, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		delimiter, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delimiter {
-		case '{':
-			seen := map[string]bool{}
-			for decoder.More() {
-				key, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				name, ok := key.(string)
-				if !ok || seen[name] {
-					return errors.New("runtime config has duplicate object key")
-				}
-				seen[name] = true
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			_, err = decoder.Token()
-			return err
-		case '[':
-			for decoder.More() {
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			_, err = decoder.Token()
-			return err
-		default:
-			return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
-		}
-	}
-	return walk()
-}
-
 func (profile RuntimeProfile) Validate(routes []RouteCandidate) error {
 	if profile.Kind != "sing_box" || profile.Config == "" {
 		return errors.New("runtime profile is incomplete")
 	}
-	canonical, err := CanonicalizeRuntimeConfig([]byte(profile.Config))
-	if err != nil || canonical != profile.Config {
-		return errors.New("runtime profile config is not canonical")
+	if err := (control.RuntimeProfile{Kind: profile.Kind, Config: profile.Config}).Validate(); err != nil {
+		return err
 	}
 	var document runtimeDocument
 	if err := json.Unmarshal([]byte(profile.Config), &document); err != nil {
 		return err
 	}
-	tun := 0
-	for _, inbound := range document.Inbounds {
-		if inbound.Type == "tun" {
-			tun++
-			if inbound.Tag != "tun-in" || !inbound.AutoRoute {
-				return errors.New("runtime profile TUN contract is invalid")
-			}
-		}
-	}
-	if tun != 1 || document.Experimental.ClashAPI.ExternalController != "127.0.0.1:61800" ||
-		!validName(document.Experimental.ClashAPI.Secret) {
-		return errors.New("runtime profile host control is invalid")
+	// Host capture and local API authentication belong to the platform adapter.
+	// The authenticated profile contains no platform listeners or local secret.
+	if len(document.Inbounds) != 0 || document.Experimental.ClashAPI.ExternalController != "" || document.Experimental.ClashAPI.Secret != "" {
+		return errors.New("authorization profile contains host execution inputs")
 	}
 	outboundType := map[string]string{}
 	selectors := map[string][]string{}
@@ -356,7 +269,7 @@ func (profile RuntimeProfile) Validate(routes []RouteCandidate) error {
 		}
 		wanted[route.Scope][route.ID] = true
 	}
-	if len(wanted) == 0 || len(selectors) != len(wanted) {
+	if len(selectors) != len(wanted) {
 		return errors.New("runtime selectors do not match authorized scopes")
 	}
 	for scope, candidates := range wanted {

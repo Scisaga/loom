@@ -22,7 +22,10 @@ internal class SelectorClient(config: String) {
     }
 
     suspend fun apply(targets: List<AppliedSelector>) {
-        check(targets.isNotEmpty()) { "没有可应用的 selector" }
+        if (targets.isEmpty()) {
+            checkHealth()
+            return
+        }
         val ordered = targets.sortedBy(AppliedSelector::selector)
         val current = readCurrent(ordered)
         val changed = mutableListOf<String>()
@@ -48,11 +51,29 @@ internal class SelectorClient(config: String) {
 
     /** §7.3.3：只读投影 libbox 的实际 selector 状态。 */
     suspend fun readCurrent(targets: List<AppliedSelector>): Map<String, String> {
-        check(targets.isNotEmpty()) { "没有可读取的 selector" }
+        if (targets.isEmpty()) {
+            var last: Throwable? = null
+            repeat(20) {
+                try {
+                    checkHealth()
+                    return emptyMap()
+                } catch (error: Throwable) {
+                    last = error
+                    delay(100)
+                }
+            }
+            throw IllegalStateException("本地运行时 API 启动超时", last)
+        }
         return linkedMapOf<String, String>().apply {
             targets.sortedBy(AppliedSelector::selector).forEach { target ->
                 put(target.selector, readCurrentWithStartupRetry(target.selector))
             }
+        }
+    }
+
+    private fun checkHealth() {
+        check(JSONObject(requestRaw("GET", "/version", null).decodeToString()).getString("version").isNotBlank()) {
+            "本地运行时 API 未返回实际版本"
         }
     }
 

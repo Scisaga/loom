@@ -40,8 +40,8 @@ func newProfileGUITestWindow(t *testing.T) *portableGUI {
 			{ID: profileGUIFixtureB, Name: "演示网络乙", DeviceID: "demo-device-b", State: guiStopped},
 		},
 		routeSelected: 0, routeOptions: []portableRouteOption{
-			{Label: "自动选择", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}},
-			{Label: "固定出口 · demo-exit", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}},
+			{Label: "自动选择", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}},
+			{Label: "固定出口 · demo-exit", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}},
 		},
 		paths: []windowsPathDisplay{
 			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", Health: "可用",

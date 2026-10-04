@@ -98,6 +98,15 @@ the issuing control, connect through the normal VPN action, and confirm the sign
 from the private control service. Cellular/Wi-Fi transition evidence is required
 for runtime acceptance and is tracked in [implementation status](../../docs/progress.md).
 
+`scripts/emulator-smoke.sh` runs the empty-profile UI check on an explicitly
+selected API 35+ emulator. Use a fresh test profile; the script preserves existing
+app data and system proxy, DNS, and VPN consent settings. The opt-in
+`CertifiedRuntimeInstrumentedTest` additionally needs an isolated real control
+fixture: it imports a signed invitation through DocumentsUI, exercises system VPN
+consent, sends HTTPS through Hy2, and checks withdrawal, protected process
+restart, and reauthorization against private signed reports. This debug emulator check does not replace
+the release or physical-device acceptance above.
+
 ## Visual review in VS Code
 
 The production Compose tree is the sole rendering source for native visual

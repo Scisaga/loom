@@ -1,72 +1,30 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"sort"
 	"time"
-
-	"loom/internal/clientmodel"
 )
 
-type enrollmentCreatePayload struct {
-	Schema            int              `json:"schema,omitempty"`
-	TransactionID     string           `json:"transaction_id"`
-	ExpiresAt         string           `json:"expires_at"`
-	DeviceID          string           `json:"device_id"`
-	Name              string           `json:"name"`
-	Platform          string           `json:"platform"`
-	Roles             []string         `json:"roles"`
-	Routes            []RouteCandidate `json:"routes"`
-	Runtime           *RuntimeProfile  `json:"runtime_profile,omitempty"`
-	Responsibilities  []string         `json:"responsibilities,omitempty"`
-	DestinationGrants []string         `json:"destination_grants,omitempty"`
-	Direction         string           `json:"direction,omitempty"`
-}
-
-// productEnrollmentCreatePayload is the complete browser-facing enrollment
-// request. Identity, expiry, roles, routes and runtime are authority-derived
-// and deliberately cannot be represented by this wire type.
-type productEnrollmentCreatePayload struct {
-	Name              string   `json:"name"`
-	Platform          string   `json:"platform"`
-	Responsibilities  []string `json:"responsibilities"`
-	DestinationGrants []string `json:"destination_grants"`
-	Direction         string   `json:"direction,omitempty"`
-}
-
-func (payload productEnrollmentCreatePayload) internal() enrollmentCreatePayload {
-	return enrollmentCreatePayload{Schema: enrollmentSchemaV2, Name: payload.Name, Platform: payload.Platform,
-		Responsibilities: payload.Responsibilities, DestinationGrants: payload.DestinationGrants, Direction: payload.Direction}
-}
-
-type deviceUpdatePayload struct {
-	DeviceID string           `json:"device_id"`
-	Routes   []RouteCandidate `json:"routes"`
-	Runtime  *RuntimeProfile  `json:"runtime_profile"`
-}
-
-type existingNodeRejoinPayload struct {
-	DeviceID          string   `json:"device_id"`
-	DestinationGrants []string `json:"destination_grants,omitempty"`
-}
-
 type tunnelIdentityKey struct{}
-
 type tunnelIdentity struct {
 	Mode          string
 	TransactionID string
 	DeviceID      string
 	EndpointID    string
-	Generation    uint64
+	Generation    U64
+}
+
+type OperationExtra struct {
+	Invite string `json:"invite,omitempty"`
 }
 
 func (server *Server) now() time.Time {
@@ -76,118 +34,256 @@ func (server *Server) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (authority *Authority) EnrollmentOpen(transactionID string) (EnrollmentOpen, error) {
-	consensus, _, _ := authority.Snapshot()
-	for _, entry := range consensus.Entries {
-		body, err := authority.Material(entry.MaterialID)
-		if err != nil {
-			return EnrollmentOpen{}, err
-		}
-		material, err := DecodeMaterial(body)
-		if err != nil {
-			return EnrollmentOpen{}, err
-		}
-		if material.EnrollmentOpen != nil && material.EnrollmentOpen.TransactionID == transactionID {
-			return *material.EnrollmentOpen, nil
-		}
+// HandleOperation accepts the public operation. Identity binding and the first
+// RuntimeKey can only be produced by the authenticated enrollment handler.
+func (server *Server) HandleOperation(ctx context.Context, operation Operation) (Submission, *OperationExtra, error) {
+	if operation.Operation == "invite.bind" || operation.Operation == "device.join" || operation.Operation == "invite.expire" {
+		return Submission{}, nil, errors.New("operation belongs to the authenticated enrollment entry")
 	}
-	return EnrollmentOpen{}, errors.New("enrollment capability not found")
-}
-
-func (authority *Authority) EnrollmentOpenByRequestID(requestID string) (EnrollmentOpen, bool, error) {
-	consensus, _, _ := authority.Snapshot()
-	for _, entry := range consensus.Entries {
-		body, err := authority.Material(entry.MaterialID)
-		if err != nil {
-			return EnrollmentOpen{}, false, err
+	body, err := EncodeOperation(operation)
+	if err != nil {
+		return Submission{}, nil, err
+	}
+	_, _, priorErr := server.Runtime.Authority.MaterialForRequest(operation.RequestID)
+	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
+		return Submission{}, nil, priorErr
+	}
+	if operation.Operation == "endpoint.put" && errors.Is(priorErr, os.ErrNotExist) {
+		value := operation.Payload.(EndpointGeneration)
+		if value.OwnerControlID != server.Runtime.Config.ControlID {
+			return Submission{}, nil, errors.New("endpoint can only be written by its local owner")
 		}
-		material, err := DecodeMaterial(body)
-		if err != nil {
-			return EnrollmentOpen{}, false, err
+		endpoint := server.endpointRuntime()
+		if value.State == "serving" && (endpoint == nil || !endpoint.Ready(value)) {
+			return Submission{}, nil, errors.New("endpoint serving requires verified advertised TLS readiness")
 		}
-		if material.RequestID == requestID {
-			if material.EnrollmentOpen == nil {
-				return EnrollmentOpen{}, false, errors.New("request ID is already used by another operation")
+		if value.State == "draining" && value.DrainUntil <= server.now().UnixMilli() {
+			return Submission{}, nil, errors.New("draining requires an explicit future termination time")
+		}
+		if value.State == "draining" || value.State == "retired" {
+			for _, invite := range server.Runtime.Authority.Snapshot().Invites {
+				if invite.Endpoint.ID != value.ID || invite.Endpoint.Generation != value.Generation {
+					continue
+				}
+				state, err := server.Runtime.Authority.EnrollmentState(invite.ID)
+				if err != nil || state == "bound" || state == "open" {
+					return Submission{}, nil, errors.New("endpoint still protects an unterminated enrollment")
+				}
 			}
-			return *material.EnrollmentOpen, true, nil
+		}
+		if value.State == "retired" && (endpoint == nil || endpoint.Active(value) != 0) {
+			return Submission{}, nil, errors.New("endpoint retirement requires verified zero active sessions")
 		}
 	}
-	return EnrollmentOpen{}, false, nil
+	if operation.Operation == "invite.issue" {
+		invite, ok := operation.Payload.(Invite)
+		if !ok {
+			return Submission{}, nil, errors.New("invite payload is invalid")
+		}
+		if errors.Is(priorErr, os.ErrNotExist) {
+			endpoint := server.endpointRuntime()
+			if endpoint == nil || !endpoint.Ready(invite.Endpoint) {
+				return Submission{}, nil, errors.New("invite endpoint has not been verified ready locally")
+			}
+			expires, err := endpoint.ExpiresAt(invite.Endpoint)
+			if err != nil || !server.now().Before(time.UnixMilli(invite.ExpiresAt)) || time.UnixMilli(invite.ExpiresAt).After(expires) {
+				return Submission{}, nil, errors.New("invite expiry is outside the ready endpoint certificate validity")
+			}
+		}
+	}
+	result, err := server.Runtime.Submit(ctx, body)
+	if err != nil {
+		return Submission{}, nil, err
+	}
+	if operation.Operation != "invite.issue" {
+		return result, nil, nil
+	}
+	invite, err := server.bootstrapInvite(operation.TargetID)
+	if err != nil {
+		return Submission{}, nil, err
+	}
+	encoded, err := EncodeInvite(invite)
+	if err != nil {
+		return Submission{}, nil, err
+	}
+	return result, &OperationExtra{Invite: encoded}, nil
 }
 
-func randomEnrollmentID(prefix string, bytes int) (string, error) {
-	body := make([]byte, bytes)
-	if _, err := rand.Read(body); err != nil {
+func (a *Authority) materialValueLocked(id string) (Material, bool) {
+	for _, material := range a.materials {
+		actual, err := MaterialID(material)
+		if err == nil && actual == id {
+			return material, true
+		}
+	}
+	return Material{}, false
+}
+func cloneMaterialValue(material Material) (Material, error) {
+	body, _, err := EncodeMaterial(material)
+	if err != nil {
+		return Material{}, err
+	}
+	return DecodeMaterial(body)
+}
+func (a *Authority) MaterialForRequest(requestID string) (string, Material, error) {
+	config, err := LoadNodeConfig(a.root)
+	if err != nil {
+		return "", Material{}, err
+	}
+	member, err := config.Member()
+	if err != nil {
+		return "", Material{}, err
+	}
+	keyID, err := KeyID(member.PublicKey)
+	if err != nil {
+		return "", Material{}, err
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	var found Material
+	id := ""
+	for _, material := range a.materials {
+		if material.IssuerKeyID != keyID || material.RequestID != requestID {
+			continue
+		}
+		if id != "" {
+			return "", Material{}, errors.New("request has conflicting signed facts")
+		}
+		id, err = MaterialID(material)
+		if err != nil {
+			return "", Material{}, err
+		}
+		found = material
+	}
+	if id == "" {
+		return "", Material{}, os.ErrNotExist
+	}
+	copy, err := cloneMaterialValue(found)
+	return id, copy, err
+}
+func (a *Authority) inviteLocked(transactionID string) (Material, error) {
+	state, ok := a.projection.CurrentTarget("invite", transactionID)
+	if !ok {
+		return Material{}, os.ErrNotExist
+	}
+	if state.Conflicted {
+		return Material{}, errors.New("invite is conflicted")
+	}
+	var found Material
+	count := 0
+	for _, material := range a.materials {
+		if material.Operation == "invite.issue" && material.TargetID == transactionID {
+			found = material
+			count++
+		}
+	}
+	if count != 1 {
+		return Material{}, errors.New("invite origin is not unique")
+	}
+	return found, nil
+}
+func (a *Authority) Invite(transactionID string) (Material, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	material, err := a.inviteLocked(transactionID)
+	if err != nil {
+		return Material{}, err
+	}
+	return cloneMaterialValue(material)
+}
+func (a *Authority) bindingLocked(transactionID string) (Material, bool, error) {
+	var found Material
+	count := 0
+	for _, value := range a.projection.Bindings {
+		if value.TransactionID != transactionID {
+			continue
+		}
+		for _, material := range a.materials {
+			binding, ok := material.Payload.(EnrollmentBind)
+			if ok && material.Operation == "invite.bind" && binding == value {
+				found = material
+				count++
+			}
+		}
+	}
+	if count > 1 {
+		return Material{}, false, errors.New("enrollment binding is not unique")
+	}
+	return found, count == 1, nil
+}
+func (a *Authority) Binding(transactionID string) (EnrollmentBind, bool, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	material, found, err := a.bindingLocked(transactionID)
+	if err != nil || !found {
+		return EnrollmentBind{}, false, err
+	}
+	return material.Payload.(EnrollmentBind), true, nil
+}
+func (a *Authority) enrollmentStateLocked(transactionID string) (string, error) {
+	if _, err := a.inviteLocked(transactionID); err != nil {
 		return "", err
 	}
-	return prefix + hex.EncodeToString(body), nil
-}
-
-func productEnrollmentIntent(payload enrollmentCreatePayload) (EnrollmentIntent, error) {
-	if payload.Schema != enrollmentSchemaV2 || !validName(payload.Name) {
-		return EnrollmentIntent{}, errors.New("schema-2 enrollment request is incomplete")
+	target, _ := a.projection.CurrentTarget("invite", transactionID)
+	if len(target.MaterialIDs) != 1 {
+		return "", errors.New("invite has no unique current fact")
 	}
-	if payload.TransactionID != "" || payload.ExpiresAt != "" || payload.DeviceID != "" || len(payload.Roles) != 0 ||
-		len(payload.Routes) != 0 || payload.Runtime != nil {
-		return EnrollmentIntent{}, errors.New("schema-2 enrollment request contains server-derived fields")
+	material, ok := a.materialValueLocked(target.MaterialIDs[0])
+	if !ok {
+		return "", errors.New("invite current fact is unavailable")
 	}
-	if payload.Platform != "android" && payload.Platform != "linux" && payload.Platform != "windows" {
-		return EnrollmentIntent{}, errors.New("schema-2 enrollment platform is invalid")
+	switch material.Operation {
+	case "invite.cancel":
+		return "cancelled", nil
+	case "invite.expire":
+		return "expired", nil
 	}
-	if err := validateSortedNames(payload.Responsibilities, "enrollment responsibilities"); err != nil {
-		return EnrollmentIntent{}, err
-	}
-	if err := validateSortedNames(payload.DestinationGrants, "enrollment grants"); err != nil {
-		return EnrollmentIntent{}, errors.New("schema-2 enrollment grants are invalid")
-	}
-	roles := []string{}
-	egress := false
-	for _, responsibility := range payload.Responsibilities {
-		switch responsibility {
-		case "forward":
-			roles = append(roles, "server")
-		case "internet_egress":
-			roles = append(roles, "server")
-			egress = true
-		case "use_loom":
-			roles = append(roles, "access")
-		default:
-			return EnrollmentIntent{}, errors.New("schema-2 enrollment responsibility is invalid")
+	for _, authorization := range a.projection.DeviceAuthorizations {
+		if authorization.TransactionID == transactionID {
+			return "completed", nil
 		}
 	}
-	sort.Strings(roles)
-	roles = compactStrings(roles)
-	if len(roles) == 0 || (payload.Platform == "android" || payload.Platform == "windows") && !contains(roles, "access") {
-		return EnrollmentIntent{}, errors.New("platform responsibilities are invalid")
-	}
-	hasAccess, hasServer := contains(roles, "access"), contains(roles, "server")
-	if (payload.Platform == "android" || payload.Platform == "windows") && hasServer {
-		return EnrollmentIntent{}, errors.New("mobile and desktop client platforms cannot provide server responsibilities")
-	}
-	if hasAccess && len(payload.DestinationGrants) == 0 || !hasAccess && egress && len(payload.DestinationGrants) == 0 ||
-		!hasAccess && !egress && len(payload.DestinationGrants) != 0 {
-		return EnrollmentIntent{}, errors.New("responsibilities and destination grants disagree")
-	}
-	intent := EnrollmentIntent{Schema: enrollmentSchemaV2, Name: payload.Name, Platform: payload.Platform,
-		Roles: roles, DestinationGrants: append([]string(nil), payload.DestinationGrants...)}
-	if hasServer {
-		if payload.Direction == "" {
-			return EnrollmentIntent{}, errors.New("server enrollment direction is required")
+	// A revoked/deleted authorization is not a new open enrollment. Remember
+	// completion from the original immutable join without granting access.
+	for _, item := range a.materials {
+		if authorization, ok := item.Payload.(DeviceAuthorization); ok && item.Operation == "device.join" && authorization.TransactionID == transactionID {
+			return "completed", nil
 		}
-		intent.Server = &ServerIntent{Direction: payload.Direction, PublicDataIngress: payload.Direction != "reverse_only",
-			EgressCapable: egress}
-	} else if payload.Direction != "" {
-		return EnrollmentIntent{}, errors.New("access-only enrollment cannot set server direction")
 	}
-	// DeviceID is authority-generated after this product request has been
-	// validated. Full domain validation therefore belongs after that binding;
-	// calling it here would reject every browser-created schema-2 enrollment
-	// because the browser is deliberately unable to submit an identity.
-	return intent, nil
+	if material.Operation == "invite.bind" {
+		return "bound", nil
+	}
+	if material.Operation == "invite.issue" {
+		return "open", nil
+	}
+	return "", errors.New("invite current fact has no enrollment state")
+}
+func (a *Authority) EnrollmentState(transactionID string) (string, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.enrollmentStateLocked(transactionID)
+}
+func (server *Server) bootstrapInvite(transactionID string) (BootstrapInvite, error) {
+	material, err := server.Runtime.Authority.Invite(transactionID)
+	if err != nil {
+		return BootstrapInvite{}, err
+	}
+	genesis, err := server.Runtime.Authority.Genesis()
+	if err != nil {
+		return BootstrapInvite{}, err
+	}
+	result := BootstrapInvite{Schema: 3, NetworkID: server.Runtime.Config.NetworkID, GenesisDigest: server.Runtime.Config.GenesisID,
+		ControlProof: ControlProof{Genesis: genesis, Successors: []ControlCertificate{}}, Material: material}
+	return result, result.Validate()
 }
 
-func compactStrings(values []string) []string {
-	result := values[:0]
+func enrollmentRequestID(operation, transactionID string) string {
+	value := sha256.Sum256([]byte(transactionID))
+	return operation + ":" + hex.EncodeToString(value[:])
+}
+func sortedUniqueDependencies(values []string) []string {
+	sort.Strings(values)
+	result := []string{}
 	for _, value := range values {
 		if len(result) == 0 || result[len(result)-1] != value {
 			result = append(result, value)
@@ -196,829 +292,275 @@ func compactStrings(values []string) []string {
 	return result
 }
 
-func servingEndpointReferences(projection Projection) []EndpointReference {
-	result := []EndpointReference{}
-	for _, generation := range projection.EndpointGenerations {
-		if generation.State == "serving" {
-			result = append(result, generation.Reference())
-		}
-	}
-	sort.Slice(result, func(i, j int) bool { return endpointReferenceLess(result[i], result[j]) })
-	return result
-}
-
-// submitCommittedRequest resumes the exact immutable Material already present
-// in the consensus log. This is the recovery path when Raft committed a request
-// but the caller's context ended before a QC could be returned; rebuilding a
-// random key, timestamp, transaction or capability would be a different
-// request and must never be used as a retry.
-func (server *Server) submitCommittedRequest(ctx context.Context, requestID string) (CertifiedState, Material, bool, error) {
-	id, material, err := server.Runtime.Authority.MaterialForRequest(requestID)
-	if errors.Is(err, os.ErrNotExist) {
-		return CertifiedState{}, Material{}, false, nil
+// CompleteEnrollment owns the same writer lock used by ordinary operations.
+// Its two facts are independently durable; retry after either write recovers
+// the original binding and key from those facts alone.
+func (a *Authority) CompleteEnrollment(ctx context.Context, request EnrollmentClaimRequest, resume bool, identity tunnelIdentity, now time.Time, local NodeConfig) (Submission, error) {
+	var err error
+	if resume {
+		err = EnrollmentResumeRequest(request).Validate()
+	} else {
+		err = request.Validate()
 	}
 	if err != nil {
-		return CertifiedState{}, Material{}, false, err
+		return Submission{}, err
 	}
-	body, encodedID, err := EncodeMaterial(material)
-	if err != nil || encodedID != id {
-		return CertifiedState{}, Material{}, true, errors.New("committed request material is not canonical")
+	lock, err := lockAuthority(ctx, a.root)
+	if err != nil {
+		return Submission{}, err
 	}
-	result, err := server.Runtime.Submit(ctx, body)
-	return result, material, true, err
-}
-
-func (server *Server) createEnrollment(ctx context.Context, requestID, baseHead string, payload enrollmentCreatePayload) (CertifiedState, string, error) {
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	if payload.Schema == enrollmentSchemaV2 {
-		if open, found, err := server.Runtime.Authority.EnrollmentOpenByRequestID(requestID); err != nil {
-			return CertifiedState{}, "", err
-		} else if found {
-			requested, intentErr := productEnrollmentIntent(payload)
-			if intentErr != nil {
-				return CertifiedState{}, "", intentErr
-			}
-			requested.DeviceID = open.Intent.DeviceID
-			if intentErr = requested.Validate(); intentErr != nil {
-				return CertifiedState{}, "", intentErr
-			}
-			if !equalEnrollmentIntent(open.Intent, requested) {
-				return CertifiedState{}, "", errors.New("request ID is already bound to different enrollment intent")
-			}
-			result, material, committed, retryErr := server.submitCommittedRequest(ctx, requestID)
-			if retryErr != nil || !committed || material.EnrollmentOpen == nil || material.EnrollmentOpen.TransactionID != open.TransactionID {
-				if retryErr != nil {
-					return CertifiedState{}, "", retryErr
+	defer lock.Close()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.reloadLocked(); err != nil {
+		return Submission{}, err
+	}
+	if request.NetworkID != local.NetworkID || request.GenesisDigest != local.GenesisID {
+		return Submission{}, errors.New("enrollment request changed its fixed network anchor")
+	}
+	original, err := a.inviteLocked(request.TransactionID)
+	if err != nil {
+		return Submission{}, err
+	}
+	originalID, _ := MaterialID(original)
+	invite := original.Payload.(Invite)
+	if originalID != request.InviteMaterialID || invite.IssuerControlID != local.ControlID {
+		return Submission{}, errors.New("enrollment must reach its original issuer with the exact invite")
+	}
+	if _, err := activeLocalMember(local, a.projection.Config); err != nil {
+		return Submission{}, err
+	}
+	if identity.Mode == "bootstrap" {
+		if identity.TransactionID != invite.ID || identity.EndpointID != invite.Endpoint.ID || identity.Generation != invite.Endpoint.Generation {
+			return Submission{}, errors.New("enrollment tunnel does not match the frozen invite entry")
+		}
+	} else if identity.Mode != "device" || !resume || identity.DeviceID != invite.DeviceID {
+		return Submission{}, errors.New("authenticated enrollment tunnel is required")
+	}
+	if request.Platform != "linux" && (len(invite.Responsibilities) != 1 || invite.Responsibilities[0] != "access") {
+		return Submission{}, errors.New("platform cannot execute the requested responsibilities")
+	}
+	bindingMaterial, bound, err := a.bindingLocked(invite.ID)
+	if err != nil {
+		return Submission{}, err
+	}
+	binding := EnrollmentBind{TransactionID: invite.ID, InviteMaterialID: originalID, ClaimRequestID: request.RequestID, DevicePublicKey: request.DevicePublicKey, Platform: request.Platform}
+	if bound && bindingMaterial.Payload.(EnrollmentBind) != binding {
+		return Submission{}, errors.New("enrollment is bound to another request or device identity")
+	}
+	state, err := a.enrollmentStateLocked(invite.ID)
+	if err != nil {
+		return Submission{}, err
+	}
+	if state == "cancelled" || state == "expired" {
+		return Submission{}, errors.New("enrollment is terminated")
+	}
+	if state == "completed" {
+		if !bound {
+			return Submission{}, errors.New("completed enrollment lost its verified binding")
+		}
+		for _, authorization := range a.projection.DeviceAuthorizations {
+			if authorization.TransactionID == invite.ID {
+				target, ok := a.projection.CurrentTarget("device", authorization.ID)
+				if ok && !target.Conflicted && !target.Deleted && len(target.MaterialIDs) == 1 {
+					return Submission{MaterialID: target.MaterialIDs[0], Projection: cloneAuthorityProjection(a.projection)}, nil
 				}
-				return CertifiedState{}, "", errors.New("enrollment request material is unavailable")
-			}
-			invite, encodeErr := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
-			return result, invite, encodeErr
-		}
-		if baseHead != HeadID(certified.Head) {
-			return CertifiedState{}, "", errors.New("base head is stale")
-		}
-		intent, err := productEnrollmentIntent(payload)
-		if err != nil {
-			return CertifiedState{}, "", err
-		}
-		for _, grant := range intent.DestinationGrants {
-			if _, found := networkPolicy(projection.NetworkIntent, grant); !found {
-				return CertifiedState{}, "", errors.New("enrollment grant is unavailable")
 			}
 		}
-		intent.DeviceID, err = randomEnrollmentID("d-", 5)
+		return Submission{}, errors.New("completed device is no longer authorized")
+	}
+	if resume && !bound {
+		return Submission{}, errors.New("resume requires an existing durable binding")
+	}
+	if !bound && !now.Before(time.UnixMilli(invite.ExpiresAt)) {
+		target, _ := a.projection.CurrentTarget("invite", invite.ID)
+		at := now.UnixMilli()
+		termination := EnrollmentTermination{TransactionID: invite.ID, InviteMaterialID: originalID, ExpiredAt: &at}
+		_, err := a.submitOperationLocked(ctx, Operation{Schema: 3, RequestID: enrollmentRequestID("expire", invite.ID), Operation: "invite.expire", TargetKind: "invite", TargetID: invite.ID, Dependencies: sortedUniqueDependencies(append(target.MaterialIDs, originalID)), Payload: termination}, local)
 		if err != nil {
-			return CertifiedState{}, "", err
+			return Submission{}, err
 		}
-		if err := intent.Validate(); err != nil {
-			return CertifiedState{}, "", err
+		return Submission{}, errors.New("enrollment expired")
+	}
+	policyDependencies := []string{originalID}
+	for _, policyID := range invite.PolicyIDs {
+		target, ok := a.projection.CurrentTarget("policy", policyID)
+		if !ok || target.Conflicted || target.Deleted {
+			return Submission{}, errors.New("invited policy is no longer available")
 		}
-		if err := validateNewEnrollmentIdentity(certified.Projection, intent.DeviceID); err != nil {
-			return CertifiedState{}, "", err
-		}
-		transactionID, err := randomEnrollmentID("tx-", 16)
-		if err != nil {
-			return CertifiedState{}, "", err
-		}
-		expires := server.now().Add(15 * time.Minute).Truncate(time.Second)
-		endpoints := servingEndpointReferences(projection)
-		if len(endpoints) == 0 {
-			return CertifiedState{}, "", errors.New("no serving bootstrap endpoint generation")
-		}
-		constraint, _ := intentDigest(intent)
-		capability := BootstrapCapability{Schema: enrollmentSchema, TransactionID: transactionID,
-			IssuedHead: HeadID(certified.Head), ConfigMaterial: projection.ConfigMaterial, ControlConfig: projection.Config,
-			ExpiresAt: expires.Format(time.RFC3339), Actions: []string{"claim", "resume"}, Endpoints: endpoints,
-			ConstraintDigest: constraint, IssuerMemberID: server.Config.MemberID}
-		capability, err = SignBootstrapCapability(capability, server.Config)
-		if err != nil {
-			return CertifiedState{}, "", err
-		}
-		open := EnrollmentOpen{TransactionID: transactionID, Intent: intent, Capability: capability}
-		material := Material{Schema: MaterialSchema, Kind: "enrollment.open", RequestID: requestID,
-			BaseHead: baseHead, EnrollmentOpen: &open}
-		body, _, err := EncodeMaterial(material)
-		if err != nil {
-			return CertifiedState{}, "", err
-		}
-		result, err := server.Runtime.Submit(ctx, body)
-		if err != nil {
-			return CertifiedState{}, "", err
-		}
-		invite, err := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: capability})
-		return result, invite, err
-	}
-	if payload.Platform == "linux" && payload.Runtime == nil {
-		return CertifiedState{}, "", errors.New("Linux enrollment requires a certified runtime profile")
-	}
-	if payload.Runtime != nil {
-		canonical, canonicalErr := clientmodel.CanonicalizeRuntimeConfig([]byte(payload.Runtime.Config))
-		if canonicalErr != nil {
-			return CertifiedState{}, "", canonicalErr
-		}
-		if payload.Platform == "windows" && canonical != payload.Runtime.Config {
-			return CertifiedState{}, "", errors.New("Windows runtime profile config is not canonical")
-		}
-		payload.Runtime.Config = canonical
-	}
-	if _, transaction := findEnrollment(&projection, payload.TransactionID); transaction != nil {
-		open, err := server.Runtime.Authority.EnrollmentOpen(payload.TransactionID)
-		if err != nil {
-			return CertifiedState{}, "", err
-		}
-		intent := EnrollmentIntent{DeviceID: payload.DeviceID, Name: payload.Name, Platform: payload.Platform,
-			Roles: payload.Roles, Routes: payload.Routes, Runtime: payload.Runtime}
-		if !equalEnrollmentIntent(open.Intent, intent) || open.Capability.ExpiresAt != payload.ExpiresAt {
-			return CertifiedState{}, "", errors.New("enrollment transaction ID is already bound to different intent")
-		}
-		invite, err := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
-		return certified, invite, err
-	}
-	if baseHead != HeadID(certified.Head) {
-		return CertifiedState{}, "", errors.New("base head is stale")
-	}
-	if err := validateNewEnrollmentIdentity(certified.Projection, payload.DeviceID); err != nil {
-		return CertifiedState{}, "", err
-	}
-	expires, err := time.Parse(time.RFC3339, payload.ExpiresAt)
-	if err != nil || payload.ExpiresAt != expires.UTC().Format(time.RFC3339) || !expires.After(server.now()) {
-		return CertifiedState{}, "", errors.New("enrollment expiry is invalid")
-	}
-	intent := EnrollmentIntent{DeviceID: payload.DeviceID, Name: payload.Name, Platform: payload.Platform,
-		Roles: append([]string(nil), payload.Roles...), Routes: append([]RouteCandidate(nil), payload.Routes...),
-		Runtime: cloneRuntimeProfile(payload.Runtime)}
-	if err := intent.Validate(); err != nil {
-		return CertifiedState{}, "", err
-	}
-	endpoints := servingEndpointReferences(projection)
-	if len(endpoints) == 0 {
-		return CertifiedState{}, "", errors.New("no serving bootstrap endpoint generation")
-	}
-	constraint, _ := intentDigest(intent)
-	capability := BootstrapCapability{Schema: enrollmentSchema, TransactionID: payload.TransactionID,
-		IssuedHead: HeadID(certified.Head), ConfigMaterial: projection.ConfigMaterial, ControlConfig: projection.Config,
-		ExpiresAt: expires.UTC().Format(time.RFC3339), Actions: []string{"claim", "resume"}, Endpoints: endpoints,
-		ConstraintDigest: constraint, IssuerMemberID: server.Config.MemberID}
-	capability, err = SignBootstrapCapability(capability, server.Config)
-	if err != nil {
-		return CertifiedState{}, "", err
-	}
-	open := EnrollmentOpen{TransactionID: payload.TransactionID, Intent: intent, Capability: capability}
-	material := Material{Schema: MaterialSchema, Kind: "enrollment.open", RequestID: requestID, BaseHead: baseHead, EnrollmentOpen: &open}
-	body, _, err := EncodeMaterial(material)
-	if err != nil {
-		return CertifiedState{}, "", err
-	}
-	result, err := server.Runtime.Submit(ctx, body)
-	if err != nil {
-		return CertifiedState{}, "", err
-	}
-	invite, err := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: capability})
-	return result, invite, err
-}
-
-func (server *Server) createExistingNodeRejoin(ctx context.Context, requestID, baseHead string,
-	payload existingNodeRejoinPayload) (CertifiedState, string, error) {
-	if !validName(payload.DeviceID) || validateSortedNames(payload.DestinationGrants, "existing-node rejoin grants") != nil {
-		return CertifiedState{}, "", errors.New("existing-node rejoin request is invalid")
-	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	if open, found, err := server.Runtime.Authority.EnrollmentOpenByRequestID(requestID); err != nil {
-		return CertifiedState{}, "", err
-	} else if found {
-		if open.Intent.Schema != enrollmentSchemaV2 || open.Intent.DeviceID != payload.DeviceID ||
-			!equalStrings(open.Intent.DestinationGrants, payload.DestinationGrants) {
-			return CertifiedState{}, "", errors.New("request ID is already bound to different existing-node rejoin intent")
-		}
-		_, transaction := findEnrollment(&projection, open.TransactionID)
-		if transaction != nil && transaction.State != "completed" && !server.now().Before(mustTime(transaction.ExpiresAt)) {
-			return CertifiedState{}, "", errors.New("existing-node rejoin request ID is expired")
-		}
-		result, material, committed, retryErr := server.submitCommittedRequest(ctx, requestID)
-		if retryErr != nil || !committed || material.EnrollmentOpen == nil || material.EnrollmentOpen.TransactionID != open.TransactionID {
-			if retryErr != nil {
-				return CertifiedState{}, "", retryErr
-			}
-			return CertifiedState{}, "", errors.New("existing-node rejoin material is unavailable")
-		}
-		invite, encodeErr := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: open.Capability})
-		return result, invite, encodeErr
-	}
-	if baseHead != HeadID(certified.Head) {
-		return CertifiedState{}, "", errors.New("base head is stale")
-	}
-	for _, transaction := range projection.Enrollments {
-		if transaction.Intent.DeviceID != payload.DeviceID || transaction.State == "completed" || transaction.State == "rejected" ||
-			transaction.State == "expired" || transaction.State == "cancelled" || server.now().Before(mustTime(transaction.ExpiresAt)) {
-			continue
-		}
-		expireRequestID := "enrollment-expire:" + transaction.ID
-		result, material, committed, submitErr := server.submitCommittedRequest(ctx, expireRequestID)
-		if submitErr == nil && committed && (material.EnrollmentExpire == nil || material.EnrollmentExpire.TransactionID != transaction.ID) {
-			submitErr = errors.New("enrollment expiration request is bound to another transaction")
-		}
-		if submitErr == nil && !committed {
-			expire := EnrollmentExpire{TransactionID: transaction.ID, ExpiredAt: server.now().UTC().Truncate(time.Second).Format(time.RFC3339)}
-			material = Material{Schema: MaterialSchema, Kind: "enrollment.expire", RequestID: expireRequestID,
-				BaseHead: baseHead, EnrollmentExpire: &expire}
-			body, _, encodeErr := EncodeMaterial(material)
-			if encodeErr != nil {
-				return CertifiedState{}, "", encodeErr
-			}
-			result, submitErr = server.Runtime.Submit(ctx, body)
-		}
-		if submitErr != nil {
-			return CertifiedState{}, "", submitErr
-		}
-		projection, certified, baseHead = result.Projection, result, HeadID(result.Head)
-		break
-	}
-	node, found := networkNode(projection.NetworkIntent, payload.DeviceID)
-	if !found || node.Platform == "" {
-		return CertifiedState{}, "", errors.New("existing-node rejoin target is not in certified network intent")
-	}
-	for _, authorization := range projection.DeviceAuthorizations {
-		if authorization.DeviceID == payload.DeviceID {
-			return CertifiedState{}, "", errors.New("existing-node rejoin target already has a device authorization")
-		}
-	}
-	for _, grant := range payload.DestinationGrants {
-		if _, found := networkPolicy(projection.NetworkIntent, grant); !found {
-			return CertifiedState{}, "", errors.New("existing-node rejoin grant is unavailable")
-		}
-	}
-	intent := EnrollmentIntent{Schema: enrollmentSchemaV2, DeviceID: node.ID, Name: node.Name,
-		Platform: node.Platform, Roles: append([]string(nil), node.Roles...),
-		DestinationGrants: append([]string(nil), payload.DestinationGrants...)}
-	if node.Server != nil {
-		intent.Server = &ServerIntent{Direction: node.Server.Direction, PublicDataIngress: node.Server.PublicDataIngress,
-			EgressCapable: node.Server.EgressCapable}
-	}
-	if node.Server != nil && node.Server.EgressCapable && len(payload.DestinationGrants) == 0 {
-		return CertifiedState{}, "", errors.New("existing egress rejoin requires at least one policy grant")
-	}
-	if err := intent.Validate(); err != nil {
-		return CertifiedState{}, "", err
-	}
-	transactionID, err := randomEnrollmentID("tx-", 16)
-	if err != nil {
-		return CertifiedState{}, "", err
-	}
-	expires := server.now().Add(15 * time.Minute).Truncate(time.Second)
-	endpoints := servingEndpointReferences(projection)
-	if len(endpoints) == 0 {
-		return CertifiedState{}, "", errors.New("no serving bootstrap endpoint generation")
-	}
-	constraint, _ := intentDigest(intent)
-	capability := BootstrapCapability{Schema: enrollmentSchema, TransactionID: transactionID,
-		IssuedHead: HeadID(certified.Head), ConfigMaterial: projection.ConfigMaterial, ControlConfig: projection.Config,
-		ExpiresAt: expires.Format(time.RFC3339), Actions: []string{"claim", "resume"}, Endpoints: endpoints,
-		ConstraintDigest: constraint, IssuerMemberID: server.Config.MemberID}
-	capability, err = SignBootstrapCapability(capability, server.Config)
-	if err != nil {
-		return CertifiedState{}, "", err
-	}
-	open := EnrollmentOpen{TransactionID: transactionID, Intent: intent, Capability: capability}
-	material := Material{Schema: MaterialSchema, Kind: "enrollment.open", RequestID: requestID,
-		BaseHead: baseHead, EnrollmentOpen: &open}
-	body, _, err := EncodeMaterial(material)
-	if err != nil {
-		return CertifiedState{}, "", err
-	}
-	result, err := server.Runtime.Submit(ctx, body)
-	if err != nil {
-		return CertifiedState{}, "", err
-	}
-	invite, err := EncodeInvite(BootstrapInvite{Schema: enrollmentSchema, Capability: capability})
-	return result, invite, err
-}
-
-func equalEnrollmentIntent(left, right EnrollmentIntent) bool {
-	a, _ := canonical(left)
-	b, _ := canonical(right)
-	return bytes.Equal(a, b)
-}
-
-func cloneProjection(projection Projection) (Projection, error) {
-	body, err := canonical(projection)
-	if err != nil {
-		return Projection{}, err
-	}
-	var clone Projection
-	if err := json.Unmarshal(body, &clone); err != nil {
-		return Projection{}, err
-	}
-	return clone, nil
-}
-
-func (server *Server) approveEnrollment(ctx context.Context, requestID, baseHead, transactionID string) (CertifiedState, error) {
-	if !validName(transactionID) {
-		return CertifiedState{}, errors.New("enrollment transaction ID is invalid")
-	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	_, transaction := findEnrollment(&projection, transactionID)
-	if transaction == nil {
-		return CertifiedState{}, errors.New("enrollment transaction does not exist")
-	}
-	if transaction.State == "completed" {
-		return certified, nil
-	}
-	for _, candidateRequestID := range []string{requestID, requestID + ":approve", requestID + ":complete"} {
-		result, material, committed, retryErr := server.submitCommittedRequest(ctx, candidateRequestID)
-		if retryErr != nil {
-			return CertifiedState{}, retryErr
-		}
-		if !committed {
-			continue
-		}
-		matches := material.EnrollmentApprove != nil && material.EnrollmentApprove.TransactionID == transactionID ||
-			material.EnrollmentComplete != nil && material.EnrollmentComplete.TransactionID == transactionID
-		if !matches {
-			return CertifiedState{}, errors.New("enrollment approval request is bound to another transaction")
-		}
-		if material.EnrollmentComplete != nil {
-			return result, nil
-		}
-		certified = result
-		projection = result.Projection
-		_, transaction = findEnrollment(&projection, transactionID)
-	}
-	if transaction.State == "bound" && transaction.Intent.Schema != enrollmentSchemaV2 {
-		if baseHead != HeadID(certified.Head) {
-			return CertifiedState{}, errors.New("base head is stale")
-		}
-		approve := EnrollmentApprove{TransactionID: transactionID}
-		material := Material{Schema: MaterialSchema, Kind: "enrollment.approve", RequestID: requestID + ":approve",
-			BaseHead: baseHead, EnrollmentApprove: &approve}
-		body, _, err := EncodeMaterial(material)
-		if err != nil {
-			return CertifiedState{}, err
-		}
-		if _, err := server.Runtime.Submit(ctx, body); err != nil {
-			return CertifiedState{}, err
-		}
-		_, _, certified = server.Runtime.Authority.Snapshot()
-		projection = certified.Projection
-		_, transaction = findEnrollment(&projection, transactionID)
-	}
-	if transaction == nil || transaction.State != "approved" && (transaction.State != "bound" || transaction.Intent.Schema != enrollmentSchemaV2) {
-		return CertifiedState{}, errors.New("enrollment transaction is not bound or approved")
-	}
-	authorization := DeviceAuthorization{Schema: enrollmentSchema, DeviceID: transaction.Intent.DeviceID,
-		Name: transaction.Intent.Name, Platform: transaction.Intent.Platform, Roles: append([]string(nil), transaction.Intent.Roles...),
-		Routes: append([]RouteCandidate(nil), transaction.Intent.Routes...), Runtime: cloneRuntimeProfile(transaction.Intent.Runtime),
-		DevicePublicKey: transaction.DevicePublicKey,
-		Floor:           certified.Head.Index + 1}
-	requestMaterialID := requestID + ":complete"
-	if transaction.Intent.Schema == enrollmentSchemaV2 {
-		runtimeKey := make([]byte, 32)
-		if _, err := rand.Read(runtimeKey); err != nil {
-			return CertifiedState{}, err
-		}
-		authorization.Schema = enrollmentSchemaV2
-		authorization.Name = ""
-		authorization.Platform = ""
-		authorization.Roles = nil
-		authorization.Routes = nil
-		authorization.Runtime = nil
-		authorization.DestinationGrants = append([]string(nil), transaction.Intent.DestinationGrants...)
-		authorization.Server = nil
-		authorization.RuntimeKey = base64.RawURLEncoding.EncodeToString(runtimeKey)
-		// A newly-created access node has no browser-supplied probe target: that
-		// field belongs to certified NetworkIntent, not Enrollment. Existing-node
-		// rejoin can activate the current contract immediately when its certified
-		// target is already present and covered by the requested grants. A brand
-		// new node remains on the DNS contract until an administrator adds that
-		// authority and explicitly upgrades its runtime contract.
-		authorization.RuntimeContract = runtimeContractViewDNS
-		if !contains(transaction.Intent.Roles, "access") {
-			authorization.RuntimeContract = runtimeContractCurrent
-		} else if node, found := networkNode(projection.NetworkIntent, transaction.Intent.DeviceID); found &&
-			authorizedBusinessProbeTargets(projection.NetworkIntent, transaction.Intent.DestinationGrants, node.ProbeTargets) {
-			authorization.RuntimeContract = runtimeContractCurrent
-		}
-		requestMaterialID = requestID
-	}
-	projected, err := cloneProjection(projection)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	index := sort.Search(len(projected.DeviceAuthorizations), func(index int) bool {
-		return projected.DeviceAuthorizations[index].DeviceID >= authorization.DeviceID
-	})
-	projected.DeviceAuthorizations = append(projected.DeviceAuthorizations, DeviceAuthorization{})
-	copy(projected.DeviceAuthorizations[index+1:], projected.DeviceAuthorizations[index:])
-	projected.DeviceAuthorizations[index] = authorization
-	if transaction.Intent.Schema == enrollmentSchemaV2 {
-		claimedServer, claimErr := serverIntentFromClaim(transaction.Intent.Server, transaction.ClaimedServer)
-		if transaction.Intent.Server == nil {
-			claimedServer, claimErr = nil, nil
-		}
-		if claimErr != nil {
-			return CertifiedState{}, claimErr
-		}
-		if err := integrateEnrollmentNetworkIntent(&projected, transaction.Intent, claimedServer); err != nil {
-			return CertifiedState{}, err
-		}
-	}
-	view, found := projectDeviceView(projected, authorization.DeviceID)
-	if !found {
-		return CertifiedState{}, errors.New("device view projection failed")
-	}
-	digest, _ := DeviceViewDigest(view)
-	complete := EnrollmentComplete{TransactionID: transactionID, Authorization: authorization, ResultDigest: digest}
-	material := Material{Schema: MaterialSchema, Kind: "enrollment.complete", RequestID: requestMaterialID,
-		BaseHead: HeadID(certified.Head), EnrollmentComplete: &complete}
-	body, _, err := EncodeMaterial(material)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	return server.Runtime.Submit(ctx, body)
-}
-
-func (server *Server) putEndpoint(ctx context.Context, requestID, baseHead string, generation EndpointGeneration) (CertifiedState, error) {
-	if err := generation.Validate(); err != nil {
-		return CertifiedState{}, err
-	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	if baseHead != HeadID(certified.Head) {
-		return CertifiedState{}, errors.New("base head is stale")
-	}
-	var previous *EndpointGeneration
-	for index := range projection.EndpointGenerations {
-		current := &projection.EndpointGenerations[index]
-		if current.EndpointID == generation.EndpointID && current.Generation == generation.Generation {
-			previous = current
-			break
-		}
-	}
-	if previous != nil && previous.State == "prepared" && generation.State == "serving" {
-		endpoints := server.endpointRuntime()
-		if endpoints == nil || generation.Node != server.Config.Node || !endpoints.Ready(generation) {
-			return CertifiedState{}, errors.New("endpoint generation is not locally ready")
-		}
-	}
-	if previous != nil && previous.State == "serving" && generation.State == "draining" {
-		endpoints := server.endpointRuntime()
-		ready := false
-		for _, candidate := range projection.EndpointGenerations {
-			if candidate.EndpointID == generation.EndpointID && candidate.Generation != generation.Generation &&
-				candidate.State == "serving" && candidate.Preference < generation.Preference && endpoints != nil && endpoints.Successes(candidate) > 0 {
-				ready = true
-			}
-		}
-		if !ready {
-			return CertifiedState{}, errors.New("endpoint generation has no successful preferred replacement")
-		}
-		for _, transaction := range projection.Enrollments {
-			if transaction.State == "completed" || transaction.State == "rejected" || transaction.State == "expired" || transaction.State == "cancelled" ||
-				transaction.State == "open" && !server.now().Before(mustTime(transaction.ExpiresAt)) {
-				continue
-			}
-			open, err := server.Runtime.Authority.EnrollmentOpen(transaction.ID)
-			if err != nil {
-				return CertifiedState{}, err
-			}
-			for _, endpoint := range open.Capability.Endpoints {
-				if endpoint.EndpointID == generation.EndpointID && endpoint.Generation == generation.Generation {
-					return CertifiedState{}, errors.New("endpoint generation still protects an active enrollment")
+		policyDependencies = append(policyDependencies, target.MaterialIDs...)
+		for _, policy := range a.projection.NetworkIntent.Policies {
+			if policy.ID == policyID {
+				if service, ok := a.projection.CurrentTarget("service", policy.ServiceID); ok {
+					policyDependencies = append(policyDependencies, service.MaterialIDs...)
 				}
 			}
 		}
 	}
-	endpoints := server.endpointRuntime()
-	if previous != nil && previous.State == "draining" && generation.State == "retired" &&
-		(endpoints == nil || endpoints.Active(generation) != 0) {
-		return CertifiedState{}, errors.New("endpoint generation still has protected sessions")
+	if !bound {
+		result, err := a.submitOperationLocked(ctx, Operation{Schema: 3, RequestID: enrollmentRequestID("bind", invite.ID), Operation: "invite.bind", TargetKind: "invite", TargetID: invite.ID, Dependencies: sortedUniqueDependencies(policyDependencies), Payload: binding}, local)
+		if err != nil {
+			return Submission{}, err
+		}
+		bindingMaterial, _ = a.materialValueLocked(result.MaterialID)
 	}
-	material := Material{Schema: MaterialSchema, Kind: "endpoint.put", RequestID: requestID, BaseHead: baseHead, EndpointGeneration: &generation}
-	body, _, err := EncodeMaterial(material)
-	if err != nil {
-		return CertifiedState{}, err
+	bindingID, _ := MaterialID(bindingMaterial)
+	if _, exists := a.projection.CurrentTarget("device", invite.DeviceID); exists {
+		return Submission{}, errors.New("device identity already has authorization history")
 	}
-	return server.Runtime.Submit(ctx, body)
+	dependencies := append(policyDependencies, bindingID)
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return Submission{}, err
+	}
+	responsibilities := []string{}
+	for _, value := range invite.Responsibilities {
+		if value != "control" {
+			responsibilities = append(responsibilities, value)
+		}
+	}
+	authorization := DeviceAuthorization{ID: invite.DeviceID, Name: invite.Name, Platform: binding.Platform, DevicePublicKey: binding.DevicePublicKey,
+		Responsibilities: responsibilities, PolicyIDs: append([]string{}, invite.PolicyIDs...), DistributionURLs: []string{}, RuntimeKey: base64.RawURLEncoding.EncodeToString(key),
+		TransactionID: invite.ID, InviteMaterialID: originalID, BindingMaterialID: bindingID}
+	return a.submitOperationLocked(ctx, Operation{Schema: 3, RequestID: enrollmentRequestID("join", invite.ID), Operation: "device.join", TargetKind: "device", TargetID: invite.DeviceID, Dependencies: sortedUniqueDependencies(dependencies), Payload: authorization}, local)
 }
 
-func (server *Server) putDevice(ctx context.Context, requestID, baseHead string, payload deviceUpdatePayload) (CertifiedState, error) {
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	if baseHead != HeadID(certified.Head) {
-		return CertifiedState{}, errors.New("base head is stale")
-	}
-	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
-		return projection.DeviceAuthorizations[index].DeviceID >= payload.DeviceID
-	})
-	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != payload.DeviceID {
-		return CertifiedState{}, errors.New("device authorization does not exist")
-	}
-	if payload.Runtime == nil {
-		return CertifiedState{}, errors.New("device runtime profile is required")
-	}
-	canonicalConfig, err := clientmodel.CanonicalizeRuntimeConfig([]byte(payload.Runtime.Config))
+func (server *Server) deviceEnvelope(deviceID string) (DeviceViewEnvelope, error) {
+	projection := server.Runtime.Authority.Snapshot()
+	member, err := activeLocalMember(server.Runtime.Config, projection.Config)
 	if err != nil {
-		return CertifiedState{}, err
+		return DeviceViewEnvelope{}, err
 	}
-	authorization := projection.DeviceAuthorizations[index]
-	if authorization.Schema == enrollmentSchemaV2 {
-		return CertifiedState{}, errors.New("schema-2 device runtime is derived from certified network intent")
-	}
-	if authorization.Platform == "windows" && canonicalConfig != payload.Runtime.Config {
-		return CertifiedState{}, errors.New("Windows runtime profile config is not canonical")
-	}
-	payload.Runtime.Config = canonicalConfig
-	authorization.Routes = append([]RouteCandidate(nil), payload.Routes...)
-	authorization.Runtime = cloneRuntimeProfile(payload.Runtime)
-	authorization.Floor = certified.Head.Index + 1
-	material := Material{Schema: MaterialSchema, Kind: "device.put", RequestID: requestID, BaseHead: baseHead,
-		DeviceAuthorization: &authorization}
-	body, _, err := EncodeMaterial(material)
+	view, err := ProjectDeviceView(projection, deviceID)
 	if err != nil {
-		return CertifiedState{}, err
+		return DeviceViewEnvelope{}, err
 	}
-	return server.Runtime.Submit(ctx, body)
+	genesis, err := server.Runtime.Authority.Genesis()
+	if err != nil {
+		return DeviceViewEnvelope{}, err
+	}
+	keyID, err := KeyID(member.PublicKey)
+	if err != nil {
+		return DeviceViewEnvelope{}, err
+	}
+	key, err := server.Runtime.Config.PrivateKey()
+	if err != nil {
+		return DeviceViewEnvelope{}, err
+	}
+	return SignDeviceViewEnvelope(DeviceViewEnvelope{Schema: 3, NetworkID: projection.NetworkID, GenesisDigest: server.Runtime.Config.GenesisID,
+		IssuerControlID: member.ControlID, IssuerKeyID: keyID, ControlProof: ControlProof{Genesis: genesis, Successors: []ControlCertificate{}}, FactFrontier: projection.Frontier, View: view}, key)
 }
-
-func (server *Server) upgradeDeviceRuntime(ctx context.Context, requestID, baseHead string, payload DeviceRuntimeUpgrade) (CertifiedState, error) {
-	if err := payload.Validate(); err != nil {
-		return CertifiedState{}, err
-	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	if baseHead != HeadID(certified.Head) {
-		return CertifiedState{}, errors.New("base head is stale")
-	}
-	material := Material{Schema: MaterialSchema, Kind: "device.runtime-upgrade", RequestID: requestID,
-		BaseHead: baseHead, DeviceRuntimeUpgrade: &payload}
-	body, _, err := EncodeMaterial(material)
+func (server *Server) EnrollmentResponse(transactionID string) (EnrollmentResponse, error) {
+	state, err := server.Runtime.Authority.EnrollmentState(transactionID)
 	if err != nil {
-		return CertifiedState{}, err
+		return EnrollmentResponse{}, err
 	}
-	return server.Runtime.Submit(ctx, body)
-}
-
-func (server *Server) revokeDevice(ctx context.Context, requestID, baseHead, deviceID string) (CertifiedState, error) {
-	if !validName(deviceID) {
-		return CertifiedState{}, errors.New("device ID is invalid")
-	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	if baseHead != HeadID(certified.Head) {
-		return CertifiedState{}, errors.New("base head is stale")
-	}
-	if _, found := authorizationFor(projection, deviceID); !found {
-		return CertifiedState{}, errors.New("device authorization does not exist")
-	}
-	revoke := DeviceRevoke{DeviceID: deviceID}
-	material := Material{Schema: MaterialSchema, Kind: "device.revoke", RequestID: requestID, BaseHead: baseHead,
-		DeviceRevoke: &revoke}
-	body, _, err := EncodeMaterial(material)
-	if err != nil {
-		return CertifiedState{}, err
-	}
-	return server.Runtime.Submit(ctx, body)
-}
-
-func (server *Server) enrollmentResponse(transactionID string) (EnrollmentResponse, error) {
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	_, transaction := findEnrollment(&certified.Projection, transactionID)
-	if transaction == nil {
-		return EnrollmentResponse{}, errors.New("enrollment transaction does not exist")
-	}
-	response := EnrollmentResponse{Schema: enrollmentWireSchema(transaction.Intent), Transaction: *transaction}
-	if transaction.State == "completed" {
-		envelope, err := DeviceViewFor(certified.Projection, certified.Head, transaction.Intent.DeviceID)
+	response := EnrollmentResponse{Schema: 3, TransactionID: transactionID, State: state}
+	if state == "completed" {
+		material, err := server.Runtime.Authority.Invite(transactionID)
 		if err != nil {
 			return EnrollmentResponse{}, err
 		}
-		response.DeviceView = &envelope
+		view, err := server.deviceEnvelope(material.Payload.(Invite).DeviceID)
+		if err != nil {
+			return EnrollmentResponse{}, err
+		}
+		response.DeviceView = &view
 	}
-	return response, nil
+	return response, response.Validate()
 }
-
-// The deployed enrollment intent predates an explicit schema field: its
-// canonical historical value is zero while its claim/resume wire protocol is
-// schema 1. Schema-2 intent and wire values are both explicit. Keep this
-// translation at the protocol boundary rather than rewriting replayed intent.
-func enrollmentWireSchema(intent EnrollmentIntent) int {
-	if intent.Schema == enrollmentSchemaV2 {
-		return enrollmentSchemaV2
-	}
-	return enrollmentSchema
-}
-
 func (server *Server) DeviceHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v2/enrollment/claim", server.claim)
-	mux.HandleFunc("POST /v2/enrollment/resume", server.resume)
-	mux.HandleFunc("POST /v2/device/config", server.deviceConfig)
-	mux.HandleFunc("POST /v2/device/report", server.deviceReport)
-	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) { http.NotFound(writer, request) })
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Cache-Control", "no-store")
-		writer.Header().Set("X-Content-Type-Options", "nosniff")
-		mux.ServeHTTP(writer, request)
+	mux.HandleFunc("POST /enrollment/claim", server.claim)
+	mux.HandleFunc("POST /enrollment/resume", server.resume)
+	mux.HandleFunc("POST /device/config", server.deviceConfig)
+	mux.HandleFunc("POST /device/report", server.deviceReport)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		mux.ServeHTTP(w, r)
 	})
 }
-
-func readDeviceJSON(writer http.ResponseWriter, request *http.Request, value any) bool {
-	body, err := io.ReadAll(io.LimitReader(request.Body, 1<<20))
-	if err != nil || decodeRawStrict(body, value) != nil {
-		http.Error(writer, "invalid request", http.StatusBadRequest)
+func readDeviceJSON(w http.ResponseWriter, r *http.Request, value any) bool {
+	body, err := io.ReadAll(io.LimitReader(r.Body, controlHTTPBodyLimit+1))
+	if err != nil || DecodeCanonical(body, value, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20}) != nil {
+		http.Error(w, "invalid canonical device request", http.StatusBadRequest)
 		return false
 	}
 	return true
 }
-
 func tunnelAuth(request *http.Request) (tunnelIdentity, bool) {
-	identity, ok := request.Context().Value(tunnelIdentityKey{}).(tunnelIdentity)
-	return identity, ok
+	value, ok := request.Context().Value(tunnelIdentityKey{}).(tunnelIdentity)
+	return value, ok
 }
-
-func (server *Server) claim(writer http.ResponseWriter, request *http.Request) {
-	identity, ok := tunnelAuth(request)
+func (server *Server) claim(w http.ResponseWriter, r *http.Request) {
+	identity, ok := tunnelAuth(r)
 	if !ok || identity.Mode != "bootstrap" {
-		http.Error(writer, "bootstrap tunnel required", http.StatusForbidden)
+		http.Error(w, "bootstrap tunnel required", http.StatusForbidden)
 		return
 	}
-	var claim EnrollmentClaimRequest
-	if !readDeviceJSON(writer, request, &claim) || claim.Validate() != nil || identity.TransactionID != claim.Capability.TransactionID {
-		http.Error(writer, "invalid enrollment claim", http.StatusBadRequest)
+	var request EnrollmentClaimRequest
+	if !readDeviceJSON(w, r, &request) {
 		return
 	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	if projection.ConfigMaterial != claim.Capability.ConfigMaterial || !sameControlConfig(projection.Config, claim.Capability.ControlConfig) {
-		http.Error(writer, "enrollment capability control boundary changed", http.StatusConflict)
-		return
-	}
-	_, transaction := findEnrollment(&projection, claim.Capability.TransactionID)
-	digest, _ := capabilityDigest(claim.Capability)
-	if transaction == nil || transaction.CapabilityDigest != digest {
-		http.Error(writer, "enrollment capability rejected", http.StatusForbidden)
-		return
-	}
-	if claim.Schema != enrollmentWireSchema(transaction.Intent) {
-		http.Error(writer, "enrollment claim schema does not match product intent", http.StatusUnprocessableEntity)
-		return
-	}
-	claimedServer := claim.Server
-	if transaction.Intent.Schema == enrollmentSchemaV2 {
-		requiresServer := transaction.Intent.Server != nil
-		if requiresServer != (claimedServer != nil) || requiresServer && transaction.Intent.Platform != "linux" {
-			http.Error(writer, "enrollment server claim does not match product intent", http.StatusUnprocessableEntity)
-			return
-		}
-		if claimedServer != nil {
-			if claimedServer.Validate() != nil {
-				http.Error(writer, "enrollment server facts are invalid", http.StatusUnprocessableEntity)
-				return
-			}
-		}
-	}
-	if transaction.State == "open" {
-		if !server.now().Before(mustTime(claim.Capability.ExpiresAt)) {
-			http.Error(writer, "enrollment capability expired", http.StatusGone)
-			return
-		}
-		bindRequestID := "enrollment-bind:" + transaction.ID + ":" + claim.DevicePublicKey
-		_, material, committed, err := server.submitCommittedRequest(request.Context(), bindRequestID)
-		if err == nil && committed {
-			if material.EnrollmentBind == nil {
-				err = errors.New("enrollment bind request has the wrong material kind")
-			} else {
-				left, _ := canonical(material.EnrollmentBind.Server)
-				right, _ := canonical(claimedServer)
-				if material.EnrollmentBind.TransactionID != transaction.ID ||
-					material.EnrollmentBind.ClaimRequestID != claim.RequestID || material.EnrollmentBind.DevicePublicKey != claim.DevicePublicKey ||
-					!bytes.Equal(left, right) {
-					err = errors.New("enrollment bind request is bound to another identity")
-				}
-			}
-		}
-		if err == nil && !committed {
-			bind := EnrollmentBind{TransactionID: transaction.ID, ClaimRequestID: claim.RequestID,
-				DevicePublicKey: claim.DevicePublicKey, ClaimedAt: server.now().Format(time.RFC3339), Server: claimedServer}
-			material = Material{Schema: MaterialSchema, Kind: "enrollment.bind", RequestID: bindRequestID,
-				BaseHead: HeadID(certified.Head), EnrollmentBind: &bind}
-			var body []byte
-			body, _, err = EncodeMaterial(material)
-			if err == nil {
-				_, err = server.Runtime.Submit(request.Context(), body)
-			}
-		}
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-	} else {
-		left, _ := canonical(transaction.ClaimedServer)
-		right, _ := canonical(claimedServer)
-		if transaction.DevicePublicKey != claim.DevicePublicKey || transaction.ClaimRequestID != claim.RequestID || !bytes.Equal(left, right) {
-			http.Error(writer, "enrollment transaction is bound to another identity", http.StatusConflict)
-			return
-		}
-	}
-	response, err := server.enrollmentResponse(transaction.ID)
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	status := http.StatusAccepted
-	if response.Transaction.State == "completed" {
-		status = http.StatusOK
-	}
-	writeJSON(writer, status, response)
+	server.finishEnrollment(w, r, request, false, identity)
 }
-
-func (server *Server) resume(writer http.ResponseWriter, request *http.Request) {
-	identity, ok := tunnelAuth(request)
+func (server *Server) resume(w http.ResponseWriter, r *http.Request) {
+	identity, ok := tunnelAuth(r)
 	if !ok || identity.Mode != "bootstrap" && identity.Mode != "device" {
-		http.Error(writer, "authenticated tunnel required", http.StatusForbidden)
+		http.Error(w, "authenticated tunnel required", http.StatusForbidden)
 		return
 	}
-	var resume EnrollmentResumeRequest
-	if !readDeviceJSON(writer, request, &resume) || resume.Validate() != nil ||
-		identity.Mode == "bootstrap" && identity.TransactionID != resume.TransactionID {
-		http.Error(writer, "invalid enrollment resume", http.StatusBadRequest)
+	var request EnrollmentResumeRequest
+	if !readDeviceJSON(w, r, &request) {
 		return
 	}
-	response, err := server.enrollmentResponse(resume.TransactionID)
-	if err != nil || response.Transaction.DevicePublicKey != resume.DevicePublicKey ||
-		identity.Mode == "device" && identity.DeviceID != response.Transaction.Intent.DeviceID {
-		http.Error(writer, "enrollment resume rejected", http.StatusForbidden)
-		return
-	}
-	if resume.Schema != enrollmentWireSchema(response.Transaction.Intent) {
-		http.Error(writer, "enrollment resume schema does not match product intent", http.StatusUnprocessableEntity)
-		return
-	}
-	status := http.StatusAccepted
-	if response.Transaction.State == "completed" {
-		status = http.StatusOK
-	}
-	writeJSON(writer, status, response)
+	server.finishEnrollment(w, r, EnrollmentClaimRequest(request), true, identity)
 }
-
-func (server *Server) deviceConfig(writer http.ResponseWriter, request *http.Request) {
-	identity, ok := tunnelAuth(request)
-	if !ok || identity.Mode != "device" {
-		http.Error(writer, "device tunnel required", http.StatusForbidden)
+func (server *Server) finishEnrollment(w http.ResponseWriter, r *http.Request, request EnrollmentClaimRequest, resume bool, identity tunnelIdentity) {
+	if _, err := server.Runtime.Authority.CompleteEnrollment(r.Context(), request, resume, identity, server.now(), server.Runtime.Config); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	envelope, err := DeviceViewFor(certified.Projection, certified.Head, identity.DeviceID)
+	response, err := server.EnrollmentResponse(request.TransactionID)
 	if err != nil {
-		http.Error(writer, "device configuration unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "enrollment view unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(writer, http.StatusOK, envelope)
+	writeCanonical(w, http.StatusOK, response)
 }
-
-func (server *Server) deviceReport(writer http.ResponseWriter, request *http.Request) {
-	identity, ok := tunnelAuth(request)
+func (server *Server) deviceConfig(w http.ResponseWriter, r *http.Request) {
+	identity, ok := tunnelAuth(r)
+	if !ok || identity.Mode != "device" {
+		http.Error(w, "device tunnel required", http.StatusForbidden)
+		return
+	}
+	view, err := server.deviceEnvelope(identity.DeviceID)
+	if err != nil {
+		http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	writeCanonical(w, http.StatusOK, view)
+}
+func (server *Server) deviceReport(w http.ResponseWriter, r *http.Request) {
+	identity, ok := tunnelAuth(r)
 	if !ok || identity.Mode != "device" || server.Reports == nil {
-		http.Error(writer, "device report channel unavailable", http.StatusForbidden)
+		http.Error(w, "device report channel unavailable", http.StatusForbidden)
 		return
 	}
 	var report DeviceReport
-	if !readDeviceJSON(writer, request, &report) || report.DeviceID != identity.DeviceID {
-		http.Error(writer, "invalid device report", http.StatusBadRequest)
+	if !readDeviceJSON(w, r, &report) {
 		return
 	}
-	reportedAt, parseErr := time.Parse(time.RFC3339, report.ReportedAt)
-	if parseErr != nil || reportedAt.After(server.now().Add(2*time.Minute)) || reportedAt.Before(server.now().Add(-30*24*time.Hour)) {
-		http.Error(writer, "device report time is outside the accepted window", http.StatusUnprocessableEntity)
+	projection := server.Runtime.Authority.Snapshot()
+	if report.DeviceID != identity.DeviceID || report.NetworkID != projection.NetworkID {
+		http.Error(w, "device report identity rejected", http.StatusForbidden)
 		return
 	}
-	_, _, certified := server.Runtime.Authority.Snapshot()
-	projection := certified.Projection
-	index := sort.Search(len(projection.DeviceAuthorizations), func(index int) bool {
-		return projection.DeviceAuthorizations[index].DeviceID >= report.DeviceID
-	})
-	if index == len(projection.DeviceAuthorizations) || projection.DeviceAuthorizations[index].DeviceID != report.DeviceID {
-		http.Error(writer, "device report signature rejected", http.StatusForbidden)
+	authorization, ok := authorizationFor(projection, identity.DeviceID)
+	if !ok || server.Reports.Put(report, authorization.DevicePublicKey) != nil {
+		http.Error(w, "device report rejected", http.StatusConflict)
 		return
 	}
-	if err := verifyCurrentReport(report, projection); err != nil {
-		status := http.StatusForbidden
-		if err.Error() == "device report view is stale" {
-			status = http.StatusConflict
-		}
-		http.Error(writer, err.Error(), status)
-		return
-	}
-	if err := server.Reports.Put(report, projection.DeviceAuthorizations[index].DevicePublicKey); err != nil {
-		http.Error(writer, err.Error(), http.StatusConflict)
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{"device_id": report.DeviceID, "reported_at": report.ReportedAt})
-}
-
-func mustTime(value string) time.Time {
-	parsed, _ := time.Parse(time.RFC3339, value)
-	return parsed
+	writeCanonical(w, http.StatusOK, DeviceReportResponse{Schema: 3, ReportSequence: report.ReportSequence, Status: "accepted"})
 }

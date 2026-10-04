@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"loom/internal/control"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -26,15 +29,15 @@ func routeOptions(routes []clientmodel.RouteCandidate) ([]portableRouteOption, e
 		if err := route.Validate(); err != nil {
 			return nil, err
 		}
-		if len(route.Chain) == 0 {
+		if route.FinalExit == "direct" {
 			direct = true
 		} else {
 			exits[route.FinalExit] = true
 		}
 	}
-	options := []portableRouteOption{{Label: "自动选择", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeAuto}}}
+	options := []portableRouteOption{{Label: "自动选择", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}}}
 	if direct {
-		options = append(options, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}})
+		options = append(options, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}})
 	}
 	ids := make([]string, 0, len(exits))
 	for id := range exits {
@@ -43,9 +46,43 @@ func routeOptions(routes []clientmodel.RouteCandidate) ([]portableRouteOption, e
 	sort.Strings(ids)
 	for _, id := range ids {
 		options = append(options, portableRouteOption{Label: "固定出口 · " + id,
-			Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: id}})
+			Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: id}})
 	}
 	return options, nil
+}
+
+func windowsRouteOptions(view control.DeviceView) ([]portableRouteOption, error) {
+	if err := view.Validate(); err != nil {
+		return nil, err
+	}
+	if view.RuntimeProfile == nil {
+		return routeOptions(nil)
+	}
+	routes, _, err := clientadapter.AccessProjection(view)
+	if err != nil {
+		return nil, err
+	}
+	return routeOptions(routes)
+}
+func windowsRuntimeSelector(root, viewDigest string) (*clientadapter.HTTPSelector, error) {
+	status, err := readWindowsRuntimeStatus(root)
+	if err != nil || status.ViewDigest != viewDigest || status.RuntimeState != "running" {
+		return nil, errors.New("accepted View is not the running generation")
+	}
+	paths, err := filepath.Glob(filepath.Join(root, "runtime", ".sing-box-active-*.json"))
+	if err != nil || len(paths) != 1 {
+		return nil, errors.New("runtime configuration is unavailable")
+	}
+	info, err := os.Lstat(paths[0])
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 16<<20 {
+		return nil, errors.New("runtime configuration is not a bounded regular file")
+	}
+	body, err := os.ReadFile(paths[0])
+	if err != nil {
+		return nil, err
+	}
+	defer clear(body)
+	return clientadapter.NewHTTPSelector(string(body))
 }
 
 func routeOptionIndex(options []portableRouteOption, preference clientmodel.Preference) int {
@@ -80,7 +117,7 @@ func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uin
 	if err != nil || store.LKG() == nil {
 		return errors.New("DPAPI profile 暂不可读")
 	}
-	options, err := routeOptions(store.LKG().View.Routes)
+	options, err := windowsRouteOptions(store.LKG().View)
 	if err != nil {
 		return err
 	}
@@ -145,7 +182,7 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 	if err != nil || store.LKG() == nil {
 		return errors.New("无法读取 DPAPI profile")
 	}
-	options, err := routeOptions(store.LKG().View.Routes)
+	options, err := windowsRouteOptions(store.LKG().View)
 	if err != nil || routeOptionIndex(options, preference) < 0 {
 		return errors.New("出口未获当前 LKG 授权")
 	}
@@ -158,9 +195,10 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 	app.mu.RUnlock()
 	if online {
 		lkg := store.LKG()
-		selector, selectErr := clientadapter.NewHTTPSelector(lkg.View.Runtime.Config)
+		selector, selectErr := windowsRuntimeSelector(app.root, lkg.ViewDigest)
 		if selectErr == nil {
-			scopes, byScope, scopeErr := clientadapter.Scopes(lkg.View.Routes)
+			routes, _, scopeErr := clientadapter.AccessProjection(lkg.View)
+			scopes, byScope, scopeErr := clientadapter.Scopes(routes)
 			if scopeErr != nil {
 				selectErr = scopeErr
 			} else {

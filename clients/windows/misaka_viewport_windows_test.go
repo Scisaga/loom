@@ -132,7 +132,7 @@ func TestGUIMisakaViewportComboCentersAndOpensMultipleRows(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	for index := 0; index < 7; index++ {
 		name := fmt.Sprintf("demo-exit-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "固定出口 · " + name, Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeFixed, Exit: name}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "固定出口 · " + name, Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: name}})
 	}
 	app.routeSelected = 1
 	app.renderControls()
@@ -277,7 +277,7 @@ func TestGUIMisakaViewportPassesCoveredResizeEdgesToRoot(t *testing.T) {
 
 func TestGUIMisakaViewportFixedTUNActualHintCapture(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 1, Mode: clientmodel.ModeDirect}})
+	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}})
 	app.routeSelected = 1
 	app.paths = app.paths[:1]
 	app.detail = "系统 TUN 已启用；本地 HTTP/SOCKS 代理：127.0.0.1:1080。"

@@ -78,7 +78,10 @@ stateDiagram-v2
 ```
 
 `prepared` 不供普通客户端选择；仅允许操作者以候选地址和预定校验名定向预检，且不发布到设备候选或 `control.loom` DNS。`serving` 可分配新连接，`draining` 仅允许已存在会话在明确期限内结束，
-`retired` 不得再启动。轮换时可短暂有两个 serving 代；偏好来自签名事实，不建立额外状态机。
+`retired` 不得再启动。明确期限由签名的 `drain_until` 表达为 UTC Unix 毫秒；draining 时大于 0，
+其他状态固定为 0。进入 draining 的正式入口核对其晚于请求时刻；纯规范值校验不读时钟。
+adapter 到期关闭该代已有会话，转为 retired 前必须回读该代 Active 为 0，不凭期限已到推测会话已清理。
+轮换时可短暂有两个 serving 代；偏好来自签名事实，不建立额外状态机。
 新代未通过证书、端到端访问和回读时，旧代不提前退休。轮换失败保持最后经验证的阶段和安全 floor。
 公网映射落在非 control 节点时，edge 只做已有端口上的 TCP 转发；它不持有 control 或设备签名密钥，
 不会因转发而获得 control 资格。外部 DNS provider、DNS-01 与 ACME 自动签发或续期不属于本模型。
@@ -399,6 +402,12 @@ SelectedCandidate    = Select(AuthorizedCandidates, FreshObservations, Preferenc
 其中 `Projection` 按[控制模型](control-model.md)计算，DeviceView 由某个有效 control 签名交付；Web 页面按
 [控制面 Web 投影](../clients/web-ui-projection.md)生成。这些箭头均为单向投影；UI 颜色、运行时连接或本机
 缓存不能写回控制事实。
+
+二维码、复制字符串与加入文件承载同一完整 BootstrapInvite 的规范交付值：`loom://enroll#` 加
+固定等级 9、无字典的单流 zlib 无损压缩 C(JSON) 后的无填充 base64url，详见
+[唯一现行契约](current-contract.md#inviteclaimresume-与配置交付)。解压后仍逐字节规范校验并验证
+完整成员证明及 Material 签名，不接受旧未压缩交付。成员数不设专用模式；单二维码容量不足时明确
+显示无法生成二维码，并保留同一值的复制、加入文件交互，不能截断证明或暗换身份。本链没有分片状态。
 
 ## 正常业务链
 

@@ -2,9 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,9 +14,9 @@ import (
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientdist"
-	"loom/internal/clientrelease"
-	"loom/internal/publish"
 )
+
+const stagedBinary = "deploy/staging/loom"
 
 const clientUsage = `loom client —— 客户端交付
 
@@ -27,17 +25,13 @@ const clientUsage = `loom client —— 客户端交付
 	                                             经受限 tunnel claim/resume 并原子保存 LKG
 	loom client sync [-state <文件>]              经认证设备通道读取并保存最新 DeviceView
 	loom client inspect [-state <文件>]           回读本机身份与认证 LKG（不显示秘密）
-	loom client run                              正式 Linux service：启动统一 runtime
+	loom client run                              Linux 运行入口，默认显式 Mixed proxy
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
-	loom client stage-server-migration           从 owner-only 旧配置暂存受限用户/ACL overlay
-	loom client finalize-server-migration        按源摘要删除 overlay，重启后进入 exact runtime
 	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service
 	loom client status                           回读 selector 已确认的实际路径与观测
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
-  loom client publish-linux -archive <amd64> -archive <arm64>
-                                               原子更新现有签名 release catalog
   loom client package-windows -arch <amd64|arm64>
       -sing-box-archive <官方 ZIP> -wintun-archive <官方 ZIP>
                                                生成已签名的 Windows 数据面包
@@ -60,10 +54,8 @@ func cmdClient(args []string) error {
 		return cmdClientRun(args[1:])
 	case "preflight":
 		return cmdClientPreflight(args[1:])
-	case "stage-server-migration":
-		return cmdClientStageServerMigration(args[1:])
-	case "finalize-server-migration":
-		return cmdClientFinalizeServerMigration(args[1:])
+	case "cleanup":
+		return cmdClientCleanup(args[1:])
 	case "route":
 		return cmdClientRoute(args[1:])
 	case "status":
@@ -72,8 +64,6 @@ func cmdClient(args []string) error {
 		return cmdClientPackage(args[1:])
 	case "verify":
 		return cmdClientVerify(args[1:])
-	case "publish-linux":
-		return cmdClientPublishLinux(args[1:])
 	case "package-windows":
 		return cmdClientPackageWindows(args[1:])
 	case "verify-windows":
@@ -84,31 +74,6 @@ func cmdClient(args []string) error {
 	default:
 		return fmt.Errorf("未知 client 子命令 %q\n\n%s", args[0], clientUsage)
 	}
-}
-
-func cmdClientPublishLinux(args []string) error {
-	fs := flag.NewFlagSet("client publish-linux", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var archives repeatedFlag
-	fs.Var(&archives, "archive", "已签名 Linux 包；必须各提供 amd64、arm64 一份")
-	root := fs.String("root", "/var/lib/loom/client-dist/releases", "现有签名 release catalog 根目录")
-	keyPath := fs.String("key", "deploy/keys/platform-signing.key", "平台 Ed25519 签名私钥")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 || len(archives) != 2 {
-		return errors.New("用法: loom client publish-linux -archive <amd64.tar.gz> -archive <arm64.tar.gz> [-root <目录>] [-key <私钥>]")
-	}
-	privateKey, err := readKey(*keyPath, ed25519.PrivateKeySize)
-	if err != nil {
-		return fmt.Errorf("读平台签名私钥:%w", err)
-	}
-	catalog, err := clientrelease.PublishLinux(*root, archives, ed25519.PrivateKey(privateKey))
-	if err != nil {
-		return err
-	}
-	fmt.Printf("✓ Linux amd64/arm64 已原子写入签名 release catalog；当前共 %d 个制品\n", len(catalog.Artifacts))
-	return nil
 }
 
 func cmdClientPackageWindows(args []string) error {
@@ -350,14 +315,12 @@ func readRegularClientInput(path string, executable bool) ([]byte, error) {
 }
 
 func checkPackagedLoom(stageDir string, body []byte) error {
-	sum := sha256.Sum256(body)
-	candidate := publish.BinaryCandidate{Body: body, SHA256: fmt.Sprintf("%x", sum[:]), Size: len(body)}
-	path, cleanup, err := stageReleaseCheck(stageDir, candidate)
+	path, cleanup, err := stagePackagedExecutable(stageDir, body)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	out, err := selfcheckBinaryCandidate(path, true)
+	out, err := exec.Command(path, "selfcheck", "-q").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("[§15.4 二进制与配置兼容] 包内 Loom selfcheck 失败:%v\n%s", err, strings.TrimSpace(string(out)))
 	}
@@ -366,6 +329,39 @@ func checkPackagedLoom(stageDir string, body []byte) error {
 		return fmt.Errorf("[§15.4 二进制与配置兼容] 包内 Loom 不具备 client enroll:%v\n%s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// stagePackagedExecutable executes the exact bytes being packaged, never a
+// concurrently replaceable source path or an older installed release.
+func stagePackagedExecutable(dir string, body []byte) (string, func(), error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", nil, err
+	}
+	file, err := os.CreateTemp(dir, ".loom-package-check-*")
+	if err != nil {
+		return "", nil, err
+	}
+	path := file.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	fail := func(err error) (string, func(), error) {
+		_ = file.Close()
+		cleanup()
+		return "", nil, err
+	}
+	if err := file.Chmod(0o700); err != nil {
+		return fail(err)
+	}
+	if _, err := file.Write(body); err != nil {
+		return fail(err)
+	}
+	if err := file.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return path, cleanup, nil
 }
 
 func writeClientFileAtomic(path string, body []byte, mode os.FileMode) (retErr error) {

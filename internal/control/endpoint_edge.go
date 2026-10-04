@@ -5,114 +5,37 @@ import (
 	"errors"
 	"io"
 	"net"
-	"os"
 	"sync"
 	"time"
 )
-
-const endpointEdgePlanSchema = 1
-
-// EndpointEdgePlan is an owner-only runtime projection of one certified
-// EndpointGeneration. It carries no authority or TLS key: the edge forwards
-// opaque TCP bytes and the control listener performs every authentication
-// decision.
-type EndpointEdgePlan struct {
-	Schema           int                      `json:"schema"`
-	CertifiedHead    string                   `json:"certified_head"`
-	ProjectionDigest string                   `json:"projection_digest"`
-	EdgeNode         string                   `json:"edge_node"`
-	Listen           string                   `json:"listen"`
-	Target           string                   `json:"target"`
-	Generations      []EndpointEdgeGeneration `json:"generations"`
-}
-
-type EndpointEdgeGeneration struct {
-	EndpointID string `json:"endpoint_id"`
-	Generation uint64 `json:"generation"`
-}
-
-func (plan EndpointEdgePlan) Validate(node string) error {
-	if plan.Schema != endpointEdgePlanSchema || !validDigest(plan.CertifiedHead) || !validDigest(plan.ProjectionDigest) ||
-		!validName(plan.EdgeNode) || plan.EdgeNode != node || len(plan.Generations) == 0 ||
-		!validAddress(plan.Listen) || !validAddress(plan.Target) {
-		return errors.New("endpoint edge plan is invalid")
-	}
-	for index, generation := range plan.Generations {
-		if !validName(generation.EndpointID) || generation.Generation == 0 || index > 0 &&
-			(plan.Generations[index-1].EndpointID > generation.EndpointID ||
-				plan.Generations[index-1].EndpointID == generation.EndpointID && plan.Generations[index-1].Generation >= generation.Generation) {
-			return errors.New("endpoint edge generations are not uniquely sorted")
-		}
-	}
-	host, _, _ := net.SplitHostPort(plan.Target)
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsPrivate() && !ip.IsLoopback() {
-		return errors.New("endpoint edge target is not private")
-	}
-	return nil
-}
-
-// ProjectEndpointEdge derives the entire edge runtime value from the current
-// certified state. It never accepts an operator-supplied listener or target.
-func ProjectEndpointEdge(certified CertifiedState, edgeNode string) (EndpointEdgePlan, error) {
-	if !validName(edgeNode) {
-		return EndpointEdgePlan{}, errors.New("endpoint edge node is invalid")
-	}
-	var selected *EndpointGeneration
-	generations := []EndpointEdgeGeneration{}
-	for index := range certified.Projection.EndpointGenerations {
-		generation := &certified.Projection.EndpointGenerations[index]
-		if generation.EdgeNode != edgeNode || generation.State == "retired" {
-			continue
-		}
-		if selected != nil && (selected.EdgeListen != generation.EdgeListen || selected.Listen != generation.Listen) {
-			return EndpointEdgePlan{}, errors.New("endpoint edge node has conflicting active listeners")
-		}
-		if selected == nil {
-			selected = generation
-		}
-		generations = append(generations, EndpointEdgeGeneration{EndpointID: generation.EndpointID, Generation: generation.Generation})
-	}
-	if selected == nil {
-		return EndpointEdgePlan{}, errors.New("endpoint edge node has no active generation")
-	}
-	plan := EndpointEdgePlan{Schema: endpointEdgePlanSchema, CertifiedHead: HeadID(certified.Head),
-		ProjectionDigest: certified.Head.ProjectionDigest, EdgeNode: selected.EdgeNode,
-		Listen: selected.EdgeListen, Target: selected.Listen, Generations: generations}
-	return plan, plan.Validate(edgeNode)
-}
-
-func SaveEndpointEdgePlan(path string, plan EndpointEdgePlan) error {
-	if err := plan.Validate(plan.EdgeNode); err != nil {
-		return err
-	}
-	return atomicJSON(path, plan)
-}
-
-func LoadEndpointEdgePlan(path, node string) (EndpointEdgePlan, error) {
-	var plan EndpointEdgePlan
-	if err := readStrict(path, &plan); err != nil {
-		return plan, err
-	}
-	return plan, plan.Validate(node)
-}
 
 type EndpointEdgeRuntime struct {
 	listener net.Listener
 	target   string
 	done     chan struct{}
 	once     sync.Once
+	context  context.Context
+	cancel   context.CancelFunc
+	mu       sync.Mutex
+	closed   bool
+	conns    map[net.Conn]struct{}
+	workers  sync.WaitGroup
+	closeErr error
 }
 
-func OpenEndpointEdge(plan EndpointEdgePlan, node string) (*EndpointEdgeRuntime, error) {
-	if err := plan.Validate(node); err != nil {
-		return nil, err
+// OpenEndpointEdge consumes explicit operator-owned TCP coordinates and only
+// copies opaque bytes. TLS and every authorization decision remain at control.
+func OpenEndpointEdge(listen, target string) (*EndpointEdgeRuntime, error) {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil || net.ParseIP(host) == nil || port == "" || !privateAddress(target) {
+		return nil, errors.New("endpoint edge requires an IP listener and private target")
 	}
-	listener, err := net.Listen("tcp", plan.Listen)
+	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, err
 	}
-	runtime := &EndpointEdgeRuntime{listener: listener, target: plan.Target, done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	runtime := &EndpointEdgeRuntime{listener: listener, target: target, done: make(chan struct{}), context: ctx, cancel: cancel, conns: make(map[net.Conn]struct{})}
 	go runtime.accept()
 	return runtime, nil
 }
@@ -124,18 +47,36 @@ func (runtime *EndpointEdgeRuntime) accept() {
 		if err != nil {
 			return
 		}
+		runtime.mu.Lock()
+		if runtime.closed {
+			runtime.mu.Unlock()
+			_ = incoming.Close()
+			return
+		}
+		runtime.conns[incoming] = struct{}{}
+		runtime.workers.Add(1)
+		runtime.mu.Unlock()
 		go runtime.forward(incoming)
 	}
 }
 
 func (runtime *EndpointEdgeRuntime) forward(incoming net.Conn) {
-	defer incoming.Close()
+	defer runtime.workers.Done()
+	defer runtime.release(incoming)
 	dialer := net.Dialer{Timeout: 10 * time.Second}
-	target, err := dialer.DialContext(context.Background(), "tcp", runtime.target)
+	target, err := dialer.DialContext(runtime.context, "tcp", runtime.target)
 	if err != nil {
 		return
 	}
-	defer target.Close()
+	runtime.mu.Lock()
+	if runtime.closed {
+		runtime.mu.Unlock()
+		_ = target.Close()
+		return
+	}
+	runtime.conns[target] = struct{}{}
+	runtime.mu.Unlock()
+	defer runtime.release(target)
 	_ = incoming.SetDeadline(time.Time{})
 	_ = target.SetDeadline(time.Time{})
 	finished := make(chan struct{})
@@ -151,17 +92,33 @@ func (runtime *EndpointEdgeRuntime) forward(incoming net.Conn) {
 	<-finished
 }
 
-func (runtime *EndpointEdgeRuntime) Close() error {
-	var err error
-	runtime.once.Do(func() { err = runtime.listener.Close() })
-	<-runtime.done
-	return err
+func (runtime *EndpointEdgeRuntime) release(connection net.Conn) {
+	_ = connection.Close()
+	runtime.mu.Lock()
+	delete(runtime.conns, connection)
+	runtime.mu.Unlock()
 }
 
-func loadOptionalEndpointEdge(path, node string) (EndpointEdgePlan, bool, error) {
-	plan, err := LoadEndpointEdgePlan(path, node)
-	if errors.Is(err, os.ErrNotExist) {
-		return EndpointEdgePlan{}, false, nil
-	}
-	return plan, err == nil, err
+func (runtime *EndpointEdgeRuntime) Close() error {
+	runtime.once.Do(func() {
+		runtime.mu.Lock()
+		runtime.closed = true
+		connections := make([]net.Conn, 0, len(runtime.conns))
+		for connection := range runtime.conns {
+			connections = append(connections, connection)
+		}
+		runtime.mu.Unlock()
+		runtime.cancel()
+		if err := runtime.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			runtime.closeErr = errors.Join(runtime.closeErr, err)
+		}
+		for _, connection := range connections {
+			if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				runtime.closeErr = errors.Join(runtime.closeErr, err)
+			}
+		}
+		<-runtime.done
+		runtime.workers.Wait()
+	})
+	return runtime.closeErr
 }

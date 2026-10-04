@@ -9,11 +9,7 @@ import (
 	"loom/internal/version"
 )
 
-// cmdVersion 回答"这个二进制是哪一版",并且把答案摆成能和别处对上的形状。
-//
-// 排障时四个标识老是混:git commit、二进制 sha、SSOT sha、快照 id。
-// 这个命令负责前两个,并明说另外两个去哪儿查 —— 混淆的代价是把
-// 二进制哈希当成 "HEAD" 写进文档,已经发生过。
+// cmdVersion reports executable build coordinates, independently of accepted configuration.
 func cmdVersion(args []string) error {
 	fs := flag.NewFlagSet("version", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "输出 JSON,给脚本用")
@@ -49,8 +45,8 @@ func cmdVersion(args []string) error {
 	if c.BinaryErr != "" {
 		fmt.Printf("            ⚠️ %s\n", c.BinaryErr)
 	}
-	fmt.Printf("  snapshot  loom report        本机装着的配置是哪一版\n")
-	fmt.Printf("  ssot      loom snapshots     发过哪些、源头分别是哪个 sha\n")
+	fmt.Printf("  accepted  loom client inspect  已持久接受的认证 View\n")
+	fmt.Printf("  runtime   loom client status   实际执行与观测回读\n")
 
 	if w := c.Warnings(); len(w) > 0 {
 		fmt.Println()

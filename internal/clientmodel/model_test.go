@@ -1,7 +1,10 @@
 package clientmodel
 
 import (
+	"encoding/json"
+	"loom/internal/control"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -19,20 +22,46 @@ func TestSelectAvailabilityGenerationAndSameExitFallback(t *testing.T) {
 		{CandidateID: "relay", NetworkGeneration: "old-network", Scope: "business", Result: "unavailable", Action: "https",
 			ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)},
 	}
-	selected, err := Select(routes, observations, Preference{Schema: 1, Mode: ModeFixed, Exit: "demo-exit"},
+	selected, err := Select(routes, observations, Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"},
 		"one-hop", "network-a", now)
 	if err != nil || selected.CandidateID != "relay" {
 		t.Fatalf("same-exit fallback = %+v, %v", selected, err)
 	}
-	selected, err = Select(routes, observations, Preference{Schema: 1, Mode: ModeDirect}, "", "network-a", now)
+	selected, err = Select(routes, observations, Preference{Schema: 3, Mode: ModeDirect}, "", "network-a", now)
 	if err != nil || selected.CandidateID != "direct" {
 		t.Fatalf("direct = %+v, %v", selected, err)
 	}
 }
 
+func TestLocalExitIsNotDirectAndKeepsItsRuntimeIdentity(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	local := RouteCandidate{ID: "demo-local", FinalExit: "demo-hybrid", Chain: []string{}, Scope: "service:demo-service"}
+	routes := []RouteCandidate{local, {ID: "demo-direct", FinalExit: "direct", Chain: []string{}, Scope: local.Scope}}
+	for _, item := range []struct {
+		preference Preference
+		wanted     string
+	}{{Preference{Schema: 3, Mode: ModeDirect}, "demo-direct"}, {Preference{Schema: 3, Mode: ModeFixed, Exit: local.FinalExit}, local.ID}, {Preference{Schema: 3, Mode: ModeAuto}, local.ID}} {
+		selected, err := Select(routes, nil, item.preference, local.ID, "demo-generation", now)
+		if err != nil || selected.CandidateID != item.wanted {
+			t.Fatalf("%s lost final exit identity: %+v, %v", item.preference.Mode, selected, err)
+		}
+	}
+	if _, err := Select([]RouteCandidate{local}, nil, Preference{Schema: 3, Mode: ModeDirect}, local.ID, "demo-generation", now); err == nil {
+		t.Fatal("Direct preference selected an empty chain belonging to the local exit")
+	}
+	config, err := canonicalRuntimeFixture([]byte(`{"outbounds":[{"type":"direct","tag":"demo-local"},{"type":"selector","tag":"service:demo-service","outbounds":["demo-local"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := ProjectRuntimeCandidates([]RouteCandidate{local}, RuntimeProfile{Kind: "sing_box", Config: config})
+	if err != nil || len(runtime) != 1 || runtime[0].FinalExit != local.FinalExit || runtime[0].ID != local.ID || len(runtime[0].Chain) != 0 || runtime[0].Transport != "direct" {
+		t.Fatalf("local runtime projection: %+v, %v", runtime, err)
+	}
+}
+
 func TestRuntimeProfileRequiresExactRouteMapping(t *testing.T) {
-	raw := `{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],"outbounds":[{"type":"direct","tag":"direct"},{"type":"selector","tag":"service","outbounds":["direct","relay"]},{"type":"hysteria2","tag":"relay"}],"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}`
-	config, err := CanonicalizeRuntimeConfig([]byte(raw))
+	raw := `{"outbounds":[{"type":"direct","tag":"direct"},{"type":"selector","tag":"service","outbounds":["direct","relay"]},{"type":"hysteria2","tag":"relay"}]}`
+	config, err := canonicalRuntimeFixture([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,15 +71,15 @@ func TestRuntimeProfileRequiresExactRouteMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := raw[:len(raw)-2] + `,"extra"]}}`
-	if canonical, err := CanonicalizeRuntimeConfig([]byte(bad)); err == nil &&
+	if canonical, err := canonicalRuntimeFixture([]byte(bad)); err == nil &&
 		(RuntimeProfile{Kind: "sing_box", Config: canonical}).Validate(routes) == nil {
 		t.Fatal("unauthorized selector member accepted")
 	}
 }
 
 func TestRuntimeCandidatesArePureStableProjection(t *testing.T) {
-	raw := `{"inbounds":[{"type":"tun","tag":"tun-in","auto_route":true}],"outbounds":[{"type":"selector","tag":"service","outbounds":["relay","direct"]},{"type":"hysteria2","tag":"relay"},{"type":"direct","tag":"direct"}],"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}`
-	config, err := CanonicalizeRuntimeConfig([]byte(raw))
+	raw := `{"outbounds":[{"type":"selector","tag":"service","outbounds":["relay","direct"]},{"type":"hysteria2","tag":"relay"},{"type":"direct","tag":"direct"}]}`
+	config, err := canonicalRuntimeFixture([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,5 +102,30 @@ func TestRuntimeCandidatesArePureStableProjection(t *testing.T) {
 	}
 	if !reflect.DeepEqual(first, want) || !reflect.DeepEqual(second, want) {
 		t.Fatalf("runtime projection is not stable:\nfirst=%+v\nsecond=%+v", first, second)
+	}
+}
+
+// Test fixtures use the contract renderer; production validates the original
+// authenticated bytes without any alternate JSON canonicalization.
+func canonicalRuntimeFixture(body []byte) (string, error) {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return "", err
+	}
+	result, err := control.CanonicalEncode(value)
+	return string(result), err
+}
+func TestRuntimeProfileUsesContractEscapingForCertificates(t *testing.T) {
+	config, err := canonicalRuntimeFixture([]byte(`{"outbounds":[{"type":"hysteria2","tag":"demo-hop","tls":{"certificate":["demo\ncertificate\n"]}},{"type":"selector","tag":"service:demo-service","outbounds":["demo-hop"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []RouteCandidate{{ID: "demo-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service"}}
+	if err := (RuntimeProfile{Kind: "sing_box", Config: config}).Validate(routes); err != nil {
+		t.Fatal(err)
+	}
+	alternative := strings.ReplaceAll(config, `\u000a`, `\n`)
+	if alternative == config || (RuntimeProfile{Kind: "sing_box", Config: alternative}).Validate(routes) == nil {
+		t.Fatal("accepted a second certificate string encoding")
 	}
 }

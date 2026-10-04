@@ -41,6 +41,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -54,6 +56,7 @@ import java.net.InetAddress
 import java.net.NetworkInterface
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import org.json.JSONObject
 
 internal data class RankedUnderlying<T>(
     val value: T,
@@ -100,7 +103,7 @@ internal class UnderlyingPublicationTracker<T> {
 
 class LoomVpnService : VpnService(), PlatformInterface {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lifecycle = Mutex()
+    private val lifecycle get() = configurationLifecycle
     private val monitors = ConcurrentHashMap<InterfaceUpdateListener, UnderlyingMonitor>()
     private val underlyingPublicationLock = Any()
     private val underlyingPublication = UnderlyingPublicationTracker<Network>()
@@ -108,15 +111,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
     private var reportJob: Job? = null
+    private var probeJob: Job? = null
+    @Volatile private var activeProbe: ProbeSession? = null
     @Volatile private var sessionID = 0L
     @Volatile private var desiredProfileId = ""
     @Volatile private var runtimeProfileId = ""
-    @Volatile private var activeProbe: ProbeSession? = null
     @Volatile private var selectedUnderlyingNetwork: Network? = null
     @Volatile private var activeManagedProfile: ManagedProfile? = null
 
     override fun onCreate() {
         super.onCreate()
+        runningService = this
         createNotificationChannel()
         VpnRuntime.transform { it.copy(alwaysOn = alwaysOnEnabled()) }
     }
@@ -137,17 +142,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 if (!ProfileCatalog.get(this).contains(requested)) {
                     return rejectConnectionStart(startId, "连接配置不存在")
                 }
-                val previousDesired = desiredProfileId
                 VpnConnectionPreference(this).save(true, requested)
                 desiredProfileId = requested
                 projectConnectionRequest(requested, "正在准备连接…")
-                if (requested != previousDesired || requested != runtimeProfileId) activeProbe?.cancel()
                 scope.launch { startTunnel(requested) }
-            }
-            ACTION_RELOAD -> {
-                val candidateID = intent?.getStringExtra(EXTRA_CANDIDATE_ID).orEmpty()
-                val profileID = intent?.getStringExtra(EXTRA_PROFILE_ID).orEmpty()
-                scope.launch { reloadTunnel(profileID, candidateID, startId) }
             }
             ACTION_SYNC_SYSTEM_POLICY -> {
                 val alwaysOn = alwaysOnEnabled()
@@ -178,7 +176,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 } else {
                     VpnConnectionPreference(this).save(false, desiredProfileId)
                     desiredProfileId = ""
-                    activeProbe?.cancel()
                     scope.launch { stopTunnel(stopStartId = startId) }
                 }
             }
@@ -193,7 +190,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
     override fun onRevoke() {
         VpnConnectionPreference(this).save(false, desiredProfileId)
         desiredProfileId = ""
-        activeProbe?.cancel()
         scope.launch {
             stopTunnel()
             stopSelf()
@@ -202,31 +198,27 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     override fun onDestroy() {
         desiredProfileId = ""
-        activeProbe?.cancel()
-        runBlocking(Dispatchers.IO) { stopTunnel() }
+        runBlocking(Dispatchers.IO) {
+            stopTunnel(preserveFailure = true)
+            lifecycle.withLock { if (runningService === this@LoomVpnService) runningService = null }
+        }
         scope.cancel()
         super.onDestroy()
     }
 
     private suspend fun startTunnel(profileID: String) = lifecycle.withLock {
         if (!connectionWanted(profileID)) return@withLock
-        if (boxService != null && runtimeProfileId == profileID) return@withLock
-        if (boxService != null || tunnel != null) closeResources()
+        if (boxService != null && runtimeProfileId == profileID && VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) return@withLock
+        val cleanup = runCatching { if (boxService != null || tunnel != null) closeResources() }
+        if (cleanup.isFailure) {
+            desiredProfileId = ""
+            VpnConnectionPreference(this).save(false, profileID)
+            VpnRuntime.update(VpnStatus(phase = ConnectionPhase.ERROR, requestedProfileId = profileID,
+                detail = "旧运行清理未确认；未启动新连接：${cleanup.exceptionOrNull()?.message}", alwaysOn = alwaysOnEnabled()))
+            EnrollmentManager.get(this).reportRuntimeOutcome(profileID)
+            return@withLock
+        }
         startTunnelLocked(profileID)
-    }
-
-    private suspend fun reloadTunnel(profileID: String, candidateID: String, startId: Int) = lifecycle.withLock {
-        if (profileID != desiredProfileId || candidateID.isBlank()) {
-            stopIdleForeground(startId)
-            return@withLock
-        }
-        val pending = runCatching { EnrollmentManager.get(this).candidateProfile(profileID) }.getOrNull()
-        if (pending?.recordID != candidateID) {
-            stopIdleForeground(startId)
-            return@withLock
-        }
-        closeResources()
-        if (connectionWanted(profileID)) startTunnelLocked(profileID)
     }
 
     private suspend fun startTunnelLocked(profileID: String) {
@@ -245,45 +237,16 @@ class LoomVpnService : VpnService(), PlatformInterface {
         )
         startForeground(NOTIFICATION_ID, foregroundNotification("正在连接…"))
         try {
-            val manager = EnrollmentManager.get(this)
-            val candidate = manager.candidateProfile(profileID)
-            if (candidate != null) {
-                try {
-                    val probe = activateAndProbe(profileID, candidate)
-                    ensureConnectionWanted(profileID)
-                    val committed = manager.candidateActivated(profileID, candidate)
-                    connected(profileID, committed, probe, "新认证配置已验证并激活")
-                    return
-                } catch (cancelled: CancellationException) {
-                    closeResources()
-                    throw cancelled
-                } catch (candidateError: Throwable) {
-                    Log.e(TAG, "candidate activation rejected", candidateError)
-                    closeResources()
-                    ensureConnectionWanted(profileID)
-                    runtimeProfileId = profileID
-                    val fallback = manager.candidateRejected(profileID, candidate, "真实 DNS/HTTPS 未通过")
-                    if (fallback != null) {
-                        val probe = activateAndProbe(profileID, fallback)
-                        ensureConnectionWanted(profileID)
-                        connected(profileID, fallback, probe, "新配置验证失败，已继续使用最后可用配置")
-                        return
-                    }
-                    throw candidateError
-                }
+            val profile = checkNotNull(EnrollmentManager.get(this).currentProfile(profileID)) {
+                "请先通过私有 Enrollment 完成正式入网"
             }
-
-            val current = manager.currentProfile(profileID)
-            if (current != null) {
-                val probe = activateAndProbe(profileID, current)
-                ensureConnectionWanted(profileID)
-                connected(profileID, current, probe, "认证配置已激活")
-                return
-            }
-            error("请先通过私有 Enrollment 完成正式入网")
+            activateCertified(profileID, profile)
+            ensureConnectionWanted(profileID)
+            connected(profileID, profile, "认证配置已应用并读回")
         } catch (error: Throwable) {
             Log.e(TAG, "start tunnel", error)
-            closeResources()
+            val cleanupError = runCatching { closeResources() }.exceptionOrNull()
+            if (cleanupError != null) error.addSuppressed(cleanupError)
             if (!connectionWanted(profileID)) return
             VpnConnectionPreference(this).save(false, profileID)
             desiredProfileId = ""
@@ -296,12 +259,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 ),
             )
             updateNotification("连接失败")
+            EnrollmentManager.get(this).reportRuntimeOutcome(profileID)
             stopForegroundCompat()
             stopSelf()
         }
     }
 
-    private suspend fun activateAndProbe(profileID: String, profile: ManagedProfile): ProbeResult {
+    private suspend fun activateCertified(profileID: String, profile: ManagedProfile) {
         ensureConnectionWanted(profileID)
         val routing = RouteManager.get(this)
         val active = connectivity.activeNetwork
@@ -312,36 +276,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 ?.let(::networkGenerationIdentity),
         )
         ensureConnectionWanted(profileID)
+        Libbox.checkConfig(profile.config)
         activate(profile.config)
         ensureConnectionWanted(profileID)
-        val before = routing.applyToRunning(profileID, profile)
-        ensureConnectionWanted(profileID)
-        var probe = runBusinessProbe(profileID)
-        val after = routing.recordBusinessOutcome(profileID, profile, probe)
-        ensureConnectionWanted(profileID)
-        if (!probe.healthy) {
-            check(after.selectors.map { it.candidate } != before.selectors.map { it.candidate }) {
-                "真实 DNS/HTTPS 失败且没有可用 fallback"
-            }
-            probe = runBusinessProbe(profileID)
-            routing.recordBusinessOutcome(profileID, profile, probe)
-            ensureConnectionWanted(profileID)
-        }
-        check(probe.healthy) { "TUN 已启动，但真实 DNS/HTTPS 端到端结果不可用" }
-        return probe
-    }
-
-    private suspend fun runBusinessProbe(profileID: String): ProbeResult {
-        val probeSession = ProbeSession()
-        activeProbe = probeSession
-        val probe = try {
-            NetworkProbe.run(probeSession)
-        } finally {
-            if (activeProbe === probeSession) activeProbe = null
-        }
-        ensureConnectionWanted(profileID)
-        VpnRuntime.transform { it.copy(dnsProbe = probe.dns, httpsProbe = probe.https) }
-        return probe
+        routing.applyToRunning(profileID, profile)
+        // Runtime/selector readback establishes active before the independent probe.
+        // Missing or ambiguous target scopes remain unknown.
     }
 
     private fun connectionWanted(profileID: String): Boolean =
@@ -366,7 +306,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         if (!connectionWanted(profileID)) throw CancellationException("连接请求已取消或已切换")
     }
 
-    private fun connected(profileID: String, profile: ManagedProfile, probe: ProbeResult, detail: String) {
+    private fun connected(profileID: String, profile: ManagedProfile, detail: String) {
         ensureConnectionWanted(profileID)
         VpnRuntime.update(
             VpnStatus(
@@ -375,15 +315,53 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 requestedProfileId = profileID,
                 activeProfileId = profileID,
                 deviceName = profile.deviceName,
-                generation = profile.generation,
-                dnsProbe = probe.dns,
-                httpsProbe = probe.https,
+                viewDigest = profile.viewDigest,
+                dnsProbe = "未知：尚无认证目标观测",
+                httpsProbe = "未知：尚无认证目标观测",
                 alwaysOn = alwaysOnEnabled(),
             ),
         )
         updateNotification("已连接 · $detail")
         activeManagedProfile = profile
+        startBusinessProbe(profileID, profile)
         startReporter(profileID)
+    }
+
+    @Synchronized
+    private fun startBusinessProbe(profileId: String, profile: ManagedProfile, restart: Boolean = false) {
+        if (activeManagedProfile?.recordID != profile.recordID || runtimeProfileId != profileId) return
+        if (probeJob?.isActive == true && !restart) return
+        activeProbe?.cancel()
+        probeJob?.cancel()
+        val probeSession = ProbeSession()
+        activeProbe = probeSession
+        val runtimeSession = sessionID
+        probeJob = scope.launch {
+            try {
+                val routing = RouteManager.get(this@LoomVpnService)
+                var input = routing.businessProbeInput(profileId, profile) ?: return@launch
+                repeat(2) { attempt ->
+                    val result = NetworkProbe.run(input.dns, input.target, probeSession)
+                    val next = lifecycle.withLock {
+                        if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||
+                            !connectionWanted(profileId)
+                        ) return@launch
+                        routing.recordBusinessOutcome(profileId, profile, input, result, allowFallback = attempt == 0) {
+                            VpnRuntime.transform {
+                                it.copy(dnsProbe = "${input.target} · ${result.dns}", httpsProbe = "${input.target} · ${result.https}")
+                            }
+                        }
+                    } ?: return@launch
+                    input = next
+                }
+            } catch (_: CancellationException) {
+                // A changed View/network invalidates this observation, not the accepted LKG.
+            } catch (error: Throwable) {
+                Log.w(TAG, "business observation incomplete", error)
+            } finally {
+                if (activeProbe === probeSession) activeProbe = null
+            }
+        }
     }
 
     private fun activate(config: String) {
@@ -404,6 +382,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             while (isActive && reporterSession == sessionID) {
                 val status = VpnRuntime.status.value
                 if (status.phase != ConnectionPhase.CONNECTED) return@launch
+                activeManagedProfile?.let { startBusinessProbe(profileID, it) }
                 val report = runCatching { reporter.send() }
                 if (!isActive || reporterSession != sessionID) return@launch
                 if (report.isSuccess) {
@@ -411,23 +390,24 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 } else {
                     VpnRuntime.transform { it.copy(trustedReport = "失败；将重试") }
                 }
-                // Fetching a newer certified view only stages a candidate.
-                // The service reload path below remains the sole place that
-                // can promote it after libbox, selector and business readback.
+                // Authenticated updates persist first and always attempt to stop old
+                // execution; runtime failure cannot reinstate the previous authority.
                 EnrollmentManager.get(this@LoomVpnService).refreshConfigurationInBackground(profileID)
                 delay(REPORT_INTERVAL_MS)
             }
         }
     }
 
-    private suspend fun stopTunnel(stopStartId: Int? = null) = lifecycle.withLock {
+    private suspend fun stopTunnel(stopStartId: Int? = null, preserveFailure: Boolean = false) = lifecycle.withLock {
         if (stopStartId != null && desiredProfileId.isNotBlank()) return@withLock
+        val stopped = VpnRuntime.status.value.takeIf { preserveFailure && it.phase == ConnectionPhase.ERROR }
+            ?.copy(activeProfileId = "") ?: VpnStatus()
         if (boxService == null && tunnel == null) {
-            VpnRuntime.update(VpnStatus())
+            VpnRuntime.update(stopped)
         } else {
             VpnRuntime.transform { it.copy(phase = ConnectionPhase.STOPPING, detail = "正在释放网络资源…") }
             closeResources()
-            VpnRuntime.update(VpnStatus())
+            VpnRuntime.update(stopped)
         }
         // Only remove foreground state when this stop is still the newest
         // command. A newer queued connect must inherit a valid foreground
@@ -442,21 +422,35 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private suspend fun closeResources() {
         val stoppedProfileId = runtimeProfileId
         sessionID++
-        activeProbe?.cancel()
-        activeProbe = null
         reportJob?.cancel()
         reportJob = null
-        activeManagedProfile = null
+        synchronized(this) {
+            activeManagedProfile = null
+            activeProbe?.cancel()
+            activeProbe = null
+            probeJob?.cancel()
+            probeJob = null
+        }
         monitors.entries.toList().forEach { (listener, monitor) ->
             removeUnderlyingMonitor(listener, monitor)
         }
         selectedUnderlyingNetwork = null
         synchronized(underlyingPublicationLock) { underlyingPublication.clear() }
-        if (stoppedProfileId.isNotBlank()) RouteManager.get(this).tunnelStopped(stoppedProfileId)
-        runCatching { boxService?.close() }.onFailure { Log.w(TAG, "close libbox", it) }
-        boxService = null
-        runCatching { tunnel?.close() }.onFailure { Log.w(TAG, "close tun", it) }
-        tunnel = null
+        val boxClosed = runCatching { boxService?.close() }
+        val tunnelClosed = runCatching { tunnel?.close() }
+        if (boxClosed.isSuccess) boxService = null
+        if (tunnelClosed.isSuccess) tunnel = null
+        val routingStopped = runCatching {
+            if (stoppedProfileId.isNotBlank()) RouteManager.get(this).tunnelStopped(stoppedProfileId)
+        }
+        if (boxClosed.isFailure || tunnelClosed.isFailure || routingStopped.isFailure) {
+            VpnRuntime.transform {
+                it.copy(phase = ConnectionPhase.ERROR, activeProfileId = "", detail = "旧运行清理未确认；已停止配置切换")
+            }
+            boxClosed.getOrThrow()
+            tunnelClosed.getOrThrow()
+            routingStopped.getOrThrow()
+        }
         runtimeProfileId = ""
     }
 
@@ -739,6 +733,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
                             val routing = RouteManager.get(this@LoomVpnService)
                             if (routing.beginNetworkGeneration(profileID, networkGenerationIdentity(selected.network))) {
                                 routing.applyToRunning(profileID, profile)
+                                VpnRuntime.transform { it.copy(dnsProbe = "未知：网络已变化", httpsProbe = "未知：网络已变化") }
+                                startBusinessProbe(profileID, profile, restart = true)
                             }
                         }
                     }.onFailure { Log.w(TAG, "network-generation route apply failed", it) }
@@ -970,16 +966,86 @@ class LoomVpnService : VpnService(), PlatformInterface {
     )
 
     companion object {
+        // The same lock covers service start/stop and an authenticated authority write.
+        // It is process synchronization, not a persisted runtime or an authorization source.
+        private val configurationLifecycle = Mutex()
+        @Volatile private var runningService: LoomVpnService? = null
+
+        internal suspend fun <T> withRuntimeReport(profileId: String, send: suspend (JSONObject) -> T): T =
+            configurationLifecycle.withLock {
+                val service = runningService
+                val status = VpnRuntime.status.value
+                val active = service?.activeManagedProfile?.takeIf {
+                    service.runtimeProfileId == profileId && service.boxService != null &&
+                        status.phase == ConnectionPhase.CONNECTED && status.activeProfileId == profileId
+                }
+                val runtime = JSONObject().put("state", "stopped").put("applied_view_digest", "").put("error_code", "")
+                when {
+                    active != null -> runtime.put("state", "running").put("applied_view_digest", active.viewDigest)
+                    status.phase == ConnectionPhase.ERROR && status.requestedProfileId == profileId ->
+                        runtime.put("state", "error").put("error_code", "runtime_apply_failed")
+                }
+                send(runtime)
+            }
+
+        internal suspend fun acceptConfiguration(profileId: String, persist: () -> ManagedProfile): ManagedProfile =
+            configurationLifecycle.withLock {
+                withContext(NonCancellable) {
+                    val service = runningService
+                    val appliesToRunning = service?.runtimeProfileId == profileId
+                    val reconnect = service?.connectionWanted(profileId) == true
+                    val (accepted, stopped) = acceptAuthorityAndStopRuntime(persist) {
+                        if (appliesToRunning) {
+                            VpnRuntime.update(
+                                VpnStatus(
+                                    phase = ConnectionPhase.STARTING,
+                                    detail = "正在停止旧运行以应用认证配置…",
+                                    requestedProfileId = profileId,
+                                    alwaysOn = service!!.alwaysOnEnabled(),
+                                ),
+                            )
+                            service.closeResources()
+                        }
+                    }
+                    if (accepted.isFailure || stopped.isFailure) {
+                        if (appliesToRunning || reconnect) {
+                            if (service!!.connectionWanted(profileId)) {
+                                service.desiredProfileId = ""
+                                VpnConnectionPreference(service).save(false, profileId)
+                            }
+                            val authority = if (accepted.isSuccess) "认证配置已保存" else "认证配置未完成保存"
+                            val failure = stopped.exceptionOrNull() ?: accepted.exceptionOrNull()
+                            VpnRuntime.update(
+                                VpnStatus(
+                                    phase = ConnectionPhase.ERROR,
+                                    detail = "$authority；运行已停止请求：${failure?.message ?: failure?.javaClass?.simpleName}",
+                                    requestedProfileId = profileId,
+                                    alwaysOn = service.alwaysOnEnabled(),
+                                ),
+                            )
+                            EnrollmentManager.get(service).reportRuntimeOutcome(profileId)
+                            if (service.desiredProfileId.isBlank()) {
+                                service.stopForegroundCompat()
+                                service.stopSelf()
+                            }
+                        }
+                        stopped.exceptionOrNull()?.let { Log.e(TAG, "previous runtime cleanup failed after authority write", it) }
+                    } else if (reconnect) {
+                        service!!.scope.launch { service.startTunnel(profileId) }
+                    }
+                    // A runtime cleanup error never rolls back or rejects accepted authority.
+                    accepted.getOrThrow()
+                }
+            }
+
         private const val TAG = "LoomVpnService"
         private const val CHANNEL_ID = "loom-vpn"
         private const val NOTIFICATION_ID = 4101
         private const val REPORT_INTERVAL_MS = 60_000L
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
-        const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
         const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
         const val EXTRA_PROFILE_ID = "io.github.scisaga.loom.extra.PROFILE_ID"
-        const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
     }
 }
 

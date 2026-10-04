@@ -1,145 +1,57 @@
 package loomcore
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"fmt"
 	"io"
-	"net"
-	"net/http"
+	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
+	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
-	"loom/internal/version"
+	"loom/internal/control"
+	"loom/internal/deviceclient"
 )
 
-type deviceState struct {
-	Schema         int                 `json:"schema"`
-	PrivateKey     string              `json:"private_key"`
-	PublicKey      string              `json:"public_key"`
-	ClaimRequestID string              `json:"claim_request_id"`
-	Capability     bootstrapCapability `json:"capability"`
-	Claimed        bool                `json:"claimed"`
-	Floor          uint64              `json:"floor"`
-	LKG            *deviceViewEnvelope `json:"certified_lkg,omitempty"`
-}
-
+// This is a disposable Android host projection, never a second authority wire.
 type androidProfile struct {
-	Schema     int                          `json:"schema"`
-	NodeID     string                       `json:"node_id"`
-	Name       string                       `json:"name"`
-	Head       string                       `json:"head"`
-	Generation uint64                       `json:"generation"`
-	ViewDigest string                       `json:"view_digest"`
-	Config     string                       `json:"config"`
-	Routes     []clientmodel.RouteCandidate `json:"routes"`
-	RecordID   string                       `json:"record_id"`
+	Schema               int                           `json:"schema"`
+	NodeID               string                        `json:"node_id"`
+	Name                 string                        `json:"name"`
+	ViewDigest           string                        `json:"view_digest"`
+	FactFrontier         []control.FactFrontier        `json:"fact_frontier"`
+	Config               string                        `json:"config"`
+	Routes               []clientmodel.RouteCandidate  `json:"routes"`
+	RecordID             string                        `json:"record_id"`
+	DNS                  []string                      `json:"dns"`
+	BusinessProbeTargets []control.ServiceProbeTargets `json:"business_probe_targets"`
 }
 
-func androidRuntimeConfig(config, publicCA string) (string, error) {
-	rest := []byte(publicCA)
-	certificates := 0
-	for len(rest) > 0 {
-		block, remainder := pem.Decode(rest)
-		if block == nil || block.Type != "CERTIFICATE" {
-			return "", errors.New("invalid public data-plane CA bundle")
-		}
-		certificate, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || !certificate.IsCA {
-			return "", errors.New("invalid public data-plane CA certificate")
-		}
-		certificates++
-		rest = remainder
+func decodeState(body []byte) (deviceclient.State, error) {
+	state, err := deviceclient.DecodeIdentityState(body)
+	if err == nil && state.Platform != "android" {
+		err = errors.New("identity belongs to another platform")
 	}
-	if certificates == 0 {
-		return "", errors.New("missing public data-plane CA")
-	}
-	var document map[string]any
-	if err := json.Unmarshal([]byte(config), &document); err != nil {
-		return "", errors.New("invalid Android runtime config")
-	}
-	outbounds, ok := document["outbounds"].([]any)
-	if !ok {
-		return "", errors.New("invalid Android runtime outbounds")
-	}
-	for _, raw := range outbounds {
-		outbound, ok := raw.(map[string]any)
-		if !ok {
-			return "", errors.New("invalid Android runtime outbound")
-		}
-		kind, _ := outbound["type"].(string)
-		if kind != "hysteria2" && kind != "trojan" {
-			continue
-		}
-		tlsValue, ok := outbound["tls"].(map[string]any)
-		if !ok {
-			return "", errors.New("Android data-plane TLS outbound is incomplete")
-		}
-		tlsValue["certificate"] = publicCA
-		delete(tlsValue, "certificate_path")
-	}
-	body, err := json.Marshal(document)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
+	return state, err
 }
-
-func validateState(state deviceState) error {
-	private, privateErr := base64.RawURLEncoding.DecodeString(state.PrivateKey)
-	public, publicErr := rawKey(state.PublicKey)
-	if state.Schema != 1 || privateErr != nil || len(private) != ed25519.PrivateKeySize || publicErr != nil ||
-		!ed25519.PrivateKey(private).Public().(ed25519.PublicKey).Equal(public) || !validName(state.ClaimRequestID) || validateCapability(state.Capability) != nil {
-		return errors.New("invalid protected device state")
-	}
-	if state.LKG == nil {
-		if state.Floor != 0 {
-			return errors.New("device floor has no LKG")
-		}
-		return nil
-	}
-	if verifyEnvelope(*state.LKG, state.Capability) != nil || state.LKG.View.DevicePublicKey != state.PublicKey ||
-		state.Floor != state.LKG.Head.Index || state.Floor < state.LKG.View.Floor {
-		return errors.New("invalid certified LKG")
-	}
-	return nil
-}
-
-func decodeState(body []byte) (deviceState, error) {
-	var state deviceState
-	if err := decodeStrictJSON(body, 8<<20, &state); err != nil {
-		return state, err
-	}
-	return state, validateState(state)
-}
-
-func encodeState(state deviceState) ([]byte, error) {
-	if err := validateState(state); err != nil {
-		return nil, err
-	}
-	return canonical(state)
-}
-
-// NewAndroidDeviceState creates one durable Ed25519 identity bound to a private bootstrap capability.
-func NewAndroidDeviceState(inviteRaw string) ([]byte, error) {
-	invite, err := decodeInvite(inviteRaw)
+func NewAndroidDeviceState(raw string) ([]byte, error) {
+	invite, err := control.DecodeInvite(raw)
 	if err != nil {
 		return nil, err
 	}
-	public, private, err := ed25519.GenerateKey(rand.Reader)
+	value := invite.Material.Payload.(control.Invite)
+	if len(value.Responsibilities) != 1 || value.Responsibilities[0] != "access" {
+		return nil, errors.New("Android supports access invitations")
+	}
+	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -147,370 +59,260 @@ func NewAndroidDeviceState(inviteRaw string) ([]byte, error) {
 	if _, err := io.ReadFull(rand.Reader, request); err != nil {
 		return nil, err
 	}
-	return encodeState(deviceState{Schema: 1, PrivateKey: base64.RawURLEncoding.EncodeToString(private),
-		PublicKey: base64.RawURLEncoding.EncodeToString(public), ClaimRequestID: hex.EncodeToString(request), Capability: invite.Capability})
-}
-
-func ValidateAndroidDeviceState(body []byte) error {
-	_, err := decodeState(body)
-	return err
-}
-
-// AndroidDeviceProfile projects only the authenticated runtime data needed by the host.
-func AndroidDeviceProfile(body []byte) ([]byte, error) {
-	state, err := decodeState(body)
+	state, err := deviceclient.NewIdentityState(invite, "android", private, hex.EncodeToString(request))
 	if err != nil {
 		return nil, err
 	}
-	if state.LKG == nil || state.LKG.View.Runtime == nil {
-		return nil, errors.New("device has no certified runtime profile")
-	}
-	digest, _ := viewDigest(state.LKG.View)
-	runtimeConfig := state.LKG.View.Runtime.Config
-	if state.LKG.View.Schema == 2 {
-		runtimeConfig, err = androidRuntimeConfig(runtimeConfig, state.LKG.View.PublicDataPlaneCA)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return canonical(androidProfile{Schema: 1, NodeID: state.LKG.View.DeviceID, Name: state.LKG.View.Name, Head: headID(state.LKG.Head),
-		Generation: state.LKG.Head.Index, ViewDigest: digest, Config: runtimeConfig,
-		Routes: state.LKG.View.Routes, RecordID: recordID(body)})
+	return deviceclient.EncodeIdentityState(state)
 }
-
-// AndroidEnrollmentState is a redacted status projection; it never returns capability or key bytes.
+func ValidateAndroidDeviceState(body []byte) error { _, err := decodeState(body); return err }
+func CheckAndroidDeviceStateAdvance(nextBody, previousBody []byte) error {
+	next, err := decodeState(nextBody)
+	if err != nil {
+		return err
+	}
+	previous, err := decodeState(previousBody)
+	if err != nil {
+		return err
+	}
+	return deviceclient.CheckIdentityStateAdvance(next, previous)
+}
 func AndroidEnrollmentState(body []byte) ([]byte, error) {
 	state, err := decodeState(body)
 	if err != nil {
 		return nil, err
 	}
 	value := struct {
-		Schema        int    `json:"schema"`
-		TransactionID string `json:"transaction_id"`
-		Claimed       bool   `json:"claimed"`
-		Ready         bool   `json:"ready"`
-		NodeID        string `json:"node_id,omitempty"`
-		Generation    uint64 `json:"generation,omitempty"`
-	}{Schema: 1, TransactionID: state.Capability.TransactionID, Claimed: state.Claimed, Ready: state.LKG != nil}
+		Schema        int                    `json:"schema"`
+		TransactionID string                 `json:"transaction_id"`
+		Claimed       bool                   `json:"claimed"`
+		Ready         bool                   `json:"ready"`
+		NodeID        string                 `json:"node_id"`
+		ViewDigest    string                 `json:"view_digest"`
+		FactFrontier  []control.FactFrontier `json:"fact_frontier"`
+	}{Schema: 3, TransactionID: state.Invite.Material.Payload.(control.Invite).ID, Claimed: state.LKG != nil, Ready: state.LKG != nil, FactFrontier: []control.FactFrontier{}}
 	if state.LKG != nil {
-		value.NodeID, value.Generation = state.LKG.View.DeviceID, state.LKG.Head.Index
+		value.NodeID = state.LKG.View.DeviceID
+		value.ViewDigest = state.LKG.ViewDigest
+		value.FactFrontier = state.LKG.FactFrontier
 	}
-	return canonical(value)
+	return json.Marshal(value)
+}
+func AndroidDeviceProfile(body []byte) ([]byte, error) {
+	state, err := decodeState(body)
+	if err != nil {
+		return nil, err
+	}
+	if state.LKG == nil {
+		return nil, errors.New("device has no accepted LKG")
+	}
+	view := state.LKG.View
+	routes, _, err := clientadapter.AccessProjection(view)
+	if err != nil {
+		return nil, err
+	}
+	// A local management secret is not a Service credential and never travels
+	// in DeviceView. It has a separate purpose and is bound to this device key.
+	key, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
+	sum := sha256.Sum256(append([]byte("loom-android-local-selector-v3\x00"), key...))
+	clear(key)
+	config, err := androidRuntimeConfig(view, base64.RawURLEncoding.EncodeToString(sum[:]))
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(androidProfile{Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...)})
+}
+func androidRuntimeConfig(view control.DeviceView, secret string) (string, error) {
+	raw, err := clientadapter.ManagedRuntimeConfig(view, secret)
+	if err != nil {
+		return "", err
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return "", err
+	}
+	exclusions := map[string]bool{}
+	for _, endpoint := range view.Endpoints {
+		address, err := netip.ParseAddr(endpoint.Host)
+		if err != nil {
+			return "", errors.New("Android capture requires authenticated endpoint address resolution")
+		}
+		exclusions[netip.PrefixFrom(address, address.BitLen()).String()] = true
+	}
+	prefixes := make([]string, 0, len(exclusions))
+	for prefix := range exclusions {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+	document["inbounds"] = []any{map[string]any{"type": "tun", "tag": "tun-in", "address": []string{"192.0.2.1/30"}, "mtu": 1500, "auto_route": true, "stack": "system", "route_exclude_address": prefixes}}
+	route := document["route"].(map[string]any)
+	// On Android this enables the existing VpnService.protect callback for
+	// libbox TCP/UDP sockets. It changes neither the signed ACL nor its grants.
+	route["auto_detect_interface"] = true
+	rules := route["rules"].([]any)
+	// Capture only supplies absent domain metadata; it cannot change destination
+	// IP or add an allow rule/outbound to the authenticated Service projection.
+	sniff := map[string]any{"type": "logical", "mode": "and", "rules": []any{map[string]any{"inbound": []string{"tun-in"}}, map[string]any{"domain_regex": []string{".+"}, "invert": true}, map[string]any{"port": []int{53}, "invert": true}}, "action": "sniff"}
+	route["rules"] = append([]any{sniff}, rules...)
+	body, err := json.Marshal(document)
+	return string(body), err
 }
 
-func privateKey(state deviceState) ed25519.PrivateKey {
-	value, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
-	return ed25519.PrivateKey(value)
-}
+// The temporary adapter has no storage and performs no execution. Kotlin owns
+// the one protected identity record and commits the returned value before use.
+type androidIdentity struct{ state deviceclient.State }
 
-// AdvanceAndroidEnrollment submits claim or resume through the capability's pinned private tunnel.
+func (store *androidIdentity) Invite() control.BootstrapInvite { return store.state.Invite }
+func (store *androidIdentity) Platform() string                { return store.state.Platform }
+func (store *androidIdentity) PublicKey() string               { return store.state.PublicKey }
+func (store *androidIdentity) PrivateKey() ed25519.PrivateKey {
+	key, _ := base64.RawURLEncoding.DecodeString(store.state.PrivateKey)
+	return ed25519.PrivateKey(key)
+}
+func (store *androidIdentity) ClaimRequestID() string           { return store.state.ClaimRequestID }
+func (store *androidIdentity) LKG() *control.DeviceViewEnvelope { return store.state.LKG }
+func (store *androidIdentity) SaveLKG(view control.DeviceViewEnvelope) error {
+	next, err := deviceclient.AcceptLKG(store.state, view)
+	if err == nil {
+		store.state = next
+	}
+	return err
+}
+func (*androidIdentity) ReserveReportSequence() (control.U64, error) {
+	return 0, errors.New("Android report reservation must be committed by the protected host store")
+}
 func AdvanceAndroidEnrollment(body []byte) ([]byte, error) {
 	state, err := decodeState(body)
 	if err != nil {
 		return nil, err
 	}
-	var request any
-	path := "/v2/enrollment/claim"
-	if state.Claimed {
-		value := enrollmentResume{Schema: 2, TransactionID: state.Capability.TransactionID,
-			RequestID: state.ClaimRequestID, DevicePublicKey: state.PublicKey}
-		if err := signValue(resumeDomainV2, value, &value.Signature, privateKey(state)); err != nil {
-			return nil, err
-		}
-		request, path = value, "/v2/enrollment/resume"
+	store := &androidIdentity{state: state}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if state.LKG == nil {
+		_, err = deviceclient.Claim(ctx, store)
 	} else {
-		value := enrollmentClaim{Schema: 2, Capability: state.Capability, RequestID: state.ClaimRequestID, DevicePublicKey: state.PublicKey}
-		if err := signValue(claimDomainV2, value, &value.Signature, privateKey(state)); err != nil {
-			return nil, err
-		}
-		request = value
+		_, err = deviceclient.Resume(ctx, store)
 	}
-	var response enrollmentResponse
-	if err := postAcross(state.Capability.Endpoints, bootstrapHello(state.Capability), nil, path, request, &response); err != nil {
+	if err != nil {
 		return nil, err
 	}
-	if response.Schema != 2 || response.Transaction.ID != state.Capability.TransactionID || response.Transaction.DevicePublicKey != state.PublicKey ||
-		response.Transaction.ClaimRequestID != state.ClaimRequestID {
-		return nil, errors.New("enrollment response is bound to another transaction or identity")
-	}
-	state.Claimed = response.Transaction.State != "open"
-	if response.DeviceView != nil {
-		if err := installEnvelope(&state, *response.DeviceView); err != nil {
-			return nil, err
-		}
-	}
-	return encodeState(state)
+	return deviceclient.EncodeIdentityState(store.state)
 }
-
-// SyncAndroidDevice fetches the current certified view while retaining the old input bytes on failure.
 func SyncAndroidDevice(body []byte) ([]byte, error) {
 	state, err := decodeState(body)
 	if err != nil {
 		return nil, err
 	}
-	if state.LKG == nil {
-		return nil, errors.New("device has no certified LKG")
-	}
-	var envelope deviceViewEnvelope
-	if err := postAcross(state.LKG.View.Endpoints, deviceHello(state.LKG.View.DeviceID), privateKey(state),
-		"/v2/device/config", struct{}{}, &envelope); err != nil {
+	store := &androidIdentity{state: state}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := deviceclient.Sync(ctx, store); err != nil {
 		return nil, err
 	}
-	if err := installEnvelope(&state, envelope); err != nil {
+	return deviceclient.EncodeIdentityState(store.state)
+}
+func ReserveAndroidReportSequence(body []byte) ([]byte, error) {
+	state, err := decodeState(body)
+	if err != nil {
 		return nil, err
 	}
-	return encodeState(state)
+	next, _, err := deviceclient.AdvanceReportSequence(state)
+	if err != nil {
+		return nil, err
+	}
+	return deviceclient.EncodeIdentityState(next)
 }
 
-func installEnvelope(state *deviceState, envelope deviceViewEnvelope) error {
-	if err := verifyEnvelope(envelope, state.Capability); err != nil {
-		return err
-	}
-	if envelope.View.DevicePublicKey != state.PublicKey || envelope.Head.Index < state.Floor {
-		return errors.New("device view changes identity or rolls back floor")
-	}
-	state.Floor, state.LKG = envelope.Head.Index, &envelope
-	return nil
+type androidObservation struct {
+	CandidateID       string `json:"candidate_id"`
+	NetworkGeneration string `json:"network_generation"`
+	Scope             string `json:"scope"`
+	Result            string `json:"result"`
+	Action            string `json:"action"`
+	Target            string `json:"target"`
+	ObservedAt        string `json:"observed_at"`
+	ValidUntil        string `json:"valid_until"`
+	MetricMillis      *int64 `json:"metric_millis,omitempty"`
+}
+type androidSelection struct {
+	Scope       string `json:"scope"`
+	CandidateID string `json:"candidate_id"`
 }
 
-// PostAndroidDeviceReport signs bounded business outcomes and sends them through the device tunnel.
-func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody []byte, reportedAt string) error {
+func androidReport(state deviceclient.State, observationsBody, selectionsBody, runtimeBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
+	if state.LKG == nil || state.ReportSequence == 0 {
+		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
+	}
+	var observations []androidObservation
+	var selections []androidSelection
+	var runtime control.RuntimeReadback
+	if err := decodeStrictJSON(observationsBody, 1<<20, &observations); err != nil {
+		return control.DeviceReport{}, err
+	}
+	if err := decodeStrictJSON(selectionsBody, 1<<20, &selections); err != nil {
+		return control.DeviceReport{}, err
+	}
+	if err := decodeStrictJSON(runtimeBody, 1<<20, &runtime); err != nil {
+		return control.DeviceReport{}, err
+	}
+	now, err := time.Parse(time.RFC3339, reportedAt)
+	if err != nil || now.UTC().Format(time.RFC3339) != reportedAt {
+		return control.DeviceReport{}, errors.New("Android report time is not canonical")
+	}
+	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: []control.ComponentReadback{}}
+	routes := map[string]control.RouteCandidate{}
+	targets := map[string]map[string]bool{}
+	for _, route := range state.LKG.View.Routes {
+		routes[route.ID] = route
+	}
+	for _, group := range state.LKG.View.BusinessProbeTargets {
+		targets[group.ServiceID] = map[string]bool{}
+		for _, target := range group.Targets {
+			targets[group.ServiceID][target] = true
+		}
+	}
+	for _, selection := range selections {
+		route, ok := routes[selection.CandidateID]
+		if !ok || route.Scope != selection.Scope {
+			return control.DeviceReport{}, errors.New("reported selector is not authorized")
+		}
+		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, CandidateID: route.ID})
+	}
+	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
+	for _, observation := range observations {
+		route, ok := routes[observation.CandidateID]
+		if !ok || route.Scope != observation.Scope || !targets[route.ServiceID][observation.Target] || observation.Action != "https_request" || observation.NetworkGeneration != generation {
+			return control.DeviceReport{}, errors.New("reported business observation is outside its authenticated Service")
+		}
+		observed, e1 := time.Parse(time.RFC3339, observation.ObservedAt)
+		until, e2 := time.Parse(time.RFC3339, observation.ValidUntil)
+		if e1 != nil || e2 != nil || observed.UTC().Format(time.RFC3339) != observation.ObservedAt || until.UTC().Format(time.RFC3339) != observation.ValidUntil {
+			return control.DeviceReport{}, errors.New("reported observation time is not canonical")
+		}
+		report.Observations = append(report.Observations, control.Observation{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: observation.Target, Action: observation.Action, SpecDigest: route.SpecDigest, NetworkGeneration: generation, Result: observation.Result, ObservedAt: observed.UnixMilli(), ValidUntil: until.UnixMilli(), DurationMS: observation.MetricMillis})
+	}
+	sort.Slice(report.Observations, func(i, j int) bool {
+		a, b := report.Observations[i], report.Observations[j]
+		return strings.Join([]string{a.ServiceID, a.CandidateID, a.Target, a.Action, a.SpecDigest}, "\x00") < strings.Join([]string{b.ServiceID, b.CandidateID, b.Target, b.Action, b.SpecDigest}, "\x00")
+	})
+	if runtime.State == "running" && runtime.AppliedViewDigest != state.LKG.ViewDigest {
+		return control.DeviceReport{}, errors.New("running report is not the actual accepted configuration")
+	}
+	return control.SignDeviceReport(report, (&androidIdentity{state: state}).PrivateKey())
+}
+
+// Kotlin commits ReserveAndroidReportSequence before invoking this function.
+func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody, runtimeBody []byte, networkGeneration, reportedAt string) error {
 	state, err := decodeState(stateBody)
 	if err != nil {
 		return err
 	}
-	if state.LKG == nil {
-		return errors.New("device has no certified LKG")
-	}
-	var observations []clientmodel.Observation
-	if err := decodeStrictJSON(observationsBody, 1<<20, &observations); err != nil {
+	report, err := androidReport(state, observationsBody, selectionsBody, runtimeBody, networkGeneration, reportedAt)
+	if err != nil {
 		return err
 	}
-	for index, observation := range observations {
-		if observation.Validate() != nil || index > 0 && observations[index-1].CandidateID >= observation.CandidateID {
-			return errors.New("observations are not uniquely sorted")
-		}
-	}
-	if err := requireRFC3339(reportedAt); err != nil {
-		return err
-	}
-	digest, _ := viewDigest(state.LKG.View)
-	report := deviceReport{Schema: 1, DeviceID: state.LKG.View.DeviceID, ViewDigest: digest,
-		ReportedAt: reportedAt, Observations: observations}
-	domain := reportDomain
-	if state.LKG.View.Schema == 2 {
-		if err := decodeStrictJSON(selectionsBody, 1<<20, &report.Selections); err != nil {
-			return err
-		}
-		routes := map[string]clientmodel.RouteCandidate{}
-		for _, route := range state.LKG.View.Routes {
-			routes[route.ID] = route
-		}
-		for index, selection := range report.Selections {
-			route, found := routes[selection.CandidateID]
-			if !found || route.Scope != selection.Scope || index > 0 && report.Selections[index-1].Scope >= selection.Scope {
-				return errors.New("report selections are not uniquely sorted or authorized")
-			}
-		}
-		report.Schema = 2
-		report.Runtime = &runtimeReadback{State: "running", AppliedViewDigest: digest, Exact: true}
-		for _, expected := range state.LKG.View.ExpectedComponents {
-			if expected.Name == "agent" {
-				report.Components = append(report.Components, componentReadback{Name: "agent", Version: version.AgentProtocolVersion})
-			}
-		}
-		domain = reportDomainV2
-	} else {
-		var selections []reportSelection
-		if err := decodeStrictJSON(selectionsBody, 1<<20, &selections); err != nil || len(selections) != 1 {
-			return errors.New("legacy report requires one selection")
-		}
-		report.Selection = selections[0].CandidateID
-	}
-	if err := signValue(domain, report, &report.Signature, privateKey(state)); err != nil {
-		return err
-	}
-	var response struct {
-		DeviceID   string `json:"device_id"`
-		ReportedAt string `json:"reported_at"`
-	}
-	if err := postAcross(state.LKG.View.Endpoints, deviceHello(state.LKG.View.DeviceID), privateKey(state),
-		"/v2/device/report", report, &response); err != nil {
-		return err
-	}
-	if response.DeviceID != report.DeviceID || response.ReportedAt != report.ReportedAt {
-		return errors.New("report acknowledgement mismatch")
-	}
-	return nil
-}
-
-func bootstrapHello(capability bootstrapCapability) func(endpointReference) tunnelHello {
-	return func(endpoint endpointReference) tunnelHello {
-		copy := capability
-		return tunnelHello{Schema: 1, Mode: "bootstrap", EndpointID: endpoint.EndpointID,
-			Generation: endpoint.Generation, Capability: &copy}
-	}
-}
-
-func deviceHello(deviceID string) func(endpointReference) tunnelHello {
-	return func(endpoint endpointReference) tunnelHello {
-		return tunnelHello{Schema: 1, Mode: "device", EndpointID: endpoint.EndpointID,
-			Generation: endpoint.Generation, DeviceID: deviceID}
-	}
-}
-
-type bufferedConn struct {
-	net.Conn
-	reader *bufio.Reader
-}
-
-func (connection *bufferedConn) Read(body []byte) (int, error) { return connection.reader.Read(body) }
-
-func writeFrame(writer io.Writer, value any) error {
-	body, err := canonical(value)
-	if err != nil || len(body) == 0 || len(body) > 64<<10 {
-		return errors.New("invalid tunnel frame")
-	}
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, uint32(len(body)))
-	if _, err = writer.Write(header); err != nil {
-		return err
-	}
-	_, err = writer.Write(body)
-	return err
-}
-
-func readFrame(reader *bufio.Reader, value any) error {
-	header := make([]byte, 4)
-	if _, err := io.ReadFull(reader, header); err != nil {
-		return err
-	}
-	size := binary.BigEndian.Uint32(header)
-	if size == 0 || size > 64<<10 {
-		return errors.New("invalid tunnel frame")
-	}
-	body := make([]byte, size)
-	if _, err := io.ReadFull(reader, body); err != nil {
-		return err
-	}
-	return decodeCanonical(body, value)
-}
-
-func dial(endpoint endpointReference, hello tunnelHello, private ed25519.PrivateKey) (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", endpoint.Address)
-	if err != nil {
-		return nil, err
-	}
-	failed := true
-	defer func() {
-		if failed {
-			_ = raw.Close()
-		}
-	}()
-	config := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
-		ServerName: endpoint.ServerName, NextProtos: []string{"loom-tunnel/1"}, InsecureSkipVerify: true,
-		VerifyConnection: func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return errors.New("missing tunnel certificate")
-			}
-			sum := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
-			if hex.EncodeToString(sum[:]) != endpoint.SPKISHA256 {
-				return errors.New("tunnel SPKI mismatch")
-			}
-			return nil
-		}}
-	connection := tls.Client(raw, config)
-	_ = connection.SetDeadline(time.Now().Add(20 * time.Second))
-	if err := connection.HandshakeContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := writeFrame(connection, hello); err != nil {
-		return nil, err
-	}
-	reader := bufio.NewReader(connection)
-	if hello.Mode == "device" {
-		var challenge tunnelChallenge
-		if err := readFrame(reader, &challenge); err != nil || challenge.Schema != 1 {
-			return nil, errors.New("invalid tunnel challenge")
-		}
-		message, _ := canonical(struct {
-			Hello     tunnelHello     `json:"hello"`
-			Challenge tunnelChallenge `json:"challenge"`
-		}{hello, challenge})
-		proof := tunnelProof{Schema: 1, Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(private, append([]byte(tunnelDomain), message...)))}
-		if err := writeFrame(connection, proof); err != nil {
-			return nil, err
-		}
-	}
-	var ready tunnelReady
-	if err := readFrame(reader, &ready); err != nil || ready.Schema != 1 || ready.Status != "ready" {
-		return nil, errors.New("tunnel rejected")
-	}
-	_ = connection.SetDeadline(time.Time{})
-	failed = false
-	return &bufferedConn{Conn: connection, reader: reader}, nil
-}
-
-func postAcross(endpoints []endpointReference, hello func(endpointReference) tunnelHello, private ed25519.PrivateKey,
-	path string, request, response any) error {
-	ordered := append([]endpointReference(nil), endpoints...)
-	sort.Slice(ordered, func(i, j int) bool { return endpointLess(ordered[i], ordered[j]) })
-	var failures []error
-	for _, endpoint := range ordered {
-		if endpoint.State != "serving" {
-			continue
-		}
-		connection, err := dial(endpoint, hello(endpoint), private)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		err = postJSON(connection, path, request, response)
-		_ = connection.Close()
-		if err == nil {
-			return nil
-		}
-		failures = append(failures, err)
-	}
-	if len(failures) == 0 {
-		return errors.New("no serving private endpoint")
-	}
-	return errors.Join(failures...)
-}
-
-func postJSON(connection net.Conn, path string, requestValue, responseValue any) error {
-	body, err := canonical(requestValue)
-	if err != nil {
-		return err
-	}
-	request, err := http.NewRequest(http.MethodPost, "http://loom.private"+path, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	used := false
-	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil,
-		DialContext: func(context.Context, string, string) (net.Conn, error) {
-			if used {
-				return nil, errors.New("tunnel already used")
-			}
-			used = true
-			return connection, nil
-		}}}
-	httpResponse, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer httpResponse.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(httpResponse.Body, 8<<20))
-	if err != nil {
-		return err
-	}
-	if httpResponse.StatusCode != http.StatusOK && httpResponse.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("private service rejected request: HTTP %d", httpResponse.StatusCode)
-	}
-	return decodeStrictJSON(responseBody, 8<<20, responseValue)
+	return deviceclient.PostSignedReport(ctx, &androidIdentity{state: state}, report)
 }
