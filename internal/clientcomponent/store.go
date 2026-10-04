@@ -198,10 +198,24 @@ func (state State) Validate() error {
 
 func (ref SlotRef) Validate() error {
 	if ref.Generation == 0 || !validLowerHex(ref.ID, 64) || (ref.Arch != "amd64" && ref.Arch != "arm64") ||
-		ref.SingBoxVersion != DataPlaneVersion || ref.WintunVersion != wintunVersion {
+		!validComponentVersion(ref.SingBoxVersion) || !validComponentVersion(ref.WintunVersion) {
 		return errors.New("component slot has invalid content coordinates")
 	}
 	return nil
+}
+
+// Accepted coordinates remain readable across a later component upgrade. The
+// new package supplies the next version; versions are never ordered as strings.
+func validComponentVersion(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, c := range value {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune(".-_+", c)) {
+			return false
+		}
+	}
+	return true
 }
 
 func installSlot(parent, target string, verified *Verified, verifyAuthenticode AuthenticodeVerifier) (retErr error) {

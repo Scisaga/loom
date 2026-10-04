@@ -187,6 +187,24 @@ func TestComponentGenerationCannotRegressOrEquivocate(t *testing.T) {
 	if err := install(root, third); err != nil {
 		t.Fatal("same generation retry failed", err)
 	}
+	// A previous artifact version is data in the existing schema 3 acceptance
+	// floor. Upgrading must retain that floor even if its old slot is absent.
+	state.Current.Generation = 2
+	state.Current.ID = strings.Repeat("b", 64)
+	state.Current.SingBoxVersion = "1.11.3-loom.demo"
+	body, err := control.CanonicalEncode(*state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath(root), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := install(root, artifact.Package); err == nil {
+		t.Fatal("old artifact coordinate lost its generation floor")
+	}
+	if err := install(root, third); err != nil {
+		t.Fatal("forward component version upgrade failed", err)
+	}
 	old := []byte(`{"schema":1,"current":{}}`)
 	if err := os.WriteFile(statePath(root), old, 0600); err != nil {
 		t.Fatal(err)
