@@ -420,7 +420,7 @@ func (a *Authority) CompleteEnrollment(ctx context.Context, request EnrollmentCl
 		}
 	}
 	authorization := DeviceAuthorization{ID: invite.DeviceID, Name: invite.Name, Platform: binding.Platform, DevicePublicKey: binding.DevicePublicKey,
-		Responsibilities: responsibilities, PolicyIDs: append([]string{}, invite.PolicyIDs...), DistributionURLs: []string{}, RuntimeKey: base64.RawURLEncoding.EncodeToString(key),
+		Responsibilities: responsibilities, PolicyIDs: append([]string{}, invite.PolicyIDs...), DistributionURLs: []string{}, DNSServers: append([]string(nil), invite.DNSServers...), RuntimeKey: base64.RawURLEncoding.EncodeToString(key),
 		TransactionID: invite.ID, InviteMaterialID: originalID, BindingMaterialID: bindingID}
 	return a.submitOperationLocked(ctx, Operation{Schema: 3, RequestID: enrollmentRequestID("join", invite.ID), Operation: "device.join", TargetKind: "device", TargetID: invite.DeviceID, Dependencies: sortedUniqueDependencies(dependencies), Payload: authorization}, local)
 }

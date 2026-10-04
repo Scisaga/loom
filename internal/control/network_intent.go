@@ -155,6 +155,19 @@ func contractHost(host string) bool {
 	return contractDNSName(host)
 }
 
+func validateOptionalDNS(servers []string) error {
+	if servers != nil && len(servers) == 0 {
+		return errors.New("unconfigured device DNS must be omitted")
+	}
+	for i, value := range servers {
+		address, err := netip.ParseAddr(value)
+		if err != nil || address.Zone() != "" || address.Is4In6() || address.IsUnspecified() || address.IsMulticast() || address.String() != value || i > 0 && servers[i-1] >= value {
+			return errors.New("device DNS requires canonical uniquely sorted unicast IP addresses")
+		}
+	}
+	return nil
+}
+
 type NetworkPolicy struct {
 	ID                 string      `json:"id"`
 	Name               string      `json:"name"`

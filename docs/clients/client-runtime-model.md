@@ -184,8 +184,8 @@ HostAdapter 可以按交付形态投影本机 capture 配置，但不得增加�
 Service business 仍为 `unknown`，直到对该 Service 匹配的真实目标或正常业务动作成功。
 Auto 可以用已知首跳连通性优先尝试候选，但不能据此向 UI 或报告宣称该 Service 已健康。
 
-完整业务探测的 DNS 地址和 HTTPS 目标都来自同一份认证 `DeviceView`。DNS 是 `NetworkIntent` 的全局值
-与节点逐项覆盖；HTTPS 目标来自 `NetworkIntent` 中一份规范排序、去重、仅含 HTTPS URL 的全局业务探测
+完整业务探测的 DNS 地址和 HTTPS 目标都来自同一份认证 `DeviceView`。DNS 地址来自设备授权中的
+规范解析器集合，首次加入可由 Invite 配置；HTTPS 目标来自 `NetworkIntent` 中一份规范排序、去重、仅含 HTTPS URL 的全局业务探测
 目标池，不要求每个 access 节点手工填写。服务端先解析该设备的 `PolicyIDs`，过滤出有效 allow 策略及其固定 Service，再只把
 主机名被这些 Service matcher 覆盖且授权允许的 HTTPS URL **按 Service 分别**投影为 `BusinessProbeTargets`，
 不建立第二个权威 `ProbeGroup`。不同设备/Service/Policy 范围的实际业务结果不得互相借用。无匹配目标时，
@@ -213,7 +213,11 @@ DNS overlay 只接受精确 `.loom` A/AAAA 映射，`control.loom` 由已认证 
 Android HostAdapter 在本机执行投影启用 libbox 的平台接口控制，使其 TCP/UDP underlay socket 实际调用
 `VpnService.protect`，否则隧道自身会重新进入 VPN。私有配置/报告使用的认证 Endpoint IP 还须以精确
 `/32` 或 `/128` 从 capture 中排除；这是从同一 View 单向派生的本机路由输入，不授予 Service 权限。
-当前尚未接入认证名称解析的 capture 路径遇到 Endpoint 主机名须明确失败，不借系统 resolver 猜地址。
+Android 私有配置/报告的 Go socket 与 DNS 查询同样使用活跃 VpnService 的 protect 回调；该回调在 capture
+之前安装，在确认关闭后撤销，失败则拒绝连接。具名 Endpoint 只经 View 的规范解析器查询，逐次拨号使用
+所得 IP，原 TLS 名称及 SPKI 保持；不把可能变化的域名答案当成永久 TUN 排除。纯渲染不查询 DNS，
+字面 Endpoint 仍产生上述精确排除。未配置解析器的具名入口与资源明确失败，不借系统 resolver 或 hosts。
+解析器来自 Invite 的初始设备配置或随后普通 device.put；业务权限变化不应无意移除未编辑的 DNS 配置。
 这项 Android 平台 socket 控制不证明 Linux 初始 namespace 的 auto_route 安全，不能用于绕过宿主门禁。
 Linux HostAdapter 只在隔离 capture namespace 内将这些 underlay endpoint 的解析结果以逐主机 `/32` 或
 `/128` 投影为 TUN 的本机 `route_exclude_address`，使私有控制、引导、

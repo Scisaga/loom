@@ -67,6 +67,7 @@ type Invite struct {
 	Name             string             `json:"name"`
 	Responsibilities []string           `json:"responsibilities"`
 	PolicyIDs        []string           `json:"policy_ids"`
+	DNSServers       []string           `json:"dns_servers,omitempty"`
 	Medium           string             `json:"medium"`
 	Endpoint         EndpointGeneration `json:"endpoint"`
 	ExpiresAt        int64              `json:"expires_at"`
@@ -111,6 +112,9 @@ func validatePlatform(value string) bool {
 }
 
 func (invite Invite) Validate() error {
+	if err := validateOptionalDNS(invite.DNSServers); err != nil {
+		return err
+	}
 	if ValidateID(invite.ID) != nil || ValidateDigest(invite.GenesisDigest) != nil || ValidateID(invite.IssuerControlID) != nil ||
 		ValidateID(invite.DeviceID) != nil || invite.DeviceID == "direct" || ValidateText(invite.Name) != nil ||
 		len(invite.Responsibilities) == 0 || validateResponsibilities(invite.Responsibilities, true) != nil ||
@@ -166,6 +170,7 @@ type DeviceAuthorization struct {
 	Responsibilities  []string `json:"responsibilities"`
 	PolicyIDs         []string `json:"policy_ids"`
 	DistributionURLs  []string `json:"distribution_urls"`
+	DNSServers        []string `json:"dns_servers,omitempty"`
 	RuntimeKey        string   `json:"runtime_key"`
 	TransactionID     string   `json:"transaction_id"`
 	InviteMaterialID  string   `json:"invite_material_id"`
@@ -173,6 +178,9 @@ type DeviceAuthorization struct {
 }
 
 func (authorization DeviceAuthorization) Validate() error {
+	if err := validateOptionalDNS(authorization.DNSServers); err != nil {
+		return err
+	}
 	if ValidateID(authorization.ID) != nil || authorization.ID == "direct" || ValidateText(authorization.Name) != nil || !validatePlatform(authorization.Platform) || ValidatePublicKey(authorization.DevicePublicKey) != nil ||
 		validateResponsibilities(authorization.Responsibilities, false) != nil || validateIDSet(authorization.PolicyIDs) != nil || ValidatePublicKey(authorization.RuntimeKey) != nil || ValidateID(authorization.TransactionID) != nil ||
 		ValidateDigest(authorization.InviteMaterialID) != nil || ValidateDigest(authorization.BindingMaterialID) != nil || authorization.DistributionURLs == nil {

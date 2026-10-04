@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func enrollmentAuthorityFixture(t *testing.T) (*Server, Invite, string, EnrollmentClaimRequest, ed25519.PrivateKey, []string) {
+func enrollmentAuthorityFixture(t *testing.T, changes ...func(*Invite)) (*Server, Invite, string, EnrollmentClaimRequest, ed25519.PrivateKey, []string) {
 	t.Helper()
 	root, config, genesis := authorityFixture(t)
 	if _, err := InitializeAuthority(root, config, genesis); err != nil {
@@ -37,6 +37,9 @@ func enrollmentAuthorityFixture(t *testing.T) (*Server, Invite, string, Enrollme
 	endpoint.State = "serving"
 	serving := submitAuthority(t, runtime, Operation{Schema: 3, RequestID: "demo-serve-endpoint", Operation: "endpoint.put", TargetKind: "endpoint", TargetID: endpoint.ID, Dependencies: []string{prepared.MaterialID}, Payload: endpoint})
 	invite := Invite{ID: "demo-enrollment", GenesisDigest: config.GenesisID, IssuerControlID: config.ControlID, DeviceID: "demo-access", Name: "Demo access", Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, Medium: "qr", Endpoint: endpoint, ExpiresAt: now.Add(time.Hour).UnixMilli()}
+	for _, change := range changes {
+		change(&invite)
+	}
 	dependencies := sortedUniqueDependencies([]string{service.MaterialID, policy.MaterialID, serving.MaterialID})
 	issued := submitAuthority(t, runtime, Operation{Schema: 3, RequestID: "demo-issue-invite", Operation: "invite.issue", TargetKind: "invite", TargetID: invite.ID, Dependencies: dependencies, Payload: invite})
 	seed := sha256.Sum256([]byte("demo-joining-device"))

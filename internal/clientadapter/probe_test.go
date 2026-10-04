@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"loom/internal/netx"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -272,7 +273,7 @@ func TestBusinessDNSAnswersRejectMismatchAndUnrelatedAddress(t *testing.T) {
 	binary.BigEndian.PutUint16(answer[2:4], 0x8180)
 	binary.BigEndian.PutUint16(answer[6:8], 1)
 	answer = append(answer, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 8)
-	if addresses, err := probeDNSAnswers(query, answer, 1); err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.8" {
+	if addresses, err := netx.DNSAnswers(query, answer, 1); err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.8" {
 		t.Fatalf("valid answer: %v %v", addresses, err)
 	}
 	for _, change := range []func([]byte) []byte{
@@ -283,14 +284,14 @@ func TestBusinessDNSAnswersRejectMismatchAndUnrelatedAddress(t *testing.T) {
 		func(b []byte) []byte { b[len(query)+1] = byte(len(query)); return b },
 		func(b []byte) []byte { return b[:len(b)-1] },
 	} {
-		if _, err := probeDNSAnswers(query, change(append([]byte(nil), answer...)), 1); err == nil {
+		if _, err := netx.DNSAnswers(query, change(append([]byte(nil), answer...)), 1); err == nil {
 			t.Fatal("accepted invalid DNS response")
 		}
 	}
 	unrelated := append([]byte(nil), answer[:len(query)]...)
 	unrelated = append(unrelated, 5, 'o', 't', 'h', 'e', 'r', 0xc0, 0x14)
 	unrelated = append(unrelated, answer[len(query)+2:]...)
-	if addresses, err := probeDNSAnswers(query, unrelated, 1); err != nil || len(addresses) != 0 {
+	if addresses, err := netx.DNSAnswers(query, unrelated, 1); err != nil || len(addresses) != 0 {
 		t.Fatalf("unrelated answer supplied target: %v %v", addresses, err)
 	}
 	cname := append([]byte(nil), answer[:len(query)]...)
@@ -298,7 +299,7 @@ func TestBusinessDNSAnswersRejectMismatchAndUnrelatedAddress(t *testing.T) {
 	cname = append(cname, 0xc0, 0x0c, 0, 5, 0, 1, 0, 0, 0, 60, 0, 8, 5, 'a', 'l', 'i', 'a', 's', 0xc0, 0x0c)
 	cname = append(cname, 0xc0, byte(len(query)+12))
 	cname = append(cname, answer[len(query)+2:]...)
-	if addresses, err := probeDNSAnswers(query, cname, 1); err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.8" {
+	if addresses, err := netx.DNSAnswers(query, cname, 1); err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.8" {
 		t.Fatalf("certified CNAME answer = %v %v", addresses, err)
 	}
 }

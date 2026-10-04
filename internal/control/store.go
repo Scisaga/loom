@@ -629,6 +629,7 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 		}
 		original.Name, original.Responsibilities, original.PolicyIDs, original.DistributionURLs = public.Name,
 			append([]string{}, public.Responsibilities...), append([]string{}, public.PolicyIDs...), append([]string{}, public.DistributionURLs...)
+		original.DNSServers = append([]string(nil), public.DNSServers...)
 		payload = *original
 	}
 	material := Material{Schema: MaterialSchema, NetworkID: config.NetworkID, IssuerControlID: config.ControlID, IssuerKeyID: keyID, ControlConfigID: a.projection.ControlConfigID, Sequence: sequence + 1, PreviousMaterialID: previous, Dependencies: append([]string{}, op.Dependencies...), RequestID: op.RequestID, TargetKind: op.TargetKind, TargetID: op.TargetID, Operation: op.Operation, Payload: payload}

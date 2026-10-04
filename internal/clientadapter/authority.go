@@ -3,6 +3,8 @@ package clientadapter
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/netip"
 
 	"loom/internal/clientmodel"
@@ -41,7 +43,7 @@ func ManagedRuntimeConfig(view control.DeviceView, secret string) (string, error
 			if view.Platform != "linux" {
 				return "", errors.New("this platform has no server resource executor")
 			}
-		} else if _, err := netip.ParseAddr(resource.DialHost); err != nil {
+		} else if _, err := netip.ParseAddr(resource.DialHost); err != nil && len(view.DNSServers) == 0 {
 			return "", errors.New("resource hostname execution requires an authenticated resolver configuration")
 		}
 	}
@@ -54,6 +56,49 @@ func ManagedRuntimeConfig(view control.DeviceView, secret string) (string, error
 	}
 	document["inbounds"] = json.RawMessage(`[{"type":"tun","tag":"tun-in","auto_route":true}]`)
 	document["experimental"], _ = json.Marshal(map[string]any{"clash_api": map[string]any{"external_controller": "127.0.0.1:61800", "secret": secret}})
+	body, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	return WithManagedDNS(string(body), view.DNSServers, true)
+}
+
+// WithManagedDNS projects the authenticated per-device resolver addresses into
+// a disposable runtime. It cannot change the certified business selectors.
+func WithManagedDNS(config string, addresses []string, access bool) (string, error) {
+	if len(addresses) == 0 {
+		return config, nil
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config), &document); err != nil {
+		return "", err
+	}
+	{
+		var outbounds []json.RawMessage
+		if err := json.Unmarshal(document["outbounds"], &outbounds); err != nil {
+			return "", err
+		}
+		outbounds = append(outbounds, json.RawMessage(`{"type":"direct","tag":"loom-underlay-dns"}`))
+		document["outbounds"], _ = json.Marshal(outbounds)
+		servers := make([]map[string]any, 0, len(addresses))
+		for i, address := range addresses {
+			servers = append(servers, map[string]any{"tag": fmt.Sprintf("loom-resolver-%d", i), "address": "udp://" + net.JoinHostPort(address, "53"), "detour": "loom-underlay-dns"})
+		}
+		document["dns"], _ = json.Marshal(map[string]any{"servers": servers, "final": "loom-resolver-0", "strategy": "prefer_ipv4", "independent_cache": true})
+		var route map[string]json.RawMessage
+		if err := json.Unmarshal(document["route"], &route); err != nil {
+			return "", err
+		}
+		var rules []json.RawMessage
+		if err := json.Unmarshal(route["rules"], &rules); err != nil {
+			return "", err
+		}
+		if access {
+			rules = append([]json.RawMessage{json.RawMessage(`{"inbound":["tun-in"],"port":[53],"action":"hijack-dns"}`)}, rules...)
+		}
+		route["rules"], _ = json.Marshal(rules)
+		document["route"], _ = json.Marshal(route)
+	}
 	body, err := json.Marshal(document)
 	return string(body), err
 }

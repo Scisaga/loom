@@ -182,6 +182,13 @@ func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []stri
 			return "", err
 		}
 	}
+	if view.RuntimeProfile == nil {
+		var err error
+		config, err = clientadapter.WithManagedDNS(config, view.DNSServers, false)
+		if err != nil {
+			return "", err
+		}
+	}
 	return appendHY2Runtime(config, view, executions)
 }
 func runtimeSecret() (string, error) {

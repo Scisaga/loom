@@ -851,7 +851,7 @@ func connectEndpoint(ctx context.Context, endpoint EndpointGeneration, protocol 
 	if err := endpoint.Validate(); err != nil {
 		return nil, err
 	}
-	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(endpoint.Host, strconv.Itoa(endpoint.Port)))
+	raw, err := EndpointDialer(ctx)(ctx, "tcp", net.JoinHostPort(endpoint.Host, strconv.Itoa(endpoint.Port)))
 	if err != nil {
 		return nil, err
 	}
@@ -861,6 +861,21 @@ func connectEndpoint(ctx context.Context, endpoint EndpointGeneration, protocol 
 		return nil, err
 	}
 	return connection, nil
+}
+
+type endpointDialerKey struct{}
+
+// WithEndpointDialer supplies transport addresses without changing the signed
+// endpoint's TLS name, SPKI, certificate or application authentication.
+func WithEndpointDialer(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error)) context.Context {
+	return context.WithValue(ctx, endpointDialerKey{}, dial)
+}
+
+func EndpointDialer(ctx context.Context) func(context.Context, string, string) (net.Conn, error) {
+	if dial, ok := ctx.Value(endpointDialerKey{}).(func(context.Context, string, string) (net.Conn, error)); ok && dial != nil {
+		return dial
+	}
+	return (&net.Dialer{}).DialContext
 }
 
 // ProbeEndpoint verifies the advertised address without claiming or opening a

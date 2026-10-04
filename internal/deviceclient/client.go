@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"loom/internal/control"
+	"loom/internal/netx"
 	"net"
 	"net/http"
 	"sort"
@@ -144,6 +145,28 @@ func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error
 		return nil, errors.New("device has no accepted LKG")
 	}
 	var failures []error
+	underlay := control.EndpointDialer(ctx)
+	ctx = control.WithEndpointDialer(ctx, func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		addresses, err := netx.ResolveCertifiedIPs(ctx, host, lkg.View.DNSServers, underlay)
+		if err != nil {
+			return nil, err
+		}
+		var failures []error
+		for _, ip := range addresses {
+			attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
+			connection, err := underlay(attempt, network, net.JoinHostPort(ip.String(), port))
+			cancel()
+			if err == nil {
+				return connection, nil
+			}
+			failures = append(failures, err)
+		}
+		return nil, errors.Join(failures...)
+	})
 	for _, endpoint := range endpointOrder(lkg.View.Endpoints) {
 		if endpoint.State != "serving" {
 			continue
@@ -165,28 +188,15 @@ func endpointDialAddresses(ctx context.Context, address string, dnsAddresses []s
 	if err != nil || host == "" || port == "" {
 		return nil, errors.New("device endpoint address is invalid")
 	}
-	if net.ParseIP(host) != nil {
-		return []string{address}, nil
-	}
-	if len(dnsAddresses) == 0 {
-		addresses, err := net.DefaultResolver.LookupHost(ctx, host)
-		if err != nil {
-			return nil, errors.New("underlay DNS could not resolve an endpoint")
-		}
-		return canonicalEndpointAddresses(addresses, port)
-	}
-	dns := net.ParseIP(dnsAddresses[0])
-	if dns == nil {
-		return nil, errors.New("certified device DNS address is invalid")
-	}
-	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "udp", net.JoinHostPort(dns.String(), "53"))
-	}}
-	addresses, err := resolver.LookupHost(ctx, host)
+	ips, err := netx.ResolveCertifiedIPs(ctx, host, dnsAddresses, control.EndpointDialer(ctx))
 	if err != nil {
-		return nil, errors.New("certified device DNS could not resolve an endpoint")
+		return nil, err
 	}
-	return canonicalEndpointAddresses(addresses, port)
+	values := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		values = append(values, ip.String())
+	}
+	return canonicalEndpointAddresses(values, port)
 }
 
 func canonicalEndpointAddresses(addresses []string, port string) ([]string, error) {

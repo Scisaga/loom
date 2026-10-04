@@ -122,6 +122,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
     override fun onCreate() {
         super.onCreate()
         runningService = this
+        io.github.scisaga.loomcore.Loomcore.setAndroidSocketProtector(
+            object : io.github.scisaga.loomcore.AndroidSocketProtector {
+                override fun protectSocket(fd: Long): Boolean = protect(fd.toInt())
+            },
+        )
         createNotificationChannel()
         VpnRuntime.transform { it.copy(alwaysOn = alwaysOnEnabled()) }
     }
@@ -203,6 +208,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             lifecycle.withLock { if (runningService === this@LoomVpnService) runningService = null }
         }
         scope.cancel()
+        io.github.scisaga.loomcore.Loomcore.setAndroidSocketProtector(null)
         super.onDestroy()
     }
 

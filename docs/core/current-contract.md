@@ -448,6 +448,24 @@ DeviceAuthorization 字段为 `id,name,platform,device_public_key,responsibiliti
 PolicyIDs 可为空，没有 access 则必须为空。同 Service 最多一条 Policy；新分配时
 未知/冲突/悬空引用和歧义目标组合均拒绝。已分配引用后来失效，原分配仍可回读但不再产生相应权限。
 RuntimeKey 是 control 生成的 Secret32，不是设备身份私钥。
+
+设备还可带 `dns_servers:[]IP`，由同一 `device.put` 公开命令管理，表示该设备已认证的
+underlay 解析器集合；非空时按规范 IP 文本排序去重。未配置唯一表示为字段省略，显式空数组、null、
+主机名、带 zone 的地址和非规范 IP 均拒绝。这个可选值不改变已签发的省略字段字节；
+Invite 可带相同约束的可选 `dns_servers`；首次 device.join 原样继承，省略时保持未配置。
+这让具名入口设备在一次正常加入中取得解析器，避免先加入失败再补配置；管理员按设备原有部署输入配置，
+不从 `.env`、宿主 resolver 或旧事实自动导入。
+公开命令替换完整设备值，省略该字段表示取消配置，重命名或改权的 UI 必须保留操作者未改动的解析器。
+`DeviceView.dns_servers` 继续使用既有必填数组：未配置投影为 `[]`，已配置逐项复制。
+它只决定解析位置，不改变 Service/Policy 权限或认证 TLS 名称、SPKI；它与 `.loom` 权威记录分开。
+正式入口为设备管理表单或 `loom control write`，普通事实持久化、同步、重启重建和冲突处理复用设备目标。
+客户端纯渲染只消费认证地址；网络查询在连接 adapter 中执行，结果不可倒写 DeviceView 或身份。
+
+最小测试覆盖设备配置的值/字节往返及未配置历史字节不变、普通管理写入与重启投影、解析失败不借
+系统 DNS/hosts 回退、真实域名设备认证及错误 TLS 身份拒绝、Android underlay socket 的 protect 回调。
+DNS 修改后新 View 使旧运行与相关观测失效；认证接受必须先持久化，执行失败仍保留新授权。
+首次 bootstrap 未持有 View，继续使用 Invite 的既定地址与 TLS 边界；加入后的域名入口只使用
+该设备认证的解析器，地址是瞬时拨号参数，不能改写签名 EndpointGeneration。
 普通改权保持原 transaction、Invite、绑定、公钥和平台；这些引用沿事实依赖可验证，不由 UI 重建。
 id/transaction_id 为 ID，name 为 Text，公钥为 PublicKey；两个 material_id 为 Digest，policy_ids 为 ID 集合。
 

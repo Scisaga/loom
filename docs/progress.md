@@ -21,7 +21,7 @@
   Android API 35 x86_64 临时模拟器也已从正常文件导入和系统 VPN 同意入口，完成 Hy2 HTTPS、撤权热替换、
   Keystore 重启恢复、重新授权及界面/私有签名报告回读。
   这是一条已运行的开发闭环，不是生产激活、全部传输能力或所有平台验收完成。
-- 仍须连续推进：Windows 当前 Hy2 制品的原生消费、各平台实体机与正式交付验证、资源主机名与认证 DNS 接线、
+- 仍须连续推进：Windows 当前 Hy2/DNS 制品的原生消费、各平台实体机与正式交付验证、内核 WG 资源域名及 `.loom` overlay、
   未实现的传输能力、动态成员及签名发布消费。Linux WG 中继、此次精确制品激活和旧运行入口退出已现场验证，见下文。
   动态成员多数链尚未实现，不能用初始成员表代替；Hy2、LAN、发布和全部平台能力不是简单 Direct 链的共同前置。
 - 生产状态：获准的 Linux client、control、私有 relay 和透明 endpoint edge 已使用本轮同一精确制品。
@@ -62,6 +62,34 @@
 本轮未完成 `control.loom`：现有网站叶证书缺该 DNS SAN，认证 DNS overlay 也尚未接线。
 回环浏览器成功不能抵扣它，也不改写用户已确认的笔记本访问历史。旧 HTTP 分发 URL 未伪装成 HTTPS；
 原值留证据，新发布 catalog/floor 消费仍未实现。本次直接激活不声称该发布链或 Android/Windows 实体机完成。
+
+### 认证解析器与具名客户端入口
+
+本次补齐设备解析器配置、Linux 私有域名入口及 Android 具名 Endpoint/Hy2 的实际消费；
+证据位于受保护的 `deploy/evidence/2026-10-04-client-dns/`，不改变上述完整工作项的未完成判定。
+
+- 解析器复用 Invite 和设备授权中的可选 `dns_servers`，沿正式邀请/设备管理表单或 `loom control write`
+  写入同一普通事实，投影到既有 `DeviceView.dns_servers`。首次加入直接取得配置；改名和改权保留未编辑的值。
+  未配置的已签发字段继续省略，原始字节不变，没有新协议号、全局默认 store 或系统 resolver 运行回退。
+- 私有设备连接只向认证的字面解析器查询；域名答案只作临时拨号地址，原 TLS 名称、SPKI 和证书身份保持。
+  Linux 与 Android 的 Hy2 运行投影接入同一 DNS 配置；Android 的 Go 私有连接及 DNS socket 也在 VPN capture
+  前调用平台 protect，关闭后撤销回调。纯渲染没有网络查询，未配置解析器的具名入口明确失败。
+- 所有获准 Linux 节点先经原管理员 mTLS 配置各自原有解析器，再确认旧客户端已保存签名 View，随后切换
+  client、control、relay 和 edge 的同一精确制品。新客户端经具名入口完成正式 sync 和签名报告；
+  控制节点同步一致，普通 DNS 事实经 control 重启后回读，正式 Chrome 也回读设备表单中的同一值。
+- 固定出口及 Auto 使用真实 HTTPS 验证。单个出口首次失败的原始记录保留，单独复测经同出口中继成功；
+  已有部分境内出口的国际目标仍失败，未伪报可用。客户端正常停止、owned WG 清理和重启后 Auto 业务通过；
+  各阶段新建 SSH、LAN DNS、系统 DNS、默认公网及既有代理正常，路由/规则的配置值保持。
+  RA 路由租约的自然倒计时单独剔除后比较，原始快照保留。设备身份、RuntimeKey、旧 floor、证书/密钥及
+  已有 Material 原字节逐项核对保持，运行制品与最终源码的重建摘要一致。
+- 独立 user/network/mount namespace 中的 Android API 35 x86_64 原生验证使用具名私有入口和具名 Hy2
+  资源，完成正常文件导入、VPN 同意、真实业务、撤权拒绝、Keystore 重启恢复、重新授权、签名报告与界面回读。
+  DNS 查询与接收端记录、截图、精确 APK 摘要保留；临时模拟器及 fixture 已退出，宿主未安装 DNS/路由规则。
+- Go 全仓 build/test/vet、mobile test/vet、真实 Chrome 邀请与改权、双 ABI Android AAR、JVM/lint/APK 检查通过。
+  Windows amd64/arm64 源码编译通过，未用它抵扣新版原生执行、交互桌面或实体机验收。
+
+`.loom` 权威记录与 `control.loom` 网站证书/浏览器入口、内核 WG 资源域名、Windows 新制品原生验证、
+实体机及正式签名交付仍未完成；本段的认证解析器结果不替代这些能力。
 
 ### 本轮实现与实际验证
 

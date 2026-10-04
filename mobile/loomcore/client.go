@@ -135,7 +135,12 @@ func androidRuntimeConfig(view control.DeviceView, secret string) (string, error
 	for _, endpoint := range view.Endpoints {
 		address, err := netip.ParseAddr(endpoint.Host)
 		if err != nil {
-			return "", errors.New("Android capture requires authenticated endpoint address resolution")
+			if len(view.DNSServers) == 0 {
+				return "", errors.New("Android capture requires authenticated endpoint address resolution")
+			}
+			// Go private-service sockets and their DNS queries use the active
+			// VpnService protect callback, including after DNS addresses change.
+			continue
 		}
 		exclusions[netip.PrefixFrom(address, address.BitLen()).String()] = true
 	}
@@ -187,7 +192,7 @@ func AdvanceAndroidEnrollment(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	store := &androidIdentity{state: state}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
 	defer cancel()
 	if state.LKG == nil {
 		_, err = deviceclient.Claim(ctx, store)
@@ -205,7 +210,7 @@ func SyncAndroidDevice(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	store := &androidIdentity{state: state}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
 	defer cancel()
 	if _, err := deviceclient.Sync(ctx, store); err != nil {
 		return nil, err
@@ -312,7 +317,7 @@ func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody, runtim
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
 	defer cancel()
 	return deviceclient.PostSignedReport(ctx, &androidIdentity{state: state}, report)
 }

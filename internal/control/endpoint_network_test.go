@@ -118,6 +118,23 @@ func TestEndpointTLSClaimConfigurationReportAndRevocation(t *testing.T) {
 		t.Fatal("claim did not return a verified current envelope")
 	}
 	deviceHello := TunnelHello{Schema: 3, Mode: "device", EndpointID: endpoint.ID, Generation: endpoint.Generation, DeviceID: invite.DeviceID}
+	// A resolved transport address must not replace the certified TLS name or
+	// pin. Exercise the actual private handshake through the injected dialer.
+	resolved := WithEndpointDialer(ctx, func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	})
+	named := endpoint
+	named.Host = "demo-entry.example"
+	resolvedConnection, err := DialEndpoint(resolved, named, deviceHello, key)
+	if err != nil {
+		t.Fatal("resolved endpoint lost its certified identity", err)
+	}
+	resolvedConnection.Close()
+	named.ServerName = "demo-wrong.example"
+	if bad, err := DialEndpoint(resolved, named, deviceHello, key); err == nil {
+		bad.Close()
+		t.Fatal("DNS address replaced certified TLS identity")
+	}
 	connection, err = DialEndpoint(ctx, endpoint, deviceHello, key)
 	if err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ package control
 type Device struct {
 	PolicyIDs           []string        `json:"policy_ids"`
 	DistributionURLs    []string        `json:"distribution_urls"`
+	DNSServers          []string        `json:"dns_servers"`
 	Dependencies        []string        `json:"dependencies"`
 	Conflicted          bool            `json:"conflicted"`
 	Deleted             bool            `json:"deleted"`

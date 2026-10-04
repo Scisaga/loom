@@ -296,7 +296,7 @@ func ProjectDeviceView(projection Projection, deviceID string) (DeviceView, erro
 	view := DeviceView{Schema: 3, DeviceID: authorization.ID, Name: authorization.Name, Platform: authorization.Platform, DevicePublicKey: authorization.DevicePublicKey,
 		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
 		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
-		DNSServers: []string{}, BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}
+		DNSServers: append([]string{}, authorization.DNSServers...), BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}
 	for _, member := range projection.Config.Members {
 		if member.NodeID == deviceID {
 			view.Responsibilities = append(view.Responsibilities, "control")

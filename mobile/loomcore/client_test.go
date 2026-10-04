@@ -122,6 +122,14 @@ func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
 	if _, err := androidRuntimeConfig(state.LKG.View, "demo-selector"); err == nil || !strings.Contains(err.Error(), "authenticated endpoint address resolution") {
 		t.Fatal("Android used unresolved management names or an implicit host resolver")
 	}
+	state.LKG.View.DNSServers = []string{"192.0.2.53"}
+	configured, err := androidRuntimeConfig(state.LKG.View, "demo-selector")
+	if err != nil {
+		t.Fatal("authenticated resolver did not enable the named endpoint", err)
+	}
+	if !strings.Contains(configured, `udp://192.0.2.53:53`) || !strings.Contains(configured, `"detour":"loom-underlay-dns"`) {
+		t.Fatal("Android did not keep resolver sockets on its protected underlay")
+	}
 }
 func TestAndroidReportReservationDoesNotChangeActiveProfileOrPermitStaleWrites(t *testing.T) {
 	_, body := androidFixture(t, 7, false)

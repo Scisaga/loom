@@ -76,9 +76,13 @@ type DevicePut struct {
 	Responsibilities []string `json:"responsibilities"`
 	PolicyIDs        []string `json:"policy_ids"`
 	DistributionURLs []string `json:"distribution_urls"`
+	DNSServers       []string `json:"dns_servers,omitempty"`
 }
 
 func (value DevicePut) Validate() error {
+	if err := validateOptionalDNS(value.DNSServers); err != nil {
+		return err
+	}
 	if ValidateID(value.ID) != nil || value.ID == "direct" || ValidateText(value.Name) != nil || validateResponsibilities(value.Responsibilities, false) != nil || validateIDSet(value.PolicyIDs) != nil || value.DistributionURLs == nil {
 		return errors.New("device management value is invalid")
 	}
@@ -369,7 +373,7 @@ func (material Material) OperationRequest() (Operation, error) {
 		if !ok {
 			return Operation{}, errors.New("device material payload is invalid")
 		}
-		operation.Payload = DevicePut{ID: value.ID, Name: value.Name, Responsibilities: append([]string{}, value.Responsibilities...), PolicyIDs: append([]string{}, value.PolicyIDs...), DistributionURLs: append([]string{}, value.DistributionURLs...)}
+		operation.Payload = DevicePut{ID: value.ID, Name: value.Name, Responsibilities: append([]string{}, value.Responsibilities...), PolicyIDs: append([]string{}, value.PolicyIDs...), DistributionURLs: append([]string{}, value.DistributionURLs...), DNSServers: append([]string(nil), value.DNSServers...)}
 	}
 	return operation, operation.Validate()
 }
@@ -1258,7 +1262,7 @@ func (graph *materialGraph) validateDevice(material Material, view Projection, h
 			expected = append(expected, role)
 		}
 	}
-	if !reflect.DeepEqual(expected, device.Responsibilities) || !reflect.DeepEqual(invite.PolicyIDs, device.PolicyIDs) {
+	if !reflect.DeepEqual(expected, device.Responsibilities) || !reflect.DeepEqual(invite.PolicyIDs, device.PolicyIDs) || !reflect.DeepEqual(invite.DNSServers, device.DNSServers) {
 		return errors.New("device.join changes invited authorization")
 	}
 	if len(expected) == 0 {

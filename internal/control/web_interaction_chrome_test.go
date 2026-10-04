@@ -246,7 +246,7 @@ func TestWebChromeDevicePolicyRevocationPreservesIdentity(t *testing.T) {
 	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
 		t.Skip("set LOOM_WEB_CHROME_TEST=1 for browser command acceptance")
 	}
-	server, invite, _, claim, _, _ := enrollmentAuthorityFixture(t)
+	server, invite, _, claim, _, _ := enrollmentAuthorityFixture(t, func(invite *Invite) { invite.DNSServers = []string{"192.0.2.53"} })
 	response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite))
 	if response.Code != http.StatusOK {
 		t.Fatal(response.Body.String())
@@ -270,6 +270,9 @@ func TestWebChromeDevicePolicyRevocationPreservesIdentity(t *testing.T) {
 	view, err := server.deviceEnvelope(invite.DeviceID)
 	if err != nil || len(view.View.Routes) != 0 || view.View.RuntimeProfile == nil {
 		t.Fatal("browser revoke did not produce deny-only runtime", err)
+	}
+	if len(view.View.DNSServers) != 1 || view.View.DNSServers[0] != "192.0.2.53" {
+		t.Fatal("editing business authorization discarded the existing DNS configuration")
 	}
 	reopened, err := OpenAuthority(server.Runtime.Authority.root)
 	if err != nil || len(reopened.Snapshot().DeviceAuthorizations[0].PolicyIDs) != 0 {
@@ -381,7 +384,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if !ok {
 		t.Fatal("browser form has no stable transaction ID")
 	}
-	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.device_id.value='demo-browser-device';f.elements.name.value='Demo browser device';f.querySelector('[name=policy_id][value=demo-policy]').checked=true;f.requestSubmit();return true})()`)
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.device_id.value='demo-browser-device';f.elements.name.value='Demo browser device';f.elements.dns_servers.value='192.0.2.53';f.querySelector('[name=policy_id][value=demo-policy]').checked=true;f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `location.pathname.startsWith('/devices/invites/')&&document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='open'&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
 	if chromeDo(t, debug, `location.pathname`) != "/devices/invites/"+transactionID {
 		t.Fatal("initial delivery did not retain the issued transaction route")
@@ -393,6 +396,9 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	bootstrap, err := DecodeInvite(encoded)
 	if err != nil || bootstrap.Material.TargetID != transactionID || bootstrap.Material.Payload.(Invite).DeviceID != "demo-browser-device" {
 		t.Fatal("device detail invitation does not match its persisted transaction", err)
+	}
+	if dns := bootstrap.Material.Payload.(Invite).DNSServers; len(dns) != 1 || dns[0] != "192.0.2.53" {
+		t.Fatal("normal invitation form lost the initial DNS configuration")
 	}
 	if chromeDo(t, debug, `(async()=>{const a=document.querySelector('#device-enrollment a[download]');return (await (await fetch(a.href)).text()).trim()===document.querySelector('#invite-uri').value})()`) != true {
 		t.Fatal("download and device detail produced different invitations")

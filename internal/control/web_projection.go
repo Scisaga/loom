@@ -20,6 +20,7 @@ func projectWebDevices(projection Projection) []Device {
 		device.EnrollmentID = authorization.TransactionID
 		device.PolicyIDs = append([]string{}, authorization.PolicyIDs...)
 		device.DistributionURLs = append([]string{}, authorization.DistributionURLs...)
+		device.DNSServers = append([]string{}, authorization.DNSServers...)
 		device.Presence, device.RuntimeState = "unknown", "unknown"
 		byID[device.ID] = device
 	}
