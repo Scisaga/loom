@@ -25,9 +25,15 @@ loom client verify \
   -arch amd64
 ```
 
-发布者从干净提交运行 `scripts/build-linux-client.sh`。默认一次生成并签名 amd64、arm64 两份 archive；
+发布者先运行 `bash scripts/build-dataplane.sh`，再从干净提交运行 `scripts/build-linux-client.sh <generation>`。
+generation 是显式选择的非零发布代，不从时钟推导。默认一次生成并签名 amd64、arm64 两份 archive；
 amd64 必须完成原生 service 和业务验收，arm64 只做交叉构建、ELF/build-info 检查和签名往返，不把交叉结果
 写成原生验收。
+
+包内 manifest 使用[唯一 schema 3 字段](../core/current-contract.md#linux-客户端-manifest-的规范字段)，
+逐项签名覆盖程序、源码证据、安装脚本和 unit；数据面必须匹配审核的源码修正版。下载附件 `.sig` 是与包内
+manifest.sig 相同的原始 Ed25519 签名；旧 JSON 签名封装拒绝。构建入口只生成并验证制品，不再调用已删除的
+旧 catalog 写入器；它不改变现有发布 floor、`current` 或运行服务。
 
 ## 私有 Enrollment 与安装
 

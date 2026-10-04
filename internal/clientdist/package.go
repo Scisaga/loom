@@ -15,29 +15,35 @@ import (
 	"debug/elf"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"path"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"loom/internal/clientcomponent"
+	"loom/internal/control"
 )
 
 const (
-	Schema          = 2
-	signatureDomain = "loom:linux-client-package:v2"
+	Schema          = 3
+	signatureDomain = "loom-release-manifest-v3"
 	maxArchiveBytes = 256 << 20
 )
 
 // Component records the exact executable embedded in an archive.
 type Component struct {
-	Path    string `json:"path"`
-	SHA256  string `json:"sha256"`
-	Size    int    `json:"size"`
-	Version string `json:"version,omitempty"`
-	Commit  string `json:"commit,omitempty"`
-	Dirty   bool   `json:"dirty,omitempty"`
+	Path    string                  `json:"path"`
+	SHA256  string                  `json:"sha256"`
+	Size    int                     `json:"size"`
+	Version string                  `json:"version,omitempty"`
+	Commit  string                  `json:"commit,omitempty"`
+	Dirty   bool                    `json:"dirty,omitempty"`
+	Source  *clientcomponent.Source `json:"source,omitempty"`
 }
 
 // File records a deterministic payload file. manifest.json and checksums.txt
@@ -52,25 +58,70 @@ type File struct {
 // Manifest is the machine-readable boundary between a bootstrap archive and a
 // signed per-node configuration bundle.
 type Manifest struct {
-	Schema            int       `json:"schema"`
-	Kind              string    `json:"kind"`
-	OS                string    `json:"os"`
-	Arch              string    `json:"arch"`
-	Lifecycle         string    `json:"lifecycle"`
-	SignatureDomain   string    `json:"signature_domain"`
-	PlatformKeySHA256 string    `json:"platform_key_sha256"`
-	Loom              Component `json:"loom"`
-	SingBox           Component `json:"sing_box"`
-	Files             []File    `json:"files"`
+	Generation        control.U64 `json:"generation"`
+	Version           string      `json:"version"`
+	Audience          string      `json:"audience"`
+	Schema            int         `json:"schema"`
+	Kind              string      `json:"kind"`
+	OS                string      `json:"os"`
+	Arch              string      `json:"arch"`
+	Lifecycle         string      `json:"lifecycle"`
+	SignatureDomain   string      `json:"signature_domain"`
+	PlatformKeySHA256 string      `json:"platform_key_sha256"`
+	Loom              Component   `json:"loom"`
+	SingBox           Component   `json:"sing_box"`
+	Files             []File      `json:"files"`
+}
+
+func (m Manifest) Validate() error {
+	if m.Schema != Schema || m.Kind != "linux-client-bootstrap" || m.OS != "linux" || (m.Arch != "amd64" && m.Arch != "arm64") || m.Generation == 0 || m.Audience != "public" || m.Lifecycle != "certified-lkg-runtime" || m.SignatureDomain != signatureDomain || !lowerHex(m.PlatformKeySHA256, 64) {
+		return fmt.Errorf("Linux manifest coordinates are invalid")
+	}
+	version := m.Loom.Commit
+	if version == "" || m.Loom.Dirty {
+		version = "devel"
+	}
+	if m.Version != version || m.Loom.Commit != "" && !lowerHex(m.Loom.Commit, 40) || m.Loom.Version != "" || m.Loom.Source != nil || m.SingBox.Dirty || m.SingBox.Source == nil || !lowerHex(m.SingBox.Commit, 40) || m.SingBox.Version == "" {
+		return fmt.Errorf("Linux manifest component source coordinates are invalid")
+	}
+	names := payloadNames()
+	if len(m.Files) != len(names) {
+		return fmt.Errorf("Linux manifest payload set is incomplete")
+	}
+	for index, file := range m.Files {
+		mode := "0644"
+		if file.Path == "loom" || file.Path == "sing-box" || file.Path == "install.sh" {
+			mode = "0755"
+		}
+		if file.Path != names[index] || file.Mode != mode || file.Size <= 0 || file.Size > maxArchiveBytes || !lowerHex(file.SHA256, 64) {
+			return fmt.Errorf("Linux manifest payload is invalid or not strictly sorted")
+		}
+		for _, component := range []Component{m.Loom, m.SingBox} {
+			if component.Path == file.Path && (component.Size != file.Size || component.SHA256 != file.SHA256) {
+				return fmt.Errorf("Linux manifest component differs from its payload record")
+			}
+		}
+	}
+	if m.Loom.Path != "loom" || m.SingBox.Path != "sing-box" {
+		return fmt.Errorf("Linux manifest component path is invalid")
+	}
+	return nil
+}
+
+func lowerHex(value string, size int) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(value) == size && hex.EncodeToString(decoded) == value
 }
 
 // BuildInput contains all bytes that affect the output. The builder never
 // reads the clock, environment, network, or source paths.
 type BuildInput struct {
-	Loom       []byte
-	SingBox    []byte
-	PrivateKey ed25519.PrivateKey
-	AllowDirty bool
+	Generation  control.U64
+	SourceFiles map[string][]byte
+	Loom        []byte
+	SingBox     []byte
+	PrivateKey  ed25519.PrivateKey
+	AllowDirty  bool
 }
 
 // Artifact contains the exact archive and detached verification material.
@@ -82,14 +133,6 @@ type Artifact struct {
 	Manifest  Manifest
 }
 
-type signatureEnvelope struct {
-	Schema    int    `json:"schema"`
-	Algorithm string `json:"algorithm"`
-	Domain    string `json:"domain"`
-	SHA256    string `json:"sha256"`
-	Signature string `json:"signature"`
-}
-
 type archiveFile struct {
 	path string
 	mode int64
@@ -99,6 +142,10 @@ type archiveFile struct {
 // Build validates that both executables are real matching Linux binaries and
 // emits a byte-for-byte reproducible gzip stream.
 func Build(in BuildInput) (Artifact, error) {
+	return buildWithInspect(in, inspectSingBox, clientcomponent.LinuxSourceFiles)
+}
+
+func buildWithInspect(in BuildInput, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error)) (Artifact, error) {
 	if len(in.PrivateKey) != ed25519.PrivateKeySize {
 		return Artifact{}, fmt.Errorf("[§4.3 签名高于传输信任] 平台签名私钥长度是 %d，期望 %d", len(in.PrivateKey), ed25519.PrivateKeySize)
 	}
@@ -106,7 +153,10 @@ func Build(in BuildInput) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, err
 	}
-	singBox, err := inspectSingBox(in.SingBox, arch)
+	if in.Generation == 0 {
+		return Artifact{}, fmt.Errorf("Linux package generation must be nonzero")
+	}
+	singBox, err := inspectSing(in.SingBox, arch)
 	if err != nil {
 		return Artifact{}, err
 	}
@@ -123,24 +173,37 @@ func Build(in BuildInput) (Artifact, error) {
 		{path: "systemd/README.md", mode: 0o644, body: []byte(systemdReadme)},
 		{path: "systemd/loom-client.service", mode: 0o644, body: []byte(systemdService)},
 	}
+	sources, err := sourceFiles(in.SourceFiles)
+	if err != nil {
+		return Artifact{}, err
+	}
+	for _, name := range slices.Sorted(maps.Keys(sources)) {
+		body := sources[name]
+		files = append(files, archiveFile{path: name, mode: 0o644, body: body})
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 
 	manifest := Manifest{
+		Generation: in.Generation, Version: loom.Commit, Audience: "public",
 		Schema: Schema, Kind: "linux-client-bootstrap", OS: osName, Arch: arch,
 		Lifecycle: "certified-lkg-runtime", SignatureDomain: signatureDomain,
 		PlatformKeySHA256: sha256Hex(publicKey), Loom: loom, SingBox: singBox,
+	}
+	if loom.Commit == "" || loom.Dirty {
+		manifest.Version = "devel"
 	}
 	for _, f := range files {
 		manifest.Files = append(manifest.Files, File{
 			Path: f.path, Mode: fmt.Sprintf("%04o", f.mode), Size: len(f.body), SHA256: sha256Hex(f.body),
 		})
 	}
-	manifestBody, err := json.MarshalIndent(manifest, "", "  ")
+	manifestBody, err := control.CanonicalEncode(manifest)
 	if err != nil {
 		return Artifact{}, err
 	}
-	manifestBody = append(manifestBody, '\n')
 	files = append(files, archiveFile{path: "manifest.json", mode: 0o644, body: manifestBody})
+	signature := ed25519.Sign(in.PrivateKey, signatureMessage(manifestBody))
+	files = append(files, archiveFile{path: "manifest.sig", mode: 0o644, body: signature})
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 
 	var checksum strings.Builder
@@ -156,26 +219,28 @@ func Build(in BuildInput) (Artifact, error) {
 	}
 	name := root + ".tar.gz"
 	hash := sha256Hex(body)
-	signed := signatureMessage(hash)
-	sig := ed25519.Sign(in.PrivateKey, signed)
-	envelopeBody, err := json.MarshalIndent(signatureEnvelope{
-		Schema: Schema, Algorithm: "ed25519", Domain: signatureDomain,
-		SHA256: hash, Signature: base64.StdEncoding.EncodeToString(sig),
-	}, "", "  ")
-	if err != nil {
-		return Artifact{}, err
-	}
 	return Artifact{
 		Name: name, Archive: body,
 		Checksum:  []byte(fmt.Sprintf("%s  %s\n", hash, name)),
-		Signature: append(envelopeBody, '\n'), Manifest: manifest,
+		Signature: signature, Manifest: manifest,
 	}, nil
+}
+
+func payloadNames() []string {
+	names := []string{"README.md", "install.sh", "loom", "platform.pub", "sing-box", "systemd/README.md", "systemd/loom-client.service", "licenses/sing-box-LICENSE", "source/source-provenance.json", "source/domain-cache.patch", "source/prepare-sing-box.py", "source/build-dataplane.sh", "source/BUILD.txt"}
+	sort.Strings(names)
+	return names
 }
 
 func inspectLoom(body []byte, allowDirty bool) (Component, string, string, error) {
 	if len(body) == 0 {
 		return Component{}, "", "", fmt.Errorf("[§15.4 二进制与配置兼容] Loom 二进制为空")
 	}
+	elfFile, err := elf.NewFile(bytes.NewReader(body))
+	if err != nil {
+		return Component{}, "", "", fmt.Errorf("Loom must be a Linux ELF: %w", err)
+	}
+	defer elfFile.Close()
 	bi, err := buildinfo.Read(bytes.NewReader(body))
 	if err != nil {
 		return Component{}, "", "", fmt.Errorf("[§15.4 二进制与配置兼容] Loom 不是可识别的 Go 二进制:%w", err)
@@ -184,7 +249,7 @@ func inspectLoom(body []byte, allowDirty bool) (Component, string, string, error
 		return Component{}, "", "", fmt.Errorf("[§15.4 二进制与配置兼容] 候选程序入口是 %q，不是 loom/cmd/loom", bi.Path)
 	}
 	osName, arch, commit, dirty := buildCoordinates(bi)
-	if osName != "linux" || (arch != "amd64" && arch != "arm64") {
+	if osName != "linux" || (arch != "amd64" && arch != "arm64") || elfArch(elfFile.Machine) != arch {
 		return Component{}, "", "", fmt.Errorf("[§10.2 渲染目标必须显式] Loom 平台是 %s/%s，当前只打包 linux/amd64 或 linux/arm64", osName, arch)
 	}
 	if (commit == "" || dirty) && !allowDirty {
@@ -194,28 +259,11 @@ func inspectLoom(body []byte, allowDirty bool) (Component, string, string, error
 }
 
 func inspectSingBox(body []byte, wantArch string) (Component, error) {
-	if len(body) == 0 {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] sing-box 二进制为空")
-	}
-	ef, err := elf.NewFile(bytes.NewReader(body))
+	source, err := clientcomponent.InspectLinuxSourceBuild(body, wantArch)
 	if err != nil {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] sing-box 不是 Linux ELF 二进制:%w", err)
+		return Component{}, err
 	}
-	arch := elfArch(ef.Machine)
-	if arch == "" || arch != wantArch {
-		return Component{}, fmt.Errorf("[§10.2 渲染目标必须显式] sing-box 架构是 %q，Loom 架构是 %q", arch, wantArch)
-	}
-	bi, err := buildinfo.Read(bytes.NewReader(body))
-	if err != nil {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] 读不出 sing-box 构建身份:%w", err)
-	}
-	if bi.Path != "github.com/sagernet/sing-box/cmd/sing-box" || bi.Main.Path != "github.com/sagernet/sing-box" {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] 数据平面候选是 %q(%q)，不是真实 sing-box", bi.Path, bi.Main.Path)
-	}
-	if bi.Main.Version == "" || bi.Main.Version == "(devel)" {
-		return Component{}, fmt.Errorf("[§12 可重现制品] sing-box 没有可追溯的固定版本")
-	}
-	return Component{Path: "sing-box", SHA256: sha256Hex(body), Size: len(body), Version: bi.Main.Version}, nil
+	return Component{Path: source.Path, SHA256: source.SHA256, Size: source.Size, Version: source.Version, Commit: source.Commit, Source: &source.Source}, nil
 }
 
 func buildCoordinates(bi *buildinfo.BuildInfo) (osName, arch, commit string, dirty bool) {
@@ -283,8 +331,8 @@ func buildArchive(root string, files []archiveFile) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func signatureMessage(hash string) []byte {
-	return []byte(signatureDomain + "\n" + hash + "\n")
+func signatureMessage(manifest []byte) []byte {
+	return append([]byte(signatureDomain+"\x00"), manifest...)
 }
 
 func sha256Hex(body []byte) string {
@@ -296,35 +344,26 @@ func sha256Hex(body []byte) string {
 // a separately trusted key; a platform.pub extracted from the same unverified
 // archive is not a trust root.
 func Verify(archive, checksum, signature []byte, pub ed25519.PublicKey) (Manifest, error) {
-	var zero Manifest
-	if len(archive) == 0 || len(archive) > maxArchiveBytes {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包大小 %d 超出边界", len(archive))
-	}
-	hash := sha256Hex(archive)
-	fields := strings.Fields(string(checksum))
-	if len(fields) != 2 || fields[0] != hash || !strings.HasSuffix(fields[1], ".tar.gz") {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包 SHA-256 校验不一致")
-	}
-	if len(pub) != ed25519.PublicKeySize {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 可信公钥长度无效")
-	}
-	var envelope signatureEnvelope
-	dec := json.NewDecoder(bytes.NewReader(signature))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&envelope); err != nil {
-		return zero, fmt.Errorf("解析客户端包签名:%w", err)
-	}
-	if dec.Decode(&struct{}{}) != io.EOF || envelope.Schema != Schema || envelope.Algorithm != "ed25519" || envelope.Domain != signatureDomain || envelope.SHA256 != hash {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包签名封装无效")
-	}
-	sig, err := base64.StdEncoding.DecodeString(envelope.Signature)
-	if err != nil || !ed25519.Verify(pub, signatureMessage(hash), sig) {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包 Ed25519 签名无效")
-	}
-	return verifyArchive(archive, pub)
+	return verifyWithInspect(archive, checksum, signature, pub, inspectSingBox, clientcomponent.LinuxSourceFiles)
 }
 
-func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
+func verifyWithInspect(archive, checksum, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error)) (Manifest, error) {
+	var zero Manifest
+	if len(archive) == 0 || len(archive) > maxArchiveBytes || len(signature) != ed25519.SignatureSize || len(pub) != ed25519.PublicKeySize {
+		return zero, fmt.Errorf("Linux package or signature bounds are invalid")
+	}
+	manifest, err := verifyArchive(archive, signature, pub, inspectSing, sourceFiles)
+	if err != nil {
+		return zero, err
+	}
+	expected := fmt.Sprintf("%s  loom-client-linux-%s.tar.gz\n", sha256Hex(archive), manifest.Arch)
+	if !bytes.Equal(checksum, []byte(expected)) {
+		return zero, fmt.Errorf("Linux archive checksum is not canonical or differs")
+	}
+	return manifest, nil
+}
+
+func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error)) (Manifest, error) {
 	var zero Manifest
 	gz, err := gzip.NewReader(bytes.NewReader(body))
 	if err != nil {
@@ -375,7 +414,8 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		total += h.Size
 		files[rel], modes[rel] = content, h.Mode&0o777
 	}
-	required := []string{"README.md", "checksums.txt", "install.sh", "loom", "manifest.json", "platform.pub", "sing-box", "systemd/README.md", "systemd/loom-client.service"}
+	required := payloadNames()
+	required = append(required, "checksums.txt", "manifest.json", "manifest.sig")
 	if len(files) != len(required) {
 		return zero, fmt.Errorf("客户端包文件数是 %d，期望 %d", len(files), len(required))
 	}
@@ -385,13 +425,14 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		}
 	}
 	var manifest Manifest
-	dec := json.NewDecoder(bytes.NewReader(files["manifest.json"]))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&manifest); err != nil || dec.Decode(&struct{}{}) != io.EOF {
-		return zero, fmt.Errorf("解析 manifest.json 失败:%v", err)
+	if err := control.DecodeCanonical(files["manifest.json"], &manifest, control.ContractDecodeLimits{MaxBytes: 64 << 10, MaxDepth: 12, MaxItems: 2048}); err != nil {
+		return zero, fmt.Errorf("invalid canonical Linux manifest: %w", err)
 	}
-	if manifest.Schema != Schema || manifest.Kind != "linux-client-bootstrap" || manifest.OS != "linux" || manifest.SignatureDomain != signatureDomain || manifest.Lifecycle != "certified-lkg-runtime" {
-		return zero, fmt.Errorf("[§10.2 渲染目标必须显式] manifest 语义无效")
+	if manifest.Schema != Schema || manifest.Kind != "linux-client-bootstrap" || manifest.OS != "linux" || manifest.SignatureDomain != signatureDomain || manifest.Lifecycle != "certified-lkg-runtime" || manifest.Generation == 0 || manifest.Audience != "public" || (manifest.Arch != "amd64" && manifest.Arch != "arm64") {
+		return zero, fmt.Errorf("Linux manifest semantics are invalid")
+	}
+	if !bytes.Equal(signature, files["manifest.sig"]) || !ed25519.Verify(pub, signatureMessage(files["manifest.json"]), signature) {
+		return zero, fmt.Errorf("Linux manifest signature is invalid")
 	}
 	if root != "loom-client-linux-"+manifest.Arch {
 		return zero, fmt.Errorf("manifest 架构 %q 与目录 %q 不一致", manifest.Arch, root)
@@ -401,46 +442,85 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 包内平台公钥与带外可信公钥不一致")
 	}
 	seen := map[string]bool{}
-	for _, f := range manifest.Files {
+	for index, f := range manifest.Files {
+		if index >= len(payloadNames()) || f.Path != payloadNames()[index] {
+			return zero, fmt.Errorf("Linux manifest payload order or membership is invalid")
+		}
 		content, ok := files[f.Path]
 		if !ok || seen[f.Path] || f.Size != len(content) || f.SHA256 != sha256Hex(content) || f.Mode != fmt.Sprintf("%04o", modes[f.Path]) {
 			return zero, fmt.Errorf("manifest 中的文件 %q 与实际内容不一致", f.Path)
 		}
 		seen[f.Path] = true
 	}
-	if len(seen) != len(required)-2 {
+	if len(seen) != len(required)-3 {
 		return zero, fmt.Errorf("manifest 文件清单不完整")
 	}
 	if err := verifyChecksums(files); err != nil {
 		return zero, err
 	}
 	loom, osName, arch, err := inspectLoom(files["loom"], true)
-	if err != nil || osName != manifest.OS || arch != manifest.Arch || loom != manifest.Loom {
+	if err != nil || osName != manifest.OS || arch != manifest.Arch || !reflect.DeepEqual(loom, manifest.Loom) {
 		return zero, fmt.Errorf("包内 Loom 身份与 manifest 不一致:%v", err)
 	}
-	singBox, err := inspectSingBox(files["sing-box"], manifest.Arch)
-	if err != nil || singBox != manifest.SingBox {
+	singBox, err := inspectSing(files["sing-box"], manifest.Arch)
+	if err != nil || !reflect.DeepEqual(singBox, manifest.SingBox) {
 		return zero, fmt.Errorf("包内 sing-box 身份与 manifest 不一致:%v", err)
+	}
+	version := loom.Commit
+	if loom.Commit == "" || loom.Dirty {
+		version = "devel"
+	}
+	if manifest.Version != version {
+		return zero, fmt.Errorf("Linux package version differs from Loom source coordinates")
+	}
+	sourceInputs := map[string][]byte{"LICENSE": files["licenses/sing-box-LICENSE"]}
+	for _, name := range []string{"source-provenance.json", "domain-cache.patch", "prepare-sing-box.py", "build-dataplane.sh"} {
+		sourceInputs[name] = files["source/"+name]
+	}
+	sources, err := sourceFiles(sourceInputs)
+	if err != nil {
+		return zero, err
+	}
+	for _, name := range slices.Sorted(maps.Keys(sources)) {
+		expected := sources[name]
+		if !bytes.Equal(files[name], expected) {
+			return zero, fmt.Errorf("Linux package source payload differs: %s", name)
+		}
+	}
+	payload := make([]archiveFile, 0, len(files))
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		content := files[name]
+		wantMode := int64(0o644)
+		if name == "loom" || name == "sing-box" || name == "install.sh" {
+			wantMode = 0o755
+		}
+		if modes[name] != wantMode {
+			return zero, fmt.Errorf("Linux package file mode differs: %s", name)
+		}
+		payload = append(payload, archiveFile{path: name, mode: wantMode, body: content})
+	}
+	sort.Slice(payload, func(i, j int) bool { return payload[i].path < payload[j].path })
+	canonical, err := buildArchive(root, payload)
+	if err != nil || !bytes.Equal(canonical, body) {
+		return zero, fmt.Errorf("Linux archive is not canonical")
 	}
 	return manifest, nil
 }
 
 func verifyChecksums(files map[string][]byte) error {
-	lines := strings.Split(strings.TrimSpace(string(files["checksums.txt"])), "\n")
-	if len(lines) != len(files)-1 {
-		return fmt.Errorf("checksums.txt 条目数不完整")
+	names := make([]string, 0, len(files)-1)
+	for name := range files {
+		if name != "checksums.txt" {
+			names = append(names, name)
+		}
 	}
-	seen := map[string]bool{}
-	for _, line := range lines {
-		parts := strings.Split(line, "  ")
-		if len(parts) != 2 || parts[1] == "checksums.txt" || seen[parts[1]] {
-			return fmt.Errorf("checksums.txt 条目无效")
-		}
-		body, ok := files[parts[1]]
-		if !ok || parts[0] != sha256Hex(body) {
-			return fmt.Errorf("checksums.txt 中 %q 的校验值不一致", parts[1])
-		}
-		seen[parts[1]] = true
+	sort.Strings(names)
+	var expected strings.Builder
+	for _, name := range names {
+		fmt.Fprintf(&expected, "%s  %s\n", sha256Hex(files[name]), name)
+	}
+	if !bytes.Equal(files["checksums.txt"], []byte(expected.String())) {
+		return fmt.Errorf("checksums.txt is incomplete or not canonical")
 	}
 	return nil
 }

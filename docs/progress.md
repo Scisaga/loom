@@ -210,6 +210,12 @@ floor 或 latch，也没有新增旧格式运行解码。现行组件指针保�
 
 ### 本轮实现与实际验证
 
+Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
+显式发布代、带外公钥、逐文件摘要和规范 tar/gzip 均参与验证；源码修正版数据面、许可证与独立复现材料
+随包交付。旧 schema 2 签名封装与旧 Linux catalog 写入器删除。amd64/arm64 的真实程序打包、验签、
+规范往返和篡改拒绝已通过，记录在 `deploy/evidence/2026-10-04-linux-package/`。这只证明交付格式，
+不表示默认 TUN installer、SSH/sh 自动安装或生产发布 floor 的前向消费已经完成。
+
 - [规范编码](../internal/control/contract_encoding.go)、[规范值](../internal/control/contract_values.go)和
   [Material](../internal/control/model.go)使用唯一 schema 3、严格规范 JSON、逐事实签名及领域分隔符；
   未知/重复字段、非规范整数/转义、缺字段、null、非法集合顺序和旧格式均拒绝，不自动修复或重解释旧字节。

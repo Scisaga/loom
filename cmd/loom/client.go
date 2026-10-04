@@ -30,7 +30,7 @@ const clientUsage = `loom client —— 客户端交付
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
 	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service
 	loom client status                           回读 selector 已确认的实际路径与观测
-  loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
+  loom client package -sing-box <二进制> -dataplane-dir <目录> -generation <发布代>
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
   loom client package-windows -arch <amd64|arm64>
@@ -186,15 +186,29 @@ func cmdClientPackage(args []string) error {
 	fs := flag.NewFlagSet("client package", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	loomPath := fs.String("loom", stagedBinary, "要嵌入的 Loom 二进制")
-	singBoxPath := fs.String("sing-box", "/usr/local/bin/sing-box", "要嵌入的真实 sing-box 二进制")
+	singBoxPath := fs.String("sing-box", "", "要嵌入的已审核 sing-box 二进制")
+	buildDir := fs.String("dataplane-dir", "", "已审核的数据面源码材料目录")
+	generationText := fs.String("generation", "", "本次签名发布代（非零规范 U64）")
 	keyPath := fs.String("key", "deploy/keys/platform-signing.key", "平台 Ed25519 签名私钥")
 	outPath := fs.String("o", "", "输出 tar.gz；默认 deploy/staging/loom-client-linux-<arch>.tar.gz")
 	allowDirty := fs.Bool("allow-dirty", false, "允许无法追溯到干净 commit 的 Loom 候选")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("用法:loom client package [-loom <文件>] -sing-box <文件> [-key <私钥>] [-o <tar.gz>]:%w", err)
+		return fmt.Errorf("用法:loom client package [-loom <文件>] -sing-box <文件> -dataplane-dir <目录> -generation <发布代> [-key <私钥>] [-o <tar.gz>]:%w", err)
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("用法:loom client package [-loom <文件>] -sing-box <文件> [-key <私钥>] [-o <tar.gz>]")
+	if fs.NArg() != 0 || *buildDir == "" || *singBoxPath == "" {
+		return fmt.Errorf("用法:loom client package [-loom <文件>] -sing-box <文件> -dataplane-dir <目录> -generation <发布代> [-key <私钥>] [-o <tar.gz>]")
+	}
+	generation, err := control.ParseU64(*generationText)
+	if err != nil || generation == 0 {
+		return fmt.Errorf("发布代必须是非零规范 U64")
+	}
+	sourceFiles := make(map[string][]byte)
+	for _, name := range []string{"LICENSE", "source-provenance.json", "domain-cache.patch", "prepare-sing-box.py", "build-dataplane.sh"} {
+		body, err := readRegularClientInput(filepath.Join(*buildDir, name), false)
+		if err != nil {
+			return err
+		}
+		sourceFiles[name] = body
 	}
 	loomBody, err := readRegularClientInput(*loomPath, true)
 	if err != nil {
@@ -209,6 +223,7 @@ func cmdClientPackage(args []string) error {
 		return fmt.Errorf("读平台签名私钥:%w", err)
 	}
 	artifact, err := clientdist.Build(clientdist.BuildInput{
+		Generation: generation, SourceFiles: sourceFiles,
 		Loom: loomBody, SingBox: singBoxBody, PrivateKey: ed25519.PrivateKey(privateKey), AllowDirty: *allowDirty,
 	})
 	if err != nil {

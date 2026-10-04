@@ -762,6 +762,31 @@ UI 和报告只从当前实际验证的文件投影组件摘要，不把签名�
 源码、配置及实际入口中的旧组件 writer、旧包解码和 previous fallback 同项删除。最小测试覆盖规范往返、
 改包/错钥/旧格式拒绝、双架构 PE、签名来源、同代异值/回退拒绝、中断恢复和真实 Installed TUN 域名业务。
 
+## Linux 客户端 manifest 的规范字段
+
+Linux 安装包沿用独立发布签名权威，不从包内公钥自证可信。它的 `manifest.json` 使用同一规范 JSON，
+字段固定为 `schema=3,kind="linux-client-bootstrap",os="linux",arch,generation,version,audience="public",
+lifecycle="certified-lkg-runtime",signature_domain="loom-release-manifest-v3",platform_key_sha256,loom,sing_box,files`。
+`arch` 只允许 amd64/arm64，generation 为非零 U64；version 是包内 Loom 的完整源码提交坐标，开发构建须
+显式允许并标为 devel，不能伪造干净提交。包内 `manifest.sig` 和下载附件 `.sig` 均为同一个 64 字节 Ed25519
+签名，覆盖 `"loom-release-manifest-v3\0" || C(manifest)`；不再写旧 schema 2 的 archive-hash 签名封装。
+
+loom 与 sing_box 项均有 `path,sha256,size`，分别固定路径 `loom`、`sing-box`；Loom 另保存可追溯的 commit
+与仅在开发脏构建时出现的 dirty；数据面另有 version、commit 和与 Windows 相同的源码证据 source。
+二进制摘要及构建信息须对应同一审核源码、补丁和目标架构，不把本地 `(devel)` Go module 信息伪装为上游
+未修改制品。许可证、源码补丁、准备/构建脚本和独立复现说明随包交付。
+
+files 按 path 严格排序，项固定为 `path,mode,size,sha256`，覆盖所有业务文件，排除 manifest 本身、其签名及
+checksums.txt，避免自哈希循环；只接受规定的普通文件、固定权限和路径，不接受链接、额外文件或重复项。
+checksums.txt 覆盖包括 manifest 与签名在内的全部其他文件；archive 使用固定排序、时间和头部的 tar/gzip，
+验证后重新编码须与收到的 archive 字节相等。下载 `.sha256` 仅核对整包传输；信任来自带外固定公钥对上述
+规范 manifest 的验签。旧格式 decoder/writer 删除，既有原始包和发布 floor 仍按现网字节门禁保全。
+
+domain 与 wire 均为这份 Manifest；安装制品保存相同原始字节，runtime 只消费核验后的程序和当前设备 LKG，
+UI 只能投影验签结果及实际运行报告。此格式不创建 catalog、设备授权或第二安装状态机，也不自动授权生产
+激活。正常链为精确源码构建 → 显式 generation 签名打包 → 带外公钥验证 → 正式安装入口 → 原身份运行/报告。
+最小检查包括规范往返及确定性、源码/架构/文件篡改拒绝、旧格式/未知字段/重复字段拒绝，以及双架构真实包验证。
+
 ## 往返与拒绝
 
 对权威领域值 `D`、被接受的规范字节 `B` 与耐久值，必须满足：
