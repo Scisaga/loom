@@ -133,9 +133,26 @@
 原桌面 DPAPI 与 GUI 定向回归也已通过；固定出口文字的检查修正为识别现有绿色字形，没有修改产品样式或视觉基准。
 
 共用 Go 定向 race 及全仓 build/test/vet、安全和格式检查通过；Android 双 ABI 核心、JVM、lint 与调试制品
-构建通过。正式签名 APK、Windows 正式安装/TUN/升级卸载和本次源码的生产激活仍须继续；不能把此处
-Portable Mixed 的开发业务链当作三形态交付或实体机终验。Android release 输入检查已覆盖共享 Go 与 staged 修改，
+构建通过。Windows 三形态 TUN/升级卸载仍须继续；不能把此处 Portable Mixed 的开发业务链当作三形态交付或
+实体机终验。Android release 输入检查已覆盖共享 Go 与 staged 修改，
 防止制品标注 HEAD 却包含未提交的共用修复。
+
+源码 `58305b2b` 已提交推送，并按既有明确授权在全部部署节点激活同一精确制品。原身份、认证材料、
+floor 与 latch 保留，宿主 route/rule 不变；新建 SSH、LAN DNS、系统 DNS、默认公网及原 WG HTTP proxy 回读通过，
+指定既定境外出口和 Auto 的国际 HTTPS 业务通过。逐节点旧程序和临时上传已删除，受保护证据位于
+`deploy/evidence/2026-10-04-bootstrap-windows/deployment-summary.json`；不是新的签名 catalog 激活。
+
+同一提交的 Android 正式 APK 已使用既有发布签名生成并验签，两个 ABI 的 native library 与 AAR 逐字节一致。
+API 35 x86_64 干净模拟器实际安装正式 APK，从 DocumentsUI 导入、私有加入和系统 VPN 同意入口完成具名 Hy2
+HTTPS、撤权、Keystore 进程重启恢复、再授权、界面/私有报告回读及正常断开。制品、首次安装和保留身份重试的
+独立记录分别位于上述证据目录的 `android-release-artifact.json`、`android-release-clean-install/` 与
+`android-release-native/`。首次尝试的首个业务请求失败，没有充分诊断确定原因；原身份重试与独立干净安装均通过。
+验收测试保留每次失败原因，并在限定时间内独立等待真实业务结果，不把 runtime ready 当作业务已成功。
+ARM64、物理切网、睡眠及其他实体机终验仍由用户执行。
+
+更新后的 Windows 六份 ZIP 与双架构 MSI 已生成；x64 MSI 经正常安装后 SCM 以 LocalSystem 运行，安装的程序
+回读提交与摘要相符，VM 原有六份 DPAPI 文件逐字节保留。当前桌面回归中 deviceclient 14 项、client/broker 14 项、
+DPAPI 3 项和 GUI 54 项通过。安装本身不抵扣实际 TUN、重启/升级/卸载业务验收；这些验证继续进行。
 
 ### 本轮实现与实际验证
 
@@ -296,7 +313,7 @@ Portable Mixed 的开发业务链当作三形态交付或实体机终验。Andro
 | DNS overlay | 精确 .loom、控制入口与权限分离的目标模型保留；端点 TLS/过期执行已有窄实现。 | 规范 DNS 事实/设备投影、私有解析器、受约束网站根与叶证书交付、CSR/手工续签、逐入口提醒、正式/回环两路径浏览器验链及生产读回。DNS provider、DNS-01 和 ACME 不在本项。 |
 | 共享局域网 | 目标由 forward 声明、control 签发 IPv4 虚拟映射，经所属 Policy 与 PolicyIDs 授权；不作为简单 Direct 链前置。 | 分配/冲突重分配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除及隔离实际运行。不得修改宿主初始 netns 或 LAN 路由器。 |
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
-| Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、34 项 JVM、lint 与 APK 构建通过。API 35 x86_64 模拟器已正常导入/私有加入、原生 VPN/Hy2 HTTPS、撤权热替换、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行、物理切网及正式签名发行；模拟器不能抵扣实体终验。 |
+| Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在干净 API 35 x86_64 模拟器已正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验，APK 签名也不等于 schema 3 发布 catalog。 |
 | Linux | 获准节点正式服务已接管，Mixed、具名 Hy2/WG 中继、报告、停止/SIGKILL 清理和重新启动通过；开发宿主基础网络回读成立，初始 netns TUN 拒绝保留。 | 隔离 TUN capture 和自动安装失败流程；未实测物理网络变化不能由此次有限回读代替。 |
 | Windows 既定交付 | 双架构构建、桌面 CurrentUser/Machine DPAPI、GUI 回归及具名 Hy2/Mixed HTTPS、撤权/重启/再授权、签名报告与界面回读通过；本次使用同机 VM 持续验收。 | 三形态正式安装链；TUN 尚未实际运行；ARM64/睡眠/物理切网/显示硬件仍需实体终验，外部签名未启用。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |

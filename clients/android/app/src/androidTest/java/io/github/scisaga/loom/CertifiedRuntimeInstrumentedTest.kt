@@ -58,8 +58,12 @@ class CertifiedRuntimeInstrumentedTest {
         fun click(tag: String) = compose.onNodeWithTag(tag).performScrollTo().performClick()
         fun await(label: String, condition: () -> Boolean) {
             val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
-            while (!condition() && System.nanoTime() < end) Thread.sleep(100)
-            assertTrue(label + "; enrollment=" + enrollment.status(profileID).value + "; runtime=" + VpnRuntime.status.value, condition())
+            var ready = condition()
+            while (!ready && System.nanoTime() < end) {
+                Thread.sleep(100)
+                ready = condition()
+            }
+            assertTrue(label + "; enrollment=" + enrollment.status(profileID).value + "; runtime=" + VpnRuntime.status.value, ready)
         }
         fun clickSystem(selector: BySelector, label: String) {
             val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
@@ -114,9 +118,12 @@ class CertifiedRuntimeInstrumentedTest {
                     body.startsWith("HTTP/1.0 200") && body.endsWith("demo-android-business")
                 }
             }
-        }.getOrDefault(false)
+        }.getOrElse {
+            android.util.Log.w("LoomCertifiedFixture", "HTTPS failed: ${it.javaClass.simpleName}: ${it.message}")
+            false
+        }
 
-        if (!resume) {
+        if (!resume && args.getString("demoJoined") != "true") {
             compose.onNodeWithTag("tab-configuration").performClick()
             click("import-invite")
             clickSystem(By.desc("Show roots"), "normal document picker did not open")
@@ -132,7 +139,9 @@ class CertifiedRuntimeInstrumentedTest {
             assertEquals("demo-exit", path.finalExit)
             assertEquals(listOf("demo-exit"), path.serverChain)
             assertEquals("unknown", path.state)
-            assertTrue("real application TLS must traverse the VPN", business())
+            // Runtime/selector readiness precedes a real business result. Wait
+            // for that result within the fixture deadline; never synthesize it.
+            await("real application TLS must traverse the VPN") { business() }
             val previous = enrollment.status(profileID).value.viewDigest
             mark("demo-allowed.json")
             await("formal control must publish withdrawal") { File(directory, "demo-withdrawn").isFile }
@@ -158,7 +167,7 @@ class CertifiedRuntimeInstrumentedTest {
             compose.onNodeWithTag("tab-connection").performClick()
             awaitConnected()
             assertEquals("demo-exit", routing.status(profileID).value.currentPaths.single().finalExit)
-            assertTrue("reauthorization did not restore real VPN business", business())
+            await("reauthorization did not restore real VPN business") { business() }
             mark("demo-regranted.json")
         }
         // The controller reads the private signed report before allowing exit.
