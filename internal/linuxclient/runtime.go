@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -29,6 +30,7 @@ import (
 var errCertifiedViewChanged = errors.New("a newly accepted device view is available")
 var errCertifiedPersistence = errors.New("device view persistence failed")
 var errRuntimeCleanup = errors.New("runtime generation cleanup failed")
+var errRuntimeAddressChanged = errors.New("authenticated runtime hostname resolved to a new address")
 
 type Options struct {
 	DeviceState         string
@@ -405,9 +407,19 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	wg, identity, err := projectWireGuard(lkg.View)
+	desiredWG, identity, err := projectWireGuard(lkg.View)
 	if err != nil {
 		return err
+	}
+	wg, err := resolveWireGuardEndpoints(ctx, desiredWG, wireGuardExecution{}, lkg.View.DNSServers, nil)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(desiredWG, wg) {
+		local = invalidateWireGuardObservations(local, lkg.View, desiredWG, wg)
+		if _, err := SaveObservations(options.LocalState, local); err != nil {
+			return err
+		}
 	}
 	if err := preflightRuntimeConfig(options.SingBox, config); err != nil && (hasAccess || len(executions) != 0) {
 		return err
@@ -551,6 +563,26 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		} else if changed {
 			return errCertifiedViewChanged
 		}
+		resolved, err := resolveWireGuardEndpoints(ctx, desiredWG, wg, lkg.View.DNSServers, nil)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			fmt.Fprintln(options.Log, "authenticated WireGuard DNS refresh failed; retaining this generation's peer address")
+		} else if !reflect.DeepEqual(wg, resolved) {
+			currentGeneration, err := options.Generation()
+			if err != nil {
+				return err
+			}
+			state, err := loadLocalState(options.LocalState, currentGeneration, lkg.ViewDigest)
+			if err != nil {
+				return err
+			}
+			if _, err := SaveObservations(options.LocalState, invalidateWireGuardObservations(state, lkg.View, wg, resolved)); err != nil {
+				return err
+			}
+			return errRuntimeAddressChanged
+		}
 		if err := update(); err != nil {
 			return err
 		}
@@ -647,7 +679,7 @@ func Run(ctx context.Context, options Options) (retErr error) {
 			_, err := writeInactiveStatus(store, options, "stopped")
 			return err
 		}
-		if errors.Is(err, errCertifiedViewChanged) {
+		if errors.Is(err, errCertifiedViewChanged) || errors.Is(err, errRuntimeAddressChanged) {
 			continue
 		}
 		if err == nil {

@@ -527,10 +527,8 @@ func endpointMatches(expected, actual string) bool {
 	if expectedErr != nil || actualErr != nil || expectedPort != actualPort {
 		return false
 	}
-	if net.ParseIP(expectedHost) == nil {
-		return net.ParseIP(actualHost) != nil || strings.EqualFold(expectedHost, actualHost)
-	}
-	return net.ParseIP(expectedHost).Equal(net.ParseIP(actualHost))
+	expectedIP, actualIP := net.ParseIP(expectedHost), net.ParseIP(actualHost)
+	return expectedIP != nil && actualIP != nil && expectedIP.Equal(actualIP)
 }
 
 func readbackWireGuard(profile wireGuardExecution, options Options) error {
@@ -576,6 +574,11 @@ func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIden
 	}
 	if len(profile.WireGuard) != 0 && server == nil {
 		return nil, errors.New("WireGuard runtime has no certified server identity")
+	}
+	for _, link := range profile.WireGuard {
+		if link.Mode == "initiator" && !endpointMatches(link.Endpoint, link.Endpoint) {
+			return nil, errors.New("WireGuard runtime requires a resolved literal endpoint")
+		}
 	}
 	// Previous authority cannot claim an interface. The caller first cleans
 	// any recorded generation using its independent kernel ownership token.

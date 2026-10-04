@@ -33,11 +33,13 @@ func TestLinuxWireGuardDefaultsStayInsideUbuntuAppArmorBoundary(t *testing.T) {
 	}
 }
 
-func TestWireGuardEndpointReadbackAllowsDNSResolutionButNotPortDrift(t *testing.T) {
-	if !endpointMatches("relay.example:51820", "192.0.2.20:51820") {
-		t.Fatal("resolved endpoint was rejected")
+func TestWireGuardEndpointReadbackRequiresResolvedAddressAndPort(t *testing.T) {
+	if !endpointMatches("192.0.2.20:51820", "192.0.2.20:51820") {
+		t.Fatal("exact endpoint was rejected")
 	}
-	if endpointMatches("relay.example:51820", "192.0.2.20:51821") ||
+	if endpointMatches("relay.example:51820", "192.0.2.20:51820") ||
+		endpointMatches("relay.example:51820", "relay.example:51820") ||
+		endpointMatches("192.0.2.20:51820", "192.0.2.20:51821") ||
 		endpointMatches("192.0.2.10:51820", "192.0.2.20:51820") {
 		t.Fatal("endpoint drift was accepted")
 	}

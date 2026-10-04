@@ -218,6 +218,14 @@ Android 私有配置/报告的 Go socket 与 DNS 查询同样使用活跃 VpnSer
 所得 IP，原 TLS 名称及 SPKI 保持；不把可能变化的域名答案当成永久 TUN 排除。纯渲染不查询 DNS，
 字面 Endpoint 仍产生上述精确排除。未配置解析器的具名入口与资源明确失败，不借系统 resolver 或 hosts。
 解析器来自 Invite 的初始设备配置或随后普通 device.put；业务权限变化不应无意移除未编辑的 DNS 配置。
+Linux 内核 WG 的域名同样只由 adapter 使用这些认证解析器查询，纯资源投影不查询网络。发起端在安装前
+将结果转为精确 IP:port，内核 `wg` 不接收域名，回读必须匹配该精确地址和认证公钥。同一次解析按名称复用，
+答案规范排序；仍在答案中的本代地址优先保留，否则取排序第一项，不将解析顺序解释为可达性排序。
+正常刷新重新解析；答案变更确需换地址时，先按本代所有权停止和清理，再从同一已接受 View 重建。
+已有认证配置不变时，临时解析失败保留本代地址和身份，不制造健康结果；首次执行或接受新配置后解析失败
+不能借旧解析器或宿主 resolver 运行。重启重新解析，不持久化 DNS 答案或倒写签名资源、LKG、授权及端点身份。
+正式入口仍是普通 resource.put 与设备 sync/run；UI 回读既有 runtime/业务观测，不增加 DNS 完成状态。
+最小验证覆盖字面地址无 DNS、认证解析/拒绝 fallback、多个答案与同名复用、地址变更和真实 WG 中继业务。
 这项 Android 平台 socket 控制不证明 Linux 初始 namespace 的 auto_route 安全，不能用于绕过宿主门禁。
 Linux HostAdapter 只在隔离 capture namespace 内将这些 underlay endpoint 的解析结果以逐主机 `/32` 或
 `/128` 投影为 TUN 的本机 `route_exclude_address`，使私有控制、引导、
