@@ -72,7 +72,7 @@ func TestDeviceDNSManagementPersistsAndProjectsWithoutChangingIdentity(t *testin
 	if !found {
 		t.Fatal("normal UI readback lost DNS")
 	}
-	for i, bad := range [][]string{{}, {"demo.example"}, {"192.0.2.53", "192.0.2.53"}, {"2001:db8::53", "192.0.2.53"}, {"0.0.0.0"}, {"fe80::1%demo"}} {
+	for i, bad := range [][]string{{}, {"demo.example"}, {"192.0.2.53", "192.0.2.53"}, {"2001:db8::53", "192.0.2.53"}, {"0.0.0.0"}, {"2001:db8::1%demo"}} {
 		value := op.Payload.(DevicePut)
 		value.DNSServers = bad
 		op.Payload = value
