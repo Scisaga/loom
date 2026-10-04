@@ -25,7 +25,7 @@
   Android API 35 x86_64 临时模拟器也已从正常文件导入和系统 VPN 同意入口，完成 Hy2 HTTPS、撤权热替换、
   Keystore 重启恢复、重新授权及界面/私有签名报告回读。
   这是一条已运行的开发闭环，不是生产激活、全部传输能力或所有平台验收完成。
-- 仍须连续推进：Windows 三形态正式交付验证、`.loom` overlay、
+- 仍须连续推进：Linux 隔离 capture 与正式安装、`.loom` overlay、
   未实现的传输能力、动态成员及签名发布消费。Linux WG 中继、此次精确制品激活和旧运行入口退出已现场验证，见下文。
   动态成员多数链尚未实现，不能用初始成员表代替；Hy2、LAN、发布和全部平台能力不是简单 Direct 链的共同前置。
 - 生产状态：获准的 Linux client、control、私有 relay 和透明 endpoint edge 已使用本轮同一精确制品。
@@ -158,7 +158,7 @@ DPAPI 3 项和 GUI 54 项通过。安装本身不抵扣实际 TUN、重启/升�
 
 实际 Installed MSI 已经通过正常加入、Machine DPAPI、TUN 启动和签名运行报告；随后 HTTPS 暴露域名
 Service 被发送为 Hy2 IP 目标的问题。接收端按原 ACL 正确拒绝，没有放宽接收端、替换服务目标或改动宿主网络。
-VM service 已停止且 TUN 清理，原身份保留用于重试。此失败不等于 Windows TUN 已通过业务验收。
+当次失败后 service 已停止且 TUN 清理，原身份保留用于修正后的重试；下述正式制品重新验证已通过。
 
 共用 capture 现按 Service 域名 matcher 派生仅适用于 TUN A/AAAA 查询的地址映射，保持签名 View 和原 ACL；
 原始 IP 不因 SNI 变成域名。独立 user/network namespace 中，真实 TUN DNS、IPv4/IPv6 域名还原、Hy2 TLS、
@@ -175,7 +175,38 @@ Windows 原版组件 writer 已替换为[规范 schema 3 manifest](core/current-
 固定源码、补丁和精确双架构制品，附许可证与可独立复现的构建方法；发布代同值重试、同代异值和倒退拒绝。
 旧 schema 1 解码与 previous 运行回退删除，现有旧指针和签名包必须显式保全后替换，不自动重解释。
 独立空目录重建的四份数据面与审核摘要一致；同机 Windows 原生签名包安装、Wintun Authenticode、逐文件
-回读及数据面预检通过。正式 MSI 的升级、TUN 域名业务与恢复仍在推进；尚未替换现网数据面或启用生产 catalog。
+回读及数据面预检通过。原生正式交付结果见下一节；尚未替换现网数据面或启用生产 catalog。
+
+### Windows 三种正式制品的原生业务与恢复
+
+源码 `9274181a` 的六份 ZIP 与双架构 MSI 已构建，保存在 `dist/windows-9274181a/`；下面的实际执行
+均限于同机 Windows 11 x64 VM。数据面使用经 Ed25519 验签的源码修正版，Wintun 的 Authenticode 验证通过；
+应用 EXE/MSI 仍遵循既有未签名预览策略，不冒充已取得外部代码签名。
+
+- Installed：正常 MSI 升级保留七份 Machine DPAPI、profile catalog 和现行组件代指针；原身份实际完成
+  域名 TUN → Hy2 → HTTPS。关闭 GUI 后服务仍承载业务；TUN 运行中正常卸载清理程序、SCM、虚拟网卡和路由，
+  保留配置身份与恢复意图，重新安装后无需新邀请即可恢复业务，并从私有控制入口读回新的签名报告。
+- Portable TUN：正式 ZIP 经正常 GUI 加入，保存操作者输入的配置名及 CurrentUser DPAPI，实际完成域名
+  HTTPS。强制退出后 Job/TUN 清理，再次运行同一制品恢复原身份、连接意图和名称映射；撤权后拒绝业务，
+  再次异常重启仍拒绝，再授权后业务恢复。各步均回读真实 UI 与新的私有签名报告。
+- Portable Mixed：正式 ZIP 复用同一用户的既有配置，从显式回环代理完成域名 Hy2 HTTPS；撤权、进程异常
+  重启及再授权均通过，未创建 TUN，正常断开后路由与基线一致。
+
+Portable TUN 的正常断开及两次强制退出后，系统 DNS 已实际返回真实地址，新的默认 HTTPS 连接成功，
+没有用额外清 DNS 或路由补丁完成恢复。Installed 的整机重启已在登录桌面前自动恢复原身份、TUN、
+真实 HTTPS 与新的私有签名报告；随后桌面回读、正常断开和默认 HTTPS 也通过。重启使 Windows 网卡索引
+重新编号，原始路由逐字节比较因此失败；按唯一且未变的直连子网核对一一对应后，全部路由、下一跳及
+metric 相同。原始差异、对应关系和实际读回分别保存，没有更改来宾路由来取得通过结果。
+
+旧 schema 1 组件指针和原签名包已先逐字节保全、验证，再按精确所有权替换；该处理没有改变身份、认证
+floor 或 latch，也没有新增旧格式运行解码。现行组件指针保留此前已接受的制品版本坐标，使后续前向升级
+能继续比较原发布代；不能用当前编译版本覆盖或抹掉该 floor。
+
+受保护证据位于 `deploy/evidence/2026-10-04-tun-domain/` 的 `final-upgrade/`、`installed-lifecycle/`、
+`installed-msi-lifecycle/`、`portable-tun/`、`portable-mixed/`、`portable-dns-recovery/` 和 `installed-reboot/`，
+包括正常入口、精确制品、运行回读与清理结果。
+较早的脚本失败单独保留，不计为通过。此处不抵扣 ARM64、物理切网、睡眠或显示硬件终验，也不表示生产
+签名 catalog 已实现。
 
 ### 本轮实现与实际验证
 
@@ -338,7 +369,7 @@ Windows 原版组件 writer 已替换为[规范 schema 3 manifest](core/current-
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
 | Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在干净 API 35 x86_64 模拟器已正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验，APK 签名也不等于 schema 3 发布 catalog。 |
 | Linux | 获准节点正式服务已接管，Mixed、具名 Hy2/WG 中继、报告、停止/SIGKILL 清理和重新启动通过；开发宿主基础网络回读成立，初始 netns TUN 拒绝保留。 | 隔离 TUN capture 和自动安装失败流程；未实测物理网络变化不能由此次有限回读代替。 |
-| Windows 既定交付 | 双架构构建、桌面 CurrentUser/Machine DPAPI、GUI 回归及具名 Hy2/Mixed HTTPS、撤权/重启/再授权、签名报告与界面回读通过；本次使用同机 VM 持续验收。 | 三形态正式安装链；TUN 尚未实际运行；ARM64/睡眠/物理切网/显示硬件仍需实体终验，外部签名未启用。 |
+| Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；这些结果不抵扣发布 catalog。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
 | 签名发布闭环 | 旧发布/制品代码及 floor 保留独立取证边界，新二进制已禁旧 SSOT 发布激活入口；UI 无实际应用证据保持 unknown。 | schema 3 catalog/manifest、期望组件事实、节点实际坐标与旧发布 floor 的可验证前向映射及生产读回；不能用普通授权闭环声称发布已替换，也不将发布设为 Direct 前置。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
