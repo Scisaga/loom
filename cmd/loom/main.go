@@ -24,7 +24,7 @@ const usage = `loom —— 私有控制与客户端
                                       私有加入、认证配置、运行与报告
   loom client <package|verify|package-windows|verify-windows>
                                       通用客户端制品打包与验签
-  loom release <stage|publish|import|verify>
+  loom release <package-android|stage|publish|import|verify>
                                       schema 3 签名制品、全目标分发与回读
   loom config check [-env .env]        本机部署 YAML 引用与输入校验
   loom version [-short|-json]         当前可执行文件坐标

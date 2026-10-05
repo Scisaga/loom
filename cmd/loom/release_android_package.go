@@ -64,16 +64,6 @@ func cmdReleasePackageAndroid(args []string) error {
 		body []byte
 	}{{androidrelease.Name, apk}, {androidrelease.Name + ".manifest.json", body}, {androidrelease.Name + ".sig", signature}} {
 		path := filepath.Join(*output, file.name)
-		prior, err := readBoundedRegular(path, 256<<20, false)
-		if err == nil {
-			if !bytes.Equal(prior, file.body) {
-				return errors.New("Android output already contains different bytes; choose a new output directory")
-			}
-			continue
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
 		if err := writeAndroidOutput(path, file.body); err != nil {
 			return err
 		}
