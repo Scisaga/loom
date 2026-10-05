@@ -569,6 +569,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if err != nil || len(reopenedReports.Verified(server.Runtime.Authority.Snapshot())) != 1 || len(reopenedReports.Verified(server.Runtime.Authority.Snapshot())[0].Components) != 2 {
 		t.Fatal("signed component reports did not survive observation store reopen", err)
 	}
+	assertChromeLivePaths(t, debug)
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#expected-component-form');f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')&&document.querySelector('#expected-component-form [data-delete-kind="expected_component"]')`)
@@ -579,6 +580,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if err != nil || len(view.View.ExpectedComponents) != 1 {
 		t.Fatal("browser expectation did not enter the signed device view", err)
 	}
+	assertChromeWaitingForView(t, debug)
 	report.ReportSequence++
 	report.ViewDigest, report.Runtime.AppliedViewDigest = view.ViewDigest, view.ViewDigest
 	sendReport(report)

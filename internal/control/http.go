@@ -183,6 +183,7 @@ func (server *Server) Handler() http.Handler {
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", secureFiles(http.FileServer(http.FS(assets)))))
 	mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) { serveEmbedded(w, r, "favicon.svg", "image/svg+xml") })
 	mux.HandleFunc("GET /api/control/ui/snapshot", server.snapshot)
+	mux.HandleFunc("GET /api/control/ui/path-history", server.pathHistory)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
 	mux.HandleFunc("GET /api/control/ui/enrollment-options", server.enrollmentOptions)
@@ -314,8 +315,15 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Reports != nil {
-		reports := server.Reports.Verified(projection, releases...)
-		projectWebObservations(&snapshot, reports, server.now())
+		latest := server.Reports.All()
+		projectWebLastReportTimes(&snapshot, latest, projection)
+		reports := []DeviceReport{}
+		for _, report := range latest {
+			if verifyCurrentReport(report, projection, releases...) == nil {
+				reports = append(reports, report)
+			}
+		}
+		projectWebObservations(&snapshot, reports)
 		snapshot.Events = snapshotEvents(projectReportHistory(reports))
 	}
 	if server.Releases != nil {

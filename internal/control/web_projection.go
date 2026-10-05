@@ -113,7 +113,21 @@ func projectWebPaths(projection Projection, releases ...ReleaseSet) []Path {
 			continue
 		}
 		for _, candidate := range view.Routes {
+			transport := ""
+			for _, resource := range view.Resources {
+				if resource.ID == candidate.FirstResourceID {
+					transport = resource.Kind
+				}
+			}
+			targets := []string{}
+			for _, set := range view.BusinessProbeTargets {
+				if set.ServiceID == candidate.ServiceID {
+					targets = append(targets, set.Targets...)
+				}
+			}
 			paths = append(paths, Path{CandidateID: candidate.ID, Device: device.ID, Scope: candidate.Scope,
+				ServiceID: candidate.ServiceID, SpecDigest: candidate.SpecDigest, FirstResourceID: candidate.FirstResourceID,
+				FirstTransport: transport, LinkIDs: append([]string{}, candidate.LinkIDs...), Targets: targets,
 				FinalExit: candidate.FinalExit, Chain: append([]string{}, candidate.NodeChain...), Availability: "unknown"})
 		}
 	}
@@ -149,7 +163,7 @@ func projectWebLinks(projection Projection) []Link {
 
 // The caller supplies reports already checked against the current signed view.
 // Receipt is not a liveness proof; per-service observations are shown separately.
-func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now time.Time) {
+func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
 	for index := range snapshot.Devices {
 		device := &snapshot.Devices[index]
 		for _, report := range reports {
@@ -162,7 +176,7 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 			device.ViewDigest = report.ViewDigest
 			device.RuntimeState = report.Runtime.State
 			runtime := report.Runtime
-			device.Evidence = &DeviceEvidence{ReportedAt: device.LastReportAt, ViewDigest: report.ViewDigest, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...), Measurements: append([]Observation{}, report.Observations...)}
+			device.Evidence = &DeviceEvidence{ReportedAt: device.LastReportAt, ViewDigest: report.ViewDigest, NetworkGeneration: report.NetworkGeneration, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...), Measurements: append([]Observation{}, report.Observations...)}
 			// A device may have different results for different services. Do not fold
 			// one success or failure into a global device business-health assertion.
 			for pathIndex := range snapshot.Paths {
@@ -175,17 +189,24 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 						path.Selected = true
 					}
 				}
-				// Multi-target reduction is not defined. Keep the individual
-				// measurements above without choosing a winner by array order.
-				var matching []Observation
-				for _, observation := range report.Observations {
-					if observation.Level == "service" && path.Scope == "service:"+observation.ServiceID && path.CandidateID == observation.CandidateID {
-						matching = append(matching, observation)
-					}
-				}
-				if len(matching) == 1 && matching[0].NetworkGeneration == report.NetworkGeneration && matching[0].ObservedAt <= now.UnixMilli() && now.UnixMilli() < matching[0].ValidUntil {
-					path.Availability = matching[0].Result
-				}
+				// The receiver's maximum lifetime and clock-skew rule are not
+				// defined. A device-supplied future expiry cannot prove freshness.
+				// Preserve reported samples and selection without asserting current health.
+			}
+		}
+	}
+}
+
+func projectWebLastReportTimes(snapshot *WebSnapshot, reports []DeviceReport, projection Projection) {
+	for _, report := range reports {
+		authorization, found := authorizationFor(projection, report.DeviceID)
+		if !found || report.NetworkID != projection.NetworkID || report.Verify(authorization.DevicePublicKey) != nil {
+			continue
+		}
+		for index := range snapshot.Devices {
+			device := &snapshot.Devices[index]
+			if device.ID == report.DeviceID {
+				device.LastReportAt = time.UnixMilli(report.ReportedAt).UTC().Format(time.RFC3339Nano)
 			}
 		}
 	}

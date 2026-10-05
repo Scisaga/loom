@@ -37,12 +37,13 @@ type Device struct {
 }
 
 type DeviceEvidence struct {
-	ReportedAt   string              `json:"reported_at"`
-	ViewDigest   string              `json:"view_digest"`
-	Selections   []ReportSelection   `json:"selections,omitempty"`
-	Runtime      *RuntimeReadback    `json:"runtime,omitempty"`
-	Components   []ComponentReadback `json:"components,omitempty"`
-	Measurements []Observation       `json:"measurements,omitempty"`
+	ReportedAt        string              `json:"reported_at"`
+	ViewDigest        string              `json:"view_digest"`
+	NetworkGeneration string              `json:"network_generation"`
+	Selections        []ReportSelection   `json:"selections,omitempty"`
+	Runtime           *RuntimeReadback    `json:"runtime,omitempty"`
+	Components        []ComponentReadback `json:"components,omitempty"`
+	Measurements      []Observation       `json:"measurements,omitempty"`
 }
 
 type Link struct {
@@ -65,13 +66,19 @@ type TrafficBucket struct {
 }
 
 type Path struct {
-	CandidateID  string   `json:"candidate_id,omitempty"`
-	Device       string   `json:"device"`
-	Scope        string   `json:"scope,omitempty"`
-	FinalExit    string   `json:"final_exit"`
-	Chain        []string `json:"chain"`
-	Selected     bool     `json:"selected"`
-	Availability string   `json:"availability"`
+	CandidateID     string   `json:"candidate_id,omitempty"`
+	ServiceID       string   `json:"service_id"`
+	SpecDigest      string   `json:"spec_digest"`
+	FirstResourceID string   `json:"first_resource_id"`
+	FirstTransport  string   `json:"first_transport"`
+	LinkIDs         []string `json:"link_ids"`
+	Targets         []string `json:"targets"`
+	Device          string   `json:"device"`
+	Scope           string   `json:"scope,omitempty"`
+	FinalExit       string   `json:"final_exit"`
+	Chain           []string `json:"chain"`
+	Selected        bool     `json:"selected"`
+	Availability    string   `json:"availability"`
 }
 
 type Release struct {

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestWebSnapshotRedactsSecretsAndPreservesPolicyReferences(t *testing.T) {
@@ -45,25 +44,25 @@ func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 		t.Fatal("unmeasured local candidate disappeared or acquired a selection/health assertion")
 	}
 	report := DeviceReport{DeviceID: "demo-access", NetworkGeneration: "demo-generation", ReportedAt: 1000, ViewDigest: "demo-digest", Runtime: RuntimeReadback{State: "running", AppliedViewDigest: "demo-digest"}, Selections: []ReportSelection{{ServiceID: "demo-service", CandidateID: snapshot.Paths[0].CandidateID}}, Observations: []Observation{}}
-	projectWebObservations(&snapshot, []DeviceReport{report}, time.UnixMilli(2000))
+	projectWebObservations(&snapshot, []DeviceReport{report})
 	if !snapshot.Paths[0].Selected || snapshot.Paths[0].Availability != "unknown" {
 		t.Fatal("selector readback without a business probe was lost or manufactured health")
 	}
 	observation := Observation{Level: "service", ServiceID: "demo-service", CandidateID: snapshot.Paths[0].CandidateID, NetworkGeneration: report.NetworkGeneration, Target: "https://demo.example/", Result: "available", ObservedAt: 1000, ValidUntil: 3000}
 	report.Observations = []Observation{observation}
-	for _, at := range []int64{2000, 3000} {
-		fresh := buildWebSnapshot(projection, true, true, true)
-		projectWebObservations(&fresh, []DeviceReport{report}, time.UnixMilli(at))
-		want := "available"
-		if at == 3000 {
-			want = "unknown"
+	for _, expiry := range []int64{3000, 4102444800000} {
+		report.Observations[0].ValidUntil = expiry
+		readback := buildWebSnapshot(projection, true, true, true)
+		projectWebObservations(&readback, []DeviceReport{report})
+		if readback.Paths[0].Availability != "unknown" || !readback.Paths[0].Selected {
+			t.Fatal("device-provided expiry manufactured current health or lost the reported selection")
 		}
-		if fresh.Paths[0].Availability != want || !fresh.Paths[0].Selected {
-			t.Fatal("business observation expiry or actual selection was lost")
-		}
-		for _, device := range fresh.Devices {
+		for _, device := range readback.Devices {
 			if device.Availability != "unknown" || device.Presence != "unknown" {
 				t.Fatal("one observation was folded into unproved global health")
+			}
+			if device.ID == report.DeviceID && (device.Evidence.NetworkGeneration != report.NetworkGeneration || device.Evidence.Measurements[0].ValidUntil != expiry) {
+				t.Fatal("original reported sample or its network binding was lost")
 			}
 		}
 	}
@@ -71,13 +70,13 @@ func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 	other.Target, other.Result = "https://other.example/", "unavailable"
 	report.Observations = append(report.Observations, other)
 	multiple := buildWebSnapshot(projection, true, true, true)
-	projectWebObservations(&multiple, []DeviceReport{report}, time.UnixMilli(2000))
+	projectWebObservations(&multiple, []DeviceReport{report})
 	if len(multiple.Paths) != 1 || multiple.Paths[0].Availability != "unknown" {
 		t.Fatal("multiple measurements duplicated the path or invented a reduction rule")
 	}
 	projection.NetworkIntent.Policies[0].Action = "deny"
 	withdrawn := buildWebSnapshot(projection, true, true, true)
-	projectWebObservations(&withdrawn, []DeviceReport{report}, time.UnixMilli(2000))
+	projectWebObservations(&withdrawn, []DeviceReport{report})
 	if len(withdrawn.Paths) != 0 {
 		t.Fatal("an observation manufactured a withdrawn path")
 	}
