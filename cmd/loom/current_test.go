@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,9 +22,17 @@ func TestCurrentInspectVerifiesEnvelopeAndNodeSelection(t *testing.T) {
 		Snapshot: "aaaaaaaaaaaa", PublishedAt: "2026-08-27T12:00:00Z",
 		Assignments: []publish.DeploymentAssignment{{Node: "demo-c", Snapshot: "bbbbbbbbbbbb"}},
 	}
-	if err := current.Sign(priv); err != nil {
+	payload, err := json.Marshal(struct {
+		Schema      int                            `json:"schema"`
+		Generation  uint64                         `json:"generation"`
+		Snapshot    string                         `json:"snapshot"`
+		Assignments []publish.DeploymentAssignment `json:"assignments,omitempty"`
+		PublishedAt string                         `json:"published_at"`
+	}{current.Schema, current.Generation, current.Snapshot, current.Assignments, current.PublishedAt})
+	if err != nil {
 		t.Fatal(err)
 	}
+	current.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(priv, append([]byte("loom-current-v1\x00"), payload...)))
 	body, err := current.Bytes()
 	if err != nil {
 		t.Fatal(err)

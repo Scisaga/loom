@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -35,7 +37,7 @@ func signedDeploymentCurrent(t *testing.T) (*DeploymentCurrent, ed25519.PublicKe
 	return c, pub
 }
 
-func TestDeploymentCurrentRoundTripAndLegacyCompatibility(t *testing.T) {
+func TestHistoricalDeploymentCurrentRoundTripAndAssignments(t *testing.T) {
 	c, pub := signedDeploymentCurrent(t)
 	if got := []string{c.Assignments[0].Node, c.Assignments[1].Node}; got[0] != "demo-b" || got[1] != "demo-c" {
 		t.Fatalf("Sign 没有规范化 assignment 顺序:%v", got)
@@ -61,15 +63,6 @@ func TestDeploymentCurrentRoundTripAndLegacyCompatibility(t *testing.T) {
 		t.Fatal("显式 assignment 模式下缺少节点应 fail closed")
 	}
 
-	// The deployed legacy reader only knows these two fields.  New envelopes
-	// must therefore retain them at the top level during migration.
-	var legacy Current
-	if err := json.Unmarshal(body, &legacy); err != nil {
-		t.Fatalf("旧 Current 不能解析新 envelope:%v", err)
-	}
-	if legacy.Snapshot != c.Snapshot || legacy.PublishedAt != c.PublishedAt {
-		t.Fatalf("旧 reader 没读到兼容坐标:%+v", legacy)
-	}
 }
 
 func TestDeploymentCurrentGlobalSelection(t *testing.T) {
@@ -254,25 +247,28 @@ func TestDeploymentCurrentRejectsMissingOrInvalidPublishedAt(t *testing.T) {
 	}
 }
 
-func TestDecodeLegacyCurrentStrict(t *testing.T) {
-	good := `{"snapshot":"aaaaaaaaaaaa","published_at":"2026-08-27T12:00:00.123Z"}`
-	got, err := DecodeLegacyCurrent([]byte(good))
-	if err != nil || got.Snapshot != "aaaaaaaaaaaa" {
-		t.Fatalf("合法 legacy current 解码失败:%+v err=%v", got, err)
+// Only tests can create historical signed envelopes. No current runtime writer remains.
+func (c *DeploymentCurrent) Sign(priv ed25519.PrivateKey) error {
+	if c == nil {
+		return errors.New("不能签名空 current")
 	}
-	for _, tc := range []struct {
-		name, body string
-	}{
-		{"unknown", strings.TrimSuffix(good, "}") + `,"generation":1}`},
-		{"duplicate", `{"snapshot":"aaaaaaaaaaaa","snapshot":"bbbbbbbbbbbb","published_at":"2026-08-27T12:00:00Z"}`},
-		{"trailing", good + `{}`},
-		{"bad-snapshot", `{"snapshot":"not-a-snap","published_at":"2026-08-27T12:00:00Z"}`},
-		{"missing-time", `{"snapshot":"aaaaaaaaaaaa","published_at":""}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := DecodeLegacyCurrent([]byte(tc.body)); err == nil {
-				t.Fatal("非法 legacy current 被接受")
-			}
-		})
+	if len(priv) != ed25519.PrivateKeySize {
+		return fmt.Errorf("签名私钥长度不对:%d", len(priv))
 	}
+	next := *c
+	if next.Schema == 0 {
+		next.Schema = DeploymentCurrentSchema
+	}
+	next.Assignments = sortedAssignments(next.Assignments)
+	next.Signature = ""
+	if err := next.validate(false); err != nil {
+		return err
+	}
+	message, err := next.signingBytes()
+	if err != nil {
+		return err
+	}
+	next.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(priv, message))
+	*c = next
+	return nil
 }

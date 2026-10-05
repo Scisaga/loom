@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"loom/internal/model"
 	"loom/internal/render"
@@ -149,4 +150,13 @@ func servedBundleHash(files map[string]string) string {
 		bundle.Files = append(bundle.Files, render.File{Path: p, Content: files[p]})
 	}
 	return bundle.Hash()
+}
+
+func validSHA256Coordinate(value string) bool {
+	raw, ok := strings.CutPrefix(value, "sha256:")
+	if !ok || len(raw) != sha256.Size*2 || raw != strings.ToLower(raw) {
+		return false
+	}
+	_, err := hex.DecodeString(raw)
+	return err == nil
 }

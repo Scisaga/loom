@@ -4,194 +4,68 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestReleaseAuthorityGenerationIsDurableAndIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	priv := key(t)
-	first, allocated, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", nil,
-		"2026-08-27T12:00:00Z", priv)
+func archiveAuthorityFixture(t *testing.T, dir string) ed25519.PublicKey {
+	t.Helper()
+	value, key := signedDeploymentCurrent(t)
+	body, err := value.Bytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !allocated || first.Generation != 1 {
-		t.Fatalf("首次 authority=%+v allocated=%v", first, allocated)
-	}
-	firstBytes, err := first.Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// A later build timestamp is not a release decision.  Reusing the same
-	// logical target must retain the exact envelope, not re-sign generation 1.
-	again, allocated, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", nil,
-		"2026-08-27T13:00:00Z", priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	againBytes, _ := again.Bytes()
-	if allocated || again.Generation != 1 || string(againBytes) != string(firstBytes) {
-		t.Fatalf("同一 target 没有精确复用:allocated=%v current=%+v", allocated, again)
-	}
-
-	changed, allocated, err := ensureReleaseAuthority(dir, "bbbbbbbbbbbb", nil,
-		"2026-08-27T14:00:00Z", priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allocated || changed.Generation != 2 || changed.Snapshot != "bbbbbbbbbbbb" {
-		t.Fatalf("目标变化没有推进一代:%+v allocated=%v", changed, allocated)
-	}
-
-	onDisk, err := ReadReleaseAuthority(dir, priv.Public().(ed25519.PublicKey))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !deploymentCurrentBytesEqual(onDisk, changed) {
-		t.Fatalf("磁盘 authority 与返回值不同:onDisk=%+v want=%+v", onDisk, changed)
-	}
-	for _, name := range []string{releaseAuthorityFile, releaseAuthorityMarkerFile} {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil {
+	for name, body := range map[string][]byte{releaseAuthorityFile: body, releaseAuthorityMarkerFile: []byte(releaseAuthorityMarkerBody)} {
+		if err = os.WriteFile(filepath.Join(dir, name), body, 0600); err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s mode=%o", name, info.Mode().Perm())
-		}
 	}
+	return key
 }
 
-func TestReleaseAuthorityAssignmentsAreLogicalTarget(t *testing.T) {
-	dir := t.TempDir()
-	priv := key(t)
-	a := []DeploymentAssignment{
-		{Node: "demo-c", Snapshot: "cccccccccccc"},
-		{Node: "demo-b", Snapshot: "bbbbbbbbbbbb"},
-	}
-	first, _, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", a,
-		"2026-08-27T12:00:00Z", priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a[0], a[1] = a[1], a[0]
-	again, allocated, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", a,
-		"2026-08-27T13:00:00Z", priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if allocated || again.Generation != first.Generation {
-		t.Fatalf("assignment 换序不应生成新代:first=%d again=%d allocated=%v",
-			first.Generation, again.Generation, allocated)
-	}
-	a[0].Snapshot = "dddddddddddd"
-	third, allocated, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", a,
-		"2026-08-27T14:00:00Z", priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allocated || third.Generation != first.Generation+1 {
-		t.Fatalf("assignment 变化没有推进 generation:%+v", third)
-	}
-}
-
-func TestReleaseAuthorityMissingAfterMarkerFailsClosed(t *testing.T) {
-	dir := t.TempDir()
-	priv := key(t)
-	if _, _, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", nil,
-		"2026-08-27T12:00:00Z", priv); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(ReleaseAuthorityPath(dir)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadReleaseAuthority(dir, priv.Public().(ed25519.PublicKey)); err == nil ||
-		!strings.Contains(err.Error(), "拒绝从 generation 1") {
-		t.Fatalf("authority 丢失后应 fail closed:%v", err)
-	}
-	if _, _, err := ensureReleaseAuthority(dir, "bbbbbbbbbbbb", nil,
-		"2026-08-27T13:00:00Z", priv); err == nil {
-		t.Fatal("marker 存在时仍重新初始化 authority")
-	}
-}
-
-func TestReleaseAuthorityCleanLegacyAndTamper(t *testing.T) {
-	dir := t.TempDir()
-	priv := key(t)
-	pub := priv.Public().(ed25519.PublicKey)
-	current, err := ReadReleaseAuthority(dir, pub)
-	if err != nil || current != nil {
-		t.Fatalf("干净 legacy 目录应可迁移:current=%+v err=%v", current, err)
-	}
-	if _, _, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", nil,
-		"2026-08-27T12:00:00Z", priv); err != nil {
-		t.Fatal(err)
-	}
-	body, err := os.ReadFile(ReleaseAuthorityPath(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	body[len(body)/2] ^= 1
-	if err := os.WriteFile(ReleaseAuthorityPath(dir), body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadReleaseAuthority(dir, pub); err == nil {
-		t.Fatal("损坏的 authority 被接受")
-	}
-}
-
-func TestReleaseAuthorityBackupStateRequiresCompleteDurablePair(t *testing.T) {
-	priv := key(t)
-	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T, dir string)
-		want  bool
-		bad   bool
-	}{
-		{name: "clean-legacy"},
-		{name: "complete-signed-era", want: true, setup: func(t *testing.T, dir string) {
-			if _, _, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", nil,
-				"2026-08-27T12:00:00Z", priv); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{name: "authority-only", bad: true, setup: func(t *testing.T, dir string) {
-			if _, _, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", nil,
-				"2026-08-27T12:00:00Z", priv); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Remove(releaseAuthorityMarkerPath(dir)); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{name: "marker-only", bad: true, setup: func(t *testing.T, dir string) {
-			if err := os.WriteFile(releaseAuthorityMarkerPath(dir), []byte(releaseAuthorityMarkerBody), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{name: "corrupt-authority", bad: true, setup: func(t *testing.T, dir string) {
-			if _, _, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", nil,
-				"2026-08-27T12:00:00Z", priv); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(ReleaseAuthorityPath(dir), []byte("{}"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestHistoricalAuthorityBackupRequiresExactCompleteEvidence(t *testing.T) {
+	for _, name := range []string{"complete", "missing-marker", "missing-authority", "corrupt-marker", "corrupt-authority"} {
+		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if tc.setup != nil {
-				tc.setup(t, dir)
+			key := archiveAuthorityFixture(t, dir)
+			switch name {
+			case "missing-marker":
+				os.Remove(releaseAuthorityMarkerPath(dir))
+			case "missing-authority":
+				os.Remove(ReleaseAuthorityPath(dir))
+			case "corrupt-marker":
+				os.WriteFile(releaseAuthorityMarkerPath(dir), []byte("demo-corrupt"), 0600)
+			case "corrupt-authority":
+				os.WriteFile(ReleaseAuthorityPath(dir), []byte("{}"), 0600)
 			}
-			got, err := ReleaseAuthorityBackupState(dir)
-			if tc.bad && err == nil {
-				t.Fatalf("不完整 authority 状态被当成可恢复备份:enabled=%v", got)
+			enabled, err := ReleaseAuthorityBackupState(dir)
+			if name == "complete" {
+				if err != nil || !enabled {
+					t.Fatal("original backup evidence rejected", err)
+				}
+				if _, err = ReadReleaseAuthority(dir, key); err != nil {
+					t.Fatal("original signature rejected", err)
+				}
+			} else if err == nil {
+				t.Fatal("partial or corrupt evidence accepted as complete backup")
 			}
-			if !tc.bad && (err != nil || got != tc.want) {
-				t.Fatalf("enabled=%v want=%v err=%v", got, tc.want, err)
+			if name == "missing-authority" || name == "corrupt-authority" {
+				if _, err = ReadReleaseAuthority(dir, key); err == nil {
+					t.Fatal("damaged authority accepted")
+				}
 			}
 		})
+	}
+	dir := t.TempDir()
+	before, _ := os.ReadDir(dir)
+	if enabled, err := ReleaseAuthorityBackupState(dir); err != nil || enabled {
+		t.Fatal("empty evidence fabricated a signed era")
+	}
+	key, _ := deploymentCurrentKey(t)
+	if value, err := ReadReleaseAuthority(dir, key); err != nil || value != nil {
+		t.Fatal("empty read generated authority")
+	}
+	after, _ := os.ReadDir(dir)
+	if len(before) != len(after) {
+		t.Fatal("read-only evidence check wrote files")
 	}
 }

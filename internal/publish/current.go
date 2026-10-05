@@ -16,16 +16,8 @@ import (
 	"loom/internal/model"
 )
 
-// DeploymentCurrentSchema is the first authenticated deployment-pointer
-// schema.  It deliberately keeps snapshot and published_at at the top level:
-// an older pull binary decodes those two fields and ignores the additions,
-// which lets the fleet learn this protocol without a flag day.
+// DeploymentCurrentSchema identifies protected historical evidence only.
 const DeploymentCurrentSchema = 1
-
-// SignedCurrentCapability is the selfcheck capability every Agent carried by
-// the signed-current era must explicitly advertise.  Keeping the protocol
-// name beside the envelope avoids producer and reader spelling drift.
-const SignedCurrentCapability = "signed-current-v1"
 
 const deploymentCurrentDomain = "loom-current-v1\x00"
 
@@ -39,13 +31,9 @@ type DeploymentAssignment struct {
 	Snapshot string `json:"snapshot"`
 }
 
-// DeploymentCurrent is the authenticated mutable pointer at current.json.
-// Snapshot remains the legacy/global target.  Assignments is reserved for
-// node-by-node rollout; Sign, Bytes and DecodeDeploymentCurrent normalize it by
-// node so every producer signs the same semantic payload.
-//
-// Generation orders release decisions, not snapshot age.  A legitimate
-// rollback therefore points a higher generation at an older snapshot.
+// DeploymentCurrent is the original signed pointer shape, retained only for
+// offline verification of protected evidence. New publication and installation
+// never consume it; its original signed bytes and persisted floors are preserved.
 type DeploymentCurrent struct {
 	Schema      int                    `json:"schema"`
 	Generation  uint64                 `json:"generation"`
@@ -69,9 +57,8 @@ type deploymentCurrentPayload struct {
 
 // DecodeDeploymentCurrent strictly decodes a signed current.json envelope.
 // Signature authenticity is deliberately a separate Verify call because the
-// caller owns the pinned public key.  Legacy unsigned current.json must be
-// handled explicitly by the migration caller; it is never silently accepted
-// as a DeploymentCurrent.
+// caller owns the pinned public key. Unsigned pointers are not accepted.
+// This decoder is used only by offline evidence inspection and backup checks.
 func DecodeDeploymentCurrent(body []byte) (*DeploymentCurrent, error) {
 	if err := rejectDuplicateJSONKeys(body); err != nil {
 		return nil, fmt.Errorf("current.json 非法:%w", err)
@@ -90,62 +77,6 @@ func DecodeDeploymentCurrent(body []byte) (*DeploymentCurrent, error) {
 		return nil, fmt.Errorf("current.json 无效:%w", err)
 	}
 	return &current, nil
-}
-
-// DecodeLegacyCurrent is the only compatibility decoder for the unsigned
-// pre-generation current.json.  It accepts exactly the two fields understood
-// by deployed old pull binaries and rejects duplicate keys, unknown fields and
-// trailing values.  Migration callers can therefore make an explicit choice:
-// try the authenticated envelope first, then permit this narrow shape only
-// while the node has not latched a signed generation.
-func DecodeLegacyCurrent(body []byte) (*Current, error) {
-	if err := rejectDuplicateJSONKeys(body); err != nil {
-		return nil, fmt.Errorf("legacy current.json 非法:%w", err)
-	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	var current Current
-	if err := dec.Decode(&current); err != nil {
-		return nil, fmt.Errorf("解析 legacy current.json:%w", err)
-	}
-	if err := requireJSONEOF(dec); err != nil {
-		return nil, fmt.Errorf("解析 legacy current.json:%w", err)
-	}
-	if !validDeploymentSnapshot(current.Snapshot) {
-		return nil, fmt.Errorf("legacy snapshot %q 必须是 12 位小写十六进制", current.Snapshot)
-	}
-	if err := validateDeploymentPublishedAt(current.PublishedAt); err != nil {
-		return nil, fmt.Errorf("legacy current.json 无效:%w", err)
-	}
-	return &current, nil
-}
-
-// Sign authenticates the canonical payload with the platform Ed25519 key.
-// It sorts Assignments on the receiver so the subsequently serialized JSON is
-// canonical as well as the bytes covered by the signature.
-func (c *DeploymentCurrent) Sign(priv ed25519.PrivateKey) error {
-	if c == nil {
-		return errors.New("不能签名空 current")
-	}
-	if len(priv) != ed25519.PrivateKeySize {
-		return fmt.Errorf("签名私钥长度不对:%d", len(priv))
-	}
-	next := *c
-	if next.Schema == 0 {
-		next.Schema = DeploymentCurrentSchema
-	}
-	next.Assignments = sortedAssignments(next.Assignments)
-	next.Signature = ""
-	if err := next.validate(false); err != nil {
-		return err
-	}
-	message, err := next.signingBytes()
-	if err != nil {
-		return err
-	}
-	next.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(priv, message))
-	*c = next
-	return nil
 }
 
 // Verify checks the envelope with the locally pinned platform public key.
@@ -175,9 +106,8 @@ func (c *DeploymentCurrent) Verify(pub ed25519.PublicKey) error {
 	return nil
 }
 
-// Select returns the snapshot assigned to node.  Callers must Verify before
-// trusting this answer; keeping selection separate makes that ordering visible
-// at the pull boundary and keeps tests able to exercise validation directly.
+// Select reads a historical assignment after verification. It never selects
+// a running program, network configuration, or current release.
 func (c *DeploymentCurrent) Select(node string) (string, error) {
 	if c == nil {
 		return "", errors.New("不能从空 current 选择快照")

@@ -269,6 +269,8 @@ location 时，须逐一核对已有 bin 均来自已验证公开 catalog；未�
 相同 catalog 可验证目标一并按目标二的新事实决定接受或拒绝。缺少任意 HTTPS 正文、授权变动、错误密钥、
 同摘要异字节或任一身份不匹配均不能产生整体成功。没有已认证 HTTPS 根时也不能称全目标分发完成。
 本入口仅发布下载内容，不签发期望组件、不安装客户端、不推进任何既有运行 floor。
+旧 SSOT 发布构建、常驻循环、镜像写入、旧 release/pin/history 写入和无签名 current fallback 同项删除。
+旧 signed-current 与 snapshot 仅保留离线验签、原始备份完整性检查；运行入口不能调用历史签发或分发器。
 
 最小测试覆盖：prepare 不改 current 与重启回读；混合本机/SSH 的全目标顺序与失败不推进；目标身份与
 认证 URL 的来源、配置/权限变化、条件推进冲突及同 catalog 重试；真实正式 CLI、全部 YAML 目标落盘、
