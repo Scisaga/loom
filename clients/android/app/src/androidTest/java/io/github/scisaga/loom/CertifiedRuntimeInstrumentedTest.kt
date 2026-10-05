@@ -135,6 +135,9 @@ class CertifiedRuntimeInstrumentedTest {
         await("private join or protected restart must restore the certified profile") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
         connect()
         if (!resume) {
+            await("authorized path must be consumed after protected restart") {
+                routing.status(profileID).value.currentPaths.size == 1
+            }
             val path = routing.status(profileID).value.currentPaths.single()
             assertEquals("demo-exit", path.finalExit)
             assertEquals(listOf("demo-exit"), path.serverChain)
@@ -148,7 +151,9 @@ class CertifiedRuntimeInstrumentedTest {
             compose.onNodeWithTag("tab-configuration").performClick()
             click("refresh-config")
             await("accepted withdrawal must replace the encrypted LKG") {
-                enrollment.status(profileID).value.phase == EnrollmentPhase.READY && enrollment.status(profileID).value.viewDigest != previous
+                enrollment.status(profileID).value.phase == EnrollmentPhase.READY &&
+                    enrollment.status(profileID).value.viewDigest != previous &&
+                    routing.status(profileID).value.currentPaths.isEmpty()
             }
             compose.onNodeWithTag("tab-connection").performClick()
             awaitConnected()
@@ -162,7 +167,9 @@ class CertifiedRuntimeInstrumentedTest {
             compose.onNodeWithTag("tab-configuration").performClick()
             click("refresh-config")
             await("new permission must replace the withdrawn LKG") {
-                enrollment.status(profileID).value.phase == EnrollmentPhase.READY && enrollment.status(profileID).value.viewDigest != previous
+                enrollment.status(profileID).value.phase == EnrollmentPhase.READY &&
+                    enrollment.status(profileID).value.viewDigest != previous &&
+                    routing.status(profileID).value.currentPaths.size == 1
             }
             compose.onNodeWithTag("tab-connection").performClick()
             awaitConnected()
