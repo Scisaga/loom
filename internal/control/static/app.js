@@ -141,14 +141,31 @@ function deviceInvite(device){
   }
   return `<section class="card" id="device-enrollment"><h2>Invitation and joining</h2><p data-enrollment-state>${esc(device.enrollment||'unknown')}</p><p class="dim">Loading authenticated transaction…</p><button data-invite-refresh="${esc(id)}">Refresh transaction</button></section>`;
  }
- const transaction=value.transaction,delivery=device.enrollment==='open'&&value.state==='open'&&value.invite&&Date.now()<value.expires_at;
+ return inviteDetails(value);
+}
+function inviteDetails(value){
+ const transaction=value.transaction,id=transaction.id,delivery=value.state==='open'&&value.invite&&Date.now()<value.expires_at;
  return `<section id="device-enrollment"><div class="sectionhead"><h2>Invitation and joining</h2><span class="badge" data-enrollment-state>${esc(value.state)}</span></div><p class="dim">Joining and runtime observation are separate.</p><div class="grid"><section class="card"><h3>${esc(transaction.name||transaction.device_id)}</h3><dl class="device-facts"><dt>Device ID</dt><dd class="mono">${esc(transaction.device_id)}</dd><dt>Requested responsibilities</dt><dd>${esc(transaction.responsibilities.join(' + '))}</dd><dt>Policies</dt><dd>${esc(transaction.policy_ids.join(', ')||'None')}</dd><dt>Delivery</dt><dd>${esc(transaction.medium)}</dd><dt>Expires</dt><dd>${esc(when(value.expires_at))}</dd></dl><button data-invite-refresh="${esc(id)}">Refresh transaction</button></section><section class="card ${transaction.medium==='qr'?'qr-delivery':''}">${transaction.medium==='ssh'?sshDelivery(value):delivery?`${transaction.medium==='qr'?(value.qr_available?`<div class="qr-frame"><img class="qr" src="/api/control/ui/invites/${encodeURIComponent(id)}/qr.png" alt="One-time enrollment QR"><p class="note qr-size-note" hidden>Open the full-size QR to scan, or copy or download the complete invitation.</p><a class="button" href="/api/control/ui/invites/${encodeURIComponent(id)}/qr.png" target="_blank" rel="noopener">Open full-size QR</a></div>`:`<p class="note" role="status">${esc(value.delivery_error||'The invitation cannot be displayed as a QR code. Copy or download the complete invitation.')}</p>`):''}<div class="field"><label>Signed invitation</label><input id="invite-uri" readonly value="${esc(value.invite)}"></div><button data-copy-invite>Copy invite</button><a class="button" href="/api/control/ui/invites/${encodeURIComponent(id)}/download" download>Download invite</a>${transaction.medium==='sh'?(value.shell_command?`<div class="field"><label for="invite-command">Install command</label><textarea id="invite-command" class="mono" readonly rows="16">${esc(value.shell_command)}</textarea></div><button class="primary" data-copy-install-command>Copy command</button><p class="note">Paste the complete block into a root shell on the target Linux machine. It contains the invitation and may remain in terminal history or session recordings.</p>`:`<p class="note" role="status">${esc(value.delivery_error||'A verified public installer is unavailable.')}</p>`):''}`:'<p class="dim">This transaction cannot issue another fresh invitation.</p>'}</section></div></section>`;
 }
 function invitePage(id){
  const device=list(projection.devices).find(v=>v.enrollment_id===id);
- if(!device){notFoundPage();return}
  app.className='network-page page-enrollment';
- app.innerHTML=heading('Device invitation',device.name||device.id)+deviceInvite(device)+`<div class="actions"><a class="button primary" href="/devices/${encodeURIComponent(device.id)}" data-nav>Continue in device details</a></div>`;
+ if(device){app.innerHTML=heading('Device invitation',esc(device.name||device.id))+deviceInvite(device)+`<div class="actions"><a class="button primary" href="/devices/${encodeURIComponent(device.id)}" data-nav>Continue in device details</a></div>`;return}
+ // A terminated transaction remains addressable after its unbound DeviceID is
+ // reused. Facts invalidate this disposable cache; report updates do not.
+ const key=canonical(list(projection.targets)),cached=inviteCache.get(id),value=cached?.key===key?cached.value:null;
+ if(value){app.innerHTML=heading('Device invitation',esc(value.transaction.name||value.transaction.device_id))+inviteDetails(value)+'<div class="actions"><a class="button" href="/devices" data-nav>Back to nodes</a></div>';return}
+ app.innerHTML=heading('Device invitation','Loading authenticated transaction…');
+ if(inviteLoads.has(id))return;
+ inviteLoads.add(id);
+ api('/api/control/ui/invites/'+encodeURIComponent(id)).then(result=>{
+  if(canonical(list(projection.targets))===key)inviteCache.set(id,{key,value:result});
+  inviteLoads.delete(id);
+  if(location.pathname==='/devices/invites/'+encodeURIComponent(id))stableRender();
+ }).catch(error=>{
+  inviteLoads.delete(id);
+  if(location.pathname==='/devices/invites/'+encodeURIComponent(id))app.innerHTML=heading('Invitation unavailable',esc(error.message))+`<button data-invite-refresh="${esc(id)}">Retry</button>`;
+ });
 }
 function devicePage(id){
   const device=list(projection.devices).find(v=>v.id===id);if(!device){app.innerHTML=heading('Device not found','The certified projection has no such identity.');return}

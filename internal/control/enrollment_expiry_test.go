@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -185,4 +186,29 @@ func TestServingControlExpiresUnclaimedInviteWithoutAReadTrigger(t *testing.T) {
 	if err != nil || response.StatusCode != http.StatusOK || json.Unmarshal(body, &value) != nil || value.State != "expired" || value.Invite != "" {
 		t.Fatal("normal readback did not reflect the terminal fact")
 	}
+}
+
+func TestChromeExpiredInvitationRemainsReadableAfterDeviceIDReuse(t *testing.T) {
+	server, invite, _, _, _, _ := enrollmentAuthorityFixture(t)
+	original, _ := server.Runtime.Authority.Invite(invite.ID)
+	if _, err := server.Runtime.Authority.ExpireUnboundInvites(context.Background(), time.UnixMilli(invite.ExpiresAt), server.Config); err != nil {
+		t.Fatal(err)
+	}
+	expired, _, err := server.Runtime.Authority.MaterialForRequest(enrollmentRequestID("expire", invite.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := invite
+	replacement.ID, replacement.ExpiresAt = "demo-replacement", invite.ExpiresAt+60000
+	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-replacement-request", Operation: "invite.issue", TargetKind: "invite", TargetID: replacement.ID,
+		Dependencies: sortedUniqueDependencies(append(append([]string{}, original.Dependencies...), expired)), Payload: replacement})
+	httpServer := httptest.NewServer(server.AdminHandler())
+	defer httpServer.Close()
+	debug := openCommandChrome(t, httpServer.URL+"/devices/invites/"+invite.ID)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-enrollment-state]')?.textContent==='expired'`)
+	if chromeDo(t, debug, `document.querySelector('#invite-uri')===null && !document.querySelector('#app a[href="/devices/demo-access"]') && document.querySelector('#app').textContent.includes('This transaction cannot issue another fresh invitation.')`) != true {
+		t.Fatal("old invitation was redelivered or attached to the replacement identity")
+	}
+	chromeDo(t, debug, `document.querySelector('[data-invite-refresh]').click()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-enrollment-state]')?.textContent==='expired'`)
 }
