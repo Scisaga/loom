@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -422,91 +421,120 @@ func (address channelAddress) Network() string { return "loom-private" }
 func (address channelAddress) String() string  { return string(address) }
 
 func (channel *PrivateChannel) dialMemberTLS(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration) (net.Conn, error) {
-	var failures []error
+	if _, ok := channel.memberForNode(target); !ok {
+		return nil, errors.New("private control target is not a current member")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type route struct {
+		endpoint string
+		relay    bool
+	}
+	var routes []route
 	for _, endpoint := range channel.endpoints(target) {
-		raw, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", endpoint)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		connection := tls.Client(raw, channel.relayTargetTLS(target, protocol))
-		_ = connection.SetDeadline(time.Now().Add(timeout))
-		err = connection.HandshakeContext(ctx)
-		if err == nil {
-			_ = connection.SetDeadline(time.Time{})
-			return connection, nil
-		}
-		_ = connection.Close()
-		failures = append(failures, err)
+		routes = append(routes, route{endpoint: endpoint})
 	}
-	if _, ok := channel.memberForNode(target); ok {
-		relayNodes := make([]string, 0, len(channel.config.Peers))
-		for _, peer := range channel.config.Peers {
-			relayNodes = append(relayNodes, peer.Node)
-		}
-		sort.Strings(relayNodes)
-		for _, relayNode := range relayNodes {
-			if relayNode == target {
-				continue
-			}
-			endpoints := channel.endpoints(relayNode)
-			for _, endpoint := range endpoints {
-				outer, err := channel.dialTLS(endpoint, relayProtocol, timeout)
-				if err != nil {
-					failures = append(failures, err)
-					continue
-				}
-				targetBytes := []byte(target)
-				if len(targetBytes) > 1024 || binary.Write(outer, binary.BigEndian, uint16(len(targetBytes))) != nil {
-					_ = outer.Close()
-					continue
-				}
-				if _, err := outer.Write(targetBytes); err != nil {
-					_ = outer.Close()
-					failures = append(failures, err)
-					continue
-				}
-				var status [1]byte
-				if _, err := io.ReadFull(outer, status[:]); err != nil || status[0] != 0 {
-					_ = outer.Close()
-					failures = append(failures, errors.New("private relay rejected target"))
-					continue
-				}
-				connection := tls.Client(outer, channel.relayTargetTLS(target, protocol))
-				_ = connection.SetDeadline(time.Now().Add(timeout))
-				if err := connection.HandshakeContext(ctx); err != nil {
-					_ = connection.Close()
-					failures = append(failures, err)
-					continue
-				}
-				_ = connection.SetDeadline(time.Time{})
-				return connection, nil
+	for _, peer := range channel.config.Peers {
+		if peer.Node != target {
+			for _, endpoint := range peer.Addresses {
+				routes = append(routes, route{endpoint: endpoint, relay: true})
 			}
 		}
 	}
-	if len(failures) == 0 {
+	if len(routes) == 0 {
 		return nil, fmt.Errorf("private control node %s has no private route", target)
+	}
+	type result struct {
+		connection net.Conn
+		err        error
+	}
+	results := make(chan result)
+	for _, candidate := range routes {
+		go func(candidate route) {
+			connection, err := channel.dialMemberRoute(ctx, target, candidate.endpoint, protocol, relayProtocol, candidate.relay)
+			select {
+			case results <- result{connection, err}:
+			case <-ctx.Done():
+				if connection != nil {
+					_ = connection.Close()
+				}
+			}
+		}(candidate)
+	}
+	var failures []error
+	for range routes {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-results:
+			if result.err == nil {
+				return result.connection, nil
+			}
+			failures = append(failures, result.err)
+		}
 	}
 	return nil, errors.Join(failures...)
 }
 
-func (channel *PrivateChannel) dialTLS(endpoint, protocol string, timeout time.Duration) (*tls.Conn, error) {
-	dialer := &net.Dialer{Timeout: timeout}
-	raw, err := dialer.Dial("tcp", endpoint)
+// All establishment steps share one deadline and cancellation, including the
+// relay's target response. The losing attempts cannot outlive the request.
+func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endpoint, protocol, relayProtocol string, relay bool) (net.Conn, error) {
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", endpoint)
 	if err != nil {
 		return nil, err
 	}
-	host, _, _ := net.SplitHostPort(endpoint)
-	config := channel.peerTLS.Clone()
-	config.ServerName = host
-	config.NextProtos = []string{protocol}
-	connection := tls.Client(raw, config)
-	_ = connection.SetDeadline(time.Now().Add(timeout))
-	if err := connection.HandshakeContext(context.Background()); err != nil {
-		_ = raw.Close()
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	success := false
+	defer func() {
+		stop()
+		if !success {
+			_ = raw.Close()
+		}
+	}()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = raw.SetDeadline(deadline)
+	}
+	var transport net.Conn = raw
+	if relay {
+		host, _, _ := net.SplitHostPort(endpoint)
+		config := channel.peerTLS.Clone()
+		config.ServerName = host
+		config.NextProtos = []string{relayProtocol}
+		outer := tls.Client(raw, config)
+		if err := outer.HandshakeContext(ctx); err != nil {
+			return nil, err
+		}
+		targetBytes := []byte(target)
+		if len(targetBytes) > 1024 {
+			return nil, errors.New("private relay target is too long")
+		}
+		if err := binary.Write(outer, binary.BigEndian, uint16(len(targetBytes))); err != nil {
+			return nil, err
+		}
+		if _, err := outer.Write(targetBytes); err != nil {
+			return nil, err
+		}
+		var status [1]byte
+		if _, err := io.ReadFull(outer, status[:]); err != nil {
+			return nil, err
+		}
+		if status[0] != 0 {
+			return nil, errors.New("private relay rejected target")
+		}
+		transport = outer
+	}
+	connection := tls.Client(transport, channel.relayTargetTLS(target, protocol))
+	if err := connection.HandshakeContext(ctx); err != nil {
 		return nil, err
 	}
+	if !stop() || ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	_ = connection.SetDeadline(time.Time{})
+	success = true
 	return connection, nil
 }
 

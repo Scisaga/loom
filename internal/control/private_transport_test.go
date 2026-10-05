@@ -10,13 +10,17 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -169,6 +173,104 @@ func TestPrivateMemberDeltaAndBrowserTLSUseCurrentAuthority(t *testing.T) {
 	if len(runtimes[1].Authority.Snapshot().NetworkIntent.Services) != 1 {
 		t.Fatal("private member did not consume the signed fact")
 	}
+	t.Run("unresponsive relay does not block authenticated delta", func(t *testing.T) {
+		files, _, _ := testTransportIdentity(t, parent, "relay-demo-relay", 51, testKey(t), ca,
+			[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth})
+		identity := RelayIdentity{Schema: 3, Node: "demo-relay", TLS: files}
+		relay := func(targetAddress string) *PrivateChannel {
+			t.Helper()
+			channel, err := OpenPrivateRelay(PrivateChannelConfig{Schema: 3, Node: identity.Node,
+				Listen: []string{testLoopbackAddress(t)}, Peers: []PrivatePeer{{Node: members[0].NodeID, Addresses: []string{targetAddress}}}}, identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { channel.Close() })
+			return channel
+		}
+		good := relay(first.ListenAddresses()[0])
+		stallTLS, err := relayTLSConfig(identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stalled, closed := testStalledPrivateRelay(t, stallTLS)
+		root := filepath.Join(parent, "demo-authority-recovery")
+		authority, err := InitializeAuthority(root, configs[1], genesis)
+		if err != nil {
+			t.Fatal(err)
+		}
+		channel := &PrivateChannel{peerTLS: second.peerTLS, config: PrivateChannelConfig{Schema: 3,
+			Node: members[1].NodeID, Peers: []PrivatePeer{
+				{Node: "demo-relay-a", Addresses: []string{stalled}},
+				{Node: "demo-relay-b", Addresses: good.ListenAddresses()},
+			}}}
+		channel.AttachAuthority(authority)
+		recovery := &Runtime{Config: configs[1], Authority: authority, Channel: channel}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := recovery.reconcilePeer(ctx, members[0]); err != nil {
+			t.Fatalf("available relay did not sync past stalled relay: %v", err)
+		}
+		reopened, err := OpenAuthority(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		copied, err := reopened.Material(accepted.MaterialID)
+		if err != nil || !bytes.Equal(original, copied) || len(reopened.Snapshot().NetworkIntent.Services) != 1 {
+			t.Fatal("relay delta did not persist the exact signed fact and projection")
+		}
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			t.Fatal("losing relay connection remained open")
+		}
+
+		t.Run("all routes stalled honor cancellation", func(t *testing.T) {
+			address, closed := testStalledPrivateRelay(t, stallTLS)
+			caller := &PrivateChannel{peerTLS: second.peerTLS, config: PrivateChannelConfig{
+				Peers: []PrivatePeer{{Node: "demo-relay-a", Addresses: []string{address}}}}}
+			caller.AttachAuthority(authority)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() {
+				connection, err := caller.dialMemberTLS(ctx, members[0].NodeID, controlALPN, controlRelayALPN, 100*time.Millisecond)
+				if connection != nil {
+					connection.Close()
+				}
+				finished <- err
+			}()
+			select {
+			case err := <-finished:
+				if err == nil || !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "i/o timeout") {
+					t.Fatalf("stalled relay did not return a deadline error: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("relay status read escaped the connection timeout")
+			}
+			select {
+			case <-closed:
+			case <-time.After(time.Second):
+				t.Fatal("timed-out relay connection remained open")
+			}
+			cancel()
+			if _, err := caller.dialMemberTLS(ctx, members[0].NodeID, controlALPN, controlRelayALPN, time.Second); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled caller started another connection: %v", err)
+			}
+		})
+		t.Run("relay cannot substitute another member", func(t *testing.T) {
+			wrong := relay(second.ListenAddresses()[0])
+			caller := &PrivateChannel{peerTLS: second.peerTLS, config: PrivateChannelConfig{
+				Peers: []PrivatePeer{{Node: "demo-relay-a", Addresses: wrong.ListenAddresses()}}}}
+			caller.AttachAuthority(authority)
+			connection, err := caller.dialMemberTLS(context.Background(), members[0].NodeID, controlALPN, controlRelayALPN, time.Second)
+			if connection != nil {
+				connection.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), "not the configured member") {
+				t.Fatalf("relay target identity check was bypassed: %v", err)
+			}
+		})
+	})
 
 	pool := x509.NewCertPool()
 	pool.AddCert(ca.certificate)
@@ -205,6 +307,57 @@ func TestPrivateMemberDeltaAndBrowserTLSUseCurrentAuthority(t *testing.T) {
 			t.Fatal("transport CA alone granted member facts")
 		}
 	}
+}
+
+// The relay authenticates but never acknowledges its target. EOF proves the
+// caller cancelled the socket, rather than merely abandoning a dial goroutine.
+func testStalledPrivateRelay(t *testing.T, config *tls.Config) (string, <-chan struct{}) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{}, 32)
+	var mu sync.Mutex
+	connections := map[net.Conn]bool{}
+	t.Cleanup(func() {
+		listener.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for connection := range connections {
+			connection.Close()
+		}
+	})
+	go func() {
+		for {
+			raw, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			connections[raw] = true
+			mu.Unlock()
+			go func() {
+				defer raw.Close()
+				connection := tls.Server(raw, config)
+				if connection.Handshake() == nil {
+					var length uint16
+					if binary.Read(connection, binary.BigEndian, &length) == nil {
+						_, _ = io.CopyN(io.Discard, connection, int64(length))
+						_, _ = io.Copy(io.Discard, connection)
+					}
+				}
+				mu.Lock()
+				delete(connections, raw)
+				mu.Unlock()
+				select {
+				case closed <- struct{}{}:
+				default:
+				}
+			}()
+		}
+	}()
+	return listener.Addr().String(), closed
 }
 
 func TestLocalPeerTLSRejectsCertificateIdentityMismatch(t *testing.T) {
