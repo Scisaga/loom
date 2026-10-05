@@ -83,6 +83,9 @@ stateDiagram-v2
 adapter 到期关闭该代已有会话，转为 retired 前必须回读该代 Active 为 0，不凭期限已到推测会话已清理。
 轮换时可短暂有两个 serving 代；偏好来自签名事实，不建立额外状态机。
 新代未通过证书、端到端访问和回读时，旧代不提前退休。轮换失败保持最后经验证的阶段和安全 floor。
+TLS 就绪预检按实际协商协议各建一次连接：bootstrap 与 device 共用 `loom-tunnel/3`，不在同一
+超时预算内重复握手；web 的 `http/1.1` 仍须单独验证。它只证明该协议的地址、证书、名称和 SPKI，
+不能代替后续 bootstrap capability 或设备签名认证。反例是 tunnel 成功但 web 协商失败：整体预检仍失败。
 公网映射落在非 control 节点时，edge 只做已有端口上的 TCP 转发；它不持有 control 或设备签名密钥，
 不会因转发而获得 control 资格。外部 DNS provider、DNS-01 与 ACME 自动签发或续期不属于本模型。
 

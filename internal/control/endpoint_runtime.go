@@ -881,11 +881,19 @@ func EndpointDialer(ctx context.Context) func(context.Context, string, string) (
 // ProbeEndpoint verifies the advertised address without claiming or opening a
 // device session. A prepared endpoint may be checked before it is selectable.
 func ProbeEndpoint(ctx context.Context, endpoint EndpointGeneration) error {
+	protocols := map[string]bool{}
 	for _, mode := range endpoint.Modes {
 		protocol := tunnelALPN
 		if mode == "web" {
 			protocol = "http/1.1"
 		}
+		// Bootstrap and device authentication share one TLS transport. Repeating
+		// that handshake consumes the same deadline without testing a new mode;
+		// their distinct application authentication is checked by DialEndpoint.
+		if protocols[protocol] {
+			continue
+		}
+		protocols[protocol] = true
 		connection, err := connectEndpoint(ctx, endpoint, protocol)
 		if err != nil {
 			return err

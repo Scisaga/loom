@@ -4,16 +4,82 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 )
+
+func TestEndpointReadinessChecksEachTLSProtocolOnce(t *testing.T) {
+	root := t.TempDir()
+	ca := testTransportCA(t, root)
+	files, _, leaf := testTransportIdentity(t, root, "demo-probe-tls", 52, testKey(t), ca, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	certificate, err := tls.LoadX509KeyPair(files.CertificateFile, files.KeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		modes     []string
+		protocols []string
+		want      []string
+		fails     bool
+	}{
+		{"shared tunnel", []string{"bootstrap", "device"}, []string{tunnelALPN}, []string{tunnelALPN}, false},
+		{"separate web", []string{"bootstrap", "device", "web"}, []string{tunnelALPN, "http/1.1"}, []string{tunnelALPN, "http/1.1"}, false},
+		{"web unavailable", []string{"bootstrap", "device", "web"}, []string{tunnelALPN}, []string{tunnelALPN, "http/1.1"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempts := make(chan string, 4)
+			listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, NextProtos: test.protocols,
+				GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+					for _, protocol := range hello.SupportedProtos {
+						attempts <- protocol
+					}
+					return nil, nil
+				}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for {
+					connection, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					connection.SetDeadline(time.Now().Add(3 * time.Second))
+					_ = connection.(*tls.Conn).Handshake()
+					connection.Close()
+				}
+			}()
+			defer func() { listener.Close(); <-done }()
+			host, port, _ := net.SplitHostPort(listener.Addr().String())
+			number, _ := strconv.Atoi(port)
+			endpoint := EndpointGeneration{ID: "demo-probe-entry", Generation: 1, OwnerControlID: "demo-control", Host: host, Port: number, ServerName: "demo.example", SPKISHA256: endpointByteDigest(leaf.RawSubjectPublicKeyInfo), CertificateDigest: endpointByteDigest(leaf.Raw), Modes: test.modes, State: "prepared"}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := ProbeEndpoint(ctx, endpoint); (err != nil) != test.fails {
+				t.Fatal("readiness did not verify the advertised protocols", err)
+			}
+			var got []string
+			for len(attempts) > 0 {
+				got = append(got, <-attempts)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("TLS attempts %v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func endpointHTTPClient(connection net.Conn) *http.Client {
 	used := false
