@@ -31,7 +31,7 @@ func RunWindowsDataPlaneProfile(ctx context.Context, executable string, config [
 
 // §16.1：只有进程已创建且已受 Job Object 监督，宿主才可以开始启动稳定窗口。
 func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, config []byte, runtimeDir, cacheDir string,
-	profile WindowsRuntimeProfile, started func()) (retErr error) {
+	profile WindowsRuntimeProfile, started func(pid int)) (retErr error) {
 	if ctx == nil {
 		return errors.New("sing-box supervisor context is nil")
 	}
@@ -101,7 +101,7 @@ func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, c
 	}
 	defer guard.Close()
 	if started != nil {
-		started()
+		started(command.Process.Pid)
 	}
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()

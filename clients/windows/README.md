@@ -116,6 +116,14 @@ delete a disconnected profile in the UI to delete its identity intentionally.
 - `internal/clientadapter` applies and reads the authenticated selector and
   records real TCP/TLS plus UDP/DNS results.
 
+Component reports measure the running agent, supervised data-plane image and
+actually loaded Wintun module independently of configured expectations. The
+verified component files are held read-only for that runtime generation;
+reported versions come from the manifest only after the measured file identity
+and digest match. Portable Mixed does not report an unloaded Wintun DLL. Normal
+stop releases these handles before upgrade or uninstall; no component-report
+state is persisted separately.
+
 The client accepts only private authenticated device data and a complete
 certified `DeviceView`. Current runtime state comes from verified LKG and
 HostAdapter readback.

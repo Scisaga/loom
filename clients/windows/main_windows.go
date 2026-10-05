@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -308,26 +307,6 @@ func windowsNetworkGeneration() (string, error) {
 	return "network-" + hex.EncodeToString(digest[:]), nil
 }
 
-func windowsComponentReadbacks(view control.DeviceView, components clientcomponent.RuntimePaths) []control.ComponentReadback {
-	coordinate := version.Self()
-	componentVersion := coordinate.Tag
-	if componentVersion == "" {
-		componentVersion = coordinate.Commit
-	}
-	actual := map[string]control.ComponentReadback{
-		"sing-box": {ComponentID: "sing-box", Platform: "windows-" + runtime.GOARCH, Version: strings.TrimPrefix(components.Manifest.SingBox.Version, "v"), ArtifactDigest: "sha256:" + components.Manifest.SingBox.SHA256},
-		"wintun":   {ComponentID: "wintun", Platform: "windows-" + runtime.GOARCH, Version: strings.TrimPrefix(components.Manifest.Wintun.Version, "v"), ArtifactDigest: "sha256:" + components.Manifest.Wintun.SHA256},
-		"agent":    {ComponentID: "agent", Platform: "windows-" + runtime.GOARCH, Version: componentVersion, ArtifactDigest: "sha256:" + coordinate.Binary},
-	}
-	result := []control.ComponentReadback{}
-	for _, expected := range view.ExpectedComponents {
-		if value, ok := actual[expected.ComponentID]; ok && value.Platform == expected.Platform && value.Version != "" && value.Validate() == nil {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
 func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapter.Activation,
 	components []control.ComponentReadback, reportedAt time.Time) (control.DeviceReport, error) {
 	report := control.DeviceReport{ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, ReportedAt: reportedAt.UnixMilli(),
@@ -461,6 +440,15 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if err != nil {
 		return err
 	}
+	heldComponents, err := pinWindowsRuntimeComponents(components)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for _, file := range heldComponents {
+			file.Close()
+		}
+	}()
 	localSecret := make([]byte, 32)
 	if _, err := rand.Read(localSecret); err != nil {
 		return err
@@ -479,21 +467,22 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	defer stopGeneration()
 	ctx = generationContext
 	planeDone := make(chan error, 1)
-	started := make(chan struct{})
+	started := make(chan int, 1)
 	go func() {
 		base := root
 		if filepath.Base(filepath.Dir(root)) == "profiles" && validConnectionProfileID(filepath.Base(root)) {
 			base = filepath.Dir(filepath.Dir(root))
 		}
 		planeDone <- clientruntime.RunWindowsDataPlaneProfileStarted(ctx, components.SingBox, config,
-			filepath.Join(root, "runtime"), filepath.Join(base, "dataplane-cache"), profile, func() { close(started) })
+			filepath.Join(root, "runtime"), filepath.Join(base, "dataplane-cache"), profile, func(pid int) { started <- pid })
 	}()
+	var dataPlanePID int
 	select {
 	case <-ctx.Done():
 		return <-planeDone
 	case err := <-planeDone:
 		return err
-	case <-started:
+	case dataPlanePID = <-started:
 	}
 	planeStopped := false
 	defer func() {
@@ -549,7 +538,10 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			return activationErr
 		}
 	}
-	componentReadbacks := windowsComponentReadbacks(lkg.View, components)
+	componentReadbacks, componentErr := windowsComponentReadbacks(dataPlanePID, components, heldComponents)
+	if componentErr != nil {
+		log.Printf("actual Windows component readback incomplete: %v", componentErr)
+	}
 	report, err := windowsDeviceReport(lkg, activation, componentReadbacks, time.Now())
 	if err != nil {
 		return err

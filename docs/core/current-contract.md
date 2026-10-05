@@ -694,6 +694,16 @@ components 使用上述组件坐标，表示实际运行坐标，不复制期望
 每个 generation 的测量可缓存在本进程内，进程退出即失效；重启重新测量，不建立组件状态 store。
 单个组件无法测量只缺少该项，不抹去其他实际回读，也不把运行故障改成成功。
 
+Windows 同样从实际进程回读 agent 和 sing-box，不按期望列表筛选。现有实现按期望筛选会在
+未配置期望时漏报，且从已验签包直接复制 Wintun 会把 Portable Mixed 未加载的 DLL 算成运行组件。
+最小修正只改变 HostAdapter 的测量：启动前以禁止写入/删除共享的只读句柄固定已验签程序文件，
+本 generation 结束后释放；就绪后核对受 Job 监督子进程的镜像及已加载 Wintun 模块与同一文件身份。
+只有实际文件摘要与原 manifest 相等时才从该 manifest 取版本；agent 版本取实际镜像的源码提交。
+Mixed 未加载 Wintun 时不报告它。domain、wire 与报告持久值仍为原 ComponentReadback，UI 按现有
+坐标比较；没有新增安装状态或操作者配置。停止释放句柄后可正常升级/卸载，重启重新测量。
+最小验证覆盖无期望时仍回读、未加载 DLL 不充数、运行文件替换被拒绝、错误 manifest/退出进程
+不伪造组件，以及同机 VM 正常业务、签名报告、重启与停止后的文件释放。
+
 Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest,`
 `network_generation,result,observed_at,valid_until`，可选 `duration_ms` 为非负整数。
 level 仅 `resource/link/service`；不适用的四个 ID 字段固定为空字符串，不能缺席。

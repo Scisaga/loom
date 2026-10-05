@@ -3,22 +3,116 @@
 package main
 
 import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
 	"loom/internal/clientadapter"
 	"loom/internal/clientcomponent"
 	"loom/internal/clientmodel"
 	"loom/internal/control"
-	"runtime"
-	"strings"
-	"testing"
-	"time"
 )
 
-func TestWindowsComponentReadbacksOnlyReportActualCertifiedCoordinates(t *testing.T) {
-	view := control.DeviceView{ExpectedComponents: []control.ComponentReadback{{ComponentID: "demo-uninstalled", Platform: "windows-" + runtime.GOARCH}, {ComponentID: "sing-box", Platform: "windows-" + runtime.GOARCH}}}
-	components := clientcomponent.RuntimePaths{Manifest: clientcomponent.Manifest{SingBox: clientcomponent.Component{Version: "v1.11.4", SHA256: strings.Repeat("1", 64)}}}
-	readbacks := windowsComponentReadbacks(view, components)
-	if len(readbacks) != 1 || readbacks[0].ComponentID != "sing-box" || readbacks[0].ArtifactDigest != "sha256:"+strings.Repeat("1", 64) {
-		t.Fatal("uninstalled component was fabricated or verified component missing")
+func TestWindowsComponentProcess(t *testing.T) {
+	if os.Getenv("LOOM_COMPONENT_HELPER") != "1" {
+		return
+	}
+	fmt.Println("ready")
+	io.Copy(io.Discard, os.Stdin)
+}
+
+func TestWindowsComponentReadbacksMeasureRunningFilesWithoutExpectations(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	paths := clientcomponent.RuntimePaths{SingBox: filepath.Join(root, "demo-component.exe"), Wintun: filepath.Join(root, "wintun.dll")}
+	for _, item := range []struct {
+		path  string
+		body  []byte
+		value *clientcomponent.Component
+	}{
+		{paths.SingBox, body, &paths.Manifest.SingBox},
+		{paths.Wintun, []byte("demo unloaded component"), &paths.Manifest.Wintun},
+	} {
+		if err := os.WriteFile(item.path, item.body, 0600); err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(item.body)
+		*item.value = clientcomponent.Component{Version: "demo-version", SHA256: hex.EncodeToString(hash[:])}
+	}
+	held, err := pinWindowsRuntimeComponents(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, file := range held {
+			file.Close()
+		}
+	}()
+	command := exec.Command(paths.SingBox, "-test.run=^TestWindowsComponentProcess$")
+	command.Env = append(os.Environ(), "LOOM_COMPONENT_HELPER=1")
+	input, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	output, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer command.Process.Kill()
+	if line, err := bufio.NewReader(output).ReadString('\n'); err != nil || strings.TrimSpace(line) != "ready" {
+		t.Fatal("real child did not become ready", err)
+	}
+	readbacks, err := windowsComponentReadbacks(command.Process.Pid, paths, held)
+	if err != nil || len(readbacks) != 2 || readbacks[0].ComponentID != "agent" || readbacks[1].ComponentID != "sing-box" || readbacks[1].ArtifactDigest != "sha256:"+paths.Manifest.SingBox.SHA256 {
+		t.Fatal("actual child or agent missing, or unloaded DLL fabricated", readbacks, err)
+	}
+	for _, path := range []string{paths.SingBox, paths.Wintun} {
+		if err := os.Rename(path, path+".replaced"); err == nil {
+			t.Fatal("held component was replaceable")
+		}
+		if file, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+			file.Close()
+			t.Fatal("held component was writable")
+		}
+	}
+	wrong := paths
+	wrong.Manifest.SingBox.SHA256 = strings.Repeat("1", 64)
+	if result, err := windowsComponentReadbacks(command.Process.Pid, wrong, held); err == nil || len(result) != 1 || result[0].ComponentID != "agent" {
+		t.Fatal("unverified file became a reported component, or agent was erased", result, err)
+	}
+	input.Close()
+	if err := command.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := windowsComponentReadbacks(command.Process.Pid, paths, held); err == nil || len(result) != 1 || result[0].ComponentID != "agent" {
+		t.Fatal("stopped process remained reported", result, err)
+	}
+	for _, file := range held {
+		file.Close()
+	}
+	for _, path := range []string{paths.SingBox, paths.Wintun} {
+		if err := os.Rename(path, path+".released"); err != nil {
+			t.Fatal("normal stop retained a component handle", err)
+		}
 	}
 }
 func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *testing.T) {
