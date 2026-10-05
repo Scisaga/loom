@@ -21,7 +21,7 @@ import (
 
 // The same contract signer and decoder used by the daemon supply this client
 // failure test. Full bind/join and tunnel acceptance are exercised by control.
-func linuxAcceptanceFixture(t *testing.T) (*deviceclient.Store, string, func(uint64, bool) control.DeviceViewEnvelope) {
+func linuxAcceptanceFixture(t *testing.T, change ...func(uint64, *control.DeviceView)) (*deviceclient.Store, string, func(uint64, bool) control.DeviceViewEnvelope) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -70,6 +70,9 @@ func linuxAcceptanceFixture(t *testing.T) (*deviceclient.Store, string, func(uin
 			view.PolicyIDs = []string{"demo-policy"}
 			view.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo-service.example"}}}}
 			view.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: scope, AllowDirect: true, LocalEgressDevices: []string{}}}
+		}
+		for _, update := range change {
+			update(sequence, &view)
 		}
 		view.Routes, view.RuntimeProfile, err = control.ProjectAccessRuntime(view)
 		if err != nil {
@@ -139,7 +142,13 @@ func TestAcceptedRevocationSurvivesRuntimeFailureAndRestart(t *testing.T) {
 	}
 	options := Options{DeviceState: path, Capture: "mixed", Config: config, LocalState: filepath.Join(root, "local.json"),
 		SingBox: filepath.Join(root, "missing-sing-box"), Status: filepath.Join(root, "status.json"), Generation: func() (string, error) { return "demo-generation", nil }}
-	if err := runGeneration(context.Background(), options, store); err == nil {
+	var transaction *wireGuardTransaction
+	t.Cleanup(func() {
+		if err := transaction.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := runGeneration(context.Background(), options, store, nil, &transaction); err == nil {
 		t.Fatal("runtime applied an invalid local config path")
 	}
 	restarted, err := deviceclient.Load(path)
@@ -155,7 +164,7 @@ func TestAcceptedRevocationSurvivesRuntimeFailureAndRestart(t *testing.T) {
 	if _, err := acceptCertifiedView(restarted, makeView(8, true)); err == nil {
 		t.Fatal("a conflicting head at the same floor restored the revoked service")
 	}
-	if err := runGeneration(context.Background(), options, restarted); err == nil {
+	if err := runGeneration(context.Background(), options, restarted, nil, &transaction); err == nil {
 		t.Fatal("restart did not preserve the application failure")
 	}
 	if _, err := ReadStatus(options.Status); err == nil {

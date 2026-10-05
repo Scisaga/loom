@@ -42,17 +42,11 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		}
 		return body
 	}
-	_ = exec.Command("ip", "netns", "del", initiatorNS).Run()
-	_ = exec.Command("ip", "netns", "del", acceptorNS).Run()
-	t.Cleanup(func() {
-		_ = exec.Command("ip", "netns", "del", initiatorNS).Run()
-		_ = exec.Command("ip", "netns", "del", acceptorNS).Run()
-	})
 	run("netns", "add", initiatorNS)
+	t.Cleanup(func() { _ = exec.Command("ip", "netns", "del", initiatorNS).Run() })
 	run("netns", "add", acceptorNS)
-	run("link", "add", vethI, "type", "veth", "peer", "name", vethA)
-	run("link", "set", vethI, "netns", initiatorNS)
-	run("link", "set", vethA, "netns", acceptorNS)
+	t.Cleanup(func() { _ = exec.Command("ip", "netns", "del", acceptorNS).Run() })
+	run("-n", initiatorNS, "link", "add", vethI, "type", "veth", "peer", "name", vethA, "netns", acceptorNS)
 	for _, values := range [][]string{{initiatorNS, vethI, "192.0.2.1/24"}, {acceptorNS, vethA, "192.0.2.2/24"}} {
 		run("-n", values[0], "address", "add", values[2], "dev", values[1])
 		run("-n", values[0], "link", "set", "dev", values[1], "up")
@@ -107,9 +101,9 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		return path
 	}
 	initiatorOptions := Options{IP: makeWrapper("ip-i", initiatorNS, "/usr/sbin/ip"),
-		WireGuard: makeWrapper("wg-i", initiatorNS, "/usr/bin/wg"), WireGuardPrivateKey: initiatorKey}
+		WireGuard: makeWrapper("wg-i", initiatorNS, "/usr/bin/wg"), WireGuardPrivateKey: initiatorKey, Config: filepath.Join(root, "initiator.json")}
 	acceptorOptions := Options{IP: makeWrapper("ip-a", acceptorNS, "/usr/sbin/ip"),
-		WireGuard: makeWrapper("wg-a", acceptorNS, "/usr/bin/wg"), WireGuardPrivateKey: acceptorKey}
+		WireGuard: makeWrapper("wg-a", acceptorNS, "/usr/bin/wg"), WireGuardPrivateKey: acceptorKey, Config: filepath.Join(root, "acceptor.json")}
 	const listenPort = 51888 // isolated namespace only; deliberately not a production/public port
 	acceptorProfile := &wireGuardExecution{WireGuard: []wireGuardExecutionLink{{
 		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.2/32", PeerID: "demo-i",
@@ -189,6 +183,19 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	}
 	initiatorTransaction.Commit()
 	acceptorTransaction.Commit()
+	beforeInitiator, beforeAcceptor := initiatorTransaction, acceptorTransaction
+	beforeLinks := string(run("-n", initiatorNS, "-json", "-details", "link", "show", "dev", "wg-demo"))
+	if err := replaceWireGuard(&initiatorTransaction, *initiatorProfile, &wireGuardIdentity{WGPublicKey: initiatorPublic}, initiatorOptions); err != nil {
+		t.Fatal("reuse initiator", err)
+	}
+	if err := replaceWireGuard(&acceptorTransaction, *acceptorProfile, &wireGuardIdentity{WGPublicKey: acceptorPublic}, acceptorOptions); err != nil {
+		t.Fatal("reuse acceptor", err)
+	}
+	if initiatorTransaction != beforeInitiator || acceptorTransaction != beforeAcceptor || beforeLinks != string(run("-n", initiatorNS, "-json", "-details", "link", "show", "dev", "wg-demo")) {
+		t.Fatal("unchanged View replaced a real kernel interface")
+	}
+	roundTrip("TCP after reuse", "TCP4-LISTEN:18082,bind=10.20.0.2,reuseaddr", "TCP4:10.20.0.2:18082", "tcp-after-reuse")
+	roundTrip("UDP after reuse", "UDP4-RECVFROM:18055,bind=10.20.0.2,reuseaddr", "UDP4:10.20.0.2:18055", "udp-after-reuse")
 
 	// A committed runtime retains its cleanup handle. Stop it before creating
 	// the next generation; a previous profile never permits blind host adoption.
@@ -215,4 +222,16 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	roundTrip("UDP after restart", "UDP4-RECVFROM:18054,bind=10.20.0.2,reuseaddr", "UDP4:10.20.0.2:18054", "udp-after-restart")
 	initiatorRestart.Commit()
 	acceptorRestart.Commit()
+	// External crash cleanup consumes only the original public ownership record.
+	if err := CleanupWireGuard(initiatorOptions); err != nil {
+		t.Fatal("initiator crash cleanup", err)
+	}
+	if err := CleanupWireGuard(acceptorOptions); err != nil {
+		t.Fatal("acceptor crash cleanup", err)
+	}
+	for _, namespace := range []string{initiatorNS, acceptorNS} {
+		if exec.Command("ip", "-n", namespace, "link", "show", "dev", "wg-demo").Run() == nil {
+			t.Fatal("crash cleanup retained a real kernel interface")
+		}
+	}
 }

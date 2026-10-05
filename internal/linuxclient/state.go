@@ -176,6 +176,10 @@ func LoadLocalState(path, generation string) (LocalState, error) {
 // A cache without that binding cannot prove that a reused candidate ID still
 // describes the same authorization, targets and runtime inputs.
 func loadLocalState(path, generation, viewDigest string) (LocalState, error) {
+	return loadLocalStateWithEvidence(path, generation, viewDigest, nil)
+}
+
+func loadLocalStateWithEvidence(path, generation, viewDigest string, retain func(LocalState) []clientmodel.Observation) (LocalState, error) {
 	var result LocalState
 	err := withLock(path, func() error {
 		var state LocalState
@@ -191,9 +195,13 @@ func loadLocalState(path, generation, viewDigest string) (LocalState, error) {
 			return err
 		}
 		if state.NetworkGeneration != generation || viewDigest != "" && state.ObservationViewDigest != viewDigest {
+			observations := []clientmodel.Observation{}
+			if state.NetworkGeneration == generation && retain != nil {
+				observations = retain(state)
+			}
 			state.NetworkGeneration = generation
 			state.ObservationViewDigest = viewDigest
-			state.Observations = []clientmodel.Observation{}
+			state.Observations = observations
 			if err := atomicJSON(path, state); err != nil {
 				return err
 			}

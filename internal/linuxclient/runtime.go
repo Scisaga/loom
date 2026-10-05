@@ -314,7 +314,7 @@ func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, repor
 	}
 	return value
 }
-func runGeneration(ctx context.Context, options Options, store *deviceclient.Store) (retErr error) {
+func runGeneration(ctx context.Context, options Options, store *deviceclient.Store, previous *control.DeviceViewEnvelope, transaction **wireGuardTransaction) (retErr error) {
 	options.defaults()
 	defer func() {
 		if err := os.Remove(options.Status); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -332,14 +332,6 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		if err != nil {
 			return err
 		}
-	}
-	generation, err := options.Generation()
-	if err != nil {
-		return err
-	}
-	local, err := loadLocalState(options.LocalState, generation, lkg.ViewDigest)
-	if err != nil {
-		return err
 	}
 	// Every local selector starts at reject. A missing usable candidate closes
 	// only its Service; it cannot briefly serve a different Preference.
@@ -369,28 +361,41 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	wg, err := resolveWireGuardEndpoints(ctx, desiredWG, wireGuardExecution{}, lkg.View.DNSServers, nil)
+	previousWG := (*transaction).execution()
+	if *transaction == nil {
+		// After a restart no accepted DNS answer survives as execution truth.
+		// A hostname-to-address projection must invalidate its old samples.
+		previousWG = desiredWG
+	}
+	wg, err := resolveWireGuardEndpoints(ctx, desiredWG, previousWG, lkg.View.DNSServers, nil)
 	if err != nil {
 		return err
-	}
-	if !reflect.DeepEqual(desiredWG, wg) {
-		local = invalidateWireGuardObservations(local, lkg.View, desiredWG, wg)
-		if _, err := SaveObservations(options.LocalState, local); err != nil {
-			return err
-		}
 	}
 	if err := preflightRuntimeConfig(options.SingBox, config); err != nil && (hasAccess || len(executions) != 0) {
 		return err
 	}
-	transaction, err := applyWireGuard(&wg, nil, identity, options)
+	if err := replaceWireGuard(transaction, wg, identity, options); err != nil {
+		return err
+	}
+	generation, err := options.Generation()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := transaction.Cleanup(); err != nil {
-			retErr = errors.Join(retErr, errRuntimeCleanup, err)
+	if !options.defaultProbe {
+		// An injected diagnostic may use a target outside the View's probe
+		// contract, so it cannot prove cross-view sample equivalence.
+		previous = nil
+	}
+	local, err := loadLocalStateForView(options.LocalState, generation, lkg, previous)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(previousWG, wg) {
+		local = invalidateWireGuardObservations(local, lkg.View, previousWG, wg)
+		if _, err := SaveObservations(options.LocalState, local); err != nil {
+			return err
 		}
-	}()
+	}
 	var done chan error
 	var selector Selector
 	pid := 0
@@ -672,8 +677,25 @@ func Run(ctx context.Context, options Options) (retErr error) {
 	if _, err := certifiedViewChanged(ctx, store, options.Log); err != nil {
 		return err
 	}
+	var transaction *wireGuardTransaction
+	var previous *control.DeviceViewEnvelope
 	for {
-		err := runGeneration(ctx, options, store)
+		before := store.LKG()
+		err := runGeneration(ctx, options, store, previous, &transaction)
+		if errors.Is(err, errCertifiedViewChanged) && !errors.Is(err, errRuntimeCleanup) && ctx.Err() == nil {
+			previous = before
+			continue
+		}
+		// Every stop or failed application closes owned resources before any
+		// inactive status. A failed cleanup must not be retried by this loop.
+		if !errors.Is(err, ErrWireGuardCleanup) {
+			if cleanupErr := transaction.Cleanup(); cleanupErr != nil {
+				err = errors.Join(err, errRuntimeCleanup, cleanupErr)
+			} else {
+				transaction = nil
+			}
+		}
+		previous = nil
 		if errors.Is(err, errCertifiedPersistence) {
 			return err
 		}
@@ -685,7 +707,7 @@ func Run(ctx context.Context, options Options) (retErr error) {
 			_, err := writeInactiveStatus(store, options, "stopped")
 			return err
 		}
-		if errors.Is(err, errCertifiedViewChanged) || errors.Is(err, errRuntimeAddressChanged) {
+		if errors.Is(err, errRuntimeAddressChanged) {
 			continue
 		}
 		if err == nil {

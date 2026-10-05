@@ -254,7 +254,13 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 		RefreshPoll:         time.Hour, Reload: reload, Generation: func() (string, error) { return "demo-network", nil }, Now: func() time.Time { return time.Now().Add(time.Duration(clockAdvance.Load())) }}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	done := make(chan error, 1)
-	go func() { done <- runGeneration(ctx, options, store) }()
+	var transaction *wireGuardTransaction
+	t.Cleanup(func() {
+		if err := transaction.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	go func() { done <- runGeneration(ctx, options, store, nil, &transaction) }()
 	stopped := false
 	defer func() {
 		cancel()
