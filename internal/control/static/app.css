@@ -506,6 +506,11 @@ fieldset {
   font-size: 11px
 }
 
+.qr-delivery {
+  grid-column: 1 / -1;
+  min-width: 0
+}
+
 .qr-frame {
   max-width: 100%
 }
@@ -514,7 +519,7 @@ fieldset {
   display: block;
   width: auto;
   height: auto;
-  max-width: 100%;
+  max-width: none;
   image-rendering: pixelated
 }
 

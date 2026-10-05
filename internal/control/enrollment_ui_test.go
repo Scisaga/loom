@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image/png"
@@ -11,7 +12,10 @@ import (
 	"os"
 	"sort"
 	"testing"
+	"time"
 
+	"github.com/makiuchi-d/gozxing"
+	zxingqr "github.com/makiuchi-d/gozxing/qrcode"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -76,6 +80,59 @@ func TestInviteQRCapacityPreservesCompleteDelivery(t *testing.T) {
 					debug := openCommandChrome(t, endpoint.URL+"/devices/invites/"+id)
 					waitChromeEvaluation(t, debug, `document.querySelector('#device-enrollment')?.textContent.includes('too large for one QR code')&&!document.querySelector('#device-enrollment img.qr')&&!!document.querySelector('#invite-uri')`)
 				}
+			}
+			if test.name == "large" && os.Getenv("LOOM_WEB_CHROME_TEST") == "1" {
+				endpoint := httptest.NewServer(handler)
+				defer endpoint.Close()
+				debug := openCommandChrome(t, endpoint.URL+"/devices/invites/"+id)
+				waitChromeEvaluation(t, debug, `document.querySelector('img.qr')?.naturalWidth>0`)
+				for _, width := range []int{780, 1280} {
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": width, "height": 1200, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
+						t.Fatal(err)
+					}
+					// Wait for layout/ResizeObserver without assuming a particular
+					// pixel size. Actual screen pixels must decode independently.
+					chromeDo(t, debug, `new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`)
+					rect := chromeDo(t, debug, `(()=>{const r=document.querySelector('img.qr').getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height,scale:1}})()`)
+					var shot struct {
+						Data string `json:"data"`
+					}
+					if err := debug.call(ctx, "Page.captureScreenshot", map[string]any{"format": "png", "captureBeyondViewport": true, "clip": rect}, &shot); err != nil {
+						t.Fatal(err)
+					}
+					cancel()
+					body, err := base64.StdEncoding.DecodeString(shot.Data)
+					if err != nil {
+						t.Fatal(err)
+					}
+					image, err := png.Decode(bytes.NewReader(body))
+					if err != nil {
+						t.Fatal(err)
+					}
+					bitmap, err := gozxing.NewBinaryBitmapFromImage(image)
+					if err != nil {
+						t.Fatal(err)
+					}
+					decoded, err := zxingqr.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_TRY_HARDER: true})
+					if err != nil {
+						// The native image importer also uses a direct module read
+						// when dense data resembles an extra finder pattern.
+						decoded, err = zxingqr.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_PURE_BARCODE: true})
+					}
+					if err != nil {
+						t.Fatalf("rendered invitation cannot be scanned at viewport %d, image=%v, rect=%v: %v", width, image.Bounds(), rect, err)
+					}
+					if decoded.GetText() != extra.Invite {
+						t.Fatal("rendered QR changed signed invitation bytes")
+					}
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 320, "height": 900, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
+					t.Fatal(err)
+				}
+				waitChromeEvaluation(t, debug, `getComputedStyle(document.querySelector('img.qr')).display==='none'&&!document.querySelector('.qr-size-note').hidden&&!!document.querySelector('.qr-frame a[target=_blank]')&&!!document.querySelector('#invite-uri')`)
 			}
 			file := request(path + "/download")
 			if file.Code != http.StatusOK || file.Body.String() != extra.Invite+"\n" {
