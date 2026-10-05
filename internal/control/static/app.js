@@ -175,12 +175,16 @@ function eventsPage(){
 function ssotPage(){app.className='network-page page-ssot';app.innerHTML=heading('Settings','Authenticated facts and local write authority.')+`<div class="steps"><div class="step"><span class="label">NETWORK</span><b>${esc(projection.network_id)}</b></div><div class="step"><span class="label">MEMBER CONFIG</span><b>${esc(short(projection.control_config_id))}</b></div><div class="step"><span class="label">LOCAL WRITES</span><b>${projection.ui_state.writable?'Available':'Read only'}</b></div></div><section class="card"><h2>Signed fact frontier</h2>${table(['KEY','SEQUENCE','TIP'],list(projection.fact_frontier).map(v=>`<tr><td class="mono">${esc(short(v.key_id))}</td><td>${esc(v.sequence)}</td><td class="mono">${esc(short(v.tip_material_id))}</td></tr>`).join(''))}<p>Each operation references the facts reviewed in its form. Local acceptance does not claim propagation to every device.</p><a class="button" href="/services" data-nav>Services</a><a class="button" href="/policies" data-nav>Policies</a></section>`}
 function notFoundPage(){app.className='network-page page-not-found';app.innerHTML=heading('Page not found','This route is not part of the authenticated control interface.')+'<p><a class="button" href="/" data-nav>Return to overview</a></p>'}
 function render(){const path=location.pathname;document.querySelectorAll('nav a').forEach(v=>v.setAttribute('aria-current',v.pathname===path||v.pathname==='/releases'&&path==='/deployments'?'page':'false'));if(path==='/')overview();else if(path==='/devices')devicesPage();else if(path.startsWith('/devices/invites/'))invitePage(decodeURIComponent(path.slice('/devices/invites/'.length)));else if(path.startsWith('/devices/')){devicePage(decodeURIComponent(path.slice(9)));appendDeviceEditor(decodeURIComponent(path.slice(9)));}else if(path==='/topology')topologyPage();else if(path==='/routing')routingPage();else if(path==='/services')servicesPage();else if(path==='/policies')policiesPage();else if(path==='/releases')releasesPage();else if(path==='/deployments')deploymentsPage();else if(path==='/events')eventsPage();else if(path==='/ssot'||path==='/settings')ssotPage();else notFoundPage();queueMicrotask(()=>{for(const container of document.querySelectorAll('#topology,.overview-topology-card'))bindTopology(container);if(!canOperate('invite.issue'))document.querySelectorAll('a[href="/devices?new=1"]').forEach(v=>v.remove());if(!canOperate('service.delete'))document.querySelectorAll('[data-service-delete]').forEach(v=>v.remove());if(!canOperate('service.put'))document.querySelectorAll('#service-form,a[href="/services?new=1"]').forEach(v=>v.remove())})}
-async function operate(operation,payload,requestId=crypto.randomUUID(),dependencies=[]){
- if(!canOperate(operation))throw Error(`Operation ${operation} is unavailable for this credential.`);
+function operationBody(operation,payload,requestId,dependencies){
  const target_kind=operation.split('.')[0],target_id=payload.id||payload.transaction_id;
- const result=await api('/api/control/operations',{method:'POST',headers:{'Content-Type':'application/json'},body:canonical({schema:3,request_id:requestId,operation,target_kind,target_id,dependencies:[...new Set(dependencies)].sort(),payload})});
+ return canonical({schema:3,request_id:requestId,operation,target_kind,target_id,dependencies:[...new Set(dependencies)].sort(),payload});
+}
+async function submitOperation(operation,body){
+ if(!canOperate(operation))throw Error(`Operation ${operation} is unavailable for this credential.`);
+ const result=await api('/api/control/operations',{method:'POST',headers:{'Content-Type':'application/json'},body});
  await refresh(false);return result;
 }
+async function operate(operation,payload,requestId=crypto.randomUUID(),dependencies=[]){return submitOperation(operation,operationBody(operation,payload,requestId,dependencies))}
 document.addEventListener('click',async event=>{
  const remove=event.target.closest('[data-delete-kind]');if(remove){if(!confirm(`Delete ${remove.dataset.deleteKind} ${remove.dataset.deleteId}?`))return;remove.disabled=true;try{const form=remove.closest('form'),dependencies=commandDependencies(form,remove.dataset.deleteKind,remove.dataset.deleteId);await operate(remove.dataset.deleteKind+'.delete',{id:remove.dataset.deleteId},crypto.randomUUID(),dependencies);render();toast('Deletion accepted locally.')}catch(error){remove.disabled=false;toast(error.message,true)}return}
  const revoke=event.target.closest('[data-revoke-device]');if(revoke){if(!confirm('Revoke this device’s ordinary authorization?'))return;try{await operate('device.revoke',{id:revoke.dataset.revokeDevice},crypto.randomUUID(),commandDependencies(revoke.closest('form'),'device',revoke.dataset.revokeDevice));render();toast('Revocation accepted locally.')}catch(error){toast(error.message,true)}return}
@@ -205,7 +209,7 @@ document.addEventListener('change',event=>{
 document.addEventListener('submit',async event=>{
  if(event.target.matches('[data-page-filter]')){event.preventDefault();const query=new URLSearchParams(new FormData(event.target));for(const [key,value]of [...query])if(!value)query.delete(key);history.pushState({},'',`${location.pathname}${query.size?'?'+query:''}`);render();return}
  const element=event.target;if(!element.matches('#service-form,#policy-form,#device-policy-form,#enrollment-form'))return;
- event.preventDefault();const form=new FormData(element),output=element.querySelector('[role=alert]'),ids=name=>String(form.get(name)||'').split(',').map(v=>v.trim()).filter(Boolean).sort();output.textContent='Submitting…';
+ event.preventDefault();if(element.submitting)return;element.submitting=true;const form=new FormData(element),output=element.querySelector('[role=alert]'),ids=name=>String(form.get(name)||'').split(',').map(v=>v.trim()).filter(Boolean).sort();output.textContent='Submitting…';
  try{
   let operation,payload,dependencies;
   if(element.getAttribute('id')==='service-form'){
@@ -219,13 +223,21 @@ document.addEventListener('submit',async event=>{
    operation='device.put';payload={id:element.dataset.deviceId,name:String(form.get('name')),responsibilities:form.getAll('responsibility').map(String).sort(),policy_ids:form.getAll('policy_id').map(String).sort(),distribution_urls:String(form.get('distribution_urls')).split('\n').map(v=>v.trim()).filter(Boolean).sort()};const dns=String(form.get('dns_servers')||'').split('\n').map(v=>v.trim()).filter(Boolean).sort();if(dns.length)payload.dns_servers=dns;dependencies=commandDependencies(element,'device',payload.id,payload.policy_ids);
   }else{
    const options=JSON.parse(element.dataset.options),endpoint=options.endpoints[Number(form.get('endpoint'))];if(!endpoint)throw Error('No authenticated serving endpoint is available.');
-   operation='invite.issue';payload={id:element.dataset.transactionId,genesis_digest:options.genesis_digest,issuer_control_id:options.issuer_control_id,device_id:String(form.get('device_id')),name:String(form.get('name')),responsibilities:form.getAll('responsibility').map(String).sort(),policy_ids:form.getAll('policy_id').map(String).sort(),medium:String(form.get('medium')),endpoint,expires_at:Date.now()+15*60*1000};const dns=String(form.get('dns_servers')||'').split('\n').map(v=>v.trim()).filter(Boolean).sort();if(dns.length)payload.dns_servers=dns;
+   operation='invite.issue';payload={id:element.dataset.transactionId,genesis_digest:options.genesis_digest,issuer_control_id:options.issuer_control_id,device_id:String(form.get('device_id')),name:String(form.get('name')),responsibilities:form.getAll('responsibility').map(String).sort(),policy_ids:form.getAll('policy_id').map(String).sort(),medium:String(form.get('medium')),endpoint};const dns=String(form.get('dns_servers')||'').split('\n').map(v=>v.trim()).filter(Boolean).sort();if(dns.length)payload.dns_servers=dns;
    dependencies=commandDependencies(element,'invite',payload.id,payload.policy_ids);dependencies.push(...targetDependencies(JSON.parse(element.dataset.targets),'endpoint',endpoint.id,true));
   }
-  await operate(operation,payload,element.dataset.requestId,dependencies);
+  // Keep the exact submitted bytes with this disposable draft. A new edit
+  // gets a new request ID, while its reviewed object/dependency IDs stay put.
+  const draft=canonical({operation,payload,dependencies:[...new Set(dependencies)].sort()});
+  if(!element.submission||element.submission.draft!==draft){
+   if(element.submission)element.dataset.requestId=crypto.randomUUID();
+   if(operation==='invite.issue')payload.expires_at=Date.now()+15*60*1000;
+   element.submission={draft,body:operationBody(operation,payload,element.dataset.requestId,dependencies)};
+  }
+  await submitOperation(operation,element.submission.body);
   if(operation==='invite.issue')history.pushState({},'',`/devices/invites/${encodeURIComponent(payload.id)}`);
   render();toast('Accepted locally. Device propagation is separate.');
- }catch(error){output.textContent=error.message}
+ }catch(error){output.textContent=error.message}finally{element.submitting=false}
 });
 let reconnectDelay=1000;
 function connectLive(){const scheme=location.protocol==='https:'?'wss:':'ws:',socket=new WebSocket(`${scheme}//${location.host}/api/control/ui/live`);socket.onopen=()=>{reconnectDelay=1000;connection.className='ok'};socket.onmessage=event=>{const payload=JSON.parse(event.data),encoded=JSON.stringify(payload);if(encoded!==lastSnapshot){lastSnapshot=encoded;const editing=document.activeElement&&/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);accept(payload,!editing)}};socket.onclose=()=>{connection.textContent='Reconnecting…';connection.className='bad';const delay=reconnectDelay;reconnectDelay=Math.min(30000,reconnectDelay*2);setTimeout(connectLive,delay)};socket.onerror=()=>socket.close()}

@@ -1,17 +1,20 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -233,6 +236,11 @@ func TestWebChromeServicePolicyAndStaleDraft(t *testing.T) {
 	if chromeDo(t, debug, `demoName.value==='Unsaved demo'`) != true {
 		t.Fatal("stale command destroyed draft")
 	}
+	chromeDo(t, debug, `(()=>{window.demoRejectedRequest=JSON.parse(demoDraft.submission.body);window.demoFetch=fetch;window.demoEditedRequest=null;fetch=(url,options)=>{if(url==='/api/control/operations')demoEditedRequest=JSON.parse(options.body);return demoFetch(url,options)};demoName.value='Edited unsaved demo';demoDraft.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#operation-status').textContent.includes('stale')&&demoEditedRequest`)
+	if chromeDo(t, debug, `demoEditedRequest.request_id!==demoRejectedRequest.request_id&&demoEditedRequest.target_id===demoRejectedRequest.target_id&&JSON.stringify(demoEditedRequest.dependencies)===JSON.stringify(demoRejectedRequest.dependencies)&&demoEditedRequest.payload.name==='Edited unsaved demo'&&demoName.value==='Edited unsaved demo'`) != true {
+		t.Fatal("editing a rejected draft reused its request ID, changed the reviewed baseline, or lost the edit")
+	}
 	reopened, err := OpenAuthority(root)
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +360,32 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	var releaseDelayedOnce sync.Once
 	releaseDelayed := func() { releaseDelayedOnce.Do(func() { close(delayedSnapshot) }) }
 	adminHandler := server.AdminHandler()
+	var inviteRequestsMu sync.Mutex
+	var inviteRequests [][]byte
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/control/operations" && r.Method == http.MethodPost {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "demo read failed", http.StatusBadRequest)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			inviteRequestsMu.Lock()
+			inviteRequests = append(inviteRequests, append([]byte(nil), body...))
+			first := len(inviteRequests) == 1
+			inviteRequestsMu.Unlock()
+			if first {
+				response := httptest.NewRecorder()
+				adminHandler.ServeHTTP(response, r)
+				if response.Code != http.StatusOK {
+					t.Errorf("first invitation was not accepted: %d", response.Code)
+				}
+				// The authority has durably accepted the operation; its response
+				// is lost before the browser can learn the result.
+				http.Error(w, "Demo response interrupted", http.StatusBadGateway)
+				return
+			}
+		}
 		if r.URL.Path == "/api/control/ui/snapshot" {
 			<-allowSnapshot
 			if delayNextSnapshot.CompareAndSwap(true, false) {
@@ -385,7 +418,17 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("browser form has no stable transaction ID")
 	}
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.device_id.value='demo-browser-device';f.elements.name.value='Demo browser device';f.elements.dns_servers.value='192.0.2.53';f.querySelector('[name=policy_id][value=demo-policy]').checked=true;f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#enrollment-status').textContent==='Demo response interrupted'`)
+	beforeRetry := server.Runtime.Authority.Frontier()
+	chromeDo(t, debug, `(()=>{window.demoOriginalNow=Date.now;Date.now=()=>demoOriginalNow()+5000;document.querySelector('#enrollment-form').requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `location.pathname.startsWith('/devices/invites/')&&document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='open'&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
+	chromeDo(t, debug, `(()=>{Date.now=demoOriginalNow;return true})()`)
+	inviteRequestsMu.Lock()
+	sameRequest := len(inviteRequests) == 2 && bytes.Equal(inviteRequests[0], inviteRequests[1])
+	inviteRequestsMu.Unlock()
+	if !sameRequest || !slices.Equal(beforeRetry, server.Runtime.Authority.Frontier()) {
+		t.Fatal("unchanged invitation retry altered the request or signed another fact")
+	}
 	if chromeDo(t, debug, `location.pathname`) != "/devices/invites/"+transactionID {
 		t.Fatal("initial delivery did not retain the issued transaction route")
 	}
