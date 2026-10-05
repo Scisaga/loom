@@ -660,6 +660,9 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 	a.materials, a.projection = next, projection
 	return Submission{MaterialID: id, Projection: cloneAuthorityProjection(projection)}, nil
 }
+
+const maxControlInputBytes = 64 << 20
+
 func readProtectedControlFile(path string) ([]byte, error) {
 	entry, err := os.Lstat(path)
 	if err != nil {
@@ -677,8 +680,8 @@ func readProtectedControlFile(path string) ([]byte, error) {
 	if err != nil || !os.SameFile(entry, info) {
 		return nil, errors.New("control input changed while opening")
 	}
-	body, err := io.ReadAll(io.LimitReader(file, (64<<20)+1))
-	if len(body) > 64<<20 {
+	body, err := io.ReadAll(io.LimitReader(file, maxControlInputBytes+1))
+	if len(body) > maxControlInputBytes {
 		return nil, errors.New("control input exceeds the current reader resource bound")
 	}
 	return body, err

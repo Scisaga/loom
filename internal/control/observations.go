@@ -13,6 +13,10 @@ import (
 var ErrReportEquivocation = errors.New("device signed different reports at one sequence")
 var ErrReportReplay = errors.New("device report sequence is below the durable high-water mark")
 
+// The protected file reader applies this same capacity. A history may contain
+// more JSON values than any individual report; its bytes already bound them.
+const maxObservationStateBytes = maxControlInputBytes
+
 // This collection preserves the signed observations, including fork evidence.
 // Latest values and high-water marks are rebuilt, never separately persisted.
 type observationState struct {
@@ -99,7 +103,7 @@ func (store *ObservationStore) reloadLocked() error {
 		return nil
 	}
 	var state observationState
-	if err := DecodeCanonical(body, &state, ContractDecodeLimits{MaxBytes: 64 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
+	if err := DecodeCanonical(body, &state, ContractDecodeLimits{MaxBytes: maxObservationStateBytes, MaxDepth: 128, MaxItems: len(body)}); err != nil {
 		return err
 	}
 	store.state = state
@@ -185,7 +189,7 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 	if err != nil {
 		return err
 	}
-	if err := atomicWrite(store.path, encoded); err != nil {
+	if err := writeObservationState(store.path, encoded); err != nil {
 		return err
 	}
 	store.state = next
@@ -194,6 +198,13 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 		return ErrReportEquivocation
 	}
 	return nil
+}
+
+func writeObservationState(path string, body []byte) error {
+	if len(body) > maxObservationStateBytes {
+		return errors.New("observation history exceeds the current reader resource bound")
+	}
+	return atomicWrite(path, body)
 }
 
 // All is a diagnostic latest-report readback. It never claims freshness or
