@@ -105,3 +105,74 @@ func TestReviewedStoreRechecksBytesAndRebuildsCache(t *testing.T) {
 		t.Fatal("exact bytes could not be recovered", err)
 	}
 }
+
+func TestReviewedStoreImportUsesExactCatalogAndOriginalBytes(t *testing.T) {
+	if *reviewedStore == "" || *reviewedPublic == "" {
+		t.Skip("requires explicit signed package store and independent public key")
+	}
+	key, err := control.ReadReleasePublicKey(*reviewedPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := New(*reviewedStore, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := source.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(t.TempDir(), "uploaded")
+	if _, err := Import(*reviewedStore, staging, want.ID, key, ""); err != nil {
+		t.Fatal(err)
+	}
+	// Uploads need no mutable pointer. A leftover or untrusted source pointer
+	// must never select what the operator imports.
+	if err := os.WriteFile(filepath.Join(staging, "current.json"), []byte("not a release pointer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "distribution")
+	for attempt := 0; attempt < 2; attempt++ {
+		got, err := Import(staging, destination, want.ID, key, "")
+		if err != nil || !reflect.DeepEqual(want, got) {
+			t.Fatal("exact import or retry changed the signed release", attempt, err)
+		}
+	}
+	// A fresh reader verifies the destination without the uploader's cache.
+	reopened, err := New(destination, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reopened.Read()
+	if err != nil || !reflect.DeepEqual(want, got) {
+		t.Fatal("import did not persist the original signed release", err)
+	}
+	for _, pkg := range want.Packages {
+		for _, relative := range []string{digestPath("bin", pkg.Entry.Artifact.Digest, ""), digestPath("manifests", pkg.Entry.ManifestDigest, "manifest.json"), digestPath("manifests", pkg.Entry.ManifestDigest, "manifest.sig")} {
+			original, err := os.ReadFile(filepath.Join(staging, relative))
+			if err != nil {
+				t.Fatal(err)
+			}
+			copied, err := os.ReadFile(filepath.Join(destination, relative))
+			if err != nil || !bytes.Equal(original, copied) {
+				t.Fatal("import reinterpreted original signed bytes", err)
+			}
+		}
+	}
+	signature := filepath.Join(staging, digestPath("catalogs", want.ID, "catalog.sig"))
+	body, err := os.ReadFile(signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body[0] ^= 1
+	if err := os.WriteFile(signature, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Import(staging, destination, want.ID, key, want.ID); err == nil {
+		t.Fatal("retry accepted a corrupt upload")
+	}
+	got, err = reopened.Read()
+	if err != nil || !reflect.DeepEqual(want, got) {
+		t.Fatal("rejected upload damaged destination", err)
+	}
+}

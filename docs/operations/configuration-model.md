@@ -213,6 +213,13 @@ stage 不执行 YAML 的 publish_outputs，不写设备期望事实，不改变�
 输入包含 Linux 包时，同次确定性生成一个通用 bootstrap 脚本及其独立签名 manifest，并引用同一 catalog
 的精确 Linux 包。脚本不包含邀请，生成和读取均不改写那些原包的签名字节；未提供的平台在目标端明确拒绝。
 
+单个分发目标使用 `loom release import -source <临时上传目录> -catalog <精确摘要> -root <目标目录>
+-pubkey <独立公钥> [-expected-current <旧摘要>]` 验证并接受已经签署的同一目录。上传只携带公开制品和
+原签名字节，发布私钥不离开工作站；source 的 current 不用于选择版本。import 与 stage 共用目标端排他锁、
+耐久写入和旧指针比较，完成后沿 verify 重新回读。root 由正式部署调用方从 YAML publish_outputs 解析，
+source、catalog 和 expected-current 只是本次执行参数，不形成另一份节点配置。单目标 import 不代替全部
+目标分发/HTTPS 回读的总体结果，也不授权消费节点改变已有发布 floor 或应用运行制品。
+
 `loom control serve` 可成对传入 `-release-root <绝对路径>` 和 `-release-pubkey <带外公钥文件>`，作为该
 control 的受保护只读安装输入；它们不进入 `.env` 或网络权威。私有 Releases 页面从验证结果投影 Linux
 archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原有页面与交互保留。Windows 数据面不是

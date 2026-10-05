@@ -19,16 +19,51 @@ import (
 
 func cmdRelease(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom release <stage|verify>")
+		return errors.New("用法: loom release <stage|import|verify>")
 	}
 	switch args[0] {
 	case "stage":
 		return cmdReleaseStage(args[1:])
 	case "verify":
 		return cmdReleaseVerify(args[1:])
+	case "import":
+		return cmdReleaseImport(args[1:])
 	default:
 		return errors.New("未知 release 子命令")
 	}
+}
+
+func cmdReleaseImport(args []string) error {
+	fs := flag.NewFlagSet("release import", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	source := fs.String("source", "", "本次临时上传的签名目录")
+	root := fs.String("root", "", "本节点目标发布目录")
+	pub := fs.String("pubkey", "", "通过独立管理通道固定的发布公钥")
+	catalog := fs.String("catalog", "", "显式选择的 catalog digest，不读取 latest")
+	expected := fs.String("expected-current", "", "计划读取的目标旧 digest；新空目录省略")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *source == "" || *root == "" || *pub == "" || control.ValidateDigest(*catalog) != nil {
+		return errors.New("release import 需要 source、root、pubkey 及精确 catalog")
+	}
+	key, err := control.ReadReleasePublicKey(*pub)
+	if err != nil {
+		return err
+	}
+	from, err := filepath.Abs(*source)
+	if err != nil {
+		return err
+	}
+	to, err := filepath.Abs(*root)
+	if err != nil {
+		return err
+	}
+	set, err := clientrelease.Import(from, to, *catalog, key, *expected)
+	if err != nil {
+		return err
+	}
+	return printReleaseReadback(set)
 }
 
 func cmdReleaseStage(args []string) error {

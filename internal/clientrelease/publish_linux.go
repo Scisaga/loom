@@ -14,6 +14,45 @@ import (
 	"loom/internal/control"
 )
 
+// Import installs an explicitly addressed signed catalog from a staging tree.
+// The destination accepts the same immutable bytes and conditional advancement
+// as local publication; signing secrets never travel to a distribution node.
+func Import(source, destination, catalogID string, key ed25519.PublicKey, expected string) (control.ReleaseSet, error) {
+	store, err := New(source, key)
+	if err != nil {
+		return control.ReleaseSet{}, err
+	}
+	set, err := store.ReadCatalog(catalogID)
+	if err != nil {
+		return control.ReleaseSet{}, err
+	}
+	root, err := os.OpenRoot(source)
+	if err != nil {
+		return control.ReleaseSet{}, err
+	}
+	defer root.Close()
+	body, err := readFile(root, digestPath("catalogs", catalogID, "catalog.json"), 1<<20)
+	if err != nil {
+		return control.ReleaseSet{}, err
+	}
+	signature, err := readFile(root, digestPath("catalogs", catalogID, "catalog.sig"), ed25519.SignatureSize)
+	if err != nil {
+		return control.ReleaseSet{}, err
+	}
+	if control.ReleaseDigest(body) != catalogID {
+		return control.ReleaseSet{}, errors.New("staged catalog changed before import")
+	}
+	packages := map[string]Input{}
+	for _, pkg := range set.Packages {
+		artifact, err := readFile(root, digestPath("bin", pkg.Entry.Artifact.Digest, ""), int64(pkg.Entry.Artifact.Size))
+		if err != nil {
+			return control.ReleaseSet{}, err
+		}
+		packages[pkg.Entry.Artifact.Digest] = Input{Body: artifact, Manifest: pkg.ManifestBody, Signature: pkg.Signature}
+	}
+	return Publish(destination, body, signature, key, packages, expected)
+}
+
 // Publish writes an already signed catalog and exact packages. The expected
 // pointer is an explicit plan input, compared while holding the target lock.
 func Publish(directory string, body, signature []byte, key ed25519.PublicKey, packages map[string]Input, expected string) (control.ReleaseSet, error) {
