@@ -275,6 +275,10 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("report retry changed original signed values")
 	}
+	otherWriter, err := OpenObservationStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	fork := report
 	fork.Signature = ""
 	fork.Runtime.State = "stopped"
@@ -291,6 +295,25 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	}
 	if len(store.History()) != 2 || len(store.All()) != 0 {
 		t.Fatal("report fork evidence lost or one fork was chosen")
+	}
+	forkBytes, _ := os.ReadFile(filepath.Join(root, "observations.json"))
+	reverseRoot := t.TempDir()
+	if err := os.Chmod(reverseRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reverse, err := OpenObservationStore(reverseRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reverse.Put(fork, public); err != nil {
+		t.Fatal(err)
+	}
+	if err := reverse.Put(report, public); !errors.Is(err, ErrReportEquivocation) {
+		t.Fatal("reverse arrival order lost the signed fork", err)
+	}
+	reversedBytes, _ := os.ReadFile(filepath.Join(reverseRoot, "observations.json"))
+	if !bytes.Equal(forkBytes, reversedBytes) {
+		t.Fatal("arrival order changed canonical signed history")
 	}
 	next := report
 	next.ReportSequence = 3
@@ -312,8 +335,29 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := store.Put(stale, public); !errors.Is(err, ErrReportReplay) {
 		t.Fatal("older sequence overrode report high-water")
 	}
+	if err := otherWriter.Put(stale, public); !errors.Is(err, ErrReportReplay) {
+		t.Fatal("another writer's accepted sequence was hidden by the decode cache", err)
+	}
 	if len(store.Verified(server.Runtime.Authority.Snapshot())) != 1 {
 		t.Fatal("latest signed current-view report unavailable")
+	}
+	path := filepath.Join(root, "observations.json")
+	valid, _ := os.ReadFile(path)
+	invalid := append(append([]byte{}, valid...), '\n')
+	if err := os.WriteFile(path, invalid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(next, public); err == nil {
+		t.Fatal("cached report history bypassed strict file decoding")
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, invalid) {
+		t.Fatal("rejected history was overwritten from the cache")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(next, public); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("missing history was restored from the decode cache", err)
 	}
 }
 
@@ -375,6 +419,12 @@ func TestObservationEvidenceCannotBeReinitializedOrMigrated(t *testing.T) {
 	}
 	if _, err := OpenObservationStore(root); err == nil {
 		t.Fatal("missing report high-water history was silently reset")
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenObservationStore(root); err == nil {
+		t.Fatal("empty report history was accepted as an empty decode cache")
 	}
 	old := []byte("{\"schema\":2,\"records\":[],\"latest\":[]}")
 	if err := os.WriteFile(path, old, 0o600); err != nil {

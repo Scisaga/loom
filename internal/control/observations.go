@@ -51,9 +51,10 @@ func reportBefore(left DeviceReport, leftBody []byte, right DeviceReport, rightB
 }
 
 type ObservationStore struct {
-	path  string
-	mu    sync.RWMutex
-	state observationState
+	path      string
+	mu        sync.RWMutex
+	state     observationState
+	canonical []byte // Rebuildable decode cache, checked against the protected file under its lock.
 }
 
 func OpenObservationStore(root string) (*ObservationStore, error) {
@@ -85,6 +86,7 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 			return nil, err
 		}
 		store.state = state
+		store.canonical = body
 	}
 	return store, nil
 }
@@ -93,11 +95,15 @@ func (store *ObservationStore) reloadLocked() error {
 	if err != nil {
 		return err
 	}
+	if len(store.canonical) != 0 && bytes.Equal(body, store.canonical) {
+		return nil
+	}
 	var state observationState
 	if err := DecodeCanonical(body, &state, ContractDecodeLimits{MaxBytes: 64 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
 		return err
 	}
 	store.state = state
+	store.canonical = body
 	return nil
 }
 func cloneReport(report DeviceReport) DeviceReport {
@@ -163,12 +169,18 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 	if report.ReportSequence < high {
 		return ErrReportReplay
 	}
-	next := observationState{Schema: 3, Reports: append(append([]DeviceReport{}, store.state.Reports...), cloneReport(report))}
-	sort.Slice(next.Reports, func(i, j int) bool {
-		a, _ := CanonicalEncode(next.Reports[i])
-		b, _ := CanonicalEncode(next.Reports[j])
-		return reportBefore(next.Reports[i], a, next.Reports[j], b)
+	index := sort.Search(len(store.state.Reports), func(i int) bool {
+		prior := store.state.Reports[i]
+		var priorBody []byte
+		if prior.NetworkID == report.NetworkID && prior.DeviceID == report.DeviceID && prior.ReportSequence == report.ReportSequence {
+			priorBody, _ = CanonicalEncode(prior)
+		}
+		return !reportBefore(prior, priorBody, report, body)
 	})
+	next := observationState{Schema: 3, Reports: make([]DeviceReport, len(store.state.Reports)+1)}
+	copy(next.Reports, store.state.Reports[:index])
+	next.Reports[index] = cloneReport(report)
+	copy(next.Reports[index+1:], store.state.Reports[index:])
 	encoded, err := CanonicalEncode(next)
 	if err != nil {
 		return err
@@ -177,6 +189,7 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 		return err
 	}
 	store.state = next
+	store.canonical = encoded
 	if fork {
 		return ErrReportEquivocation
 	}
