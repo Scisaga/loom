@@ -21,29 +21,34 @@ func LoadTLSIdentity(ref TLSFiles) (tls.Certificate, *x509.CertPool, error) {
 	if err != nil {
 		return tls.Certificate{}, nil, err
 	}
-	roots, err := readControlPublicFile(ref.TrustFile)
+	roots, err := loadTLSRoots(ref.TrustFile)
+	return pair, roots, err
+}
+
+func loadTLSRoots(path string) (*x509.CertPool, error) {
+	roots, err := readControlPublicFile(path)
 	if err != nil {
-		return tls.Certificate{}, nil, err
+		return nil, err
 	}
 	pool := x509.NewCertPool()
 	count := 0
 	for len(bytes.TrimSpace(roots)) != 0 {
 		block, rest := pem.Decode(roots)
 		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
-			return tls.Certificate{}, nil, errors.New("TLS trust file contains non-certificate bytes")
+			return nil, errors.New("TLS trust file contains non-certificate bytes")
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil || !cert.IsCA {
-			return tls.Certificate{}, nil, errors.New("TLS trust file must contain CA certificates")
+			return nil, errors.New("TLS trust file must contain CA certificates")
 		}
 		pool.AddCert(cert)
 		roots = rest
 		count++
 	}
 	if count == 0 {
-		return tls.Certificate{}, nil, errors.New("TLS trust file is empty")
+		return nil, errors.New("TLS trust file is empty")
 	}
-	return pair, pool, nil
+	return pool, nil
 }
 
 // LoadTLSCertificate resolves explicit local identity references without

@@ -67,6 +67,8 @@ main {max-width:1586px;padding:28px 20px 44px}
 .network-page th {font-size:11px;text-transform:none;letter-spacing:0;font-weight:400;padding:3px 7px 4px 0;white-space:nowrap;background:none}
 .network-page td {padding:3px 7px 3px 0;height:26px;border-color:var(--line);white-space:nowrap}
 .network-page .badge {font-size:12px;white-space:nowrap}
+#administrators td:nth-child(-n+2) {white-space:normal;overflow-wrap:anywhere;max-width:26rem}
+#administrators td:first-child small {display:block;overflow-wrap:anywhere}
 .overview-list-card td:first-child a {font-family:var(--font-mono);color:var(--fg)}
 .overview-list-card td:first-child a:before {content:"";display:inline-block;width:7px;height:7px;background:#73c39d;border-radius:50%;margin-right:10px}
 .overview-list-card td:nth-child(4) {font-family:var(--font-mono)}

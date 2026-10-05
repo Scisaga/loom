@@ -191,7 +191,7 @@ sequence: U64，至少 1
 previous_material_id: Digest；序列 1 使用固定空链值
 dependencies: []Digest
 request_id: ID
-target_kind: service | policy | device | invite | endpoint | resource | link | probe_target | expected_component
+target_kind: service | policy | device | invite | endpoint | resource | link | probe_target | expected_component | admin_certificate
 target_id: ID
 operation: 下表中的精确操作名
 payload: 对应的唯一类型
@@ -235,10 +235,47 @@ daemon 校验依赖后生成签名事实并持久化，
 | `probe_target.delete` / probe_target | `{"id":ID}`；不改变设备权限 |
 | `expected_component.put` / expected_component | 下述 ExpectedComponent；依赖有效设备授权及已审阅的同目标前值，签发前独立验证精确发布引用 |
 | `expected_component.delete` / expected_component | `{"id":ID}`；只撤销该期望，不删除程序、不降低安装 floor 或改变设备权限 |
+| `admin_certificate.put` / admin_certificate | 下述 AdminCertificate；本机先按配置的 admin 验链锚验证新叶，普通事实只授予该精确叶 |
+| `admin_certificate.delete` / admin_certificate | `{"id":ID}`；撤销精确叶，新请求及既有管理 WebSocket 重新检查当前授权 |
 | `conflict.resolve` / 被解决目标种类 | `conflicts:[]Digest,action:put或delete`；put 另含对应完整 `value`，delete 不含 value；引用须覆盖全部冲突，不能通过此操作绕过成员资格/已绑定 control 事务或设备墓碑 |
 
-以上为本链所需操作，不新增管理员证书、成员治理或发布操作的编码。那些入口仍须遵循各自模型，
+以上为本链所需操作，不新增成员治理或发布操作的编码。那些入口仍须遵循各自模型，
 待其精确字段确定后修订同一 schema 3；不得把未定义 payload 当任意 JSON 接受。
+
+### 管理员精确叶授权与交付
+
+既有 `AdminCertificate` 仍恰为 `{id,certificate_der}`，证书为单个完整 DER 的规范 base64url；不增加
+管理员 store、签发任务或轮换状态。新证书 ID 为 `admin-` 加 DER 的完整 SHA-256 小写十六进制。
+现有 genesis 的原 ID、证书和签名字节保持；对这些 ID 重新授予时只能引用同一原叶，不能更换证书。
+新值必须是 P-256、非 CA、仅 clientAuth、digitalSignature 的叶。证书 ID 永久绑定原叶，同一叶不能另换 ID
+逃避撤权；普通 put/delete 引用已审阅前值，撤权后的重新授权须显式引用撤权。并发撤权优先，并发不兼容
+修改使该目标失败关闭；多个 control 不是特殊模式。撤销全部浏览器管理员仍保留既有 root-only Unix 管理入口。
+
+| 层 | 表达与方向 |
+|---|---|
+| domain / wire | AdminCertificate 与 put/delete 普通 Material，使用既有 schema 3 规范签名 |
+| persistent | 原 genesis 与普通事实原字节；管理员私钥和 P12 是受保护交付物，不写入事实 |
+| runtime | 从事实重建精确叶名单；TLS 独立按本机已有 admin 信任锚验链，请求与 WebSocket 再查当前名单及证书有效期 |
+| UI / CLI | Settings 展示证书 ID、公开指纹与有效期；导入公开 admin.json 后授予，撤销写同一普通操作；生成包本身不授权 |
+
+control 的普通签名权与 X.509 签发能力分别验证。`control admin issue` 只消费本机显式指定、受保护的
+P-256 admin 根证书及匹配签发私钥，在新 owner-only 目录产生同一新叶、私钥、完整 P12、独立密码文件和
+公开 `admin.json`；不依赖旧管理员私钥，不签授权事实。该能力只在持有操作者所提供签发密钥的 control
+上可用，其他 control 可按相同规则授权已验链叶，缺少签发引用明确失败，不从成员键或网站键补值。
+首证可把同一公开值纳入首次 genesis；已有网络走普通 put，不重写 genesis。当前现网签发根、公钥与
+服务端原信任输入延续，秘密只提取为独立受保护文件引用，不恢复旧权威解码或轮换状态机。
+
+签发时间和随机数是调用方输入，不进入纯投影。交付目录先完整生成并验证，再耐久原子安装；同目录重试
+验证并复用原叶、私钥和密码，不覆盖异值或部分损坏。删除交付文件不撤权；已授予的丢失包先正式撤权，
+再生成另一个证书。包与密码由操作者手动取回，网站信任与客户端身份分开，不以 admin 根代替网站根。
+新 put 在接收 daemon 验链并检查当时有效期后签发；同步/重放不依赖本机时钟或另一个 control 的文件。
+每个服务端在实际 TLS 连接时独立验链；信任输入不一致导致该端明确拒绝，不能把本地授权说成全网成功。
+已接受请求的重试返回原事实，证书过期不重签事实、不删除历史，运行入口拒绝过期证书。
+
+正常链：本机签发交付包 → 手动安装 P12 → 原管理员通过 Settings 导入公开值并授予 → 普通事实持久/同步 →
+新证书实际浏览器登录、正常写入和回读 → 撤销后新请求与原 WebSocket 拒绝 → 重启仍拒绝。
+最小测试覆盖原 genesis 字节不变、规范往返、ID/证书替换与重复叶拒绝、撤销优先、错误 CA/用途/有效期、
+同请求重试、交付目录损坏与原值保留、真实 TLS/浏览器操作、同步及重启；旧 N=1 和旧私钥证明轮换入口不恢复。
 
 ### Genesis 与初始成员表
 

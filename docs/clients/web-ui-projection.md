@@ -65,11 +65,13 @@ TLS 允许无客户端证书握手以提供该入口页，受保护路由必须�
 本机 root-only admin Unix socket 可以使用本机身份认证，但进入与浏览器完全相同的 operation handler。
 首节点 bootstrap 在 control 端生成首位管理员私钥、客户端证书、`admin.p12` 与独立密码文件，
 首位管理员的受信叶子及验证所需公开材料进入 genesis；操作者手动把交付包取到管理设备并导入浏览器。
-后续补发仍由 control 本机 root CLI 生成并交付新包；签发者、验链锚及多 control 的签发能力尚待确定。
+后续补发由 control 本机 root CLI 沿显式的原 admin 签发引用生成新包，服务端延续已安装的独立 admin 验链锚；
+有签发能力的 control 生成交付物，任一有效 control 均可对已验链叶授信，不自动复制签发私钥。
 任一有效 control 可通过同一 operation handler 对已验链的新叶签发加入受信叶子的普通事实；
 旧叶撤权另签普通事实，不依赖旧管理员私钥，也不按 control 数量分支。交付包与签名事实
 分别验收：生成包不等于已授权，事实本地接受不等于其他 control 已收到；具体回读见
-[管理员访问与证书交付](../operations/admin-access.md)。此段是目标操作链，不声称当前重建命令已实现。
+[管理员访问与证书交付](../operations/admin-access.md)。Settings 的 Administrators 只接收公开 `admin.json`，
+显示证书指纹与有效期，授予和撤销沿同一普通操作入口；P12、密码和私钥不上传页面。实际验收见实施状态。
 
 ## 输入、映射和重启
 

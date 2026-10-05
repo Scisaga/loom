@@ -234,6 +234,13 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 		return errors.New("material target is invalid")
 	}
 	switch operation {
+	case "admin_certificate.put":
+		value, ok := payload.(AdminCertificate)
+		if !ok || kind != "admin_certificate" || value.ID != id {
+			return errors.New("administrator grant has the wrong payload or target")
+		}
+		_, err := ValidateAdminLeaf(value)
+		return err
 	case "service.put":
 		value, ok := payload.(Service)
 		if !ok || kind != "service" || value.ID != id {
@@ -246,7 +253,7 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 			return errors.New("policy.put has the wrong payload or target")
 		}
 		return value.Validate()
-	case "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete":
+	case "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
 		value, ok := payload.(DeleteTarget)
 		if !ok || operation != kind+".delete" && !(operation == "device.revoke" && kind == "device") || value.ID != id {
 			return errors.New("deletion has the wrong payload or target")
@@ -576,11 +583,13 @@ func decodeOperationObject(object map[string]any) (Operation, error) {
 func decodeMaterialPayload(operation, kind string, value any) (MaterialPayload, error) {
 	var target any
 	switch operation {
+	case "admin_certificate.put":
+		target = &AdminCertificate{}
 	case "service.put":
 		target = &Service{}
 	case "policy.put":
 		target = &NetworkPolicy{}
-	case "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete":
+	case "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
 		target = &DeleteTarget{}
 	case "invite.issue":
 		target = &Invite{}
@@ -845,12 +854,15 @@ type targetFact struct {
 func (graph *materialGraph) projectValues(ids []string, suspended map[string][]string) Projection {
 	genesis := graph.genesis.Payload.(Genesis)
 	projection := Projection{Schema: 3, NetworkID: graph.genesis.NetworkID, Config: graph.config, ControlConfigID: graph.configID, NetworkIntent: EmptyNetworkIntent(),
-		AdminCertificates: append([]AdminCertificate{}, genesis.AdminCertificates...), Targets: []TargetState{}, Frontier: []FactFrontier{}, PendingMaterialIDs: []string{}, InvalidMaterials: []MaterialRejection{},
+		AdminCertificates: []AdminCertificate{}, Targets: []TargetState{}, Frontier: []FactFrontier{}, PendingMaterialIDs: []string{}, InvalidMaterials: []MaterialRejection{},
 		DeviceAuthorizations: []DeviceAuthorization{}, Invites: []Invite{}, Bindings: []EnrollmentBind{}, EndpointGenerations: []EndpointGeneration{}}
 	grouped := map[string][]targetFact{}
 	add := func(kind, id, factID, operation string, payload MaterialPayload) {
 		key := kind + "\x00" + id
 		grouped[key] = append(grouped[key], targetFact{id: factID, payload: payload, operation: operation})
+	}
+	for _, value := range genesis.AdminCertificates {
+		add("admin_certificate", value.ID, graph.genesisID, "admin_certificate.put", value)
 	}
 	for _, value := range genesis.NetworkIntent.Services {
 		add("service", value.ID, graph.genesisID, "service.put", value)
@@ -924,6 +936,8 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 			continue
 		}
 		switch value := chosen.payload.(type) {
+		case AdminCertificate:
+			projection.AdminCertificates = append(projection.AdminCertificates, value)
 		case Service:
 			projection.NetworkIntent.Services = append(projection.NetworkIntent.Services, value)
 		case NetworkPolicy:
@@ -956,7 +970,7 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 
 func isWithdrawal(operation string) bool {
 	switch operation {
-	case "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "expected_component.delete", "invite.cancel", "invite.expire":
+	case "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "expected_component.delete", "admin_certificate.delete", "invite.cancel", "invite.expire":
 		return true
 	}
 	return false
@@ -996,6 +1010,8 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		return errors.New("operation requires an existing target")
 	}
 	switch value := material.Payload.(type) {
+	case AdminCertificate:
+		return graph.validateAdminCertificate(value, history)
 	case Service:
 		return nil
 	case NetworkPolicy:

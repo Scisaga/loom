@@ -281,7 +281,7 @@ func (server *Server) admin(r *http.Request) bool {
 	if localAdmin(r) {
 		return true
 	}
-	if server.Runtime == nil || r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
+	if server.Runtime == nil || r.TLS == nil || len(r.TLS.PeerCertificates) == 0 || !certificateChainsCurrent(r.TLS.VerifiedChains, server.now()) {
 		return false
 	}
 	allowed := []string{}

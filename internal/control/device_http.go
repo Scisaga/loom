@@ -48,6 +48,11 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
 		return Submission{}, nil, priorErr
 	}
+	if operation.Operation == "admin_certificate.put" && errors.Is(priorErr, os.ErrNotExist) {
+		if err := server.verifyAdminGrant(operation.Payload.(AdminCertificate)); err != nil {
+			return Submission{}, nil, err
+		}
+	}
 	if operation.Operation == "expected_component.put" && errors.Is(priorErr, os.ErrNotExist) {
 		value := operation.Payload.(ExpectedComponent)
 		if server.Releases == nil {

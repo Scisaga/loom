@@ -68,10 +68,12 @@ APPROVED_DOMAIN_BASES = {
     "microsoft.com",  # Windows manifest schema namespaces.
     "oaistatic.com",
     "openai.com",
+    "pkg.go.dev",  # Official Go package API documentation.
     "qq.com",  # Independent regional HTTPS endpoint used by Android TUN health checks.
     "sagernet.org",
     "signpath.io",  # Official release signing service.
     "signpath.org",  # Open-source signing foundation.
+    "software.sslmate.com",  # Pinned PKCS#12 encoder module and API reference.
     "w3.org",
     "wireguard.com",
     "wintun.net",  # Official Wintun component download and license.

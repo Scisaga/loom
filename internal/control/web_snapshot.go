@@ -10,23 +10,32 @@ import (
 // WebSnapshot is a redacted projection for the existing control UI. It is never
 // accepted as an operation or used to restore authority.
 type WebSnapshot struct {
-	Schema          int              `json:"schema"`
-	NetworkID       string           `json:"network_id"`
-	ControlConfigID string           `json:"control_config_id"`
-	FactFrontier    []FactFrontier   `json:"fact_frontier"`
-	Targets         []TargetState    `json:"targets"`
-	Capabilities    WebCapabilities  `json:"capabilities"`
-	UIState         WebUIState       `json:"ui_state"`
-	Devices         []Device         `json:"devices"`
-	Links           []Link           `json:"links"`
-	Paths           []Path           `json:"paths"`
-	Policies        []NetworkPolicy  `json:"policies"`
-	Services        []Service        `json:"services"`
-	Releases        []Release        `json:"releases"`
-	Publisher       *PublisherStatus `json:"publisher,omitempty"`
-	Deployments     []Deployment     `json:"deployments"`
-	Events          []Event          `json:"events"`
-	Traffic         []TrafficBucket  `json:"traffic"`
+	Schema          int                `json:"schema"`
+	NetworkID       string             `json:"network_id"`
+	ControlConfigID string             `json:"control_config_id"`
+	FactFrontier    []FactFrontier     `json:"fact_frontier"`
+	Targets         []TargetState      `json:"targets"`
+	Capabilities    WebCapabilities    `json:"capabilities"`
+	UIState         WebUIState         `json:"ui_state"`
+	Devices         []Device           `json:"devices"`
+	Links           []Link             `json:"links"`
+	Paths           []Path             `json:"paths"`
+	Policies        []NetworkPolicy    `json:"policies"`
+	Services        []Service          `json:"services"`
+	Releases        []Release          `json:"releases"`
+	Publisher       *PublisherStatus   `json:"publisher,omitempty"`
+	Deployments     []Deployment       `json:"deployments"`
+	Events          []Event            `json:"events"`
+	Traffic         []TrafficBucket    `json:"traffic"`
+	Administrators  []WebAdministrator `json:"administrators"`
+}
+
+type WebAdministrator struct {
+	ID          string `json:"id"`
+	Subject     string `json:"subject"`
+	Fingerprint string `json:"fingerprint"`
+	NotBefore   string `json:"not_before"`
+	NotAfter    string `json:"not_after"`
 }
 
 type WebCapabilities struct {
@@ -105,7 +114,7 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		capabilities.Credential = "local_admin"
 	}
 	if admin && writable {
-		capabilities.Operations = []string{"device.delete", "device.put", "device.revoke", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "service.delete", "service.put"}
+		capabilities.Operations = []string{"admin_certificate.delete", "admin_certificate.put", "device.delete", "device.put", "device.revoke", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "service.delete", "service.put"}
 	}
 	devices := projectWebDevices(projection, releases...)
 	warnings := []WebWarning{}
@@ -130,5 +139,5 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},
 		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPaths(projection, releases...), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
 		Services: append([]Service{}, projection.NetworkIntent.Services...), Releases: []Release{}, Deployments: []Deployment{},
-		Events: []Event{}, Traffic: []TrafficBucket{}}
+		Events: []Event{}, Traffic: []TrafficBucket{}, Administrators: projectWebAdministrators(projection)}
 }
