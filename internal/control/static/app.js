@@ -17,7 +17,7 @@ function openPolicyDraft(button){
 }
 function restorePolicyParent(){
  if(!policyParent)return;
- if(location.pathname+location.search===policyParent.url){const parent=policyParent,placeholder=document.getElementById(parent.form.id);policyParent=null;if(placeholder)placeholder.replaceWith(parent.form)}
+ if(location.pathname+location.search===policyParent.url){const parent=policyParent,placeholder=document.getElementById(parent.form.id);if(placeholder){policyParent=null;placeholder.replaceWith(parent.form)}else{const retained=document.createElement('section');retained.className='card';retained.dataset.unappliedPolicyDraft='';retained.innerHTML='<h2>Unapplied device draft</h2><p>This device can no longer accept this assignment. The unsaved fields remain here for review.</p>';for(const field of parent.form.elements)field.disabled=true;for(const button of parent.form.querySelectorAll('button'))button.hidden=true;retained.append(parent.form);app.append(retained)}}
  else if(location.pathname!=='/policies')policyParent=null;
 }
 function returnFromPolicy(value,accepted,reviewedTargets){

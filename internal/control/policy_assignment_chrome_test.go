@@ -134,6 +134,16 @@ func TestWebChromePolicyCopyPreservesAssignmentDraftAndSharedSource(t *testing.T
 	if chromeDo(t, debug, `!document.querySelector('#policy-form')&&document.body.textContent.includes('This Policy is unavailable')`) != true {
 		t.Fatal("unknown Policy silently opened a different Policy")
 	}
+	// Permanent deletion during the second copy must preserve only an inert
+	// public draft, never recreate an authorization entry or discard the fields.
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-access');dispatchEvent(new PopStateEvent('popstate'));document.querySelector('#device-policy-form [name=name]').value='Demo retained after deletion';document.querySelector('[data-copy-policy="demo-policy"]').click();return true})()`)
+	target, _ = projection.CurrentTarget("device", original.ID)
+	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-delete-during-copy", Operation: "device.delete", TargetKind: "device", TargetID: original.ID, Dependencies: target.MaterialIDs, Payload: DeleteTarget{ID: original.ID}})
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#policy-form');f.elements.id.value='demo-unassigned-copy';f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-unapplied-policy-draft] [name=name]')?.value==='Demo retained after deletion'`)
+	if chromeDo(t, debug, `[...document.querySelector('[data-unapplied-policy-draft] form').elements].every(e=>e.disabled)&&[...document.querySelectorAll('[data-unapplied-policy-draft] button')].every(e=>e.hidden)`) != true {
+		t.Fatal("permanent deletion left an executable stale assignment")
+	}
 }
 
 func TestWebChromeNewPolicyReturnsToOriginalInvitation(t *testing.T) {
