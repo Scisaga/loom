@@ -89,7 +89,7 @@ func cmdClientPackageWindows(args []string) error {
 	generationText := fs.String("generation", "", "本次签名发布代（非零规范 U64）")
 	wintunPath := fs.String("wintun-archive", "", "已审核的官方 Wintun ZIP")
 	keyPath := fs.String("key", "deploy/keys/platform-signing.key", "平台 Ed25519 签名私钥")
-	outPath := fs.String("o", "", "输出 ZIP；默认 deploy/staging/loom-windows-dataplane-1.11.4-loom.1-<arch>.zip")
+	outPath := fs.String("o", "", "输出 ZIP；默认 deploy/staging/loom-windows-dataplane-"+clientcomponent.DataPlaneVersion+"-<arch>.zip")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("用法:loom client package-windows -arch <amd64|arm64> -dataplane-dir <目录> -generation <发布代> -wintun-archive <zip> [-key <私钥>] [-o <zip>]:%w", err)
 	}

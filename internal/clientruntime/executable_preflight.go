@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"loom/internal/clientcomponent"
 )
 
 const (
@@ -105,7 +107,7 @@ func RequireTUNDNSExecutor(ctx context.Context, executable string, config []byte
 	command := exec.CommandContext(ctx, executable, "version")
 	configureCheckCommand(command)
 	body, err := command.Output()
-	if err != nil || !strings.HasPrefix(string(body), "sing-box version 1.11.4-loom.1\n") {
+	if err != nil || !strings.HasPrefix(string(body), "sing-box version "+clientcomponent.DataPlaneVersion+"\n") {
 		return errors.New("TUN domain DNS requires the verified persistent-cache data-plane build")
 	}
 	return nil

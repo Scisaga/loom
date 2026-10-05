@@ -11,7 +11,6 @@ go_path="$build_dir/go/path"
 go_cache="$build_dir/go/cache"
 output="$build_dir/loom-box.aar"
 
-sing_box_version="1.11.4-loom.1"
 gomobile_version="v0.1.13"
 go_toolchain="go1.27.0"
 ndk_version="28.0.13004108"
@@ -37,6 +36,7 @@ fi
 
 mkdir -p "$build_dir" "$go_bin" "$go_path" "$go_cache" "$android_dir/app/libs"
 python3 "$repo_dir/scripts/prepare-sing-box.py" "$source_dir"
+sing_box_version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact_version"])' "$source_dir/.loom-source-provenance.json")
 
 # Android uses the same schema-3 control/deviceclient source and canonical
 # codecs as desktop clients. Never generate a second reduced authority module.

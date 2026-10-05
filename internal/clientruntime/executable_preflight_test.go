@@ -6,9 +6,27 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestReviewedTUNDNSExecutorFromEnvironment(t *testing.T) {
+	root := os.Getenv("LOOM_WINDOWS_DATAPLANE_DIR")
+	if root == "" || runtime.GOOS != "linux" {
+		t.Skip("requires the current reviewed Linux executable")
+	}
+	config := []byte(`{"dns":{"fakeip":{"enabled":true}}}`)
+	executable := filepath.Join(root, "sing-box-linux-"+runtime.GOARCH)
+	if err := RequireTUNDNSExecutor(context.Background(), executable, config); err != nil {
+		t.Fatal(err)
+	}
+	if previous := os.Getenv("LOOM_PREVIOUS_DATAPLANE_DIR"); previous != "" {
+		if err := RequireTUNDNSExecutor(context.Background(), filepath.Join(previous, "sing-box-linux-"+runtime.GOARCH), config); err == nil {
+			t.Fatal("current runtime accepted a superseded bundled executor")
+		}
+	}
+}
 
 func TestRunSingBoxCheckUsesEphemeralConfigAndSuppressesOutput(t *testing.T) {
 	root := t.TempDir()
