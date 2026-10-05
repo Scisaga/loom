@@ -859,21 +859,67 @@ unit 为已签模板与显式本机路径的投影，不能有未核验 drop-in�
 接受后失败再重试时，从同一受保护 releases 目录内已验签的同平台较低代清单识别应退役程序；不新增旧指针
 或安装 receipt。未来代缓存、未认证条目和其他文件不由此删除。
 
+## Android 应用 manifest 的规范字段
+
+目标是让操作者从现有 Releases 页面取得正式 APK，并将它的实际执行组件设为节点期望。
+此前正式签名 APK 只作为本机交付文件存在，catalog 明确拒绝其 kind，因此无法形成该链。
+最小变化增加既有 Artifact 的 Android 应用 manifest；它只描述不可变交付字节，不新增安装状态、
+自动更新器或设备授权。操作者多执行一次应用签名清单打包，再沿同一 stage/publish 入口发布。
+
+唯一 manifest 固定为 `schema=3,kind="android-application",generation:U64,application_id,version_code,`
+`version_name,source_commit,aar_sha256,sing_box_version,artifact,native_libraries`。
+generation 非零；application_id 固定正式包名；version_code 为正且不超过 Android 有符号整数范围，
+version_name 为规范版本文本；source_commit 是编入 APK 的 40 位小写源码提交，aar_sha256 为 64 位小写 hex。
+artifact 使用原 ReleaseArtifact，名称固定 `loom-android.apk`，media_type 为
+`application/vnd.android.package-archive`，audience 固定 public，摘要和长度覆盖原始已签 APK。
+native_libraries 恰好按 arch 排序列出 amd64/arm64，字段为 `arch,path,sha256,size`；path 分别固定为
+`lib/x86_64/libbox.so` 与 `lib/arm64-v8a/libbox.so`，摘要和正的有界长度对应 APK 内未压缩的完整 ELF。
+其他现有 UI 原生依赖仍随同一 APK 交付，不因此成为独立运行组件或引入新 ABI。
+
+manifest 在 APK 外保存，避免 APK 签名及整包摘要循环。Ed25519 签名覆盖
+`loom-release-manifest-v3\0 || C(manifest)`，独立发布公钥、不可变路径和 catalog 仍沿用原契约。
+生成前使用固定 SDK 的 apksigner 验证完整 APK，读取实际唯一签名证书；正常 Android 安装仍独立执行其
+签名和升级规则。发布签名不替换 APK 签名，也不允许安装工具清空身份或更换签名键以绕过升级。
+sing_box_version 来自 AAR 随包携带的原始受审核 source-provenance.json，固定位置为
+`assets/loom/source-provenance.json`，由 Gradle 同字节合并到 APK。该记录已用于 Linux/Windows 数据面，
+不新建构建元数据 schema 或状态文件；缺少它就无法区分旧 AAR 与当前数据面版本，不能直接复制工具版本。
+读取者按原来源记录的审核摘要识别版本，打包时核对 AAR 摘要、来源原件和两份库与 APK 完全相同；
+只签发当前受审核版本。它表达期望坐标，实际版本仍由已加载 Libbox.version 回读。
+
+所有读取者从 APK 的实际 DEX BuildConfig 核对 application_id、release/非 debug、version_code、
+version_name、source_commit 和 aar_sha256，核对 native_libraries 的 ELF 架构及 Android Go buildinfo，
+并重新核对整 APK 和库的摘要。未知 DEX/打包形态、重复 BuildConfig、重复 ZIP 路径、额外 libbox ABI、
+错误文件/元数据/签名或非规范字段拒绝；不增加另一份 APK 构建信息 store 或旧包 fallback。
+节点上的只读验签器消费平台签名及精确 APK 字节，无需部署 Android SDK；APK 签名证书由发布者的
+SDK 对同一 APK 的验签回读覆盖，目标 Android 系统在安装时再次验证；不另复制一份可与 APK 分离的签名身份字段。
+
+对应关系为同一 Manifest → 同一规范签名字节/发布目录 → Releases APK 下载及原期望组件引用 →
+Android 原报告 → 版本页比较。页面同时提供原 manifest 与签名下载，不能只有无法独立验签的分离签名附件。
+catalog 的平台为 android-any，因为一个 APK 同时交付两个 ABI；
+期望坐标仍是 android-amd64/android-arm64。agent 的摘要是同一完整 APK、版本为 source_commit；
+sing-box 的摘要是相应 ABI 原生库、版本为 sing_box_version。引用只按该 manifest 中明确存在的运行
+组件/平台解析，不能把 any 当作任意平台通配。低代和同代异值依原发布目录规则拒绝，失败不推进 current；
+安装代由 Android 既有版本规则处理，目录发布和普通期望事实均不自动安装或重置任何 floor。
+
+最小验证覆盖 manifest 规范往返、错钥/改包/错 ABI/元数据与库绑定拒绝，真实 APK 与 SDK 独立读回，
+正式 stage/publish 全目标回读、私有浏览器精确下载、正常期望写入及同机模拟器真实报告比较与重启。
+实体安装/ARM64/物理切网不由本清单替代；Windows 应用的 manifest 仍单独待补。
+
 ## 签名 catalog 与安装包、运行文件的对应
 
-本节补齐既有 Release/Artifact 的交付索引，不新增控制权威、安装 receipt 或协议号。当前已存在两种规范
-manifest：`linux-client-bootstrap` 和 `windows-dataplane`。它们保持原始签名字节；catalog 只引用它们，
+本节补齐既有 Release/Artifact 的交付索引，不新增控制权威、安装 receipt 或协议号。现行规范
+manifest 包括 `linux-client-bootstrap`、`windows-dataplane` 与 `android-application`。它们保持原始签名字节；catalog 只引用它们，
 不能把整包摘要写成包内程序的运行摘要。Android APK、Windows 三种应用交付和通用 bootstrap 脚本各自的
-非空 manifest 按各自交付边界定义；下面补齐通用脚本，Android APK 与 Windows 应用尚未定义的 kind 拒绝，
+非空 manifest 按各自交付边界定义；现行包含上述 Android APK 与下述通用脚本；Windows 应用尚未定义的 kind 拒绝，
 不能使用任意 JSON 透传。
 
 catalog 固定字段为 `{schema:3,generation:U64,entries:[]ReleaseEntry}`，generation 非零；entries 非空，
 按 `(component_id,platform)` 严格排序且唯一。此处 component_id 表示交付组件，当前为两个程序包 kind
-及 `linux-bootstrap-script`；程序包 platform 恰为 `<os>-<arch>`，通用脚本为 `linux-any`。
+、`android-application` 及 `linux-bootstrap-script`；程序包 platform 恰为 `<os>-<arch>`，通用脚本为 `linux-any`，双 ABI APK 为 `android-any`。
 每项固定为 `{component_id,platform,manifest_digest,artifact}`；
 manifest_digest 为原始规范 manifest 的 Digest。artifact 固定为 `{name,digest,size:U64,media_type,audience}`，
 文件名为单个安全 ASCII basename，digest 为完整下载字节的 Digest，size 非零，当前 audience 恰为 public。
-Linux archive 的 media_type 为 application/gzip，Windows 数据面 ZIP 为 application/zip，通用脚本为 text/x-shellscript。
+Linux archive 的 media_type 为 application/gzip，Windows 数据面 ZIP 为 application/zip，通用脚本为 text/x-shellscript，APK 为 application/vnd.android.package-archive。
 版本、源码、组件代及包内精确程序坐标由已引用的原 manifest 读取并核对，不另复制一份可独立修改的值。
 
 签名为 64 字节 Ed25519，覆盖 `loom-release-catalog-v3\0 || C(catalog)`；规范 catalog 摘要定位不可变
@@ -907,7 +953,7 @@ Linux 的 loom 对应既有运行 component_id=agent，数据面恰为 sing-box�
 `SHA256("loom-expected-component-v3\0" || C({node_id,component_id,platform}))` 的 Digest 表达。
 两份发布摘要固定原始 schema 3 catalog 与其引用的 manifest；不保存 archive/ZIP 摘要作为程序摘要，
 也不再复制一份可编辑的 version、运行摘要或制品内容。现有可解析组合为 Linux agent/sing-box 与
-Windows sing-box/wintun，平台为相应 OS 的 amd64/arm64；没有规范 manifest 的应用组件不能创建期望。
+Windows sing-box/wintun 与 Android agent/sing-box，平台为相应 OS 的 amd64/arm64；没有规范 manifest 的应用组件不能创建期望。
 
 | 层 | 唯一表达与方向 |
 |---|---|

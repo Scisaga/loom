@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"loom/internal/androidrelease"
 	"loom/internal/clientrelease"
 	"loom/internal/control"
 	"loom/internal/localconfig"
@@ -19,9 +20,11 @@ import (
 
 func cmdRelease(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom release <stage|publish|import|verify>")
+		return errors.New("用法: loom release <package-android|stage|publish|import|verify>")
 	}
 	switch args[0] {
+	case "package-android":
+		return cmdReleasePackageAndroid(args[1:])
 	case "publish":
 		return cmdReleasePublish(args[1:])
 	case "target":
@@ -100,28 +103,9 @@ func cmdReleaseStage(args []string) error {
 	if err != nil || generation == 0 || *pub == "" || *output == "" || len(paths) == 0 {
 		return errors.New("release stage 需要 generation、pubkey、o 及已签包路径")
 	}
-	config, err := localconfig.Load(*env)
+	key, public, err := releaseSigningKey(*env, *pub)
 	if err != nil {
 		return err
-	}
-	public, err := control.ReadReleasePublicKey(*pub)
-	if err != nil {
-		return err
-	}
-	if strings.HasPrefix(config.SigningKey, "secret:") || strings.HasPrefix(config.SigningKey, "pkcs11:") {
-		return errors.New("该不透明发布签发能力没有已配置的 adapter")
-	}
-	encoded, err := readBoundedRegular(config.SigningKey, 4096, true)
-	if err != nil {
-		return err
-	}
-	private, err := decodeB64(string(encoded))
-	if err != nil || len(private) != ed25519.PrivateKeySize {
-		return errors.New("部署 YAML 引用的发布签发密钥无效")
-	}
-	key := ed25519.PrivateKey(private)
-	if !bytes.Equal(key.Public().(ed25519.PublicKey), public) {
-		return errors.New("部署签发能力与带外验签公钥不一致")
 	}
 	packages := map[string]clientrelease.Input{}
 	catalog := control.ReleaseCatalog{Schema: 3, Generation: generation, Entries: []control.ReleaseEntry{}}
@@ -130,7 +114,18 @@ func cmdReleaseStage(args []string) error {
 		if err != nil {
 			return err
 		}
-		value, err := clientrelease.Inspect(filepath.Base(path), body, public)
+		input := clientrelease.Input{Body: body}
+		if filepath.Base(path) == androidrelease.Name {
+			input.Manifest, err = readBoundedRegular(path+".manifest.json", 64<<10, false)
+			if err != nil {
+				return err
+			}
+			input.Signature, err = readBoundedRegular(path+".sig", ed25519.SignatureSize, false)
+			if err != nil {
+				return err
+			}
+		}
+		value, err := clientrelease.InspectInput(filepath.Base(path), input, public)
 		if err != nil {
 			return err
 		}
@@ -158,6 +153,10 @@ func cmdReleaseStage(args []string) error {
 		packages[pkg.Entry.Artifact.Digest] = input
 		catalog.Entries = append([]control.ReleaseEntry{pkg.Entry}, catalog.Entries...)
 	}
+	sort.Slice(catalog.Entries, func(i, j int) bool {
+		a, b := catalog.Entries[i], catalog.Entries[j]
+		return a.ComponentID < b.ComponentID || a.ComponentID == b.ComponentID && a.Platform < b.Platform
+	})
 	body, signature, err := control.SignReleaseCatalog(catalog, key)
 	if err != nil {
 		return err
@@ -171,6 +170,33 @@ func cmdReleaseStage(args []string) error {
 		return err
 	}
 	return printReleaseReadback(set)
+}
+
+func releaseSigningKey(env, pub string) (ed25519.PrivateKey, ed25519.PublicKey, error) {
+	config, err := localconfig.Load(env)
+	if err != nil {
+		return nil, nil, err
+	}
+	public, err := control.ReadReleasePublicKey(pub)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.HasPrefix(config.SigningKey, "secret:") || strings.HasPrefix(config.SigningKey, "pkcs11:") {
+		return nil, nil, errors.New("该不透明发布签发能力没有已配置的 adapter")
+	}
+	encoded, err := readBoundedRegular(config.SigningKey, 4096, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	private, err := decodeB64(string(encoded))
+	if err != nil || len(private) != ed25519.PrivateKeySize {
+		return nil, nil, errors.New("部署 YAML 引用的发布签发密钥无效")
+	}
+	key := ed25519.PrivateKey(private)
+	if !bytes.Equal(key.Public().(ed25519.PublicKey), public) {
+		return nil, nil, errors.New("部署签发能力与带外验签公钥不一致")
+	}
+	return key, public, nil
 }
 
 func cmdReleaseVerify(args []string) error {

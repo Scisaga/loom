@@ -93,6 +93,7 @@ type Release struct {
 	URL          string       `json:"url"`
 	Checksum     *ReleaseFile `json:"checksum,omitempty"`
 	Signature    *ReleaseFile `json:"signature,omitempty"`
+	Manifest     *ReleaseFile `json:"manifest,omitempty"`
 	SBOM         *ReleaseFile `json:"sbom,omitempty"`
 }
 

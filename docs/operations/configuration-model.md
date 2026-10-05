@@ -221,6 +221,13 @@ stage 不执行 YAML 的 publish_outputs，不写设备期望事实，不改变�
 输入包含 Linux 包时，同次确定性生成一个通用 bootstrap 脚本及其独立签名 manifest，并引用同一 catalog
 的精确 Linux 包。脚本不包含邀请，生成和读取均不改写那些原包的签名字节；未提供的平台在目标端明确拒绝。
 
+Android 应用先使用 `loom release package-android -env .env -pubkey <带外公钥> -apk <正式 APK>
+-aar <原始 AAR> -sdk <本机 SDK 绝对目录> -generation <应用代> -o <新输出目录>`。
+它沿同一 YAML 定位发布签名能力，固定 SDK 验证 APK 签名及实际包身份，共享读取器核对编入版本、
+源码提交、AAR 和两种原生库，再生成 APK 旁的规范 `.manifest.json` 与 `.sig`；不重新签 APK、安装或改变身份。
+将输出的 `loom-android.apk` 传入同一 stage，严格读取同名两个附件并验签；缺少附件拒绝，不猜测版本。
+应用目录只定位本次文件，不成为第二发布 store。节点验签和下载不依赖 SDK，SDK 仅用于工作站签发前审查。
+
 单个分发目标使用 `loom release import -source <临时上传目录> -catalog <精确摘要> -root <目标目录>
 -pubkey <独立公钥> [-expected-current <旧摘要>]` 验证并接受已经签署的同一目录。上传只携带公开制品和
 原签名字节，发布私钥不离开工作站；source 的 current 不用于选择版本。import 与 stage 共用目标端排他锁、
@@ -278,8 +285,8 @@ location 时，须逐一核对已有 bin 均来自已验证公开 catalog；未�
 
 `loom control serve` 可成对传入 `-release-root <绝对路径>` 和 `-release-pubkey <带外公钥文件>`，作为该
 control 的受保护只读安装输入；它们不进入 `.env` 或网络权威。私有 Releases 页面从验证结果投影 Linux
-archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原有页面与交互保留。Windows 数据面不是
-完整 Windows 应用安装器；Android 与应用安装包未定义的 manifest 不进入目录。通用 bootstrap 供邀请交付
+archive、Windows 数据面 ZIP 和 Android 正式 APK，下载走既有管理员认证服务，原有页面与交互保留。
+Windows 数据面不是完整 Windows 应用安装器；其应用安装包尚未定义的 manifest 不进入目录。通用 bootstrap 供邀请交付
 入口使用，不作为另一款客户端卡片。sh 交付从当前设备授权中的 HTTPS distribution_urls 读回同一脚本，
 成功才在私有页面显示一次粘贴块。块中携带交付时仍获授权且读回通过的地址集合，目标机器按规范顺序
 分别尝试脚本和程序包，每次下载均核对固定摘要；全部失败时停止，不能重新创建加入事务。缺少有效入口时

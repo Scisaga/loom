@@ -91,5 +91,25 @@ if grep -Eq '^jni/(armeabi-v7a|x86)/' <<<"$entries"; then
     echo "AAR 含未授权 ABI" >&2
     exit 1
 fi
+# Carry the existing reviewed source record with these exact native bytes.
+# It has no runtime/installation state and introduces no alternate source of
+# versions: the caller uses this same record for Libbox's compiled constant.
+python3 - "$output" "$source_dir/.loom-source-provenance.json" <<'PY'
+import os, pathlib, sys, zipfile
+archive, provenance = map(pathlib.Path, sys.argv[1:])
+temporary = archive.with_suffix('.with-source.aar')
+name = 'assets/loom/source-provenance.json'
+with zipfile.ZipFile(archive) as source, zipfile.ZipFile(temporary, 'w') as target:
+    assert name not in source.namelist()
+    entries = {entry.filename: entry for entry in source.infolist()}
+    extra = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+    extra.create_system = 3
+    extra.external_attr = 0o100644 << 16
+    for member in sorted([*entries, name]):
+        target.writestr(extra if member == name else entries[member],
+                        provenance.read_bytes() if member == name else source.read(member))
+    target.comment = source.comment
+os.replace(temporary, archive)
+PY
 cp "$output" "$android_dir/app/libs/loom-box.aar"
 sha256sum "$output" | tee "$build_dir/loom-box.sha256"

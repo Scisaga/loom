@@ -76,6 +76,50 @@ func TestExpectedComponentCanonicalReference(t *testing.T) {
 	}
 }
 
+func TestAndroidUniversalArtifactResolvesOnlyItsExplicitRuntimeABIs(t *testing.T) {
+	server, invite, _, claim, key, _ := enrollmentAuthorityFixture(t)
+	claim.Platform = "android"
+	claim, err := SignEnrollmentClaim(claim, key)
+	if err != nil || enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)).Code != http.StatusOK {
+		t.Fatal("Android fixture claim failed", err)
+	}
+	source, value := expectedReleaseFixture()
+	pkg := &source.original.Packages[0]
+	pkg.Entry.ComponentID, pkg.Entry.Platform = "android-application", "android-any"
+	pkg.Entry.Artifact.Name, pkg.Entry.Artifact.MediaType = "loom-android.apk", "application/vnd.android.package-archive"
+	pkg.Components = []ComponentReadback{
+		{ComponentID: "agent", Platform: "android-amd64", Version: "demo-source", ArtifactDigest: pkg.Entry.Artifact.Digest},
+		{ComponentID: "agent", Platform: "android-arm64", Version: "demo-source", ArtifactDigest: pkg.Entry.Artifact.Digest},
+		{ComponentID: "sing-box", Platform: "android-amd64", Version: "demo-native", ArtifactDigest: ReleaseDigest([]byte("demo amd64 native"))},
+		{ComponentID: "sing-box", Platform: "android-arm64", Version: "demo-native", ArtifactDigest: ReleaseDigest([]byte("demo arm64 native"))},
+	}
+	source.original.Catalog.Entries = []ReleaseEntry{pkg.Entry}
+	source.current = source.original
+	server.Releases = source
+	for index, expected := range pkg.Components {
+		value.ComponentID, value.Platform = expected.ComponentID, expected.Platform
+		value.ID, _ = ExpectedComponentID(value.NodeID, value.ComponentID, value.Platform)
+		_, _, err := server.HandleOperation(context.Background(), expectedOperation(server.Runtime.Authority.Snapshot(), value, "demo-android-"+string(rune('a'+index))))
+		if err != nil {
+			t.Fatal("explicit APK component could not become an ordinary expectation", err)
+		}
+	}
+	view, err := server.deviceEnvelope(invite.DeviceID)
+	if err != nil || !reflect.DeepEqual(view.View.ExpectedComponents, pkg.Components) {
+		t.Fatal("universal download lost distinct actual ABI boundaries", err)
+	}
+	value.Platform = "linux-amd64"
+	value.ID, _ = ExpectedComponentID(value.NodeID, value.ComponentID, value.Platform)
+	if _, err := resolveExpectedComponent(value, []ReleaseSet{source.original}); err == nil {
+		t.Fatal("android-any expanded into another OS")
+	}
+	value.Platform, value.ComponentID = "android-arm64", "wintun"
+	value.ID, _ = ExpectedComponentID(value.NodeID, value.ComponentID, value.Platform)
+	if _, err := resolveExpectedComponent(value, []ReleaseSet{source.original}); err == nil {
+		t.Fatal("APK manufactured an absent component")
+	}
+}
+
 func TestExpectedComponentFormalWriteRestartAndIndependentResolution(t *testing.T) {
 	server, invite, _, claim, key, _ := enrollmentAuthorityFixture(t)
 	if response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {

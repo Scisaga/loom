@@ -78,7 +78,7 @@ func (artifact ReleaseArtifact) Validate() error {
 			return errors.New("release artifact filename is invalid")
 		}
 	}
-	if artifact.MediaType != "application/gzip" && artifact.MediaType != "application/zip" && artifact.MediaType != "text/x-shellscript" {
+	if artifact.MediaType != "application/gzip" && artifact.MediaType != "application/zip" && artifact.MediaType != "text/x-shellscript" && artifact.MediaType != "application/vnd.android.package-archive" {
 		return errors.New("release artifact media type is undefined")
 	}
 	return nil
@@ -100,6 +100,10 @@ func (entry ReleaseEntry) Validate() error {
 	case "linux-bootstrap-script":
 		if entry.Platform != "linux-any" || entry.Artifact.MediaType != "text/x-shellscript" || entry.Artifact.Name != "loom-bootstrap-linux.sh" {
 			return errors.New("Linux bootstrap entry differs from its script form")
+		}
+	case "android-application":
+		if entry.Platform != "android-any" || entry.Artifact.MediaType != "application/vnd.android.package-archive" || entry.Artifact.Name != "loom-android.apk" {
+			return errors.New("Android catalog entry differs from its application form")
 		}
 	default:
 		return errors.New("release component manifest contract is undefined")

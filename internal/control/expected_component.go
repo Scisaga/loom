@@ -23,7 +23,7 @@ func ExpectedComponentID(node, component, platform string) (string, error) {
 
 func expectedComponentSupported(component, platform string) bool {
 	switch platform {
-	case "linux-amd64", "linux-arm64":
+	case "linux-amd64", "linux-arm64", "android-amd64", "android-arm64":
 		return component == "agent" || component == "sing-box"
 	case "windows-amd64", "windows-arm64":
 		return component == "sing-box" || component == "wintun"
@@ -58,7 +58,8 @@ func resolveExpectedComponent(value ExpectedComponent, sets []ReleaseSet) (Compo
 			continue
 		}
 		for _, pkg := range set.Packages {
-			if pkg.Entry.ManifestDigest != value.ManifestDigest || pkg.Entry.Platform != value.Platform {
+			androidAPK := pkg.Entry.ComponentID == "android-application" && pkg.Entry.Platform == "android-any" && (value.Platform == "android-amd64" || value.Platform == "android-arm64")
+			if pkg.Entry.ManifestDigest != value.ManifestDigest || pkg.Entry.Platform != value.Platform && !androidAPK {
 				continue
 			}
 			for _, actual := range pkg.Components {
@@ -78,7 +79,7 @@ func deviceExpectedComponents(projection Projection, node string, sets []Release
 	result := []ComponentReadback{}
 	// Conflicts have no projected value. Their stable identity still identifies
 	// the affected device, so absence cannot silently become an empty expectation.
-	for _, platform := range []string{"linux-amd64", "linux-arm64", "windows-amd64", "windows-arm64"} {
+	for _, platform := range []string{"linux-amd64", "linux-arm64", "windows-amd64", "windows-arm64", "android-amd64", "android-arm64"} {
 		for _, component := range []string{"agent", "sing-box", "wintun"} {
 			if !expectedComponentSupported(component, platform) {
 				continue

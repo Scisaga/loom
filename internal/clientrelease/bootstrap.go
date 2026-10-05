@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"loom/internal/androidrelease"
 	"loom/internal/control"
 )
 
@@ -19,6 +20,13 @@ type Input struct{ Body, Manifest, Signature []byte }
 func InspectInput(name string, input Input, key ed25519.PublicKey) (control.ReleasePackage, error) {
 	if (len(input.Manifest) == 0) != (len(input.Signature) == 0) {
 		return control.ReleasePackage{}, errors.New("external package metadata is incomplete")
+	}
+	if name == androidrelease.Name {
+		manifest, err := androidrelease.Verify(input.Manifest, input.Signature, input.Body, key)
+		if err != nil {
+			return control.ReleasePackage{}, err
+		}
+		return control.ReleasePackage{Entry: control.ReleaseEntry{ComponentID: manifest.Kind, Platform: "android-any", ManifestDigest: control.ReleaseDigest(input.Manifest), Artifact: manifest.Artifact}, ManifestBody: bytes.Clone(input.Manifest), Signature: bytes.Clone(input.Signature), Version: manifest.VersionName, SourceCommit: manifest.SourceCommit, Generation: manifest.Generation, Components: manifest.Components()}, nil
 	}
 	if name == "loom-bootstrap-linux.sh" {
 		manifest, err := control.VerifyReleaseBootstrap(input.Manifest, input.Signature, key)

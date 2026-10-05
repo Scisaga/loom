@@ -98,6 +98,19 @@ audited AAR:
 ANDROID_HOME=/opt/android-sdk ./scripts/build-release.sh
 ```
 
+The AAR and APK carry the same reviewed `assets/loom/source-provenance.json`;
+the release reader binds that record to the actual APK BuildConfig and both
+native libraries. From the repository root, package the signed APK with its
+original AAR using `loom release package-android -env .env -pubkey <public-key>
+-apk <signed-apk> -aar <original-aar> -sdk <absolute-sdk-directory>
+-generation <application-generation> -o <new-output-directory>`. Pass the
+resulting `loom-android.apk` to the normal `release stage` and `release publish`
+commands. The adjacent manifest and signature must remain with the APK.
+The private Releases page provides all three files and exposes the original
+component expectations; publication itself does not install an application.
+See the [application manifest](../../docs/core/current-contract.md#android-应用-manifest-的规范字段)
+and [publication workflow](../../docs/operations/configuration-model.md#签名发布记录到实际运行的闭环).
+
 The package ID remains `io.github.scisaga.loom`; preserve its PKCS12 signing key
 for upgrade continuity. A clean-install acceptance must use the signed release
 APK, import a `.loom-invite` through the normal file or QR UI, complete claim with

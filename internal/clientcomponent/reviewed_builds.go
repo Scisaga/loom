@@ -1,9 +1,22 @@
 package clientcomponent
 
 import (
+	"errors"
 	"maps"
 	"slices"
 )
+
+// ReviewedSourceVersion identifies original source provenance bytes. It does
+// not certify an executable or infer that a component has been loaded.
+func ReviewedSourceVersion(body []byte) (string, error) {
+	digest := sha256Hex(body)
+	for _, version := range slices.Sorted(maps.Keys(reviewedArtifacts)) {
+		if reviewedArtifacts[version].sources["source-provenance.json"] == digest {
+			return version, nil
+		}
+	}
+	return "", errors.New("data-plane source provenance is not a reviewed artifact")
+}
 
 // Artifact coordinates identify exact reproducible source and executable bytes.
 // Every entry uses the same schema and verifier. Only DataPlaneVersion is writable;
