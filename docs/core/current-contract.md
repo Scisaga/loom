@@ -703,6 +703,10 @@ Mixed 未加载 Wintun 时不报告它。domain、wire 与报告持久值仍为�
 坐标比较；没有新增安装状态或操作者配置。停止释放句柄后可正常升级/卸载，重启重新测量。
 最小验证覆盖无期望时仍回读、未加载 DLL 不充数、运行文件替换被拒绝、错误 manifest/退出进程
 不伪造组件，以及同机 VM 正常业务、签名报告、重启与停止后的文件释放。
+原数据面通过内存 loader 使用内嵌 Wintun，不能用旁边未加载的 DLL 代替其运行证据。源码修订将
+Windows Wintun 的唯一加载入口改为 sing-box 镜像目录内已验签的同一个 DLL；显式绝对路径及系统
+依赖搜索范围固定，缺失或加载失败即失败，不回到内嵌副本。Mixed 不触发此加载。此变化只修复
+交付文件与执行文件的对应，不增加 capture、路由、权限或操作者配置。
 
 Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest,`
 `network_generation,result,observed_at,valid_until`，可选 `duration_ms` 为非负整数。
@@ -762,6 +766,13 @@ resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，se
 也不能把本节文档完成或单目标局部验证称为整个业务工作项完成。
 
 ## Windows 数据面 manifest 的规范字段
+
+数据面源码修订使用新的制品坐标和发布代，schema 3 的字段、签名域和原始已签包保持。源码审查
+按 manifest 明示的制品坐标核对固定上游、补丁、构建输入与精确程序摘要；不能把一个可变的“当前
+源码摘要”套到全部历史包上。旧 schema 3 包仍可按其原字节独立验签和被已有期望精确引用；新 writer
+只生成本次审核的制品。运行安装仍按原单调代和精确包决定，不因新包失败选择历史包。这不是旧协议
+decoder、旧配置 fallback 或新的发布状态。最小验证须同时保全原已签 catalog 的读取，并拒绝不同
+修订之间拼接源码/程序、同代异值和低代安装。
 
 修复后的 TUN 需要能在异常退出后保留域名地址对应的数据面。正式入口仍是 `loom client
 package-windows`、三种交付包及客户端自己的组件验证；不允许把带补丁的二进制声明成官方原版。

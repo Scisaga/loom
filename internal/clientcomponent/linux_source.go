@@ -11,17 +11,16 @@ import (
 	"strings"
 )
 
-var reviewedLinuxBuilds = map[string]string{
-	"amd64": "06e809d876216481bb88b761c2a0feaee417fc5381af5a2121600450a95f61c9",
-	"arm64": "a8ca6c98d3a30708048b8760ff24f76c988ae0d2750fb015dd537bf11330a93f",
-}
-
 // LinuxSourceFiles checks the same reviewed source inputs used by the Windows
 // component package. Its result is payload, never installation authority.
-func LinuxSourceFiles(inputs map[string][]byte) (map[string][]byte, error) {
-	files := make(map[string][]byte, len(reviewedSources)+1)
-	for _, name := range slices.Sorted(maps.Keys(reviewedSources)) {
-		digest := reviewedSources[name]
+func LinuxSourceFiles(inputs map[string][]byte, version string) (map[string][]byte, error) {
+	review, ok := reviewedArtifacts[version]
+	if !ok {
+		return nil, errors.New("unreviewed data-plane source artifact")
+	}
+	files := make(map[string][]byte, len(review.sources)+1)
+	for _, name := range slices.Sorted(maps.Keys(review.sources)) {
+		digest := review.sources[name]
 		if sha256Hex(inputs[name]) != digest {
 			return nil, fmt.Errorf("data-plane source file %s differs from reviewed inputs", name)
 		}
@@ -39,7 +38,8 @@ func LinuxSourceFiles(inputs map[string][]byte) (map[string][]byte, error) {
 // InspectLinuxSourceBuild validates the exact reviewed ELF and honest Go build
 // coordinates. Neither a forged version string nor a module name is provenance.
 func InspectLinuxSourceBuild(body []byte, arch string) (Component, error) {
-	if reviewedLinuxBuilds[arch] == "" || sha256Hex(body) != reviewedLinuxBuilds[arch] {
+	version := reviewedBinaryVersion(body, "linux", arch)
+	if version == "" {
 		return Component{}, errors.New("Linux data-plane binary differs from reviewed source build")
 	}
 	file, err := elf.NewFile(bytes.NewReader(body))
@@ -65,6 +65,6 @@ func InspectLinuxSourceBuild(body []byte, arch string) (Component, error) {
 	if settings["GOOS"] != "linux" || settings["GOARCH"] != arch || settings["CGO_ENABLED"] != "0" || settings["-trimpath"] != "true" || settings["-tags"] != "with_gvisor,with_quic,with_wireguard,with_ech,with_utls,with_clash_api,http2legacy" || settings["vcs.revision"] != "" {
 		return Component{}, errors.New("Linux data-plane build settings differ from reviewed inputs")
 	}
-	return Component{Path: "sing-box", SHA256: sha256Hex(body), Size: len(body), Version: DataPlaneVersion, Commit: upstreamCommit,
-		Source: Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: patchDigest}}, nil
+	return Component{Path: "sing-box", SHA256: sha256Hex(body), Size: len(body), Version: version, Commit: upstreamCommit,
+		Source: Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: reviewedArtifacts[version].sources["domain-cache.patch"]}}, nil
 }

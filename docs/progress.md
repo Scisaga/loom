@@ -462,6 +462,18 @@ TLS 与私有路径边界实际回读保持，旧 SSOT 发布写入器及其重�
 `deploy/evidence/2026-10-05-release-distribution/component-readback/`。
 本段只确认实际运行坐标；期望普通事实的生产消费与其他平台组件回读仍须分别验收。
 
+### 期望组件事实与实际运行对照
+
+节点详情的正式表单已写入期望组件普通事实，引用当前已验签 catalog 与 manifest 的精确坐标。
+六个节点的 agent、sing-box 分别从认证 View 消费期望；实际进程测量保持独立，由签名报告给出比较结果。
+真实 mTLS 浏览器已逐项回读。所有控制成员持久化同一批原始事实，控制与运行服务重启后再次回读一致。
+
+本轮精确制品经正式全目标 publish 分发，私有浏览器下载与独立验签通过；重启后的指定境外出口和 Auto
+HTTPS 业务通过。身份、密钥、旧 floor、已有认证原件及宿主 route/rule 保持，被替代的旧可执行程序已删除。
+证据位于 `deploy/evidence/2026-10-05-release-distribution/expected-components-final/`。
+该结果覆盖 Linux 的期望与实际比较；Windows 的 DLL 实际加载与组件回读仍在修复和原生验证中，
+Android 组件回读、应用制品 manifest 和旧运行发布 floor 的前向消费仍未完成。
+
 ### 本轮实现与实际验证
 
 Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
@@ -631,7 +643,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh/SSH 安装、原事务恢复、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture 及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
 | Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；这些结果不抵扣发布 catalog。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
-| 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | 其余应用制品 manifest、期望组件事实与实际报告比较、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
+| 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | 其余应用制品 manifest、Android/Windows 的完整运行组件回读、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
 | 字段级同构 | Direct/本机出口/Hy2/WG 中继已定义并消费跨层对应与严格往返；初始成员、节点绑定及 distribution_urls 已落实。 | 其他传输、动态成员和未定观测算法；旧 HTTP 分发坐标不自动转换成 HTTPS。 |
 | 生产切换 | 本次明确授权的精确制品已接管正式服务，原身份/密钥/管理员/认证原件和 floor/latch 保全，旧运行入口退出。 | schema 3 签名发布 catalog 的单调消费、全部功能或全部平台已完成；旧证据不能恢复成运行权威。 |

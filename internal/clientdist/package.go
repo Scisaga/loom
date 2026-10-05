@@ -142,10 +142,15 @@ type archiveFile struct {
 // Build validates that both executables are real matching Linux binaries and
 // emits a byte-for-byte reproducible gzip stream.
 func Build(in BuildInput) (Artifact, error) {
-	return buildWithInspect(in, inspectSingBox, clientcomponent.LinuxSourceFiles)
+	return buildWithInspect(in, inspectSingBox, func(inputs map[string][]byte, version string) (map[string][]byte, error) {
+		if version != clientcomponent.DataPlaneVersion {
+			return nil, fmt.Errorf("Linux package writer requires the current reviewed data-plane artifact")
+		}
+		return clientcomponent.LinuxSourceFiles(inputs, version)
+	})
 }
 
-func buildWithInspect(in BuildInput, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error)) (Artifact, error) {
+func buildWithInspect(in BuildInput, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte, string) (map[string][]byte, error)) (Artifact, error) {
 	if len(in.PrivateKey) != ed25519.PrivateKeySize {
 		return Artifact{}, fmt.Errorf("[§4.3 签名高于传输信任] 平台签名私钥长度是 %d，期望 %d", len(in.PrivateKey), ed25519.PrivateKeySize)
 	}
@@ -173,7 +178,7 @@ func buildWithInspect(in BuildInput, inspectSing func([]byte, string) (Component
 		{path: "systemd/README.md", mode: 0o644, body: []byte(systemdReadme)},
 		{path: "systemd/loom-client.service", mode: 0o644, body: []byte(systemdService)},
 	}
-	sources, err := sourceFiles(in.SourceFiles)
+	sources, err := sourceFiles(in.SourceFiles, singBox.Version)
 	if err != nil {
 		return Artifact{}, err
 	}
@@ -364,7 +369,7 @@ func VerifyPackage(archive []byte, pub ed25519.PublicKey) (SignedPackage, error)
 	return result, err
 }
 
-func verifyWithInspect(archive, checksum, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error)) (Manifest, error) {
+func verifyWithInspect(archive, checksum, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte, string) (map[string][]byte, error)) (Manifest, error) {
 	var zero Manifest
 	if len(archive) == 0 || len(archive) > maxArchiveBytes || len(signature) != ed25519.SignatureSize || len(pub) != ed25519.PublicKeySize {
 		return zero, fmt.Errorf("Linux package or signature bounds are invalid")
@@ -380,7 +385,7 @@ func verifyWithInspect(archive, checksum, signature []byte, pub ed25519.PublicKe
 	return manifest, nil
 }
 
-func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error), proof *SignedPackage) (Manifest, error) {
+func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte, string) (map[string][]byte, error), proof *SignedPackage) (Manifest, error) {
 	var zero Manifest
 	gz, err := gzip.NewReader(bytes.NewReader(body))
 	if err != nil {
@@ -494,7 +499,7 @@ func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing fu
 	for _, name := range []string{"source-provenance.json", "domain-cache.patch", "prepare-sing-box.py", "build-dataplane.sh"} {
 		sourceInputs[name] = files["source/"+name]
 	}
-	sources, err := sourceFiles(sourceInputs)
+	sources, err := sourceFiles(sourceInputs, singBox.Version)
 	if err != nil {
 		return zero, err
 	}

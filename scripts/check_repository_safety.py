@@ -64,6 +64,7 @@ APPROVED_DOMAIN_BASES = {
     "gstatic.com",
     "gnu.org",  # GPL license text and canonical license reference.
     "ipify.org",
+    "lukechampine.com",  # Upstream Go module path in the reviewed data-plane source patch.
     "microsoft.com",  # Windows manifest schema namespaces.
     "oaistatic.com",
     "openai.com",

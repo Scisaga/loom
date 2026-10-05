@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path"
 	"slices"
 	"sort"
@@ -103,28 +104,14 @@ type Verified struct {
 	Files        map[string][]byte
 }
 
-const DataPlaneVersion = "1.11.4-loom.1"
+const DataPlaneVersion = "1.11.4-loom.2"
 const upstreamCommit = "eb07c7a79eeca943370eafea601e87da76c0e57e"
 const upstreamVersion = "v1.11.4"
 const upstreamURL = "https://proxy.golang.org/github.com/sagernet/sing-box/@v/v1.11.4.zip"
 const upstreamArchive = "43928129d0aa0ecf6bc3bede60d805e918f3f1510e8a38612b7ccd78f3bc8bf2"
 const upstreamModuleSum = "h1:Z3xLwVJlTJfJ1p8R9M05aNJLFKRAwGebA5M/DFmr8p8="
-const patchDigest = "5c8a8b8403834dedfe35345aa914fda2c909cca5c89ffb06868d19f7c5c65b08"
 const wintunVersion = "0.14.1"
 const wintunArchiveDigest = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
-
-var reviewedBuilds = map[string]string{
-	"amd64": "59aa4de23625dfc309292a27363507687dfa5ed12e9095b190b4f3d9e6916218",
-	"arm64": "9c66eb2d9a828769f84e54be975cb51c41324c7f03aef0b0e91d2d97d27ba3a6",
-}
-
-var reviewedSources = map[string]string{
-	"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
-	"source-provenance.json": "3272bb452fd24129d8d78ab8744b6d377990b236a79c576e9615728f1ade0dfe",
-	"domain-cache.patch":     patchDigest,
-	"prepare-sing-box.py":    "2cfcd7b16889f0ab7553b51253be4680f331d0c08ba6a7081653c8cb0a73daed",
-	"build-dataplane.sh":     "d2704928f0b9ceb3f5b01a458b0ad534e754d75039f234445705a3bfd323f337",
-}
 
 const sourceBuildInstructions = `This package contains a modified sing-box 1.11.4, built with Go 1.27.0.
 The upstream source ZIP, checksum and module sum are in the signed manifest.
@@ -147,12 +134,13 @@ its source and license are described by its publisher and the signed manifest.
 // Build consumes only explicit bytes. No clock, network or file reads occur.
 // The generation is selected by the release caller, never inferred from time.
 func Build(arch string, generation control.U64, buildFiles map[string][]byte, wintunArchive []byte, privateKey ed25519.PrivateKey) (Artifact, error) {
-	for name, digest := range reviewedSources {
+	for _, name := range slices.Sorted(maps.Keys(reviewedArtifacts[DataPlaneVersion].sources)) {
+		digest := reviewedArtifacts[DataPlaneVersion].sources[name]
 		if sha256Hex(buildFiles[name]) != digest {
 			return Artifact{}, fmt.Errorf("data-plane source file %s differs from reviewed inputs", name)
 		}
 	}
-	if sha256Hex(buildFiles["sing-box-windows-"+arch+".exe"]) != reviewedBuilds[arch] || reviewedBuilds[arch] == "" {
+	if sha256Hex(buildFiles["sing-box-windows-"+arch+".exe"]) != reviewedArtifacts[DataPlaneVersion].windows[arch] || reviewedArtifacts[DataPlaneVersion].windows[arch] == "" {
 		return Artifact{}, errors.New("data-plane binary differs from the reviewed source build")
 	}
 	if sha256Hex(wintunArchive) != wintunArchiveDigest {
@@ -185,7 +173,7 @@ func buildWithInspect(arch string, generation control.U64, buildFiles map[string
 			return Artifact{}, fmt.Errorf("missing or oversized component file %s", name)
 		}
 	}
-	if sha256Hex(payload["source/domain-cache.patch"]) != patchDigest {
+	if sha256Hex(payload["source/domain-cache.patch"]) != reviewedArtifacts[DataPlaneVersion].sources["domain-cache.patch"] {
 		return Artifact{}, errors.New("unreviewed data-plane patch")
 	}
 	identity, err := inspectSing(payload[SingBoxPath], arch)
@@ -200,7 +188,7 @@ func buildWithInspect(arch string, generation control.U64, buildFiles map[string
 	}
 	manifest := Manifest{Schema: Schema, Kind: Kind, OS: "windows", Arch: arch, Generation: generation, Version: DataPlaneVersion, Audience: "public", SignatureDomain: signatureDomain,
 		SingBox: Component{Path: SingBoxPath, SHA256: sha256Hex(payload[SingBoxPath]), Size: len(payload[SingBoxPath]), Version: DataPlaneVersion, Commit: upstreamCommit,
-			Source: Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: patchDigest}},
+			Source: Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: reviewedArtifacts[DataPlaneVersion].sources["domain-cache.patch"]}},
 		Wintun: Component{Path: WintunPath, SHA256: sha256Hex(payload[WintunPath]), Size: len(payload[WintunPath]), Version: wintunVersion,
 			Source: Source{URL: officialWintunURL, ArchiveSHA256: wintunArchiveDigest, Evidence: evidenceWintun, AuthenticodeRequired: true, AuthenticodePublisher: wintunPublisher}},
 	}
@@ -228,7 +216,21 @@ func payloadNames() []string {
 }
 
 func Verify(packageBody []byte, publicKey ed25519.PublicKey) (*Verified, error) {
-	return verifyWithInspect(packageBody, publicKey, inspectSingBox, inspectWintun)
+	verified, err := verifyWithInspect(packageBody, publicKey, inspectSingBox, inspectWintun)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range slices.Sorted(maps.Keys(reviewedArtifacts[verified.Manifest.Version].sources)) {
+		digest := reviewedArtifacts[verified.Manifest.Version].sources[name]
+		file := "source/" + name
+		if name == "LICENSE" {
+			file = SingBoxLicense
+		}
+		if sha256Hex(verified.Files[file]) != digest {
+			return nil, fmt.Errorf("component source file %s differs from its reviewed artifact", name)
+		}
+	}
+	return verified, nil
 }
 
 func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
@@ -286,7 +288,7 @@ func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
 }
 
 func (m Manifest) Validate() error {
-	if m.Schema != Schema || m.Kind != Kind || m.OS != "windows" || m.SignatureDomain != signatureDomain || m.Generation == 0 || m.Audience != "public" || m.Version != DataPlaneVersion {
+	if m.Schema != Schema || m.Kind != Kind || m.OS != "windows" || m.SignatureDomain != signatureDomain || m.Generation == 0 || m.Audience != "public" || m.Version != m.SingBox.Version {
 		return errors.New("component manifest has invalid schema, kind, OS, or signature domain")
 	}
 	if m.Arch != "amd64" && m.Arch != "arm64" {
@@ -351,8 +353,9 @@ func validateComponent(component Component, wantPath string, requireCommit bool)
 }
 
 func validateSingSource(source Source, version, arch string) error {
-	want := Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: patchDigest}
-	if source != want || version != DataPlaneVersion || reviewedBuilds[arch] == "" {
+	review, ok := reviewedArtifacts[version]
+	want := Source{URL: upstreamURL, ArchiveSHA256: upstreamArchive, Evidence: evidenceSingBox, UpstreamVersion: upstreamVersion, ModuleSum: upstreamModuleSum, PatchSHA256: review.sources["domain-cache.patch"]}
+	if !ok || source != want || review.windows[arch] == "" {
 		return errors.New("sing-box source evidence differs from the reviewed source build")
 	}
 	return nil
@@ -372,7 +375,8 @@ type singBoxIdentity struct {
 }
 
 func inspectSingBox(body []byte, wantArch string) (singBoxIdentity, error) {
-	if reviewedBuilds[wantArch] == "" || sha256Hex(body) != reviewedBuilds[wantArch] {
+	version := reviewedBinaryVersion(body, "windows", wantArch)
+	if version == "" {
 		return singBoxIdentity{}, errors.New("sing-box binary differs from the reviewed source build")
 	}
 	if err := inspectPE(body, wantArch, false); err != nil {
@@ -406,7 +410,7 @@ func inspectSingBox(body []byte, wantArch string) (singBoxIdentity, error) {
 	if goos != "windows" || goarch != wantArch || tags != "with_gvisor,with_quic,with_wireguard,with_ech,with_utls,with_clash_api,http2legacy" || cgo != "0" || trimpath != "true" || info.GoVersion != "go1.27.0" {
 		return singBoxIdentity{}, errors.New("sing-box build settings do not contain the pinned Windows coordinates")
 	}
-	return singBoxIdentity{version: DataPlaneVersion, commit: upstreamCommit}, nil
+	return singBoxIdentity{version: version, commit: upstreamCommit}, nil
 }
 
 func inspectWintun(body []byte, wantArch string) error {

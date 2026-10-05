@@ -192,7 +192,7 @@ func writeTestBytes(t *testing.T, path string, body []byte) {
 func fixtureSingBox(body []byte, arch string) (Component, error) {
 	return Component{Path: "sing-box", SHA256: sha256Hex(body), Size: len(body), Version: "demo-reviewed", Commit: strings.Repeat("a", 40), Source: &clientcomponent.Source{URL: "https://example.com/source.zip", ArchiveSHA256: strings.Repeat("b", 64), Evidence: "demo-fixture"}}, nil
 }
-func fixtureSources(_ map[string][]byte) (map[string][]byte, error) {
+func fixtureSources(_ map[string][]byte, _ string) (map[string][]byte, error) {
 	result := map[string][]byte{}
 	for _, name := range payloadNames() {
 		if strings.HasPrefix(name, "source/") || strings.HasPrefix(name, "licenses/") {

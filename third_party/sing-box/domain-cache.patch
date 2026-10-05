@@ -237,3 +237,76 @@
  }
  
  func (c *CacheFile) LoadGroupExpand(group string) (isExpand bool, loaded bool) {
+--- a/.loom-sing-tun/internal/wintun/dll_windows.go
++++ b/.loom-sing-tun/internal/wintun/dll_windows.go
+@@ -7,11 +7,12 @@
+ 
+ import (
+ 	"fmt"
++	"os"
++	"path/filepath"
+ 	"sync"
+ 	"sync/atomic"
+ 	"unsafe"
+ 
+-	"github.com/sagernet/sing-tun/internal/wintun/memmod"
+ 
+ 	"golang.org/x/sys/windows"
+ )
+@@ -64,9 +65,8 @@
+ 
+ type lazyDLL struct {
+ 	Name   string
+-	Base   windows.Handle
+ 	mu     sync.Mutex
+-	module *memmod.Module
++	module uintptr
+ }
+ 
+ func newLazyDLL(name string) *lazyDLL {
+@@ -74,25 +74,31 @@
+ }
+ 
+ func (d *lazyDLL) Load() error {
+-	if atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&d.module))) != nil {
++	if atomic.LoadUintptr(&d.module) != 0 {
+ 		return nil
+ 	}
+ 	d.mu.Lock()
+ 	defer d.mu.Unlock()
+-	if d.module != nil {
++	if d.module != 0 {
+ 		return nil
+ 	}
+ 
+-	module, err := memmod.LoadLibrary(dllContent)
++	executable, err := os.Executable()
++	if err != nil {
++		return err
++	}
++	// Loom verifies and holds this exact file before starting the data plane.
++	// Do not use an embedded DLL, the working directory or PATH as fallback.
++	module, err := windows.LoadLibraryEx(filepath.Join(filepath.Dir(executable), d.Name), 0,
++		windows.LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|windows.LOAD_LIBRARY_SEARCH_SYSTEM32)
+ 	if err != nil {
+ 		return fmt.Errorf("unable to load library: %w", err)
+ 	}
+-	d.Base = windows.Handle(module.BaseAddr())
+ 
+-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&d.module)), unsafe.Pointer(module))
++	atomic.StoreUintptr(&d.module, uintptr(module))
+ 	return nil
+ }
+ 
+ func (p *lazyProc) nameToAddr() (uintptr, error) {
+-	return p.dll.module.ProcAddressByName(p.Name)
++	return windows.GetProcAddress(windows.Handle(atomic.LoadUintptr(&p.dll.module)), p.Name)
+ }
+--- a/go.mod
++++ b/go.mod
+@@ -102,3 +102,5 @@
+ 	gopkg.in/yaml.v3 v3.0.1 // indirect
+ 	lukechampine.com/blake3 v1.3.0 // indirect
+ )
++
++replace github.com/sagernet/sing-tun => ./.loom-sing-tun

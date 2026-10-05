@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the single pinned data-plane source plus Loom's narrow DNS fix."""
+"""Prepare pinned data-plane sources with the reviewed DNS and DLL fixes."""
 
 import hashlib
 import json
@@ -15,6 +15,9 @@ REPO = Path(__file__).resolve().parent.parent
 VERSION = "v1.11.4"
 COMMIT = "eb07c7a79eeca943370eafea601e87da76c0e57e"
 SUM = "h1:Z3xLwVJlTJfJ1p8R9M05aNJLFKRAwGebA5M/DFmr8p8="
+TUN_VERSION = "v0.6.1"
+TUN_COMMIT = "c8c29842618b186b8eb802345504cc19d3d06872"
+TUN_SUM = "h1:4l0+gnEKcGjlWfUVTD+W0BRApqIny/lU2ZliurE+VMo="
 MARKER = ".loom-generated-source"
 
 
@@ -30,6 +33,10 @@ def prepare(destination):
         ["go", "mod", "download", "-json", "github.com/sagernet/sing-box@" + VERSION], env=env, cwd=REPO))
     if module["Sum"] != SUM or module["Origin"]["Hash"] != COMMIT:
         raise ValueError("upstream source does not match the reviewed module and commit")
+    tun = json.loads(subprocess.check_output(
+        ["go", "mod", "download", "-json", "github.com/sagernet/sing-tun@" + TUN_VERSION], env=env, cwd=REPO))
+    if tun["Sum"] != TUN_SUM or tun["Origin"]["Hash"] != TUN_COMMIT:
+        raise ValueError("TUN source does not match the reviewed module and commit")
     patch = REPO / "third_party/sing-box/domain-cache.patch"
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".loom-source-", dir=destination.parent) as temporary:
@@ -48,6 +55,19 @@ def prepare(destination):
                 target = stage / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(archive.read(member))
+        prefix = "github.com/sagernet/sing-tun@" + TUN_VERSION + "/"
+        with zipfile.ZipFile(tun["Zip"]) as archive:
+            for member in archive.infolist():
+                if not member.filename.startswith(prefix):
+                    raise ValueError("unexpected TUN source archive path")
+                relative = Path(member.filename[len(prefix):])
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("unsafe TUN source archive path")
+                if member.is_dir():
+                    continue
+                target = stage / ".loom-sing-tun" / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(member))
         subprocess.run(["git", "apply", "--check", str(patch)], cwd=stage, check=True)
         subprocess.run(["git", "apply", str(patch)], cwd=stage, check=True)
         (stage / MARKER).write_text(COMMIT)
@@ -56,7 +76,7 @@ def prepare(destination):
         stage.rename(destination)
     return {"upstream_version": VERSION, "upstream_commit": COMMIT, "upstream_module_sum": SUM,
             "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
-            "artifact_version": "1.11.4-loom.1"}
+            "artifact_version": "1.11.4-loom.2"}
 
 
 if __name__ == "__main__":
