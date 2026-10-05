@@ -236,6 +236,28 @@ floor 或 latch，也没有新增旧格式运行解码。现行组件指针保�
 全仓 build/test/vet、格式、安全检查通过。VM 与临时接收端已正常停止，磁盘、身份及接受记录保留。
 Web 发起的 SSH/sh 自动下载交付、隔离 TUN 生命周期和生产 signed-current 前向消费仍须继续。
 
+### 签名目录与私有 Web 精确下载
+
+本地 `loom release stage` 已从唯一部署 YAML 读取发布签发能力，验证 Linux 双架构 archive 和 Windows
+双架构数据面 ZIP 的原规范包，再签署 schema 3 catalog。原 manifest、签名及包字节保持，整包摘要与包内
+程序摘要分开；Windows 数据面没有冒充完整客户端。旧 schema 1 catalog reader 和未接入正式 CLI 的
+publisher observation 拼接层删除，未恢复旧发布或安装 fallback。
+
+本地审查目录实际完成独立进程回读、同值重试、比较旧指针后前进、并发锁、陈旧计划、降代、同代异值、
+文件损坏及历史指针丢失拒绝。拒绝后原 current 保持；已缓存解析仍重新核验真实字节，删除缓存可重建同一结果。
+私有测试 control 经正式 init/serve 读取该目录，真实 Chrome 使用管理员 mTLS 打开 Linux/Windows 两页，
+实际点击下载的文件与目录摘要相符；下载后 Linux/Windows 正式 CLI 验签通过。无管理员证书请求被拒绝，
+新 current 不改变旧页面绑定的精确下载，损坏 catalog 撤下卡片并拒绝下载，恢复原字节后才恢复。
+daemon 重启后同一管理员与下载目录回读一致，权威原字节保持；全仓 build/test/vet、格式、安全检查及
+真实双架构 Linux 包的独立签名元数据核验通过。
+
+证据保存在 `deploy/evidence/2026-10-05-release-catalog/`。测试只绑定回环私有监听，浏览器信任和策略位于
+独立挂载 namespace；没有改变宿主信任、DNS 或路由。较早测试辅助程序等待页面过早、CLI 参数错误和测试
+成员证书名不符的失败分别留证，未作为通过结果。原生产服务、发布 floor、身份及公钥保持。
+
+该结果接通本地签名目录和私有下载，不表示公网分发、YAML 全目标发布、节点期望组件、生产 catalog/floor
+消费或 Web SSH/sh 安装已完成；Android APK、Windows 应用制品和通用 bootstrap 的签名交付仍须继续。
+
 ### 本轮实现与实际验证
 
 Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
@@ -256,7 +278,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
   已认证缺依赖事实和同键分叉证据保留，受影响授权失败关闭，不选一个分叉赢家或复活祖先权限。
   新二进制已移除旧 SSOT 渲染、写入、发布激活、安装及回滚命令分派；离线验签/旧 current 取证和受保护
   备份恢复工具仍保留原字节，不授予新 Authority 重放资格；旧 client publish-linux catalog writer 也已从新 CLI
-  删除。新签名发布能力尚不可用；现网已按本次直接替换授权切换，不以它冒充发布器验收。
+  删除。本地签名目录与私有下载已接通，生产自动发布尚不可用；现网已按本次直接替换授权切换，不以它冒充发布器验收。
 - [正式设备链](../internal/control/device_http.go)接通 invite.issue、私有 claim/resume、绑定和 device.join；
   RuntimeKey 只在首次加入生成并随原事实持久化，同事务重试/重启复用原身份。device.put 只接公开字段，
   保留已验证的私钥关联和 RuntimeKey；内部 bind/join/expire 不能由通用管理请求伪造。

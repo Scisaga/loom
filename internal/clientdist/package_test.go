@@ -254,6 +254,10 @@ func TestReviewedLinuxPackages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			proof, err := VerifyPackage(artifact.Archive, public)
+			if err != nil || !reflect.DeepEqual(proof.Manifest, manifest) || !bytes.Equal(proof.ManifestBody, encoded) || !bytes.Equal(proof.Signature, artifact.Signature) {
+				t.Fatal("self-contained package proof changed original signed bytes", err)
+			}
 			var decoded Manifest
 			if err := control.DecodeCanonical(encoded, &decoded, control.ContractDecodeLimits{MaxBytes: 64 << 10, MaxDepth: 12, MaxItems: 2048}); err != nil || !reflect.DeepEqual(manifest, decoded) {
 				t.Fatal("canonical manifest round trip failed", err)

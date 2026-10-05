@@ -201,6 +201,24 @@ LocalDeploymentConfig.deploy_hosts
 
 ### 签名发布记录到实际运行的闭环
 
+#### 本地签名交付审查与私有下载
+
+`loom release stage -env .env -pubkey <带外公钥> -generation <显式代> -o <本地审查目录> <已签包...>`
+严格读取同一 YAML 的 signing_key，核对其与独立公钥一致，验证每份原包，再生成
+[唯一 schema 3 catalog](../core/current-contract.md#签名-catalog-与安装包运行文件的对应)。更新已有审查目录
+还须 `-expected-current <计划读取的摘要>`；排他锁内比较旧指针，拒绝陈旧计划、降代和同代异值。
+同 catalog 重试幂等，已有不可变摘要路径不覆盖异值；文件和目录耐久写入、完整回读后才更新本地 current。
+`loom release verify -root <目录> -pubkey <公钥>` 在独立进程重新验证指针、签名、原 manifest 和整包字节。
+stage 不执行 YAML 的 publish_outputs，不写设备期望事实，不改变生产安装代；它不是生产 publish 命令。
+
+`loom control serve` 可成对传入 `-release-root <绝对路径>` 和 `-release-pubkey <带外公钥文件>`，作为该
+control 的受保护只读安装输入；它们不进入 `.env` 或网络权威。私有 Releases 页面从验证结果投影 Linux
+archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原有页面与交互保留。Windows 数据面不是
+完整 Windows 应用安装器；Android、应用安装包和通用 bootstrap 脚本未定义的 manifest 不进入目录。
+页面中的整包摘要与真实运行文件摘要分开，下载成功不制造部署成功。此处没有启用公网分发或生产自动更新。
+
+#### 生产发布与实际消费
+
 2026-10-04 的正式替换按用户明确授权直接安装精确制品，见
 [现网字节与生产切换](../core/current-contract.md#现网字节与生产切换)。它保留旧发布 floor，退出旧发布入口，
 不使用 schema 3 catalog 作为激活依据，也不声称已完成下面的自动签名发布链。
@@ -224,7 +242,8 @@ LocalDeploymentConfig.deploy_hosts
    不能因指针可读而跳过验签、摘要或反重放检查。部分指针推进失败时逐目标记录结果，
    不把整体写成已激活，也不把已推进的指针倒退到较旧 generation。
 4. 全部目标的发布读回成立后，管理员再经私有认证控制写入入口，为需更新的节点签发“期望组件”
-   普通事实，只引用已核验 catalog 中对应组件/平台的制品摘要。control 本地接受、持久化和同步后，
+   普通事实，只引用已核验 catalog 所绑定原 manifest 中对应运行组件/平台的精确程序摘要，不能使用 ZIP、
+   archive 或 MSI 的整包摘要代替。control 本地接受、持久化和同步后，
    `Projection` 才改变期望；发布者、`.env` 或 `current` 都不能自动写入该事实。
 5. executor 在已授权节点安装精确制品，按职责完成安全 preflight、运行时应用及重启回读；节点和设备
    从实际进程与文件报告组件、平台、制品摘要及版本。控制面分别显示签名发布、认证期望、实际运行

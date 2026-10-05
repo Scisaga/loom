@@ -797,6 +797,48 @@ unit 为已签模板与显式本机路径的投影，不能有未核验 drop-in�
 接受后失败再重试时，从同一受保护 releases 目录内已验签的同平台较低代清单识别应退役程序；不新增旧指针
 或安装 receipt。未来代缓存、未认证条目和其他文件不由此删除。
 
+## 签名 catalog 与安装包、运行文件的对应
+
+本节补齐既有 Release/Artifact 的交付索引，不新增控制权威、安装 receipt 或协议号。当前已存在两种规范
+manifest：`linux-client-bootstrap` 和 `windows-dataplane`。它们保持原始签名字节；catalog 只引用它们，
+不能把整包摘要写成包内程序的运行摘要。Android APK、Windows 三种应用交付和通用 bootstrap 脚本各自的
+非空 manifest 尚须按其交付边界补齐；未定义的 kind 拒绝，不能使用任意 JSON 透传。
+
+catalog 固定字段为 `{schema:3,generation:U64,entries:[]ReleaseEntry}`，generation 非零；entries 非空，
+按 `(component_id,platform)` 严格排序且唯一。此处 component_id 表示交付组件，当前恰为上述两个 kind；
+platform 恰为 `<os>-<arch>`。每项固定为 `{component_id,platform,manifest_digest,artifact}`；
+manifest_digest 为原始规范 manifest 的 Digest。artifact 固定为 `{name,digest,size:U64,media_type,audience}`，
+文件名为单个安全 ASCII basename，digest 为完整下载字节的 Digest，size 非零，当前 audience 恰为 public。
+Linux archive 的 media_type 为 application/gzip，Windows 数据面 ZIP 为 application/zip。
+版本、源码、组件代及包内精确程序坐标由已引用的原 manifest 读取并核对，不另复制一份可独立修改的值。
+
+签名为 64 字节 Ed25519，覆盖 `loom-release-catalog-v3\0 || C(catalog)`；规范 catalog 摘要定位不可变
+`catalogs/<digest>/catalog.json` 与 catalog.sig。原 manifest 与原签名存放于
+`manifests/<digest>/manifest.json` 与 manifest.sig；整包只存于 `bin/<digest>`。所有路径均从摘要确定，
+不接受调用者提供任意相对路径。原包、manifest、签名与逐文件内容须同时验证；包中的原 manifest/签名
+必须与外层引用逐字节相同，组件 ID、平台、媒体类型及公开受众必须相符。
+
+私有下载 URL 同时固定 catalog digest 和 artifact digest；更新 current 后，已经打开的页面仍取得原先
+选中的精确字节。读取被明确寻址的旧代 schema 3 catalog 只提供下载，不改变安装接受代、期望事实或 current，
+也不接受旧格式。后续安装仍须独立验签并遵守已有组件代。损坏的目录、签名或制品使对应下载失败；当前目录
+不可验证时页面清空下载投影并显示不可用，不保留上次验证的卡片冒充当前结果。
+
+可变 current 是 `{schema:3,catalog_digest}` 的规范定位值。发布工具先在同一根目录的排他锁内回读旧值，
+核对操作者计划固定的旧 digest，拒绝低代及同代异值；不可变文件全部落盘并重新验签、验摘要后才原子
+写 current。同代同值允许幂等重试。中断可留下未被 current 引用的完整文件，不能留下半个可接受对象；
+已有摘要路径的不同字节拒绝覆盖。此处的防并发推进规则不代替生产节点已有 signed-current floor 的迁移证明。
+
+对应关系为：Catalog/ReleaseEntry → 同一规范签名字节 → 独立 release store → 已核验下载清单/包验证器 →
+Releases 页面；原 manifest 中 Loom/sing-box/Wintun 的文件摘要 → 实际程序回读 → 组件期望比较。
+Linux 的 loom 对应既有运行 component_id=agent，数据面恰为 sing-box；Windows 数据面另有 wintun。
+交付组件 ID 和运行组件 ID 各自描述既有对象，不以 ID 相同或“安装命令成功”替代该签名关系。
+发布清单可删除重建的 UI 投影不能签发期望组件；期望仍须管理员普通 operation，应用仍须真实报告。
+
+最小验证：规范往返及确定性；错钥、旧格式、字段/排序/媒体/受众和原包绑定拒绝；不可变文件损坏拒绝；
+并发旧指针比较、同代同值重试、降代/同代异值拒绝；CLI 写入后重启回读、私有 Web 精确下载及安装消费。
+所有生成函数只消费显式字节和代坐标；不读时钟、随机数或远端状态。正式生产 current 激活继续受下节
+现网字节与生产切换门禁约束，现网旧 floor 原字节保全。
+
 ## 往返与拒绝
 
 对权威领域值 `D`、被接受的规范字节 `B` 与耐久值，必须满足：

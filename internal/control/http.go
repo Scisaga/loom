@@ -34,20 +34,17 @@ var staticFiles embed.FS
 const controlHTTPBodyLimit = 8 << 20
 
 type Server struct {
-	Runtime                  *Runtime
-	Channel                  *PrivateChannel
-	Config                   NodeConfig
-	AdminSocket              string
-	Now                      func() time.Time
-	Endpoints                *EndpointRuntime
-	Reports                  *ObservationStore
-	ReleaseRoot              string
-	ReleaseKey               string
-	PublisherObservationPath string
-	ReportSyncInterval       time.Duration
-	PublisherSyncInterval    time.Duration
-	mu                       sync.Mutex
-	endpointsMu              sync.RWMutex
+	Runtime            *Runtime
+	Channel            *PrivateChannel
+	Config             NodeConfig
+	AdminSocket        string
+	Now                func() time.Time
+	Endpoints          *EndpointRuntime
+	Reports            *ObservationStore
+	Releases           ReleaseSource
+	ReportSyncInterval time.Duration
+	mu                 sync.Mutex
+	endpointsMu        sync.RWMutex
 }
 
 func (server *Server) Serve(ctx context.Context) (retErr error) {
@@ -162,6 +159,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/invites/{transaction}", server.inviteReadback)
 	mux.HandleFunc("GET /api/control/ui/invites/{transaction}/qr.png", server.inviteQR)
 	mux.HandleFunc("GET /api/control/ui/invites/{transaction}/download", server.inviteDownload)
+	mux.HandleFunc("GET /api/control/releases/{catalog}/{artifact}/{file}", server.releaseDownload)
 	mux.HandleFunc("GET /internal/frontier", server.internalFrontier)
 	mux.HandleFunc("GET /internal/materials", server.internalMaterialsAfter)
 	mux.HandleFunc("GET /internal/materials/{digest}", server.internalMaterial)
@@ -285,9 +283,9 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		projectWebObservations(&snapshot, reports, server.now())
 		snapshot.Events = snapshotEvents(projectReportHistory(reports))
 	}
-	if server.PublisherObservationPath != "" {
-		if err := server.projectDeployments(&snapshot); err != nil {
-			snapshot.UIState.Warnings = append(snapshot.UIState.Warnings, WebWarning{Code: "publisher_observation_unavailable", Message: err.Error()})
+	if server.Releases != nil {
+		if err := server.projectReleases(&snapshot); err != nil {
+			snapshot.UIState.Warnings = append(snapshot.UIState.Warnings, WebWarning{Code: "release_catalog_unavailable", Message: "Signed release catalog or referenced artifacts could not be verified."})
 		}
 	}
 	return snapshot, nil

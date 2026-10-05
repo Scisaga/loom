@@ -24,8 +24,8 @@ const usage = `loom —— 私有控制与客户端
                                       私有加入、认证配置、运行与报告
   loom client <package|verify|package-windows|verify-windows>
                                       通用客户端制品打包与验签
-  loom config <check|migrate> [-env .env]
-                                      本机部署输入校验与规范化
+  loom release <stage|verify>          schema 3 签名交付清单与本地回读
+  loom config check [-env .env]        本机部署 YAML 引用与输入校验
   loom version [-short|-json]         当前可执行文件坐标
   loom selfcheck [-q]                 二进制架构与构建自检
   loom keygen -o <目录>                显式生成新的平台签名密钥对
@@ -65,6 +65,8 @@ func runCommand(command string, args []string) error {
 		return cmdControl(args)
 	case "client":
 		return cmdClient(args)
+	case "release":
+		return cmdRelease(args)
 	case "config":
 		return cmdConfig(args)
 	case "version":

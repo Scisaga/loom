@@ -1,218 +1,234 @@
-// Package clientrelease verifies and serves the immutable client release
-// catalog. A mutable pointer is accepted only after its signed, content-
-// addressed catalog and every referenced file have been verified.
+// Package clientrelease consumes only the current signed release catalog and
+// the original platform package formats. It never decodes historical catalogs.
 package clientrelease
 
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
+	"sync"
+
+	"loom/internal/clientcomponent"
+	"loom/internal/clientdist"
+	"loom/internal/control"
 )
 
-const domain = "loom-client-releases-v1\n"
+const maxPackageBytes = 256 << 20
 
-var (
-	safeName      = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
-	hashPattern   = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
-)
-
-type File struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
+// Store caches only authenticated package parsing. Every read rehashes the
+// actual file bytes before using that removable content-addressed cache.
+type Store struct {
+	root     string
+	key      ed25519.PublicKey
+	mu       sync.Mutex
+	packages map[string]control.ReleasePackage
 }
 
-type Artifact struct {
-	File
-	Filename     string `json:"filename"`
-	Title        string `json:"title"`
-	Platform     string `json:"platform"`
-	Arch         string `json:"arch"`
-	Variant      string `json:"variant"`
-	Version      string `json:"version"`
-	SourceCommit string `json:"source_commit"`
-	Signing      string `json:"signing"`
-	Checksum     File   `json:"checksum"`
-	Signature    File   `json:"signature"`
-	SBOM         *File  `json:"sbom,omitempty"`
+func New(root string, key ed25519.PublicKey) (*Store, error) {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || len(key) != ed25519.PublicKeySize {
+		return nil, errors.New("release root or independent trust input is invalid")
+	}
+	return &Store{root: root, key: append(ed25519.PublicKey(nil), key...), packages: map[string]control.ReleasePackage{}}, nil
 }
 
-type Catalog struct {
-	Schema    int        `json:"schema"`
-	Artifacts []Artifact `json:"artifacts"`
+func digestPath(prefix, digest, name string) string {
+	return filepath.Join(prefix, strings.TrimPrefix(digest, "sha256:"), name)
 }
 
-func PublicKey(path string) (ed25519.PublicKey, error) {
-	body, err := os.ReadFile(path)
+func readFile(root *os.Root, path string, limit int64) ([]byte, error) {
+	info, err := root.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
-	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(body)))
-	if err != nil || len(key) != ed25519.PublicKeySize {
-		return nil, errors.New("platform public key is invalid")
+	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > limit {
+		return nil, errors.New("release entry is not a bounded regular file")
 	}
-	return ed25519.PublicKey(key), nil
+	f, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	current, err := f.Stat()
+	if err != nil || !os.SameFile(info, current) {
+		return nil, errors.New("release entry changed while opening")
+	}
+	body, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(body)) > limit {
+		return nil, errors.New("release entry exceeds its read boundary")
+	}
+	return body, nil
 }
 
-func Read(root string, key ed25519.PublicKey) (Catalog, error) {
-	var empty Catalog
-	if len(key) != ed25519.PublicKeySize {
-		return empty, errors.New("platform public key is unavailable")
-	}
-	dir, err := os.OpenRoot(root)
+func (store *Store) Read() (control.ReleaseSet, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var zero control.ReleaseSet
+	root, err := os.OpenRoot(store.root)
 	if err != nil {
-		return empty, err
+		return zero, err
 	}
-	defer dir.Close()
-	pointer, err := dir.ReadFile("current.json")
+	defer root.Close()
+	pointer, err := readFile(root, "current.json", 4096)
 	if err != nil {
-		return empty, err
+		return zero, err
 	}
-	var current struct {
-		Catalog string `json:"catalog"`
+	var current control.ReleaseCurrent
+	if err = control.DecodeCanonical(pointer, &current, control.ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 4, MaxItems: 16}); err != nil {
+		return zero, err
 	}
-	if err := decodeStrict(pointer, &current); err != nil {
-		return empty, err
-	}
-	parts := strings.Split(current.Catalog, "/")
-	if len(parts) != 3 || parts[0] != "catalogs" || !hashPattern.MatchString(parts[1]) || parts[2] != "catalog.json" {
-		return empty, errors.New("release catalog pointer is invalid")
-	}
-	body, err := dir.ReadFile(current.Catalog)
+	return store.readCatalog(root, current.CatalogDigest)
+}
+
+// ReadCatalog verifies an explicitly addressed immutable catalog. It does not
+// select an installed generation or change current; old download links remain
+// useful without introducing an installation fallback.
+func (store *Store) ReadCatalog(id string) (control.ReleaseSet, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	root, err := os.OpenRoot(store.root)
 	if err != nil {
-		return empty, err
+		return control.ReleaseSet{}, err
 	}
-	signatureBody, err := dir.ReadFile(strings.TrimSuffix(current.Catalog, ".json") + ".sig")
+	defer root.Close()
+	return store.readCatalog(root, id)
+}
+
+func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, error) {
+	var zero control.ReleaseSet
+	if control.ValidateDigest(id) != nil {
+		return zero, errors.New("release catalog digest is invalid")
+	}
+	body, err := readFile(root, digestPath("catalogs", id, "catalog.json"), 1<<20)
 	if err != nil {
-		return empty, err
+		return zero, err
 	}
-	signature, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(signatureBody)))
-	if err != nil || digest(body) != parts[1] || !ed25519.Verify(key, append([]byte(domain), body...), signature) {
-		return empty, errors.New("release catalog signature is invalid")
+	signature, err := readFile(root, digestPath("catalogs", id, "catalog.sig"), ed25519.SignatureSize)
+	if err != nil {
+		return zero, err
 	}
-	var catalog Catalog
-	if err := decodeStrict(body, &catalog); err != nil {
-		return empty, err
+	catalog, err := control.VerifyReleaseCatalog(body, signature, store.key)
+	if err != nil {
+		return zero, err
 	}
-	if catalog.Schema != 1 || catalog.Artifacts == nil {
-		return empty, errors.New("release catalog schema is invalid")
+	if control.ReleaseDigest(body) != id {
+		return zero, errors.New("release catalog differs from its content address")
 	}
-	seen := map[string]bool{}
-	for _, artifact := range catalog.Artifacts {
-		if !commitPattern.MatchString(artifact.SourceCommit) || artifact.Filename != artifact.Name || seen[artifact.Path] {
-			return empty, errors.New("release artifact metadata is invalid")
+	result := control.ReleaseSet{ID: id, Catalog: catalog, Packages: []control.ReleasePackage{}}
+	for _, entry := range catalog.Entries {
+		if uint64(entry.Artifact.Size) > maxPackageBytes {
+			return zero, errors.New("release package exceeds the reader boundary")
 		}
-		switch artifact.Platform {
-		case "linux-server", "android", "windows-desktop":
-		default:
-			return empty, errors.New("release artifact platform is invalid")
-		}
-		seen[artifact.Path] = true
-	}
-	for _, file := range Files(catalog) {
-		if !validFile(file) {
-			return empty, errors.New("release file metadata is invalid")
-		}
-		opened, err := OpenVerified(root, file)
+		artifact, err := readFile(root, digestPath("bin", entry.Artifact.Digest, ""), int64(entry.Artifact.Size))
 		if err != nil {
-			return empty, err
+			return zero, err
 		}
-		_ = opened.Close()
+		if len(artifact) != int(entry.Artifact.Size) || control.ReleaseDigest(artifact) != entry.Artifact.Digest {
+			return zero, errors.New("release package differs from its signed digest or size")
+		}
+		parsed, ok := store.packages[entry.Artifact.Digest]
+		if !ok {
+			parsed, err = Inspect(entry.Artifact.Name, artifact, store.key)
+			if err != nil {
+				return zero, err
+			}
+			store.packages[entry.Artifact.Digest] = parsed
+		}
+		if parsed.Entry != entry {
+			return zero, errors.New("release catalog coordinates differ from the original package manifest")
+		}
+		manifest, err := readFile(root, digestPath("manifests", entry.ManifestDigest, "manifest.json"), 64<<10)
+		if err != nil {
+			return zero, err
+		}
+		signed, err := readFile(root, digestPath("manifests", entry.ManifestDigest, "manifest.sig"), ed25519.SignatureSize)
+		if err != nil {
+			return zero, err
+		}
+		if !bytes.Equal(manifest, parsed.ManifestBody) || !bytes.Equal(signed, parsed.Signature) {
+			return zero, errors.New("release manifest or signature differs from its original package bytes")
+		}
+		result.Packages = append(result.Packages, clonePackage(parsed))
 	}
-	return catalog, nil
+	return result, nil
 }
 
-func Files(catalog Catalog) []File {
-	files := []File{}
-	for _, artifact := range catalog.Artifacts {
-		files = append(files, artifact.File, artifact.Checksum, artifact.Signature)
-		if artifact.SBOM != nil {
-			files = append(files, *artifact.SBOM)
-		}
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return files
+func clonePackage(value control.ReleasePackage) control.ReleasePackage {
+	value.ManifestBody = append([]byte(nil), value.ManifestBody...)
+	value.Signature = append([]byte(nil), value.Signature...)
+	value.Components = append([]control.ComponentReadback(nil), value.Components...)
+	return value
 }
 
-func OpenVerified(root string, file File) (*os.File, error) {
-	if !validFile(file) {
-		return nil, errors.New("release file path is invalid")
+// Inspect binds a download to its original manifest and to the distinct files
+// whose digests the running program can actually report.
+func Inspect(name string, body []byte, key ed25519.PublicKey) (control.ReleasePackage, error) {
+	var result control.ReleasePackage
+	if len(body) == 0 || len(body) > maxPackageBytes {
+		return result, errors.New("release package size is invalid")
 	}
-	dir, err := os.OpenRoot(root)
+	artifact := control.ReleaseArtifact{Name: name, Digest: control.ReleaseDigest(body), Size: control.U64(len(body)), Audience: "public"}
+	switch {
+	case strings.HasPrefix(name, "loom-client-linux-") && strings.HasSuffix(name, ".tar.gz"):
+		value, err := clientdist.VerifyPackage(body, key)
+		if err != nil {
+			return result, err
+		}
+		m := value.Manifest
+		artifact.MediaType = "application/gzip"
+		result = control.ReleasePackage{Entry: control.ReleaseEntry{ComponentID: m.Kind, Platform: m.OS + "-" + m.Arch, ManifestDigest: control.ReleaseDigest(value.ManifestBody), Artifact: artifact}, ManifestBody: value.ManifestBody, Signature: value.Signature, Version: m.Version, SourceCommit: m.Loom.Commit, Generation: m.Generation,
+			Components: []control.ComponentReadback{{ComponentID: "agent", Platform: m.OS + "-" + m.Arch, Version: m.Version, ArtifactDigest: "sha256:" + m.Loom.SHA256}, {ComponentID: "sing-box", Platform: m.OS + "-" + m.Arch, Version: m.SingBox.Version, ArtifactDigest: "sha256:" + m.SingBox.SHA256}}}
+	case strings.HasPrefix(name, "loom-windows-dataplane-") && strings.HasSuffix(name, ".zip"):
+		value, err := clientcomponent.Verify(body, key)
+		if err != nil {
+			return result, err
+		}
+		m := value.Manifest
+		if name != fmt.Sprintf("loom-windows-dataplane-%s-%s.zip", m.Version, m.Arch) {
+			return result, errors.New("Windows component filename differs from its signed coordinates")
+		}
+		artifact.MediaType = "application/zip"
+		result = control.ReleasePackage{Entry: control.ReleaseEntry{ComponentID: m.Kind, Platform: m.OS + "-" + m.Arch, ManifestDigest: control.ReleaseDigest(value.ManifestBody), Artifact: artifact}, ManifestBody: value.ManifestBody, Signature: value.Signature, Version: m.Version, SourceCommit: m.SingBox.Commit, Generation: m.Generation,
+			Components: []control.ComponentReadback{{ComponentID: "sing-box", Platform: m.OS + "-" + m.Arch, Version: m.SingBox.Version, ArtifactDigest: "sha256:" + m.SingBox.SHA256}, {ComponentID: "wintun", Platform: m.OS + "-" + m.Arch, Version: m.Wintun.Version, ArtifactDigest: "sha256:" + m.Wintun.SHA256}}}
+	default:
+		return result, errors.New("release package manifest contract is undefined")
+	}
+	if err := result.Entry.Validate(); err != nil {
+		return control.ReleasePackage{}, err
+	}
+	return result, nil
+}
+
+func (store *Store) Open(catalogID string, artifact control.ReleaseArtifact) (io.ReadCloser, error) {
+	current, err := store.ReadCatalog(catalogID)
 	if err != nil {
 		return nil, err
 	}
-	defer dir.Close()
-	opened, err := dir.Open(file.Path)
-	if err != nil {
-		return nil, err
-	}
-	fail := func(err error) (*os.File, error) {
-		_ = opened.Close()
-		return nil, err
-	}
-	info, err := opened.Stat()
-	if err != nil {
-		return fail(err)
-	}
-	if !info.Mode().IsRegular() || info.Size() != file.Size {
-		return fail(errors.New("release file size or type is invalid"))
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, opened); err != nil {
-		return fail(err)
-	}
-	if hex.EncodeToString(hash.Sum(nil)) != file.SHA256 {
-		return fail(errors.New("release file digest does not match catalog"))
-	}
-	if _, err := opened.Seek(0, 0); err != nil {
-		return fail(err)
-	}
-	return opened, nil
-}
-
-func Find(catalog Catalog, path string) (File, bool) {
-	for _, file := range Files(catalog) {
-		if file.Path == path {
-			return file, true
+	found := false
+	for _, entry := range current.Catalog.Entries {
+		if entry.Artifact == artifact {
+			found = true
+			break
 		}
 	}
-	return File{}, false
-}
-
-func validFile(file File) bool {
-	return safeName.MatchString(file.Name) && hashPattern.MatchString(file.SHA256) && file.Size > 0 && file.Path == "bin/"+file.SHA256
-}
-
-func digest(body []byte) string {
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
-}
-
-func decodeStrict(body []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("decode release catalog: %w", err)
+	if !found {
+		return nil, errors.New("artifact is not in the verified current catalog")
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("release catalog has trailing content")
+	root, err := os.OpenRoot(store.root)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	defer root.Close()
+	body, err := readFile(root, digestPath("bin", artifact.Digest, ""), int64(artifact.Size))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) != int(artifact.Size) || control.ReleaseDigest(body) != artifact.Digest {
+		return nil, errors.New("artifact changed before download")
+	}
+	return io.NopCloser(bytes.NewReader(body)), nil
 }
-
-func RootPath(root, relative string) string { return filepath.Join(root, filepath.FromSlash(relative)) }

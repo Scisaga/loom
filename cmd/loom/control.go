@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"loom/internal/clientrelease"
 	"loom/internal/control"
 	"loom/internal/localconfig"
 	"net"
@@ -124,11 +125,27 @@ func cmdControlServe(args []string) (retErr error) {
 	root := fs.String("state-dir", "/var/lib/loom-control", "现行权威目录")
 	privatePath := fs.String("private-inputs", "", "可选的受保护私有监听/成员拨号输入")
 	socket := fs.String("admin-socket", "", "本机管理 Unix socket；默认由 state-dir 派生")
+	releaseRoot := fs.String("release-root", "", "独立签名 release store 的本机只读目录")
+	releaseKey := fs.String("release-pubkey", "", "带外安装的发布验签公钥；不从 catalog 取得")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("control serve 不接受位置参数")
+	}
+	var releases control.ReleaseSource
+	if (*releaseRoot == "") != (*releaseKey == "") {
+		return errors.New("release-root 与 release-pubkey 必须同时指定")
+	}
+	if *releaseRoot != "" {
+		key, err := control.ReadReleasePublicKey(*releaseKey)
+		if err != nil {
+			return err
+		}
+		releases, err = clientrelease.New(*releaseRoot, key)
+		if err != nil {
+			return err
+		}
 	}
 	node, err := control.LoadNodeConfig(*root)
 	if err != nil {
@@ -161,7 +178,7 @@ func cmdControlServe(args []string) (retErr error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Reports: reports}).Serve(ctx)
+	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Reports: reports, Releases: releases}).Serve(ctx)
 }
 func cmdControlRelay(args []string) (retErr error) {
 	fs := flag.NewFlagSet("control relay", flag.ContinueOnError)

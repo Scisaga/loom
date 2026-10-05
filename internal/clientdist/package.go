@@ -347,12 +347,29 @@ func Verify(archive, checksum, signature []byte, pub ed25519.PublicKey) (Manifes
 	return verifyWithInspect(archive, checksum, signature, pub, inspectSingBox, clientcomponent.LinuxSourceFiles)
 }
 
+// SignedPackage is the authenticated metadata of the self-contained archive.
+// A catalog binds the complete archive digest independently of this manifest.
+type SignedPackage struct {
+	Manifest     Manifest
+	ManifestBody []byte
+	Signature    []byte
+}
+
+func VerifyPackage(archive []byte, pub ed25519.PublicKey) (SignedPackage, error) {
+	var result SignedPackage
+	if len(archive) == 0 || len(archive) > maxArchiveBytes || len(pub) != ed25519.PublicKeySize {
+		return result, fmt.Errorf("Linux package bounds or installation key are invalid")
+	}
+	_, err := verifyArchive(archive, nil, pub, inspectSingBox, clientcomponent.LinuxSourceFiles, &result)
+	return result, err
+}
+
 func verifyWithInspect(archive, checksum, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error)) (Manifest, error) {
 	var zero Manifest
 	if len(archive) == 0 || len(archive) > maxArchiveBytes || len(signature) != ed25519.SignatureSize || len(pub) != ed25519.PublicKeySize {
 		return zero, fmt.Errorf("Linux package or signature bounds are invalid")
 	}
-	manifest, err := verifyArchive(archive, signature, pub, inspectSing, sourceFiles)
+	manifest, err := verifyArchive(archive, signature, pub, inspectSing, sourceFiles, nil)
 	if err != nil {
 		return zero, err
 	}
@@ -363,7 +380,7 @@ func verifyWithInspect(archive, checksum, signature []byte, pub ed25519.PublicKe
 	return manifest, nil
 }
 
-func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error)) (Manifest, error) {
+func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing func([]byte, string) (Component, error), sourceFiles func(map[string][]byte) (map[string][]byte, error), proof *SignedPackage) (Manifest, error) {
 	var zero Manifest
 	gz, err := gzip.NewReader(bytes.NewReader(body))
 	if err != nil {
@@ -423,6 +440,9 @@ func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing fu
 		if _, ok := files[name]; !ok {
 			return zero, fmt.Errorf("客户端包缺少 %s", name)
 		}
+	}
+	if signature == nil {
+		signature = files["manifest.sig"]
 	}
 	manifest, err := verifyManifest(files["manifest.json"], signature, pub)
 	if err != nil {
@@ -500,6 +520,9 @@ func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing fu
 	canonical, err := buildArchive(root, payload)
 	if err != nil || !bytes.Equal(canonical, body) {
 		return zero, fmt.Errorf("Linux archive is not canonical")
+	}
+	if proof != nil {
+		*proof = SignedPackage{Manifest: manifest, ManifestBody: append([]byte(nil), files["manifest.json"]...), Signature: append([]byte(nil), signature...)}
 	}
 	return manifest, nil
 }

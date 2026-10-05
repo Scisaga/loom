@@ -34,6 +34,10 @@ amd64 必须完成原生 service 和业务验收，arm64 只做交叉构建、EL
 manifest.sig 相同的原始 Ed25519 签名；旧 JSON 签名封装拒绝。构建入口只生成并验证制品，不再调用已删除的
 旧 catalog 写入器；它不改变现有发布 floor、`current` 或运行服务。
 
+已签包可经[本地 catalog 审查入口](configuration-model.md#本地签名交付审查与私有下载)接入私有 Releases
+页面。页面下载同时固定 catalog 与 archive 摘要，附件保持原 manifest 签名字节；下载后的正式核验仍使用
+上述独立公钥命令。目录更新不会绕过 installer 已接受的组件代，也不自动激活服务。
+
 ## 私有 Enrollment 与安装
 
 ### 正式安装入口
