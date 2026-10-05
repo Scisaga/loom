@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/makiuchi-d/gozxing"
+	zxingqr "github.com/makiuchi-d/gozxing/qrcode"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -91,7 +93,10 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 		_, qrErr := inviteQRCode(encoded)
 		qrAvailable = qrErr == nil
 		if qrErr != nil {
-			deliveryError = "This invitation is too large for one QR code. Copy or download the complete invitation."
+			deliveryError = "A readable QR could not be generated. Copy or download the complete invitation."
+			if errors.Is(qrErr, errInviteQRCapacity) {
+				deliveryError = "This invitation is too large for one QR code. Copy or download the complete invitation."
+			}
 		}
 	}
 	if encoded != "" && value.Medium == "sh" {
@@ -111,14 +116,39 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt, "shell_command": command, "qr_available": qrAvailable, "delivery_error": deliveryError})
 }
 
-// QR correction levels are image encoding choices. Every image contains the
-// identical canonical Invite, including its full signed member proof.
+var errInviteQRCapacity = errors.New("invite exceeds single QR capacity")
+
+// QR sizes and correction levels are image encoding choices. Dense content can
+// resemble extra finder patterns, so capacity alone does not prove readability.
+// Choose deterministically using an independent client decoder, preserving every
+// byte of the same canonical Invite and its complete signed member proof.
 func inviteQRCode(invite string) (*qrcode.QRCode, error) {
-	code, err := qrcode.New(invite, qrcode.Medium)
-	if err != nil {
-		return qrcode.New(invite, qrcode.Low)
+	fits := false
+	for _, level := range []qrcode.RecoveryLevel{qrcode.Medium, qrcode.Low} {
+		code, err := qrcode.New(invite, level)
+		if err != nil {
+			continue
+		}
+		fits = true
+		for size := code.VersionNumber; size <= 40; size++ {
+			candidate, err := qrcode.NewWithForcedVersion(invite, size, level)
+			if err != nil {
+				return nil, err
+			}
+			bitmap, err := gozxing.NewBinaryBitmapFromImage(candidate.Image(-5))
+			if err != nil {
+				return nil, err
+			}
+			decoded, err := zxingqr.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_TRY_HARDER: true})
+			if err == nil && decoded.GetText() == invite {
+				return candidate, nil
+			}
+		}
 	}
-	return code, nil
+	if !fits {
+		return nil, errInviteQRCapacity
+	}
+	return nil, errors.New("no single QR image passed independent client decoding")
 }
 
 func (server *Server) inviteQR(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +159,7 @@ func (server *Server) inviteQR(w http.ResponseWriter, r *http.Request) {
 	}
 	code, err := inviteQRCode(invite)
 	if err != nil {
-		http.Error(w, "invite exceeds QR capacity; copy or download the complete invitation", http.StatusUnprocessableEntity)
+		http.Error(w, "a readable QR is unavailable; copy or download the complete invitation", http.StatusUnprocessableEntity)
 		return
 	}
 	png, err := code.PNG(-5)

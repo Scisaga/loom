@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -142,5 +143,54 @@ func TestInviteQRCapacityPreservesCompleteDelivery(t *testing.T) {
 				t.Fatal("capacity handling damaged the signed invitation", err)
 			}
 		})
+	}
+}
+
+// A synthetic counterpart to a production invitation whose dense data made
+// both the Go and Android default readers choose a false finder pattern.
+func TestInviteQRCodeSelectsReadableStandardSize(t *testing.T) {
+	content := "demo-qr:"
+	for i := 0; len(content) < 2425; i++ {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("demo-qr-5-%d", i)))
+		content += base64.RawURLEncoding.EncodeToString(sum[:])
+	}
+	content = content[:2425]
+	decode := func(code *qrcode.QRCode) (string, error) {
+		bitmap, err := gozxing.NewBinaryBitmapFromImage(code.Image(-5))
+		if err != nil {
+			return "", err
+		}
+		decoded, err := zxingqr.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_TRY_HARDER: true})
+		if err != nil {
+			return "", err
+		}
+		return decoded.GetText(), nil
+	}
+	smallest, err := qrcode.New(content, qrcode.Low)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decode(smallest); err == nil {
+		t.Fatal("dense synthetic example no longer reproduces the client finder failure")
+	}
+	readable, err := inviteQRCode(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readable.VersionNumber <= smallest.VersionNumber {
+		t.Fatal("selected the known unreadable standard size")
+	}
+	actual, err := decode(readable)
+	if err != nil || actual != content {
+		t.Fatal("readable rendering changed the complete invitation", err)
+	}
+	again, err := inviteQRCode(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := readable.PNG(-5)
+	second, _ := again.PNG(-5)
+	if !bytes.Equal(first, second) {
+		t.Fatal("image selection depends on external state")
 	}
 }
