@@ -546,7 +546,35 @@ ABI 的实际 ELF 逐项绑定。工作站使用固定 SDK 检查 APK 签名和�
 原不可变发布证据继续保留，不作为运行 fallback。
 
 证据位于 `deploy/evidence/2026-10-05-android-release/`。此结果不包含实体 ARM64、物理切网或真实设备
-Keystore 终验；Windows 应用 manifest 和旧运行发布 floor 的前向消费仍是独立缺口。
+Keystore 终验；Windows 应用发布的后续结果见下一节，旧运行发布 floor 的前向消费仍是独立缺口。
+
+### Windows 应用发布与三种形态的期望组件
+
+[Windows 应用 manifest](core/current-contract.md#windows-应用-manifest-的规范字段) 已接入同一 schema 3
+catalog、严格 YAML 发布入口、私有下载和期望组件事实。Installed、Portable TUN、Portable Mixed 各自
+绑定实际架构、源码和文件；Installed 还绑定真实 MSI 版本。签发前只读审查 MSI，并在无网络的临时文件系统
+提取后与原构建 ZIP 逐文件比较。节点独立核对平台签名和整包字节，ZIP 再核对实际内容；不存在第二套发布状态。
+
+六份应用交付物沿用原源码 `99ddca5e`、MSI 0.13.36 的精确字节，没有为添加 manifest 重建或改签应用。
+应用清单第 1 代已随 catalog 第 33 代通过正式 publish 分发到全部 YAML 目标；原目录比较、公开 HTTPS
+完整正文、目标条件推进及最终目录均通过。生产私有 mTLS Chrome 实际下载六份应用及各自原 manifest/签名，
+独立公钥再次验签后与原交付物逐字节相同。页面分别显示三种形态、架构及预览属性；平台发布签名不冒充 Authenticode。
+
+同机 Windows 11 x64 保留原 VM、TPM、DPAPI 和加入身份，三种原制品分别实际完成 agent/数据面期望写入、
+真实 Hy2 HTTPS、运行摘要与私有签名报告比较、停止及进程重启恢复；控制 daemon 重启后原事实与报告字节保持。
+Mixed 的测试首次把“没有 TUN”误作旧进程已退出，导致新窗口等待失败；现按实际旧 agent 与数据面 PID
+等待退出后再启动，同一未改动制品通过。失败记录单独保留，不以旧状态文件或 runtime running 代替新进程业务。
+VM 正常停止后原宿主目录权限恢复，初始 netns 的 route/rule/link 配置未变。
+
+同批公共程序源码 `c6a3f897` 已推送并激活六个正式节点，Linux 签名包为第 30 代，数据面保持原审核修订。
+十二项期望由真实 Web 表单提交，六节点实际进程摘要与签名报告一致；三个 control 同步并重启后仍保留相同
+原始期望事实。全部服务重启后的组件回读、指定境外出口与 Auto 的真实 HTTPS 均通过，两种偏好都读回同一
+预期境外最终出口。原 Auto 偏好恢复，新建 SSH、LAN DNS、系统 DNS、默认公网与既有 WG 代理正常。
+原身份、密钥、RuntimeKey、认证材料及既有 floor/latch 保全，宿主 route/rule 配置保持；被替代程序与精确上传暂存已删除。
+
+受保护证据位于 `deploy/evidence/2026-10-05-windows-release/`。全仓与 mobile 检查、双架构原交付物验证、
+完整目录导入/传输和浏览器回读通过。ARM64、真实睡眠、物理切网及显示硬件仍由用户终验；外部应用代码签名未启用。
+下载目录推进不消费旧运行发布 floor，这项前向安装缺口继续保留。
 
 ### 本轮实现与实际验证
 
@@ -715,9 +743,9 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
 | Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在隔离 API 35 x86_64 模拟器完成正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和签名报告；同身份升级、实际 APK/原生库测量及停止报告通过。应用 manifest/catalog 已正式分发，私有浏览器精确下载、期望组件与实际报告比较及控制重启恢复通过。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验。 |
 | Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh/SSH 安装、原事务恢复、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture 及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
-| Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；应用 manifest、目录及期望接线已实现，六份原交付物静态审查通过；正式分发、浏览器下载及新增 agent 期望原生回读仍待本轮执行。 |
+| Windows 既定交付 | 双架构正式制品已构建；x64 三种形态实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。六份应用 manifest 已正式分发，浏览器精确下载及独立验签、三种形态的 agent/数据面期望和进程/控制重启回读通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验；外部代码签名未启用，预览属性保持。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
-| 签名发布闭环 | schema 3 catalog、Linux 包、Android 应用包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载、Android 期望/实际组件比较及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | Windows 应用制品 manifest、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
+| 签名发布闭环 | schema 3 catalog、Linux 包、Android 应用包、Windows 三形态应用/数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载、三平台期望/实际组件比较及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | 旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
 | 字段级同构 | Direct/本机出口/Hy2/WG 中继已定义并消费跨层对应与严格往返；初始成员、节点绑定及 distribution_urls 已落实。 | 其他传输、动态成员和未定观测算法；旧 HTTP 分发坐标不自动转换成 HTTPS。 |
 | 生产切换 | 本次明确授权的精确制品已接管正式服务，原身份/密钥/管理员/认证原件和 floor/latch 保全，旧运行入口退出。 | schema 3 签名发布 catalog 的单调消费、全部功能或全部平台已完成；旧证据不能恢复成运行权威。 |
