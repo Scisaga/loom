@@ -167,6 +167,19 @@ an upgrade. Do not treat an unpacked Installed EXE as an MSI installation.
 hash. The source commit, verified input hashes, ZIP/MSI hashes, and each VM
 stage/run/run-interactive/collect result must be kept as one audit chain.
 
+Publish the existing application artifacts through `loom release package-windows`
+with `-artifact`, `-edition`, `-arch`, `-generation`, the deployment `.env`, an
+independent `-pubkey`, and output `-o`. Installed also requires its original build
+ZIP as `-bundle`. On the Linux publishing workstation, msitools and bubblewrap
+inspect the MSI without executing installer actions and compare every extracted
+file to that ZIP. The original MSI or portable ZIP plus detached manifest and
+signature then enter the same `release stage` / `release publish` flow.
+
+Releases exposes all three editions and both architectures, with the original
+manifest and signature. Expected agent hashes identify the actual EXE, not the
+download archive. Portable Mixed exposes no Wintun expectation. Platform release
+signatures do not supply Windows Authenticode or change the preview designation.
+
 ## Verification boundary
 
 Use the restricted same-host

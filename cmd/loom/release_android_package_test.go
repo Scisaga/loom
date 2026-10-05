@@ -11,11 +11,11 @@ func TestAndroidOutputNewRetryAndConflict(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "demo-application.apk")
 	body := []byte("demo-signed-application")
 	for range 2 {
-		if err := writeAndroidOutput(path, body); err != nil {
+		if err := writeReleaseOutput(path, body); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := writeAndroidOutput(path, []byte("demo-other-application")); err == nil {
+	if err := writeReleaseOutput(path, []byte("demo-other-application")); err == nil {
 		t.Fatal("different application replaced original output")
 	}
 	actual, err := os.ReadFile(path)

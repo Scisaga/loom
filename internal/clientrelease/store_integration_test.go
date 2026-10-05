@@ -65,7 +65,8 @@ func TestReviewedStoreRechecksBytesAndRebuildsCache(t *testing.T) {
 			t.Fatal("download differs from original bytes", err)
 		}
 		for _, component := range pkg.Components {
-			if component.ArtifactDigest == pkg.Entry.Artifact.Digest {
+			apkAgent := pkg.Entry.ComponentID == "android-application" && component.ComponentID == "agent"
+			if component.ArtifactDigest == pkg.Entry.Artifact.Digest && !apkAgent {
 				t.Fatal("archive digest used as runtime file digest")
 			}
 		}

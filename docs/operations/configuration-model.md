@@ -228,6 +228,14 @@ Android 应用先使用 `loom release package-android -env .env -pubkey <带外�
 将输出的 `loom-android.apk` 传入同一 stage，严格读取同名两个附件并验签；缺少附件拒绝，不猜测版本。
 应用目录只定位本次文件，不成为第二发布 store。节点验签和下载不依赖 SDK，SDK 仅用于工作站签发前审查。
 
+Windows 使用 `loom release package-windows -env .env -pubkey <带外公钥> -artifact <原 MSI 或 ZIP>
+-edition <installed|portable-tun|portable-mixed> -arch <amd64|arm64> -generation <应用代> -o <新输出目录>`。
+Installed 还须 `-bundle <构建该 MSI 的原 Installed ZIP>`，工作站需安装 msitools 与 bubblewrap；
+只读检查 MSI，并在隔离临时文件系统提取后与原 ZIP 逐字节比较。便携版直接核对原 ZIP。工具读取实际
+源码、PE 架构及原数据面签名，产生同名 `.manifest.json` 和 `.sig`；输出原文件传入同一 stage。
+Installed ZIP 只是构建输入，不作为安装版下载。节点读取和公开下载无需安装检查工具。此发布签名不替代
+Windows Authenticode，现有 preview 标记及真实 MSI 版本不改变，也不修改本机 DPAPI、身份或安装代。
+
 单个分发目标使用 `loom release import -source <临时上传目录> -catalog <精确摘要> -root <目标目录>
 -pubkey <独立公钥> [-expected-current <旧摘要>]` 验证并接受已经签署的同一目录。上传只携带公开制品和
 原签名字节，发布私钥不离开工作站；source 的 current 不用于选择版本。import 与 stage 共用目标端排他锁、

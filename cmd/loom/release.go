@@ -16,15 +16,18 @@ import (
 	"loom/internal/clientrelease"
 	"loom/internal/control"
 	"loom/internal/localconfig"
+	"loom/internal/windowsrelease"
 )
 
 func cmdRelease(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom release <package-android|stage|publish|import|verify>")
+		return errors.New("用法: loom release <package-android|package-windows|stage|publish|import|verify>")
 	}
 	switch args[0] {
 	case "package-android":
 		return cmdReleasePackageAndroid(args[1:])
+	case "package-windows":
+		return cmdReleasePackageWindows(args[1:])
 	case "publish":
 		return cmdReleasePublish(args[1:])
 	case "target":
@@ -115,7 +118,7 @@ func cmdReleaseStage(args []string) error {
 			return err
 		}
 		input := clientrelease.Input{Body: body}
-		if filepath.Base(path) == androidrelease.Name {
+		if filepath.Base(path) == androidrelease.Name || windowsrelease.IsArtifact(filepath.Base(path)) {
 			input.Manifest, err = readBoundedRegular(path+".manifest.json", 64<<10, false)
 			if err != nil {
 				return err

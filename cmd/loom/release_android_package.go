@@ -64,7 +64,7 @@ func cmdReleasePackageAndroid(args []string) error {
 		body []byte
 	}{{androidrelease.Name, apk}, {androidrelease.Name + ".manifest.json", body}, {androidrelease.Name + ".sig", signature}} {
 		path := filepath.Join(*output, file.name)
-		if err := writeAndroidOutput(path, file.body); err != nil {
+		if err := writeReleaseOutput(path, file.body); err != nil {
 			return err
 		}
 	}
@@ -73,8 +73,8 @@ func cmdReleasePackageAndroid(args []string) error {
 
 // Publish complete bytes without replacing a concurrent writer's output.
 // These are disposable packaging files, not another release store.
-func writeAndroidOutput(path string, body []byte) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".loom-android-*")
+func writeReleaseOutput(path string, body []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), ".loom-release-*")
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func writeAndroidOutput(path string, body []byte) error {
 		}
 		prior, readErr := readBoundedRegular(path, 256<<20, false)
 		if readErr != nil || !bytes.Equal(prior, body) {
-			return errors.New("Android output concurrently changed; choose a new output directory")
+			return errors.New("Release output concurrently changed; choose a new output directory")
 		}
 	}
 	return nil

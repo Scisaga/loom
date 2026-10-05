@@ -11,6 +11,7 @@ import (
 
 	"loom/internal/androidrelease"
 	"loom/internal/control"
+	"loom/internal/windowsrelease"
 )
 
 // Input is a publication call's exact bytes. Original archives carry their own
@@ -27,6 +28,16 @@ func InspectInput(name string, input Input, key ed25519.PublicKey) (control.Rele
 			return control.ReleasePackage{}, err
 		}
 		return control.ReleasePackage{Entry: control.ReleaseEntry{ComponentID: manifest.Kind, Platform: "android-any", ManifestDigest: control.ReleaseDigest(input.Manifest), Artifact: manifest.Artifact}, ManifestBody: bytes.Clone(input.Manifest), Signature: bytes.Clone(input.Signature), Version: manifest.VersionName, SourceCommit: manifest.SourceCommit, Generation: manifest.Generation, Components: manifest.Components()}, nil
+	}
+	if windowsrelease.IsArtifact(name) {
+		manifest, err := windowsrelease.Verify(input.Manifest, input.Signature, input.Body, key)
+		if err != nil {
+			return control.ReleasePackage{}, err
+		}
+		if manifest.Artifact.Name != name {
+			return control.ReleasePackage{}, errors.New("Windows application filename differs from its manifest")
+		}
+		return control.ReleasePackage{Entry: control.ReleaseEntry{ComponentID: "windows-client-" + manifest.Edition, Platform: "windows-" + manifest.Arch, ManifestDigest: control.ReleaseDigest(input.Manifest), Artifact: manifest.Artifact}, ManifestBody: bytes.Clone(input.Manifest), Signature: bytes.Clone(input.Signature), Version: manifest.Version(), SourceCommit: manifest.SourceCommit, Generation: manifest.Generation, Components: append([]control.ComponentReadback{}, manifest.Components...)}, nil
 	}
 	if name == "loom-bootstrap-linux.sh" {
 		manifest, err := control.VerifyReleaseBootstrap(input.Manifest, input.Signature, key)

@@ -244,3 +244,40 @@ func TestExpectedComponentConflictAndUnavailableUIFailClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsApplicationExpectationRetainsExactEditionProgram(t *testing.T) {
+	source, value := expectedReleaseFixture()
+	pkg := &source.original.Packages[0]
+	pkg.Entry.ComponentID, pkg.Entry.Platform = "windows-client-installed", "windows-amd64"
+	pkg.Entry.Artifact.Name, pkg.Entry.Artifact.MediaType = "loom-client-windows-installed-amd64.msi", "application/x-msi"
+	pkg.Components[0].Platform = "windows-amd64"
+	value.Platform = "windows-amd64"
+	value.ID, _ = ExpectedComponentID(value.NodeID, value.ComponentID, value.Platform)
+	source.original.Catalog.Entries = []ReleaseEntry{pkg.Entry}
+	original := pkg.Components[0]
+	source.current = source.original
+	// Another delivery from the same source has a distinct executable. Neither
+	// current nor an equal version string can replace the administrator's reference.
+	other := *pkg
+	other.Entry.ComponentID = "windows-client-portable-mixed"
+	other.Entry.Artifact.Name, other.Entry.Artifact.MediaType = "loom-client-windows-portable-mixed-amd64.zip", "application/zip"
+	other.Entry.ManifestDigest = ReleaseDigest([]byte("demo portable manifest"))
+	other.Components = []ComponentReadback{original}
+	other.Components[0].ArtifactDigest = ReleaseDigest([]byte("demo portable program"))
+	source.original.Packages = append(source.original.Packages, other)
+	source.current = ReleaseSet{ID: ReleaseDigest([]byte("demo newer catalog")), Packages: []ReleasePackage{other}}
+	got, err := resolveExpectedComponent(value, []ReleaseSet{source.original, source.current})
+	if err != nil || got != original {
+		t.Fatal("Windows agent reference lost its delivery identity", err)
+	}
+	value.ManifestDigest = other.Entry.ManifestDigest
+	got, err = resolveExpectedComponent(value, []ReleaseSet{source.original})
+	if err != nil || got != other.Components[0] {
+		t.Fatal("explicit portable agent could not be resolved", err)
+	}
+	value.ComponentID = "wintun"
+	value.ID, _ = ExpectedComponentID(value.NodeID, value.ComponentID, value.Platform)
+	if _, err = resolveExpectedComponent(value, []ReleaseSet{source.original}); err == nil {
+		t.Fatal("Mixed application invented a Wintun expectation")
+	}
+}

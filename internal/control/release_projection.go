@@ -37,6 +37,14 @@ func (server *Server) projectReleases(snapshot *WebSnapshot) error {
 		if pkg.Entry.ComponentID == "android-application" {
 			title, variant, arch = "Loom Android", "Signed APK", "ARM64 + x86_64"
 		}
+		switch pkg.Entry.ComponentID {
+		case "windows-client-installed":
+			title, variant = "Loom Windows", "Installed MSI · preview"
+		case "windows-client-portable-tun":
+			title, variant = "Loom Windows", "Portable TUN ZIP · preview"
+		case "windows-client-portable-mixed":
+			title, variant = "Loom Windows", "Portable Mixed ZIP · preview"
+		}
 		if pkg.Version == "devel" {
 			variant = "Developer archive"
 		}

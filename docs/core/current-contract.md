@@ -903,23 +903,65 @@ sing-box 的摘要是相应 ABI 原生库、版本为 sing_box_version。引用�
 
 最小验证覆盖 manifest 规范往返、错钥/改包/错 ABI/元数据与库绑定拒绝，真实 APK 与 SDK 独立读回，
 正式 stage/publish 全目标回读、私有浏览器精确下载、正常期望写入及同机模拟器真实报告比较与重启。
-实体安装/ARM64/物理切网不由本清单替代；Windows 应用的 manifest 仍单独待补。
+实体安装/ARM64/物理切网不由本清单替代。
+
+## Windows 应用 manifest 的规范字段
+
+目标是从现有 Releases 取得 Installed MSI、Portable TUN ZIP、Portable Mixed ZIP，并将包内实际
+agent 设为设备期望。已有数据面包只交付 sing-box/Wintun，无法表达这三种应用；最小变化是为已有
+三种交付字节增加同一应用 manifest，不增加安装器、自动升级器、授权或安装状态。操作者在原构建后
+多执行一次清单签发，随后仍使用同一 stage/publish。
+
+manifest 固定为 `schema=3,kind="windows-application",edition,arch,generation:U64,source_commit,`
+`installer_version?,artifact,components`。edition 恰为 installed、portable-tun、portable-mixed；arch
+恰为 amd64/arm64；generation 非零，source_commit 为实际干净 Go 构建的 40 位小写提交。
+只有 installed 有 installer_version，它是实际 MSI 的三段规范 ProductVersion，范围为 255.255.65535。
+artifact 仍是 ReleaseArtifact；名称固定 `loom-client-windows-<edition>-<arch>.msi|zip`，installed
+使用 MSI / application/x-msi，其余为 ZIP / application/zip，摘要覆盖原始完整交付文件。
+components 使用已有四字段 ComponentReadback，按 component_id 严格排序：agent、sing-box，以及
+仅 TUN 两种形态的 wintun；平台均为 windows-<arch>。agent 版本是 source_commit、摘要是包内 EXE；
+另两项从同包内已独立验签的数据面 manifest 和真实文件取得。Portable Mixed 不制造未加载 Wintun 的期望。
+
+发布工作站逐项核对原 ZIP 的固定普通文件集合、PE 架构、Windows Go 构建身份与干净 VCS，以及
+内嵌数据面的原签名和文件。Installed 另要求原构建 ZIP，使用只读 msitools 检查实际 MSI 的产品、
+版本、架构及嵌入 CAB；在无网络、仅临时输出可写的 sandbox 中提取，将每个文件与原 ZIP 逐字节
+比较（只有 EXE 改为固定 loom-client.exe）。该审查不运行 MSI/custom action、不安装程序；未知
+外部 CAB、额外文件或不同字节拒绝。交付形态由原构建及原生 --build-info 验收共同确认，静态 VCS
+回读本身不证明程序已执行或形态行为成立。工作站调用方将这些实际输入交给纯签名函数，不持久化
+另一份审查权威。相同显式字节、版本、代及密钥产生相同 manifest/签名。
+
+签名仍覆盖 `loom-release-manifest-v3\0 || C(manifest)`，manifest 与 64 字节签名在原交付物外保存。
+读取者验证规范字段、独立发布签名及完整交付摘要；ZIP 还独立重复包内程序核对。MSI 的组件及
+ProductVersion 绑定来自签发工作站对同一原文件的读取，节点无需部署 Windows Installer 或 msitools。
+Windows 安装后仍以真实进程/模块摘要报告，不能将 MSI 验签当作安装成功。平台签名不等于 Authenticode；
+现有 preview 交付标识保留，外部代码签名按独立策略执行。
+
+对应关系为同一 Manifest → 原规范签名字节/独立发布目录 → Releases 精确 MSI/ZIP 与原清单/签名
+下载 → 原 ExpectedComponent 引用 → Windows 实际报告比较。catalog component_id 为
+windows-client-<edition>，platform 为 windows-<arch>，因此现有三种交付同时存在而不改变目录唯一键。
+页面选择期望时显示形态；installed 展示 MSI 版本，便携版展示源码提交。目录推进不改期望、不安装；
+期望引用固定 manifest，即使另一个形态同源码也不能用另一个 EXE 摘要满足它。重试/低代/同代异值
+沿原目录规则，失败不推进 current；MSI 升级与本机数据面单调代照常执行，不重置身份、DPAPI 或 floor。
+
+最小验证覆盖规范往返、三形态/双架构与包内程序绑定、错钥/改包/额外路径/错 ABI/版本拒绝，真实 MSI
+只读提取与原 ZIP 比对、正式发布与浏览器下载、同机 Windows 三形态真实 agent 期望比较和重启。
+ARM64 执行、真实睡眠、物理网络切换及显示硬件仍由实体终验覆盖，不恢复旧发布/安装 fallback。
 
 ## 签名 catalog 与安装包、运行文件的对应
 
 本节补齐既有 Release/Artifact 的交付索引，不新增控制权威、安装 receipt 或协议号。现行规范
-manifest 包括 `linux-client-bootstrap`、`windows-dataplane` 与 `android-application`。它们保持原始签名字节；catalog 只引用它们，
+manifest 包括 `linux-client-bootstrap`、`windows-dataplane`、`android-application` 与 `windows-application`。它们保持原始签名字节；catalog 只引用它们，
 不能把整包摘要写成包内程序的运行摘要。Android APK、Windows 三种应用交付和通用 bootstrap 脚本各自的
-非空 manifest 按各自交付边界定义；现行包含上述 Android APK 与下述通用脚本；Windows 应用尚未定义的 kind 拒绝，
+非空 manifest 按各自交付边界定义；现行包含上述应用与下述通用脚本；未定义的 kind 拒绝，
 不能使用任意 JSON 透传。
 
 catalog 固定字段为 `{schema:3,generation:U64,entries:[]ReleaseEntry}`，generation 非零；entries 非空，
 按 `(component_id,platform)` 严格排序且唯一。此处 component_id 表示交付组件，当前为两个程序包 kind
-、`android-application` 及 `linux-bootstrap-script`；程序包 platform 恰为 `<os>-<arch>`，通用脚本为 `linux-any`，双 ABI APK 为 `android-any`。
+、`android-application`、三种 `windows-client-<edition>` 及 `linux-bootstrap-script`；程序包 platform 恰为 `<os>-<arch>`，通用脚本为 `linux-any`，双 ABI APK 为 `android-any`。
 每项固定为 `{component_id,platform,manifest_digest,artifact}`；
 manifest_digest 为原始规范 manifest 的 Digest。artifact 固定为 `{name,digest,size:U64,media_type,audience}`，
 文件名为单个安全 ASCII basename，digest 为完整下载字节的 Digest，size 非零，当前 audience 恰为 public。
-Linux archive 的 media_type 为 application/gzip，Windows 数据面 ZIP 为 application/zip，通用脚本为 text/x-shellscript，APK 为 application/vnd.android.package-archive。
+Linux archive 的 media_type 为 application/gzip，ZIP 为 application/zip，MSI 为 application/x-msi，通用脚本为 text/x-shellscript，APK 为 application/vnd.android.package-archive。
 版本、源码、组件代及包内精确程序坐标由已引用的原 manifest 读取并核对，不另复制一份可独立修改的值。
 
 签名为 64 字节 Ed25519，覆盖 `loom-release-catalog-v3\0 || C(catalog)`；规范 catalog 摘要定位不可变
@@ -953,7 +995,7 @@ Linux 的 loom 对应既有运行 component_id=agent，数据面恰为 sing-box�
 `SHA256("loom-expected-component-v3\0" || C({node_id,component_id,platform}))` 的 Digest 表达。
 两份发布摘要固定原始 schema 3 catalog 与其引用的 manifest；不保存 archive/ZIP 摘要作为程序摘要，
 也不再复制一份可编辑的 version、运行摘要或制品内容。现有可解析组合为 Linux agent/sing-box 与
-Windows sing-box/wintun 与 Android agent/sing-box，平台为相应 OS 的 amd64/arm64；没有规范 manifest 的应用组件不能创建期望。
+Windows agent/sing-box/wintun 与 Android agent/sing-box，平台为相应 OS 的 amd64/arm64；没有规范 manifest 的应用组件不能创建期望。
 
 | 层 | 唯一表达与方向 |
 |---|---|

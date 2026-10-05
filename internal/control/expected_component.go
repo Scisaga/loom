@@ -26,7 +26,7 @@ func expectedComponentSupported(component, platform string) bool {
 	case "linux-amd64", "linux-arm64", "android-amd64", "android-arm64":
 		return component == "agent" || component == "sing-box"
 	case "windows-amd64", "windows-arm64":
-		return component == "sing-box" || component == "wintun"
+		return component == "agent" || component == "sing-box" || component == "wintun"
 	}
 	return false
 }

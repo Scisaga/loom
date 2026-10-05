@@ -90,7 +90,9 @@ func ReceiveArchive(input io.Reader, catalog string, key ed25519.PublicKey) (str
 		}
 		parts := strings.Split(header.Name, "/")
 		valid := len(parts) == 2 && parts[0] == "bin" || len(parts) == 3 && (parts[0] == "catalogs" && (parts[2] == "catalog.json" || parts[2] == "catalog.sig") || parts[0] == "manifests" && (parts[2] == "manifest.json" || parts[2] == "manifest.sig"))
-		if !valid || control.ValidateDigest("sha256:"+parts[1]) != nil || header.Typeflag != tar.TypeReg || header.Mode != 0644 || len(header.PAXRecords) > 0 || header.Linkname != "" || seen[header.Name] || len(seen) >= 32 || header.Size < 1 || header.Size > maxPackageBytes {
+		// Twelve finite delivery/platform combinations, each with artifact,
+		// manifest and signature, plus the catalog and its signature.
+		if !valid || control.ValidateDigest("sha256:"+parts[1]) != nil || header.Typeflag != tar.TypeReg || header.Mode != 0644 || len(header.PAXRecords) > 0 || header.Linkname != "" || seen[header.Name] || len(seen) >= 2+3*12 || header.Size < 1 || header.Size > maxPackageBytes {
 			return "", errors.New("invalid release transfer member")
 		}
 		total += header.Size
