@@ -130,6 +130,10 @@ func (preference Preference) Validate() error {
 	return nil
 }
 
+// ErrNoUsableCandidate distinguishes a current selection limit from invalid
+// inputs or a failed runtime operation. It does not revoke authorization.
+var ErrNoUsableCandidate = errors.New("no authorized route candidate is usable")
+
 // Select returns one candidate for one selector scope. Missing, expired, and
 // other-generation observations remain unknown. Known unavailable candidates
 // are excluded; a current candidate is retained when evidence does not prove a
@@ -172,7 +176,7 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		eligible = append(eligible, candidate)
 	}
 	if len(eligible) == 0 {
-		return Selection{}, errors.New("no authorized route candidate is usable")
+		return Selection{}, ErrNoUsableCandidate
 	}
 	rank := func(candidate RouteCandidate) int {
 		if byID[candidate.ID].Result == "available" {

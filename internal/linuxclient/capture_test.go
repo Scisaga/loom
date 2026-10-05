@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
 	"loom/internal/deviceclient"
 )
@@ -246,10 +247,11 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 	port := target.Listener.Addr().(*net.TCPAddr).Port
 	store, path := mixedRuntimeFixture(t, root, port)
 	reload := make(chan os.Signal, 1)
+	var clockAdvance atomic.Int64
 	options := Options{DeviceState: path, LocalState: filepath.Join(root, "runtime-state.json"), Status: filepath.Join(root, "status.json"),
 		Config: filepath.Join(root, "config.json"), SingBox: executable, Capture: "mixed",
 		WireGuardPrivateKey: filepath.Join(root, "no-wg-key"),
-		RefreshPoll:         time.Hour, Reload: reload, Generation: func() (string, error) { return "demo-network", nil }}
+		RefreshPoll:         time.Hour, Reload: reload, Generation: func() (string, error) { return "demo-network", nil }, Now: func() time.Time { return time.Now().Add(time.Duration(clockAdvance.Load())) }}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	done := make(chan error, 1)
 	go func() { done <- runGeneration(ctx, options, store) }()
@@ -356,6 +358,62 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 	readSelector()
 	if selectorConnections.Load() != 1 {
 		t.Fatal("preference reload replaced the live selector API connection")
+	}
+	// A real selector blocks only this Service, keeps its process/API alive,
+	// and can recover when a failed observation expires without a new View.
+	routes, _, err := clientadapter.AccessProjection(store.LKG().View)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := LoadLocalState(options.LocalState, "demo-network")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := Activate(ctx, actualSelector, routes, local, func(context.Context) ProbeResult { return ProbeResult{Action: "https_request"} }, options.Now)
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(failed.Selections) != 0 {
+		t.Fatal("failed Service remained selected", err)
+	}
+	if _, err := SaveObservations(options.LocalState, failed.State); err != nil {
+		t.Fatal(err)
+	}
+	waitState := func(selected int, state string) {
+		t.Helper()
+		reload <- syscall.SIGHUP
+		for {
+			value, err := ReadStatus(options.Status)
+			if err == nil && value.Runtime == "running" && len(value.Selections) == selected && len(value.Observations) == 1 && (selected == 0 || value.Selections[0].State == state) {
+				return
+			}
+			select {
+			case err := <-done:
+				stopped = true
+				t.Fatalf("business outcome stopped the data plane: %v", err)
+			case <-ctx.Done():
+				t.Fatal("business outcome did not reach runtime readback")
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
+	waitState(0, "")
+	if response, err := requestTarget("demo-service.example", proxy); err == nil {
+		response.Body.Close()
+		if response.StatusCode < 400 {
+			t.Fatal("failed Service was not actually blocked")
+		}
+	}
+	clockAdvance.Store(int64(10 * time.Minute))
+	waitState(1, "unknown")
+	response, err = requestTarget("demo-service.example", proxy)
+	if err != nil {
+		t.Fatal("expired observation did not recover actual HTTPS", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatal("recovered HTTPS request failed")
+	}
+	readSelector()
+	if selectorConnections.Load() != 1 {
+		t.Fatal("business failure or recovery replaced the data plane")
 	}
 	selectorTransport.CloseIdleConnections()
 	cancel()

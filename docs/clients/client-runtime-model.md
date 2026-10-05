@@ -321,6 +321,15 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
 排序是一次纯计算，不需要挑战者状态、采样收敛或额外状态机。ICMP RTT 最多只能为同类入口
 提供次级提示，不能覆盖真实 transport / business outcome。
 
+某 Service 的所有候选暂时不可用时，该 Service 不产生新的 Selection；其他 Service、服务节点 listener
+和认证修复通道继续运行。Linux HostAdapter 在已验证 profile 的每个 selector 中加入既有 `reject` block
+作为本机拒绝位置，并以它为启动默认值：它不是 RouteCandidate，不进入授权、Selection 或报告中的候选集合，
+也不能转发流量。签名 profile、LKG 和候选成员原字节不变，增加的只是运行时拒绝投影。
+每次正常刷新按当前授权、Preference、网络代和观测有效期重算；失败观测过期后成为 unknown，才允许再次
+选择并进行实际业务探测。失败不能清空观测以强制重试，也不能等待必须修改权限才能恢复。
+反例是单条路径在服务端尚未消费新授权时失败：它暂时拒绝该 Service，不能因此停掉其他服务或将整个
+数据面留在永久等待配置修复的状态。selector 应用/回读、进程、认证持久化或网络清理失败仍按原失败关闭规则处理。
+
 上述原则已经确定，但尚不足以构成完整的选择算法。以下问题须在实现排序与归约前明确，
 不能由旧实现、测试或原型中的单个例子替代决定：
 

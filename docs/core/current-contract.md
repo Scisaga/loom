@@ -111,7 +111,8 @@ deny 保留分配但无业务权限。解析到的 Service/Policy 对只是可�
 成员证书由同一提案的规范投票签名组成，不能把另一目的签名当成员票。发布 catalog 固定
 generation 与规范排序的 manifest 摘要集合；每份 manifest 固定组件、平台及逐文件字段。解码后重编码
 必须得到原字节，缺项、重复组件/平台映射、未知受众或签名不符均拒绝。Windows 数据面与 Linux 客户端 manifest 已按下方
-字段接入签名包；catalog、其余制品 manifest 及现网 catalog 激活仍未完成，不能把旧发布记录解释为此格式。
+字段接入签名包；catalog 与通用 Linux 脚本的签名、下载和单目标 import 已接通，其余应用制品 manifest
+及现网发布 floor 的自动消费仍未完成。分发目录 current 不等于运行安装代，不能把旧发布记录解释为此格式。
 
 不复用 1 号，因为 1 号是真实存在过的旧 `Material` 格式，现网不可回退 latch 要求 reader 版本不低于 2，
 `loom-material-v1` 领域也已被 2 号使用。3 号此后冻结。
@@ -617,6 +618,10 @@ runtime_profile 仅 access 出现，包含 `kind="sing_box",config`，config 是
 包含候选 outbound、Service selector 与权限规则；平台本机 capture/listener 和本机 API secret 由
 HostAdapter 投影，不可扩大签名 selector 的成员。无业务权限的 access 仍须能表示拒绝业务的合法运行配置，
 不能因 routes 为空而拒绝认证配置。forward/出网的入站值由当前权限单向投影，不接受本机自填 ACL。
+Linux 的本机 selector 另可选择既有 `reject` block，以表达该 Service 没有可用候选，并在启动时默认拒绝。
+它仅减少运行时转发，不增加候选或改写签名 profile/LKG；拒绝位置不进入 Selection 或候选报告。
+业务观测过期后按同一授权重新选择，其他 Service 与服务节点 listener 不因单项业务失败停止，详见
+[Preference 与 Selection](../clients/client-runtime-model.md#preference-与-selection)。
 
 services/policies/resources/links/endpoints 均使用上述完整值，引用仅限该设备可消费范围；
 policy_ids 保留设备原分配；policies 只包含当前有效值，缺失的所选策略或缺失所属 Service 表示该权限已收口，

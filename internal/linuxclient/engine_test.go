@@ -27,8 +27,37 @@ func TestServiceActivationNeverSharesBusinessOutcome(t *testing.T) {
 		return ProbeResult{Available: calls == 1, Action: "https_request"}
 	}}
 	value, err := activateServices(context.Background(), options, control.DeviceView{}, selector, routes, defaultState("demo-network"))
-	if err == nil || calls != 2 || len(value.State.Observations) != 2 || value.Selections[0].State != "available" || value.Selections[1].State != "unavailable" {
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 2 || len(value.State.Observations) != 2 || len(value.Selections) != 1 || value.Selections[0].State != "available" || selector.current["service:demo-b"] != blockedSelection {
 		t.Fatal("one Service probe was applied to another", calls, err, value.Selections)
+	}
+}
+
+func TestUnavailableServiceStaysBlockedUntilObservationExpires(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	routes := []clientmodel.RouteCandidate{{ID: "demo-route", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service"}}
+	selector := &fakeSelector{current: map[string]string{"service:demo-service": blockedSelection}}
+	calls := 0
+	probe := func(context.Context) ProbeResult {
+		calls++
+		return ProbeResult{Available: calls > 1, Action: "https_request"}
+	}
+	first, err := Activate(context.Background(), selector, routes, defaultState("demo-network"), probe, func() time.Time { return now })
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 1 || len(first.Selections) != 0 || selector.current[routes[0].Scope] != blockedSelection || len(first.State.Observations) != 1 || first.State.Observations[0].Result != "unavailable" {
+		t.Fatal("failed business did not retain its observation and block only its Service", err)
+	}
+	again, err := Activate(context.Background(), selector, routes, first.State, probe, func() time.Time { return now.Add(time.Minute) })
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 1 || !reflect.DeepEqual(first.State, again.State) {
+		t.Fatal("valid failure was cleared or retried", err)
+	}
+	previousFailure := first.State
+	previousFailure.Observations = append([]clientmodel.Observation(nil), first.State.Observations...)
+	recovered, err := Activate(context.Background(), selector, routes, again.State, probe, func() time.Time { return now.Add(10 * time.Minute) })
+	if err != nil || calls != 2 || len(recovered.Selections) != 1 || recovered.Selections[0].State != "available" || selector.current[routes[0].Scope] != routes[0].ID {
+		t.Fatal("expired observation did not permit a real recovery probe", err)
+	}
+	selector.failSet = blockedSelection
+	if value, err := Activate(context.Background(), selector, routes, previousFailure, nil, func() time.Time { return now }); err == nil || value.State.Schema != 0 {
+		t.Fatal("failed runtime block application was mistaken for business unavailability")
 	}
 }
 

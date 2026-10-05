@@ -196,7 +196,7 @@ LocalDeploymentConfig.deploy_hosts
 常驻 publisher 使用同一个严格 loader：`loom publisher -env <path> -control-socket <path>` 只从
 `LocalDeploymentConfig` 取得 signing key 引用、publish targets 与 SSH config，不能再同时传
 `-key`、`-target` 或 `-ssh-config` 形成第二份输入。分发后的读取验证 URL 不来自 `.env`，而随当前
-认证的 `NetworkIntent.nodes[].distribution_urls` 进入 `PublisherInput`；因此事实前沿变化时
+认证的 `DeviceAuthorization.distribution_urls` 进入发布调用；因此事实前沿变化时
 验证集合也原子变化，旧 systemd unit 中手写的 URL 不能继续成为发布事实。
 
 ### 签名发布记录到实际运行的闭环
@@ -225,8 +225,10 @@ control 的受保护只读安装输入；它们不进入 `.env` 或网络权威�
 archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原有页面与交互保留。Windows 数据面不是
 完整 Windows 应用安装器；Android 与应用安装包未定义的 manifest 不进入目录。通用 bootstrap 供邀请交付
 入口使用，不作为另一款客户端卡片。sh 交付从当前设备授权中的 HTTPS distribution_urls 读回同一脚本，
-成功才在私有页面显示一次粘贴块；缺少有效分发入口时显示不可用，复制与刷新复用原邀请。
-页面中的整包摘要与真实运行文件摘要分开，下载成功不制造部署成功。此处没有启用公网分发或生产自动更新。
+成功才在私有页面显示一次粘贴块。块中携带交付时仍获授权且读回通过的地址集合，目标机器按规范顺序
+分别尝试脚本和程序包，每次下载均核对固定摘要；全部失败时停止，不能重新创建加入事务。缺少有效入口时
+显示不可用，复制与刷新复用原邀请。页面中的整包摘要与真实运行文件摘要分开，下载成功不制造部署成功。
+现有公开 HTTPS 分发及正式私有下载已部署验收，见[实施状态](../progress.md)；生产自动更新仍未启用。
 
 #### 生产发布与实际消费
 
@@ -248,7 +250,7 @@ archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原�
 3. 全部目标的 catalog 与引用制品读回通过后，才逐目标把可变 `current` 指向该 catalog。
    每次推进须由目标端以原子条件更新，或在覆盖所有发布者的独占锁内比较计划读取的旧指针并
    原子替换；单独“先读再写”不能防并发覆盖。条件不成立或目标端没有这种门禁时停止推进，
-   重新读取、重新计划。该并发门禁目前也属于待实现与验收的目标流程。
+   重新读取、重新计划。单目标 import 已实现并验收此条件更新；统一全目标 executor 仍须接线。
    推进后再次读回指针、签名 catalog 和实际制品；消费方仍须依经批准的单调发布规则验收，
    不能因指针可读而跳过验签、摘要或反重放检查。部分指针推进失败时逐目标记录结果，
    不把整体写成已激活，也不把已推进的指针倒退到较旧 generation。

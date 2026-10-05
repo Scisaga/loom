@@ -118,7 +118,7 @@ func activateServices(ctx context.Context, options Options, view control.DeviceV
 	for _, scope := range scopes {
 		value, err := Activate(ctx, selector, byScope[scope], result.State, options.probeForService(view, scope), options.Now)
 		if value.State.Schema == 0 {
-			return result, err
+			return Activation{}, err
 		}
 		result.State = value.State
 		result.Selections = append(result.Selections, value.Selections...)
@@ -154,6 +154,10 @@ func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpo
 		return "", err
 	}
 	config, err := clientadapter.ManagedRuntimeConfig(view, secret)
+	if err != nil {
+		return "", err
+	}
+	config, err = withBlockedSelectors(config)
 	if err != nil {
 		return "", err
 	}
@@ -385,11 +389,8 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	// Refuse an unsatisfied preference before opening the data listener. An
-	// empty local-hop chain must not briefly serve a Direct-only preference.
-	if _, err := selectAll(routes, local.Observations, local.Preference, nil, generation, options.Now()); err != nil {
-		return err
-	}
+	// Every local selector starts at reject. A missing usable candidate closes
+	// only its Service; it cannot briefly serve a different Preference.
 	secret, err := runtimeSecret()
 	if err != nil {
 		return err
@@ -524,7 +525,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			readback = control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}
 			if hasAccess {
 				activation, err = Activate(ctx, selector, routes, local, nil, options.Now)
-				if err != nil {
+				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 					return err
 				}
 			}
@@ -604,6 +605,45 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 	}
+}
+
+// This runtime-only block never becomes an authorized candidate or Selection.
+// The original signed profile and its candidate order remain unchanged.
+func withBlockedSelectors(config string) (string, error) {
+	var document map[string]any
+	if err := json.Unmarshal([]byte(config), &document); err != nil {
+		return "", err
+	}
+	outbounds, ok := document["outbounds"].([]any)
+	if !ok {
+		return "", errors.New("runtime outbounds are invalid")
+	}
+	block := false
+	for _, raw := range outbounds {
+		value, ok := raw.(map[string]any)
+		if !ok {
+			return "", errors.New("runtime outbound is invalid")
+		}
+		if value["tag"] == blockedSelection {
+			if value["type"] != "block" {
+				return "", errors.New("runtime rejection outbound is invalid")
+			}
+			block = true
+		}
+		if value["type"] == "selector" {
+			members, ok := value["outbounds"].([]any)
+			if !ok {
+				return "", errors.New("runtime selector is invalid")
+			}
+			value["outbounds"] = append(members, blockedSelection)
+			value["default"] = blockedSelection
+		}
+	}
+	if !block {
+		return "", errors.New("runtime rejection outbound is missing")
+	}
+	body, err := json.Marshal(document)
+	return string(body), err
 }
 func writeInactiveStatus(store *deviceclient.Store, options Options, state string) (Status, error) {
 	lkg := store.LKG()
