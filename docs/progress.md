@@ -428,6 +428,25 @@ WG 代理均通过，控制前沿及节点投影一致，已替代和中间候�
 证据位于 `deploy/evidence/2026-10-05-release-distribution/invite-expiry/` 与 `invite-expiry-final/`。
 绑定后的新增 control 仍依赖未实现的多数成员链；此次自动终结不释放已绑定身份，也不抵扣该结果。
 
+### 全部 YAML 目标的正式签名分发
+
+此前跨目标上传、公开回读及指针推进依赖受保护临时脚本。现已接入正式 `loom release publish`：
+严格读取原 `.env` 与 YAML，经私有管理员入口核对当前节点授权，逐节点回读真实身份；所有目标原指针
+检查完成后才上传原始签名包，全部不可变文件及公开 HTTPS 正文字节验证通过后才条件推进 current。
+目标端保留独立验签与原指针比较，最终再次回读全部目标；没有新增常驻发布器、任务 store 或自动安装。
+
+真实签名制品测试覆盖身份不符不上传、公开字节失败不推进、并发旧值拒绝、部分推进后同目录重试、
+授权中途变化停止、降代拒绝及传输原字节保全。生产命令已实际完成全部 YAML 目标，真实 mTLS Chrome
+下载 Linux 和 Windows 包后独立验签通过。公网仅以内容摘要映射已经核验为公开的不可变文件；原网站、
+TLS 与私有路径边界实际回读保持，旧 SSOT 发布写入器及其重复目标、历史和指针写入路径已删除。
+受保护旧签名字节仍可离线取证，不恢复为新发布或安装的运行权威。
+
+同一精确程序已激活全部获准节点，身份、RuntimeKey、认证原件、证书、旧 floor 和宿主 route/rule 保持；
+固定境外出口、Auto、新建管理连接、DNS 与既有 WG 代理通过，全部 control 前沿和授权一致。
+已替代版本及未启用中间候选的可执行程序逐节点删除。证据位于
+`deploy/evidence/2026-10-05-release-distribution/formal-publish/` 与 `formal-publish-final/`。
+下载目录的推进仍不等于期望组件事实、旧运行 floor 的前向消费或应用制品的自动安装。
+
 ### 本轮实现与实际验证
 
 Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
@@ -597,7 +616,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh/SSH 安装、原事务恢复、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture 及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
 | Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；这些结果不抵扣发布 catalog。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
-| 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已验签分发到全部 YAML 目标；公网精确下载、私有发布页、带旧值比较的 import 和 Linux 安装器接受代前向升级已实际回读，旧运行 floor 保全。 | YAML 全目标正式 executor、其余应用制品 manifest、期望组件事实与实际报告比较、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
+| 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | 其余应用制品 manifest、期望组件事实与实际报告比较、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
 | 字段级同构 | Direct/本机出口/Hy2/WG 中继已定义并消费跨层对应与严格往返；初始成员、节点绑定及 distribution_urls 已落实。 | 其他传输、动态成员和未定观测算法；旧 HTTP 分发坐标不自动转换成 HTTPS。 |
 | 生产切换 | 本次明确授权的精确制品已接管正式服务，原身份/密钥/管理员/认证原件和 floor/latch 保全，旧运行入口退出。 | schema 3 签名发布 catalog 的单调消费、全部功能或全部平台已完成；旧证据不能恢复成运行权威。 |

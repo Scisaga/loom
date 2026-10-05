@@ -96,7 +96,7 @@ func snapshotEvents(events []Event) []Event {
 	return result
 }
 
-func buildWebSnapshot(projection Projection, admin, local, writable bool) WebSnapshot {
+func buildWebSnapshot(projection Projection, admin, local, writable bool, releases ...ReleaseSet) WebSnapshot {
 	capabilities := WebCapabilities{Credential: "none", Admin: admin, Operations: []string{}}
 	if admin {
 		capabilities.Credential = "admin"
@@ -105,10 +105,15 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool) WebSna
 		capabilities.Credential = "local_admin"
 	}
 	if admin && writable {
-		capabilities.Operations = []string{"device.delete", "device.put", "device.revoke", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "service.delete", "service.put"}
+		capabilities.Operations = []string{"device.delete", "device.put", "device.revoke", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "service.delete", "service.put"}
 	}
-	devices := projectWebDevices(projection)
+	devices := projectWebDevices(projection, releases...)
 	warnings := []WebWarning{}
+	for _, device := range devices {
+		if device.ComponentError != "" {
+			warnings = append(warnings, WebWarning{Code: "expected_component_unavailable", Message: device.ID + ": " + device.ComponentError})
+		}
+	}
 	for _, target := range projection.Targets {
 		if target.Conflicted {
 			warnings = append(warnings, WebWarning{Code: "conflicting_facts", Message: target.TargetKind + " " + target.TargetID + " has conflicting changes."})
@@ -123,7 +128,7 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool) WebSna
 	return WebSnapshot{Schema: 3, NetworkID: projection.NetworkID, ControlConfigID: projection.ControlConfigID,
 		FactFrontier: append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},
-		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPaths(projection), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
+		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPaths(projection, releases...), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
 		Services: append([]Service{}, projection.NetworkIntent.Services...), Releases: []Release{}, Deployments: []Deployment{},
 		Events: []Event{}, Traffic: []TrafficBucket{}}
 }

@@ -3,6 +3,10 @@
 package control
 
 type Device struct {
+	ExpectedComponents []ComponentReadback `json:"expected_components"`
+	ExpectedReferences []ExpectedComponent `json:"expected_component_references"`
+	ComponentError     string              `json:"component_error,omitempty"`
+
 	PolicyIDs           []string        `json:"policy_ids"`
 	DistributionURLs    []string        `json:"distribution_urls"`
 	DNSServers          []string        `json:"dns_servers"`
@@ -71,6 +75,10 @@ type Path struct {
 }
 
 type Release struct {
+	CatalogDigest  string              `json:"catalog_digest"`
+	ManifestDigest string              `json:"manifest_digest"`
+	Components     []ComponentReadback `json:"components"`
+
 	Path         string       `json:"path"`
 	Name         string       `json:"name"`
 	Title        string       `json:"title"`

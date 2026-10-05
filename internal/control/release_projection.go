@@ -39,7 +39,7 @@ func (server *Server) projectReleases(snapshot *WebSnapshot) error {
 		}
 		url := releaseDownloadBase(set.ID, file.Digest)
 		checksum := releaseChecksum(file)
-		result = append(result, Release{Path: "bin/" + strings.TrimPrefix(file.Digest, "sha256:"), Name: file.Name, Title: title, Platform: platform, Arch: arch, Variant: variant, Version: pkg.Version, SourceCommit: pkg.SourceCommit, SHA256: strings.TrimPrefix(file.Digest, "sha256:"), Size: int64(file.Size), Signing: "Platform Ed25519 manifest and catalog", URL: url + "download",
+		result = append(result, Release{CatalogDigest: set.ID, ManifestDigest: pkg.Entry.ManifestDigest, Components: append([]ComponentReadback{}, pkg.Components...), Path: "bin/" + strings.TrimPrefix(file.Digest, "sha256:"), Name: file.Name, Title: title, Platform: platform, Arch: arch, Variant: variant, Version: pkg.Version, SourceCommit: pkg.SourceCommit, SHA256: strings.TrimPrefix(file.Digest, "sha256:"), Size: int64(file.Size), Signing: "Platform Ed25519 manifest and catalog", URL: url + "download",
 			Checksum:  &ReleaseFile{Name: file.Name + ".sha256", SHA256: strings.TrimPrefix(ReleaseDigest(checksum), "sha256:"), Size: int64(len(checksum)), URL: url + "checksum"},
 			Signature: &ReleaseFile{Name: file.Name + ".sig", SHA256: strings.TrimPrefix(ReleaseDigest(pkg.Signature), "sha256:"), Size: int64(len(pkg.Signature)), URL: url + "signature"}})
 	}

@@ -5,9 +5,14 @@ export function componentComparisons(device,report){
   const key=value=>value.component_id+'\0'+value.platform,expected=new Map(list(device?.expected_components).map(v=>[key(v),v])),actual=new Map(list(report?.components).map(v=>[key(v),v]));
   return [...new Set([...expected.keys(),...actual.keys()])].sort().map(id=>{
     const wanted=expected.get(id),observed=actual.get(id),value=wanted||observed;
-    const result=!wanted?'unconfigured':!observed?'missing':!wanted.artifact_digest||!observed.artifact_digest?'unknown':wanted.artifact_digest===observed.artifact_digest&&wanted.version===observed.version?'reported_match':'reported_mismatch';
+    const result=device?.component_error?'unavailable':!wanted?'unconfigured':!observed?'missing':!wanted.artifact_digest||!observed.artifact_digest?'unknown':wanted.artifact_digest===observed.artifact_digest&&wanted.version===observed.version?'reported_match':'reported_mismatch';
     return {component_id:value.component_id,platform:value.platform,expected:wanted,actual:observed,result};
   });
+}
+export async function expectedComponentID(value){
+  const identity={node_id:value.node_id,component_id:value.component_id,platform:value.platform},bytes=new TextEncoder().encode('loom-expected-component-v3\0'+canonical(identity));
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return 'sha256:'+Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
 export function topologyPositions(nodes){
   const sorted=[...nodes].sort((a,b)=>Number(!!b.Control)-Number(!!a.Control)||a.ID.localeCompare(b.ID));

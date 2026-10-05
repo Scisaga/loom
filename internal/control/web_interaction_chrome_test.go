@@ -339,6 +339,10 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	}
 	fixture := newEndpointFixture(t)
 	server := fixture.server
+	releaseSource, _ := expectedReleaseFixture()
+	releaseSource.original.Packages[0].Components[0].Version = "demo-agent"
+	releaseSource.original.Packages[0].Components[0].ArtifactDigest = "sha256:" + strings.Repeat("a", 64)
+	server.Releases = releaseSource
 	var err error
 	server.Reports, err = OpenObservationStore(server.Runtime.Authority.root)
 	if err != nil {
@@ -566,6 +570,32 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("signed component reports did not survive observation store reopen", err)
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#expected-component-form');f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')&&document.querySelector('#expected-component-form [data-delete-kind="expected_component"]')`)
+	if len(server.Runtime.Authority.Snapshot().NetworkIntent.ExpectedComponents) != 1 {
+		t.Fatal("browser expected-component operation did not persist")
+	}
+	view, err = server.deviceEnvelope("demo-browser-device")
+	if err != nil || len(view.View.ExpectedComponents) != 1 {
+		t.Fatal("browser expectation did not enter the signed device view", err)
+	}
+	report.ReportSequence++
+	report.ViewDigest, report.Runtime.AppliedViewDigest = view.ViewDigest, view.ViewDigest
+	sendReport(report)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime [data-component="agent"]')?.innerText.includes('Reported coordinates match')`)
+	if chromeDo(t, debug, `document.querySelector('#device-runtime [data-component="sing-box"]').innerText.includes('No expectation set')`) != true {
+		t.Fatal("one expected component manufactured another expectation")
+	}
+	chromeDo(t, debug, `(()=>{window.confirm=()=>true;document.querySelector('#expected-component-form [data-delete-kind="expected_component"]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `!document.querySelector('#expected-component-form [data-delete-kind="expected_component"]')&&document.querySelector('#notice').textContent.includes('Deletion accepted locally')`)
+	if len(server.Runtime.Authority.Snapshot().NetworkIntent.ExpectedComponents) != 0 {
+		t.Fatal("browser clear did not withdraw the exact expectation")
+	}
+	view, err = server.deviceEnvelope("demo-browser-device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.ViewDigest = view.ViewDigest
 	report.Components = report.Components[:1]
 	report.ReportSequence++
 	report.Runtime = RuntimeReadback{State: "error", ErrorCode: "demo-execution-failed"}

@@ -29,7 +29,7 @@ type NetworkIntent struct {
 	BusinessProbeTargets []BusinessProbeTarget   `json:"business_probe_targets"`
 	DNSRecords           []undefinedNetworkValue `json:"dns_records"`
 	PublicTrust          []undefinedNetworkValue `json:"public_trust"`
-	ExpectedComponents   []undefinedNetworkValue `json:"expected_components"`
+	ExpectedComponents   []ExpectedComponent     `json:"expected_components"`
 }
 
 // No non-empty value of this type is valid. It preserves the already defined
@@ -278,7 +278,7 @@ func contractUpperHex(value byte) bool {
 
 func EmptyNetworkIntent() NetworkIntent {
 	return NetworkIntent{Schema: 3, Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{},
-		BusinessProbeTargets: []BusinessProbeTarget{}, DNSRecords: []undefinedNetworkValue{}, PublicTrust: []undefinedNetworkValue{}, ExpectedComponents: []undefinedNetworkValue{}}
+		BusinessProbeTargets: []BusinessProbeTarget{}, DNSRecords: []undefinedNetworkValue{}, PublicTrust: []undefinedNetworkValue{}, ExpectedComponents: []ExpectedComponent{}}
 }
 
 func (intent NetworkIntent) Validate() error {

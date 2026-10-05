@@ -310,9 +310,10 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		return WebSnapshot{}, errors.New("control projection unavailable")
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable())
+	releases := server.expectedReleaseSets(projection)
+	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
 	if server.Reports != nil {
-		reports := server.Reports.Verified(projection)
+		reports := server.Reports.Verified(projection, releases...)
 		projectWebObservations(&snapshot, reports, server.now())
 		snapshot.Events = snapshotEvents(projectReportHistory(reports))
 	}
@@ -396,7 +397,7 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable())}
+	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)}
 	if extra != nil && extra.Invite != "" {
 		response["invite"] = extra.Invite
 	}

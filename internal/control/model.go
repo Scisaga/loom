@@ -69,6 +69,7 @@ func (DevicePut) materialPayload()             {}
 func (EndpointGeneration) materialPayload()    {}
 func (TransportResource) materialPayload()     {}
 func (NetworkLink) materialPayload()           {}
+func (ExpectedComponent) materialPayload()     {}
 
 type DevicePut struct {
 	ID               string   `json:"id"`
@@ -245,7 +246,7 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 			return errors.New("policy.put has the wrong payload or target")
 		}
 		return value.Validate()
-	case "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete":
+	case "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete":
 		value, ok := payload.(DeleteTarget)
 		if !ok || operation != kind+".delete" && !(operation == "device.revoke" && kind == "device") || value.ID != id {
 			return errors.New("deletion has the wrong payload or target")
@@ -291,6 +292,12 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 		value, ok := payload.(NetworkLink)
 		if !ok || kind != "link" || value.ID != id {
 			return errors.New("link payload or target is invalid")
+		}
+		return value.Validate()
+	case "expected_component.put":
+		value, ok := payload.(ExpectedComponent)
+		if !ok || kind != "expected_component" || value.ID != id {
+			return errors.New("expected component has the wrong payload or target")
 		}
 		return value.Validate()
 	case "probe_target.put":
@@ -573,7 +580,7 @@ func decodeMaterialPayload(operation, kind string, value any) (MaterialPayload, 
 		target = &Service{}
 	case "policy.put":
 		target = &NetworkPolicy{}
-	case "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete":
+	case "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete":
 		target = &DeleteTarget{}
 	case "invite.issue":
 		target = &Invite{}
@@ -591,6 +598,8 @@ func decodeMaterialPayload(operation, kind string, value any) (MaterialPayload, 
 		target = &NetworkLink{}
 	case "probe_target.put":
 		target = &BusinessProbeTarget{}
+	case "expected_component.put":
+		target = &ExpectedComponent{}
 	default:
 		return nil, errors.New("unsupported Material payload contract")
 	}
@@ -921,6 +930,8 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 			projection.NetworkIntent.Policies = append(projection.NetworkIntent.Policies, value)
 		case BusinessProbeTarget:
 			projection.NetworkIntent.BusinessProbeTargets = append(projection.NetworkIntent.BusinessProbeTargets, value)
+		case ExpectedComponent:
+			projection.NetworkIntent.ExpectedComponents = append(projection.NetworkIntent.ExpectedComponents, value)
 		case DeviceAuthorization:
 			projection.DeviceAuthorizations = append(projection.DeviceAuthorizations, value)
 		case EndpointGeneration:
@@ -931,6 +942,9 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 			projection.NetworkIntent.Links = append(projection.NetworkIntent.Links, value)
 		}
 	}
+	sort.Slice(projection.NetworkIntent.ExpectedComponents, func(i, j int) bool {
+		return expectedComponentLess(projection.NetworkIntent.ExpectedComponents[i], projection.NetworkIntent.ExpectedComponents[j])
+	})
 	graph.projectEndpointGenerations(&projection, ids)
 	closeEnrollmentConflicts(&projection)
 	sort.Slice(projection.Invites, func(i, j int) bool { return projection.Invites[i].ID < projection.Invites[j].ID })
@@ -942,7 +956,7 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 
 func isWithdrawal(operation string) bool {
 	switch operation {
-	case "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "invite.cancel", "invite.expire":
+	case "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "expected_component.delete", "invite.cancel", "invite.expire":
 		return true
 	}
 	return false
@@ -1009,6 +1023,11 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		return graph.validateDevice(material, view, history, value)
 	case EndpointGeneration:
 		return graph.validateEndpoint(material, view, history, value)
+	case ExpectedComponent:
+		if err := validateExpectedNode(value, view); err != nil {
+			return err
+		}
+		return requireTargetDependency(material, view, "device", value.NodeID, true)
 	case TransportResource:
 		for _, id := range history {
 			if prior, ok := graph.facts[id].Payload.(TransportResource); ok && prior.ID == value.ID && (prior.OwnerNodeID != value.OwnerNodeID || prior.Kind != value.Kind || prior.ListenerID != value.ListenerID) {

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func projectWebDevices(projection Projection) []Device {
+func projectWebDevices(projection Projection, releases ...ReleaseSet) []Device {
 	byID := map[string]Device{}
 	for _, member := range projection.Config.Members {
 		byID[member.NodeID] = Device{ID: member.NodeID, Name: member.NodeID, Roles: []string{"control"}, Authorized: true, Availability: "unknown", PolicyIDs: []string{}, DistributionURLs: []string{}, Dependencies: []string{}, Presence: "unknown", RuntimeState: "unknown"}
@@ -71,16 +71,30 @@ func projectWebDevices(projection Projection) []Device {
 	}
 	devices := make([]Device, 0, len(byID))
 	for _, device := range byID {
+		device.ExpectedComponents, device.ExpectedReferences = []ComponentReadback{}, []ExpectedComponent{}
+		if device.Authorized && device.Platform != "" {
+			for _, value := range projection.NetworkIntent.ExpectedComponents {
+				if value.NodeID == device.ID {
+					device.ExpectedReferences = append(device.ExpectedReferences, value)
+				}
+			}
+			components, err := deviceExpectedComponents(projection, device.ID, releases)
+			if err != nil {
+				device.ComponentError = err.Error()
+			} else {
+				device.ExpectedComponents = components
+			}
+		}
 		devices = append(devices, device)
 	}
 	sort.Slice(devices, func(i, j int) bool { return devices[i].ID < devices[j].ID })
 	return devices
 }
 
-func projectWebPaths(projection Projection) []Path {
+func projectWebPaths(projection Projection, releases ...ReleaseSet) []Path {
 	paths := []Path{}
 	for _, device := range projection.DeviceAuthorizations {
-		view, err := ProjectDeviceView(projection, device.ID)
+		view, err := ProjectDeviceView(projection, device.ID, releases...)
 		if err != nil {
 			continue
 		}

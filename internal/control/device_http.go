@@ -48,6 +48,19 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
 		return Submission{}, nil, priorErr
 	}
+	if operation.Operation == "expected_component.put" && errors.Is(priorErr, os.ErrNotExist) {
+		value := operation.Payload.(ExpectedComponent)
+		if server.Releases == nil {
+			return Submission{}, nil, errExpectedRelease
+		}
+		set, err := server.Releases.ReadCatalog(value.CatalogDigest)
+		if err != nil {
+			return Submission{}, nil, errExpectedRelease
+		}
+		if _, err := resolveExpectedComponent(value, []ReleaseSet{set}); err != nil {
+			return Submission{}, nil, err
+		}
+	}
 	if operation.Operation == "endpoint.put" && errors.Is(priorErr, os.ErrNotExist) {
 		value := operation.Payload.(EndpointGeneration)
 		if value.OwnerControlID != server.Runtime.Config.ControlID {
@@ -440,7 +453,7 @@ func (server *Server) deviceEnvelope(deviceID string) (DeviceViewEnvelope, error
 	if err != nil {
 		return DeviceViewEnvelope{}, err
 	}
-	view, err := ProjectDeviceView(projection, deviceID)
+	view, err := ProjectDeviceView(projection, deviceID, server.expectedReleaseSets(projection)...)
 	if err != nil {
 		return DeviceViewEnvelope{}, err
 	}

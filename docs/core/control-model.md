@@ -288,6 +288,12 @@ NetworkIntent.nodes 与 PublisherInput 从有效设备事实单向投影该列�
 
 `NetworkIntent` 是 Projection 中的规范值，保存节点、Service、Policy、TransportResource、NetworkLink、共享 HTTPS 探测目标、overlay DNS、局域网映射、公开信任材料（数据面 TLS 身份与网站证书信任根的公开证书）及各节点期望组件（按发布记录摘要引用，不复制制品内容）。每项按稳定 ID 签发修改或撤销事实，先整体验证该目标规范值和引用，再投影；不得以网络全量替换覆盖并发写入。`Projection` 另含设备授权、管理员证书名单和 `EndpointGeneration`，它们与 NetworkIntent 一样只由签名事实确定。
 
+期望组件使用[精确发布引用](current-contract.md#节点期望组件的精确发布引用)：普通签名只指定节点与
+组件应引用哪份 catalog/manifest，程序坐标仍从独立验签的发布记录纯投影。期望引用的同步不搬运制品，
+某 control 缺少相应发布材料时该引用不可执行，不能以下载 current、上次缓存或空期望代替。
+原本只有实际运行报告，无法表达管理员想要的程序；最小变化是接入已有 ExpectedComponent 普通事实及
+节点页面选择入口。新增操作成本是选择节点、已验证组件与平台，不增加发布阶段或审批状态机。
+
 `TransportResource` 有稳定 ID、种类、固定承载节点及 interface/listener 身份、拨号坐标和公开认证参数。当前接受已定义的 `wireguard`、`hysteria2` 和 `tls_tunnel`；新加密隧道需在同一模型写清身份、用途和回读规则。多个 access 首跳和中继 LinkID 可复用同一 WG interface 或 hy2 listener。普通设备参与资格由其身份、授权和实际数据面 ACL 投影，**不追加到共享资源的规范参与者列表**；新增 WG peer 只改变该设备对应的受保护执行投影，不改变其他设备的资源身份或观测摘要。资源自身规范参数变化只使引用它的观测失效。私钥、凭据、证书私有部分及本机 listener 参数只在节点受保护执行输入中保存；不为每设备建立新接口。
 
 三种资源的最小业务边界如下；表中的字段是必须表达的**语义**，不是尚未定义的 schema 3 字节名。

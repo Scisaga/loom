@@ -191,7 +191,7 @@ sequence: U64，至少 1
 previous_material_id: Digest；序列 1 使用固定空链值
 dependencies: []Digest
 request_id: ID
-target_kind: service | policy | device | invite | endpoint | resource | link | probe_target
+target_kind: service | policy | device | invite | endpoint | resource | link | probe_target | expected_component
 target_id: ID
 operation: 下表中的精确操作名
 payload: 对应的唯一类型
@@ -233,6 +233,8 @@ daemon 校验依赖后生成签名事实并持久化，
 | `resource.delete`、`link.delete` / 对应种类 | `{"id":ID}`；共享资源删除收口全部引用，Link 删除只收口引用它的候选 |
 | `probe_target.put` / probe_target | `id:ID,url:HTTPS_URL`；仍是已有共享目标池的元素，不拥有独立探测组生命周期 |
 | `probe_target.delete` / probe_target | `{"id":ID}`；不改变设备权限 |
+| `expected_component.put` / expected_component | 下述 ExpectedComponent；依赖有效设备授权及已审阅的同目标前值，签发前独立验证精确发布引用 |
+| `expected_component.delete` / expected_component | `{"id":ID}`；只撤销该期望，不删除程序、不降低安装 floor 或改变设备权限 |
 | `conflict.resolve` / 被解决目标种类 | `conflicts:[]Digest,action:put或delete`；put 另含对应完整 `value`，delete 不含 value；引用须覆盖全部冲突，不能通过此操作绕过成员资格/已绑定 control 事务或设备墓碑 |
 
 以上为本链所需操作，不新增管理员证书、成员治理或发布操作的编码。那些入口仍须遵循各自模型，
@@ -368,7 +370,7 @@ genesis.network_intent 的字段集固定为下表；schema 为整数 `3`，其�
 | business_probe_targets | `id:ID,url:HTTPS_URL`；按 id 排序；这是共享目标池，不自动分配 Service 权限 |
 | dns_records | 精确 `.loom` DNS 的既有值集合；稳定 id 排序；同名冲突、通配及保留名 `control.loom` 拒绝；其完整非空 wire 字段尚待补齐 |
 | public_trust | 数据面 TLS 和网站信任根的公开值集合；稳定 id 排序；用途及公开证书须与其引用资源/入口一致；完整非空 wire 字段尚待补齐 |
-| expected_components | 按节点引用验签发布记录的既有值集合；按 node_id、component_id、platform 排序；发布签名、摘要及节点引用必须成立，完整非空 wire 字段尚待补齐 |
+| expected_components | 下述 ExpectedComponent；按 node_id、component_id、platform 排序；初始值没有普通设备授权，非空初始期望拒绝，后续通过普通事实逐项修改 |
 
 所有元素稳定 ID 在本类集合内唯一；Service 与 Policy 即使使用相同文本 ID 也分别按目标种类寻址。
 引用只在同一完整初值及初始成员表内解析，不能查询现场网络、未签 registry、旧 Projection 或部署输入
@@ -854,6 +856,48 @@ Releases 页面；原 manifest 中 Loom/sing-box/Wintun 的文件摘要 → 实�
 Linux 的 loom 对应既有运行 component_id=agent，数据面恰为 sing-box；Windows 数据面另有 wintun。
 交付组件 ID 和运行组件 ID 各自描述既有对象，不以 ID 相同或“安装命令成功”替代该签名关系。
 发布清单可删除重建的 UI 投影不能签发期望组件；期望仍须管理员普通 operation，应用仍须真实报告。
+
+### 节点期望组件的精确发布引用
+
+`ExpectedComponent` 是已经定义的节点期望值，不是发布任务或安装状态。稳定身份由
+`{node_id,component_id,platform}` 决定；删除该值会丢失管理员对这一个程序及执行平台的期望，
+无法用下载 current 或其他节点的成功恢复它。规范字段恰为
+`id,node_id,component_id,platform,catalog_digest,manifest_digest`；id 等于
+`SHA256("loom-expected-component-v3\0" || C({node_id,component_id,platform}))` 的 Digest 表达。
+两份发布摘要固定原始 schema 3 catalog 与其引用的 manifest；不保存 archive/ZIP 摘要作为程序摘要，
+也不再复制一份可编辑的 version、运行摘要或制品内容。现有可解析组合为 Linux agent/sing-box 与
+Windows sing-box/wintun，平台为相应 OS 的 amd64/arm64；没有规范 manifest 的应用组件不能创建期望。
+
+| 层 | 唯一表达与方向 |
+|---|---|
+| domain | 一个节点、运行组件、平台的精确发布引用；put 替换引用，delete 撤销引用 |
+| wire / persistent | 同一 ExpectedComponent 随普通 schema 3 Material 规范签名及持久化；与其他事实一起同步和重放 |
+| release store | 独立固定公钥验证的原 catalog、manifest 与制品；事实只引用它们，current 不参与解析 |
+| runtime | 调用方先独立读取并验证引用的 release set，再交给纯投影解析程序坐标；DeviceView.expected_components 保持既有四字段 |
+| UI | 管理员选择已核验组件；节点详情与 Device versions 展示期望引用、实际报告坐标和比较依据，未验证引用明确不可用 |
+
+普通事实证明管理员签署了哪一个期望引用，发布签名证明该引用实际包含哪些程序。两者不可互相代替。
+正式管理入口签发 put 前须通过独立 ReleaseSource 验证精确 catalog、manifest、平台与组件，
+并验证节点 OS 及当前设备授权依赖；相同 request ID 重试返回原签名字节，不重新选择 current。
+CRDT 接收与重放仍只按普通事实的签名、因果关系及规范字段接受引用，不因本机文件暂缺而删除事实或
+重排签发链。每个 control 在生成 DeviceView、验证报告的当前 View 或展示期望坐标时，均须从自身固定
+发布公钥独立验证原引用；缺文件、错签名、摘要或组件不符使受影响的期望投影不可用，不能降成空期望。
+恢复原始已验证文件后可重新投影，无额外恢复状态。纯投影不查询磁盘、时钟、网络或随机数。
+
+put 引用有效节点事实及原期望事实；陈旧依赖、同请求异值和未知字段拒绝。撤权/删除的节点不能取得
+新的期望 View，已签引用仅保留为历史；同身份合法重新授权后才可再次消费。并发冲突沿既有目标冲突
+规则失败关闭，不选择某个发布为赢家；delete 可清除有冲突或已撤权节点的期望，但不重置任何安装代。
+重启从原事实和原签名发布字节重建，无第二份期望 store。发布目录推进、期望变更、实际安装和业务成功
+是分别可回读的结果；本值没有执行进度、超时或自动回滚，也不授权绕过生产旧 floor 的迁移证明。
+
+反例：管理员期望 catalog A 的 agent，随后下载 current 改成 B，仍必须回读 A 的原 manifest；即使
+A/B 版本文本相同，也按精确程序摘要比较，不能把 B 的文件或整包摘要当作已满足 A。没有报告或缺少
+新鲜性依据只显示缺项或带时间的 reported 比较，不能宣布已应用。
+
+正常链为：已核验发布 → 正式 UI/CLI put → daemon 独立验签及普通事实持久化 → 同步/重启 →
+DeviceView 精确坐标 → 客户端实际进程报告 → 管理员原入口回读。最小测试覆盖规范往返与原空值字节、
+错节点/平台/manifest 拒绝、陈旧依赖、目录变化不改变期望、发布文件缺失后的失败与恢复、撤销/冲突、
+重启及真实浏览器的提交和签名报告对照；不恢复 publisher observation、registry、receipt 或旧 SSOT 写入。
 
 最小验证：规范往返及确定性；错钥、旧格式、字段/排序/媒体/受众和原包绑定拒绝；不可变文件损坏拒绝；
 并发旧指针比较、同代同值重试、降代/同代异值拒绝；CLI 写入后重启回读、私有 Web 精确下载及安装消费。

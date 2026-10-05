@@ -224,16 +224,16 @@ func (store *ObservationStore) History() []DeviceReport {
 	}
 	return result
 }
-func (store *ObservationStore) Verified(projection Projection) []DeviceReport {
+func (store *ObservationStore) Verified(projection Projection, releases ...ReleaseSet) []DeviceReport {
 	result := []DeviceReport{}
 	for _, report := range store.All() {
-		if verifyCurrentReport(report, projection) == nil {
+		if verifyCurrentReport(report, projection, releases...) == nil {
 			result = append(result, report)
 		}
 	}
 	return result
 }
-func verifyCurrentReport(report DeviceReport, projection Projection) error {
+func verifyCurrentReport(report DeviceReport, projection Projection, releases ...ReleaseSet) error {
 	if report.NetworkID != projection.NetworkID {
 		return errors.New("device report belongs to another network")
 	}
@@ -241,7 +241,7 @@ func verifyCurrentReport(report DeviceReport, projection Projection) error {
 	if !found || report.Verify(authorization.DevicePublicKey) != nil {
 		return errors.New("device report signature or authorization rejected")
 	}
-	view, err := ProjectDeviceView(projection, report.DeviceID)
+	view, err := ProjectDeviceView(projection, report.DeviceID, releases...)
 	if err != nil {
 		return err
 	}

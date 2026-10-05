@@ -277,9 +277,10 @@ func validateDeviceViewAuthorization(view DeviceView) error {
 	return nil
 }
 
-// ProjectDeviceView consumes only the authenticated disposable projection. The
-// envelope signer attaches the actual member proof and verified fact frontier.
-func ProjectDeviceView(projection Projection, deviceID string) (DeviceView, error) {
+// ProjectDeviceView consumes authenticated facts and independently verified
+// immutable release sets. It performs no I/O; the envelope signer attaches the
+// actual member proof and verified fact frontier.
+func ProjectDeviceView(projection Projection, deviceID string, releases ...ReleaseSet) (DeviceView, error) {
 	var authorization DeviceAuthorization
 	found := false
 	for _, value := range projection.DeviceAuthorizations {
@@ -297,6 +298,11 @@ func ProjectDeviceView(projection Projection, deviceID string) (DeviceView, erro
 		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
 		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
 		DNSServers: append([]string{}, authorization.DNSServers...), BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}
+	var componentErr error
+	view.ExpectedComponents, componentErr = deviceExpectedComponents(projection, deviceID, releases)
+	if componentErr != nil {
+		return DeviceView{}, componentErr
+	}
 	for _, member := range projection.Config.Members {
 		if member.NodeID == deviceID {
 			view.Responsibilities = append(view.Responsibilities, "control")
