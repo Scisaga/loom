@@ -495,6 +495,29 @@ Wintun，独立 DLL 虽在包中却没有加载；现已改为只加载同目录
 `deploy/evidence/2026-10-05-windows-components/runtime-coordinate/`；失败的启动检查和验收脚本记录保留，
 不充作通过证据。Android 组件回读、应用制品 manifest 与旧运行发布 floor 的前向消费继续推进，实体终验由用户完成。
 
+### Android 实际加载组件与停止报告
+
+Android 正式报告已删除固定空 components：当前应用主 APK 对应 agent，当前 ABI 实际执行的
+libbox.so 对应 sing-box。共享核心用正在执行的代码地址核对 APK inode、映射偏移与 ELF 执行段，
+从同一打开文件计算两个摘要，并在测量前后核对文件及映射；不读取期望组件，不把其他路径或 ABI 当实际运行。
+版本分别来自应用编入的源码提交和实际 Libbox.version。错误只遗漏无法测量的项目，原 schema 3 签名报告不变。
+
+实际停止验收另外发现正常断开取消周期任务后没有补发报告。现由已有应用作用域在资源清理后重新读取
+真实 stopped/error，避免随 VPN service 一起取消；不等待网络成功才允许断开，不制造新的报告 store 或重试状态机。
+当前模块仍已加载时继续回读其实际坐标，runtime.state 单独表示 VPN 已停止。
+
+源码 `2bc02ab0` 的正式签名 APK 0.5.2 / versionCode 9 已构建，两个 ABI 的原生库均与 AAR 一致。
+API 35 x86_64 隔离模拟器先以旧正式包正常导入、私有加入、真实 Hy2 HTTPS 和撤权，再原地升级；
+同一 Keystore 身份及撤权 LKG 恢复，再授权后的 HTTPS 与签名报告通过。停止报告修正沿同一设备和控制数据继续
+升级复验，连接、再次撤权、两次正常停止、进程重启、再授权及实际业务均通过；未清空身份或重新加入。
+安装后独立拉取的 APK 与交付文件相同，报告中的 APK/当前 ABI 原生库摘要与独立提取结果逐项相同，
+没有设置期望组件。控制 daemon 重启后从原始签名材料和报告字节恢复相同 UI 投影，停止报告及组件坐标保持一致。
+
+根模块与 mobile 的构建/测试/vet、格式和仓库安全检查通过；Android JVM、lint、正式 APK 签名与发布原生测试通过。
+证据位于 `deploy/evidence/2026-10-05-android-components/`，包括首次停止报告缺口的原始记录。
+测试模拟器已正常退出，宿主 route/rule/link 回读未改变配置；路由到期计时单独排除比较。
+实体 ARM64、真实设备 Keystore、切网等由用户终验；这些结果不抵扣尚未定义的应用发布 manifest/catalog。
+
 ### 本轮实现与实际验证
 
 Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
@@ -660,11 +683,11 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | DNS overlay | 精确 .loom、控制入口与权限分离的目标模型保留；端点 TLS/过期执行已有窄实现。 | 规范 DNS 事实/设备投影、私有解析器、受约束网站根与叶证书交付、CSR/手工续签、逐入口提醒、正式/回环两路径浏览器验链及生产读回。DNS provider、DNS-01 和 ACME 不在本项。 |
 | 共享局域网 | 目标由 forward 声明、control 签发 IPv4 虚拟映射，经所属 Policy 与 PolicyIDs 授权；不作为简单 Direct 链前置。 | 分配/冲突重分配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除及隔离实际运行。不得修改宿主初始 netns 或 LAN 路由器。 |
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
-| Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在干净 API 35 x86_64 模拟器已正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验，APK 签名也不等于 schema 3 发布 catalog。 |
+| Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在干净 API 35 x86_64 模拟器已正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和 UI/签名报告回读；同身份正式包升级、实际 APK/原生库测量及停止报告已验证。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验，APK 签名也不等于 schema 3 发布 catalog。 |
 | Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh/SSH 安装、原事务恢复、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture 及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
 | Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；这些结果不抵扣发布 catalog。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
-| 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | 其余应用制品 manifest、Android 的实际运行组件回读、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
+| 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | 其余应用制品 manifest、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
 | 字段级同构 | Direct/本机出口/Hy2/WG 中继已定义并消费跨层对应与严格往返；初始成员、节点绑定及 distribution_urls 已落实。 | 其他传输、动态成员和未定观测算法；旧 HTTP 分发坐标不自动转换成 HTTPS。 |
 | 生产切换 | 本次明确授权的精确制品已接管正式服务，原身份/密钥/管理员/认证原件和 floor/latch 保全，旧运行入口退出。 | schema 3 签名发布 catalog 的单调消费、全部功能或全部平台已完成；旧证据不能恢复成运行权威。 |
