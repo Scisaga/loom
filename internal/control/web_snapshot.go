@@ -21,6 +21,7 @@ type WebSnapshot struct {
 	Links           []Link             `json:"links"`
 	Paths           []Path             `json:"paths"`
 	Policies        []NetworkPolicy    `json:"policies"`
+	PolicyInvites   []WebPolicyInvite  `json:"policy_invites"`
 	Services        []Service          `json:"services"`
 	Releases        []Release          `json:"releases"`
 	Publisher       *PublisherStatus   `json:"publisher,omitempty"`
@@ -138,6 +139,7 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		FactFrontier: append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},
 		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPaths(projection, releases...), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
-		Services: append([]Service{}, projection.NetworkIntent.Services...), Releases: []Release{}, Deployments: []Deployment{},
+		PolicyInvites: []WebPolicyInvite{},
+		Services:      append([]Service{}, projection.NetworkIntent.Services...), Releases: []Release{}, Deployments: []Deployment{},
 		Events: []Event{}, Traffic: []TrafficBucket{}, Administrators: projectWebAdministrators(projection)}
 }

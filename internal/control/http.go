@@ -312,6 +312,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	projection := server.Runtime.Authority.Snapshot()
 	releases := server.expectedReleaseSets(projection)
 	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
+	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Reports != nil {
 		reports := server.Reports.Verified(projection, releases...)
 		projectWebObservations(&snapshot, reports, server.now())
@@ -397,7 +398,9 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)}
+	snapshot := buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)
+	snapshot.PolicyInvites = projectWebPolicyInvites(result.Projection, server.now())
+	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": snapshot}
 	if extra != nil && extra.Invite != "" {
 		response["invite"] = extra.Invite
 	}
