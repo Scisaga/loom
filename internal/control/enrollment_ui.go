@@ -33,6 +33,12 @@ func (server *Server) enrollmentOptions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	endpoints := []EndpointGeneration{}
+	sshTargets := []string{}
+	if server.SSH != nil {
+		if values, err := server.SSH.Targets(); err == nil {
+			sshTargets = values
+		}
+	}
 	for _, endpoint := range projection.EndpointGenerations {
 		if endpoint.OwnerControlID == server.Runtime.Config.ControlID && endpoint.State == "serving" && containsString(endpoint.Modes, "bootstrap") {
 			endpoints = append(endpoints, endpoint)
@@ -40,7 +46,7 @@ func (server *Server) enrollmentOptions(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "genesis_digest": server.Runtime.Config.GenesisID, "issuer_control_id": server.Runtime.Config.ControlID, "platforms": []enrollmentPlatformOption{
 		{ID: "android", Responsibilities: []string{"access"}}, {ID: "linux", Responsibilities: []string{"access", "control", "forward", "internet_egress"}}, {ID: "windows", Responsibilities: []string{"access"}},
-	}, "policies": policies, "endpoints": endpoints, "targets": projection.Targets})
+	}, "policies": policies, "endpoints": endpoints, "targets": projection.Targets, "ssh_targets": sshTargets})
 }
 
 // Re-displaying an open Invite uses the same persisted signed Material. A
@@ -113,7 +119,13 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt, "shell_command": command, "qr_available": qrAvailable, "delivery_error": deliveryError})
+	response := map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt, "shell_command": command, "qr_available": qrAvailable, "delivery_error": deliveryError}
+	if value.Medium == "ssh" {
+		response["ssh_execution"] = server.sshObservation(value.ID, value.SSHTarget)
+		_, _, err := server.sshInvite(value.ID)
+		response["ssh_executable"] = err == nil && server.SSH != nil
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 var errInviteQRCapacity = errors.New("invite exceeds single QR capacity")

@@ -16,6 +16,8 @@ func TestInstallExplicitModes(t *testing.T) {
 		valid bool
 	}{
 		{"upgrade", func(*InstallOptions) {}, true},
+		{"inspection", func(o *InstallOptions) { o.Upgrade = false; o.Inspect = true }, true},
+		{"ambiguous inspection", func(o *InstallOptions) { o.Inspect = true }, false},
 		{"invitation stdin", func(o *InstallOptions) { o.Upgrade = false; o.InviteStdin = true }, true},
 		{"cache", func(o *InstallOptions) { o.Upgrade = false; o.NoEnroll = true; o.Capture = "" }, true},
 		{"implicit capture", func(o *InstallOptions) { o.Capture = "" }, false},

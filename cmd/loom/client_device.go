@@ -70,7 +70,9 @@ func cmdClientEnrollMinimal(args []string) error {
 		return err
 	}
 	deadline := time.Now().Add(*wait)
-	claimed := false
+	// A saved View resumes with device authentication. The original bootstrap
+	// endpoint may already be retired; it must not be needed to reinstall.
+	claimed := store.LKG() != nil
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		var response control.EnrollmentResponse
@@ -129,6 +131,7 @@ func cmdClientInspect(args []string) error {
 	fs := flag.NewFlagSet("client inspect", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	statePath := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
+	identityOnly := fs.Bool("identity", false, "read public identity coordinates, including an unclaimed identity")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -137,6 +140,18 @@ func cmdClientInspect(args []string) error {
 	}
 	store, err := deviceclient.Load(*statePath)
 	if err != nil {
+		return err
+	}
+	identity, err := store.IdentityReadback()
+	if err != nil {
+		return err
+	}
+	if *identityOnly {
+		body, err := control.CanonicalEncode(identity)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(append(body, '\n'))
 		return err
 	}
 	lkg := store.LKG()
@@ -148,7 +163,7 @@ func cmdClientInspect(args []string) error {
 		Endpoints    int                      `json:"endpoints,omitempty"`
 		Routes       int                      `json:"routes,omitempty"`
 		Candidates   []control.RouteCandidate `json:"route_candidates"`
-	}{Joined: lkg != nil, Candidates: []control.RouteCandidate{}}
+	}{Joined: lkg != nil, DeviceID: identity.DeviceID, Candidates: []control.RouteCandidate{}}
 	if lkg != nil {
 		result.DeviceID, result.ViewDigest, result.FactFrontier = lkg.View.DeviceID, lkg.ViewDigest, lkg.FactFrontier
 		result.Endpoints, result.Routes = len(lkg.View.Endpoints), len(lkg.View.Routes)

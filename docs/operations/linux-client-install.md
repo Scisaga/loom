@@ -104,6 +104,21 @@ installer 依次完成：
    接受后失败再重试仍使用这些已有清单识别退役程序，不增设旧指针或安装 receipt；未来代缓存不受影响。
    不自动清理未知目录、旧权威 store 或身份密钥。
 
+`loom client install -inspect -package-root <已验签目录> -pubkey <带外公钥> -capture mixed`
+只读检查这个精确候选在目标机器上的安装条件，并以规范 JSON 回读平台、公开身份、已验证的接受代及
+可安装性/失败原因。它不创建安装锁文件、信任文件、缓存、身份或 unit，不启动和停止服务，不改变网络。
+已有安装的 unit、程序、信任及代比较与正式 installer 共用检查代码；正式执行在原排他锁内重读，不能
+拿一次检查结果跳过安装门禁。控制端先核验通用引导脚本，目标核验平台包，再使用包内这个只读入口；
+因此尚无 current 的部分安装也可检查。缺少或损坏的身份信息返回错误，不能降格为空目标。
+
+`loom client inspect -identity` 从唯一受保护设备文件读取公开身份坐标，即使尚无 LKG，也返回原网络锚、
+DeviceID、Invite/事务 ID、claim request ID、平台与设备公钥；不返回邀请能力、私钥或运行凭据。
+它是一次只读投影，不另存安装状态，`joined` 仅表示本机已经保存认证 View，不能替代 control 当前授权或
+运行报告。默认 inspect 同样能显示尚未加入身份的 DeviceID。文件不存在、不可验证或权限错误必须报错，
+调用方不能把错误或缺少正式程序入口当作“没有身份”：installer 可能已保存密钥但尚未激活 current。
+SSH 前置检查据此与原 Invite、签发者已接受的绑定及当前授权逐项比较，再决定新安装、同事务继续或进入
+现有设备管理。确认这些坐标不需要把远端私钥文件取回控制机。
+
 claim 尚未由签发者接受时，installer 不启用 service。使用同一 Invite 重跑会 resume 同一事务，不生成第二身份。
 `--no-enroll` 只安装已验证 release，不创建身份也不启动 service。已 Enrollment
 的机器升级时使用 `sudo ./install.sh --capture mixed --upgrade`；它复用现有 owner-only 身份与完整

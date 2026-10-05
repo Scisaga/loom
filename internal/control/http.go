@@ -42,9 +42,14 @@ type Server struct {
 	Endpoints          *EndpointRuntime
 	Reports            *ObservationStore
 	Releases           ReleaseSource
+	SSH                SSHExecutor
 	ReportSyncInterval time.Duration
 	mu                 sync.Mutex
 	endpointsMu        sync.RWMutex
+	sshMu              sync.Mutex
+	sshContext         context.Context
+	sshExecutions      map[string]SSHExecution
+	sshWorkers         sync.WaitGroup
 }
 
 func (server *Server) Serve(ctx context.Context) (retErr error) {
@@ -54,6 +59,8 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 	if err := server.Config.Validate(); err != nil {
 		return err
 	}
+	stopSSH := server.startSSHWorkers(ctx)
+	defer stopSSH()
 	parent := filepath.Dir(server.AdminSocket)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
@@ -156,6 +163,8 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
 	mux.HandleFunc("GET /api/control/ui/enrollment-options", server.enrollmentOptions)
+	mux.HandleFunc("POST /api/control/ui/ssh/check", server.sshPreflight)
+	mux.HandleFunc("POST /api/control/ui/invites/{transaction}/ssh", server.sshExecute)
 	mux.HandleFunc("GET /api/control/ui/invites/{transaction}", server.inviteReadback)
 	mux.HandleFunc("GET /api/control/ui/invites/{transaction}/qr.png", server.inviteQR)
 	mux.HandleFunc("GET /api/control/ui/invites/{transaction}/download", server.inviteDownload)

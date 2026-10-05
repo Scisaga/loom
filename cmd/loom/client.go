@@ -25,7 +25,8 @@ const clientUsage = `loom client —— 客户端交付
 	loom client enroll {-invite-file <文件>|-stdin} [-state <文件>]
 	                                             经受限 tunnel claim/resume 并原子保存 LKG
 	loom client sync [-state <文件>]              经认证设备通道读取并保存最新 DeviceView
-	loom client inspect [-state <文件>]           回读本机身份与认证 LKG（不显示秘密）
+	loom client inspect [-state <文件>] [-identity]
+	                                             回读本机身份与认证 LKG；identity 只给公开身份坐标
 	loom client run                              Linux 运行入口，默认显式 Mixed proxy
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
 	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service

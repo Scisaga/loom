@@ -81,14 +81,14 @@ set -eu
 umask 077
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 validate_distribution_roots() {
-  [ "$#" -ge 3 ] || fail 'Expected HTTPS distribution roots and --invite-stdin.'
+  [ "$#" -ge 3 ] || fail 'Expected HTTPS distribution roots and --invite-stdin or --inspect.'
   while [ "$#" -gt 1 ]; do
-    [ "$#" -ge 3 ] && [ "$1" = '--base-url' ] || fail 'Expected HTTPS distribution roots and --invite-stdin.'
+    [ "$#" -ge 3 ] && [ "$1" = '--base-url' ] || fail 'Expected HTTPS distribution roots and --invite-stdin or --inspect.'
     case "$2" in https://*/) ;; *) fail 'Distribution root must be HTTPS.' ;; esac
     case "$2" in *'?'*|*'#'*|*'@'*|*'\'*|*'%'*) fail 'Distribution root is not canonical.' ;; esac
     shift 2
   done
-  [ "$1" = '--invite-stdin' ] || fail 'Expected --invite-stdin.'
+  case "$1" in --invite-stdin) loom_bootstrap_inspect= ;; --inspect) loom_bootstrap_inspect=1 ;; *) fail 'Expected --invite-stdin or --inspect.' ;; esac
 }
 validate_distribution_roots "$@"
 for loom_tool in curl sha256sum tar mktemp uname id; do command -v "$loom_tool" >/dev/null 2>&1 || fail 'Required installation tool is missing.'; done
@@ -119,8 +119,13 @@ download_archive() {
 download_archive "$@" || fail 'No distribution root supplied the verified package.'
 tar -xzf "$loom_bootstrap_dir/client.tar.gz" -C "$loom_bootstrap_dir" --no-same-owner
 printf '%s\n' '` + base64.StdEncoding.EncodeToString(public) + `' > "$loom_bootstrap_dir/platform-signing.pub"
-sh "$loom_bootstrap_dir/loom-client-linux-$loom_arch/install.sh" \
-  --capture mixed --pubkey "$loom_bootstrap_dir/platform-signing.pub" --invite-stdin
+if [ "$loom_bootstrap_inspect" = 1 ]; then
+  sh "$loom_bootstrap_dir/loom-client-linux-$loom_arch/install.sh" \
+    --capture mixed --pubkey "$loom_bootstrap_dir/platform-signing.pub" --inspect
+else
+  sh "$loom_bootstrap_dir/loom-client-linux-$loom_arch/install.sh" \
+    --capture mixed --pubkey "$loom_bootstrap_dir/platform-signing.pub" --invite-stdin
+fi
 `), nil
 }
 

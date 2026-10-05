@@ -10,12 +10,20 @@ import (
 )
 
 func (server *Server) shellInviteBlock(ctx context.Context, encoded string) (string, error) {
+	bases, artifact, err := server.verifiedBootstrap(ctx)
+	if err != nil {
+		return "", err
+	}
+	return ShellInviteDelivery(bases, artifact, encoded)
+}
+
+func (server *Server) verifiedBootstrap(ctx context.Context) ([]string, ReleaseArtifact, error) {
 	if server.Releases == nil {
-		return "", errors.New("signed installer unavailable")
+		return nil, ReleaseArtifact{}, errors.New("signed installer unavailable")
 	}
 	set, err := server.Releases.Read()
 	if err != nil {
-		return "", err
+		return nil, ReleaseArtifact{}, err
 	}
 	var artifact ReleaseArtifact
 	for _, pkg := range set.Packages {
@@ -25,7 +33,7 @@ func (server *Server) shellInviteBlock(ctx context.Context, encoded string) (str
 		}
 	}
 	if artifact.Name == "" || artifact.Size > 64<<10 {
-		return "", errors.New("signed installer unavailable")
+		return nil, ReleaseArtifact{}, errors.New("signed installer unavailable")
 	}
 	bases := []string{}
 	seen := map[string]bool{}
@@ -81,5 +89,5 @@ func (server *Server) shellInviteBlock(ctx context.Context, encoded string) (str
 			bases = append(bases, base)
 		}
 	}
-	return ShellInviteDelivery(bases, artifact, encoded)
+	return bases, artifact, nil
 }

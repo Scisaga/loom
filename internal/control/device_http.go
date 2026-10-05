@@ -81,6 +81,18 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 			return Submission{}, nil, errors.New("invite payload is invalid")
 		}
 		if errors.Is(priorErr, os.ErrNotExist) {
+			if invite.SSHTarget != "" {
+				inspection, err := server.checkNewSSHTarget(ctx, invite.SSHTarget)
+				if err != nil {
+					return Submission{}, nil, errors.New(sshErrorCode(err))
+				}
+				if inspection.Installation.Identity != nil {
+					return Submission{}, nil, errors.New("existing_device_identity")
+				}
+				if !inspection.Installation.CanInstall {
+					return Submission{}, nil, errors.New("existing_installation_unverified")
+				}
+			}
 			endpoint := server.endpointRuntime()
 			if endpoint == nil || !endpoint.Ready(invite.Endpoint) {
 				return Submission{}, nil, errors.New("invite endpoint has not been verified ready locally")

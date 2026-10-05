@@ -556,6 +556,9 @@ Invite payload 的字段为 `id,genesis_digest,issuer_control_id,device_id,name,
 NodeID、资格仍有效且没有既有绑定/授权冲突。它不是申请新的 control 资格，不能据 control 字样再增员。
 策略 ID 固定而规则内容可随有效后继变化；不在 Invite 中复制第二份策略。端点必须归 issuer 所有并 serving，
 证书有效期覆盖邀请到期。平台不属于 Invite。
+可选 `ssh_target` 是 [SSH 自动交付](enrollment-endpoint-model.md#ssh-目标只读检查与同事务执行)的操作者
+别名，只有 medium=ssh 可携带，语法为 `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`。未指定时省略，不能编码空值；
+它不改变 claim 的授权范围、平台和密钥绑定。已有缺席该字段的认证字节保持缺席，不补写或重新签名。
 
 BootstrapInvite 唯一形状为 `schema=3,network_id,genesis_digest,control_proof,material`；material 必须是
 上述 `invite.issue` 的完整规范签名事实，两个网络锚与 payload 精确一致。control_proof 是从固定锚到

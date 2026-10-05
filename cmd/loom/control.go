@@ -13,6 +13,7 @@ import (
 	"loom/internal/clientrelease"
 	"loom/internal/control"
 	"loom/internal/localconfig"
+	"loom/internal/sshenroll"
 	"net"
 	"net/http"
 	"os"
@@ -127,6 +128,7 @@ func cmdControlServe(args []string) (retErr error) {
 	socket := fs.String("admin-socket", "", "本机管理 Unix socket；默认由 state-dir 派生")
 	releaseRoot := fs.String("release-root", "", "独立签名 release store 的本机只读目录")
 	releaseKey := fs.String("release-pubkey", "", "带外安装的发布验签公钥；不从 catalog 取得")
+	deploymentEnv := fs.String("deployment-env", "", "可选 SSH 执行器的既有 .env 引用；严格加载同一部署 YAML")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -134,6 +136,14 @@ func cmdControlServe(args []string) (retErr error) {
 		return errors.New("control serve 不接受位置参数")
 	}
 	var releases control.ReleaseSource
+	var ssh control.SSHExecutor
+	if *deploymentEnv != "" {
+		var err error
+		ssh, err = sshenroll.New(*deploymentEnv)
+		if err != nil {
+			return err
+		}
+	}
 	if (*releaseRoot == "") != (*releaseKey == "") {
 		return errors.New("release-root 与 release-pubkey 必须同时指定")
 	}
@@ -178,7 +188,7 @@ func cmdControlServe(args []string) (retErr error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Reports: reports, Releases: releases}).Serve(ctx)
+	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Reports: reports, Releases: releases, SSH: ssh}).Serve(ctx)
 }
 func cmdControlRelay(args []string) (retErr error) {
 	fs := flag.NewFlagSet("control relay", flag.ContinueOnError)

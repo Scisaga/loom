@@ -30,7 +30,13 @@ func TestBootstrapVerifiesArchiveAcrossMirrorsBeforeSingleInstall(t *testing.T) 
 	}
 	// The real digest and tar readers surround a minimal installer boundary.
 	// Production acceptance separately executes the signed native installer.
-	installer := []byte("#!/bin/sh\ncat > \"$DEMO_ROOT/invite\"\nprintf 'installed\\n' >> \"$DEMO_ROOT/calls\"\n")
+	installer := []byte(`#!/bin/sh
+for arg in "$@"; do
+ if [ "$arg" = --inspect ]; then printf 'inspected\n' >> "$DEMO_ROOT/calls"; exit 0; fi
+done
+cat > "$DEMO_ROOT/invite"
+printf 'installed\n' >> "$DEMO_ROOT/calls"
+`)
 	var archive bytes.Buffer
 	gz := gzip.NewWriter(&archive)
 	tw := tar.NewWriter(gz)
@@ -61,6 +67,7 @@ func TestBootstrapVerifiesArchiveAcrossMirrorsBeforeSingleInstall(t *testing.T) 
 	}{
 		{"mirrors", []string{"--base-url", "https://a.example/", "--base-url", "https://b.example/", "--invite-stdin"}, true},
 		{"single", []string{"--base-url", "https://b.example/", "--invite-stdin"}, true},
+		{"inspection", []string{"--base-url", "https://b.example/", "--inspect"}, true},
 		{"all-wrong", []string{"--base-url", "https://a.example/", "--invite-stdin"}, false},
 		{"malformed", []string{"--base-url", "https://b.example/", "--base-url", "--invite-stdin"}, false},
 	} {
@@ -93,7 +100,11 @@ case "$address" in https://a.example/*) printf 'untrusted archive\n' > "$output"
 			}
 			calls, callsErr := os.ReadFile(filepath.Join(root, "calls"))
 			invite, inviteErr := os.ReadFile(filepath.Join(root, "invite"))
-			if test.ok && (callsErr != nil || string(calls) != "installed\n" || inviteErr != nil || string(invite) != "demo-private-invite\n") || !test.ok && (!os.IsNotExist(callsErr) || !os.IsNotExist(inviteErr)) {
+			if test.name == "inspection" {
+				if callsErr != nil || string(calls) != "inspected\n" || !os.IsNotExist(inviteErr) {
+					t.Fatal("inspection consumed an invitation or entered installation")
+				}
+			} else if test.ok && (callsErr != nil || string(calls) != "installed\n" || inviteErr != nil || string(invite) != "demo-private-invite\n") || !test.ok && (!os.IsNotExist(callsErr) || !os.IsNotExist(inviteErr)) {
 				t.Fatal("installer was repeated, consumed different stdin, or ran on failed download")
 			}
 			if files, err := os.ReadDir(temp); err != nil || len(files) != 0 {

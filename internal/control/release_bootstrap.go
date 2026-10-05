@@ -76,17 +76,40 @@ func shellLiteral(value string) string { return "'" + strings.ReplaceAll(value, 
 // ShellInviteDelivery receives an already verified script coordinate and the
 // same complete Invite displayed by the private delivery page. It is pure.
 func ShellInviteDelivery(bases []string, artifact ReleaseArtifact, invite string) (string, error) {
-	entry := ReleaseEntry{ComponentID: "linux-bootstrap-script", Platform: "linux-any", ManifestDigest: ReleaseDigest(nil), Artifact: artifact}
-	if entry.Validate() != nil {
-		return "", errors.New("bootstrap artifact unavailable")
-	}
+	return inviteBootstrapDelivery(bases, artifact, invite, "sh")
+}
+
+// SSHInviteDelivery is private execution input for the signed SSH medium. It
+// does not silently turn a shell invitation into an automated installation.
+func SSHInviteDelivery(bases []string, artifact ReleaseArtifact, invite string) (string, error) {
+	return inviteBootstrapDelivery(bases, artifact, invite, "ssh")
+}
+
+// SSHInspectionDelivery downloads the same verified generic installer and
+// performs only its read-only inspection. No invitation is sent to the target.
+func SSHInspectionDelivery(bases []string, artifact ReleaseArtifact) (string, error) {
+	return bootstrapDelivery(bases, artifact, "--inspect")
+}
+
+func inviteBootstrapDelivery(bases []string, artifact ReleaseArtifact, invite, medium string) (string, error) {
 	decoded, err := DecodeInvite(invite)
 	if err != nil {
 		return "", errors.New("invalid delivery invite")
 	}
 	value, ok := decoded.Material.Payload.(Invite)
-	if !ok || value.Medium != "sh" {
-		return "", errors.New("shell delivery requires the signed shell medium")
+	if !ok || value.Medium != medium || medium == "ssh" && value.SSHTarget == "" {
+		return "", errors.New("installation delivery differs from the signed medium or target")
+	}
+	if strings.ContainsAny(invite, "\r\n") {
+		return "", errors.New("invite is not a single canonical URI")
+	}
+	return bootstrapDelivery(bases, artifact, "--invite-stdin <<'LOOM_SIGNED_INVITE'\n"+invite+"\nLOOM_SIGNED_INVITE")
+}
+
+func bootstrapDelivery(bases []string, artifact ReleaseArtifact, input string) (string, error) {
+	entry := ReleaseEntry{ComponentID: "linux-bootstrap-script", Platform: "linux-any", ManifestDigest: ReleaseDigest(nil), Artifact: artifact}
+	if entry.Validate() != nil {
+		return "", errors.New("bootstrap artifact unavailable")
 	}
 	if len(bases) == 0 {
 		return "", errors.New("no verified distribution roots")
@@ -102,16 +125,11 @@ func ShellInviteDelivery(bases []string, artifact ReleaseArtifact, invite string
 		addresses = append(addresses, shellLiteral(address))
 		arguments = append(arguments, "--base-url "+shellLiteral(base))
 	}
-	// The canonical encoded Invite is a single URI line, so this fixed delimiter
-	// cannot appear as a heredoc terminator. Nothing expands its contents.
-	if strings.ContainsAny(invite, "\r\n") {
-		return "", errors.New("invite is not a single canonical URI")
-	}
 	return "(\n  set +x\n  set -eu\n  umask 077\n  loom_install_dir=$(mktemp -d)\n  trap 'rm -rf -- \"$loom_install_dir\"' 0\n  trap 'exit 1' 1 2 15\n" +
 		"  loom_script_ready=\n  for loom_script_url in " + strings.Join(addresses, " ") + "; do\n" +
 		"    if curl --disable --fail --silent --show-error --proto '=https' --max-time 120 \\\n      \"$loom_script_url\" -o \"$loom_install_dir/installer.sh\" &&\n" +
 		"      printf '%s  %s\\n' " + shellLiteral(strings.TrimPrefix(artifact.Digest, "sha256:")) + " \\\n        \"$loom_install_dir/installer.sh\" | sha256sum --check --status -; then\n" +
 		"      loom_script_ready=1\n      break\n    fi\n  done\n" +
 		"  [ \"$loom_script_ready\" = 1 ] || { printf '%s\\n' 'No distribution root supplied the verified installer.' >&2; exit 1; }\n" +
-		"  sh \"$loom_install_dir/installer.sh\" " + strings.Join(arguments, " ") + " --invite-stdin <<'LOOM_SIGNED_INVITE'\n" + invite + "\nLOOM_SIGNED_INVITE\n)\n", nil
+		"  sh \"$loom_install_dir/installer.sh\" " + strings.Join(arguments, " ") + " " + input + "\n)\n", nil
 }

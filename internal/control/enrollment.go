@@ -69,6 +69,7 @@ type Invite struct {
 	PolicyIDs        []string           `json:"policy_ids"`
 	DNSServers       []string           `json:"dns_servers,omitempty"`
 	Medium           string             `json:"medium"`
+	SSHTarget        string             `json:"ssh_target,omitempty"`
 	Endpoint         EndpointGeneration `json:"endpoint"`
 	ExpiresAt        int64              `json:"expires_at"`
 }
@@ -112,6 +113,9 @@ func validatePlatform(value string) bool {
 }
 
 func (invite Invite) Validate() error {
+	if invite.SSHTarget != "" && (invite.Medium != "ssh" || ValidateSSHTarget(invite.SSHTarget) != nil) {
+		return errors.New("SSH delivery target is invalid or differs from the signed medium")
+	}
 	if err := validateOptionalDNS(invite.DNSServers); err != nil {
 		return err
 	}

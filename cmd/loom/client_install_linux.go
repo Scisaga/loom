@@ -25,6 +25,7 @@ func cmdClientInstall(args []string) error {
 	fs.BoolVar(&options.InviteStdin, "invite-stdin", false, "从标准输入消费邀请")
 	fs.BoolVar(&options.Upgrade, "upgrade", false, "保留现有身份和认证状态的前向升级")
 	fs.BoolVar(&options.NoEnroll, "no-enroll", false, "只缓存验签制品，不推进 current 或启动服务")
+	fs.BoolVar(&options.Inspect, "inspect", false, "只读核对本机制品、安装条件和公开设备身份，不改变目标")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

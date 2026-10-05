@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"loom/internal/control"
 	"loom/internal/deviceclient"
 	"loom/internal/linuxclient"
 )
@@ -32,20 +33,20 @@ const installUnit = "/etc/systemd/system/loom-client.service"
 type InstallOptions struct {
 	PackageRoot, PublicKey, State, ResourceInputs, Capture, InviteFile string
 	InviteStdin                                                        bool
-	Upgrade, NoEnroll                                                  bool
+	Upgrade, NoEnroll, Inspect                                         bool
 	Input                                                              io.Reader
 	Log                                                                io.Writer
 }
 
 func (o InstallOptions) validate() error {
 	modes := 0
-	for _, selected := range []bool{o.InviteFile != "", o.InviteStdin, o.Upgrade, o.NoEnroll} {
+	for _, selected := range []bool{o.InviteFile != "", o.InviteStdin, o.Upgrade, o.NoEnroll, o.Inspect} {
 		if selected {
 			modes++
 		}
 	}
 	if modes != 1 {
-		return errors.New("install requires exactly one invitation source, upgrade, or no-enroll")
+		return errors.New("install requires exactly one invitation source, upgrade, no-enroll, or inspect")
 	}
 	if !installPath(o.PackageRoot) || !installPath(o.State) || o.ResourceInputs != "" && !installPath(o.ResourceInputs) {
 		return errors.New("installation paths must be absolute canonical paths")
@@ -347,6 +348,18 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if os.Geteuid() != 0 {
 		return errors.New("installation requires root")
 	}
+	if options.Inspect {
+		value, err := InspectInstallation(ctx, options)
+		if err != nil {
+			return err
+		}
+		body, err := control.CanonicalEncode(value)
+		if err != nil {
+			return err
+		}
+		_, err = options.Log.Write(append(body, '\n'))
+		return err
+	}
 	if err := protectedDirectory("/run/loom-install", 0o700); err != nil {
 		return err
 	}
@@ -414,46 +427,11 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 		fmt.Fprintln(options.Log, "Verified release cached; no Device, current pointer or service was changed.")
 		return nil
 	}
-	for _, path := range []string{"/var/lib/loom/release-floor.json", "/var/lib/loom-device/migration-overlay.json", "/var/lib/loom/client-v2", "/etc/loom/agent/v2", "/etc/loom/sing-box/v2", "/etc/systemd/system/loom-client.service.d/00-host-network-quarantine.conf"} {
-		if _, err := os.Lstat(path); err == nil {
-			return errors.New("protected prior deployment needs a verified forward cutover")
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	for _, unit := range []string{"loom-client-v2.service", "loom-client-v2-agent.service", "loom-client-v2-sing-box.service", "loom-client-v2-report.service"} {
-		body, err := exec.CommandContext(ctx, "systemctl", "show", unit, "--property=LoadState", "--value").Output()
-		if err != nil || strings.TrimSpace(string(body)) != "not-found" {
-			return errors.New("prior runtime entry remains; verified cutover must remove it")
-		}
-	}
-	unit, err := ServiceUnit(release, options.State, options.ResourceInputs)
+	unit, previousUnit, err := installationInputs(ctx, options, release, currentPath, current)
 	if err != nil {
 		return err
 	}
-	previousUnit, err := installedFile(installUnit, 64<<10, 0o644)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err = checkManagedUnit(ctx, previousUnit, unit, currentPath, current, options); err != nil {
-		return err
-	}
-	if info, err := os.Lstat("/usr/local/bin/loom"); err == nil {
-		target, linkErr := os.Readlink("/usr/local/bin/loom")
-		owner, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || owner.Uid != 0 || linkErr != nil || target != filepath.Join(installRoot, "current", "loom") {
-			return errors.New("existing CLI entry needs an explicit verified cutover")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 	if current != nil {
-		for _, component := range []Component{current.Loom, current.SingBox} {
-			body, err := installedFile(filepath.Join(currentPath, component.Path), maxArchiveBytes, 0o755)
-			if err != nil || sha256Hex(body) != component.SHA256 {
-				return errors.New("accepted executable changed; refusing to execute its cleanup")
-			}
-		}
 		if err = installCommand(ctx, nil, options.Log, "systemctl", "disable", "--now", "loom-client.service"); err != nil {
 			return err
 		}
@@ -679,4 +657,52 @@ func removeSupersededPrograms(public ed25519.PublicKey, current Manifest, releas
 		}
 	}
 	return nil
+}
+
+// installationInputs is shared by read-only inspection and locked installation.
+// It checks the original unit and exact executables without writing or running
+// them, including when an interrupted first installation has no current link.
+func installationInputs(ctx context.Context, options InstallOptions, release, currentPath string, current *Manifest) ([]byte, []byte, error) {
+	for _, path := range []string{"/var/lib/loom/release-floor.json", "/var/lib/loom-device/migration-overlay.json", "/var/lib/loom/client-v2", "/etc/loom/agent/v2", "/etc/loom/sing-box/v2", "/etc/systemd/system/loom-client.service.d/00-host-network-quarantine.conf"} {
+		if _, err := os.Lstat(path); err == nil {
+			return nil, nil, errors.New("protected prior deployment needs a verified forward cutover")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, err
+		}
+	}
+	for _, unit := range []string{"loom-client-v2.service", "loom-client-v2-agent.service", "loom-client-v2-sing-box.service", "loom-client-v2-report.service"} {
+		body, err := exec.CommandContext(ctx, "systemctl", "show", unit, "--property=LoadState", "--value").Output()
+		if err != nil || strings.TrimSpace(string(body)) != "not-found" {
+			return nil, nil, errors.New("prior runtime entry remains; verified cutover must remove it")
+		}
+	}
+	unit, err := ServiceUnit(release, options.State, options.ResourceInputs)
+	if err != nil {
+		return nil, nil, err
+	}
+	previousUnit, err := installedFile(installUnit, 64<<10, 0o644)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	if err = checkManagedUnit(ctx, previousUnit, unit, currentPath, current, options); err != nil {
+		return nil, nil, err
+	}
+	if info, err := os.Lstat("/usr/local/bin/loom"); err == nil {
+		target, linkErr := os.Readlink("/usr/local/bin/loom")
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || owner.Uid != 0 || linkErr != nil || target != filepath.Join(installRoot, "current", "loom") {
+			return nil, nil, errors.New("existing CLI entry needs an explicit verified cutover")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	if current != nil {
+		for _, component := range []Component{current.Loom, current.SingBox} {
+			body, err := installedFile(filepath.Join(currentPath, component.Path), maxArchiveBytes, 0o755)
+			if err != nil || sha256Hex(body) != component.SHA256 {
+				return nil, nil, errors.New("accepted executable changed; refusing to execute its cleanup")
+			}
+		}
+	}
+	return unit, previousUnit, nil
 }

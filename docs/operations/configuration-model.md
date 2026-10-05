@@ -193,6 +193,14 @@ LocalDeploymentConfig.deploy_hosts
 读取配置、生成 plan 或显示 readiness 都不构成生产发布授权。配置陈旧只会让下一次命令失败，不能改变
 已经运行的 daemon。
 
+私有控制面的 SSH 自动交付可显式传入 `loom control serve -deployment-env <path>`，经同一严格 loader
+读取 `.env` 与唯一 YAML。可选目标来自 deploy_hosts，SSHConfig 解析连接，local_node 在本机执行而不绕行 SSH；
+每次操作重新读取输入并回读 SSH 解析与 management 坐标的差异，不倒写配置。该参数只定位操作者已经选择的
+本机输入，不进入 Invite 或增加 dotenv 键。未配置的 control 不提供 SSH 自动执行。连接使用既有主机密钥、
+非交互认证和密码免交互 sudo；私钥不上传浏览器，provider token 不进入子进程。检查与安装均使用经过验证的
+同一通用公开制品；安装仍受 [SSH 同事务执行](../core/enrollment-endpoint-model.md#ssh-目标只读检查与同事务执行)
+及宿主网络门禁约束。
+
 常驻 publisher 使用同一个严格 loader：`loom publisher -env <path> -control-socket <path>` 只从
 `LocalDeploymentConfig` 取得 signing key 引用、publish targets 与 SSH config，不能再同时传
 `-key`、`-target` 或 `-ssh-config` 形成第二份输入。分发后的读取验证 URL 不来自 `.env`，而随当前
