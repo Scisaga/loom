@@ -334,7 +334,7 @@ func replaceInstallLink(path, target string) error {
 
 // Install performs one forward operation. A failure after current advances
 // disables execution and retains that signed generation and Device state.
-func Install(ctx context.Context, options InstallOptions) error {
+func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if options.State == "" {
 		options.State = defaultInstallState
 	}
@@ -504,8 +504,14 @@ func Install(ctx context.Context, options InstallOptions) error {
 		if !succeeded {
 			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			_ = installCommand(cleanup, nil, options.Log, "systemctl", "disable", "--now", "loom-client.service")
-			fmt.Fprintln(options.Log, "Activation failed; execution remains disabled and the accepted package, Device and floor are retained.")
+			stopErr := installCommand(cleanup, nil, options.Log, "systemctl", "disable", "--now", "loom-client.service")
+			state, stateErr := systemdProperty(cleanup, "ActiveState")
+			enabled, _ := exec.CommandContext(cleanup, "systemctl", "is-enabled", "loom-client.service").Output()
+			if stopErr != nil || stateErr != nil || state != "inactive" && state != "failed" || strings.TrimSpace(string(enabled)) != "disabled" {
+				resultErr = errors.Join(resultErr, errors.New("failed activation could not confirm disabled, inactive execution; inspect systemd before retry"), stopErr, stateErr)
+			} else {
+				fmt.Fprintln(options.Log, "Activation failed; execution is disabled and inactive, and the accepted package, Device and floor are retained.")
+			}
 		}
 	}()
 	if err = replaceInstallLink(filepath.Join(installRoot, "current"), release); err != nil {
@@ -559,6 +565,9 @@ func Install(ctx context.Context, options InstallOptions) error {
 		if err = removeReplacedPrograms(currentPath, *current); err != nil {
 			return fmt.Errorf("new runtime is active; replaced program cleanup remains incomplete: %w", err)
 		}
+	}
+	if err = removeSupersededPrograms(public, candidate.Manifest, release); err != nil {
+		return fmt.Errorf("new runtime is active; replaced program cleanup remains incomplete: %w", err)
 	}
 	fmt.Fprintln(options.Log, "Exact Linux runtime installed and read back; inspect client status and the private signed report for business results.")
 	return nil
@@ -633,4 +642,41 @@ func removeReplacedPrograms(directory string, previous Manifest) error {
 		}
 	}
 	return syncDirectory(directory)
+}
+
+// Retry after an accepted but failed activation has no previous-pointer store.
+// Signed manifests already identify older packages in our protected content
+// directory. Only their exact owned executables are retired; newer caches,
+// unknown entries and original signed evidence are untouched.
+func removeSupersededPrograms(public ed25519.PublicKey, current Manifest, release string) error {
+	root := filepath.Join(installRoot, "releases")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if path == release || !lowerHex(entry.Name(), 64) || !entry.IsDir() {
+			continue
+		}
+		if err := checkDirectory(path, 0o755, false); err != nil {
+			continue
+		}
+		body, err := installedFile(filepath.Join(path, "manifest.json"), 64<<10, 0o644)
+		if err != nil || sha256Hex(body) != entry.Name() {
+			continue
+		}
+		signature, err := installedFile(filepath.Join(path, "manifest.sig"), ed25519.SignatureSize, 0o644)
+		if err != nil {
+			continue
+		}
+		manifest, err := verifyManifest(body, signature, public)
+		if err != nil || manifest.Arch != current.Arch || manifest.Generation >= current.Generation {
+			continue
+		}
+		if err := removeReplacedPrograms(path, manifest); err != nil {
+			return err
+		}
+	}
+	return nil
 }

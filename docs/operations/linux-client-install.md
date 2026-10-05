@@ -89,7 +89,8 @@ installer 依次完成：
 4. 将显式 state 与可选 resource-inputs 投影到唯一正式 unit；包内 unit 是模板，不直接复制为运行配置；
 5. 原子推进 `/usr/local/lib/loom-client/current`，启动 `loom-client.service`，确认精确程序与当前认证 View 的运行回读；
 6. 接受新版本后的失败保留其 current、身份与认证 floor，停止并禁用 service，不恢复旧程序或旧授权；
-7. 新运行时回读通过后，按旧签名清单和实际所有权核对，删除被替代的 Loom 与 sing-box 可执行文件，保留旧签名与源码证据。
+7. 新运行时回读通过后，按旧签名清单和实际所有权核对，删除同平台较低代的 Loom 与 sing-box 可执行文件，保留旧签名与源码证据。
+   接受后失败再重试仍使用这些已有清单识别退役程序，不增设旧指针或安装 receipt；未来代缓存不受影响。
    不自动清理未知目录、旧权威 store 或身份密钥。
 
 claim 尚未由签发者接受时，installer 不启用 service。使用同一 Invite 重跑会 resume 同一事务，不生成第二身份。
