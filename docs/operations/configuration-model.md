@@ -314,6 +314,9 @@ archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原�
    普通事实，只引用已核验 catalog 所绑定原 manifest 中对应运行组件/平台的精确程序摘要，不能使用 ZIP、
    archive 或 MSI 的整包摘要代替。control 本地接受、持久化和同步后，
    `Projection` 才改变期望；发布者、`.env` 或 `current` 都不能自动写入该事实。
+   正式 Web 入口为节点详情的 Expected components；CLI 继续使用 `loom control write` 提交
+   [expected_component.put/delete](../core/current-contract.md#节点期望组件的精确发布引用)，
+   `loom control inspect` 可回读原引用，程序坐标和报告比较由私有节点详情回读。
 5. executor 在已授权节点安装精确制品，按职责完成安全 preflight、运行时应用及重启回读；节点和设备
    从实际进程与文件报告组件、平台、制品摘要及版本。控制面分别显示签名发布、认证期望、实际运行
    和报告是否新鲜；只有实际摘要与期望相符且必要运行回读成功才显示“已应用”。

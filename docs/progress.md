@@ -447,6 +447,21 @@ TLS 与私有路径边界实际回读保持，旧 SSOT 发布写入器及其重�
 `deploy/evidence/2026-10-05-release-distribution/formal-publish/` 与 `formal-publish-final/`。
 下载目录的推进仍不等于期望组件事实、旧运行 floor 的前向消费或应用制品的自动安装。
 
+### Linux 实际运行组件与版本页面
+
+旧 Linux 报告只遍历期望列表，未设置期望时连已经运行的程序也不回读，页面还使用旧组件字段。
+现已从当前 agent 和数据面子进程的实际镜像测量版本、平台及摘要；磁盘文件替换不改变旧进程报告，
+测量缺项不抹去其他组件。数据面退出后的错误报告只保留实际 agent，没有新增组件状态 store。
+节点详情和 Device versions 使用现行签名报告展示完整坐标及时间，无期望时明确显示未设置，
+不从下载 current 推断已应用；该页面的旧 publisher 总进度和快照对照已删除。
+
+最小回归覆盖真实进程文件替换、无期望回读、缺项、异平台比较，以及浏览器中的签名报告持久化与页面。
+生产全部节点的运行镜像与当前 View 签名报告逐项匹配，真实 mTLS Chrome 已回读版本和摘要。
+同制品业务、身份、密钥、认证原件、旧 floor、控制同步和宿主网络回读通过；正式 publish 分发、浏览器
+精确下载及独立验签通过，已替代可执行程序删除。证据位于
+`deploy/evidence/2026-10-05-release-distribution/component-readback/`。
+本段只确认实际运行坐标；期望普通事实的生产消费与其他平台组件回读仍须分别验收。
+
 ### 本轮实现与实际验证
 
 Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
