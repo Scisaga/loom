@@ -25,7 +25,7 @@
   Android API 35 x86_64 临时模拟器也已从正常文件导入和系统 VPN 同意入口，完成 Hy2 HTTPS、撤权热替换、
   Keystore 重启恢复、重新授权及界面/私有签名报告回读。
   这是一条已运行的开发闭环，不是生产激活、全部传输能力或所有平台验收完成。
-- 仍须连续推进：Linux 隔离 capture 与 Web SSH 自动交付、`.loom` overlay、
+- 仍须连续推进：Linux 隔离 capture、`.loom` overlay、
   未实现的传输能力、动态成员及签名发布消费。Linux WG 中继、此次精确制品激活和旧运行入口退出已现场验证，见下文。
   动态成员多数链尚未实现，不能用初始成员表代替；Hy2、LAN、发布和全部平台能力不是简单 Direct 链的共同前置。
 - 生产状态：获准的 Linux client、control、私有 relay 和透明 endpoint edge 已使用本轮同一精确制品。
@@ -361,8 +361,8 @@ YAML 全目标 executor、SSH 前置识别/执行与现网发布 floor 的前向
 或 firewall；既有 WG 资源只沿本 generation 的精确所有权停止与恢复。目标 SSH 坐标与 YAML 有一处差异，
 实际仍按 `.ssh_config` 连接，并与当前认证节点身份核对；原差异保存在受保护证据，没有倒写配置。
 
-YAML 全目标正式 executor、SSH 前置识别/执行、期望组件事实与实际报告比较、现网发布 floor 的前向消费
-仍未完成，不能以这次受保护执行和单目标 import 关闭完整工作项。生产 sh 安装、同身份升级、业务、重启、
+YAML 全目标正式 executor、期望组件事实与实际报告比较、现网发布 floor 的前向消费
+仍未完成，不能以这次受保护执行和单目标 import 关闭完整工作项。后续 SSH 闭环见下一节。生产 sh 安装、同身份升级、业务、重启、
 撤权与测试清理已完成上述范围的回读；对应精确结果在 `report-performance/` 子目录，原失败证据保留。
 
 ### SSH 目标检查与原事务执行
@@ -378,8 +378,32 @@ YAML 全目标正式 executor、SSH 前置识别/执行、期望组件事实与�
 -inspect`，身份、信任、服务、锁文件和 route/rule 配置均未改写；仅排除实际 RA 租约倒计时后比较，
 原始失败与回读保留。全仓 build/test/vet、真实 Chrome、格式及仓库安全检查通过。
 
-本节的代码与只读预检已验证，正式生产 SSH 安装、中断恢复、业务、重启与清理仍在连续执行中，尚不计为
-SSH 闭环完成。证据位于 `deploy/evidence/2026-10-05-release-distribution/ssh/`。
+`83129c84` 已提交推送并激活，真实管理员浏览器签发原邀请；独立来宾在已有持久身份、尚无正式 CLI
+与 current 的部分安装状态下，继续同一邀请完成安装。关闭浏览器没有取消后台执行，原加入变为 completed。
+首次业务验证发现失败观测仍有效时持续拒绝该 Service，而同一授权境外路径的新 HTTPS 请求已成功；
+原失败保留。`ca9f4f20` 将 Linux 新失败观测缩短为模型规定的 30 秒，成功观测及已保存的原截止时间不变；
+隔离实际 selector 的拒绝与到期后 HTTPS 恢复通过。同时修正安装器成功、最终回读失败时应显示 unknown，
+并保留最后一次成功检查，而不是改报安装失败或抹掉身份回读。
+
+上述修正已再次提交推送并激活至全部获准节点，原身份、密钥、认证材料、floor/latch 与宿主路由/规则保全；
+固定境外出口和 Auto 的真实 HTTPS、新建管理连接、LAN/DNS、默认公网及既有代理通过，原 Auto 偏好恢复。
+各 control 的事实前沿、设备与资源一致，被替代可执行程序按精确摘要删除。全部 YAML 分发目标接受同一
+前进 catalog，公网整包与签名逐项回读；实际浏览器下载 Linux 包和 Windows 数据面包后，独立正式 CLI 验签通过。
+
+控制 daemon 重启后，原加入仍 completed，临时执行结果回到 unknown。浏览器继续原邀请，沿正式签名
+安装入口升级来宾；原密钥、Invite、claim request ID 和身份保持，新精确进程、业务、签名报告与页面结果
+分别回读。来宾整机重启后自动启动同一制品，认证高水位不退，业务和新报告恢复，管理/DNS/默认公网及
+route/rule 配置保持。较低代可执行程序已移除；真实浏览器再次检查已有身份时拒绝重复添加，并返回原设备管理。
+
+最后沿正式 CLI 撤权并删除测试设备。首次撤权业务检查仍成功，失败原件保留；随后逐个
+入口与境外出口回读已认证前沿、凭据移除和实际运行 View，再确认新 HTTPS 与私有配置/报告通道拒绝。
+其他授权设备业务正常，来宾持久身份未删，测试 VM 已停止。正式 control 已回到仓库 `.env` 所指的原 YAML，
+目标集合与原配置相同；既有目标的真实 SSH 身份检查通过，未验证旧安装保持拒绝覆盖。service 只读挂载
+确需的原 SSH 文件，其他 home 内容仍隐藏，私钥不进入浏览器，没有倒写 `.env` 或 YAML。
+
+此节完成 Linux SSH 交付、原事务恢复、同身份升级及上述生产业务链；不抵扣隔离 TUN、生产发布 floor 的
+自动消费或实体机终验。证据位于受保护的 `deploy/evidence/2026-10-05-release-distribution/ssh/` 和
+`deploy/evidence/2026-10-05-release-distribution/ssh-recovery/`。
 
 ### 本轮实现与实际验证
 
@@ -387,7 +411,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 显式发布代、带外公钥、逐文件摘要和规范 tar/gzip 均参与验证；源码修正版数据面、许可证与独立复现材料
 随包交付。旧 schema 2 签名封装与旧 Linux catalog 写入器删除。amd64/arm64 的真实程序打包、验签、
 规范往返和篡改拒绝已通过，记录在 `deploy/evidence/2026-10-04-linux-package/`。这只证明交付格式，
-原生 Mixed 安装与恢复见上一节；隔离 TUN、Web SSH 自动交付及生产发布 floor 的前向消费仍待完成。
+原生 Mixed 与 Web SSH 安装、恢复见上文；隔离 TUN 及生产发布 floor 的前向消费仍待完成。
 
 - [规范编码](../internal/control/contract_encoding.go)、[规范值](../internal/control/contract_values.go)和
   [Material](../internal/control/model.go)使用唯一 schema 3、严格规范 JSON、逐事实签名及领域分隔符；
@@ -408,7 +432,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
   初始 control 的同 NodeID 首次普通职责绑定已验证，设备签名键不得复用 control 键；distribution_urls 归设备授权。
 - Invite 携带完整 genesis/成员证明和签名 Material，唯一交付编码为完整规范值经固定 zlib 压缩后 base64url，
   不裁剪证明、不接受旧未压缩 fallback。真实双成员及管理员叶证书的 URI、文件、二维码和剪贴板回读通过；
-  QR 以整数像素模块生成，超过媒介容量明确拒绝。SSH/sh 目前交付签名邀请，自动安装执行仍未接通。
+  QR 以整数像素模块生成，超过媒介容量明确拒绝。SSH/sh 已沿同一邀请接通 Linux 自动安装与原身份恢复，实际范围见上文。
 - [设备 View 与运行投影](../internal/control/runtime_projection.go)按 Service/Policy 生成 Direct、本机出口、一跳 Hy2 和显式 WG 中继候选，
   默认拒绝业务；最后一项授权移除、deny 或无分配产生合法拒绝配置。设备验证完整证明、签名、View 摘要和逐键前沿，
   同前沿不同 View 拒绝；唯一 LKG、高水位、latch、Preference 先耐久保存再执行，新配置执行失败不恢复旧权限。
@@ -539,7 +563,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | 设备服务授权与管理 | Policy.ServiceID、allow/deny、any/only/none、PolicyIDs 和正式写入已接通；开发环境实际撤权、生产既有授权及 WG 中继消费通过。 | 完整 GUI revoke/regrant、其余传输和各平台原生端到端；不能为生产验证随意撤销用户正在使用的权限。 |
 | 签名事实与同步 | 单 control 普通签名、每键序列/前哈希、声明依赖接收、差量前沿、真实成员 TLS、重启恢复和冲突失败关闭已实现；旧 Raft/QC 普通权威路径已替换。 | 分区/大规模反熵、双方已截断前沿时的完整分叉证据传播、只向受影响设备分发及生产多 control 长期回读；局部同步测试不抵扣这些结果。 |
 | control 成员门禁 | 完整 genesis、任意 N 初始成员验证和唯一 ControlProof 已实现，成员数不是模式；后继消息字段已列明。 | 后继多数证书验证、持久承诺/票史、作废提案、封存证明、前沿例外、高水位保全、超限撤权重签和整体删除仍未执行实现。正式入口拒绝非空后继，不能用初表冒充。 |
-| Invite 与节点生命周期 | 真实签名 Invite、私有绑定/加入、同事务恢复、RuntimeKey 一次生成、公开改权与初始 control 同 NodeID 绑定已接通；生产浏览器 sh 命令、签名安装、加入、业务、重启与正式撤权/删除已回读。 | SSH 前置识别/执行/恢复、申请新增 control 的多数链及所有节点删除依赖回读；open 邀请到期只失去连接资格，不凭时钟释放 ID，自动生成终结事实尚未接通。 |
+| Invite 与节点生命周期 | 真实签名 Invite、私有绑定/加入、同事务恢复、RuntimeKey 一次生成、公开改权与初始 control 同 NodeID 绑定已接通；生产浏览器 sh/SSH 签名安装、原事务恢复、加入、业务、重启与正式撤权/删除已回读。 | 申请新增 control 的多数链及所有节点删除依赖回读；open 邀请到期只失去连接资格，不凭时钟释放 ID，自动生成终结事实尚未接通。 |
 | Endpoint 轮换与退出 | prepared→serving、draining/retired、撤销关连接已验证；生产设备入口已沿原映射激活并由所有获准节点认证，临时入口正式退休。 | 同监听不同证书并存、生产网站叶续签、control.loom；同代不能改写认证坐标，也不修改路由器。 |
 | 可复用传输与中继链路 | 规范 KDF、共享 Hy2 listener、显式 WG LinkID、Hy2/WG 认证域名解析和真实 Hy2→WG→Hy2 HTTPS 已执行；WG 地址变化后的业务恢复通过。 | 其余现行模型内 transport、逐 Link 签名观测及实体平台；握手不替代业务健康，也不要求全部 transport 组合遍历。 |
 | Direct／Auto／指定出口与业务探测 | 单个授权 HTTPS 目标按 Service 实测；生产 Auto、固定出口及首跳失败后同出口中继成功已回读。 | 多目标归约、其余观测算法和平台原生结果；诊断请求的不可达不能单独认定功能缺口，完成判定须对应已确定的业务链。 |
@@ -547,7 +571,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | 共享局域网 | 目标由 forward 声明、control 签发 IPv4 虚拟映射，经所属 Policy 与 PolicyIDs 授权；不作为简单 Direct 链前置。 | 分配/冲突重分配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除及隔离实际运行。不得修改宿主初始 netns 或 LAN 路由器。 |
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
 | Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在干净 API 35 x86_64 模拟器已正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验，APK 签名也不等于 schema 3 发布 catalog。 |
-| Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh 命令安装、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture、Web SSH 自动交付及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
+| Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh/SSH 安装、原事务恢复、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture 及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
 | Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；这些结果不抵扣发布 catalog。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
 | 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已验签分发到全部 YAML 目标；公网精确下载、私有发布页、带旧值比较的 import 和 Linux 安装器接受代前向升级已实际回读，旧运行 floor 保全。 | YAML 全目标正式 executor、其余应用制品 manifest、期望组件事实与实际报告比较、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
