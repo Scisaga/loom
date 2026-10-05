@@ -1,5 +1,14 @@
 export const list=value=>Array.isArray(value)?value:[];
 export const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// A report is an observation at its timestamp, not an installation receipt.
+export function componentComparisons(device,report){
+  const key=value=>value.component_id+'\0'+value.platform,expected=new Map(list(device?.expected_components).map(v=>[key(v),v])),actual=new Map(list(report?.components).map(v=>[key(v),v]));
+  return [...new Set([...expected.keys(),...actual.keys()])].sort().map(id=>{
+    const wanted=expected.get(id),observed=actual.get(id),value=wanted||observed;
+    const result=!wanted?'unconfigured':!observed?'missing':!wanted.artifact_digest||!observed.artifact_digest?'unknown':wanted.artifact_digest===observed.artifact_digest&&wanted.version===observed.version?'reported_match':'reported_mismatch';
+    return {component_id:value.component_id,platform:value.platform,expected:wanted,actual:observed,result};
+  });
+}
 export function topologyPositions(nodes){
   const sorted=[...nodes].sort((a,b)=>Number(!!b.Control)-Number(!!a.Control)||a.ID.localeCompare(b.ID));
   let inner=sorted.filter(n=>n.Direction!=='reverse_only'),outer=sorted.filter(n=>n.Direction==='reverse_only');

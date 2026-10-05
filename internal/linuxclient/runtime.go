@@ -3,9 +3,7 @@ package linuxclient
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +15,6 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
-	"strings"
 	"syscall"
 	"time"
 
@@ -276,51 +273,6 @@ func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io
 	}
 	return acceptCertifiedView(store, envelope)
 }
-func executableDigest(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return "", errors.New("component is not a regular executable")
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
-}
-func linuxComponentReadbacks(view control.DeviceView, singBox string) ([]control.ComponentReadback, error) {
-	result := []control.ComponentReadback{}
-	for _, expected := range view.ExpectedComponents {
-		if expected.ComponentID != "sing-box" && expected.ComponentID != "sing_box" {
-			continue
-		}
-		output, err := exec.Command(singBox, "version").Output()
-		if err != nil {
-			return nil, errors.New("sing-box version readback failed")
-		}
-		fields := strings.Fields(string(output))
-		version := ""
-		for i, field := range fields {
-			if strings.EqualFold(field, "version") && i+1 < len(fields) {
-				version = strings.TrimPrefix(fields[i+1], "v")
-				break
-			}
-		}
-		digest, err := executableDigest(singBox)
-		if err != nil {
-			return nil, err
-		}
-		if version == "" {
-			return nil, errors.New("sing-box version output is invalid")
-		}
-		result = append(result, control.ComponentReadback{ComponentID: expected.ComponentID, Platform: expected.Platform, Version: version, ArtifactDigest: digest})
-	}
-	return result, nil
-}
 func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback) error {
 	selections := []control.ReportSelection{}
 	observations := []control.Observation{}
@@ -494,13 +446,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 	}
-	components := []control.ComponentReadback{}
-	if pid != 0 {
-		components, err = linuxComponentReadbacks(lkg.View, options.SingBox)
-		if err != nil {
-			components = []control.ComponentReadback{}
-			fmt.Fprintln(options.Log, "component readback unavailable")
-		}
+	components, componentErr := linuxComponentReadbacks(ctx, pid)
+	if componentErr != nil {
+		fmt.Fprintln(options.Log, "some component readbacks unavailable")
 	}
 	update := func() error {
 		// Frontier/proof progress with the same View is durable authentication
@@ -662,13 +610,14 @@ func writeInactiveStatus(store *deviceclient.Store, options Options, state strin
 	return value, WriteStatus(options.Status, value)
 }
 func waitForRepair(ctx context.Context, store *deviceclient.Store, options Options) error {
+	components, _ := linuxComponentReadbacks(ctx, 0)
 	for {
 		status, err := writeInactiveStatus(store, options, "error")
 		if err != nil {
 			return err
 		}
 		pending, cancel := context.WithTimeout(ctx, 20*time.Second)
-		_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: []control.ComponentReadback{}, Runtime: control.RuntimeReadback{State: "error", ErrorCode: "runtime_apply_failed"}})
+		_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: "runtime_apply_failed"}})
 		cancel()
 		timer := time.NewTimer(options.RefreshPoll)
 		reloadRequested := false

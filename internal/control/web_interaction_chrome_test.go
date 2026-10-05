@@ -515,6 +515,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	route := view.View.Routes[0]
 	zero := int64(0)
 	report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: "demo-browser-device", ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-network-generation", ReportedAt: server.now().UnixMilli(), Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}
+	report.Components = []ComponentReadback{{ComponentID: "agent", Platform: "linux-amd64", Version: "demo-agent", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}, {ComponentID: "sing-box", Platform: "linux-amd64", Version: "demo-dataplane", ArtifactDigest: "sha256:" + strings.Repeat("b", 64)}}
 	// These signed samples test the UI mapping, not a live request to the example targets.
 	for index, target := range []string{"https://demo-service.example/no-duration", "https://demo-service.example/zero-duration"} {
 		observation := Observation{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: target, Action: "https_request", SpecDigest: route.SpecDigest, NetworkGeneration: report.NetworkGeneration, Result: "unknown", ObservedAt: report.ReportedAt, ValidUntil: report.ReportedAt + 60000}
@@ -549,6 +550,23 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{const fields=[...document.querySelectorAll('#device-runtime dt')].map(v=>v.textContent);return fields.join('|')==='State|Applied view|Error code'&&!document.querySelector('.device-status').textContent.includes('overlay')})()`) != true {
 		t.Fatal("current runtime report was interpreted with legacy execution fields")
 	}
+	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('#device-runtime tr[data-component]')];return rows.length===2&&rows[0].dataset.component==='agent'&&rows[0].dataset.platform==='linux-amd64'&&rows[0].innerText.includes('demo-agent')&&rows[0].innerText.includes('sha256:'+'a'.repeat(64))&&rows.every(v=>v.innerText.includes('No expectation set'))})()`) != true {
+		t.Fatal("component coordinates without expectations were hidden or treated as applied")
+	}
+	if chromeDo(t, debug, `(async()=>{const {componentComparisons}=await import('/assets/model.js');const value={component_id:'sing-box',platform:'linux-amd64',version:'demo-version',artifact_digest:'sha256:'+'c'.repeat(64)},device={expected_components:[value]};const mismatch=componentComparisons(device,{components:[{...value,platform:'linux-arm64'}]});const missing=componentComparisons(device,{components:[{...value,artifact_digest:''}]});return mismatch.length===2&&mismatch[0].result==='missing'&&mismatch[1].result==='unconfigured'&&missing[0].result==='unknown'})()`) != true {
+		t.Fatal("component comparison ignored platform or accepted a missing digest")
+	}
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/deployments');dispatchEvent(new PopStateEvent('popstate'));document.querySelector('[data-version-device="demo-browser-device"] details').open=true;return true})()`)
+	if chromeDo(t, debug, `document.querySelector('h1').textContent==='Device versions'&&document.querySelector('[data-version-device="demo-browser-device"]').innerText.includes('demo-dataplane')&&!document.querySelector('.release-workflow')&&!document.querySelector('.publisher-card')`) != true {
+		t.Fatal("device versions lost signed components or restored publisher progress")
+	}
+	// Reopen the ordinary report history rather than storing component state.
+	reopenedReports, err := OpenObservationStore(server.Runtime.Authority.root)
+	if err != nil || len(reopenedReports.Verified(server.Runtime.Authority.Snapshot())) != 1 || len(reopenedReports.Verified(server.Runtime.Authority.Snapshot())[0].Components) != 2 {
+		t.Fatal("signed component reports did not survive observation store reopen", err)
+	}
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	report.Components = report.Components[:1]
 	report.ReportSequence++
 	report.Runtime = RuntimeReadback{State: "error", ErrorCode: "demo-execution-failed"}
 	report.Selections, report.Observations = []ReportSelection{}, []Observation{}

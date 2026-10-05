@@ -684,7 +684,13 @@ runtime 为 `state,applied_view_digest,error_code`；state 仅 `running/error/st
 该资源完整规范入站凭据集合，接收 control 重算比较；不把它当单个业务请求成功或全网撤权证据。
 只有完整执行已就绪且 applied_view_digest 等于该 View 才可携带这些回读；一般启动失败不填期望值。
 旧 generation 已停止且新 generation 尚未完整运行时也为空，不能把上次成功加载的摘要当当前运行回读。
-components 使用上述组件坐标，表示实际运行坐标，不复制期望值充数。
+components 使用上述组件坐标，表示实际运行坐标，不复制期望值充数。是否已经设置期望组件不影响
+实际回读；未安装、未运行或无法测量的组件不填猜测值。Linux 的 agent 摘要来自当前进程的
+`/proc/self/exe`，版本来自该镜像的源码提交（无可追溯提交或 dirty 构建明确为 devel）；sing-box
+来自本 generation 已就绪子进程的 `/proc/<pid>/exe`，版本与摘要须从同一个已打开的镜像取得。
+平台来自实际执行平台，不从期望复制。切换磁盘路径或软链接而未重启进程，不能使报告变成新文件的摘要。
+每个 generation 的测量可缓存在本进程内，进程退出即失效；重启重新测量，不建立组件状态 store。
+单个组件无法测量只缺少该项，不抹去其他实际回读，也不把运行故障改成成功。
 
 Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest,`
 `network_generation,result,observed_at,valid_until`，可选 `duration_ms` 为非负整数。

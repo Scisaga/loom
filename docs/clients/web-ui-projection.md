@@ -245,6 +245,11 @@ Web 服务端以受保护安装信任输入中的发布验签公钥核验签名 
 提供同组件、同平台的可核验约束时判断；未声明时此项不适用，已声明而实际版本不可比较时显示
 `unknown`，不按版本字符串或文件名推断。
 
+实际组件表使用报告中的 `component_id,platform,version,artifact_digest`，按组件与平台匹配，
+没有期望时仍展示已报告版本、完整摘要和报告时间，并明确“未设置期望”；不能把下载 current 自动当作
+节点期望。没有新鲜性契约或足够证据时，历史回读仅标为 reported，不宣称当前已应用。
+最小回归覆盖无期望仍可读、同名异平台不匹配、磁盘文件替换但旧进程仍在运行，以及缺项不制造一致性。
+
 ### 服务、发布与管理记录的阅读顺序
 
 Services、DNS、Policies、三平台 Releases、Device versions、Events 与 Administration
