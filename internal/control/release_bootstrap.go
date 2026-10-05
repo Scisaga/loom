@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -74,7 +75,7 @@ func shellLiteral(value string) string { return "'" + strings.ReplaceAll(value, 
 
 // ShellInviteDelivery receives an already verified script coordinate and the
 // same complete Invite displayed by the private delivery page. It is pure.
-func ShellInviteDelivery(base string, artifact ReleaseArtifact, invite string) (string, error) {
+func ShellInviteDelivery(bases []string, artifact ReleaseArtifact, invite string) (string, error) {
 	entry := ReleaseEntry{ComponentID: "linux-bootstrap-script", Platform: "linux-any", ManifestDigest: ReleaseDigest(nil), Artifact: artifact}
 	if entry.Validate() != nil {
 		return "", errors.New("bootstrap artifact unavailable")
@@ -87,9 +88,19 @@ func ShellInviteDelivery(base string, artifact ReleaseArtifact, invite string) (
 	if !ok || value.Medium != "sh" {
 		return "", errors.New("shell delivery requires the signed shell medium")
 	}
-	address, err := DistributionURL(base, artifact.Digest)
-	if err != nil {
-		return "", err
+	if len(bases) == 0 {
+		return "", errors.New("no verified distribution roots")
+	}
+	bases = append([]string(nil), bases...)
+	sort.Strings(bases)
+	addresses, arguments := []string{}, []string{}
+	for index, base := range bases {
+		address, err := DistributionURL(base, artifact.Digest)
+		if err != nil || index > 0 && base == bases[index-1] {
+			return "", errors.New("invalid or repeated distribution root")
+		}
+		addresses = append(addresses, shellLiteral(address))
+		arguments = append(arguments, "--base-url "+shellLiteral(base))
 	}
 	// The canonical encoded Invite is a single URI line, so this fixed delimiter
 	// cannot appear as a heredoc terminator. Nothing expands its contents.
@@ -97,7 +108,10 @@ func ShellInviteDelivery(base string, artifact ReleaseArtifact, invite string) (
 		return "", errors.New("invite is not a single canonical URI")
 	}
 	return "(\n  set +x\n  set -eu\n  umask 077\n  loom_install_dir=$(mktemp -d)\n  trap 'rm -rf -- \"$loom_install_dir\"' 0\n  trap 'exit 1' 1 2 15\n" +
-		"  curl --disable --fail --silent --show-error --proto '=https' --max-time 120 \\\n    " + shellLiteral(address) + " -o \"$loom_install_dir/installer.sh\"\n" +
-		"  printf '%s  %s\\n' " + shellLiteral(strings.TrimPrefix(artifact.Digest, "sha256:")) + " \\\n    \"$loom_install_dir/installer.sh\" | sha256sum --check --status -\n" +
-		"  sh \"$loom_install_dir/installer.sh\" --base-url " + shellLiteral(base) + " --invite-stdin <<'LOOM_SIGNED_INVITE'\n" + invite + "\nLOOM_SIGNED_INVITE\n)\n", nil
+		"  loom_script_ready=\n  for loom_script_url in " + strings.Join(addresses, " ") + "; do\n" +
+		"    if curl --disable --fail --silent --show-error --proto '=https' --max-time 120 \\\n      \"$loom_script_url\" -o \"$loom_install_dir/installer.sh\" &&\n" +
+		"      printf '%s  %s\\n' " + shellLiteral(strings.TrimPrefix(artifact.Digest, "sha256:")) + " \\\n        \"$loom_install_dir/installer.sh\" | sha256sum --check --status -; then\n" +
+		"      loom_script_ready=1\n      break\n    fi\n  done\n" +
+		"  [ \"$loom_script_ready\" = 1 ] || { printf '%s\\n' 'No distribution root supplied the verified installer.' >&2; exit 1; }\n" +
+		"  sh \"$loom_install_dir/installer.sh\" " + strings.Join(arguments, " ") + " --invite-stdin <<'LOOM_SIGNED_INVITE'\n" + invite + "\nLOOM_SIGNED_INVITE\n)\n", nil
 }

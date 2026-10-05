@@ -43,6 +43,7 @@ func (server *Server) shellInviteBlock(ctx context.Context, encoded string) (str
 	transport := &http.Transport{Proxy: nil, DisableCompression: true, DisableKeepAlives: true, ResponseHeaderTimeout: 10 * time.Second}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	verified := []string{}
 	for _, base := range bases {
 		if ctx.Err() != nil {
 			break
@@ -64,19 +65,21 @@ func (server *Server) shellInviteBlock(ctx context.Context, encoded string) (str
 		if readErr != nil || response.StatusCode != http.StatusOK || response.Header.Get("Content-Encoding") != "" || uint64(len(body)) != uint64(artifact.Size) || ReleaseDigest(body) != artifact.Digest {
 			continue
 		}
-		// The URL must still be authenticated after the potentially slow read.
-		current := false
-		for _, device := range server.Runtime.Authority.Snapshot().DeviceAuthorizations {
-			for _, value := range device.DistributionURLs {
-				if value == base {
-					current = true
-				}
-			}
-		}
-		if !current {
-			continue
-		}
-		return ShellInviteDelivery(base, artifact, encoded)
+		verified = append(verified, base)
 	}
-	return "", errors.New("verified public installer unavailable")
+	// Recheck the whole set after all network reads, including roots verified
+	// before another root's slow response. Availability remains target-specific.
+	current := map[string]bool{}
+	for _, device := range server.Runtime.Authority.Snapshot().DeviceAuthorizations {
+		for _, base := range device.DistributionURLs {
+			current[base] = true
+		}
+	}
+	bases = nil
+	for _, base := range verified {
+		if current[base] {
+			bases = append(bases, base)
+		}
+	}
+	return ShellInviteDelivery(bases, artifact, encoded)
 }

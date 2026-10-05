@@ -80,10 +80,17 @@ set +x
 set -eu
 umask 077
 fail() { printf '%s\n' "$1" >&2; exit 1; }
-[ "$#" -eq 3 ] && [ "$1" = '--base-url' ] && [ "$3" = '--invite-stdin' ] || fail 'Expected an HTTPS distribution root and --invite-stdin.'
-loom_base=$2
-case "$loom_base" in https://*/) ;; *) fail 'Distribution root must be HTTPS.' ;; esac
-case "$loom_base" in *'?'*|*'#'*|*'@'*|*'\'*|*'%'*) fail 'Distribution root is not canonical.' ;; esac
+validate_distribution_roots() {
+  [ "$#" -ge 3 ] || fail 'Expected HTTPS distribution roots and --invite-stdin.'
+  while [ "$#" -gt 1 ]; do
+    [ "$#" -ge 3 ] && [ "$1" = '--base-url' ] || fail 'Expected HTTPS distribution roots and --invite-stdin.'
+    case "$2" in https://*/) ;; *) fail 'Distribution root must be HTTPS.' ;; esac
+    case "$2" in *'?'*|*'#'*|*'@'*|*'\'*|*'%'*) fail 'Distribution root is not canonical.' ;; esac
+    shift 2
+  done
+  [ "$1" = '--invite-stdin' ] || fail 'Expected --invite-stdin.'
+}
+validate_distribution_roots "$@"
 for loom_tool in curl sha256sum tar mktemp uname id; do command -v "$loom_tool" >/dev/null 2>&1 || fail 'Required installation tool is missing.'; done
 [ "$(id -u)" -eq 0 ] || fail 'Run the complete installation block from a root shell.'
 [ "$(uname -s)" = Linux ] || fail 'This installer requires Linux.'
@@ -98,9 +105,18 @@ esac
 loom_bootstrap_dir=$(mktemp -d)
 trap 'rm -rf -- "$loom_bootstrap_dir"' 0
 trap 'exit 1' 1 2 15
-curl --disable --fail --silent --show-error --proto '=https' --max-time 120 \
-  "${loom_base}bin/${loom_archive_sha}" -o "$loom_bootstrap_dir/client.tar.gz"
-printf '%s  %s\n' "$loom_archive_sha" "$loom_bootstrap_dir/client.tar.gz" | sha256sum --check --status -
+download_archive() {
+  while [ "$#" -gt 1 ]; do
+    if curl --disable --fail --silent --show-error --proto '=https' --max-time 120 \
+      "${2}bin/${loom_archive_sha}" -o "$loom_bootstrap_dir/client.tar.gz" &&
+      printf '%s  %s\n' "$loom_archive_sha" "$loom_bootstrap_dir/client.tar.gz" | sha256sum --check --status -; then
+      return 0
+    fi
+    shift 2
+  done
+  return 1
+}
+download_archive "$@" || fail 'No distribution root supplied the verified package.'
 tar -xzf "$loom_bootstrap_dir/client.tar.gz" -C "$loom_bootstrap_dir" --no-same-owner
 printf '%s\n' '` + base64.StdEncoding.EncodeToString(public) + `' > "$loom_bootstrap_dir/platform-signing.pub"
 sh "$loom_bootstrap_dir/loom-client-linux-$loom_arch/install.sh" \
