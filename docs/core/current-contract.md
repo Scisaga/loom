@@ -110,8 +110,8 @@ deny 保留分配但无业务权限。解析到的 Service/Policy 对只是可�
 
 成员证书由同一提案的规范投票签名组成，不能把另一目的签名当成员票。发布 catalog 固定
 generation 与规范排序的 manifest 摘要集合；每份 manifest 固定组件、平台及逐文件字段。解码后重编码
-必须得到原字节，缺项、重复组件/平台映射、未知受众或签名不符均拒绝。Windows 数据面 manifest 已按下方
-字段接入签名组件包；catalog、其他制品 manifest 及现网 catalog 激活仍未完成，不能把旧发布记录解释为此格式。
+必须得到原字节，缺项、重复组件/平台映射、未知受众或签名不符均拒绝。Windows 数据面与 Linux 客户端 manifest 已按下方
+字段接入签名包；catalog、其余制品 manifest 及现网 catalog 激活仍未完成，不能把旧发布记录解释为此格式。
 
 不复用 1 号，因为 1 号是真实存在过的旧 `Material` 格式，现网不可回退 latch 要求 reader 版本不低于 2，
 `loom-material-v1` 领域也已被 2 号使用。3 号此后冻结。

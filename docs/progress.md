@@ -1,6 +1,6 @@
 # 实施状态
 
-实现与文档核对日期：2026-10-04。本文记录本轮代码、正式开发入口与实际运行证据；原生截图、VM 和
+实现与文档核对日期：2026-10-05。本文记录本轮代码、正式开发入口与实际运行证据；原生截图、VM 和
 生产证据分别保留各自日期及范围，不定义第二套协议。完成须满足[正式入口与回读门禁](README.md#完成判定)。
 本轮已按用户授权激活 schema 3 Linux 正式服务，完成节点配置、控制同步、业务及恢复回读；实体机终验仍未完成。
 组件、测试和页面存在均不等于整个业务完成。
@@ -25,7 +25,7 @@
   Android API 35 x86_64 临时模拟器也已从正常文件导入和系统 VPN 同意入口，完成 Hy2 HTTPS、撤权热替换、
   Keystore 重启恢复、重新授权及界面/私有签名报告回读。
   这是一条已运行的开发闭环，不是生产激活、全部传输能力或所有平台验收完成。
-- 仍须连续推进：Linux 隔离 capture 与正式安装、`.loom` overlay、
+- 仍须连续推进：Linux 隔离 capture 与 Web SSH/sh 自动交付、`.loom` overlay、
   未实现的传输能力、动态成员及签名发布消费。Linux WG 中继、此次精确制品激活和旧运行入口退出已现场验证，见下文。
   动态成员多数链尚未实现，不能用初始成员表代替；Hy2、LAN、发布和全部平台能力不是简单 Direct 链的共同前置。
 - 生产状态：获准的 Linux client、control、私有 relay 和透明 endpoint edge 已使用本轮同一精确制品。
@@ -208,13 +208,41 @@ floor 或 latch，也没有新增旧格式运行解码。现行组件指针保�
 较早的脚本失败单独保留，不计为通过。此处不抵扣 ARM64、物理切网、睡眠或显示硬件终验，也不表示生产
 签名 catalog 已实现。
 
+### Linux 正式安装、失败升级与整机恢复
+
+正式 `install.sh` 现在交给同一 Loom CLI 验签和安装，不再保留另一份 shell manifest/floor decoder。
+激活显式要求 Mixed，stdin 邀请、自定义 state、可选资源输入和当前 runtime 使用同一组本机路径。
+签名包中的 systemd 模板只作投影输入；安装时核对实际 FragmentPath、drop-in、程序字节、所有者和文件类型。
+旧部署及其发布 floor 仍须经前向切换，不作为空安装重建信任。
+
+同机 Linux amd64 VM 从正常入口完成以下实际验证，证据在
+`deploy/evidence/2026-10-04-linux-package/native-install/`；来宾有独立管理网卡与数据网卡，使用 QEMU
+用户网络，没有向开发宿主添加 TUN、路由或防火墙规则：
+
+- 带外公钥验证的包从 stdin 加入；正式 systemd 消费同一身份/LKG，实际域名 Mixed → Hy2 → HTTPS 成功，
+  私有控制入口收到新签名报告。相同邀请重跑复用原 Device；带空格、百分号和美元符号的 state 路径从真实进程 argv 回读一致。
+- SIGKILL 后 service 停止，手动重启恢复业务；撤权后业务拒绝，异常重启仍拒绝，再授权后恢复，逐阶段回读签名报告。
+- 合法签名新包在代理端口被测试进程占用时通过 preflight、接受发布代，但实际运行失败；service 保持 disabled/inactive，
+  接受的 current、设备公钥、加入 request ID、认证 floor 与 latch 保持。旧签名包降级拒绝，释放端口后同包重试恢复业务。
+- 首次升级故障测试发现重试成功后遗留旧程序，原失败证据保留；修正版从已有签名清单识别同平台较低代，
+  精确删除旧 Loom/sing-box，保留 manifest、签名及源码证据，没有增加 receipt 或第二发布 store。
+- 未知 systemd drop-in 使安装拒绝，原 current、PID 和实际业务保持。单独隔离缓存测试证明 `--no-enroll`
+  不改变已有 current/身份，也不启动 service；缓存程序篡改后拒绝复用。
+- 最终制品整机重启后 systemd 自动恢复同一身份和接受代，新的私有报告与实际 HTTPS 成功；正常停止后代理释放。
+  各阶段新建 SSH、系统 DNS 和默认 HTTPS 成功，路由/规则只剔除 RA 租约自然倒计时后相同，原始快照保留。
+
+最终双架构签名包由干净提交 `576977b6` 生成，发布代为 5，位于 `dist/linux-576977b6/`；前序代及失败尝试
+单独留证，未用更新后的结果覆盖原失败。arm64 完成真实 ELF/源码坐标与签名包验证，原生实体机由用户测试。
+全仓 build/test/vet、格式、安全检查通过。VM 与临时接收端已正常停止，磁盘、身份及接受记录保留。
+Web 发起的 SSH/sh 自动下载交付、隔离 TUN 生命周期和生产 signed-current 前向消费仍须继续。
+
 ### 本轮实现与实际验证
 
 Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
 显式发布代、带外公钥、逐文件摘要和规范 tar/gzip 均参与验证；源码修正版数据面、许可证与独立复现材料
 随包交付。旧 schema 2 签名封装与旧 Linux catalog 写入器删除。amd64/arm64 的真实程序打包、验签、
 规范往返和篡改拒绝已通过，记录在 `deploy/evidence/2026-10-04-linux-package/`。这只证明交付格式，
-不表示默认 TUN installer、SSH/sh 自动安装或生产发布 floor 的前向消费已经完成。
+原生 Mixed 安装与恢复见上一节；隔离 TUN、Web SSH/sh 自动交付及生产发布 floor 的前向消费仍待完成。
 
 - [规范编码](../internal/control/contract_encoding.go)、[规范值](../internal/control/contract_values.go)和
   [Material](../internal/control/model.go)使用唯一 schema 3、严格规范 JSON、逐事实签名及领域分隔符；
@@ -374,10 +402,10 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | 共享局域网 | 目标由 forward 声明、control 签发 IPv4 虚拟映射，经所属 Policy 与 PolicyIDs 授权；不作为简单 Direct 链前置。 | 分配/冲突重分配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除及隔离实际运行。不得修改宿主初始 netns 或 LAN 路由器。 |
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
 | Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在干净 API 35 x86_64 模拟器已正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和 UI/签名报告回读。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验，APK 签名也不等于 schema 3 发布 catalog。 |
-| Linux | 获准节点正式服务已接管，Mixed、具名 Hy2/WG 中继、报告、停止/SIGKILL 清理和重新启动通过；开发宿主基础网络回读成立，初始 netns TUN 拒绝保留。 | 隔离 TUN capture 和自动安装失败流程；未实测物理网络变化不能由此次有限回读代替。 |
+| Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；同机 VM 的签名包 stdin 安装、同事务恢复、真实业务/撤权、失败升级保全与重试、删旧及整机恢复通过。 | 隔离 TUN capture、Web SSH/sh 自动交付及生产发布 floor 前向消费；物理网络变化由用户终验。 |
 | Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；这些结果不抵扣发布 catalog。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
-| 签名发布闭环 | 旧发布/制品代码及 floor 保留独立取证边界，新二进制已禁旧 SSOT 发布激活入口；UI 无实际应用证据保持 unknown。 | schema 3 catalog/manifest、期望组件事实、节点实际坐标与旧发布 floor 的可验证前向映射及生产读回；不能用普通授权闭环声称发布已替换，也不将发布设为 Direct 前置。 |
+| 签名发布闭环 | 旧发布/制品代码及 floor 保留独立取证边界，新二进制已禁旧 SSOT 发布激活入口；UI 无实际应用证据保持 unknown。 | schema 3 catalog、其余制品 manifest、期望组件事实、节点实际坐标与旧发布 floor 的可验证前向映射及生产读回；不能用普通授权闭环声称发布已替换，也不将发布设为 Direct 前置。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
 | 字段级同构 | Direct/本机出口/Hy2/WG 中继已定义并消费跨层对应与严格往返；初始成员、节点绑定及 distribution_urls 已落实。 | 其他传输、动态成员和未定观测算法；旧 HTTP 分发坐标不自动转换成 HTTPS。 |
 | 生产切换 | 本次明确授权的精确制品已接管正式服务，原身份/密钥/管理员/认证原件和 floor/latch 保全，旧运行入口退出。 | schema 3 签名发布 catalog 的单调消费、全部功能或全部平台已完成；旧证据不能恢复成运行权威。 |
