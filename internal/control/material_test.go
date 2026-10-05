@@ -280,6 +280,41 @@ func TestMaterialEnrollmentDeviceRevocationAndImmutableBinding(t *testing.T) {
 	if err != nil || len(projection.DeviceAuthorizations) != 0 {
 		t.Fatal("revoked device stayed authorized", err)
 	}
+	revoked, _ := projection.CurrentTarget("device", device.ID)
+	if revoked.DeviceForReview == nil || revoked.DeviceForReview.Name != device.Name {
+		t.Fatal("revocation lost the public value for explicit review")
+	}
+	// A grant concurrent with revocation was not reviewed by that revoker and
+	// must not silently become the default reauthorization form.
+	concurrentValue := device
+	concurrentValue.Name = "Demo concurrent"
+	concurrentValue.DNSServers = []string{"192.0.2.54"}
+	concurrent := fixture.sign(t, 1, 1, nil, "demo-concurrent-device", "device.put", "device", device.ID, concurrentValue, materialTestID(t, join))
+	concurrentHistory := append(append([]Material{}, history...), concurrent)
+	for _, reverse := range []bool{false, true} {
+		if reverse {
+			for i, j := 0, len(concurrentHistory)-1; i < j; i, j = i+1, j-1 {
+				concurrentHistory[i], concurrentHistory[j] = concurrentHistory[j], concurrentHistory[i]
+			}
+		}
+		p, err := Project(fixture.genesis, nil, concurrentHistory)
+		review, _ := p.CurrentTarget("device", device.ID)
+		if err != nil || len(p.InvalidMaterials) != 0 || len(p.DeviceAuthorizations) != 0 || review.DeviceForReview == nil || review.DeviceForReview.Name != device.Name {
+			t.Fatal("unseen concurrent grant replaced revoked history", err)
+		}
+	}
+	// A withdrawal that sees two conflicting authorizations cannot choose one
+	// of their public values based on input order or the signing member.
+	branch := device
+	branch.Name = "Demo other branch"
+	left := fixture.sign(t, 0, 6, &join, "demo-left-device", "device.put", "device", device.ID, branch, materialTestID(t, join))
+	withdrawBoth := fixture.sign(t, 0, 7, &left, "demo-withdraw-conflicting-device", "device.revoke", "device", device.ID, DeleteTarget{ID: device.ID}, materialTestID(t, left), materialTestID(t, concurrent))
+	ambiguous := append(append([]Material{}, history[:len(history)-1]...), left, concurrent, withdrawBoth)
+	p, err := Project(fixture.genesis, nil, ambiguous)
+	review, _ := p.CurrentTarget("device", device.ID)
+	if err != nil || len(p.InvalidMaterials) != 0 || !review.Deleted || review.DeviceForReview != nil {
+		t.Fatal("ambiguous revoked history manufactured a review value", err)
+	}
 	device.Name = "Demo restored"
 	restore := fixture.sign(t, 0, 7, &revoke, "demo-device-restore", "device.put", "device", device.ID, device, materialTestID(t, revoke))
 	if err := ValidateAdmission(restore, fixture.genesis, nil, history); err != nil {
@@ -293,6 +328,11 @@ func TestMaterialEnrollmentDeviceRevocationAndImmutableBinding(t *testing.T) {
 	}
 	deletion := fixture.sign(t, 0, 7, &revoke, "demo-device-delete", "device.delete", "device", device.ID, DeleteTarget{ID: device.ID}, materialTestID(t, revoke))
 	history = append(history, deletion)
+	p, err = Project(fixture.genesis, nil, history)
+	review, _ = p.CurrentTarget("device", device.ID)
+	if err != nil || len(p.InvalidMaterials) != 0 || review.DeviceForReview != nil {
+		t.Fatal("permanent tombstone retained a reauthorization form", err)
+	}
 	resurrection := fixture.sign(t, 0, 8, &deletion, "demo-device-resurrect", "device.put", "device", device.ID, device, materialTestID(t, deletion))
 	if err := ValidateAdmission(resurrection, fixture.genesis, nil, history); err == nil {
 		t.Fatal("permanent device tombstone was resurrected")

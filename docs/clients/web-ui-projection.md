@@ -412,6 +412,10 @@ sequenceDiagram
 - **Devices**：普通设备的职责、PolicyIDs 和撤权可由任一有效 control 修改；control 卸任、
   强制撤销及整个 control 节点删除进入多数签名成员操作，不能靠普通设备删除绕过。仅卸任保留该节点其他职责；
   整体删除须在同一多数证书中绑定该节点墓碑，并从页面、授权和依赖投影中原子退出。
+  普通撤权后，同一授权表单从当前目标的 `device_for_review` 显示经因果历史验证的公开配置，按钮明确为
+  Grant ordinary authorization；历史字段不代表当前权限。管理员审阅后提交原 `device.put`，引用当前撤权
+  和所选 Policy/Service 的已审阅依赖，不重新扫码或生成身份。缺少唯一历史、目标冲突或永久删除时
+  不提供此恢复入口；不得从 Invite 初值、旧报告或浏览器缓存猜测最后配置。操作重试及陈旧草稿遵守同一规则。
 - **Topology/Services**：可复用 WG、hy2、私有 TLS `TransportResource`；显式中继才配置
   `NetworkLink`，增加节点不自动形成全互联。共享 HTTPS 探测目标按 Service 和设备授权过滤，
   没有目标显示 `unknown`。

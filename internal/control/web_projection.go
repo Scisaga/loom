@@ -65,6 +65,20 @@ func projectWebDevices(projection Projection, releases ...ReleaseSet) []Device {
 			device.Enrollment = "revoked"
 			if target.Conflicted {
 				device.Enrollment = "conflicted"
+			} else if value := target.DeviceForReview; value != nil {
+				// These remain explicitly revoked public settings. An Invite's
+				// original values must not replace later reviewed configuration.
+				device.Name = value.Name
+				device.Roles = append([]string{}, value.Responsibilities...)
+				for _, member := range projection.Config.Members {
+					if member.NodeID == device.ID {
+						device.Roles = append(device.Roles, "control")
+					}
+				}
+				sort.Strings(device.Roles)
+				device.PolicyIDs = append([]string{}, value.PolicyIDs...)
+				device.DistributionURLs = append([]string{}, value.DistributionURLs...)
+				device.DNSServers = append([]string{}, value.DNSServers...)
 			}
 		}
 		byID[device.ID] = device

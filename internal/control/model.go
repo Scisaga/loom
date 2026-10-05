@@ -141,6 +141,8 @@ type TargetState struct {
 	MaterialIDs []string `json:"material_ids"`
 	Conflicted  bool     `json:"conflicted"`
 	Deleted     bool     `json:"deleted"`
+	// Public history for explicit administrator review, never an active grant.
+	DeviceForReview *DevicePut `json:"device_for_review,omitempty"`
 }
 
 // Projection and its indexes are disposable results of the same raw facts.
@@ -931,6 +933,9 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 			state.MaterialIDs = append(state.MaterialIDs, suspended[key]...)
 		}
 		sort.Strings(state.MaterialIDs)
+		if state.TargetKind == "device" && state.Deleted && !state.Conflicted {
+			state.DeviceForReview = graph.revokedDeviceForReview(facts, maxima)
+		}
 		projection.Targets = append(projection.Targets, state)
 		if chosen == nil || state.Deleted || state.Conflicted {
 			continue
