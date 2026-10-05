@@ -16,7 +16,7 @@ import (
 
 // Publish writes an already signed catalog and exact packages. The expected
 // pointer is an explicit plan input, compared while holding the target lock.
-func Publish(directory string, body, signature []byte, key ed25519.PublicKey, packages map[string][]byte, expected string) (control.ReleaseSet, error) {
+func Publish(directory string, body, signature []byte, key ed25519.PublicKey, packages map[string]Input, expected string) (control.ReleaseSet, error) {
 	var zero control.ReleaseSet
 	store, err := New(directory, key)
 	if err != nil {
@@ -32,12 +32,13 @@ func Publish(directory string, body, signature []byte, key ed25519.PublicKey, pa
 	id := control.ReleaseDigest(body)
 	files := map[string][]byte{}
 	wanted := map[string]bool{}
+	verifiedInput := control.ReleaseSet{Catalog: catalog}
 	for _, entry := range catalog.Entries {
 		artifact, ok := packages[entry.Artifact.Digest]
-		if !ok || control.ReleaseDigest(artifact) != entry.Artifact.Digest {
+		if !ok || control.ReleaseDigest(artifact.Body) != entry.Artifact.Digest {
 			return zero, errors.New("catalog package input is missing or differs")
 		}
-		parsed, err := Inspect(entry.Artifact.Name, artifact, key)
+		parsed, err := InspectInput(entry.Artifact.Name, artifact, key)
 		if err != nil {
 			return zero, err
 		}
@@ -45,10 +46,14 @@ func Publish(directory string, body, signature []byte, key ed25519.PublicKey, pa
 			return zero, errors.New("catalog entry differs from verified package input")
 		}
 		wanted[entry.Artifact.Digest] = true
-		files[digestPath("bin", entry.Artifact.Digest, "")] = artifact
+		files[digestPath("bin", entry.Artifact.Digest, "")] = artifact.Body
 		files[digestPath("manifests", entry.ManifestDigest, "manifest.json")] = parsed.ManifestBody
 		files[digestPath("manifests", entry.ManifestDigest, "manifest.sig")] = parsed.Signature
-		store.packages[entry.Artifact.Digest] = parsed
+		store.packages[packageCacheKey(entry)] = parsed
+		verifiedInput.Packages = append(verifiedInput.Packages, parsed)
+	}
+	if err := validateBootstrapBindings(verifiedInput); err != nil {
+		return zero, err
 	}
 	if len(packages) != len(wanted) {
 		return zero, errors.New("unreferenced package inputs are not published")

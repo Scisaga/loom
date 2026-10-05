@@ -70,7 +70,7 @@ func cmdReleaseStage(args []string) error {
 	if !bytes.Equal(key.Public().(ed25519.PublicKey), public) {
 		return errors.New("部署签发能力与带外验签公钥不一致")
 	}
-	packages := map[string][]byte{}
+	packages := map[string]clientrelease.Input{}
 	catalog := control.ReleaseCatalog{Schema: 3, Generation: generation, Entries: []control.ReleaseEntry{}}
 	for _, path := range paths {
 		body, err := readBoundedRegular(path, 256<<20, false)
@@ -82,7 +82,7 @@ func cmdReleaseStage(args []string) error {
 			return err
 		}
 		catalog.Entries = append(catalog.Entries, value.Entry)
-		packages[value.Entry.Artifact.Digest] = body
+		packages[value.Entry.Artifact.Digest] = clientrelease.Input{Body: body, Manifest: value.ManifestBody, Signature: value.Signature}
 	}
 	sort.Slice(catalog.Entries, func(i, j int) bool {
 		a, b := catalog.Entries[i], catalog.Entries[j]
@@ -91,6 +91,20 @@ func cmdReleaseStage(args []string) error {
 		}
 		return a.Platform < b.Platform
 	})
+	linux := []control.ReleaseEntry{}
+	for _, entry := range catalog.Entries {
+		if entry.ComponentID == "linux-client-bootstrap" {
+			linux = append(linux, entry)
+		}
+	}
+	if len(linux) > 0 {
+		input, pkg, err := clientrelease.BuildBootstrap(generation, linux, key)
+		if err != nil {
+			return err
+		}
+		packages[pkg.Entry.Artifact.Digest] = input
+		catalog.Entries = append([]control.ReleaseEntry{pkg.Entry}, catalog.Entries...)
+	}
 	body, signature, err := control.SignReleaseCatalog(catalog, key)
 	if err != nil {
 		return err

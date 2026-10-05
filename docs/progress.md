@@ -256,7 +256,30 @@ daemon 重启后同一管理员与下载目录回读一致，权威原字节保�
 成员证书名不符的失败分别留证，未作为通过结果。原生产服务、发布 floor、身份及公钥保持。
 
 该结果接通本地签名目录和私有下载，不表示公网分发、YAML 全目标发布、节点期望组件、生产 catalog/floor
-消费或 Web SSH/sh 安装已完成；Android APK、Windows 应用制品和通用 bootstrap 的签名交付仍须继续。
+消费或 Web SSH/sh 安装已完成；后续通用 bootstrap 结果见下一节，Android APK 与 Windows 应用签名交付仍须继续。
+
+### Web 一次粘贴脚本与 Linux 实际安装
+
+通用公开脚本现在是同一 catalog 中的 Artifact，独立签名 manifest 引用原 Linux 包；它只识别架构、下载
+并核对 archive，再调用既有唯一 installer。私有 sh 邀请页先验签并从认证 distribution_urls 实际读回脚本，
+再显示完整命令和终端历史提示。复制不重签，Invite 只经 quoted heredoc/stdin 交给安装器，不进入公开脚本、
+URL、argv 或环境；已完成事务不再返回命令。脚本和不同代 manifest 的缓存分别按两个摘要定位，避免相同
+脚本内容导致不同签名代被混淆。
+
+独立 Linux 来宾经控制台核对 SSH 主机密钥；浏览器使用真实管理员 mTLS 打开邀请页，点击 Copy command
+取得与页面逐字相同的完整块。真实 HTTPS 返回错误字节时，该块拒绝执行，未创建身份或 unit；恢复原字节后
+同一块完成正式签名安装、systemd Mixed、具名 Hy2 HTTPS 和私有签名报告。相同命令重试保留私钥、公钥和
+原邀请；整机重启后自动恢复同一身份、服务、真实业务和新签名报告，正常停止释放代理。
+安装和重启后的 route/rule 与来宾基线一致，仅剔除 RA 租约的自然倒计时。实际常驻 control 的已热缓存也已
+验证同脚本字节、不同签名代的独立回读；全仓 build/test/vet、格式和安全检查通过。
+
+证据在 `deploy/evidence/2026-10-05-release-catalog/shell/`，截图中的邀请内容模糊处理，原命令只留受保护文件。
+公开测试服务器仅提供签名白名单制品，管理员/设备请求仍走原私有服务。来宾只安装独立测试分发 CA；宿主
+hosts 与浏览器信任改动均限于独立挂载 namespace，没有修改宿主 DNS、route/rule、防火墙或真实服务。
+测试辅助程序早期 SSH banner 解析和资源输入多余字段的失败留证，修正后才计入结果。
+
+生产静态 HTTPS 分发、YAML 全目标 executor、SSH 前置识别与自动执行、现网发布 floor 的前向消费仍未完成。
+此处不以同机 sh 安装代替这些剩余结果，也不改变完整工作项的未完成判定。
 
 ### 本轮实现与实际验证
 

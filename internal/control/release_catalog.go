@@ -47,6 +47,7 @@ type ReleasePackage struct {
 	Version, SourceCommit   string
 	Generation              U64
 	Components              []ComponentReadback
+	Bootstrap               *ReleaseBootstrapManifest
 }
 
 type ReleaseSet struct {
@@ -77,7 +78,7 @@ func (artifact ReleaseArtifact) Validate() error {
 			return errors.New("release artifact filename is invalid")
 		}
 	}
-	if artifact.MediaType != "application/gzip" && artifact.MediaType != "application/zip" {
+	if artifact.MediaType != "application/gzip" && artifact.MediaType != "application/zip" && artifact.MediaType != "text/x-shellscript" {
 		return errors.New("release artifact media type is undefined")
 	}
 	return nil
@@ -95,6 +96,10 @@ func (entry ReleaseEntry) Validate() error {
 	case "windows-dataplane":
 		if (entry.Platform != "windows-amd64" && entry.Platform != "windows-arm64") || entry.Artifact.MediaType != "application/zip" {
 			return errors.New("Windows data-plane catalog entry differs from its package form")
+		}
+	case "linux-bootstrap-script":
+		if entry.Platform != "linux-any" || entry.Artifact.MediaType != "text/x-shellscript" || entry.Artifact.Name != "loom-bootstrap-linux.sh" {
+			return errors.New("Linux bootstrap entry differs from its script form")
 		}
 	default:
 		return errors.New("release component manifest contract is undefined")

@@ -40,6 +40,10 @@ func digestPath(prefix, digest, name string) string {
 	return filepath.Join(prefix, strings.TrimPrefix(digest, "sha256:"), name)
 }
 
+func packageCacheKey(entry control.ReleaseEntry) string {
+	return entry.Artifact.Digest + "/" + entry.ManifestDigest
+}
+
 func readFile(root *os.Root, path string, limit int64) ([]byte, error) {
 	info, err := root.Lstat(path)
 	if err != nil {
@@ -130,17 +134,6 @@ func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, e
 		if len(artifact) != int(entry.Artifact.Size) || control.ReleaseDigest(artifact) != entry.Artifact.Digest {
 			return zero, errors.New("release package differs from its signed digest or size")
 		}
-		parsed, ok := store.packages[entry.Artifact.Digest]
-		if !ok {
-			parsed, err = Inspect(entry.Artifact.Name, artifact, store.key)
-			if err != nil {
-				return zero, err
-			}
-			store.packages[entry.Artifact.Digest] = parsed
-		}
-		if parsed.Entry != entry {
-			return zero, errors.New("release catalog coordinates differ from the original package manifest")
-		}
 		manifest, err := readFile(root, digestPath("manifests", entry.ManifestDigest, "manifest.json"), 64<<10)
 		if err != nil {
 			return zero, err
@@ -149,10 +142,24 @@ func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, e
 		if err != nil {
 			return zero, err
 		}
+		parsed, ok := store.packages[packageCacheKey(entry)]
+		if !ok {
+			parsed, err = InspectInput(entry.Artifact.Name, Input{Body: artifact, Manifest: manifest, Signature: signed}, store.key)
+			if err != nil {
+				return zero, err
+			}
+			store.packages[packageCacheKey(entry)] = parsed
+		}
+		if parsed.Entry != entry {
+			return zero, errors.New("release catalog coordinates differ from the original package manifest")
+		}
 		if !bytes.Equal(manifest, parsed.ManifestBody) || !bytes.Equal(signed, parsed.Signature) {
 			return zero, errors.New("release manifest or signature differs from its original package bytes")
 		}
 		result.Packages = append(result.Packages, clonePackage(parsed))
+	}
+	if err := validateBootstrapBindings(result); err != nil {
+		return zero, err
 	}
 	return result, nil
 }
@@ -161,6 +168,11 @@ func clonePackage(value control.ReleasePackage) control.ReleasePackage {
 	value.ManifestBody = append([]byte(nil), value.ManifestBody...)
 	value.Signature = append([]byte(nil), value.Signature...)
 	value.Components = append([]control.ComponentReadback(nil), value.Components...)
+	if value.Bootstrap != nil {
+		copy := *value.Bootstrap
+		copy.Packages = append([]control.ReleaseEntry(nil), copy.Packages...)
+		value.Bootstrap = &copy
+	}
 	return value
 }
 

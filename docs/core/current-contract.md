@@ -802,14 +802,16 @@ unit 为已签模板与显式本机路径的投影，不能有未核验 drop-in�
 本节补齐既有 Release/Artifact 的交付索引，不新增控制权威、安装 receipt 或协议号。当前已存在两种规范
 manifest：`linux-client-bootstrap` 和 `windows-dataplane`。它们保持原始签名字节；catalog 只引用它们，
 不能把整包摘要写成包内程序的运行摘要。Android APK、Windows 三种应用交付和通用 bootstrap 脚本各自的
-非空 manifest 尚须按其交付边界补齐；未定义的 kind 拒绝，不能使用任意 JSON 透传。
+非空 manifest 按各自交付边界定义；下面补齐通用脚本，Android APK 与 Windows 应用尚未定义的 kind 拒绝，
+不能使用任意 JSON 透传。
 
 catalog 固定字段为 `{schema:3,generation:U64,entries:[]ReleaseEntry}`，generation 非零；entries 非空，
-按 `(component_id,platform)` 严格排序且唯一。此处 component_id 表示交付组件，当前恰为上述两个 kind；
-platform 恰为 `<os>-<arch>`。每项固定为 `{component_id,platform,manifest_digest,artifact}`；
+按 `(component_id,platform)` 严格排序且唯一。此处 component_id 表示交付组件，当前为两个程序包 kind
+及 `linux-bootstrap-script`；程序包 platform 恰为 `<os>-<arch>`，通用脚本为 `linux-any`。
+每项固定为 `{component_id,platform,manifest_digest,artifact}`；
 manifest_digest 为原始规范 manifest 的 Digest。artifact 固定为 `{name,digest,size:U64,media_type,audience}`，
 文件名为单个安全 ASCII basename，digest 为完整下载字节的 Digest，size 非零，当前 audience 恰为 public。
-Linux archive 的 media_type 为 application/gzip，Windows 数据面 ZIP 为 application/zip。
+Linux archive 的 media_type 为 application/gzip，Windows 数据面 ZIP 为 application/zip，通用脚本为 text/x-shellscript。
 版本、源码、组件代及包内精确程序坐标由已引用的原 manifest 读取并核对，不另复制一份可独立修改的值。
 
 签名为 64 字节 Ed25519，覆盖 `loom-release-catalog-v3\0 || C(catalog)`；规范 catalog 摘要定位不可变
@@ -838,6 +840,35 @@ Linux 的 loom 对应既有运行 component_id=agent，数据面恰为 sing-box�
 并发旧指针比较、同代同值重试、降代/同代异值拒绝；CLI 写入后重启回读、私有 Web 精确下载及安装消费。
 所有生成函数只消费显式字节和代坐标；不读时钟、随机数或远端状态。正式生产 current 激活继续受下节
 现网字节与生产切换门禁约束，现网旧 floor 原字节保全。
+
+### 通用 Linux bootstrap 脚本的签名对应
+
+脚本是已定义 Artifact 的一种交付，不新增安装事务或接受记录。既有包内 install.sh 只能在程序包已到达
+后运行，不能满足一次粘贴、识别架构及先验后执行的入口；因此通用脚本的唯一职责是取得并验证那个包，
+再调用同一 install.sh。删除它会恢复为操作者手动选包和传文件，不保留第二套身份或安装逻辑。
+
+其 manifest 固定 `{schema:3,kind:"linux-bootstrap-script",generation:U64,artifact,packages:[]ReleaseEntry}`。
+generation 非零，artifact 为 `loom-bootstrap-linux.sh` 的精确摘要、大小、脚本媒体类型及 public 受众；
+packages 为非空、按平台严格排序的 Linux 程序包引用，必须逐项等于同一 catalog 中的原包条目。
+manifest 与脚本分开保存，避免脚本包含自身摘要造成循环。签名为 64 字节 Ed25519，覆盖
+`loom-linux-bootstrap-script-v3\0 || C(manifest)`，独立安装公钥与原包签名公钥相同；生成器只从已验证原包
+和显式公钥、generation 生成确定性脚本，通用公开脚本不含任何 Invite、设备标识或秘密。
+
+受保护交付入口验证当前 catalog 和原 manifest 后，将通用脚本摘要固定到完整 shell 块。公开 HTTPS 根地址
+来自当前设备授权中的 distribution_urls，不能来自请求任意路径或根 .env；按规范 URL 排序读取验证，
+只使用实际读回同一脚本字节的入口。路径固定为该根下 `bin/<digest>`。无可验证入口时只显示交付不可用，
+不生成假命令、不改变原 Invite 或重签。URL 只是寻址；签名决定公开受众和可信字节。
+
+目标端完整块先关闭命令跟踪，在 owner-only 临时目录下载脚本并比较管理面固定的摘要；成功才用 quoted
+heredoc 将 Invite 交给 `--invite-stdin`。通用脚本识别 Linux 和 amd64/arm64，核对所选 archive 摘要后解包，
+使用固定发布公钥调用包内唯一 installer，显式 Mixed。未知平台、缺工具、HTTPS/摘要失败均停止并清理临时
+文件；不更改系统代理、DNS、路由或终端历史设置。正式安装继续按已有身份、组件代、认证 floor/latch 和
+失败恢复规则执行；公开文件读到不等于设备加入或运行成功。
+
+domain Artifact/ReleaseEntry → 同一签名 manifest 与脚本字节 → 既有 release store → 纯脚本渲染/下载校验 →
+同一 Web 邀请交付块；Invite 与 EnrollmentTransaction 的生命周期不变，完成、取消、到期后不再交付该块。
+最小验证覆盖确定性与原包绑定、错钥/异值拒绝、实际 HTTPS 下载与校验、stdin 保密边界、损坏脚本不执行，
+以及从管理入口复制到 Linux 正式 installer 的真实加入、报告和重启。不能用脚本语法检查或演示样例抵扣。
 
 ## 往返与拒绝
 

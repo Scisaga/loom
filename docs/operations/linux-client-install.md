@@ -76,6 +76,13 @@ unit、status 和安装输出只是输入或回读投影。正常链为受保护
 [Enrollment 交付契约](../core/enrollment-endpoint-model.md)先核验安装器摘要，再经标准输入传入 Invite；
 操作者已明确接受该完整命令可能被终端历史保存的风险，页面须在复制入口说明。
 
+配置了已验证的通用脚本和可读 HTTPS 分发根时，私有 sh 邀请页现在显示完整命令，Copy command 与可见
+文本逐字一致。下载命令关闭跟踪、禁止 curl 读取用户配置、只允许 HTTPS，并先比较固定脚本摘要；通用
+脚本在 Linux 目标识别架构、比较固定 archive 摘要，再将 stdin 原样交给包内同一 installer。临时目录只供
+操作者访问，失败退出清理；完成、取消或到期后页面不再提供命令。Linux 安装需要 root shell、curl、
+sha256sum、tar、mktemp、uname、id 及既定 systemd 运行条件。缺少发布材料或实际分发回读时页面明确不可用。
+该链已在同机独立来宾验证；生产分发和自动 SSH 执行的状态另见[实施状态](../progress.md)。
+
 ```bash
 tar -xzf loom-client-linux-amd64.tar.gz
 cd loom-client-linux-amd64

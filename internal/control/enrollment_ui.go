@@ -85,7 +85,22 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	id, _ := MaterialID(material)
-	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt})
+	command, deliveryError := "", ""
+	if encoded != "" && value.Medium == "sh" {
+		command, err = server.shellInviteBlock(r.Context(), encoded)
+		if err != nil {
+			deliveryError = "The signed installer is not available from an authenticated public distribution URL."
+		}
+		// A download check may overlap completion, revocation or expiry. Do not
+		// hand out a stale command after that real transaction has closed.
+		if _, current, checkErr := server.inviteValue(r); checkErr != nil || current != encoded {
+			encoded, command, deliveryError = "", "", ""
+			if latest, checkErr := server.Runtime.Authority.EnrollmentState(transactionID); checkErr == nil {
+				state = latest
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt, "shell_command": command, "delivery_error": deliveryError})
 }
 func (server *Server) inviteQR(w http.ResponseWriter, r *http.Request) {
 	value, invite, err := server.inviteValue(r)

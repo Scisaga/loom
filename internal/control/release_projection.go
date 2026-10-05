@@ -23,6 +23,11 @@ func (server *Server) projectReleases(snapshot *WebSnapshot) error {
 	}
 	result := []Release{}
 	for _, pkg := range set.Packages {
+		// The generic bootstrap is consumed by the invitation delivery flow, not
+		// displayed as another installed application or architecture download.
+		if pkg.Entry.ComponentID == "linux-bootstrap-script" {
+			continue
+		}
 		file := pkg.Entry.Artifact
 		platform, arch, _ := strings.Cut(pkg.Entry.Platform, "-")
 		title, variant := "Loom Linux client", "Mixed archive"

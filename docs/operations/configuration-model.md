@@ -210,11 +210,15 @@ LocalDeploymentConfig.deploy_hosts
 同 catalog 重试幂等，已有不可变摘要路径不覆盖异值；文件和目录耐久写入、完整回读后才更新本地 current。
 `loom release verify -root <目录> -pubkey <公钥>` 在独立进程重新验证指针、签名、原 manifest 和整包字节。
 stage 不执行 YAML 的 publish_outputs，不写设备期望事实，不改变生产安装代；它不是生产 publish 命令。
+输入包含 Linux 包时，同次确定性生成一个通用 bootstrap 脚本及其独立签名 manifest，并引用同一 catalog
+的精确 Linux 包。脚本不包含邀请，生成和读取均不改写那些原包的签名字节；未提供的平台在目标端明确拒绝。
 
 `loom control serve` 可成对传入 `-release-root <绝对路径>` 和 `-release-pubkey <带外公钥文件>`，作为该
 control 的受保护只读安装输入；它们不进入 `.env` 或网络权威。私有 Releases 页面从验证结果投影 Linux
 archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原有页面与交互保留。Windows 数据面不是
-完整 Windows 应用安装器；Android、应用安装包和通用 bootstrap 脚本未定义的 manifest 不进入目录。
+完整 Windows 应用安装器；Android 与应用安装包未定义的 manifest 不进入目录。通用 bootstrap 供邀请交付
+入口使用，不作为另一款客户端卡片。sh 交付从当前设备授权中的 HTTPS distribution_urls 读回同一脚本，
+成功才在私有页面显示一次粘贴块；缺少有效分发入口时显示不可用，复制与刷新复用原邀请。
 页面中的整包摘要与真实运行文件摘要分开，下载成功不制造部署成功。此处没有启用公网分发或生产自动更新。
 
 #### 生产发布与实际消费
