@@ -99,7 +99,7 @@ func (store *ObservationStore) pathHistory(network string, authorization DeviceA
 			continue
 		}
 		for _, observation := range report.Observations {
-			if observation.Level != "service" || observation.ServiceID != route.ServiceID || observation.CandidateID != route.ID || observation.SpecDigest != route.SpecDigest || observation.Target != target || observation.Action != "https_request" || observation.NetworkGeneration != report.NetworkGeneration || observation.ObservedAt < result.From || observation.ObservedAt > result.Until || observation.ObservedAt > report.ReportedAt {
+			if observation.Level != "service" || observation.ServiceID != route.ServiceID || observation.CandidateID != route.ID || observation.SpecDigest != route.SpecDigest || observation.Target != target || observation.Action != "https_request" || observation.NetworkGeneration != report.NetworkGeneration || observation.ObservedAt < result.From || observation.ObservedAt > result.Until {
 				continue
 			}
 			hour := int((observation.ObservedAt - result.From) / time.Hour.Milliseconds())

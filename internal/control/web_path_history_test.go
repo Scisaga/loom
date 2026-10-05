@@ -92,6 +92,15 @@ func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 	}
 	appendSample(-1, nil) // Future sample cannot populate the current hour.
 	appendSample(24, nil)
+	appendSample(7, nil)
+	// ReportedAt and ObservedAt are separate device wall-clock readings. A
+	// backward clock adjustment does not invalidate an original signed sample.
+	last := &reports[len(reports)-1]
+	last.ReportedAt = last.Observations[0].ObservedAt - time.Minute.Milliseconds()
+	*last, err = SignDeviceReport(*last, fixture.keys[0])
+	if err != nil {
+		t.Fatal(err)
+	}
 	sort.Slice(reports, func(i, j int) bool {
 		left, _ := CanonicalEncode(reports[i])
 		right, _ := CanonicalEncode(reports[j])
@@ -120,6 +129,9 @@ func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 		}
 		if !result.Buckets[19].Ambiguous || result.Buckets[19].Observation != nil {
 			t.Fatal("same-time conflicting measurements acquired a winner")
+		}
+		if sample := result.Buckets[16].Observation; sample == nil || sample.ObservedAt != hour.Add(-7*time.Hour+time.Minute).UnixMilli() {
+			t.Fatal("report clock adjustment discarded or rewrote an original historical sample")
 		}
 		for _, index := range []int{20, 18, 17, 0} {
 			if result.Buckets[index].Observation != nil {
