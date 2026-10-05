@@ -506,9 +506,16 @@ fieldset {
   font-size: 11px
 }
 
+.qr-frame {
+  max-width: 100%
+}
+
 .qr {
-  width: 240px;
-  height: 240px
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  image-rendering: pixelated
 }
 
 .invite-input {

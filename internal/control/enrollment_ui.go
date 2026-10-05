@@ -86,6 +86,14 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := MaterialID(material)
 	command, deliveryError := "", ""
+	qrAvailable := false
+	if encoded != "" && value.Medium == "qr" {
+		_, qrErr := inviteQRCode(encoded)
+		qrAvailable = qrErr == nil
+		if qrErr != nil {
+			deliveryError = "This invitation is too large for one QR code. Copy or download the complete invitation."
+		}
+	}
 	if encoded != "" && value.Medium == "sh" {
 		command, err = server.shellInviteBlock(r.Context(), encoded)
 		if err != nil {
@@ -100,15 +108,31 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt, "shell_command": command, "delivery_error": deliveryError})
+	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt, "shell_command": command, "qr_available": qrAvailable, "delivery_error": deliveryError})
 }
+
+// QR correction levels are image encoding choices. Every image contains the
+// identical canonical Invite, including its full signed member proof.
+func inviteQRCode(invite string) (*qrcode.QRCode, error) {
+	code, err := qrcode.New(invite, qrcode.Medium)
+	if err != nil {
+		return qrcode.New(invite, qrcode.Low)
+	}
+	return code, nil
+}
+
 func (server *Server) inviteQR(w http.ResponseWriter, r *http.Request) {
 	value, invite, err := server.inviteValue(r)
 	if err != nil || value.Medium != "qr" {
 		http.Error(w, "QR invite unavailable", http.StatusForbidden)
 		return
 	}
-	png, err := qrcode.Encode(invite, qrcode.Medium, -5)
+	code, err := inviteQRCode(invite)
+	if err != nil {
+		http.Error(w, "invite exceeds QR capacity; copy or download the complete invitation", http.StatusUnprocessableEntity)
+		return
+	}
+	png, err := code.PNG(-5)
 	if err != nil {
 		http.Error(w, "invite QR unavailable", http.StatusServiceUnavailable)
 		return
