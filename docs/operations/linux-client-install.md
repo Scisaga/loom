@@ -5,8 +5,7 @@
 `Preference`，实际路径必须来自 sing-box selector 回读，授权与可用性不得混为一谈。
 
 > **安全暂停：** 2026-09-21 的宿主网络接管事故证明，access TUN 不能运行在宿主初始 network namespace。
-> 本分支的 TUN preflight 在该环境继续失败关闭。默认 TUN installer 在专用 namespace 生命周期完成前
-> 只能 `--no-enroll` 安装制品。2026-10-04 用户明确授权的正式替换使用显式 Mixed 与认证服务资源，
+> 本分支的 TUN preflight 在该环境继续失败关闭。正式 installer 必须显式选择 `--capture mixed`；TUN 安装在专用 namespace 生命周期完成前拒绝。2026-10-04 用户明确授权的正式替换使用显式 Mixed 与认证服务资源，
 > 已完成宿主停止、SIGKILL、精确 WG 清理、重启和基础网络回读；这不开放初始 netns TUN。
 > 不得删除 TUN 门禁或手工添加宿主逃生路由来完成安装。详见
 > [事故记录](../incidents/2026-09-21-host-network-takeover.md)。
@@ -37,9 +36,31 @@ manifest.sig 相同的原始 Ed25519 签名；旧 JSON 签名封装拒绝。构�
 
 ## 私有 Enrollment 与安装
 
-以下是默认 TUN 安装包在隔离完成后的**目标流程**。当前 access/hybrid 的 TUN 安装在专用 namespace
-生命周期及回读验收完成前失败关闭。本轮经明确授权的 Mixed 服务直接替换另见
-[实施状态](../progress.md#已授权的正式服务替换)，不能把该部署回读视为默认 installer 已验收。
+### 正式安装入口
+
+安装入口复用 CLI/runtime 的显式 Mixed、同事务加入和按 generation 清理，不新增安装状态机、receipt 或第二身份 store。
+`install.sh` 保留为正常入口，由包内同一 Loom 程序完成严格验签、目录核验与安装，避免 shell 另写规范
+manifest/floor 的解码。脚本入口和直接 CLI 使用同一流程。
+
+激活必须显式选择 `--capture mixed`，邀请来源恰好为 `--invite-file` 或 `--invite-stdin`；升级使用 `--upgrade`，
+只缓存已验证制品使用 `--no-enroll`。TUN 安装在完整 namespace 生命周期接通前明确拒绝，不因安装进程偶然
+位于某个 namespace 就生成会在 PID 1 namespace 运行的 unit。stdin 不写 argv、环境或日志；原加入事务可
+恢复，已有身份不重建。state 与可选 resource-inputs 的路径只用于生成同一 unit 的实际 argv 和受保护读写
+范围，不改变认证授权。路径生成须正确处理 systemd 的引用、百分号和变量转义。
+
+签名 manifest 的 generation 与内容 ID 是已有发布坐标，不增加权威实体。缓存 release 不推进接受代；唯一
+`current` 指向已接受的规范 manifest 及原始签名，安装时以系统级排他文件锁串行核对。低代、同代异值和旧
+格式拒绝；同代同值允许继续。现有签名、程序和 unit 先回读，新 View/floor 保留。停止旧 service 并确认本
+generation 清理成功后，才安装新 unit 和原子推进 current；新服务启动失败保持 failed/inactive，保留已接受的
+新包与设备认证状态，不把旧指针或旧授权恢复为运行路径。尚无现行包记录的旧部署须沿已批准的前向切换处理，
+不能以“第一次安装”绕过旧发布 floor。首次信任公钥来自操作者的带外输入，既有信任不由包内公钥覆盖。
+
+领域到实现的对应只有：已签 Manifest → 规范原始字节及签名 → 内容目录/current → 精确进程文件；
+DeviceIdentity/LKG/Preference → 既有 deviceclient 文件 → 同一 runtime → CLI 与私有签名报告。
+unit、status 和安装输出只是输入或回读投影。正常链为受保护管理入口交付邀请 → stdin/file 加入 → 原子持久
+身份和 LKG → Mixed/service 应用 → CLI 与控制端报告回读 → 停止/异常退出/重启后的同身份恢复。
+最小验证覆盖实际 systemd 安装与业务、同事务重试、升级代比较、损坏制品与失败后的身份/floor 保留，以及
+未授权 TUN 拒绝；正式包生成、缓存安装或单次 status 成功均不抵扣这条链。
 
 有效 control 在私有控制面按职责签发 Invite，签发即批准；平台由目标识别并在首次 claim 绑定，
 不预先把邀请写成 Linux 专用。纯 access 使用二维码媒介，其同一邀请文件也可交给 CLI 导入；
@@ -54,7 +75,8 @@ manifest.sig 相同的原始 Ed25519 签名；旧 JSON 签名封装拒绝。构�
 ```bash
 tar -xzf loom-client-linux-amd64.tar.gz
 cd loom-client-linux-amd64
-sudo ./install.sh --invite-file ../client.loom-invite
+sudo ./install.sh --capture mixed --pubkey /path/from/trusted/channel/platform-signing.pub \
+  --invite-file ../client.loom-invite
 ```
 
 installer 依次完成：
@@ -64,19 +86,16 @@ installer 依次完成：
    已安装程序正确；损坏或链接替换拒绝，不覆盖现场内容，也不继续激活或改变设备身份；
 2. 通过 `loom client enroll` 在本机生成 Ed25519 身份，经私有 tunnel claim/resume，原子保存完整认证 LKG；
 3. 用精确 release 中的 sing-box 对 LKG RuntimeProfile 做 preflight；
-4. 对 access/hybrid 验证进程位于专用 network namespace；隔离缺失时在切换 `current` 或启用 unit 前失败；
-5. 隔离成立后切换 `/usr/local/lib/loom-client/current`，启动唯一正式 unit `loom-client.service`；
-6. 等待 selector 和宿主网络不变量实际回读。当前 installer 失败时仅恢复包文件并保持 service disabled，
-   不自动启动先前 release/unit；认证 LKG、floor 与撤权不能随运行失败回退。初始 netns 中的
-   access TUN 继续失败关闭，不得为了“回滚成功”重施危险状态；
-7. 经批准的前向切换及新路径回读通过后，在同一工作项停用并移除旧 `loom-client-v2*` units，
-   将已替代且经所有权核对的旧配置/store 原始字节归档到 owner-only retired 目录。
-   现行身份、私钥、floor 和 latch 不属于清理对象；唯一正式 service 不读取旧配置或迁移 overlay。
+4. 将显式 state 与可选 resource-inputs 投影到唯一正式 unit；包内 unit 是模板，不直接复制为运行配置；
+5. 原子推进 `/usr/local/lib/loom-client/current`，启动 `loom-client.service`，确认精确程序与当前认证 View 的运行回读；
+6. 接受新版本后的失败保留其 current、身份与认证 floor，停止并禁用 service，不恢复旧程序或旧授权；
+7. 新运行时回读通过后，按旧签名清单和实际所有权核对，删除被替代的 Loom 与 sing-box 可执行文件，保留旧签名与源码证据。
+   不自动清理未知目录、旧权威 store 或身份密钥。
 
 claim 尚未由签发者接受时，installer 不启用 service。使用同一 Invite 重跑会 resume 同一事务，不生成第二身份。
 `--no-enroll` 只安装已验证 release，不创建身份也不启动 service。已 Enrollment
-的机器升级时使用 `sudo ./install.sh --upgrade`；它复用现有 owner-only 身份与完整
-LKG，候选 preflight 或启动回读失败时按上述安全条件恢复包文件并保留失活状态。
+的机器升级时使用 `sudo ./install.sh --capture mixed --upgrade`；它复用现有 owner-only 身份与完整
+LKG，候选 preflight 失败不接受新发布代，已停止的服务保持禁用；接受后启动失败则保留新包和失活状态。
 installer 在激活前拒绝尚存的旧权威路径、迁移 overlay、旧 unit 和事故 quarantine drop-in；
 这些材料与启动项只能由经批准的前向切换处理，不由安装器自动搬走。既有平台信任公钥不匹配时同样拒绝覆盖。
 
@@ -104,7 +123,7 @@ installer 在激活前拒绝尚存的旧权威路径、迁移 overlay、旧 unit
    systemd：四个旧 unit 不再运行、启用或可加载，旧源路径和 overlay 不再是正常入口。
    唯一正式 unit 不引用这些路径；再次重启并回读纯认证运行配置、真实业务和签名报告。
 
-上述默认 installer 的自动处理仍待验收；本轮人工指定精确制品的正式替换已完成对应归档、删旧及回读。
+installer 不自动处理上述旧部署；本轮人工指定精确制品的正式替换已完成对应归档、删旧及回读。
 归档失败、摘要不符、旧入口仍可加载
 或新路径尚不能承担原业务时，保留证据并报告具体阻碍，不以 `exact=true` 单项结果宣称完成。
 清理不 flush 共享 route/rule/firewall，也不重新启用初始 namespace access TUN。
@@ -131,8 +150,8 @@ TLS 引用见[本机配置模型](configuration-model.md)。普通 `resource.put
 当前资源拨号地址已验收 IP；资源主机名的认证 resolver 接线和业务 DNS 仍待完成，不使用主机 resolver
 为该 underlay 拨号补值。server listener 与 access TUN 的组合在生命周期分离前明确拒绝。
 
-包内默认 unit 与安装 preflight 使用 `-capture tun`，继续检查专用 network namespace。本次获准部署的 unit
-明确使用 `-capture mixed`，两者不能混为同一验收结果；不得把已通过的 Mixed unit 改回初始 netns TUN。
+包内模板、安装 preflight 和生成的正式 unit 使用显式 `-capture mixed`。这不抵扣隔离 TUN 验收，
+不得把 Mixed unit 改回初始 netns TUN。
 
 WG 新接口先以不可碰撞的临时名称创建，取得 ifindex 并设置所有权 alias 后才改成资源规定的名称；
 不假定创建命令会保留 alias。`config.json.wg-ownership` 只保存本 generation 的清理凭据，不是网络权威。
@@ -140,8 +159,8 @@ WG 新接口先以不可碰撞的临时名称创建，取得 ifindex 并设置�
 缺少所有权、对象已被替换或清理失败时保持 failed/inactive，不重启反复施加。SIGKILL 后由 systemd
 终止同 cgroup 的子进程，再执行相同清理；未知接口、共享 route/rule 和宿主 resolver 不在清理范围。
 
-`loom-client.service` 每次启动都从 `/var/lib/loom-device/state.json` 重新验证成员证明、事实前沿与完整 LKG。
-TUN 必须先确认自己不在 PID 1 的 network namespace，再将 RuntimeProfile 投影到
+`loom-client.service` 每次启动都从安装时指定的 state（默认 `/var/lib/loom-device/state.json`）重新验证成员证明、事实前沿与完整 LKG，
+再将 RuntimeProfile 投影到
 `/run/loom-client/config.json` 并启动同一 release 内的 sing-box。控制面暂时离线时继续使用 LKG；
 不存在公开 config、旧 pull 或 v1 fallback。
 

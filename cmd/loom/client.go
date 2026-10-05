@@ -30,6 +30,7 @@ const clientUsage = `loom client —— 客户端交付
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
 	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service
 	loom client status                           回读 selector 已确认的实际路径与观测
+	loom client install -package-root <目录>      执行已验签 Linux 包的正式安装入口
   loom client package -sing-box <二进制> -dataplane-dir <目录> -generation <发布代>
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
@@ -61,6 +62,8 @@ func cmdClient(args []string) error {
 		return cmdClientRoute(args[1:])
 	case "status":
 		return cmdClientStatus(args[1:])
+	case "install":
+		return cmdClientInstall(args[1:])
 	case "package":
 		return cmdClientPackage(args[1:])
 	case "verify":

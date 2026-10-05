@@ -123,93 +123,11 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 	if strings.Contains(systemdService, "Restart=always") || !strings.Contains(systemdService, "Restart=no") {
 		t.Fatal("Linux client service may retry a failed host network activation")
 	}
-	for _, required := range []string{"client run -capture tun", "client preflight", "--upgrade",
-		"protected prior deployment requires a verified forward cutover before activation",
-		"WorkingDirectory=/var/lib/loom-device", "ReadWritePaths=/var/lib/loom-device /run/loom-client",
-		"services remain disabled; certified configuration and floor retained"} {
-		if !strings.Contains(installScript+systemdService, required) {
-			t.Fatalf("installer is missing %q", required)
-		}
+	if !strings.Contains(installScript, `exec "$base/loom" client install`) || !strings.Contains(systemdService, "client run -capture mixed") || !strings.Contains(systemdService, "client cleanup") {
+		t.Fatal("installer must delegate to the unified explicit Mixed lifecycle")
 	}
-	if strings.Contains(systemdService, "ReadWritePaths=/etc ") || strings.Contains(systemdService, "ReadWritePaths=/etc\n") {
-		t.Fatal("runtime service may not make all of /etc writable")
-	}
-	if strings.Index(installScript, "client preflight") > strings.Index(installScript, "systemctl enable loom-client.service") {
-		t.Fatal("installer enables the runtime before the network namespace preflight")
-	}
-	if strings.Contains(installScript, "systemctl stop loom-client-v2.service") || strings.Contains(installScript, "mv /var/lib/loom/client-v2") {
-		t.Fatal("installer must not replace a verified forward cutover with automatic legacy cleanup")
-	}
-}
-
-// Execute the generated installer's failure branch with every host path replaced
-// and systemctl intercepted. A failed activation may restore package files, but
-// must never restart an older executable with revoked authorization.
-func TestInstallerFailurePreservesAuthorityAndLeavesExecutionDisabled(t *testing.T) {
-	start := strings.Index(installScript, "if [ \"$ready\" -ne 1 ]; then")
-	if start < 0 {
-		t.Fatal("installer failure branch is missing")
-	}
-	end := strings.Index(installScript[start:], "\n[ -z \"$unit_backup\" ]")
-	if end < 0 {
-		t.Fatal("installer failure branch is missing")
-	}
-	root := t.TempDir()
-	packageDir := filepath.Join(root, "packages")
-	if err := os.MkdirAll(packageDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	current := filepath.Join(packageDir, "current")
-	if err := os.Symlink("demo-new-release", current); err != nil {
-		t.Fatal(err)
-	}
-	unit, backup := filepath.Join(root, "service"), filepath.Join(root, "service.backup")
-	writeTestBytes(t, unit, []byte("demo-new-unit"))
-	writeTestBytes(t, backup, []byte("demo-previous-unit"))
-	state := filepath.Join(root, "device-state")
-	authority := []byte("demo-identity; accepted-revocation; floor=8")
-	writeTestBytes(t, state, authority)
-	log := filepath.Join(root, "systemctl.log")
-	script := "set -eu\n" + `
-systemctl() { printf '%s\n' "$*" >> "$DEMO_SYSTEMCTL_LOG"; }
-ready=0
-previous=demo-previous-release
-unit=$DEMO_UNIT
-unit_backup=$DEMO_BACKUP
-state=$DEMO_STATE
-` + strings.ReplaceAll(installScript[start:start+end], "/usr/local/lib/loom-client", packageDir)
-	command := exec.Command("sh")
-	command.Stdin = strings.NewReader(script)
-	command.Env = append(os.Environ(), "DEMO_UNIT="+unit, "DEMO_BACKUP="+backup,
-		"DEMO_STATE="+state, "DEMO_SYSTEMCTL_LOG="+log)
-	output, err := command.CombinedOutput()
-	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 ||
-		!bytes.Contains(output, []byte("services remain disabled")) {
-		t.Fatalf("failure branch exit=%v output=%s", err, output)
-	}
-	readback, err := os.ReadFile(state)
-	if err != nil || !bytes.Equal(readback, authority) {
-		t.Fatal("package failure changed accepted device authority")
-	}
-	readback, err = os.ReadFile(unit)
-	if err != nil || string(readback) != "demo-previous-unit" {
-		t.Fatal("previous package files were not restored")
-	}
-	target, err := os.Readlink(current)
-	if err != nil || target != "demo-previous-release" {
-		t.Fatal("previous package link was not restored")
-	}
-	readback, err = os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(readback)), "\n") {
-		if line != "daemon-reload" && !strings.HasPrefix(line, "disable --now ") {
-			t.Fatalf("failed activation attempted an execution change: %s", line)
-		}
-	}
-	if !bytes.Contains(readback, []byte("disable --now loom-client.service")) {
-		t.Fatal("failed activation left a runtime eligible for automatic restart")
+	if strings.Contains(systemdService, "ReadWritePaths=/etc ") || strings.Contains(systemdService, "DeviceAllow=/dev/net/tun") {
+		t.Fatal("Mixed unit must not grant TUN or all of /etc")
 	}
 }
 
@@ -349,6 +267,25 @@ func TestReviewedLinuxPackages(t *testing.T) {
 			if got, err := VerifyFiles(archive, pub); err != nil || !bytes.Equal(got.Archive, artifact.Archive) {
 				t.Fatal("real file verification failed", err)
 			}
+			unpacked := filepath.Join(dir, "unpacked")
+			if err := os.Mkdir(unpacked, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command("tar", "-xzf", archive, "-C", unpacked)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("extract verified archive: %v %s", err, output)
+			}
+			packageRoot := filepath.Join(unpacked, "loom-client-linux-"+arch)
+			directory, err := VerifyDirectory(packageRoot, public)
+			if err != nil || directory.ID != sha256Hex(encoded) || !reflect.DeepEqual(directory.Manifest, manifest) {
+				t.Fatal("unpacked verified inputs differ", err)
+			}
+			if err := os.Chmod(filepath.Join(packageRoot, "loom"), 0o777); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := VerifyDirectory(packageRoot, public); err == nil {
+				t.Fatal("directory mode mutation accepted")
+			}
 			changed := append([]byte(nil), sing...)
 			changed[len(changed)/2] ^= 1
 			if _, err := Build(BuildInput{Generation: 4, Loom: loom, SingBox: changed, SourceFiles: sources, PrivateKey: private, AllowDirty: true}); err == nil {
@@ -449,70 +386,4 @@ func replaceManifest(t *testing.T, artifact Artifact, body []byte, private ed255
 	artifact.Signature = signature
 	artifact.Checksum = []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), artifact.Name))
 	return artifact
-}
-
-func TestInstallerChecksExistingPayloadBeforeReuse(t *testing.T) {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		t.Skip("installer file ownership check requires Linux root")
-	}
-	start := strings.Index(installScript, "verify_release() {")
-	if start < 0 {
-		t.Fatal("missing release verification")
-	}
-	end := strings.Index(installScript[start:], "\n}\n")
-	if end < 0 {
-		t.Fatal("missing release verification")
-	}
-	function := installScript[start : start+end+3]
-	cases := []struct {
-		name   string
-		mutate func(string) error
-		valid  bool
-	}{
-		{name: "exact payload", valid: true},
-		{name: "changed executable", mutate: func(root string) error {
-			return os.WriteFile(filepath.Join(root, "sing-box"), []byte("demo damaged payload"), 0o755)
-		}},
-		{name: "writable executable", mutate: func(root string) error { return os.Chmod(filepath.Join(root, "loom"), 0o777) }},
-		{name: "linked executable", mutate: func(root string) error {
-			path := filepath.Join(root, "loom")
-			if err := os.Rename(path, path+".original"); err != nil {
-				return err
-			}
-			return os.Symlink(path+".original", path)
-		}},
-		{name: "hardlinked executable", mutate: func(root string) error {
-			return os.Link(filepath.Join(root, "sing-box"), filepath.Join(root, "extra-link"))
-		}},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			base := t.TempDir()
-			release := t.TempDir()
-			for _, name := range []string{"loom", "sing-box", "manifest.json"} {
-				mode := os.FileMode(0o755)
-				if name == "manifest.json" {
-					mode = 0o644
-				}
-				for _, root := range []string{base, release} {
-					if err := os.WriteFile(filepath.Join(root, name), []byte("demo verified bytes for "+name), mode); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.Chmod(filepath.Join(root, name), mode); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
-			if test.mutate != nil {
-				if err := test.mutate(release); err != nil {
-					t.Fatal(err)
-				}
-			}
-			command := exec.Command("sh", "-c", "set -eu\nbase=$1\nrelease=$2\n"+function+"\nverify_release", "demo-installer", base, release)
-			output, err := command.CombinedOutput()
-			if (err == nil) != test.valid {
-				t.Fatalf("verify existing release: %v %s", err, output)
-			}
-		})
-	}
 }
