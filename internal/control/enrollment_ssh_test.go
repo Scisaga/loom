@@ -2,10 +2,83 @@ package control
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 )
+
+type demoSSHDelivery struct{ run func(string) ([]byte, error) }
+
+func (demoSSHDelivery) Targets() ([]string, error) { return []string{"demo-target"}, nil }
+func (demoSSHDelivery) Resolve(_ context.Context, target string) (SSHTargetReadback, error) {
+	return SSHTargetReadback{Alias: target, ResolvedHost: "demo-target.example", ResolvedPort: 2222}, nil
+}
+func (value demoSSHDelivery) Run(_ context.Context, _ string, script string) ([]byte, error) {
+	return value.run(script)
+}
+
+func TestSSHFinalReadbackFailurePreservesInstalledIdentityAndOriginalRetry(t *testing.T) {
+	server, invite, id, claim, key, _ := enrollmentAuthorityFixture(t, func(v *Invite) {
+		v.Medium = "ssh"
+		v.SSHTarget = "demo-target"
+		v.Responsibilities = []string{"access", "forward"}
+	})
+	bootstrap, err := server.bootstrapInvite(invite.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := EncodeInvite(bootstrap)
+	identity := DeviceIdentityReadback{NetworkID: claim.NetworkID, GenesisDigest: claim.GenesisDigest, DeviceID: invite.DeviceID, TransactionID: invite.ID, InviteMaterialID: id, ClaimRequestID: claim.RequestID, DevicePublicKey: claim.DevicePublicKey, Platform: "linux"}
+	checks, installs := 0, 0
+	server.SSH = demoSSHDelivery{run: func(script string) ([]byte, error) {
+		if strings.Contains(script, " --inspect\n") {
+			checks++
+			if checks == 2 {
+				return nil, errors.New("target could not download the final inspection package")
+			}
+			body, err := CanonicalEncode(InstallationReadback{Platform: "linux", Architecture: "amd64", CanInstall: true, Identity: &identity})
+			return append(body, '\n'), err
+		}
+		if strings.Count(script, encoded) != 1 {
+			t.Fatal("installation replaced or duplicated the original invitation")
+		}
+		if identity.Joined {
+			resume := EnrollmentResumeRequest(claim)
+			resume.Signature = ""
+			resume, err = SignEnrollmentResume(resume, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response := enrollmentHTTP(t, server, "/enrollment/resume", resume, tunnelIdentity{Mode: "device", DeviceID: invite.DeviceID}); response.Code != http.StatusOK {
+				t.Fatal("authenticated original resume failed")
+			}
+		} else if response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
+			t.Fatal("original claim failed")
+		}
+		identity.Joined = true
+		installs++
+		return []byte("installer returned successfully\n"), nil
+	}}
+	artifact := ReleaseArtifact{Name: "loom-bootstrap-linux.sh", Digest: ReleaseDigest([]byte("demo installer")), Size: 14, MediaType: "text/x-shellscript", Audience: "public"}
+	value, err := server.installSSH(context.Background(), bootstrap, []string{"https://downloads.example/"}, artifact)
+	if err == nil || value.State != "unknown" || value.Inspection == nil || value.Inspection.Installation.Identity == nil || value.Inspection.Installation.Identity.Joined {
+		t.Fatal("failed final readback erased the last inspection or claimed installation failure")
+	}
+	state, err := server.Runtime.Authority.EnrollmentState(invite.ID)
+	if err != nil || state != "completed" {
+		t.Fatal("observation failure changed durable enrollment")
+	}
+	before := server.Runtime.Authority.Frontier()[0]
+	value, err = server.installSSH(context.Background(), bootstrap, []string{"https://downloads.example/"}, artifact)
+	if err != nil || value.State != "succeeded" || value.Inspection == nil || !value.Inspection.Installation.Identity.Joined || installs != 2 {
+		t.Fatal("same-identity retry did not recover", err)
+	}
+	if server.Runtime.Authority.Frontier()[0] != before {
+		t.Fatal("same invitation retry signed another identity or authorization")
+	}
+}
 
 func TestSSHResumeRequiresOriginalIdentityBindingAndAuthorization(t *testing.T) {
 	server, invite, id, claim, _, _ := enrollmentAuthorityFixture(t, func(value *Invite) {

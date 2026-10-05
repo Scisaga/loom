@@ -45,15 +45,27 @@ func TestUnavailableServiceStaysBlockedUntilObservationExpires(t *testing.T) {
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 1 || len(first.Selections) != 0 || selector.current[routes[0].Scope] != blockedSelection || len(first.State.Observations) != 1 || first.State.Observations[0].Result != "unavailable" {
 		t.Fatal("failed business did not retain its observation and block only its Service", err)
 	}
-	again, err := Activate(context.Background(), selector, routes, first.State, probe, func() time.Time { return now.Add(time.Minute) })
+	again, err := Activate(context.Background(), selector, routes, first.State, probe, func() time.Time { return now.Add(29 * time.Second) })
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 1 || !reflect.DeepEqual(first.State, again.State) {
 		t.Fatal("valid failure was cleared or retried", err)
 	}
 	previousFailure := first.State
 	previousFailure.Observations = append([]clientmodel.Observation(nil), first.State.Observations...)
-	recovered, err := Activate(context.Background(), selector, routes, again.State, probe, func() time.Time { return now.Add(10 * time.Minute) })
+	recovered, err := Activate(context.Background(), selector, routes, again.State, probe, func() time.Time { return now.Add(30 * time.Second) })
 	if err != nil || calls != 2 || len(recovered.Selections) != 1 || recovered.Selections[0].State != "available" || selector.current[routes[0].Scope] != routes[0].ID {
 		t.Fatal("expired observation did not permit a real recovery probe", err)
+	}
+	// Upgrading must retain an already-recorded deadline, even if an earlier
+	// producer used a longer failure window.
+	previousFailure.Observations[0].ValidUntil = now.Add(10 * time.Minute).Format(time.RFC3339)
+	retained, err := Activate(context.Background(), selector, routes, previousFailure, probe, func() time.Time { return now.Add(time.Minute) })
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 2 || !reflect.DeepEqual(previousFailure, retained.State) {
+		t.Fatal("existing failure deadline was reinterpreted", err)
+	}
+	// Successful observations continue to avoid unnecessary business probes.
+	reused, err := Activate(context.Background(), selector, routes, recovered.State, probe, func() time.Time { return now.Add(10 * time.Minute) })
+	if err != nil || calls != 2 || reused.Selections[0].State != "available" {
+		t.Fatal("successful observation was retried before its own deadline", err)
 	}
 	selector.failSet = blockedSelection
 	if value, err := Activate(context.Background(), selector, routes, previousFailure, nil, func() time.Time { return now }); err == nil || value.State.Schema != 0 {

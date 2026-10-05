@@ -108,8 +108,10 @@ func recordOutcome(state LocalState, selections map[string]string, result ProbeR
 			continue
 		}
 		outcome := "unavailable"
+		lifetime := 30 * time.Second
 		if result.Available {
 			outcome = "available"
+			lifetime = 10 * time.Minute
 		}
 		metric := result.Metric.Milliseconds()
 		if metric < 0 {
@@ -117,7 +119,7 @@ func recordOutcome(state LocalState, selections map[string]string, result ProbeR
 		}
 		byID[candidate] = clientmodel.Observation{CandidateID: candidate, NetworkGeneration: state.NetworkGeneration,
 			Scope: scope, Result: outcome, Action: action, ObservedAt: now.UTC().Format(time.RFC3339),
-			ValidUntil: now.Add(10 * time.Minute).UTC().Format(time.RFC3339), MetricMillis: metric}
+			ValidUntil: now.Add(lifetime).UTC().Format(time.RFC3339), MetricMillis: metric}
 	}
 	state.Observations = state.Observations[:0]
 	for _, observation := range byID {

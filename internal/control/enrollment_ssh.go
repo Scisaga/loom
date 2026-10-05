@@ -248,43 +248,15 @@ func (server *Server) executeSSH(ctx context.Context, invite BootstrapInvite, ob
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	value := invite.Material.Payload.(Invite)
-	err := func() error {
-		bases, artifact, err := server.verifiedBootstrap(ctx)
-		if err != nil {
-			return errors.New("verified_installer_unavailable")
-		}
-		inspection, err := server.inspectSSHTarget(ctx, value.SSHTarget, bases, artifact)
-		if err != nil {
-			return err
-		}
-		observation.Inspection = &inspection
-		if err := server.checkSSHIdentity(invite, inspection.Installation); err != nil {
-			return err
-		}
-		encoded, err := EncodeInvite(invite)
-		if err != nil {
-			return err
-		}
-		script, err := SSHInviteDelivery(bases, artifact, encoded)
-		if err != nil {
-			return err
-		}
-		if _, err = server.SSH.Run(ctx, value.SSHTarget, script); err != nil {
-			return err
-		}
-		inspection, err = server.inspectSSHTarget(ctx, value.SSHTarget, bases, artifact)
-		if err != nil {
-			return err
-		}
-		observation.Inspection = &inspection
-		if inspection.Installation.Identity == nil || !inspection.Installation.Identity.Joined {
-			return errors.New("enrollment_identity_missing")
-		}
-		return server.checkSSHIdentity(invite, inspection.Installation)
-	}()
-	observation.State = "succeeded"
+	bases, artifact, err := server.verifiedBootstrap(ctx)
+	observation.State = "failed"
+	if err == nil {
+		observation, err = server.installSSH(ctx, invite, bases, artifact)
+	} else {
+		err = errors.New("verified_installer_unavailable")
+	}
 	if err != nil {
-		observation.State, observation.ErrorCode = "failed", sshErrorCode(err)
+		observation.ErrorCode = sshErrorCode(err)
 		var failure interface{ SSHFailure() (string, int) }
 		if errors.As(err, &failure) {
 			observation.ErrorCode, observation.ExitCode = failure.SSHFailure()
@@ -299,6 +271,47 @@ func (server *Server) executeSSH(ctx context.Context, invite BootstrapInvite, ob
 	server.sshMu.Lock()
 	server.sshExecutions[value.ID] = observation
 	server.sshMu.Unlock()
+}
+
+// installSSH retains the last successful target inspection. Once the installer
+// returns successfully, a failed final readback leaves the outcome unknown; it
+// cannot retroactively assert that installation failed or erase an earlier read.
+func (server *Server) installSSH(ctx context.Context, invite BootstrapInvite, bases []string, artifact ReleaseArtifact) (SSHExecution, error) {
+	value := invite.Material.Payload.(Invite)
+	observation := SSHExecution{Target: value.SSHTarget, State: "failed"}
+	inspection, err := server.inspectSSHTarget(ctx, value.SSHTarget, bases, artifact)
+	if err != nil {
+		return observation, err
+	}
+	observation.Inspection = &inspection
+	if err := server.checkSSHIdentity(invite, inspection.Installation); err != nil {
+		return observation, err
+	}
+	encoded, err := EncodeInvite(invite)
+	if err != nil {
+		return observation, err
+	}
+	script, err := SSHInviteDelivery(bases, artifact, encoded)
+	if err != nil {
+		return observation, err
+	}
+	if _, err = server.SSH.Run(ctx, value.SSHTarget, script); err != nil {
+		return observation, err
+	}
+	observation.State = "unknown"
+	after, err := server.inspectSSHTarget(ctx, value.SSHTarget, bases, artifact)
+	if err != nil {
+		return observation, err
+	}
+	observation.Inspection = &after
+	if after.Installation.Identity == nil || !after.Installation.Identity.Joined {
+		return observation, errors.New("enrollment_identity_missing")
+	}
+	if err := server.checkSSHIdentity(invite, after.Installation); err != nil {
+		return observation, err
+	}
+	observation.State = "succeeded"
+	return observation, nil
 }
 
 func (server *Server) sshExecute(w http.ResponseWriter, r *http.Request) {

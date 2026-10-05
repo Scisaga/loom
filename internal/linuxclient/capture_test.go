@@ -401,7 +401,7 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 			t.Fatal("failed Service was not actually blocked")
 		}
 	}
-	clockAdvance.Store(int64(10 * time.Minute))
+	clockAdvance.Store(int64(30 * time.Second))
 	waitState(1, "unknown")
 	response, err = requestTarget("demo-service.example", proxy)
 	if err != nil {
