@@ -694,7 +694,7 @@ components 使用上述组件坐标，表示实际运行坐标，不复制期望
 每个 generation 的测量可缓存在本进程内，进程退出即失效；重启重新测量，不建立组件状态 store。
 单个组件无法测量只缺少该项，不抹去其他实际回读，也不把运行故障改成成功。
 
-Windows 同样从实际进程回读 agent 和 sing-box，不按期望列表筛选。现有实现按期望筛选会在
+Windows 同样从实际进程回读 agent 和 sing-box，不按期望列表筛选。此前按期望筛选会在
 未配置期望时漏报，且从已验签包直接复制 Wintun 会把 Portable Mixed 未加载的 DLL 算成运行组件。
 最小修正只改变 HostAdapter 的测量：启动前以禁止写入/删除共享的只读句柄固定已验签程序文件，
 本 generation 结束后释放；就绪后核对受 Job 监督子进程的镜像及已加载 Wintun 模块与同一文件身份。
@@ -707,6 +707,23 @@ Mixed 未加载 Wintun 时不报告它。domain、wire 与报告持久值仍为�
 Windows Wintun 的唯一加载入口改为 sing-box 镜像目录内已验签的同一个 DLL；显式绝对路径及系统
 依赖搜索范围固定，缺失或加载失败即失败，不回到内嵌副本。Mixed 不触发此加载。此变化只修复
 交付文件与执行文件的对应，不增加 capture、路由、权限或操作者配置。
+
+Android 的正式入口仍为具名配置的运行报告。此前 HostAdapter 固定提交空 components，不能满足
+实际版本回读。最小变化复用 ComponentReadback：agent 的可执行包边界是系统加载的主 APK，
+sing-box 的边界是其中实际加载的当前 ABI `libbox.so`；APK 不是某个内部 ELF 的摘要替身。
+Android 以当前进程内测量函数的代码地址定位 `/proc/self/maps` 中的执行映射，核对已打开主 APK 的
+设备号/inode，并将映射文件偏移对应到未压缩 ZIP 条目内 ELF 的执行段；只知道安装路径或库文件存在不算加载。
+主 APK 来自正常 Context 的 packageCodePath，平台来自运行 ABI，agent 版本取该应用内嵌源码提交
+（未提供规范提交为 devel），数据面版本取实际 Libbox.version；测量不读期望值。
+APK 与库的摘要从同一已打开文件取得，文件身份、大小、修改时间及代码映射在测量前后均须一致。
+不接受旧路径、新 APK 文件或另一 ABI 冒充当前执行代码；无法测量只缺少相应组件，不阻断既有报告。
+libbox 与共享 Go 核心同处一个已加载模块，其坐标不表示 VPN 正在运行，runtime.state 仍单独报告实际状态。
+
+对应关系为实际 APK/执行映射 → 原 ComponentReadback → 原 schema 3 签名报告/观察持久值 → 设备版本页面；
+没有新的安装权威、配置字段或组件状态 store。当前完整 APK 的直接库映射是唯一已实现交付形态，
+未知 split/提取形态不能猜测文件；应用 manifest 未定义前不能从这些运行报告倒写发布期望。
+最小验证覆盖无期望时 APK/库摘要回读、另一文件或 ABI/偏移拒绝、文件变化、报告平台约束，以及
+原签名 APK 在同机模拟器的真实业务、受保护身份重启与私有报告回读；实体 ABI/切网仍由用户终验。
 
 Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest,`
 `network_generation,result,observed_at,valid_until`，可选 `duration_ms` 为非负整数。

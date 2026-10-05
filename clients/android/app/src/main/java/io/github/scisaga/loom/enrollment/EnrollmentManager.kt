@@ -1,6 +1,8 @@
 package io.github.scisaga.loom.enrollment
 
 import android.content.Context
+import io.github.scisaga.libbox.Libbox
+import io.github.scisaga.loom.BuildConfig
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.route.RouteManager
@@ -139,6 +141,7 @@ class EnrollmentManager private constructor(context: Context) {
             val reserved = store.updateState(Loomcore::reserveAndroidReportSequence)
             Loomcore.postAndroidDeviceReport(
                 reserved, routing.observations, routing.selections, runtime.toString().encodeToByteArray(),
+                Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version()),
                 routing.networkGeneration, Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
             )
         }

@@ -68,6 +68,13 @@ a real failure records `unavailable` and permits the one necessary fallback.
 Process and device restart always revalidate the complete LKG and its
 anti-rollback floor before projecting a runtime profile.
 
+The signed report measures the executing primary APK as `agent` and the loaded
+ABI's `libbox.so` as `sing-box`, independently of release expectations. The shared
+core binds its executing code address to the APK inode and native ELF segment,
+then hashes the same open APK and uncompressed library. An unavailable measurement
+is omitted; it never falls back to a downloaded or expected digest. A loaded native
+library does not imply a running VPN: the report's runtime state remains separate.
+
 ## Build
 
 Required inputs are OpenJDK 17, Android SDK platform 35, build-tools 35.0.1,

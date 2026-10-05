@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -248,13 +249,14 @@ type androidSelection struct {
 	CandidateID string `json:"candidate_id"`
 }
 
-func androidReport(state deviceclient.State, observationsBody, selectionsBody, runtimeBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
+func androidReport(state deviceclient.State, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
 	if state.LKG == nil || state.ReportSequence == 0 {
 		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
 	}
 	var observations []androidObservation
 	var selections []androidSelection
 	var runtime control.RuntimeReadback
+	var components []control.ComponentReadback
 	if err := decodeStrictJSON(observationsBody, 1<<20, &observations); err != nil {
 		return control.DeviceReport{}, err
 	}
@@ -264,11 +266,19 @@ func androidReport(state deviceclient.State, observationsBody, selectionsBody, r
 	if err := decodeStrictJSON(runtimeBody, 1<<20, &runtime); err != nil {
 		return control.DeviceReport{}, err
 	}
+	if err := decodeStrictJSON(componentsBody, 1<<20, &components); err != nil {
+		return control.DeviceReport{}, err
+	}
+	for _, component := range components {
+		if (component.ComponentID != "agent" && component.ComponentID != "sing-box") || component.Platform != androidComponentPlatform() {
+			return control.DeviceReport{}, errors.New("Android component is outside the executing platform")
+		}
+	}
 	now, err := time.Parse(time.RFC3339, reportedAt)
 	if err != nil || now.UTC().Format(time.RFC3339) != reportedAt {
 		return control.DeviceReport{}, errors.New("Android report time is not canonical")
 	}
-	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: []control.ComponentReadback{}}
+	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
 	routes := map[string]control.RouteCandidate{}
 	targets := map[string]map[string]bool{}
 	for _, route := range state.LKG.View.Routes {
@@ -311,12 +321,12 @@ func androidReport(state deviceclient.State, observationsBody, selectionsBody, r
 }
 
 // Kotlin commits ReserveAndroidReportSequence before invoking this function.
-func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody, runtimeBody []byte, networkGeneration, reportedAt string) error {
+func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, networkGeneration, reportedAt string) error {
 	state, err := decodeState(stateBody)
 	if err != nil {
 		return err
 	}
-	report, err := androidReport(state, observationsBody, selectionsBody, runtimeBody, networkGeneration, reportedAt)
+	report, err := androidReport(state, observationsBody, selectionsBody, runtimeBody, componentsBody, networkGeneration, reportedAt)
 	if err != nil {
 		return err
 	}
@@ -324,3 +334,5 @@ func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody, runtim
 	defer cancel()
 	return deviceclient.PostSignedReport(ctx, &androidIdentity{state: state}, report)
 }
+
+func androidComponentPlatform() string { return "android-" + runtime.GOARCH }
