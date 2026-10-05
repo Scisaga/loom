@@ -19,9 +19,13 @@ import (
 
 func cmdRelease(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom release <stage|import|verify>")
+		return errors.New("用法: loom release <stage|publish|import|verify>")
 	}
 	switch args[0] {
+	case "publish":
+		return cmdReleasePublish(args[1:])
+	case "target":
+		return cmdReleaseTarget(args[1:])
 	case "stage":
 		return cmdReleaseStage(args[1:])
 	case "verify":
@@ -37,6 +41,8 @@ func cmdReleaseImport(args []string) error {
 	fs := flag.NewFlagSet("release import", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	source := fs.String("source", "", "本次临时上传的签名目录")
+	stream := fs.Bool("stdin", false, "从标准输入接收签名目录 tar")
+	prepare := fs.Bool("prepare-only", false, "验证并落盘，保留原 current")
 	root := fs.String("root", "", "本节点目标发布目录")
 	pub := fs.String("pubkey", "", "通过独立管理通道固定的发布公钥")
 	catalog := fs.String("catalog", "", "显式选择的 catalog digest，不读取 latest")
@@ -44,12 +50,20 @@ func cmdReleaseImport(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *source == "" || *root == "" || *pub == "" || control.ValidateDigest(*catalog) != nil {
-		return errors.New("release import 需要 source、root、pubkey 及精确 catalog")
+	if fs.NArg() != 0 || (*source != "") == *stream || *root == "" || *pub == "" || control.ValidateDigest(*catalog) != nil {
+		return errors.New("release import 需要 source 或 stdin，以及 root、pubkey 及精确 catalog")
 	}
 	key, err := control.ReadReleasePublicKey(*pub)
 	if err != nil {
 		return err
+	}
+	if *stream {
+		directory, err := clientrelease.ReceiveArchive(os.Stdin, *catalog, key)
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(directory)
+		*source = directory
 	}
 	from, err := filepath.Abs(*source)
 	if err != nil {
@@ -59,7 +73,11 @@ func cmdReleaseImport(args []string) error {
 	if err != nil {
 		return err
 	}
-	set, err := clientrelease.Import(from, to, *catalog, key, *expected)
+	importer := clientrelease.Import
+	if *prepare {
+		importer = clientrelease.Prepare
+	}
+	set, err := importer(from, to, *catalog, key, *expected)
 	if err != nil {
 		return err
 	}

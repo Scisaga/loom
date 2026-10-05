@@ -405,6 +405,29 @@ route/rule 配置保持。较低代可执行程序已移除；真实浏览器再
 自动消费或实体机终验。证据位于受保护的 `deploy/evidence/2026-10-05-release-distribution/ssh/` 和
 `deploy/evidence/2026-10-05-release-distribution/ssh-recovery/`。
 
+### 未绑定邀请自动终结与历史页面
+
+原控制服务只按截止时间拒绝连接，未生成终结事实，因此未绑定的过期邀请仍占用设备 ID。
+现在签发 control 在启动及运行期间沿同一 Authority writer lock 重新检查原事务，签发既有
+`invite.expire` 普通事实；与首次 claim 串行，已绑定、已完成、冲突或其他签发者的事务不被自动改写。
+签发失败保留原状态并重试，页面读取不制造终结事实，也没有新增过期 store 或协议版本。
+
+生产正式 CLI 签发的未绑定邀请已实际到期，旧程序仍显示 open 的回读保留；更新后原签发 control
+自动终结，同一未绑定设备 ID 成功用于新邀请，新邀请也由运行中的服务自动终结。两次原始邀请不变，
+原终结签名字节经全部 control 同步和再次重启后保持一致，没有重复生成事实。该测试没有生成设备身份。
+
+实际浏览器随后发现：设备 ID 被复用后，旧邀请页面只按当前设备投影查找，导致历史事务显示不存在。
+现已按原 transaction 从认证 API 回读，沿既有可删除缓存显示终结状态；不交付旧邀请，也不误跳新事务。
+真实 Chrome 开发回归及生产 mTLS 页面回读均通过。失败页面和未选中候选的证据保留，没有把失败候选
+推进为生产下载 current。
+
+最终修正的精确制品已激活全部获准节点；身份、RuntimeKey、密钥/证书、旧 floor、认证原件和宿主
+route/rule 保持。固定境外出口与 Auto 的实际 HTTPS、新建 SSH、LAN DNS、系统 DNS、默认公网及既有
+WG 代理均通过，控制前沿及节点投影一致，已替代和中间候选可执行文件逐节点删除。全部 YAML 分发目标
+条件推进同一签名 catalog，公开 HTTPS 正文字节与私有真实浏览器 Linux/Windows 下载独立验签通过。
+证据位于 `deploy/evidence/2026-10-05-release-distribution/invite-expiry/` 与 `invite-expiry-final/`。
+绑定后的新增 control 仍依赖未实现的多数成员链；此次自动终结不释放已绑定身份，也不抵扣该结果。
+
 ### 本轮实现与实际验证
 
 Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.md#linux-客户端-manifest-的规范字段)，
@@ -563,7 +586,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | 设备服务授权与管理 | Policy.ServiceID、allow/deny、any/only/none、PolicyIDs 和正式写入已接通；开发环境实际撤权、生产既有授权及 WG 中继消费通过。 | 完整 GUI revoke/regrant、其余传输和各平台原生端到端；不能为生产验证随意撤销用户正在使用的权限。 |
 | 签名事实与同步 | 单 control 普通签名、每键序列/前哈希、声明依赖接收、差量前沿、真实成员 TLS、重启恢复和冲突失败关闭已实现；旧 Raft/QC 普通权威路径已替换。 | 分区/大规模反熵、双方已截断前沿时的完整分叉证据传播、只向受影响设备分发及生产多 control 长期回读；局部同步测试不抵扣这些结果。 |
 | control 成员门禁 | 完整 genesis、任意 N 初始成员验证和唯一 ControlProof 已实现，成员数不是模式；后继消息字段已列明。 | 后继多数证书验证、持久承诺/票史、作废提案、封存证明、前沿例外、高水位保全、超限撤权重签和整体删除仍未执行实现。正式入口拒绝非空后继，不能用初表冒充。 |
-| Invite 与节点生命周期 | 真实签名 Invite、私有绑定/加入、同事务恢复、RuntimeKey 一次生成、公开改权与初始 control 同 NodeID 绑定已接通；生产浏览器 sh/SSH 签名安装、原事务恢复、加入、业务、重启与正式撤权/删除已回读。 | 申请新增 control 的多数链及所有节点删除依赖回读；open 邀请到期只失去连接资格，不凭时钟释放 ID，自动生成终结事实尚未接通。 |
+| Invite 与节点生命周期 | 真实签名 Invite、私有绑定/加入、同事务恢复、RuntimeKey 一次生成、公开改权与初始 control 同 NodeID 绑定已接通；生产浏览器 sh/SSH 签名安装、原事务恢复、加入、业务、重启与正式撤权/删除已回读。 | 申请新增 control 的多数链及所有节点删除依赖回读；未绑定邀请自动签署终结、原始字节保全、ID 复用及历史页面已生产验收，绑定事务不因此释放身份。 |
 | Endpoint 轮换与退出 | prepared→serving、draining/retired、撤销关连接已验证；生产设备入口已沿原映射激活并由所有获准节点认证，临时入口正式退休。 | 同监听不同证书并存、生产网站叶续签、control.loom；同代不能改写认证坐标，也不修改路由器。 |
 | 可复用传输与中继链路 | 规范 KDF、共享 Hy2 listener、显式 WG LinkID、Hy2/WG 认证域名解析和真实 Hy2→WG→Hy2 HTTPS 已执行；WG 地址变化后的业务恢复通过。 | 其余现行模型内 transport、逐 Link 签名观测及实体平台；握手不替代业务健康，也不要求全部 transport 组合遍历。 |
 | Direct／Auto／指定出口与业务探测 | 单个授权 HTTPS 目标按 Service 实测；生产 Auto、固定出口及首跳失败后同出口中继成功已回读。 | 多目标归约、其余观测算法和平台原生结果；诊断请求的不可达不能单独认定功能缺口，完成判定须对应已确定的业务链。 |

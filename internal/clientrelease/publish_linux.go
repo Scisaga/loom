@@ -18,6 +18,16 @@ import (
 // The destination accepts the same immutable bytes and conditional advancement
 // as local publication; signing secrets never travel to a distribution node.
 func Import(source, destination, catalogID string, key ed25519.PublicKey, expected string) (control.ReleaseSet, error) {
+	return importCatalog(source, destination, catalogID, key, expected, true)
+}
+
+// Prepare validates and durably copies the exact signed catalog while retaining
+// the target pointer. It shares the same writer lock and comparison as Import.
+func Prepare(source, destination, catalogID string, key ed25519.PublicKey, expected string) (control.ReleaseSet, error) {
+	return importCatalog(source, destination, catalogID, key, expected, false)
+}
+
+func importCatalog(source, destination, catalogID string, key ed25519.PublicKey, expected string, selectCurrent bool) (control.ReleaseSet, error) {
 	store, err := New(source, key)
 	if err != nil {
 		return control.ReleaseSet{}, err
@@ -50,12 +60,16 @@ func Import(source, destination, catalogID string, key ed25519.PublicKey, expect
 		}
 		packages[pkg.Entry.Artifact.Digest] = Input{Body: artifact, Manifest: pkg.ManifestBody, Signature: pkg.Signature}
 	}
-	return Publish(destination, body, signature, key, packages, expected)
+	return publish(destination, body, signature, key, packages, expected, selectCurrent)
 }
 
 // Publish writes an already signed catalog and exact packages. The expected
 // pointer is an explicit plan input, compared while holding the target lock.
 func Publish(directory string, body, signature []byte, key ed25519.PublicKey, packages map[string]Input, expected string) (control.ReleaseSet, error) {
+	return publish(directory, body, signature, key, packages, expected, true)
+}
+
+func publish(directory string, body, signature []byte, key ed25519.PublicKey, packages map[string]Input, expected string, selectCurrent bool) (control.ReleaseSet, error) {
 	var zero control.ReleaseSet
 	store, err := New(directory, key)
 	if err != nil {
@@ -217,6 +231,9 @@ func Publish(directory string, body, signature []byte, key ed25519.PublicKey, pa
 	verified, err := store.readCatalog(root, id)
 	if err != nil {
 		return zero, err
+	}
+	if !selectCurrent {
+		return verified, nil
 	}
 	next, err := control.CanonicalEncode(control.ReleaseCurrent{Schema: 3, CatalogDigest: id})
 	if err != nil {

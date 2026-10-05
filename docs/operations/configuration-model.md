@@ -201,11 +201,11 @@ LocalDeploymentConfig.deploy_hosts
 同一通用公开制品；安装仍受 [SSH 同事务执行](../core/enrollment-endpoint-model.md#ssh-目标只读检查与同事务执行)
 及宿主网络门禁约束。
 
-常驻 publisher 使用同一个严格 loader：`loom publisher -env <path> -control-socket <path>` 只从
-`LocalDeploymentConfig` 取得 signing key 引用、publish targets 与 SSH config，不能再同时传
-`-key`、`-target` 或 `-ssh-config` 形成第二份输入。分发后的读取验证 URL 不来自 `.env`，而随当前
-认证的 `DeviceAuthorization.distribution_urls` 进入发布调用；因此事实前沿变化时
-验证集合也原子变化，旧 systemd unit 中手写的 URL 不能继续成为发布事实。
+正式签名与分发命令使用同一个严格 loader：stage 只从 `LocalDeploymentConfig` 取得 signing key 引用，
+publish 只从它取得 publish targets 与 SSH config；不能再同时传 `-key`、`-target` 或 `-ssh-config`
+形成第二份部署输入。读取验证 URL 不来自 `.env`，而从当前认证的
+`DeviceAuthorization.distribution_urls` 投影；相关授权改变时本次分发停止并重新读取。旧 publisher
+与 systemd unit 中手写的 URL 不恢复为发布事实；本轮没有增加常驻循环发布或自动安装。
 
 ### 签名发布记录到实际运行的闭环
 
@@ -227,6 +227,52 @@ stage 不执行 YAML 的 publish_outputs，不写设备期望事实，不改变�
 耐久写入和旧指针比较，完成后沿 verify 重新回读。root 由正式部署调用方从 YAML publish_outputs 解析，
 source、catalog 和 expected-current 只是本次执行参数，不形成另一份节点配置。单目标 import 不代替全部
 目标分发/HTTPS 回读的总体结果，也不授权消费节点改变已有发布 floor 或应用运行制品。
+
+### 全目标签名分发的正式执行入口
+
+目标是一次发布覆盖 YAML 中的全部 publish_outputs：之前的单目标 import 已能验证原包并比较旧指针，
+跨目标次序及实际 HTTPS 回读却仍由仓库外的临时脚本执行。最小变化是将这些操作接到
+`loom release publish -env .env -source <审查目录> -catalog <精确摘要> -pubkey <带外公钥>
+-control-socket <私有管理 socket> -reason <本次理由>`；不增加常驻配置、发布事务或完成记录。
+source 和 catalog 固定本次已经签署的原始内容，发布命令不读取 source/current 选择版本，也不重新签包。
+操作者的新增成本仅为提供本次精确 catalog 和理由；节点、目标和 SSH 坐标继续来自原 YAML。
+
+| 层 | 对应关系 |
+|---|---|
+| domain / wire / persistent | 原 schema 3 Catalog、manifest、制品及目标 current；字段和签名字节不变 |
+| 本机执行输入 | 原 LocalDeploymentConfig；source、catalog、公钥和理由仅为本次命令参数 |
+| daemon 回读 | 私有管理员接口从当前 Authority 单向投影网络锚、有效节点公钥和认证 distribution_urls；不含 RuntimeKey |
+| runtime | 本次进程中的目标列表、原指针和逐项执行结果；失败后重新读实际文件与 Authority，不恢复任务状态 |
+| UI / CLI | 保留 Releases 精确下载；发布命令只输出目标序号、验证结果及失败所在操作，不输出秘密或私有坐标 |
+
+正常执行先独立验证 source 的精确 catalog 与全部包。YAML deploy_hosts 中每个节点都须经本机或原 SSH
+通道回读唯一设备身份，网络锚、NodeID 和公钥与 daemon 的有效授权严格相等；publish_outputs 的别名须
+属于该集合，本地目标只属于 local_node。SSH 解析坐标差异明确回读，不能由 YAML 覆盖。任一 join 不成立
+即在上传前整次失败。公开地址只取同一 Authority 的有效设备授权中 distribution_urls 的规范去重集合。
+
+随后读取各目标现有指针并独立验签，作为本次条件写入的 expected-current。先逐目标传输原始公开制品，
+目标端复用单目标 import 的验签、排他锁和不可变写入，以 prepare-only 保留原指针；全部落盘回读后，
+从每个认证 HTTPS 根完整下载每件公开制品，比较长度和摘要。公开站点必须已经提供此明确公开的制品路径，
+本命令不修改 Nginx、网络或认证配置；路由缺失即失败并保留原指针。站点预置的静态路径仅映射
+受保护 release root 下 `bin/<64 位小写十六进制摘要>` 的普通文件；该目录只由验签并核对 public 受众
+的发布入口写入，不映射整个 release root、catalog、manifest、current 或设备目录。首次替换旧的逐文件
+location 时，须逐一核对已有 bin 均来自已验证公开 catalog；未知文件不能因通用路径而暴露。后续发布
+仍先验签落盘再做 HTTPS 正文回读，无需为每次内容摘要修改网站配置。
+
+只有以上全部通过且 daemon 的相关授权投影仍相同时，才按 YAML 规范顺序逐目标推进 current；每次仍在
+目标端锁内比较计划固定的旧值，已是同一 catalog 时幂等回读。推进后再验签读取完整 catalog 与包。中途
+失败明确输出已推进及未确认目标，退出非零；不倒退已推进的指针，不把 SSH 断线解释为远端未写入。
+重试从全部真实 current 重建条件输入，低代与同代异值继续拒绝。上传使用仅本次命令拥有的临时目录，
+不传私钥、provider token、设备配置或运行 floor；退出清理临时目录，异常遗留不能成为发布权威。
+
+反例：目标一已推进而目标二被另一发布者改变时，本次不能覆盖目标二，也不能把目标一倒退；重新执行
+相同 catalog 可验证目标一并按目标二的新事实决定接受或拒绝。缺少任意 HTTPS 正文、授权变动、错误密钥、
+同摘要异字节或任一身份不匹配均不能产生整体成功。没有已认证 HTTPS 根时也不能称全目标分发完成。
+本入口仅发布下载内容，不签发期望组件、不安装客户端、不推进任何既有运行 floor。
+
+最小测试覆盖：prepare 不改 current 与重启回读；混合本机/SSH 的全目标顺序与失败不推进；目标身份与
+认证 URL 的来源、配置/权限变化、条件推进冲突及同 catalog 重试；真实正式 CLI、全部 YAML 目标落盘、
+公开 HTTPS 与私有 Releases 下载回读。测试不把“current 可读”解释为运行制品已应用。
 
 `loom control serve` 可成对传入 `-release-root <绝对路径>` 和 `-release-pubkey <带外公钥文件>`，作为该
 control 的受保护只读安装输入；它们不进入 `.env` 或网络权威。私有 Releases 页面从验证结果投影 Linux
@@ -258,7 +304,7 @@ archive 与 Windows 数据面 ZIP，下载走既有管理员认证服务，原�
 3. 全部目标的 catalog 与引用制品读回通过后，才逐目标把可变 `current` 指向该 catalog。
    每次推进须由目标端以原子条件更新，或在覆盖所有发布者的独占锁内比较计划读取的旧指针并
    原子替换；单独“先读再写”不能防并发覆盖。条件不成立或目标端没有这种门禁时停止推进，
-   重新读取、重新计划。单目标 import 已实现并验收此条件更新；统一全目标 executor 仍须接线。
+   重新读取、重新计划。单目标 import 已实现并验收此条件更新；统一全目标 executor 使用上面的正式 publish 入口。
    推进后再次读回指针、签名 catalog 和实际制品；消费方仍须依经批准的单调发布规则验收，
    不能因指针可读而跳过验签、摘要或反重放检查。部分指针推进失败时逐目标记录结果，
    不把整体写成已激活，也不把已推进的指针倒退到较旧 generation。

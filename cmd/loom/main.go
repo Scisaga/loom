@@ -24,7 +24,8 @@ const usage = `loom —— 私有控制与客户端
                                       私有加入、认证配置、运行与报告
   loom client <package|verify|package-windows|verify-windows>
                                       通用客户端制品打包与验签
-  loom release <stage|verify>          schema 3 签名交付清单与本地回读
+  loom release <stage|publish|import|verify>
+                                      schema 3 签名制品、全目标分发与回读
   loom config check [-env .env]        本机部署 YAML 引用与输入校验
   loom version [-short|-json]         当前可执行文件坐标
   loom selfcheck [-q]                 二进制架构与构建自检
@@ -38,7 +39,7 @@ const usage = `loom —— 私有控制与客户端
   loom restore <备份文件> -o <新目录>  解包到独立目录，不覆盖运行状态
 
 普通授权只从 control write 和私有 Web 写入。旧 SSOT 渲染、发布、安装与回滚入口已删除；
-schema 3 控制制品发布和生产前向切换尚未接通。
+下载发布不等于期望组件或运行激活；既有运行 floor 仍须验证前向切换。
 `
 
 const (

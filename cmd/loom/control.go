@@ -12,8 +12,8 @@ import (
 	"io"
 	"loom/internal/clientrelease"
 	"loom/internal/control"
+	"loom/internal/deployhost"
 	"loom/internal/localconfig"
-	"loom/internal/sshenroll"
 	"net"
 	"net/http"
 	"os"
@@ -139,7 +139,7 @@ func cmdControlServe(args []string) (retErr error) {
 	var ssh control.SSHExecutor
 	if *deploymentEnv != "" {
 		var err error
-		ssh, err = sshenroll.New(*deploymentEnv)
+		ssh, err = deployhost.New(*deploymentEnv)
 		if err != nil {
 			return err
 		}

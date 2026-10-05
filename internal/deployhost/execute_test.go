@@ -1,4 +1,4 @@
-package sshenroll
+package deployhost
 
 import (
 	"context"
@@ -101,5 +101,33 @@ exit "${DEMO_EXIT:-0}"
 	actual, _ := os.ReadFile(filepath.Join(root, "deploy.yaml"))
 	if string(actual) != string(yaml) {
 		t.Fatal("execution rewrote deployment inputs")
+	}
+}
+
+func TestLocalStreamPreservesBinaryStdinAndQuotesScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Linux deployment adapter")
+	}
+	root := t.TempDir()
+	config := localconfig.Config{DeployHosts: []string{"demo-local"}, LocalNode: "demo-local", SSHConfig: filepath.Join(root, ".ssh_config"), SigningKey: filepath.Join(root, "demo.key"), PublishOutputs: []string{"/srv/demo-releases"}, Nodes: []localconfig.NodeNetwork{{ID: "demo-local", ManagementHost: "127.0.0.1", ManagementPort: 2222, HostAddresses: []string{"192.0.2.1"}, Ingress: []localconfig.IngressMapping{}}}}
+	body, err := localconfig.EncodeDeployment(config, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(root, "deploy.yaml"), body, 0600)
+	os.WriteFile(filepath.Join(root, ".env"), []byte("LOOM_DEPLOY_CONFIG='deploy.yaml'\n"), 0600)
+	executor, err := New(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []byte{0, 1, 2, 39, 36, 40, 41, 10, 255}
+	t.Setenv("GANDI_PAT_TOKEN", "demo-must-not-be-forwarded")
+	output, err := executor.Stream(context.Background(), "demo-local", `set -eu
+[ -z "${GANDI_PAT_TOKEN+x}" ]
+printf '%s' 'demo quoted script: '
+cat
+`, strings.NewReader(string(input)))
+	if err != nil || string(output) != "demo quoted script: "+string(input) {
+		t.Fatal("stream changed binary input, quoting or environment", err)
 	}
 }
