@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -120,14 +121,36 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 			}
 		}
 	}()
-	select {
-	case <-ctx.Done():
-		return nil
-	case err := <-errorsOut:
-		if errors.Is(err, http.ErrServerClosed) {
+	expiry := time.NewTimer(0)
+	defer expiry.Stop()
+	for {
+		select {
+		case <-ctx.Done():
 			return nil
+		case <-expiry.C:
+			if server.Runtime.Writable() {
+				check, cancel := context.WithTimeout(ctx, 5*time.Second)
+				changed, err := server.Runtime.Authority.ExpireUnboundInvites(check, server.now(), server.Config)
+				cancel()
+				if changed > 0 && server.Runtime.Channel != nil {
+					select {
+					case server.Runtime.wake <- struct{}{}:
+					default:
+					}
+				}
+				if err != nil && ctx.Err() == nil {
+					// Keep repair access and the original facts. Endpoint expiry
+					// still refuses new claims; logs contain no invitation input.
+					log.Print("control: could not persist expired invitation; will retry")
+				}
+			}
+			expiry.Reset(5 * time.Second)
+		case err := <-errorsOut:
+			if errors.Is(err, http.ErrServerClosed) {
+				return nil
+			}
+			return err
 		}
-		return err
 	}
 }
 

@@ -385,10 +385,7 @@ func (a *Authority) CompleteEnrollment(ctx context.Context, request EnrollmentCl
 		return Submission{}, errors.New("resume requires an existing durable binding")
 	}
 	if !bound && !now.Before(time.UnixMilli(invite.ExpiresAt)) {
-		target, _ := a.projection.CurrentTarget("invite", invite.ID)
-		at := now.UnixMilli()
-		termination := EnrollmentTermination{TransactionID: invite.ID, InviteMaterialID: originalID, ExpiredAt: &at}
-		_, err := a.submitOperationLocked(ctx, Operation{Schema: 3, RequestID: enrollmentRequestID("expire", invite.ID), Operation: "invite.expire", TargetKind: "invite", TargetID: invite.ID, Dependencies: sortedUniqueDependencies(append(target.MaterialIDs, originalID)), Payload: termination}, local)
+		_, err := a.expireUnboundInviteLocked(ctx, invite.ID, now, local)
 		if err != nil {
 			return Submission{}, err
 		}
