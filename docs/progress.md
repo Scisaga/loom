@@ -586,8 +586,26 @@ VM 正常停止后原宿主目录权限恢复，初始 netns 的 route/rule/link
 浏览器授权、另一成员上的 Service 写入与同步、HTTP 和已连接 WebSocket 撤权，以及两个 daemon 重启后的
 持续拒绝均成立。明确引用撤权事实重新授予后恢复登录，再次撤销并重启仍拒绝；测试 Service、证书和临时
 浏览器策略已清理。过期会话、并发撤权优先、稳定 ID 拒绝重绑定、损坏交付拒绝覆盖也已通过最小测试。
-受保护证据位于 `deploy/evidence/2026-10-05-admin-access/`。现网精确制品激活和三 control 业务回读仍待执行，
-本段不代表 `control.loom`、网站信任切换或用户笔记本终验通过。
+
+`5169bc8c` 已提交推送并激活到六个获准 Linux 节点；Linux 签名包为第 31 代，下载 catalog 为第 34 代。
+正式 publish 消费原 `.env` 与 YAML，三个分发目标完成不可变制品准备、全部公开 HTTPS 正文字节核验、
+条件推进和最终验签回读。Android 与 Windows 原已签制品继续保留，运行发布 floor 未被消费或重置。
+
+生产 control 沿正式本机 CLI 从经公开键核验的原签发能力生成测试 P12，同目录重试保留全部交付字节。
+原管理员经 Settings 授予新叶，新管理员在三个 control 登录，并通过正常页面创建、回读和删除测试 Service；
+另一 control 撤销该叶后，各成员的新 HTTP 请求和既有 WebSocket 均拒绝。三个 control 重启后仍拒绝新叶，
+原管理员继续可用。新增授权与撤销的原始签名事实在三成员一致，临时交付包已按精确文件清单清理；
+原管理员、原根与私钥、genesis 和既有签名材料保留，没有轮换信任根。
+
+正式浏览器已更新六节点的 12 项组件期望；三个 control 持久保存并回读同一原始签名事实。
+六节点正式服务再次重启后，实际 agent/数据面进程摘要、签名报告与期望一致，指定境外出口及 Auto 的
+真实 HTTPS 业务通过并恢复原 Auto 偏好。原身份、密钥、配置、floor/latch 与原有材料字节保全，宿主
+route/rule 未变；新 SSH、LAN/网关 DNS、系统 DNS、既有 WG 上的 HTTP proxy 和默认公网连接通过。
+被替代程序与本轮临时上传文件已核对摘要和所有权后删除。全仓 build/test/vet、mobile 检查、格式、安全及
+diff 检查通过。受保护证据位于 `deploy/evidence/2026-10-05-admin-access/`。
+
+本项已完成管理员补发、普通授权与撤销的原生及生产业务链；`control.loom`、网站信任切换和用户笔记本
+本轮终验仍未完成，不由上述结果抵扣。
 
 ### 本轮实现与实际验证
 
@@ -737,7 +755,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | 普通授权开发闭环 | 正式 CLI/daemon、Chrome 管理操作、私有加入、耐久事实与 LKG、Linux 隔离 Mixed 和 Android 模拟器原生 Hy2 业务、撤权/重启/再授权、报告及管理 API 回读；Linux 另有执行失败保全。 | 生产激活、所有传输/中继或全部平台完成。 |
 | 客户端与 Web 产品资产 | Web、Android、Windows 界面源码及既有视觉基准保留；本轮 Web 正式 Service/Policy/设备交互已验证。 | 三端所有目标稿、真机交互、签名发行或线上运行已验收。 |
 | 2026-10-02 与 2026-10-03 文档/原型修订 | 职责、PolicyIDs、加入恢复、LKG/运行/业务分离及目标视觉已统一；详细历史记录见下方。 | 当时已执行业务实现或本轮重录原生视觉基准。 |
-| 管理员现有访问 | 用户已确认原 P12/密码交付、证书安装及访问；本轮原证书通过新正式服务的 mTLS 写入、同步、重启回读和真实 Chrome 回环页面。 | 笔记本本轮复验、新领证交付或 control.loom 已可用；现有叶缺该名称的 DNS SAN。 |
+| 管理员现有访问 | 用户已确认原 P12/密码交付、证书安装及访问；本轮新 P12 经 Windows 原生导入/选证及三 control 生产授权、管理写入、撤销和重启回读，原管理员继续可用。 | 用户笔记本本轮复验、control.loom 或网站信任切换已完成；原网站叶缺该名称的 DNS SAN。 |
 | Linux 宿主事故处置 | [事故记录](incidents/2026-09-21-host-network-takeover.md#已落地防复发措施)的 TUN 门禁保留；本轮显式 Mixed 正式服务完成停止、SIGKILL、WG 清理和基础网络回读。 | 初始 netns TUN 可以启用、完整隔离 TUN installer 已完成，或有限连接覆盖所有物理网络情形。 |
 
 ## 未完成的业务结果
@@ -753,7 +771,7 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | Direct／Auto／指定出口与业务探测 | 单个授权 HTTPS 目标按 Service 实测；生产 Auto、固定出口及首跳失败后同出口中继成功已回读。 | 多目标归约、其余观测算法和平台原生结果；诊断请求的不可达不能单独认定功能缺口，完成判定须对应已确定的业务链。 |
 | DNS overlay | 精确 .loom、控制入口与权限分离的目标模型保留；端点 TLS/过期执行已有窄实现。 | 规范 DNS 事实/设备投影、私有解析器、受约束网站根与叶证书交付、CSR/手工续签、逐入口提醒、正式/回环两路径浏览器验链及生产读回。DNS provider、DNS-01 和 ACME 不在本项。 |
 | 共享局域网 | 目标由 forward 声明、control 签发 IPv4 虚拟映射，经所属 Policy 与 PolicyIDs 授权；不作为简单 Direct 链前置。 | 分配/冲突重分配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除及隔离实际运行。不得修改宿主初始 netns 或 LAN 路由器。 |
-| 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
+| 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority；新 P12 生成/重试、Windows 原生导入/选证、名单普通授权/撤销、生产三成员管理写入与重启回读通过，原身份和信任保留。 | 正式 control.loom、网站信任切换、其余目标管理交互及用户笔记本本轮复验。 |
 | Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在隔离 API 35 x86_64 模拟器完成正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和签名报告；同身份升级、实际 APK/原生库测量及停止报告通过。应用 manifest/catalog 已正式分发，私有浏览器精确下载、期望组件与实际报告比较及控制重启恢复通过。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验。 |
 | Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh/SSH 安装、原事务恢复、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture 及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
 | Windows 既定交付 | 双架构正式制品已构建；x64 三种形态实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。六份应用 manifest 已正式分发，浏览器精确下载及独立验签、三种形态的 agent/数据面期望和进程/控制重启回读通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验；外部代码签名未启用，预览属性保持。 |
