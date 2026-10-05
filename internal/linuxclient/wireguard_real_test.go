@@ -106,14 +106,14 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		WireGuard: makeWrapper("wg-a", acceptorNS, "/usr/bin/wg"), WireGuardPrivateKey: acceptorKey, Config: filepath.Join(root, "acceptor.json")}
 	const listenPort = 51888 // isolated namespace only; deliberately not a production/public port
 	acceptorProfile := &wireGuardExecution{WireGuard: []wireGuardExecutionLink{{
-		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.2/32", PeerID: "demo-i",
-		PeerPublicKey: initiatorPublic, AllowedIP: "10.20.0.1/32", Mode: "acceptor", ListenPort: listenPort,
-		ProbeTarget: "10.20.0.1",
+		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "198.51.100.2/32", PeerID: "demo-i",
+		PeerPublicKey: initiatorPublic, AllowedIP: "198.51.100.1/32", Mode: "acceptor", ListenPort: listenPort,
+		ProbeTarget: "198.51.100.1",
 	}}}
 	initiatorProfile := &wireGuardExecution{WireGuard: []wireGuardExecutionLink{{
-		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "10.20.0.1/32", PeerID: "demo-a",
-		PeerPublicKey: acceptorPublic, AllowedIP: "10.20.0.2/32", Mode: "initiator",
-		Endpoint: "192.0.2.2:51888", PersistentKeepalive: 25, ProbeTarget: "10.20.0.2",
+		LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "198.51.100.1/32", PeerID: "demo-a",
+		PeerPublicKey: acceptorPublic, AllowedIP: "198.51.100.2/32", Mode: "initiator",
+		Endpoint: "192.0.2.2:51888", PersistentKeepalive: 25, ProbeTarget: "198.51.100.2",
 	}}}
 	acceptorTransaction, err := applyWireGuard(acceptorProfile, nil,
 		&wireGuardIdentity{WGPublicKey: acceptorPublic}, acceptorOptions)
@@ -136,7 +136,7 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
 		for {
-			command := exec.Command("ip", "netns", "exec", initiatorNS, "ping", "-n", "-c", "1", "-W", "1", "10.20.0.2")
+			command := exec.Command("ip", "netns", "exec", initiatorNS, "ping", "-n", "-c", "1", "-W", "1", "198.51.100.2")
 			if body, pingErr := command.CombinedOutput(); pingErr == nil {
 				return
 			} else if time.Now().After(deadline) {
@@ -172,8 +172,8 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		}
 		t.Fatalf("%s did not traverse reverse WireGuard: output=%q err=%v", network, output, clientErr)
 	}
-	roundTrip("TCP", "TCP4-LISTEN:18080,bind=10.20.0.2,reuseaddr", "TCP4:10.20.0.2:18080", "tcp-through-wg")
-	roundTrip("UDP", "UDP4-RECVFROM:18053,bind=10.20.0.2,reuseaddr", "UDP4:10.20.0.2:18053", "udp-through-wg")
+	roundTrip("TCP", "TCP4-LISTEN:18080,bind=198.51.100.2,reuseaddr", "TCP4:198.51.100.2:18080", "tcp-through-wg")
+	roundTrip("UDP", "UDP4-RECVFROM:18053,bind=198.51.100.2,reuseaddr", "UDP4:198.51.100.2:18053", "udp-through-wg")
 
 	if err := readbackWireGuard(*initiatorProfile, initiatorOptions); err != nil {
 		t.Fatalf("initiator readback: %v", err)
@@ -194,8 +194,8 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	if initiatorTransaction != beforeInitiator || acceptorTransaction != beforeAcceptor || beforeLinks != string(run("-n", initiatorNS, "-json", "-details", "link", "show", "dev", "wg-demo")) {
 		t.Fatal("unchanged View replaced a real kernel interface")
 	}
-	roundTrip("TCP after reuse", "TCP4-LISTEN:18082,bind=10.20.0.2,reuseaddr", "TCP4:10.20.0.2:18082", "tcp-after-reuse")
-	roundTrip("UDP after reuse", "UDP4-RECVFROM:18055,bind=10.20.0.2,reuseaddr", "UDP4:10.20.0.2:18055", "udp-after-reuse")
+	roundTrip("TCP after reuse", "TCP4-LISTEN:18082,bind=198.51.100.2,reuseaddr", "TCP4:198.51.100.2:18082", "tcp-after-reuse")
+	roundTrip("UDP after reuse", "UDP4-RECVFROM:18055,bind=198.51.100.2,reuseaddr", "UDP4:198.51.100.2:18055", "udp-after-reuse")
 
 	// A committed runtime retains its cleanup handle. Stop it before creating
 	// the next generation; a previous profile never permits blind host adoption.
@@ -218,8 +218,8 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	}
 	defer initiatorRestart.Rollback()
 	waitTunnel()
-	roundTrip("TCP after restart", "TCP4-LISTEN:18081,bind=10.20.0.2,reuseaddr", "TCP4:10.20.0.2:18081", "tcp-after-restart")
-	roundTrip("UDP after restart", "UDP4-RECVFROM:18054,bind=10.20.0.2,reuseaddr", "UDP4:10.20.0.2:18054", "udp-after-restart")
+	roundTrip("TCP after restart", "TCP4-LISTEN:18081,bind=198.51.100.2,reuseaddr", "TCP4:198.51.100.2:18081", "tcp-after-restart")
+	roundTrip("UDP after restart", "UDP4-RECVFROM:18054,bind=198.51.100.2,reuseaddr", "UDP4:198.51.100.2:18054", "udp-after-restart")
 	initiatorRestart.Commit()
 	acceptorRestart.Commit()
 	// External crash cleanup consumes only the original public ownership record.
