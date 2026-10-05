@@ -516,7 +516,37 @@ API 35 x86_64 隔离模拟器先以旧正式包正常导入、私有加入、真
 根模块与 mobile 的构建/测试/vet、格式和仓库安全检查通过；Android JVM、lint、正式 APK 签名与发布原生测试通过。
 证据位于 `deploy/evidence/2026-10-05-android-components/`，包括首次停止报告缺口的原始记录。
 测试模拟器已正常退出，宿主 route/rule/link 回读未改变配置；路由到期计时单独排除比较。
-实体 ARM64、真实设备 Keystore、切网等由用户终验；这些结果不抵扣尚未定义的应用发布 manifest/catalog。
+实体 ARM64、真实设备 Keystore、切网等由用户终验；这组证据不单独证明应用发布，发布链见下一节。
+
+### Android 应用发布与期望组件
+
+[Android 应用 manifest](core/current-contract.md#android-应用-manifest-的规范字段) 已接入原 schema 3
+catalog、严格 `.env` → YAML 签发入口、共享读取器、期望组件事实及 Releases 页面。
+正式签名 APK 旁保存原 manifest 和 Ed25519 签名；APK、编入的源码/AAR 坐标、原始受审核来源记录与两种
+ABI 的实际 ELF 逐项绑定。工作站使用固定 SDK 检查 APK 签名和包身份，节点读取器独立验签与核对原包。
+期望仍引用 catalog/manifest；实际报告独立测量已执行的 APK 和原生库，不从期望复制摘要。
+
+源码 `ed69c949` 的 APK 0.5.3 / versionCode 10 已通过正式构建、SDK 验签、原始 AAR/原生库核对及
+规范清单集成验证。应用清单第 1 代已随 catalog 第 31 代通过正式 publish 分发至全部 YAML 目标；
+各目标原身份、原目录比较、全部公开 HTTPS 正文、条件推进和最终目录均已读回，部署输入未改写。
+三台 control 分别重新验证并投影 Android 清单。私有 mTLS Chrome 页面已实际下载 APK、原 manifest 和签名，
+共享读取器使用独立公钥再次验签，下载字节与原生安装文件完全相同。
+
+同一个隔离 API 35 x86_64 模拟器保留原 AVD、Keystore 和加入身份，正常原地升级后完成真实 Hy2 HTTPS、
+正式 CLI 期望写入、撤权、两次停止报告、进程重启及再授权。实际 APK/原生库摘要与清单期望逐项一致，
+控制 daemon 重启后从原始事实和观察恢复相同结果。验收等待实际授权路径消失/恢复，不能把同时发生的
+期望更新或其他摘要变化当作撤权完成。原失败记录与成功复验分别保留，未清空设备或控制身份。
+模拟器正常退出后宿主 route/rule/link 不变，新 SSH、LAN DNS、系统 DNS、默认公网和现有代理通道通过。
+
+同批生产服务已切换到源码 `1da6dc2f` 的精确程序，Linux 签名包为第 29 代，数据面仍为原审核修订。
+六个节点的实际进程摘要与私有签名报告一致；正式 Web 写入的期望组件在三台 control 上保留相同原始签名字节，
+各服务重启后恢复相同期望和实际结果。指定境外出口及 Auto 的真实 HTTPS 均通过。
+本机客户端受控异常退出后完成本 generation 清理并保持停止；停止期间和恢复后的管理与基础网络均通过，
+原身份、密钥、认证材料及既有 floor/latch 保全，宿主 route/rule 不变。已替换程序及精确暂存文件从各节点删除，
+原不可变发布证据继续保留，不作为运行 fallback。
+
+证据位于 `deploy/evidence/2026-10-05-android-release/`。此结果不包含实体 ARM64、物理切网或真实设备
+Keystore 终验；Windows 应用 manifest 和旧运行发布 floor 的前向消费仍是独立缺口。
 
 ### 本轮实现与实际验证
 
@@ -683,11 +713,11 @@ Linux 客户端制品已改用[规范 schema 3 manifest](core/current-contract.m
 | DNS overlay | 精确 .loom、控制入口与权限分离的目标模型保留；端点 TLS/过期执行已有窄实现。 | 规范 DNS 事实/设备投影、私有解析器、受约束网站根与叶证书交付、CSR/手工续签、逐入口提醒、正式/回环两路径浏览器验链及生产读回。DNS provider、DNS-01 和 ACME 不在本项。 |
 | 共享局域网 | 目标由 forward 声明、control 签发 IPv4 虚拟映射，经所属 Policy 与 PolicyIDs 授权；不作为简单 Direct 链前置。 | 分配/冲突重分配、网关 ACL、精确路由、DNAT/必要 SNAT、停止/删除及隔离实际运行。不得修改宿主初始 netns 或 LAN 路由器。 |
 | 控制面 Web 与管理员领证 | 当前 UI 使用唯一 schema 3 Authority，原管理员叶及密钥保留；原证书的生产 mTLS 与真实 Chrome 回环访问通过。 | 新 P12 生成/交付、名单普通变更、正式 control.loom 及用户笔记本本轮复验。 |
-| Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在干净 API 35 x86_64 模拟器已正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和 UI/签名报告回读；同身份正式包升级、实际 APK/原生库测量及停止报告已验证。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验，APK 签名也不等于 schema 3 发布 catalog。 |
+| Android | mobile 共用 schema 3 状态/transport；双 ABI AAR、JVM、lint 与正式签名 APK 通过。正式包在隔离 API 35 x86_64 模拟器完成正常导入/私有加入、VPN/Hy2 HTTPS、撤权、Keystore 重启恢复、再授权和签名报告；同身份升级、实际 APK/原生库测量及停止报告通过。应用 manifest/catalog 已正式分发，私有浏览器精确下载、期望组件与实际报告比较及控制重启恢复通过。 | 实体机 Keystore、ARM64/IPv6 原生运行与物理切网；模拟器不能抵扣实体终验。 |
 | Linux | 获准节点 Mixed/Hy2/WG 正式服务已接管；生产 sh/SSH 安装、原事务恢复、同身份签名升级、境内首跳到境外出口的真实业务、撤权、删旧及整机恢复通过；独立环境另覆盖失败升级保全与重试。 | 隔离 TUN capture 及既有生产发布 floor 前向消费；物理网络变化由用户终验。 |
 | Windows 既定交付 | 双架构正式制品已构建；x64 Installed、Portable TUN 与 Portable Mixed 已在同机 VM 实际完成域名 Hy2 HTTPS、撤权恢复、签名报告及 UI 回读；MSI 升级、运行中卸载、保留身份重装、整机重启及停止后 DNS/公网恢复通过。 | ARM64/睡眠/物理切网/显示硬件由用户实体终验，外部代码签名未启用；这些结果不抵扣发布 catalog。 |
 | 本机 .env 与 YAML | 唯一 LOOM_DEPLOY_CONFIG 引用及可选 GANDI_PAT_TOKEN 严格解码；YAML 原始映射由正式检查和此次实际部署消费，六键漂移删除。 | 配置通过不证明业务成功，也不赋予修改云网络或路由器的权限。 |
-| 签名发布闭环 | schema 3 catalog、Linux 包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | 其余应用制品 manifest、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
+| 签名发布闭环 | schema 3 catalog、Linux 包、Android 应用包、Windows 数据面包与通用 bootstrap 已由正式全目标 publish 验签分发；真实身份、全部公开正文字节、目标端条件推进、私有浏览器下载、Android 期望/实际组件比较及 Linux 安装器接受代前向升级均已回读，旧运行 floor 保全。 | Windows 应用制品 manifest、旧运行发布 floor 的可验证前向映射和自动消费；下载 current 不能当运行期望或已应用证据。 |
 | 唯一规范输入 | 当前 Material、初始成员证明、Invite、View、报告和设备持久值唯一写读 schema 3；旧普通导入/恢复/协议 fallback 已删除或明确拒绝。 | 非空后继及未实现资源、DNS/LAN、发布边界仍须同版补齐；现网旧字节只保全，不能自动读成新格式。 |
 | 字段级同构 | Direct/本机出口/Hy2/WG 中继已定义并消费跨层对应与严格往返；初始成员、节点绑定及 distribution_urls 已落实。 | 其他传输、动态成员和未定观测算法；旧 HTTP 分发坐标不自动转换成 HTTPS。 |
 | 生产切换 | 本次明确授权的精确制品已接管正式服务，原身份/密钥/管理员/认证原件和 floor/latch 保全，旧运行入口退出。 | schema 3 签名发布 catalog 的单调消费、全部功能或全部平台已完成；旧证据不能恢复成运行权威。 |
