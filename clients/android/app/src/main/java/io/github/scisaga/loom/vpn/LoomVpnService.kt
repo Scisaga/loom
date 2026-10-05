@@ -406,14 +406,22 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     private suspend fun stopTunnel(stopStartId: Int? = null, preserveFailure: Boolean = false) = lifecycle.withLock {
         if (stopStartId != null && desiredProfileId.isNotBlank()) return@withLock
+        val stoppedProfileId = runtimeProfileId
         val stopped = VpnRuntime.status.value.takeIf { preserveFailure && it.phase == ConnectionPhase.ERROR }
             ?.copy(activeProfileId = "") ?: VpnStatus()
-        if (boxService == null && tunnel == null) {
-            VpnRuntime.update(stopped)
-        } else {
-            VpnRuntime.transform { it.copy(phase = ConnectionPhase.STOPPING, detail = "正在释放网络资源…") }
-            closeResources()
-            VpnRuntime.update(stopped)
+        try {
+            if (boxService == null && tunnel == null) {
+                VpnRuntime.update(stopped)
+            } else {
+                VpnRuntime.transform { it.copy(phase = ConnectionPhase.STOPPING, detail = "正在释放网络资源…") }
+                closeResources()
+                VpnRuntime.update(stopped)
+            }
+        } finally {
+            // The periodic reporter ended with this runtime. The application
+            // scope reads the actual stopped/error state after releasing this
+            // lock; destroying the VPN service must not cancel that report.
+            if (stoppedProfileId.isNotBlank()) EnrollmentManager.get(this).reportRuntimeOutcome(stoppedProfileId)
         }
         // Only remove foreground state when this stop is still the newest
         // command. A newer queued connect must inherit a valid foreground

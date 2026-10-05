@@ -174,5 +174,12 @@ class CertifiedRuntimeInstrumentedTest {
         await("private control report readback must finish") { File(directory, if (resume) "demo-resume-finish" else "demo-finish").isFile }
         click("connection-toggle")
         await("normal disconnect must release the VPN") { VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED }
+        if (args.getString("demoAwaitStoppedReport") == "true") {
+            // Keep the ordinary app process alive until the controller has
+            // independently read the signed stop result from the real daemon.
+            await("private stopped report readback must finish") {
+                File(directory, if (resume) "demo-resume-stop-readback" else "demo-stop-readback").isFile
+            }
+        }
     }
 }
