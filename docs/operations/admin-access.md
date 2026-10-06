@@ -106,6 +106,29 @@ Revoke 提交 `admin_certificate.delete`。交付值和授权生命周期的精�
 
 ## 生产网站证书切换门禁
 
+网站签发请求在承载 control 上通过以下入口准备；输出父目录须已存在且为 owner-only：
+
+```bash
+loom control website request -state-dir /var/lib/loom-control \
+  -endpoint-id demo-web -generation 1 -o /var/lib/loom/demo-delivery/request.json
+```
+
+它只生成该 control 的叶私钥与公开 CSR 请求，不生成网站根或签发叶证书。叶私钥留在 control 根目录的
+`website-requests/` 下；同一入口代重试保留原私钥和请求。操作者只取回公开的 `request.json`，在离线签发
+环境用独立已核对的网络锚、当前成员配置及预期节点、入口代验证并导出标准 PKCS10：
+
+```bash
+loom control website verify-request -request /private/demo-delivery/request.json \
+  -network-id demo-network -genesis-digest <trusted-genesis-digest> \
+  -control-config-id <trusted-current-config-digest> \
+  -control-id demo-control -node-id demo-node -endpoint-id demo-web -generation 1 \
+  -csr-out /private/demo-delivery/request.pem
+```
+
+不要直接把待验证包里自报的值填成独立可信输入。上述命令成功仅证明 CSR 自签名、成员签名及指定入口绑定；
+操作者仍须核对当前成员状态，使用受约束的离线网站根按固定模板签发，再将公开叶链交回。
+CSR 不启动 listener，不改变 DNS 或现有证书，不代表 `control.loom` 已可访问。
+
 目标 `.loom` 网站根带 critical 名称约束并排除所有 IP，目标网站叶 SAN 仅为 `control.loom`，
 根私钥不在任何 control。该证书链不能验证开发调试浏览器使用的 `127.0.0.1`。
 [控制模型](../core/control-model.md#9-dns-overlay)已将正式 `.loom` 入口和回环调试入口分开；

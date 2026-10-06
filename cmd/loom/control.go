@@ -51,7 +51,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <init|serve|relay|edge|inspect|endpoint-inputs|admin|write>")
+		return errors.New("用法: loom control <init|serve|relay|edge|inspect|endpoint-inputs|website|admin|write>")
 	}
 	switch args[0] {
 	case "admin":
@@ -68,6 +68,8 @@ func cmdControl(args []string) error {
 		return cmdControlInspect(args[1:])
 	case "endpoint-inputs":
 		return cmdControlEndpointInputs(args[1:])
+	case "website":
+		return cmdControlWebsite(args[1:])
 	case "write":
 		return cmdControlWrite(args[1:])
 	default:

@@ -36,6 +36,9 @@ TLS 校验名。入网设备则由 Loom DNS 解析 `control.loom` 访问 serving
 不能以 SSH 转发成功或 admin 客户端证书存在代替该 TLS 验收。此项未完成时，不宣称切换后的回环调试入口可用。
 根私钥由操作者隔离离线保管，区别于 `LOOM_SIGNING_KEY` 的发布私钥；各 control 本机生成叶私钥与 CSR，
 操作者在叶证书到期前手工续签，经受保护渠道交回证书链，并用新的 `EndpointGeneration` 验证和切换。
+CSR 的公开签发请求使用同一 schema 3，精确字段、成员签名和独立可信输入见
+[网站 CSR 的受保护交付](enrollment-endpoint-model.md#网站-csr-的受保护交付)。它不是控制事实或网站信任根；
+规范解码和再编码必须还原原字节，操作者须独立核对当前成员配置及目标入口，不能接受请求自选的网络锚。
 
 ## 现行编号
 

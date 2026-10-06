@@ -22,7 +22,7 @@ func TestOverlayDNSCanonicalAndConcurrentNamespace(t *testing.T) {
 			t.Fatal("accepted noncanonical or reserved name", name)
 		}
 	}
-	for _, addresses := range [][]string{nil, {}, {"0.0.0.0"}, {"224.0.0.1"}, {"::ffff:192.0.2.1"}, {"fe80::1%demo"}, {"192.0.2.1", "192.0.2.1"}, {"2001:db8::1", "192.0.2.1"}} {
+	for _, addresses := range [][]string{nil, {}, {"0.0.0.0"}, {"ff0e::1"}, {"::ffff:192.0.2.1"}, {"2001:db8::1%demo"}, {"192.0.2.1", "192.0.2.1"}, {"2001:db8::1", "192.0.2.1"}} {
 		bad := record
 		bad.Addresses = addresses
 		if bad.Validate() == nil {

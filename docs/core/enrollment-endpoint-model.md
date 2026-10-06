@@ -95,6 +95,34 @@ web 模式的网站叶证书到期前，操作者使用独立离线保管的网�
 EKU 仅 `serverAuth`、`CA=false`，KeyUsage 不含 `keyCertSign`。叶私钥留在承载 control，
 只有证书链经受保护渠道返回。
 
+#### 网站 CSR 的受保护交付
+
+目标是让离线操作者确认待签公钥确实由当前承载 control 为指定入口生成。现有入口输入只能安装已经
+签好的证书，不能生成叶私钥或证明 CSR 的成员来源。最小补充是本机 `control website request` 和离线
+`control website verify-request`：不增加网站 CA、签发服务、控制事实或新的运行状态。新增操作成本是
+操作者取回一个公开请求包，并从独立可信渠道提供网络锚、当前成员配置摘要和预期入口坐标进行核对。
+
+请求包是一次签发交付物，固定 `schema=3,network_id,genesis_digest,control_proof,control_id,node_id,`
+`endpoint_id,generation,csr_der,signature`。CSR 使用 P-256，SAN 恰好为 `control.loom`；节点、入口与
+新代连同完整 CSR 和成员证明由 control 的既有成员键签名。签名域为 `loom-website-request-v3` 加 NUL，
+签名覆盖去掉 signature 后的规范对象。DER 和签名采用无填充 base64url。请求包自身提供的 genesis
+不能充当信任锚，过时成员证明也不能替换离线操作者明确选择的当前成员配置。
+
+领域值与请求包规范 wire 必须往返；control 根目录内按入口 ID 和 generation 的规范摘要定位
+`website-requests/<digest>/`，仅保存本代叶 `key.pem` 与公开 `request.json`。目录与文件分别为
+0700/0600；原子发布完整目录前的中断不产生可交付请求。重试读取并验证原文件和公钥匹配，绝不重生成
+已交付请求的叶私钥。同代部分文件、异值、软链接及归属错误拒绝；不覆盖、删除或猜测恢复材料。
+运行时和 UI 不消费 CSR，也不据此声明入口已准备或可用。它不形成第二份成员表、EndpointGeneration
+或网站信任权威；只有后续证书检查和正式入口事实才可启动 listener。
+
+已有入口只能由原承载 control 请求紧邻下一代；新入口从第一代开始。请求未签回、超时或重复取回均
+不改变入口事实。离线校验同时检查 CSR 自签名、SAN、公钥算法、成员签名、外部锚和指定入口绑定；
+例如从其他网络复制一个自洽的请求仍须拒绝。成员失格或配置改变后，旧请求不能凭历史成员证明继续
+签发。叶证书签回后的验链、安装、正式浏览器验收和退休仍遵守下述生命周期。
+
+最小验证覆盖正式命令生成与离线核验、同代重试保持私钥和请求字节、错锚/成员/入口/CSR 篡改拒绝，
+以及原子目录发布失败后的原有材料保全。CSR 生成不抵扣网站根、证书签回或 `control.loom` 浏览器验收。
+
 承载者核对链、名称、用途、有效期与本地私钥匹配后，以新证书引用建立下一 `EndpointGeneration`。
 在 prepared 阶段用候选地址及 SNI `control.loom` 定向预检 TLS 与 Web；通过后才签发 serving 阶段，
 再用目标浏览器从正式入口回读，成功后旧代转为 draining、retired。正式回读失败时只让**新代**
