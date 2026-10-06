@@ -312,6 +312,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	projection := server.Runtime.Authority.Snapshot()
 	releases := server.expectedReleaseSets(projection)
 	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
+	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Runtime.Reports != nil {
 		latest := server.Runtime.Reports.All()
@@ -406,6 +407,7 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snapshot := buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)
+	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
 	snapshot.PolicyInvites = projectWebPolicyInvites(result.Projection, server.now())
 	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": snapshot}
 	if extra != nil && extra.Invite != "" {

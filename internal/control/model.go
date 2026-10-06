@@ -1504,6 +1504,15 @@ func (graph *materialGraph) validateEndpoint(material Material, view Projection,
 		if _, err := endpointWebsiteTrust(view, value); err != nil {
 			return err
 		}
+		if value.State == "serving" {
+			for _, other := range view.EndpointGenerations {
+				if other.State == "serving" && other.WebsiteTrustID != "" && other.Port != value.Port && endpointOwnerActive(view, other.OwnerControlID) {
+					if _, err := endpointWebsiteTrust(view, other); err == nil {
+						return errors.New("serving website endpoints must share the client URL port")
+					}
+				}
+			}
+		}
 	}
 	if value.State == "draining" || value.State == "retired" {
 		for _, invite := range view.Invites {

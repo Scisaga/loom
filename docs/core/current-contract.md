@@ -676,7 +676,9 @@ control_proof、Invite 和 View 均不得因此泄漏设备授权的 RuntimeKey 
 本链 DeviceView 的字段为 `schema=3,device_id,name,platform,device_public_key,responsibilities,policy_ids,`
 `services,policies,resources,links,endpoints,dns_servers,business_probe_targets,routes,runtime_profile,`
 `inbound_credentials,expected_components`。所有集合显式出现；没有相应授权时为空集合。
-另有可选非空 `dns_records` 和 `public_trust`，分别按上文的 DNSRecord 和 PublicTrust 规范投影，
+另有可选非空 `dns_records`、`public_trust` 和 `web_endpoints`，分别按上文的 DNSRecord、PublicTrust
+和 EndpointGeneration 规范投影；web_endpoints 仅含当前成员、有效根授权下相同客户端端口的
+serving `control.loom` web 代，按 ID/generation 排序，原设备认证 endpoints 不因此加入 web-only 值。
 无配置时字段缺席，显式空数组、null、未知用途或不规范证书均拒绝；已有缺席字段的签名字节保持。
 View 职责包含普通设备授权与成员表的有效投影；其中 control 只能来自已经验证的成员表。
 runtime_profile 仅 access 出现，包含 `kind="sing_box",config`，config 是 C 编码的 JSON 字符串，

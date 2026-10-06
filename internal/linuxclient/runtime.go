@@ -152,11 +152,11 @@ func accessView(envelope *control.DeviceViewEnvelope) (*control.DeviceViewEnvelo
 func runtimeView(store *deviceclient.Store) (*control.DeviceViewEnvelope, error) {
 	return accessView(store.LKG())
 }
-func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpointExclusions []string, capture string) (string, error) {
+func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpointExclusions []string, capture string, websites ...clientadapter.WebsiteAccess) (string, error) {
 	if err := validateCapture(capture); err != nil {
 		return "", err
 	}
-	config, err := clientadapter.ManagedRuntimeConfig(view, secret)
+	config, err := clientadapter.ManagedRuntimeConfig(view, secret, websites...)
 	if err != nil {
 		return "", err
 	}
@@ -175,10 +175,33 @@ func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpo
 	if err != nil {
 		return "", err
 	}
+	if len(websites) == 1 && websites[0].Port != 0 {
+		config, err = withIsolatedWebsiteProxy(config)
+		if err != nil {
+			return "", err
+		}
+	}
 	return clientadapter.WithTUNDomainDNS(config)
 }
 
-func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution) (string, error) {
+// The workload namespace has no physical NIC. Its private website addresses
+// stay outside TUN; an explicit loopback proxy reaches the pinned underlay.
+func withIsolatedWebsiteProxy(config string) (string, error) {
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config), &document); err != nil {
+		return "", err
+	}
+	var inbounds []json.RawMessage
+	if err := json.Unmarshal(document["inbounds"], &inbounds); err != nil || len(inbounds) != 1 {
+		return "", errors.New("isolated website proxy requires one managed TUN")
+	}
+	inbounds = append(inbounds, json.RawMessage(`{"type":"mixed","tag":"website-proxy","listen":"127.0.0.1","listen_port":1080}`))
+	document["inbounds"], _ = json.Marshal(inbounds)
+	body, err := json.Marshal(document)
+	return string(body), err
+}
+
+func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, websites ...clientadapter.WebsiteAccess) (string, error) {
 	if err := clientadapter.ValidateOverlayUnderlay(view); err != nil {
 		return "", err
 	}
@@ -188,7 +211,7 @@ func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []stri
 	}
 	if view.RuntimeProfile != nil {
 		var err error
-		config, err = accessRuntimeConfigForCapture(view, secret, exclusions, capture)
+		config, err = accessRuntimeConfigForCapture(view, secret, exclusions, capture, websites...)
 		if err != nil {
 			return "", err
 		}
@@ -237,7 +260,17 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	if err != nil {
 		return err
 	}
-	config, serverConfig, err := generationConfigs(view.View, secret, nil, capture, executions)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	addresses, err := deviceclient.WebsiteAddresses(ctx, view.View.WebEndpoints, view.View.DNSServers)
+	if err != nil {
+		return err
+	}
+	website, err := clientadapter.WebsiteAccessFor(view.View, addresses)
+	if err != nil {
+		return err
+	}
+	config, serverConfig, err := generationConfigs(view.View, secret, nil, capture, executions, website)
 	if err != nil {
 		return err
 	}
@@ -249,15 +282,33 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	return preflightRuntimeConfig(executable, config)
 }
 
-func generationConfigs(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution) (string, string, error) {
+func generationConfigs(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, websites ...clientadapter.WebsiteAccess) (string, string, error) {
+	if len(websites) > 1 {
+		return "", "", errors.New("generation requires one website execution input")
+	}
+	if len(websites) == 1 {
+		prefixes, err := websites[0].Exclusions()
+		if err != nil {
+			return "", "", err
+		}
+		unique := map[string]bool{}
+		for _, prefix := range append(append([]string{}, exclusions...), prefixes...) {
+			unique[prefix] = true
+		}
+		exclusions = nil
+		for prefix := range unique {
+			exclusions = append(exclusions, prefix)
+		}
+		sort.Strings(exclusions)
+	}
 	if view.RuntimeProfile == nil {
 		capture = "mixed" // No access role means no capture process at all.
 	}
 	if capture != "tun" {
-		config, err := nodeRuntimeConfig(view, secret, exclusions, capture, executions)
+		config, err := nodeRuntimeConfig(view, secret, exclusions, capture, executions, websites...)
 		return config, "", err
 	}
-	config, err := nodeRuntimeConfig(view, secret, exclusions, capture, nil)
+	config, err := nodeRuntimeConfig(view, secret, exclusions, capture, nil, websites...)
 	if err != nil {
 		return "", "", err
 	}
@@ -388,7 +439,22 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	config, serverConfig, err := generationConfigs(lkg.View, secret, exclusions, options.Capture, executions)
+	websiteGeneration := ""
+	if len(lkg.View.WebEndpoints) > 0 {
+		websiteGeneration, err = options.Generation()
+		if err != nil {
+			return err
+		}
+	}
+	addresses, err := deviceclient.WebsiteAddresses(ctx, lkg.View.WebEndpoints, lkg.View.DNSServers)
+	if err != nil {
+		return err
+	}
+	website, err := clientadapter.WebsiteAccessFor(lkg.View, addresses)
+	if err != nil {
+		return err
+	}
+	config, serverConfig, err := generationConfigs(lkg.View, secret, exclusions, options.Capture, executions, website)
 	if err != nil {
 		return err
 	}
@@ -420,6 +486,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	generation, err := options.Generation()
 	if err != nil {
 		return err
+	}
+	if website.Port != 0 && generation != websiteGeneration {
+		return errRuntimeAddressChanged
 	}
 	if !options.defaultProbe {
 		// An injected diagnostic may use a target outside the View's probe
@@ -541,6 +610,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		generation, err := options.Generation()
 		if err != nil {
 			return err
+		}
+		if website.Port != 0 && generation != websiteGeneration {
+			return errRuntimeAddressChanged
 		}
 		local, err := loadLocalState(options.LocalState, generation, lkg.ViewDigest)
 		if err != nil {

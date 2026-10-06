@@ -81,7 +81,7 @@ func TestTUNDNSHy2TargetIdentity(t *testing.T) {
 		TLS: &singBoxTLS{Enabled: true, ServerName: "example.com", Certificate: []string{string(certPEM)}}}
 	source.Route.Rules[0].Rules = append(source.Route.Rules[0].Rules, singBoxRule{IPCIDR: []string{"192.0.2.77/32"}})
 	body, _ = json.Marshal(source)
-	body, err = DeriveWindowsRuntimeConfig(body, WindowsPortableTUNProfile, []string{"192.0.2.53"})
+	body, err = DeriveWindowsRuntimeConfig(body, WindowsPortableTUNProfile, []string{"192.0.2.53"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

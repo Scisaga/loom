@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -370,5 +371,44 @@ func TestEndpointFailedCloseRetainsActiveHandle(t *testing.T) {
 	}
 	if err := connection.Close(); !errors.Is(err, want) || released {
 		t.Fatal("repeated close discarded the original cleanup failure")
+	}
+	secure := &authenticatedConn{Conn: tls.Server(endpointFailedClose{left, want}, &tls.Config{}), closed: func() { released = true }}
+	if err := secure.Close(); !errors.Is(err, want) || released {
+		t.Fatal("TLS cleanup hid a real underlying close failure")
+	}
+}
+
+func TestEndpointTLSCloseAfterPeerDisconnectReleasesHandle(t *testing.T) {
+	f := newEndpointFixture(t)
+	inputs, err := loadEndpointInputs(f.server.Runtime.Authority.root, f.endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := LoadTLSCertificate(inputs.CertificateFile, inputs.KeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	server := tls.Server(left, &tls.Config{Certificates: []tls.Certificate{certificate}})
+	roots := x509.NewCertPool()
+	roots.AddCert(f.ca.certificate)
+	client := tls.Client(right, &tls.Config{RootCAs: roots, ServerName: f.endpoint.ServerName})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- server.HandshakeContext(ctx) }()
+	if err := client.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	_ = right.Close()
+	released := false
+	connection := &authenticatedConn{Conn: server, closed: func() { released = true }}
+	if err := connection.Close(); err != nil || !released {
+		t.Fatal("peer's missing TLS close notification retained an already closed TCP handle", err)
 	}
 }

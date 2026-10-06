@@ -20,6 +20,7 @@ data class ManagedProfile(
     internal val recordID: String,
     val dns: List<String> = emptyList(),
     val businessProbeTargets: List<ServiceProbeTargets> = emptyList(),
+    internal val hasWebsite: Boolean = false,
 )
 
 data class ServiceProbeTargets(val serviceID: String, val targets: List<String>)
@@ -78,6 +79,15 @@ internal class ManagedProfileStore internal constructor(
 
     fun loadCurrent(): ManagedProfile? = synchronized(stateLock) { state()?.let(project) }
 
+    // Caller holds the VPN lifecycle lock; network I/O must not run while
+    // holding the encrypted identity store lock or during a UI projection.
+    fun prepareRuntime(): ManagedProfile {
+        val body = checkNotNull(state()) { "设备身份不存在" }
+        val profile = decodeAndroidProfile(Loomcore.prepareAndroidDeviceProfile(body))
+        check(acceptedViewDigest() == profile.viewDigest) { "准备运行时认证配置已变化" }
+        return profile
+    }
+
     fun updateState(transform: (ByteArray) -> ByteArray): ByteArray = synchronized(stateLock) {
         val current = checkNotNull(state()) { "设备身份不存在" }
         transform(current).also(::saveState)
@@ -113,7 +123,11 @@ internal class ManagedProfileStore internal constructor(
 }
 
 private fun decodeManagedProfile(body: ByteArray): ManagedProfile {
-    val root = JSONObject(Loomcore.androidDeviceProfile(body).decodeToString())
+    return decodeAndroidProfile(Loomcore.androidDeviceProfile(body))
+}
+
+private fun decodeAndroidProfile(body: ByteArray): ManagedProfile {
+    val root = JSONObject(body.decodeToString())
     check(root.getInt("schema") == 3) { "运行投影 schema 无效" }
     val config = root.getString("config")
     return ManagedProfile(
@@ -122,6 +136,7 @@ private fun decodeManagedProfile(body: ByteArray): ManagedProfile {
         viewDigest = root.getString("view_digest"),
         factFrontier = root.getJSONArray("fact_frontier").toString(),
         config = config,
+        hasWebsite = root.getBoolean("has_website"),
         routes = root.getJSONArray("routes").toString(),
         recordID = root.getString("record_id"),
         dns = root.optJSONArray("dns")?.let { values -> (0 until values.length()).map(values::getString) }.orEmpty(),

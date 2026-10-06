@@ -13,7 +13,7 @@ func TestWindowsOverlayDNSAllProfilesAndResolverAbsence(t *testing.T) {
 			source, _ := decodeWindowsConfig([]byte(validWindowsConfig("")))
 			source.Route.Rules[0].Rules[0].Domain = []string{record.Name}
 			body, _ := json.Marshal(source)
-			actual, err := DeriveWindowsRuntimeConfig(body, profile, resolvers, record)
+			actual, err := DeriveWindowsRuntimeConfig(body, profile, resolvers, []control.DNSRecord{record})
 			if err != nil {
 				t.Fatal(profile, len(resolvers), err)
 			}

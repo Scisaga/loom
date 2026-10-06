@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"testing"
@@ -87,6 +88,32 @@ func TestWebsiteEndpointCSRRootWithdrawalAndSharedSNI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	projection := f.server.Runtime.Authority.Snapshot()
+	beforeReadback, _ := CanonicalEncode(projection)
+	for _, test := range []struct {
+		name, directory, owner, status, reason string
+		at                                     time.Time
+	}{
+		{"renewal", root, node.ControlID, "renewal_due", "", now},
+		{"not-yet-valid", root, node.ControlID, "not_yet_valid", "", leaf.NotBefore.Add(-time.Second)},
+		{"expired", root, node.ControlID, "expired", "", leaf.NotAfter},
+		{"missing", t.TempDir(), node.ControlID, "unknown", "material_unavailable", now},
+		{"remote-owner", root, "demo-other-control", "unknown", "inspect_owning_control", now},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows := WebsiteCertificateReadbacks(test.directory, test.owner, projection, test.at)
+			if len(rows) != 1 || rows[0].Status != test.status || rows[0].Reason != test.reason {
+				t.Fatalf("certificate readback = %+v", rows)
+			}
+			if test.reason == "" && (rows[0].LeafNotAfter != leaf.NotAfter.UTC().Format(time.RFC3339) || rows[0].RemainingSeconds == nil || *rows[0].RemainingSeconds != int64(leaf.NotAfter.Sub(test.at)/time.Second)) {
+				t.Fatal("readback did not use verified certificate lifetime and injected clock")
+			}
+		})
+	}
+	afterReadback, _ := CanonicalEncode(projection)
+	if !bytes.Equal(beforeReadback, afterReadback) {
+		t.Fatal("certificate expiry diagnosis rewrote signed stages")
+	}
 	web := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("demo website")) })}
 	t.Cleanup(func() { web.Close() })
 	go web.Serve(f.runtime.WebListener())
@@ -113,7 +140,15 @@ func TestWebsiteEndpointCSRRootWithdrawalAndSharedSNI(t *testing.T) {
 		t.Fatal("website handshake selected the original device certificate")
 	}
 	// This call performs the original authenticated claim, not only TLS.
-	f.join(t, "while-website-serving")
+	joined, _, _ := f.join(t, "while-website-serving")
+	deviceID := joined.Material.Payload.(Invite).DeviceID
+	view, err := f.server.deviceEnvelope(deviceID)
+	if err != nil || len(view.View.WebEndpoints) != 1 || !reflect.DeepEqual(view.View.WebEndpoints[0], endpoint) || len(view.View.Endpoints) != 1 {
+		t.Fatal("website projection changed device channel candidates", err)
+	}
+	if err := VerifyDeviceViewEnvelope(view, joined); err != nil {
+		t.Fatal("website view lost its independent member proof", err)
+	}
 	other := testWebsiteTrust(t, now)
 	otherGrant := submitAuthority(t, f.server.Runtime, Operation{Schema: 3, RequestID: "demo-other-website-root", Operation: "public_trust.put", TargetKind: "public_trust", TargetID: other.ID, Dependencies: []string{}, Payload: other})
 	rebound := endpoint
@@ -126,6 +161,10 @@ func TestWebsiteEndpointCSRRootWithdrawalAndSharedSNI(t *testing.T) {
 	removed := submitAuthority(t, f.server.Runtime, Operation{Schema: 3, RequestID: "demo-withdraw-website", Operation: "public_trust.delete", TargetKind: "public_trust", TargetID: trust.ID, Dependencies: []string{grant.MaterialID}, Payload: DeleteTarget{ID: trust.ID}})
 	f.runtime.reconcile()
 	assertEndpointConnectionClosed(t, connection)
+	view, err = f.server.deviceEnvelope(deviceID)
+	if err != nil || view.View.WebEndpoints != nil {
+		t.Fatal("withdrawn website remained in the signed device projection", err)
+	}
 	if f.runtime.Ready(endpoint) || !f.runtime.Ready(f.endpoint) {
 		t.Fatal("root withdrawal retained website readiness or stopped the other SNI")
 	}

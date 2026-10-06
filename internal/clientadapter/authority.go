@@ -32,7 +32,17 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 // ManagedRuntimeConfig adds only local execution inputs. Platform capture
 // adapters must complete this value before passing it to a process. It remains
 // disposable and must never replace the signed RuntimeProfile.
-func ManagedRuntimeConfig(view control.DeviceView, secret string) (string, error) {
+func ManagedRuntimeConfig(view control.DeviceView, secret string, websites ...WebsiteAccess) (string, error) {
+	if len(websites) > 1 {
+		return "", errors.New("runtime has more than one website execution input")
+	}
+	var website WebsiteAccess
+	if len(websites) == 1 {
+		website = websites[0]
+		if _, err := WebsiteAccessFor(view, website.Addresses); err != nil || len(view.WebEndpoints) > 0 && website.Port != view.WebEndpoints[0].Port {
+			return "", errors.New("website execution differs from the certified entry projection")
+		}
+	}
 	config, err := AccessRuntimeSource(view, secret)
 	if err != nil {
 		return "", err
@@ -41,7 +51,11 @@ func ManagedRuntimeConfig(view control.DeviceView, secret string) (string, error
 	if err != nil {
 		return "", err
 	}
-	return WithOverlayDNS(config, view.DNSRecords, true)
+	config, err = WithOverlayDNS(config, view.DNSRecords, true, website.Addresses...)
+	if err != nil {
+		return "", err
+	}
+	return WithWebsiteRoute(config, website)
 }
 
 // AccessRuntimeSource retains the complete certified authorization and adds

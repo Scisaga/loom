@@ -10,7 +10,7 @@ func TestWindowsMixedSniffPreservesDNSAndServiceAuthorization(t *testing.T) {
 	source, _ := pathPlanFixture(t)
 	signed, _ := decodeWindowsConfig(source)
 	for _, profile := range []WindowsRuntimeProfile{WindowsPortableMixedProfile, WindowsInstalledProfile, WindowsPortableTUNProfile} {
-		body, err := DeriveWindowsRuntimeConfig(source, profile, []string{"192.0.2.53"})
+		body, err := DeriveWindowsRuntimeConfig(source, profile, []string{"192.0.2.53"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

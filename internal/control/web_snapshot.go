@@ -10,27 +10,29 @@ import (
 // WebSnapshot is a redacted projection for the existing control UI. It is never
 // accepted as an operation or used to restore authority.
 type WebSnapshot struct {
-	PublicTrust     []PublicTrust      `json:"public_trust"`
-	DNSRecords      []DNSRecord        `json:"dns_records"`
-	Schema          int                `json:"schema"`
-	NetworkID       string             `json:"network_id"`
-	ControlConfigID string             `json:"control_config_id"`
-	FactFrontier    []FactFrontier     `json:"fact_frontier"`
-	Targets         []TargetState      `json:"targets"`
-	Capabilities    WebCapabilities    `json:"capabilities"`
-	UIState         WebUIState         `json:"ui_state"`
-	Devices         []Device           `json:"devices"`
-	Links           []Link             `json:"links"`
-	Paths           []Path             `json:"paths"`
-	Policies        []NetworkPolicy    `json:"policies"`
-	PolicyInvites   []WebPolicyInvite  `json:"policy_invites"`
-	Services        []Service          `json:"services"`
-	Releases        []Release          `json:"releases"`
-	Publisher       *PublisherStatus   `json:"publisher,omitempty"`
-	Deployments     []Deployment       `json:"deployments"`
-	Events          []Event            `json:"events"`
-	Traffic         []TrafficBucket    `json:"traffic"`
-	Administrators  []WebAdministrator `json:"administrators"`
+	WebsiteCertificates []WebsiteCertificateReadback `json:"website_certificates"`
+	WebEndpoints        []EndpointGeneration         `json:"web_endpoints"`
+	PublicTrust         []PublicTrust                `json:"public_trust"`
+	DNSRecords          []DNSRecord                  `json:"dns_records"`
+	Schema              int                          `json:"schema"`
+	NetworkID           string                       `json:"network_id"`
+	ControlConfigID     string                       `json:"control_config_id"`
+	FactFrontier        []FactFrontier               `json:"fact_frontier"`
+	Targets             []TargetState                `json:"targets"`
+	Capabilities        WebCapabilities              `json:"capabilities"`
+	UIState             WebUIState                   `json:"ui_state"`
+	Devices             []Device                     `json:"devices"`
+	Links               []Link                       `json:"links"`
+	Paths               []Path                       `json:"paths"`
+	Policies            []NetworkPolicy              `json:"policies"`
+	PolicyInvites       []WebPolicyInvite            `json:"policy_invites"`
+	Services            []Service                    `json:"services"`
+	Releases            []Release                    `json:"releases"`
+	Publisher           *PublisherStatus             `json:"publisher,omitempty"`
+	Deployments         []Deployment                 `json:"deployments"`
+	Events              []Event                      `json:"events"`
+	Traffic             []TrafficBucket              `json:"traffic"`
+	Administrators      []WebAdministrator           `json:"administrators"`
 }
 
 type WebAdministrator struct {
@@ -121,6 +123,10 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 	}
 	devices := projectWebDevices(projection, releases...)
 	warnings := []WebWarning{}
+	webEndpoints, websiteErr := WebsiteEndpoints(projection)
+	if websiteErr != nil {
+		warnings = append(warnings, WebWarning{Code: "website_endpoint_conflict", Message: "Website entry ports conflict; control.loom has no address projection."})
+	}
 	for _, device := range devices {
 		if device.ComponentError != "" {
 			warnings = append(warnings, WebWarning{Code: "expected_component_unavailable", Message: device.ID + ": " + device.ComponentError})
@@ -138,12 +144,14 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		warnings = append(warnings, WebWarning{Code: "missing_dependencies", Message: "Some authenticated facts await their dependencies; affected targets are unavailable."})
 	}
 	return WebSnapshot{Schema: 3, NetworkID: projection.NetworkID, ControlConfigID: projection.ControlConfigID,
-		FactFrontier: append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
+		WebsiteCertificates: []WebsiteCertificateReadback{},
+		FactFrontier:        append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},
 		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPaths(projection, releases...), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
 		PolicyInvites: []WebPolicyInvite{},
 		DNSRecords:    append([]DNSRecord{}, projection.NetworkIntent.DNSRecords...),
 		PublicTrust:   append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),
+		WebEndpoints:  append([]EndpointGeneration{}, webEndpoints...),
 		Services:      append([]Service{}, projection.NetworkIntent.Services...), Releases: []Release{}, Deployments: []Deployment{},
 		Events: []Event{}, Traffic: []TrafficBucket{}, Administrators: projectWebAdministrators(projection)}
 }

@@ -15,7 +15,7 @@ func TestWindowsCapturePreservesAuthorizationAndDoesNotInventDNS(t *testing.T) {
 	signed, _ := decodeWindowsConfig(source)
 	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile} {
 		t.Run(string(profile), func(t *testing.T) {
-			body, err := DeriveWindowsRuntimeConfig(source, profile, nil)
+			body, err := DeriveWindowsRuntimeConfig(source, profile, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -50,7 +50,7 @@ func TestWindowsCapturePreservesHy2TrustAndRelay(t *testing.T) {
 	c.Outbounds = append(c.Outbounds[:1], entry, exit, c.Outbounds[2])
 	source, _ := json.Marshal(c)
 	for _, profile := range []WindowsRuntimeProfile{WindowsPortableMixedProfile, WindowsInstalledProfile, WindowsPortableTUNProfile} {
-		body, err := DeriveWindowsRuntimeConfig(source, profile, []string{"192.0.2.53"})
+		body, err := DeriveWindowsRuntimeConfig(source, profile, []string{"192.0.2.53"}, nil)
 		if err != nil {
 			t.Fatal(profile, err)
 		}
@@ -77,7 +77,7 @@ func TestWindowsCapturePreservesHy2TrustAndRelay(t *testing.T) {
 		changed, _ := decodeWindowsConfig(source)
 		change(&changed)
 		body, _ := json.Marshal(changed)
-		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, []string{"192.0.2.53"}); err == nil {
+		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, []string{"192.0.2.53"}, nil); err == nil {
 			t.Fatal("accepted broadened or recursive transport")
 		}
 	}
@@ -98,7 +98,7 @@ func TestWindowsRejectsOldRuntimeFacilities(t *testing.T) {
 		c, _ := decodeWindowsConfig(source)
 		change(&c)
 		body, _ := json.Marshal(c)
-		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, nil); err == nil {
+		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, nil, nil); err == nil {
 			t.Fatal("legacy or broadened source accepted")
 		}
 	}

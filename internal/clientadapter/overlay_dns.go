@@ -8,13 +8,19 @@ import (
 
 // WithOverlayDNS adds a process-local static transport. No host resolver,
 // listener, filesystem or network is consulted by this execution projection.
-func WithOverlayDNS(config string, records []control.DNSRecord, access bool) (string, error) {
+func WithOverlayDNS(config string, records []control.DNSRecord, access bool, websiteAddresses ...string) (string, error) {
 	values := map[string][]string{}
 	for _, record := range records {
 		if record.Validate() != nil || values[record.Name] != nil {
 			return "", errors.New("invalid overlay DNS execution input")
 		}
 		values[record.Name] = append([]string{}, record.Addresses...)
+	}
+	if err := validateWebsiteAddresses(websiteAddresses); err != nil {
+		return "", err
+	}
+	if len(websiteAddresses) > 0 {
+		values["control.loom"] = append([]string{}, websiteAddresses...)
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(config), &document); err != nil {

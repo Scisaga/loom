@@ -128,6 +128,8 @@ class EnrollmentManager private constructor(context: Context) {
 
     fun currentProfile(profileId: String): ManagedProfile? = store(profileId).loadCurrent()
 
+    internal fun prepareRuntimeProfile(profileId: String): ManagedProfile = store(profileId).prepareRuntime()
+
     internal suspend fun postReport(profileId: String) = operation.withLock {
         check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
         val store = store(profileId)

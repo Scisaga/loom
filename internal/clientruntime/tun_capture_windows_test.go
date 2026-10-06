@@ -21,7 +21,7 @@ func TestOfficialWindowsTUNCaptureCheck(t *testing.T) {
 		"${secret:api/win01}", "fixture-api").Replace(validWindowsConfig("warn"))
 	for _, profile := range []WindowsRuntimeProfile{WindowsPortableTUNProfile, WindowsPortableMixedProfile} {
 		t.Run(string(profile), func(t *testing.T) {
-			config, err := DeriveWindowsRuntimeConfig([]byte(source), profile, []string{"192.0.2.53"})
+			config, err := DeriveWindowsRuntimeConfig([]byte(source), profile, []string{"192.0.2.53"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

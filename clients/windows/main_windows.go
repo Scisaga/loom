@@ -377,7 +377,7 @@ func windowsRuntimeFactsDigest(activation clientadapter.Activation, components [
 	return hex.EncodeToString(digest[:])
 }
 
-var errWindowsCertifiedViewChanged = errors.New("a newer certified Windows device view is available")
+var errWindowsRuntimeInputsChanged = errors.New("Windows runtime inputs have changed")
 
 func refreshWindowsCertifiedView(ctx context.Context, store *deviceclient.ProtectedStore,
 	fetch func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error)) (bool, error) {
@@ -458,9 +458,33 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if err != nil {
 		return err
 	}
-	config, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(source), profile, lkg.View.DNSServers, lkg.View.DNSRecords...)
+	websiteGeneration := ""
+	if len(lkg.View.WebEndpoints) > 0 {
+		websiteGeneration, err = windowsNetworkGeneration()
+		if err != nil {
+			return err
+		}
+	}
+	addresses, err := deviceclient.WebsiteAddresses(ctx, lkg.View.WebEndpoints, lkg.View.DNSServers)
 	if err != nil {
 		return err
+	}
+	website, err := clientadapter.WebsiteAccessFor(lkg.View, addresses)
+	if err != nil {
+		return err
+	}
+	config, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(source), profile, lkg.View.DNSServers, lkg.View.DNSRecords, website)
+	if err != nil {
+		return err
+	}
+	if website.Port != 0 {
+		current, err := windowsNetworkGeneration()
+		if err != nil {
+			return err
+		}
+		if current != websiteGeneration {
+			return errWindowsRuntimeInputsChanged
+		}
 	}
 	defer clear(config)
 	generationContext, stopGeneration := context.WithCancel(ctx)
@@ -513,6 +537,9 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	generation, err := windowsNetworkGeneration()
 	if err != nil {
 		return err
+	}
+	if website.Port != 0 && generation != websiteGeneration {
+		return errWindowsRuntimeInputsChanged
 	}
 	activation, activationErr := clientadapter.Activate(ctx, selector, routes, clientadapter.State{
 		Preference: store.Preference(), NetworkGeneration: generation}, nil, time.Now)
@@ -579,7 +606,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 				return err
 			}
 			if changed {
-				return errWindowsCertifiedViewChanged
+				return errWindowsRuntimeInputsChanged
 			}
 			lkg = store.LKG()
 			now := time.Now()
@@ -591,6 +618,9 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			nextState := activation.State
 			nextState.Preference = store.Preference()
 			if nextGeneration != nextState.NetworkGeneration {
+				if website.Port != 0 {
+					return errWindowsRuntimeInputsChanged
+				}
 				nextState.NetworkGeneration = nextGeneration
 				nextState.Observations = nil
 			}
@@ -635,7 +665,7 @@ func runWindowsCertifiedProfile(ctx context.Context, root string, store *devicec
 		if ctx.Err() != nil {
 			return err
 		}
-		if errors.Is(err, errWindowsCertifiedViewChanged) {
+		if errors.Is(err, errWindowsRuntimeInputsChanged) {
 			continue
 		}
 		return err

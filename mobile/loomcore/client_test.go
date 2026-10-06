@@ -15,7 +15,7 @@ import (
 	"loom/internal/deviceclient"
 )
 
-func androidFixture(t *testing.T, sequence uint64, deny bool) (deviceclient.State, []byte) {
+func androidFixture(t *testing.T, sequence uint64, deny bool, changes ...func(*control.Projection)) (deviceclient.State, []byte) {
 	t.Helper()
 	members := []control.Member{}
 	keys := []ed25519.PrivateKey{}
@@ -61,6 +61,9 @@ func androidFixture(t *testing.T, sequence uint64, deny bool) (deviceclient.Stat
 	p.DeviceAuthorizations = []control.DeviceAuthorization{{ID: invitation.DeviceID, Name: invitation.Name, Platform: "android", DevicePublicKey: state.PublicKey, Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, DistributionURLs: []string{}, RuntimeKey: members[0].PublicKey, TransactionID: invitation.ID, InviteMaterialID: inviteID, BindingMaterialID: anchor}}
 	p.EndpointGenerations = []control.EndpointGeneration{endpoint}
 	p.NetworkIntent.BusinessProbeTargets = []control.BusinessProbeTarget{{ID: "demo-probe", URL: "https://demo.example:8443/health"}}
+	for _, change := range changes {
+		change(&p)
+	}
 	view, err := control.ProjectDeviceView(p, invitation.DeviceID)
 	if err != nil {
 		t.Fatal(err)

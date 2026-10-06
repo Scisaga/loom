@@ -73,15 +73,16 @@ type singBoxDNSServer struct {
 }
 
 type singBoxInbound struct {
-	Type       string        `json:"type"`
-	Tag        string        `json:"tag"`
-	Listen     string        `json:"listen,omitempty"`
-	ListenPort int           `json:"listen_port,omitempty"`
-	Address    []string      `json:"address,omitempty"`
-	AutoRoute  bool          `json:"auto_route,omitempty"`
-	Stack      string        `json:"stack,omitempty"`
-	Users      []singBoxUser `json:"users,omitempty"`
-	TLS        *singBoxTLS   `json:"tls,omitempty"`
+	RouteExcludeAddress []string      `json:"route_exclude_address,omitempty"`
+	Type                string        `json:"type"`
+	Tag                 string        `json:"tag"`
+	Listen              string        `json:"listen,omitempty"`
+	ListenPort          int           `json:"listen_port,omitempty"`
+	Address             []string      `json:"address,omitempty"`
+	AutoRoute           bool          `json:"auto_route,omitempty"`
+	Stack               string        `json:"stack,omitempty"`
+	Users               []singBoxUser `json:"users,omitempty"`
+	TLS                 *singBoxTLS   `json:"tls,omitempty"`
 }
 
 type singBoxUser struct {
@@ -123,6 +124,7 @@ type singBoxRoute struct {
 }
 
 type singBoxRule struct {
+	Network      string        `json:"network,omitempty"`
 	Type         string        `json:"type,omitempty"`
 	Mode         string        `json:"mode,omitempty"`
 	Rules        []singBoxRule `json:"rules,omitempty"`
@@ -169,7 +171,18 @@ func ValidateWindowsSingBox(body []byte) error {
 
 // DeriveWindowsRuntimeConfig preserves the authenticated routes and adds only
 // local capture and explicitly supplied authenticated DNS infrastructure.
-func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsServers []string, records ...control.DNSRecord) ([]byte, error) {
+func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsServers []string, records []control.DNSRecord, websites ...clientadapter.WebsiteAccess) ([]byte, error) {
+	if len(websites) > 1 {
+		return nil, errors.New("Windows runtime requires one website execution input")
+	}
+	var website clientadapter.WebsiteAccess
+	if len(websites) == 1 {
+		website = websites[0]
+	}
+	exclusions, err := website.Exclusions()
+	if err != nil {
+		return nil, err
+	}
 	if err := ValidateWindowsSingBox(body); err != nil {
 		return nil, err
 	}
@@ -181,11 +194,11 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 	c.Inbounds = []singBoxInbound{{Type: "mixed", Tag: "in-1080", Listen: "127.0.0.1", ListenPort: 1080}}
 	tun := profile != WindowsPortableMixedProfile
 	if tun {
-		c.Inbounds = append(c.Inbounds, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system"})
+		c.Inbounds = append(c.Inbounds, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system", RouteExcludeAddress: exclusions})
 		c.Route.AutoDetectInterface = true
 	}
 	prefix := []singBoxRule{}
-	if len(dnsServers) > 0 || len(records) > 0 {
+	if len(dnsServers) > 0 || len(records) > 0 || website.Port != 0 {
 		c.DNS = &singBoxDNS{Servers: []singBoxDNSServer{}}
 		for i, address := range dnsServers {
 			ip, err := netip.ParseAddr(address)
@@ -206,11 +219,16 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 	if err != nil {
 		return nil, err
 	}
-	derivedDNS, err := clientadapter.WithOverlayDNS(string(result), records, false)
+	derivedDNS, err := clientadapter.WithOverlayDNS(string(result), records, false, website.Addresses...)
 	if err != nil {
 		return nil, err
 	}
 	result = []byte(derivedDNS)
+	websiteConfig, err := clientadapter.WithWebsiteRoute(string(result), website)
+	if err != nil {
+		return nil, err
+	}
+	result = []byte(websiteConfig)
 	if tun && c.DNS != nil {
 		derived, err := clientadapter.WithTUNDomainDNS(string(result))
 		if err != nil {
@@ -232,13 +250,22 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 	if err != nil {
 		return err
 	}
+	website, err := windowsWebsiteInput(c)
+	if err != nil {
+		return err
+	}
+	exclusions, _ := website.Exclusions()
 	tun := profile != WindowsPortableMixedProfile
 	expected := []singBoxInbound{{Type: "mixed", Tag: "in-1080", Listen: "127.0.0.1", ListenPort: 1080}}
 	if tun {
-		expected = append(expected, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system"})
+		expected = append(expected, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system", RouteExcludeAddress: exclusions})
 	}
 	if !reflect.DeepEqual(c.Inbounds, expected) || c.Log.Level != "warn" || c.Route.AutoDetectInterface != tun {
 		return errors.New("Windows runtime capture does not match its profile")
+	}
+	if website.Port != 0 {
+		c.Route.Rules = c.Route.Rules[1:]
+		c.Outbounds = c.Outbounds[:len(c.Outbounds)-1]
 	}
 	prefix := []singBoxRule{}
 	// Remove only the exact deterministic DNS projection before validating the
@@ -282,6 +309,9 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 				return errors.New("invalid overlay DNS server")
 			}
 			for name, addresses := range server.StaticRecords {
+				if name == "control.loom" && website.Port != 0 {
+					continue
+				}
 				if (control.DNSRecord{ID: "demo-runtime-record", Name: name, Addresses: addresses}).Validate() != nil {
 					return errors.New("invalid overlay DNS record")
 				}
@@ -376,7 +406,7 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 				return errors.New("invalid block")
 			}
 		case "direct":
-			if o.Tag == "dns-underlay" {
+			if o.Tag == "dns-underlay" || o.Tag == "website-underlay" {
 				return errors.New("DNS underlay cannot enter authorization")
 			}
 		case "selector":
@@ -439,7 +469,7 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 	return nil
 }
 func validateServiceRule(r singBoxRule, tags map[string]string, top bool) error {
-	if r.Action != "" || r.Invert || len(r.Inbound) > 0 || len(r.AuthUser) > 0 || len(r.DomainRegex) > 0 || len(r.Port) > 0 {
+	if r.Network != "" || r.Action != "" || r.Invert || len(r.Inbound) > 0 || len(r.AuthUser) > 0 || len(r.DomainRegex) > 0 || len(r.Port) > 0 {
 		return errors.New("authorization contains capture rule")
 	}
 	if top {

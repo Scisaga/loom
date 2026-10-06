@@ -406,6 +406,7 @@ func (value InboundCredential) Validate() error {
 }
 
 type DeviceView struct {
+	WebEndpoints         []EndpointGeneration  `json:"web_endpoints,omitempty"`
 	PublicTrust          []PublicTrust         `json:"public_trust,omitempty"`
 	DNSRecords           []DNSRecord           `json:"dns_records,omitempty"`
 	Schema               int                   `json:"schema"`
@@ -440,6 +441,9 @@ func (view DeviceView) Validate() error {
 		return errors.New("empty public trust must be omitted")
 	}
 	if err := validatePublicTrust(view.PublicTrust); err != nil {
+		return err
+	}
+	if err := validateWebsiteEndpoints(view.WebEndpoints, view.PublicTrust); err != nil {
 		return err
 	}
 	if err := validateDNSRecords(view.DNSRecords); err != nil {
@@ -523,9 +527,11 @@ func (envelope DeviceViewEnvelope) Validate() error {
 	if containsString(envelope.View.Responsibilities, "control") != memberNodes[envelope.View.DeviceID] {
 		return errors.New("device control responsibility does not match the proven member table")
 	}
-	for _, endpoint := range envelope.View.Endpoints {
-		if !memberControls[endpoint.OwnerControlID] {
-			return errors.New("device endpoint owner is not a proven member")
+	for _, endpoints := range [][]EndpointGeneration{envelope.View.Endpoints, envelope.View.WebEndpoints} {
+		for _, endpoint := range endpoints {
+			if !memberControls[endpoint.OwnerControlID] {
+				return errors.New("device endpoint owner is not a proven member")
+			}
 		}
 	}
 	for _, prefix := range envelope.FactFrontier {

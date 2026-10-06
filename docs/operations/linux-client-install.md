@@ -188,6 +188,12 @@ sudo ./install.sh --capture tun --upgrade
 sudo loom client exec -- curl --fail https://demo-service.example/
 ```
 
+有已认证网站入口时，隔离 namespace 另提供回环 Mixed 代理。`control.loom` 返回真实 underlay IP，
+不会分配业务 fakeIP，也不进入 TUN；该 namespace 没有物理出口，管理浏览器应配置其中的显式代理。
+例如 `sudo loom client exec -- curl --socks5-hostname 127.0.0.1:1080 https://control.loom:8443/`；
+示例端口须换成 DNS 页面回读的实际端口，TLS 仍需安装网站公开根和管理员客户端证书。
+普通业务继续通过原 TUN 入口，不需要改变宿主 DNS、路由或代理设置。
+
 `exec` 核对服务端的 UID 与精确 Loom 制品；服务端核对调用 UID 及其持有的独立应用树。应用使用单独 PID/mount namespace，
 仅在其中设置 DNS，并在执行前清空 capability。正常停止、数据面崩溃、agent 或 exec 退出都会
 终止所拥有的应用树；原应用不跨 generation 自动重启。新授权生效前先结束旧应用与旧数据面，

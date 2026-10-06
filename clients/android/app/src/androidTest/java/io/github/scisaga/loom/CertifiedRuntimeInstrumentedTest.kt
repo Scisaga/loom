@@ -21,11 +21,13 @@ import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.VpnRuntime
 import java.io.File
 import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.Socket
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
+import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManagerFactory
 import org.json.JSONObject
@@ -123,6 +125,33 @@ class CertifiedRuntimeInstrumentedTest {
             false
         }
 
+        fun website() {
+            if (!fixture.has("website_port")) return
+            assertEquals(setOf("192.0.2.20"), InetAddress.getAllByName("control.loom").map { it.hostAddress }.toSet())
+            val websiteCA = CertificateFactory.getInstance("X.509").generateCertificate(File(directory, "demo-website-root.pem").inputStream())
+            val websiteTrust = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("demo-website", websiteCA) }
+            val websiteManagers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(websiteTrust) }
+            val password = File(directory, "demo-admin.password").readText().trim().toCharArray()
+            val identity = KeyStore.getInstance("PKCS12").apply { File(directory, "demo-admin.p12").inputStream().use { load(it, password) } }
+            val keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(identity, password) }
+            password.fill('\u0000')
+            val websiteTLS = SSLContext.getInstance("TLS").apply { init(keyManagers.keyManagers, websiteManagers.trustManagers, null) }
+            val port = fixture.getInt("website_port")
+            // This ordinary application socket is intentionally not VPN-protected:
+            // the active VPN's exact website exclusion must leave it on underlay.
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("control.loom", port), 5_000)
+                socket.soTimeout = 5_000
+                (websiteTLS.socketFactory.createSocket(socket, "control.loom", port, false) as SSLSocket).use { stream ->
+                    stream.sslParameters = stream.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
+                    stream.startHandshake()
+                    stream.outputStream.write("GET /api/control/ui/snapshot HTTP/1.1\r\nHost: control.loom\r\nConnection: close\r\n\r\n".toByteArray())
+                    val response = stream.inputStream.bufferedReader().readText()
+                    assertTrue("website TLS did not reach authenticated control management", response.startsWith("HTTP/1.1 200") && response.contains("\"admin\":true"))
+                }
+            }
+        }
+
         if (!resume && args.getString("demoJoined") != "true") {
             compose.onNodeWithTag("tab-configuration").performClick()
             click("import-invite")
@@ -134,6 +163,7 @@ class CertifiedRuntimeInstrumentedTest {
         }
         await("private join or protected restart must restore the certified profile") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
         connect()
+        website()
         if (!resume) {
             await("authorized path must be consumed after protected restart") {
                 routing.status(profileID).value.currentPaths.size == 1
@@ -159,6 +189,7 @@ class CertifiedRuntimeInstrumentedTest {
             awaitConnected()
         }
         assertTrue("withdrawal left a selectable path", routing.status(profileID).value.currentPaths.isEmpty())
+        website()
         assertFalse("withdrawn target remained reachable through the running VPN", business())
         mark(if (resume) "demo-restarted.json" else "demo-revoked.json")
         if (resume) {

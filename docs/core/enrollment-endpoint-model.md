@@ -68,6 +68,31 @@ bootstrap、device 与 web 模式、阶段及 serving 期间的偏好；可选 e
 处于 serving 的 web 模式代构成 `control.loom` 的解析结果。同一浏览器 URL 使用的地址须在该 URL 的
 客户端端口提供服务；非默认 HTTPS 端口须在 URL 中显式给出，A/AAAA 不提供端口。地址和入口声明表示可尝试，不能构造 `available`。
 
+设备的可选非空 `web_endpoints` 复用上述入口值，只含当前成员承载、根授权仍存在的 serving
+`control.loom` web 代，按 ID/generation 排序；它与 `endpoints` 的设备认证用途分开投影，
+不能把 web-only 入口用于设备认证。所有网站候选使用相同客户端端口；正式写入拒绝已知的端口冲突。
+并发事实形成端口冲突时，不任选一方发布保留名称：整个网站候选投影为空，管理读回显示冲突，
+普通业务和设备认证入口不受影响。一个候选与多个同端口候选使用同一规则。
+
+启动或网络代变化时，执行适配器经认证 DNS、平台受保护 socket 解析这些入口的 underlay Host，
+得到去重排序的实际 IP。纯渲染器只接受这组显式结果，不查询网络或系统解析器；失败时不启动该代
+capture。运行时的 `control.loom` 静态回答和 TUN 精确主机排除使用同一组地址，禁止把该保留名称
+或它的地址映射为 fake-IP。Mixed 入口只给精确 `control.loom` 的既定 TCP 端口增加网站 underlay
+路径；它不增加普通 Service/Policy 权限，不授予访问其他域名、端口或网站 IP 的一般代理权限。
+网站根缺席、入口退出或冲突时没有保留名称回答。一般 `.loom` 记录继续由 DNSRecord 表达，不能写入
+`control.loom`，也不能覆盖其启动定位。网站地址的 DNS 解析结果只是本网络代可删除重建的执行输入，
+不写回 View、入口事实、profile 身份或 `.env`。
+
+Android 界面读取继续是纯投影；VPN 激活另从同一已认证 LKG 解析网站地址并生成完整执行配置，
+核对 View 摘要仍一致后才启动。Linux、Android 和 Windows 都必须在 capture 之前准备排除，
+网络代改变后重新准备，不用旧解析结果冒充新网络的事实。最小验证覆盖正常名称访问、端口冲突、
+撤根/退休删除回答、名称不进入 fake-IP、精确排除，以及原业务和身份保持。
+
+Linux 的隔离 workload namespace 本身没有物理 underlay 接口，因此排除网站 IP 后不能凭空获得
+直连路由。网站存在时，该 namespace 另提供既有形式的回环 Mixed listener，应用以显式代理访问
+`control.loom`，由现有 namespace-pinned outbound 创建 underlay socket；普通业务仍可使用 TUN。
+新增操作成本是隔离应用须显式指定该代理，宿主路由、DNS 和物理接口不变。默认 Mixed 部署仍沿原入口。
+
 ```mermaid
 stateDiagram-v2
     [*] --> prepared
@@ -164,9 +189,10 @@ domain、wire 与 persistent 使用同一个 `EndpointGeneration.website_trust_i
 须失败关闭并在运行观测、本机 CLI 中显示到期故障，不按本机时钟改写签名阶段或 DNS 投影。
 根证书不变则浏览器无需重导入；根轮换另需受保护信任锚迁移。
 
-对每个 serving web 叶证书，用已验证的 `NotAfter` 和调用方注入的 UTC 时间计算剩余有效期。
+对每个 serving web 叶证书，用已验证的叶与根的较早 `NotAfter` 和调用方注入的 UTC 时间计算剩余有效期。
 剩余时间进入固定 30 天窗口时，admin 页面与本机 `control inspect` 显示入口、到期 UTC 时间和剩余时间并提醒续签；
-过期显示故障，证书缺失或无法验证显示 `unknown`。该诊断不写控制事实，也不按时钟改变签名阶段或 DNS 投影。
+过期显示故障，证书缺失或无法验证显示 `unknown`。叶材料只在承载 control 本机读回，其他 control 显示
+`unknown` 并指明承载者；不能为了显示有效期而复制叶私钥。该诊断不写控制事实，也不按时钟改变签名阶段或 DNS 投影。
 
 同一入口若还承担 bootstrap 或 device 模式，新代须对这些模式分别预检，且不能悄悄改变旧代的校验名或 SPKI。
 新 Invite 不得绑定会在 Invite 有效期内到期的旧代证书；已发的 Invite 仍固定旧代，计划轮换时旧代在证书有效期内

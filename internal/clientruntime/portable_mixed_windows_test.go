@@ -39,7 +39,7 @@ func TestOfficialPortableMixedNativeRun(t *testing.T) {
 		"${secret:vault:cred/win01}", "fixture-password",
 		"${secret:api/win01}", "fixture-api",
 	).Replace(validWindowsConfig("warn"))
-	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsPortableMixedProfile, nil)
+	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsPortableMixedProfile, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestOfficialPortableMixedServiceRevocation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		config, err := DeriveWindowsRuntimeConfig(current, WindowsPortableMixedProfile, nil)
+		config, err := DeriveWindowsRuntimeConfig(current, WindowsPortableMixedProfile, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

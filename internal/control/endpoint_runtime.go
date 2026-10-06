@@ -796,7 +796,7 @@ func (runtime *EndpointRuntime) closeSockets() {
 	_ = runtime.incoming.Close()
 	_ = runtime.web.Close()
 	for _, connection := range handshakes {
-		if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := closeEndpointTransport(connection); err != nil && !errors.Is(err, net.ErrClosed) {
 			closeErr = errors.Join(closeErr, err)
 		}
 	}
@@ -834,7 +834,7 @@ func (connection *authenticatedConn) Read(body []byte) (int, error) {
 }
 func (connection *authenticatedConn) Close() error {
 	connection.once.Do(func() {
-		connection.closeErr = connection.Conn.Close()
+		connection.closeErr = closeEndpointTransport(connection.Conn)
 		// An unproven close must retain its active handle, so retirement cannot
 		// report zero sessions after a failed cleanup.
 		if connection.closeErr == nil || errors.Is(connection.closeErr, net.ErrClosed) {
@@ -842,6 +842,20 @@ func (connection *authenticatedConn) Close() error {
 		}
 	})
 	return connection.closeErr
+}
+
+func closeEndpointTransport(connection net.Conn) error {
+	err := connection.Close()
+	if secure, ok := connection.(*tls.Conn); ok && err != nil {
+		// TLS can fail to send close_notify after the peer has gone, while
+		// successfully closing TCP. Prove closure on that exact underlying
+		// connection; never infer resource cleanup from a TLS write error.
+		if closeErr := secure.NetConn().Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			return errors.Join(err, closeErr)
+		}
+		return nil
+	}
+	return err
 }
 
 type authenticatedListener struct {

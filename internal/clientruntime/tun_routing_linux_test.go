@@ -112,7 +112,7 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 func routingTUNConfig(t *testing.T, dnsAddress string) []byte {
 	t.Helper()
 	source := []byte(validWindowsConfig(""))
-	body, err := DeriveWindowsRuntimeConfig(source, WindowsPortableTUNProfile, []string{"192.0.2.53"})
+	body, err := DeriveWindowsRuntimeConfig(source, WindowsPortableTUNProfile, []string{"192.0.2.53"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -124,7 +124,14 @@ class LoomVpnService : VpnService(), PlatformInterface {
         runningService = this
         io.github.scisaga.loomcore.Loomcore.setAndroidSocketProtector(
             object : io.github.scisaga.loomcore.AndroidSocketProtector {
-                override fun protectSocket(fd: Long): Boolean = protect(fd.toInt())
+                override fun protectSocket(fd: Long): Boolean {
+                    if (!protect(fd.toInt())) return false
+                    val network = selectedUnderlyingNetwork ?: return true
+                    return runCatching {
+                        ParcelFileDescriptor.fromFd(fd.toInt()).use { network.bindSocket(it.fileDescriptor) }
+                        true
+                    }.getOrDefault(false)
+                }
             },
         )
         createNotificationChannel()
@@ -243,12 +250,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         )
         startForeground(NOTIFICATION_ID, foregroundNotification("正在连接…"))
         try {
+            if (boxService != null || tunnel != null) closeResources()
             val profile = checkNotNull(EnrollmentManager.get(this).currentProfile(profileID)) {
                 "请先通过私有 Enrollment 完成正式入网"
             }
-            activateCertified(profileID, profile)
+            val prepared = activateCertified(profileID, profile)
             ensureConnectionWanted(profileID)
-            connected(profileID, profile, "认证配置已应用并读回")
+            connected(profileID, prepared, "认证配置已应用并读回")
         } catch (error: Throwable) {
             Log.e(TAG, "start tunnel", error)
             val cleanupError = runCatching { closeResources() }.exceptionOrNull()
@@ -271,23 +279,33 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private suspend fun activateCertified(profileID: String, profile: ManagedProfile) {
+    private suspend fun activateCertified(profileID: String, profile: ManagedProfile): ManagedProfile {
         ensureConnectionWanted(profileID)
         val routing = RouteManager.get(this)
         val active = connectivity.activeNetwork
         val activeCapabilities = active?.let(connectivity::getNetworkCapabilities)
+        val websiteNetwork = if (profile.hasWebsite) checkNotNull(preparationNetwork()) {
+            "网站入口准备需要可用的底层网络"
+        } else null
+        if (websiteNetwork != null) selectedUnderlyingNetwork = websiteNetwork
         routing.beginNetworkGeneration(
             profileID,
-            active?.takeIf { activeCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == true }
+            (websiteNetwork ?: active?.takeIf { activeCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == true })
                 ?.let(::networkGenerationIdentity),
         )
         ensureConnectionWanted(profileID)
-        Libbox.checkConfig(profile.config)
-        activate(profile.config)
+        val prepared = EnrollmentManager.get(this).prepareRuntimeProfile(profileID)
+        check(prepared.viewDigest == profile.viewDigest) { "准备运行时认证配置已变化" }
+        check(websiteNetwork == null || preparationNetwork() == websiteNetwork) { "准备网站入口时底层网络已变化，请重试" }
         ensureConnectionWanted(profileID)
-        routing.applyToRunning(profileID, profile)
+        Libbox.checkConfig(prepared.config)
+        activate(prepared.config)
+        check(websiteNetwork == null || selectedUnderlyingNetwork == websiteNetwork) { "启动网站入口时底层网络已变化，请重试" }
+        ensureConnectionWanted(profileID)
+        routing.applyToRunning(profileID, prepared)
         // Runtime/selector readback establishes active before the independent probe.
         // Missing or ambiguous target scopes remain unknown.
+        return prepared
     }
 
     private fun connectionWanted(profileID: String): Boolean =
@@ -746,6 +764,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
                             ) return@withLock
                             val routing = RouteManager.get(this@LoomVpnService)
                             if (routing.beginNetworkGeneration(profileID, networkGenerationIdentity(selected.network))) {
+                                if (profile.hasWebsite) {
+                                    // Website DNS and exact VPN exclusions belong
+                                    // to this underlay generation; resolve again
+                                    // before a replacement capture starts.
+                                    startTunnelLocked(profileID)
+                                    return@withLock
+                                }
                                 routing.applyToRunning(profileID, profile)
                                 VpnRuntime.transform { it.copy(dnsProbe = "未知：网络已变化", httpsProbe = "未知：网络已变化") }
                                 startBusinessProbe(profileID, profile, restart = true)
@@ -765,6 +790,19 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private fun networkGenerationIdentity(network: Network): String {
         val boot = Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1)
         return networkGenerationIdentity(boot, network.networkHandle)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun preparationNetwork(): Network? {
+        val candidates = connectivity.allNetworks.mapNotNull { network ->
+            underlyingCandidate(network, UnderlyingSnapshot(
+                connectivity.getNetworkCapabilities(network), connectivity.getLinkProperties(network),
+            ))
+        }
+        return selectStableUnderlying(
+            candidates.map { RankedUnderlying(it.network, it.rank, it.network.toString()) },
+            selectedUnderlyingNetwork,
+        )
     }
 
     @Suppress("DEPRECATION")

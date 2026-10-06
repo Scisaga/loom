@@ -24,6 +24,7 @@ import (
 
 // This is a disposable Android host projection, never a second authority wire.
 type androidProfile struct {
+	HasWebsite           bool                          `json:"has_website"`
 	Schema               int                           `json:"schema"`
 	NodeID               string                        `json:"node_id"`
 	Name                 string                        `json:"name"`
@@ -104,6 +105,34 @@ func AndroidDeviceProfile(body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return androidDeviceProfile(state)
+}
+
+// PrepareAndroidDeviceProfile is the operational entry before VPN capture.
+// UI reads use AndroidDeviceProfile and remain pure; only this entry resolves
+// certified website underlay names through the protected Android sockets.
+func PrepareAndroidDeviceProfile(body []byte) ([]byte, error) {
+	state, err := decodeState(body)
+	if err != nil {
+		return nil, err
+	}
+	if state.LKG == nil {
+		return nil, errors.New("device has no accepted LKG")
+	}
+	ctx, cancel := context.WithTimeout(androidNetworkContext(), 15*time.Second)
+	defer cancel()
+	addresses, err := deviceclient.WebsiteAddresses(ctx, state.LKG.View.WebEndpoints, state.LKG.View.DNSServers)
+	if err != nil {
+		return nil, err
+	}
+	website, err := clientadapter.WebsiteAccessFor(state.LKG.View, addresses)
+	if err != nil {
+		return nil, err
+	}
+	return androidDeviceProfile(state, website)
+}
+
+func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.WebsiteAccess) ([]byte, error) {
 	if state.LKG == nil {
 		return nil, errors.New("device has no accepted LKG")
 	}
@@ -117,14 +146,14 @@ func AndroidDeviceProfile(body []byte) ([]byte, error) {
 	key, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
 	sum := sha256.Sum256(append([]byte("loom-android-local-selector-v3\x00"), key...))
 	clear(key)
-	config, err := androidRuntimeConfig(view, base64.RawURLEncoding.EncodeToString(sum[:]))
+	config, err := androidRuntimeConfig(view, base64.RawURLEncoding.EncodeToString(sum[:]), websites...)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(androidProfile{Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...)})
+	return json.Marshal(androidProfile{HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...)})
 }
-func androidRuntimeConfig(view control.DeviceView, secret string) (string, error) {
-	raw, err := clientadapter.ManagedRuntimeConfig(view, secret)
+func androidRuntimeConfig(view control.DeviceView, secret string, websites ...clientadapter.WebsiteAccess) (string, error) {
+	raw, err := clientadapter.ManagedRuntimeConfig(view, secret, websites...)
 	if err != nil {
 		return "", err
 	}
@@ -133,6 +162,15 @@ func androidRuntimeConfig(view control.DeviceView, secret string) (string, error
 		return "", err
 	}
 	exclusions := map[string]bool{}
+	if len(websites) == 1 {
+		prefixes, err := websites[0].Exclusions()
+		if err != nil {
+			return "", err
+		}
+		for _, prefix := range prefixes {
+			exclusions[prefix] = true
+		}
+	}
 	for _, endpoint := range view.Endpoints {
 		address, err := netip.ParseAddr(endpoint.Host)
 		if err != nil {

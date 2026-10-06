@@ -84,6 +84,9 @@ func WithTUNDomainDNS(config string) (string, error) {
 			}
 		}
 	}
+	// This name always resolves to the endpoint underlay addresses, including
+	// when a business suffix rule would otherwise select every .loom record.
+	delete(domains, "control.loom")
 	if len(domains)+len(suffixes) == 0 {
 		return config, nil
 	}

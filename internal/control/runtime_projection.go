@@ -346,6 +346,9 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 	sort.Slice(view.Endpoints, func(i, j int) bool {
 		return view.Endpoints[i].ID < view.Endpoints[j].ID || view.Endpoints[i].ID == view.Endpoints[j].ID && view.Endpoints[i].Generation < view.Endpoints[j].Generation
 	})
+	// An unrepresentable concurrent website port conflict removes only the
+	// reserved website projection. The management snapshot exposes the conflict.
+	view.WebEndpoints, _ = WebsiteEndpoints(projection)
 	for _, service := range view.Services {
 		var policy NetworkPolicy
 		for _, selected := range view.Policies {
