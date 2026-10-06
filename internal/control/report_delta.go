@@ -6,7 +6,6 @@ import (
 	"errors"
 	"maps"
 	"net/http"
-	"path/filepath"
 	"sort"
 )
 
@@ -182,16 +181,17 @@ type storedReportRange struct {
 // Immutable, disposable projections of the same original collection. No
 // authorization or completion state is cached. Readers may retain a snapshot.
 type reportIndex struct {
-	reports map[string]DeviceReport
-	groups  map[storedReportRange][]string
-	digests map[storedReportRange]string
+	canonical []byte
+	reports   map[string]DeviceReport
+	groups    map[storedReportRange][]string
+	digests   map[storedReportRange]string
 }
 
 func emptyReportIndex() *reportIndex {
-	return &reportIndex{map[string]DeviceReport{}, map[storedReportRange][]string{}, map[storedReportRange]string{}}
+	return &reportIndex{reports: map[string]DeviceReport{}, groups: map[storedReportRange][]string{}, digests: map[storedReportRange]string{}}
 }
 func (index *reportIndex) withReports(reports []DeviceReport) (*reportIndex, error) {
-	next := &reportIndex{maps.Clone(index.reports), maps.Clone(index.groups), maps.Clone(index.digests)}
+	next := &reportIndex{reports: maps.Clone(index.reports), groups: maps.Clone(index.groups), digests: maps.Clone(index.digests)}
 	changed := map[storedReportRange]bool{}
 	for _, report := range reports {
 		body, err := CanonicalEncode(report)
@@ -221,36 +221,47 @@ func (index *reportIndex) withReports(reports []DeviceReport) (*reportIndex, err
 	return next, nil
 }
 func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*reportIndex, error) {
-	lock, err := lockProtectedControlPath(ctx, filepath.Join(filepath.Dir(store.path), ".observations.lock"))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cached := store.index.Load()
+	// Writers replace the complete file atomically. An opened, validated file
+	// is a committed snapshot even while another writer prepares its successor.
+	body, err := readProtectedControlFile(store.path)
 	if err != nil {
 		return nil, err
 	}
-	store.mu.Lock()
-	if err := store.reloadLocked(); err != nil {
-		store.mu.Unlock()
-		lock.Close()
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cached, reports, canonical := store.index, store.state.Reports, store.canonical
-	store.mu.Unlock()
-	lock.Close()
-	if cached != nil {
+	if cached != nil && bytes.Equal(cached.canonical, body) {
 		return cached, nil
 	}
-	// The collection and its nested reports are immutable after publication.
-	// Hashing a large history must not hold the durable writer's file lock.
+	var reports []DeviceReport
+	if store.mu.TryRLock() {
+		if bytes.Equal(store.canonical, body) {
+			reports = store.state.Reports
+		}
+		store.mu.RUnlock()
+	}
+	if reports == nil {
+		var state observationState
+		if err := DecodeCanonical(body, &state, ContractDecodeLimits{MaxBytes: maxObservationStateBytes, MaxDepth: 128, MaxItems: len(body)}); err != nil {
+			return nil, err
+		}
+		reports = state.Reports
+	}
 	built, err := emptyReportIndex().withReports(reports)
 	if err != nil {
 		return nil, err
 	}
-	store.mu.Lock()
-	if bytes.Equal(canonical, store.canonical) {
-		if store.index == nil {
-			store.index = built
-		}
-		built = store.index
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	store.mu.Unlock()
+	built.canonical = body
+	// A concurrent publication wins. This reader still returns its own complete
+	// committed snapshot; the next request rechecks the actual file bytes.
+	store.index.CompareAndSwap(cached, built)
 	return built, nil
 }
 func (index *reportIndex) ranges(projection Projection) reportRanges {

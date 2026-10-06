@@ -518,11 +518,23 @@ func TestReportIndexSnapshotsRemainImmutableAndRejectChangedFiles(t *testing.T) 
 	if len(second.reports) != 2 || len(third.reports) != 3 {
 		t.Fatal("cache update mutated a snapshot still in use by a reader")
 	}
-	store.mu.Lock()
-	store.index = nil
-	store.mu.Unlock()
-	if !reflect.DeepEqual(third, snapshot()) {
-		t.Fatal("deleting the derived index changed report results")
+	for _, cold := range []bool{false, true} {
+		lock, err := lockProtectedControlPath(context.Background(), filepath.Join(root, ".observations.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.mu.Lock()
+		if cold {
+			store.index.Store(nil)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		committed, readErr := store.reportIndexSnapshot(ctx)
+		cancel()
+		store.mu.Unlock()
+		lock.Close()
+		if readErr != nil || !reflect.DeepEqual(third, committed) {
+			t.Fatalf("committed snapshot waited for an uncommitted writer (cold=%t): %v", cold, readErr)
+		}
 	}
 	raw, err := os.ReadFile(store.path)
 	if err != nil {

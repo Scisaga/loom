@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 var ErrReportEquivocation = errors.New("device signed different reports at one sequence")
@@ -58,8 +59,8 @@ type ObservationStore struct {
 	path      string
 	mu        sync.RWMutex
 	state     observationState
-	canonical []byte       // Rebuildable decode cache, checked against the protected file under its lock.
-	index     *reportIndex // Immutable projection of these exact originals; never persisted.
+	canonical []byte                      // Rebuildable decode cache, checked against the protected file under its lock.
+	index     atomic.Pointer[reportIndex] // Immutable projection of exact committed bytes; never persisted.
 }
 
 func OpenObservationStore(root string) (*ObservationStore, error) {
@@ -109,7 +110,9 @@ func (store *ObservationStore) reloadLocked() error {
 	}
 	store.state = state
 	store.canonical = body
-	store.index = nil
+	if cached := store.index.Load(); cached != nil && !bytes.Equal(cached.canonical, body) {
+		store.index.CompareAndSwap(cached, nil)
+	}
 	return nil
 }
 func cloneReport(report DeviceReport) DeviceReport {
@@ -259,13 +262,18 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	if err := writeObservationState(store.path, encoded); err != nil {
 		return err
 	}
-	store.state = next
-	store.canonical = encoded
-	if store.index != nil {
+	var nextIndex *reportIndex
+	if cached := store.index.Load(); cached != nil && bytes.Equal(cached.canonical, store.canonical) {
 		// Cache failure cannot change an already durable receipt. A missing
 		// index is rebuilt from originals by the next reader.
-		store.index, _ = store.index.withReports(additions)
+		nextIndex, _ = cached.withReports(additions)
+		if nextIndex != nil {
+			nextIndex.canonical = encoded
+		}
 	}
+	store.state = next
+	store.canonical = encoded
+	store.index.Store(nextIndex)
 	if fork {
 		return ErrReportEquivocation
 	}
