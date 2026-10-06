@@ -17,9 +17,12 @@ import (
 	"loom/internal/control"
 )
 
-func resourceExecutionFixture(t *testing.T) (control.DeviceView, string, time.Time) {
+func resourceExecutionFixture(t *testing.T, at ...time.Time) (control.DeviceView, string, time.Time) {
 	t.Helper()
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	if len(at) != 0 {
+		now = at[0]
+	}
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

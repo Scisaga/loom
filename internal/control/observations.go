@@ -386,6 +386,12 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 		}
 	}
 	for _, observation := range report.Observations {
+		if observation.Level == "link" {
+			if err := verifyLinkObservation(observation, view); err != nil {
+				return err
+			}
+			continue
+		}
 		route, found := routes[observation.CandidateID]
 		if !found || observation.Level != "service" || route.ServiceID != observation.ServiceID || route.SpecDigest != observation.SpecDigest {
 			return errors.New("report observation specification is outside the current view")

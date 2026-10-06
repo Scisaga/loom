@@ -335,7 +335,19 @@ hybrid 从本机 Link 起步时不生成回环入站用户，并绑定该 WG 接
 返回后才能报告 Service 成功；WG 接口、握手及 Hy2 TLS 回读均不代替业务结果。
 
 Link 的精确动作 `hysteria2_tls` 检查对端 WG 地址上指定的 Hy2 listener，按对端资源的 CA 和名称完成
-真实 QUIC/TLS 请求返回，仅证明该 Link 的传输可用。未执行或无可验证返回时保持 unknown。
+真实 QUIC/TLS 与 Hy2 认证请求返回，仅证明该 Link 的传输可用。未执行保持 unknown，实际尝试失败
+记录该次 unavailable；HTTP 拒绝、握手和计数器都不算该动作成功。
+纯 forward 起点没有 Service/Policy 凭据，既有入站权限不能表达这项探测而不虚构业务授权。
+最小补充是从起点现有 RuntimeKey 派生仅供 Link 认证的私有执行值，只交付 From 和目标 listener
+所在节点。它没有独立身份、生命周期或 store；删除它只会失去该 Link 的主动认证观测，不影响
+Service 授权。接收端允许 Hy2 登录、拒绝该用户所有转发；不授予任何 Service、DNS 或管理访问。
+Link、端点资格或资源撤销后，该执行值退出 View，沿现有 generation 替换关闭旧会话。
+探测从 From 的已回读 WG 接口及地址发出，与 initiator 的 UDP 建连方向无关，不修改宿主路由。
+没有新增操作者配置；domain 的 Link 与资源单向投影私有 View 执行值，运行请求产生原 Observation，
+原签名 Report 持久化、重启恢复并供设备页面回读 LinkID、目标、结果和原采样时间。样本不能倒写
+Link 或制造 Service 成功，未确定全局时钟容忍前也不改变拓扑的当前 availability。
+最小验证覆盖无 Service 的起点、用途隔离、探测用户不能转发、两端撤权、摘要变化、严格报告拒绝、
+真实 WG 上的认证往返及控制面重启回读；不为这一条链扩展首跳聚合或选路算法。
 正常停止和更新先终止旧数据进程，再 compare-and-delete 本 generation 的 WG 对象；失败时不自动反复重施。
 最小验证覆盖双向 Link 共用接口、同出口一跳与中继并存、本机起点、端口 ACL、不同用途凭据隔离、
 资源或 Link 撤销、Service 分别探测、停止/异常退出后的所有权清理，以及正式服务重启恢复。
@@ -354,7 +366,7 @@ flowchart LR
     L3 --> O3["L3 真实观测"]
 ```
 
-资源握手、首跳与中继连通仅证明被实测层级。链路观测绑定 `link_spec_digest = Hash(CanonicalEncode(NetworkLink, TransportResource))`；资源或链路参数变化使旧观测回到 unknown。WG/hy2/TLS 分别用自身真实认证连接测试，不伪造 WG 地址或接口。新链路未验证成功前不能因声明存在而删除旧可信连接。即便 control 流经非 control 中继，也逐请求验证成员身份和签名；设备服务验证设备授权，数据面验证 ACL。中继不投票、不自动取得管理权。
+资源握手、首跳与中继连通仅证明被实测层级。链路观测绑定 现行契约定义的 `link_spec_digest`（Link、两端 WG 及目标 Hy2 的完整规范值）；资源或链路参数变化使旧观测回到 unknown。WG/hy2/TLS 分别用自身真实认证连接测试，不伪造 WG 地址或接口。新链路未验证成功前不能因声明存在而删除旧可信连接。即便 control 流经非 control 中继，也逐请求验证成员身份和签名；设备服务验证设备授权，数据面验证 ACL。中继不投票、不自动取得管理权。
 
 ## 8. Service、Policy、偏好与业务探测
 

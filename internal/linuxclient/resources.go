@@ -137,6 +137,16 @@ func prepareHY2Executions(view control.DeviceView, inputPath string, now time.Ti
 				break
 			}
 		}
+		if password == "" {
+			for _, credential := range view.LinkProbeCredentials {
+				for _, link := range view.Links {
+					if link.ID == credential.LinkID && link.ToNodeID == view.DeviceID && link.ProbeTarget.ResourceID == resource.ID {
+						password = credential.Credential
+						break
+					}
+				}
+			}
+		}
 		result = append(result, hy2Execution{resource: resource, input: input, roots: roots, password: password, acl: acl})
 	}
 	return result, nil
@@ -234,6 +244,19 @@ func appendHY2Runtime(config string, view control.DeviceView, executions []hy2Ex
 		}
 		// Reject before reaching access rules. The receiver never sniffs SNI to
 		// reinterpret an arbitrary IP target as a permitted domain request.
+		for _, permission := range view.LinkProbeCredentials {
+			for _, link := range view.Links {
+				if link.ID != permission.LinkID || link.ToNodeID != view.DeviceID || link.ProbeTarget.ResourceID != resource.ID {
+					continue
+				}
+				user, err := control.LinkProbeUser(permission)
+				if err != nil {
+					return "", err
+				}
+				// Authentication only: no matching forwarding rule is added.
+				users = append(users, map[string]any{"name": user, "password": permission.Credential})
+			}
+		}
 		rules = append(rules, map[string]any{"inbound": []string{tag}, "outbound": "reject"})
 		inbounds = append(inbounds, map[string]any{"type": "hysteria2", "tag": tag, "listen": host, "listen_port": number, "users": users,
 			"tls": map[string]any{"enabled": true, "certificate_path": input.CertificateFile, "key_path": input.KeyFile}})

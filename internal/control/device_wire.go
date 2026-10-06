@@ -246,7 +246,13 @@ func (observation Observation) Validate() error {
 		if ValidateID(observation.ServiceID) != nil || ValidateDigest(observation.CandidateID) != nil || observation.ResourceID != "" || observation.LinkID != "" || observation.Action != "https_request" || ValidateHTTPSURL(observation.Target) != nil {
 			return errors.New("service observation is invalid")
 		}
-	case "resource", "link":
+	case "link":
+		target, err := netip.ParseAddrPort(observation.Target)
+		if ValidateID(observation.LinkID) != nil || ValidateID(observation.ResourceID) != nil || observation.ServiceID != "" || observation.CandidateID != "" ||
+			observation.Action != "hysteria2_tls" || err != nil || target.Port() == 0 || target.String() != observation.Target || !target.Addr().IsGlobalUnicast() || target.Addr().Zone() != "" {
+			return errors.New("Link observation is invalid")
+		}
+	case "resource":
 		return errors.New("transport observation actions are not yet specified")
 	default:
 		return errors.New("observation level is invalid")

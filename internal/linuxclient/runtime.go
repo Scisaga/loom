@@ -359,9 +359,9 @@ func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io
 	}
 	return acceptCertifiedView(store, envelope)
 }
-func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback) error {
+func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback, links []control.Observation) error {
 	selections := []control.ReportSelection{}
-	observations := []control.Observation{}
+	observations := append([]control.Observation{}, links...)
 	for _, selection := range activation.Selections {
 		for _, route := range lkg.View.Routes {
 			if route.ID == selection.CandidateID {
@@ -623,8 +623,10 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 		readback := control.RuntimeReadback{State: "stopped"}
-		if pid != 0 {
+		if pid != 0 || len(wg.WireGuard) != 0 {
 			readback = control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}
+		}
+		if pid != 0 {
 			if hasAccess {
 				activation, err = Activate(ctx, selector, routes, local, nil, options.Now)
 				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
@@ -653,9 +655,13 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return saveErr
 		}
 		activation.State = saved
+		linkObservations, err := observeLinks(ctx, lkg.View, wg, generation, options.RefreshPoll, options.Now)
+		if err != nil {
+			return err
+		}
 		pending, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		reportErr := reportSelection(pending, store, *lkg, activation, options.Now(), components, readback)
+		reportErr := reportSelection(pending, store, *lkg, activation, options.Now(), components, readback, linkObservations)
 		if reportErr != nil {
 			fmt.Fprintln(options.Log, "private runtime report unavailable")
 		}

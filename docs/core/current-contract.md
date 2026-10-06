@@ -595,6 +595,23 @@ resource_auth_digest 只绑定资源 authentication，用于落实资源认证�
 客户端与接收节点得到匹配派生值，其他节点既不得取得 RuntimeKey，也不得取得本节点之外的入站值。
 本机 selector API 属于 HostAdapter 的本机受保护执行输入，不用虚构的 Service/Policy ID 派生业务权限。
 
+Link 探测复用相同 HKDF 算法与 salt，IKM 取有效 From 节点的 RuntimeKey。其 info 恰为
+`network_id,device_id,link_id,resource_id,resource_auth_digest,receiver_node_id,purpose`，device_id
+为 From，resource_id 为 probe_target 的 Hy2 资源，receiver_node_id 为 To，purpose 固定
+`link-probe-auth`，resource_auth_digest 使用同一资源 authentication 摘要。没有 Service/Policy
+字段，不能把它用于普通转发。仅 From 与 To 的私有 DeviceView 出现可选非空
+`link_probe_credentials:[{link_id,credential}]`，按 LinkID 排序且唯一；其余引用从同份 View 的 Link
+和三个资源检查，资源或节点失效便不投影，第三方 access 即使持有该 Link 的候选也不能取得它。
+空数组、null、重复、缺失引用及非两端收件人均拒绝。已有缺席字段的原 View 字节保持可验证；
+缺席只表示没有这项执行权限，不能从旧配置、Service 凭据或本机参数补造。
+部署时保全原 LKG 和高水位；已有设备只有在获认证事实前沿真实前移后才能接受新增执行值。
+同一前沿的不同 View 继续拒绝，不能为升级放宽此门禁。发布中正常提交的精确组件期望可提供
+这次普通事实进展；切换须先使 control 使用新投影并同步这些事实，再启动已升级的 Link 承载客户端，
+逐节点检查新 LKG 的前沿前移、原身份不变。未获得进展时保持原认证状态，不能重置 LKG 或补造序列。
+接收端用户名为 `loom-link-probe-user-v3\0` 加 `C({link_id})` 的摘要；凭据只能完成认证，
+全部转发落在原 listener 的默认拒绝规则。入站 acl_digest 的规范数组在原 Service 凭据之后
+追加本 listener 的 Link 探测凭据（按 LinkID 排序）；没有探测项时数组及原摘要逐字节不变。
+
 新认证 View 与 floor 先原子保存；再替换相关入站凭据、ACL、出站与实际进程。应用失败只保留新认证状态，
 运行状态为 error/未应用，旧的已撤销权限必须停止，不能从旧配置或 rollback snapshot 恢复。
 创建对象的所有权只能由实际创建与精确回读证明；遇到未知现存对象不得把“曾在旧 View 中出现”当所有权。
@@ -676,7 +693,7 @@ control_proof、Invite 和 View 均不得因此泄漏设备授权的 RuntimeKey 
 本链 DeviceView 的字段为 `schema=3,device_id,name,platform,device_public_key,responsibilities,policy_ids,`
 `services,policies,resources,links,endpoints,dns_servers,business_probe_targets,routes,runtime_profile,`
 `inbound_credentials,expected_components`。所有集合显式出现；没有相应授权时为空集合。
-另有可选非空 `dns_records`、`public_trust` 和 `web_endpoints`，分别按上文的 DNSRecord、PublicTrust
+另有上述私有 `link_probe_credentials`，以及可选非空 `dns_records`、`public_trust` 和 `web_endpoints`，分别按上文的 DNSRecord、PublicTrust
 和 EndpointGeneration 规范投影；web_endpoints 仅含当前成员、有效根授权下相同客户端端口的
 serving `control.loom` web 代，按 ID/generation 排序，原设备认证 endpoints 不因此加入 web-only 值。
 无配置时字段缺席，显式空数组、null、未知用途或不规范证书均拒绝；已有缺席字段的签名字节保持。
@@ -797,6 +814,17 @@ resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，se
 每条保留实际 target 和 action。spec_digest 分别绑定资源、Link+资源或候选规范内容。
 按 `(network_generation,level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest)` 排序且无重复。
 目标为确切 HTTPS URL 或相应传输动作的确切坐标，不能用一个聚合颜色替代。
+
+Link 层当前 action 仅 `hysteria2_tls`，resource_id 为 Link 的接收端 WG resource_id，target 为
+probe_target 的规范 IP:Port（IPv6 使用方括号）。spec_digest 为 `loom-link-spec-v3\0` 加
+`C({link:NetworkLink,resources:[TransportResource]})` 的 SHA-256 摘要；resources 恰含两端 WG
+及目标 Hy2 三项，按 ID 排序。仅 From 节点可报告，View 必须含对应探测凭据；报告接收方重算
+所有引用、目标与摘要。实际执行绑定已回读的 From WG 接口与源地址，验证 Hy2 CA、名称、有效期，
+经真实 HTTP/3 POST `/auth` 得到认证成功 233 才记 available。404、TLS 失败和超时均不可充数。
+duration_ms 是本次完整认证往返的单调时钟耗时，不是 WG RTT 或 Service HTTPS 延迟。
+每轮按现有运行刷新周期重新采样，valid_until 为该次 observed_at 加调用方的刷新周期；这只是
+设备声明的该轮样本边界，不新增 control 的全局最大寿命或时钟容忍。取消或未执行不生成成功样本，
+失败只影响该次 Link 观测，不停止其他 Service；UI 显示原时间和样本结果，拓扑当前可用性仍 unknown。
 
 本链 HTTPS action 固定 `https_request`；result 仅 `available/unavailable/unknown`。
 时间均为 Time，必须 `observed_at < valid_until`；到 valid_until 即失效，接收方不能按接收时间延长寿命。

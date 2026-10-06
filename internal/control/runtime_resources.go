@@ -43,10 +43,17 @@ func InboundCredentialUser(value InboundCredential) (string, error) {
 }
 
 func InboundACLDigest(view DeviceView, resourceID string) (string, error) {
-	values := []InboundCredential{}
+	values := []any{}
 	for _, value := range view.InboundCredentials {
 		if value.ResourceID == resourceID {
 			values = append(values, value)
+		}
+	}
+	for _, value := range view.LinkProbeCredentials {
+		for _, link := range view.Links {
+			if link.ID == value.LinkID && link.ToNodeID == view.DeviceID && link.ProbeTarget.ResourceID == resourceID {
+				values = append(values, value)
+			}
 		}
 	}
 	return digestContractValue("loom-inbound-acl-v3\x00", values)
@@ -168,7 +175,7 @@ func validateViewResources(view DeviceView) error {
 		}
 		passwords[key] = true
 	}
-	return nil
+	return validateLinkProbeCredentials(view, passwords)
 }
 
 // projectViewResources shares the exact allow projection between each access
@@ -236,11 +243,18 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 	}
 	// Existing relay resources also carry authenticated management traffic.
 	// Their node ownership is independent of access Service assignment.
+	view.LinkProbeCredentials = nil
 	for _, link := range links {
 		if link.FromNodeID == view.DeviceID || link.ToNodeID == view.DeviceID {
 			addLink(link)
+			value, err := deriveLinkProbeCredential(projection.NetworkID, devices[link.FromNodeID], link, resources[link.ProbeTarget.ResourceID])
+			if err != nil {
+				return nil, err
+			}
+			view.LinkProbeCredentials = append(view.LinkProbeCredentials, value)
 		}
 	}
+	sort.Slice(view.LinkProbeCredentials, func(i, j int) bool { return view.LinkProbeCredentials[i].LinkID < view.LinkProbeCredentials[j].LinkID })
 	credentials := map[string]string{}
 	for _, source := range projection.DeviceAuthorizations {
 		if !containsString(source.Responsibilities, "access") {
