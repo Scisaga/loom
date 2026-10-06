@@ -10,13 +10,13 @@ import (
 	"strings"
 )
 
-func oneHopCandidate(service Service, policy NetworkPolicy, resource TransportResource) (RouteCandidate, error) {
+func oneHopCandidate(service Service, policy NetworkPolicy, resource TransportResource, records ...DNSRecord) (RouteCandidate, error) {
 	identity := map[string]any{"service_id": service.ID, "first_resource_id": resource.ID, "node_chain": []string{resource.OwnerNodeID}, "link_ids": []string{}, "final_exit": resource.OwnerNodeID}
 	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
 	if err != nil {
 		return RouteCandidate{}, err
 	}
-	spec, err := digestContractValue("loom-candidate-spec-v3\x00", map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{resource}, "links": []NetworkLink{}})
+	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{resource}, "links": []NetworkLink{}}, service, records))
 	return RouteCandidate{ID: id, SpecDigest: spec, Scope: "service:" + service.ID, ServiceID: service.ID, FirstResourceID: resource.ID,
 		NodeChain: []string{resource.OwnerNodeID}, LinkIDs: []string{}, FinalExit: resource.OwnerNodeID}, err
 }
@@ -252,7 +252,7 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 			if !assigned || !present || policy.Action != "allow" {
 				continue
 			}
-			paths, err := transportPaths(source.ID, containsString(source.Responsibilities, "forward"), service, policy, allResources, links)
+			paths, err := transportPaths(source.ID, containsString(source.Responsibilities, "forward"), service, policy, allResources, links, projectDNSRecords(projection.NetworkIntent.DNSRecords)...)
 			if err != nil {
 				return nil, err
 			}

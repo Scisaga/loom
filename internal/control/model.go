@@ -243,6 +243,12 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 		}
 		_, err := ValidateAdminLeaf(value)
 		return err
+	case "dns_record.put":
+		value, ok := payload.(DNSRecord)
+		if !ok || kind != "dns_record" || value.ID != id {
+			return errors.New("dns_record.put has the wrong payload or target")
+		}
+		return value.Validate()
 	case "service.put":
 		value, ok := payload.(Service)
 		if !ok || kind != "service" || value.ID != id {
@@ -255,7 +261,7 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 			return errors.New("policy.put has the wrong payload or target")
 		}
 		return value.Validate()
-	case "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
+	case "dns_record.delete", "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
 		value, ok := payload.(DeleteTarget)
 		if !ok || operation != kind+".delete" && !(operation == "device.revoke" && kind == "device") || value.ID != id {
 			return errors.New("deletion has the wrong payload or target")
@@ -587,11 +593,13 @@ func decodeMaterialPayload(operation, kind string, value any) (MaterialPayload, 
 	switch operation {
 	case "admin_certificate.put":
 		target = &AdminCertificate{}
+	case "dns_record.put":
+		target = &DNSRecord{}
 	case "service.put":
 		target = &Service{}
 	case "policy.put":
 		target = &NetworkPolicy{}
-	case "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
+	case "dns_record.delete", "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
 		target = &DeleteTarget{}
 	case "invite.issue":
 		target = &Invite{}
@@ -866,6 +874,9 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 	for _, value := range genesis.AdminCertificates {
 		add("admin_certificate", value.ID, graph.genesisID, "admin_certificate.put", value)
 	}
+	for _, value := range genesis.NetworkIntent.DNSRecords {
+		add("dns_record", value.ID, graph.genesisID, "dns_record.put", value)
+	}
 	for _, value := range genesis.NetworkIntent.Services {
 		add("service", value.ID, graph.genesisID, "service.put", value)
 	}
@@ -943,6 +954,8 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 		switch value := chosen.payload.(type) {
 		case AdminCertificate:
 			projection.AdminCertificates = append(projection.AdminCertificates, value)
+		case DNSRecord:
+			projection.NetworkIntent.DNSRecords = append(projection.NetworkIntent.DNSRecords, value)
 		case Service:
 			projection.NetworkIntent.Services = append(projection.NetworkIntent.Services, value)
 		case NetworkPolicy:
@@ -975,7 +988,7 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 
 func isWithdrawal(operation string) bool {
 	switch operation {
-	case "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "expected_component.delete", "admin_certificate.delete", "invite.cancel", "invite.expire":
+	case "dns_record.delete", "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "expected_component.delete", "admin_certificate.delete", "invite.cancel", "invite.expire":
 		return true
 	}
 	return false
@@ -1017,6 +1030,13 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 	switch value := material.Payload.(type) {
 	case AdminCertificate:
 		return graph.validateAdminCertificate(value, history)
+	case DNSRecord:
+		for _, record := range view.NetworkIntent.DNSRecords {
+			if record.ID != value.ID && record.Name == value.Name {
+				return errors.New("DNS name is already assigned to another record")
+			}
+		}
+		return nil
 	case Service:
 		return nil
 	case NetworkPolicy:

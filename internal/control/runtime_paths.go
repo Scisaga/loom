@@ -66,7 +66,7 @@ func pathHopTag(path transportPath, index int) string {
 	return path.candidate.ID + ".hop." + strconv.Itoa(index)
 }
 
-func transportPaths(source string, localForward bool, service Service, policy NetworkPolicy, values []TransportResource, links []NetworkLink) ([]transportPath, error) {
+func transportPaths(source string, localForward bool, service Service, policy NetworkPolicy, values []TransportResource, links []NetworkLink, records ...DNSRecord) ([]transportPath, error) {
 	resources := map[string]TransportResource{}
 	for _, resource := range values {
 		resources[resource.ID] = resource
@@ -83,7 +83,7 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 			var candidate RouteCandidate
 			var err error
 			if !local && len(chain) == 1 {
-				candidate, err = oneHopCandidate(service, policy, hops[0])
+				candidate, err = oneHopCandidate(service, policy, hops[0], records...)
 			} else {
 				first := hops[0].ID
 				if local {
@@ -110,7 +110,7 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 				if e != nil {
 					return e
 				}
-				spec, e := digestContractValue("loom-candidate-spec-v3\x00", map[string]any{"identity": identity, "service": service, "policy": policy, "resources": specResources, "links": pathLinks})
+				spec, e := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": specResources, "links": pathLinks}, service, records))
 				if e != nil {
 					return e
 				}

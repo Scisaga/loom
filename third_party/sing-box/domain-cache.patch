@@ -585,3 +585,147 @@ diff --git a/.loom-sing-tun/tun_linux.go b/.loom-sing-tun/tun_linux.go
 -		_ = shell.Exec(ctlPath, append([]string{"dns", t.options.Name}, common.Map(dnsServer, netip.Addr.String)...)...).Run()
 -	}()
 -}
+--- a/option/dns.go
++++ b/option/dns.go
+@@ -16,6 +16,7 @@
+ }
+ 
+ type DNSServerOptions struct {
++	StaticRecords        map[string][]string   `json:"static_records,omitempty"`
+ 	Tag                  string                `json:"tag,omitempty"`
+ 	Address              string                `json:"address"`
+ 	AddressResolver      string                `json:"address_resolver,omitempty"`
+--- a/route/router.go
++++ b/route/router.go
+@@ -211,14 +211,26 @@
+ 			if serverProtocol == "" {
+ 				serverProtocol = "transport"
+ 			}
+-			transport, err := dns.CreateTransport(dns.TransportOptions{
+-				Context:      ctx,
+-				Logger:       logFactory.NewLogger(F.ToString("dns/", serverProtocol, "[", tag, "]")),
+-				Name:         tag,
+-				Dialer:       detour,
+-				Address:      server.Address,
+-				ClientSubnet: clientSubnet,
+-			})
++			var transport dns.Transport
++			var err error
++			if server.Address == "loom-static" {
++				if server.Detour != "" || server.AddressResolver != "" || server.ClientSubnet != nil {
++					return nil, E.New("overlay DNS cannot use a network resolver")
++				}
++				transport, err = newLoomStaticDNS(tag, server.StaticRecords)
++			} else {
++				if server.StaticRecords != nil {
++					return nil, E.New("static records require overlay DNS")
++				}
++				transport, err = dns.CreateTransport(dns.TransportOptions{
++					Context:      ctx,
++					Logger:       logFactory.NewLogger(F.ToString("dns/", serverProtocol, "[", tag, "]")),
++					Name:         tag,
++					Dialer:       detour,
++					Address:      server.Address,
++					ClientSubnet: clientSubnet,
++				})
++			}
+ 			if err != nil {
+ 				return nil, E.Cause(err, "parse dns server[", tag, "]")
+ 			}
+--- /dev/null
++++ b/route/loom_static_dns.go
+@@ -0,0 +1,94 @@
++package route
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/netip"
++	"os"
++	"strings"
++
++	D "github.com/miekg/dns"
++	"github.com/sagernet/sing-dns"
++)
++
++// This transport has no sockets, mutable records or fallback. Loom supplies
++// only a projection of the already accepted DeviceView for this process.
++type loomStaticDNS struct {
++	name    string
++	records map[string][]netip.Addr
++}
++
++func newLoomStaticDNS(name string, values map[string][]string) (dns.Transport, error) {
++	t := &loomStaticDNS{name: name, records: make(map[string][]netip.Addr, len(values))}
++	for host, addresses := range values {
++		if host != strings.ToLower(host) || !strings.HasSuffix(host, ".loom") || len(host) > 253 || len(addresses) == 0 {
++			return nil, errors.New("invalid overlay DNS name or empty address set")
++		}
++		for _, label := range strings.Split(host, ".") {
++			if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
++				return nil, errors.New("invalid overlay DNS label")
++			}
++			for _, c := range label {
++				if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
++					return nil, errors.New("invalid overlay DNS label")
++				}
++			}
++		}
++		for i, value := range addresses {
++			address, err := netip.ParseAddr(value)
++			if err != nil || address.Zone() != "" || address.String() != value || address.Is4In6() || address.IsUnspecified() || address.IsMulticast() || i > 0 && addresses[i-1] >= value {
++				return nil, errors.New("invalid overlay DNS address set")
++			}
++			t.records[host] = append(t.records[host], address)
++		}
++	}
++	return t, nil
++}
++func (t *loomStaticDNS) Name() string { return t.name }
++func (*loomStaticDNS) Start() error   { return nil }
++func (*loomStaticDNS) Reset()         {}
++func (*loomStaticDNS) Close() error   { return nil }
++func (*loomStaticDNS) Raw() bool      { return true }
++func (*loomStaticDNS) Lookup(context.Context, string, dns.DomainStrategy) ([]netip.Addr, error) {
++	return nil, os.ErrInvalid
++}
++func (t *loomStaticDNS) Exchange(_ context.Context, query *D.Msg) (*D.Msg, error) {
++	reply := new(D.Msg)
++	reply.SetReply(query)
++	reply.Authoritative = true
++	if query.Response || query.Opcode != D.OpcodeQuery || len(query.Question) != 1 {
++		reply.Rcode = D.RcodeFormatError
++		return reply, nil
++	}
++	q := query.Question[0]
++	name := strings.TrimSuffix(strings.ToLower(q.Name), ".")
++	if q.Qclass != D.ClassINET || name != "loom" && !strings.HasSuffix(name, ".loom") {
++		reply.Authoritative = false
++		reply.Rcode = D.RcodeRefused
++		return reply, nil
++	}
++	addresses, exists := t.records[name]
++	if !exists {
++		// An ancestor of an exact record is an empty non-terminal, not NXDOMAIN.
++		for host := range t.records {
++			if strings.HasSuffix(host, "."+name) {
++				exists = true
++				break
++			}
++		}
++		if !exists {
++			reply.Rcode = D.RcodeNameError
++		}
++		return reply, nil
++	}
++	for _, address := range addresses {
++		header := D.RR_Header{Name: q.Name, Rrtype: q.Qtype, Class: D.ClassINET, Ttl: 0}
++		if q.Qtype == D.TypeA && address.Is4() {
++			reply.Answer = append(reply.Answer, &D.A{Hdr: header, A: net.IP(address.AsSlice())})
++		} else if q.Qtype == D.TypeAAAA && address.Is6() {
++			reply.Answer = append(reply.Answer, &D.AAAA{Hdr: header, AAAA: net.IP(address.AsSlice())})
++		}
++	}
++	return reply, nil
++}

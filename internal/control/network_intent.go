@@ -27,7 +27,7 @@ type NetworkIntent struct {
 	Resources            []TransportResource     `json:"resources"`
 	Links                []NetworkLink           `json:"links"`
 	BusinessProbeTargets []BusinessProbeTarget   `json:"business_probe_targets"`
-	DNSRecords           []undefinedNetworkValue `json:"dns_records"`
+	DNSRecords           []DNSRecord             `json:"dns_records"`
 	PublicTrust          []undefinedNetworkValue `json:"public_trust"`
 	ExpectedComponents   []ExpectedComponent     `json:"expected_components"`
 }
@@ -278,7 +278,7 @@ func contractUpperHex(value byte) bool {
 
 func EmptyNetworkIntent() NetworkIntent {
 	return NetworkIntent{Schema: 3, Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{},
-		BusinessProbeTargets: []BusinessProbeTarget{}, DNSRecords: []undefinedNetworkValue{}, PublicTrust: []undefinedNetworkValue{}, ExpectedComponents: []ExpectedComponent{}}
+		BusinessProbeTargets: []BusinessProbeTarget{}, DNSRecords: []DNSRecord{}, PublicTrust: []undefinedNetworkValue{}, ExpectedComponents: []ExpectedComponent{}}
 }
 
 func (intent NetworkIntent) Validate() error {
@@ -286,8 +286,11 @@ func (intent NetworkIntent) Validate() error {
 		intent.BusinessProbeTargets == nil || intent.DNSRecords == nil || intent.PublicTrust == nil || intent.ExpectedComponents == nil {
 		return errors.New("NetworkIntent schema or explicit collections are invalid")
 	}
-	if len(intent.Resources)+len(intent.Links)+len(intent.DNSRecords)+len(intent.PublicTrust)+len(intent.ExpectedComponents) != 0 {
-		return errors.New("non-empty resources, links, DNS, trust or component expectations require their complete contracts")
+	if len(intent.Resources)+len(intent.Links)+len(intent.PublicTrust)+len(intent.ExpectedComponents) != 0 {
+		return errors.New("non-empty resources, links, trust or component expectations require their complete contracts")
+	}
+	if err := validateDNSRecords(intent.DNSRecords); err != nil {
+		return err
 	}
 	services := map[string]Service{}
 	for index, service := range intent.Services {

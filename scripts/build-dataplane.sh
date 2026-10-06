@@ -16,7 +16,7 @@ for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
     if [[ "$target_os" == windows ]]; then extension=".exe"; fi
     env GOWORK=off GOTOOLCHAIN=go1.27.0 CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" \
         go -C "$source_dir" build -trimpath -buildvcs=false -tags "$tags" \
-        -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.11.4-loom.4 -s -w -buildid=' \
+        -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.11.4-loom.5 -s -w -buildid=' \
         -o "$output_dir/sing-box-$target_os-$target_arch$extension" ./cmd/sing-box
     echo "built data plane $target"
 done

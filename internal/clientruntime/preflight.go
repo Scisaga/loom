@@ -42,6 +42,7 @@ type singBoxLog struct {
 }
 
 type singBoxDNS struct {
+	Final            string             `json:"final,omitempty"`
 	Servers          []singBoxDNSServer `json:"servers"`
 	Strategy         string             `json:"strategy,omitempty"`
 	ReverseMapping   bool               `json:"reverse_mapping,omitempty"`
@@ -51,8 +52,8 @@ type singBoxDNS struct {
 }
 
 type singBoxDNSRule struct {
-	Inbound      []string `json:"inbound"`
-	QueryType    []string `json:"query_type"`
+	Inbound      []string `json:"inbound,omitempty"`
+	QueryType    []string `json:"query_type,omitempty"`
 	Domain       []string `json:"domain,omitempty"`
 	DomainSuffix []string `json:"domain_suffix,omitempty"`
 	Server       string   `json:"server"`
@@ -65,9 +66,10 @@ type singBoxFakeIP struct {
 }
 
 type singBoxDNSServer struct {
-	Tag     string `json:"tag"`
-	Address string `json:"address"`
-	Detour  string `json:"detour,omitempty"`
+	StaticRecords map[string][]string `json:"static_records,omitempty"`
+	Tag           string              `json:"tag"`
+	Address       string              `json:"address"`
+	Detour        string              `json:"detour,omitempty"`
 }
 
 type singBoxInbound struct {
@@ -167,7 +169,7 @@ func ValidateWindowsSingBox(body []byte) error {
 
 // DeriveWindowsRuntimeConfig preserves the authenticated routes and adds only
 // local capture and explicitly supplied authenticated DNS infrastructure.
-func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsServers []string) ([]byte, error) {
+func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsServers []string, records ...control.DNSRecord) ([]byte, error) {
 	if err := ValidateWindowsSingBox(body); err != nil {
 		return nil, err
 	}
@@ -183,7 +185,7 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 		c.Route.AutoDetectInterface = true
 	}
 	prefix := []singBoxRule{}
-	if len(dnsServers) > 0 {
+	if len(dnsServers) > 0 || len(records) > 0 {
 		c.DNS = &singBoxDNS{Servers: []singBoxDNSServer{}}
 		for i, address := range dnsServers {
 			ip, err := netip.ParseAddr(address)
@@ -204,6 +206,11 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 	if err != nil {
 		return nil, err
 	}
+	derivedDNS, err := clientadapter.WithOverlayDNS(string(result), records, false)
+	if err != nil {
+		return nil, err
+	}
+	result = []byte(derivedDNS)
 	if tun && c.DNS != nil {
 		derived, err := clientadapter.WithTUNDomainDNS(string(result))
 		if err != nil {
@@ -248,7 +255,12 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 			}
 			c.DNS.Servers = c.DNS.Servers[:len(c.DNS.Servers)-1]
 		}
-		c.DNS.FakeIP, c.DNS.Rules, c.DNS.IndependentCache = nil, nil, false
+		c.DNS.FakeIP, c.DNS.IndependentCache = nil, false
+		if len(c.DNS.Rules) > 0 && c.DNS.Rules[len(c.DNS.Rules)-1].Server == "loom-overlay-dns" {
+			c.DNS.Rules = c.DNS.Rules[len(c.DNS.Rules)-1:]
+		} else {
+			c.DNS.Rules = nil
+		}
 		c.Experimental.CacheFile = nil
 		base, _ := json.Marshal(c)
 		derived, err := clientadapter.WithTUNDomainDNS(string(base))
@@ -263,12 +275,31 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 		}
 	}
 	if c.DNS != nil {
-		if len(c.DNS.Servers) == 0 || c.DNS.ReverseMapping || c.DNS.Strategy != "" || c.DNS.FakeIP != nil || c.DNS.IndependentCache || len(c.DNS.Rules) != 0 {
+		overlay := false
+		if len(c.DNS.Servers) > 0 && c.DNS.Servers[len(c.DNS.Servers)-1].Tag == "loom-overlay-dns" {
+			server := c.DNS.Servers[len(c.DNS.Servers)-1]
+			if server.Detour != "" || server.Address != "loom-static" && server.Address != "rcode://name_error" || (server.Address == "loom-static") != (len(server.StaticRecords) > 0) {
+				return errors.New("invalid overlay DNS server")
+			}
+			for name, addresses := range server.StaticRecords {
+				if (control.DNSRecord{ID: "demo-runtime-record", Name: name, Addresses: addresses}).Validate() != nil {
+					return errors.New("invalid overlay DNS record")
+				}
+			}
+			expectedRule := singBoxDNSRule{DomainSuffix: []string{"loom"}, Server: "loom-overlay-dns"}
+			if !reflect.DeepEqual(c.DNS.Rules, []singBoxDNSRule{expectedRule}) || c.DNS.Final != "" {
+				return errors.New("invalid overlay DNS rule")
+			}
+			overlay = len(server.StaticRecords) > 0
+			c.DNS.Rules = nil
+			c.DNS.Servers = c.DNS.Servers[:len(c.DNS.Servers)-1]
+		}
+		if len(c.DNS.Servers) == 0 && !overlay || c.DNS.ReverseMapping || c.DNS.Strategy != "" || c.DNS.FakeIP != nil || c.DNS.IndependentCache || len(c.DNS.Rules) != 0 {
 			return errors.New("invalid managed DNS")
 		}
 		for i, server := range c.DNS.Servers {
 			ip, err := netip.ParseAddr(server.Address)
-			if err != nil || ip.String() != server.Address || server.Tag != fmt.Sprintf("dns-%d", i) || server.Detour != "dns-underlay" {
+			if err != nil || ip.String() != server.Address || server.Tag != fmt.Sprintf("dns-%d", i) || server.Detour != "dns-underlay" || server.StaticRecords != nil {
 				return errors.New("invalid managed DNS server")
 			}
 		}

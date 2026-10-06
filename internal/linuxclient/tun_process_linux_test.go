@@ -31,7 +31,13 @@ import (
 	"loom/internal/control"
 )
 
-func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
+func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) { testOfficialIsolatedTUN(t, false) }
+func TestOfficialIsolatedTUNOverlayDNS(t *testing.T)           { testOfficialIsolatedTUN(t, true) }
+func testOfficialIsolatedTUN(t *testing.T, overlay bool) {
+	businessHost := "demo-service.example"
+	if overlay {
+		businessHost = "demo-service.loom"
+	}
 	singBox := os.Getenv("LOOM_TUN_ROUTING_EXECUTABLE")
 	if singBox == "" || os.Geteuid() != 0 {
 		t.Skip("requires root namespace capability and the exact TUN data plane")
@@ -137,7 +143,7 @@ func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Demo TUN root"}, DNSNames: []string{"demo-service.example"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	certificate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Demo TUN root"}, DNSNames: []string{businessHost}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, certificate, certificate, public, private)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +172,7 @@ func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
 	}
 	resourcePool := x509.NewCertPool()
 	resourcePool.AddCert(resourceCA)
-	if _, err := resourceParsed.Verify(x509.VerifyOptions{Roots: resourcePool, DNSName: "demo-service.example"}); err != nil {
+	if _, err := resourceParsed.Verify(x509.VerifyOptions{Roots: resourcePool, DNSName: businessHost}); err != nil {
 		t.Fatal("invalid fixture resource certificate", err)
 	}
 	keyDER, err := x509.MarshalPKCS8PrivateKey(private)
@@ -189,15 +195,21 @@ func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
 	if err := atomicJSON(resourceInputs, ResourceInputs{Schema: 3, Listeners: []ResourceListenerInput{{ResourceID: "demo-resource", Listen: fmt.Sprintf("127.0.0.1:%d", resourcePort), CertificateFile: resourceCertificate, KeyFile: resourceKey}}}); err != nil {
 		t.Fatal(err)
 	}
-	resourceName, resourceRoots := "demo-service.example", []string{base64.RawURLEncoding.EncodeToString(der)}
-	store, state, makeView := linuxAcceptanceFixture(t, func(_ uint64, v *control.DeviceView) {
+	resourceName, resourceRoots := businessHost, []string{base64.RawURLEncoding.EncodeToString(der)}
+	store, state, makeView := linuxAcceptanceFixture(t, func(sequence uint64, v *control.DeviceView) {
 		v.Responsibilities = []string{"access", "forward", "internet_egress"}
 		v.Resources = []control.TransportResource{{ID: "demo-resource", Kind: "hysteria2", OwnerNodeID: v.DeviceID, ListenerID: "demo-listener", DialHost: "127.0.0.1", DialPort: resourcePort, Authentication: control.ResourceAuthentication{ServerName: &resourceName, CACertificates: &resourceRoots}}}
 		v.DNSServers = []string{dnsIP}
+		if overlay && sequence != 8 {
+			v.DNSRecords = []control.DNSRecord{{ID: "demo-dns", Name: businessHost, Addresses: []string{"127.0.0.1"}}}
+		}
+		if len(v.Services) > 0 {
+			v.Services[0].Matchers[0].Value = businessHost
+		}
 		v.Endpoints[0].Host = "127.0.0.1"
 		v.Endpoints[0].Port = 1
 		if len(v.Services) != 0 {
-			v.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{fmt.Sprintf("https://demo-service.example:%d/", port)}}}
+			v.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{fmt.Sprintf("https://%s:%d/", businessHost, port)}}}
 		}
 	})
 	if err := store.SaveLKG(makeView(7, true)); err != nil {
@@ -206,7 +218,11 @@ func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
 	if body, err := exec.Command(loom, "client", "preflight", "-state", state, "-sing-box", singBox, "-capture", "tun", "-resource-inputs", resourceInputs).CombinedOutput(); err != nil {
 		t.Fatalf("formal TUN preflight: %v %s", err, body)
 	}
-	for _, failure := range []string{"normal_stop", "supervisor_kill", "data_plane_kill", "server_plane_kill", "executor_kill", "authorization_removed"} {
+	failures := []string{"normal_stop", "supervisor_kill", "data_plane_kill", "server_plane_kill", "executor_kill", "authorization_removed"}
+	if overlay {
+		failures = []string{"normal_stop", "authorization_removed"}
+	}
+	for _, failure := range failures {
 		t.Run(failure, func(t *testing.T) {
 			directory := t.TempDir()
 			config := filepath.Join(directory, "runtime.json")
@@ -249,7 +265,7 @@ func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
 				return command
 			}
 			business := func() {
-				probe := execute("curl", "--noproxy", "*", "--silent", "--show-error", "--fail", "--max-time", "8", "--cacert", trust, fmt.Sprintf("https://demo-service.example:%d/", port))
+				probe := execute("curl", "--noproxy", "*", "--silent", "--show-error", "--fail", "--max-time", "8", "--cacert", trust, fmt.Sprintf("https://%s:%d/", businessHost, port))
 				if body, err := probe.CombinedOutput(); err != nil || string(body) != "demo TUN business" {
 					t.Fatalf("formal exec DNS/TLS/HTTPS: %v %s; runtime %s", err, body, readLog())
 				}
@@ -312,7 +328,7 @@ func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
 			case "executor_kill":
 				err = workload.Process.Kill()
 			case "authorization_removed":
-				err = store.SaveLKG(makeView(8, false))
+				err = store.SaveLKG(makeView(8, overlay))
 				if err == nil {
 					err = command.Process.Signal(syscall.SIGHUP)
 				}
@@ -349,8 +365,8 @@ func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) {
 						time.Sleep(20 * time.Millisecond)
 					}
 				}
-				awaitView(makeView(8, false).ViewDigest)
-				denied := execute("curl", "--noproxy", "*", "--silent", "--fail", "--max-time", "2", "--cacert", trust, fmt.Sprintf("https://demo-service.example:%d/", port))
+				awaitView(makeView(8, overlay).ViewDigest)
+				denied := execute("curl", "--noproxy", "*", "--silent", "--fail", "--max-time", "2", "--cacert", trust, fmt.Sprintf("https://%s:%d/", businessHost, port))
 				if err := denied.Run(); err == nil {
 					t.Fatal("removed authorization still permits business traffic")
 				}

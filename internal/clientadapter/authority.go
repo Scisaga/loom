@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 
 	"loom/internal/clientmodel"
 	"loom/internal/control"
@@ -36,7 +37,11 @@ func ManagedRuntimeConfig(view control.DeviceView, secret string) (string, error
 	if err != nil {
 		return "", err
 	}
-	return WithManagedDNS(config, view.DNSServers, true)
+	config, err = WithManagedDNS(config, view.DNSServers, true)
+	if err != nil {
+		return "", err
+	}
+	return WithOverlayDNS(config, view.DNSRecords, true)
 }
 
 // AccessRuntimeSource retains the complete certified authorization and adds
@@ -47,6 +52,9 @@ func AccessRuntimeSource(view control.DeviceView, secret string) (string, error)
 	}
 	if secret == "" {
 		return "", errors.New("local runtime API secret is required")
+	}
+	if err := ValidateOverlayUnderlay(view); err != nil {
+		return "", err
 	}
 	for _, resource := range view.Resources {
 		if resource.OwnerNodeID == view.DeviceID {
@@ -71,6 +79,17 @@ func AccessRuntimeSource(view control.DeviceView, secret string) (string, error)
 		return "", err
 	}
 	return string(body), nil
+}
+
+// A transport must be reachable before the overlay exists. This is an
+// execution precondition; it does not reinterpret already signed resources.
+func ValidateOverlayUnderlay(view control.DeviceView) error {
+	for _, resource := range view.Resources {
+		if strings.HasSuffix(resource.DialHost, ".loom") || resource.DialHost == "loom" {
+			return errors.New("transport dial host cannot depend on overlay DNS")
+		}
+	}
+	return nil
 }
 
 // WithManagedDNS projects the authenticated per-device resolver addresses into

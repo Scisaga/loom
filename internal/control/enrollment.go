@@ -401,6 +401,7 @@ func (value InboundCredential) Validate() error {
 }
 
 type DeviceView struct {
+	DNSRecords           []DNSRecord           `json:"dns_records,omitempty"`
 	Schema               int                   `json:"schema"`
 	DeviceID             string                `json:"device_id"`
 	Name                 string                `json:"name"`
@@ -425,6 +426,12 @@ func (view DeviceView) Validate() error {
 	if view.Schema != 3 || ValidateID(view.DeviceID) != nil || view.DeviceID == "direct" || ValidateText(view.Name) != nil || !validatePlatform(view.Platform) || ValidatePublicKey(view.DevicePublicKey) != nil || validateResponsibilities(view.Responsibilities, true) != nil ||
 		validateIDSet(view.PolicyIDs) != nil || view.Services == nil || view.Policies == nil || view.Resources == nil || view.Links == nil || view.Endpoints == nil || view.DNSServers == nil || view.BusinessProbeTargets == nil || view.Routes == nil || view.InboundCredentials == nil || view.ExpectedComponents == nil {
 		return errors.New("device view fields are invalid or incomplete")
+	}
+	if view.DNSRecords != nil && len(view.DNSRecords) == 0 {
+		return errors.New("empty overlay DNS must be omitted")
+	}
+	if err := validateDNSRecords(view.DNSRecords); err != nil {
+		return err
 	}
 	access := containsString(view.Responsibilities, "access")
 	if access != (view.RuntimeProfile != nil) || !access && (len(view.PolicyIDs) != 0 || len(view.Routes) != 0) {

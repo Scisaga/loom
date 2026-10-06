@@ -9,7 +9,7 @@
 缓存文件仅拥有者可读写。没有新增 Service、授权、选路或签名状态。
 同时禁止该 DNS 缓存恢复或保存 selector 与 Clash mode；两者只能消费本次认证运行配置及 Loom 的实际选择。
 
-构建制品坐标为 `1.11.4-loom.4`，必须记录源码、补丁与制品摘要，不能冒充未修改的上游二进制。
+构建制品坐标为 `1.11.4-loom.5`，必须记录源码、补丁与制品摘要，不能冒充未修改的上游二进制。
 该坐标是数据面制品修订，控制协议与权威 schema 仍为 3。上游源码和二进制继续遵守其随附许可证；
 发布对应二进制时必须同时交付源码来源、该补丁及构建方法。
 
@@ -28,3 +28,13 @@ Wintun 加载修复继续保留，不回退到嵌入式内存加载器。
 Linux TUN 不再执行自动 `resolvectl` 操作；业务 DNS 由 Loom 的显式应用入口在私有挂载空间内设置。
 网络 namespace 内的接口编号不能交给宿主系统总线解释。该删除不影响 Windows 的平台 DNS 设置。
 详见[隔离 TUN 的系统总线事故](../../docs/incidents/2026-10-06-isolated-tun-host-dns.md)。
+
+`.5` 增加由认证 DeviceView 单向生成的进程内精确 `.loom` DNS transport。固定上游没有静态
+地址记录执行器，本补丁在既有 DNS 服务器配置中用 `address: "loom-static"` 和 `static_records`
+承载名称到规范地址的映射；它不打开监听或外部连接、不签发记录、不持久化答案，也不是新的网络协议。
+未知名称返回 NXDOMAIN，已存在名称无对应类型返回空答案，TTL 固定为零；空非终结名称保留 DNS
+名称树语义。其他名称拒绝，不通过宿主解析器补答。TUN fake-IP 只为存在的 overlay 名称还原目标，
+真实地址解析由当前授权路径的执行者消费。业务授权继续由原 Service/Policy 和接收端 ACL 判断。
+静态记录只在该 transport 有效，其他 DNS transport 携带此值必须拒绝。实现及真实查询、业务、删除和
+重启验证见 `internal/clientadapter/overlay_dns_runtime_test.go` 与隔离 TUN 正式 CLI 验证。
+历史 `.4` 制品和来源摘要保留原义，不作为新记录的执行 fallback。

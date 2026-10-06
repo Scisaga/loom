@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/netip"
 	"sort"
+	"strings"
 )
 
 // TUNDNSCache is disposable data-plane DNS state, never device authority.
@@ -53,7 +54,7 @@ func WithTUNDomainDNS(config string) (string, error) {
 	if json.Unmarshal(document["dns"], &dns) != nil || dns == nil {
 		return "", errors.New("TUN domain services require authenticated DNS")
 	}
-	for _, field := range []string{"fakeip", "rules"} {
+	for _, field := range []string{"fakeip"} {
 		if _, found := dns[field]; found {
 			return "", errors.New("TUN DNS source already owns domain capture")
 		}
@@ -61,6 +62,44 @@ func WithTUNDomainDNS(config string) (string, error) {
 	var servers []json.RawMessage
 	if json.Unmarshal(dns["servers"], &servers) != nil || len(servers) == 0 {
 		return "", errors.New("TUN domain services require authenticated DNS")
+	}
+	names, err := overlayNames(servers)
+	if err != nil {
+		return "", err
+	}
+	// Only existing overlay records may acquire a synthetic address. Suffix
+	// permissions still do not manufacture names or grant transport access.
+	for name := range domains {
+		if strings.HasSuffix(name, ".loom") && !names[name] {
+			delete(domains, name)
+		}
+	}
+	for suffix := range suffixes {
+		if suffix == "loom" || strings.HasSuffix(suffix, ".loom") {
+			delete(suffixes, suffix)
+			for name := range names {
+				if name == suffix || strings.HasSuffix(name, "."+suffix) {
+					domains[name] = true
+				}
+			}
+		}
+	}
+	if len(domains)+len(suffixes) == 0 {
+		return config, nil
+	}
+	var existing []json.RawMessage
+	if dns["rules"] != nil {
+		if json.Unmarshal(dns["rules"], &existing) != nil || len(existing) != 1 {
+			return "", errors.New("unexpected DNS rules before TUN capture")
+		}
+		var rule map[string]any
+		if json.Unmarshal(existing[0], &rule) != nil || len(rule) != 2 || rule["server"] != "loom-overlay-dns" {
+			return "", errors.New("unexpected DNS rule before TUN capture")
+		}
+		suffix, _ := json.Marshal(rule["domain_suffix"])
+		if string(suffix) != `["loom"]` {
+			return "", errors.New("invalid overlay DNS boundary")
+		}
 	}
 	servers = append(servers, json.RawMessage(`{"tag":"loom-tun-domain","address":"fakeip"}`))
 	dns["servers"], _ = json.Marshal(servers)
@@ -73,7 +112,8 @@ func WithTUNDomainDNS(config string) (string, error) {
 	if len(suffixes) > 0 {
 		matcher["domain_suffix"] = sortedDNSNames(suffixes)
 	}
-	dns["rules"], _ = json.Marshal([]any{matcher})
+	rule, _ := json.Marshal(matcher)
+	dns["rules"], _ = json.Marshal(append([]json.RawMessage{rule}, existing...))
 	dns["fakeip"] = json.RawMessage(`{"enabled":true,"inet4_range":"198.18.0.0/15","inet6_range":"2001:db8:8000::/49"}`)
 	document["dns"], _ = json.Marshal(dns)
 	var experimental map[string]json.RawMessage

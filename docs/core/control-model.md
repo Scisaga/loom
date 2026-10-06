@@ -550,6 +550,38 @@ DNS 拨号和本机配置，设备管理页面回读同一值。省略表示未�
 
 control 只签发精确 `.loom` 名称的 A/AAAA 地址记录；拒绝通配符、其他域名、同名冲突、显式占用保留名 `control.loom` 和覆盖公网 DNS。DNS resolver 地址是运行配置，和 overlay 权威记录不同。记录从有效 NetworkIntent 投影到设备；解析结果不授予 Service 或 Policy 权限。引导及 underlay/control 端点不能依赖尚未取得的 overlay DNS，避免自举循环；不能接管开发宿主初始 namespace 的 DNS。
 
+### 普通记录的写入与执行
+
+`DNSRecord` 是上述既有网络意图值，固定为稳定 `id`、精确 `name` 和非空 `addresses` 集合。
+名称使用小写规范 A-label、以 `.loom` 结尾，不含末尾点；地址是规范、唯一、按字节序排列的
+单播 IPv4/IPv6，不接受 IPv4-mapped IPv6、zone、unspecified 或 multicast。
+地址类型由地址本身确定，不另存可矛盾的 A/AAAA 类型，也不增加记录 store、状态或 TTL 权威。
+删除此值会失去操作者为私有业务名称指定地址的能力。
+
+正式入口为管理 Web 的 DNS 页面及 `loom control write` 的 `dns_record.put/delete`，保存、改名和删除
+复用普通事实的稳定目标、因果依赖、请求幂等、撤回及同目标冲突解决规则。已知其他 ID 占用同名时
+拒绝写入。分区中两个 control 并发签发同名不同 ID 时，两份合法事实均接收，管理页保留两份值并显示
+名称冲突，设备和解析执行均不投影该名称；不能按签发者或 ID 任选赢家。删除或改名其中一项后，
+剩余唯一项恢复投影。超时重试原请求，重启由签名事实重建，不用 UI 保存成功代替设备已消费。
+
+| 层 | 唯一映射 |
+|---|---|
+| domain / wire / persistent | `DNSRecord` 与 `dns_record.put` 的规范 payload 同构；删除使用既有 `DeleteTarget`，全部留在 Material store |
+| NetworkIntent / 管理 UI | 按 ID 排列的当前记录；同名冲突从这些值派生，可见且不能宣称已解析 |
+| DeviceView | 可选非空 `dns_records`，只含无名称冲突的记录；没有记录时字段缺席，保全已有 View 的字节 |
+| runtime | 由认证记录生成数据面进程内静态 DNS 答案；没有独立常驻解析器、监听端口或可写缓存权威 |
+| DNS / 业务 | 精确查询 A/AAAA；存在名称但无该类型返回空答案，未知 `.loom` 返回 NXDOMAIN，不回退公网或宿主 DNS；解析不扩大 Service/Policy |
+
+运行时对这些静态答案使用 TTL 0，配置代退出即销毁；普通域名仍只使用设备认证的上游解析器。
+TUN 对获准域名服务保留原有 fake-IP 还原，但 `.loom` 只为当前存在且无冲突的记录生成此投影，
+不存在的名字不能因宽泛 Service matcher 被伪造为存在。上游、引导和传输拨号不消费 overlay 记录。
+相关 DNS 变化应使对应业务观测失效；无相关记录时保持原候选摘要，无关名称变化不使其他服务失效。
+`control.loom` 仍只由下述入口和网站信任规则产生，普通记录不能抢占它。
+
+最小闭环测试包括规范往返与拒绝、旧空集合/缺席 View 字节不变、并发同名失败关闭及删除恢复、正式
+认证写入与重启读回、真实 A/AAAA/空答案/未知名称、三端业务访问和撤回。非空投影只在消费者具备
+该执行能力后发布；无法执行时报告失败，不丢字段、不降级上游。发布及生产验收状态另见实施状态。
+
 `control.loom` 是保留的私有 HTTPS 别名，解析为处于 serving、允许 `web` 模式的 `EndpointGeneration` 的客户端地址，即有效 control 的私有 Web 入口。同一浏览器 URL 使用的全部地址须在该 URL 的客户端端口提供服务；使用非默认 HTTPS 端口时 URL 显式带端口，A/AAAA 本身不携带端口。
 
 它不是可签发的普通 DNS 记录。网站证书受信名称覆盖该域名；信任根的公开证书属于 NetworkIntent 并随 DeviceView 交付，网站根证书带 critical NameConstraints，允许 dNSName 仅限 `.loom`，并以 excluded IP 子树 `0.0.0.0/0` 和 `::/0` 排除所有 IP SAN；不满足者禁止导入浏览器；根私钥不得进入任何 control，须由独立受保护的签发输入保管。control 的正式 Web 入口仅持有 SAN 精确为 `control.loom`、不含其他 DNS/IP/URI/email 名称的网站叶证书及对应私钥，不能持有网站 CA 签发能力。网站信任根与可能签发其他名称/IP 的成员或传输 TLS CA 分离；信任锚上的约束可能不被浏览器执行，导入前必须独立校验证书约束并验证目标浏览器的信任行为。可返回多个入口地址，设备按真实连接选择可达端点，不能以 DNS 回答认定治理同步。普通 access 可打开无敏感管理数据的入口页；管理数据读取及操作必须验证 admin 客户端证书和操作授权，受信 admin 叶子名单是 `Projection` 中由普通事实维护的值，所有 control 使用同一份。正式管理认证只需网站证书与 admin 证书，reader 证书属于应删除的漂移；入口页不能匿名暴露管理信息。

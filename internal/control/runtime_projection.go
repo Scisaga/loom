@@ -19,13 +19,13 @@ func digestContractValue(domain string, value any) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func localCandidate(service Service, policy NetworkPolicy, finalExit string) (RouteCandidate, error) {
+func localCandidate(service Service, policy NetworkPolicy, finalExit string, records ...DNSRecord) (RouteCandidate, error) {
 	identity := map[string]any{"service_id": service.ID, "first_resource_id": "", "node_chain": []string{}, "link_ids": []string{}, "final_exit": finalExit}
 	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
 	if err != nil {
 		return RouteCandidate{}, err
 	}
-	spec, err := digestContractValue("loom-candidate-spec-v3\x00", map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{}, "links": []NetworkLink{}})
+	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{}, "links": []NetworkLink{}}, service, records))
 	if err != nil {
 		return RouteCandidate{}, err
 	}
@@ -147,13 +147,13 @@ func projectAccessRuntime(view DeviceView, credentials map[string]string) ([]Rou
 		}
 		candidates := make([]RouteCandidate, 0, len(exits))
 		for _, exit := range exits {
-			candidate, err := localCandidate(services[id], policy, exit)
+			candidate, err := localCandidate(services[id], policy, exit, view.DNSRecords...)
 			if err != nil {
 				return nil, nil, err
 			}
 			candidates = append(candidates, candidate)
 		}
-		paths, err := transportPaths(view.DeviceID, containsString(view.Responsibilities, "forward"), services[id], policy, view.Resources, view.Links)
+		paths, err := transportPaths(view.DeviceID, containsString(view.Responsibilities, "forward"), services[id], policy, view.Resources, view.Links, view.DNSRecords...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -294,7 +294,7 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 	if !found || authorization.Validate() != nil {
 		return DeviceView{}, errors.New("device authorization is unavailable")
 	}
-	view := DeviceView{Schema: 3, DeviceID: authorization.ID, Name: authorization.Name, Platform: authorization.Platform, DevicePublicKey: authorization.DevicePublicKey,
+	view := DeviceView{DNSRecords: projectDNSRecords(projection.NetworkIntent.DNSRecords), Schema: 3, DeviceID: authorization.ID, Name: authorization.Name, Platform: authorization.Platform, DevicePublicKey: authorization.DevicePublicKey,
 		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
 		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
 		DNSServers: append([]string{}, authorization.DNSServers...), BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}

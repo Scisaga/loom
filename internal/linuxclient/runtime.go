@@ -179,6 +179,9 @@ func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpo
 }
 
 func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution) (string, error) {
+	if err := clientadapter.ValidateOverlayUnderlay(view); err != nil {
+		return "", err
+	}
 	config := `{"inbounds":[],"outbounds":[{"tag":"reject","type":"block"}],"route":{"final":"reject","rules":[]}}`
 	if capture == "tun" && (view.RuntimeProfile == nil || len(executions) != 0) {
 		return "", errors.New("server listeners cannot share the access TUN process")
@@ -193,6 +196,10 @@ func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []stri
 	if view.RuntimeProfile == nil {
 		var err error
 		config, err = clientadapter.WithManagedDNS(config, view.DNSServers, false)
+		if err != nil {
+			return "", err
+		}
+		config, err = clientadapter.WithOverlayDNS(config, view.DNSRecords, false)
 		if err != nil {
 			return "", err
 		}

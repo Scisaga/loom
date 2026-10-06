@@ -458,7 +458,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if err != nil {
 		return err
 	}
-	config, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(source), profile, lkg.View.DNSServers)
+	config, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(source), profile, lkg.View.DNSServers, lkg.View.DNSRecords...)
 	if err != nil {
 		return err
 	}

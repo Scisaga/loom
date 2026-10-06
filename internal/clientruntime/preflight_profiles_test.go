@@ -55,7 +55,7 @@ func TestWindowsCapturePreservesHy2TrustAndRelay(t *testing.T) {
 			t.Fatal(profile, err)
 		}
 		derived, err := decodeWindowsConfig(body)
-		servers := 1
+		servers := 2 // Authenticated underlay plus the closed .loom namespace.
 		if profile != WindowsPortableMixedProfile {
 			servers++
 		}

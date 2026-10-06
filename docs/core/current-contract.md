@@ -405,7 +405,7 @@ genesis.network_intent 的字段集固定为下表；schema 为整数 `3`，其�
 | resources | 本节 TransportResource；按 id 排序；owner_node_id 须具有该资源所需资格；公开认证值按资源种类严格校验 |
 | links | 本节 NetworkLink；按 id 排序；节点、方向、资源及 probe_target 同时合法；非空元素不能靠资源握手替代真实探测动作定义 |
 | business_probe_targets | `id:ID,url:HTTPS_URL`；按 id 排序；这是共享目标池，不自动分配 Service 权限 |
-| dns_records | 精确 `.loom` DNS 的既有值集合；稳定 id 排序；同名冲突、通配及保留名 `control.loom` 拒绝；其完整非空 wire 字段尚待补齐 |
+| dns_records | `DNSRecord` 集合，按稳定 id 排序；每项恰好 `id,name,addresses`，规范及并发同名拒绝见下文 |
 | public_trust | 数据面 TLS 和网站信任根的公开值集合；稳定 id 排序；用途及公开证书须与其引用资源/入口一致；完整非空 wire 字段尚待补齐 |
 | expected_components | 下述 ExpectedComponent；按 node_id、component_id、platform 排序；初始值没有普通设备授权，非空初始期望拒绝，后续通过普通事实逐项修改 |
 
@@ -429,10 +429,24 @@ DNS resolver 运行地址与 overlay DNS 记录不同，
 字段完整性到此分为两层：本节规定已列出的 genesis、初始成员表及 NetworkIntent 初始字段的编码规则，
 初始节点的首次设备绑定与认证分发地址也使用上文的同一事实链。互联网 Service/Policy 和共享 HTTPS 目标已有完整
 非空值规范；Hy2 authentication 的字段固定于下文。Link 探测动作、LAN、
-DNS、公开信任及发布期望中的未定非空值仍有明确缺口。这些输入必须指明缺项并拒绝，不能先落盘后补规范。
+公开信任等未定非空值仍有明确缺口。这些输入必须指明缺项并拒绝，不能先落盘后补规范。
 空集合是合法新网络的无配置初态，不是允许忽略其非空内容的测试协议；正式入口与测试使用同一个 decoder，
 对已规定元素执行同一检查，对未规定元素同样拒绝。补齐元素时修订同一 schema 3；既有 genesis 原始
 字节和锚不变，新增普通事实逐对象生效，不把空集合事后解释为隐含默认对象。
+
+### 精确 overlay DNS 记录
+
+`DNSRecord` 恰好包含 `id:ID,name:DNS_NAME,addresses:list<IP>`。名称以 `.loom` 结尾且不等于
+`control.loom`，地址非空、唯一、按规范字符串字节序排列，拒绝 unspecified、multicast、zone 和
+IPv4-mapped IPv6。`dns_record.put` 的 target_kind 固定 `dns_record`，target_id 等于 payload.id；
+`dns_record.delete` 使用既有 `DeleteTarget`。初始记录按 ID 排序且名称唯一；并发普通事实同名时
+按[普通记录的写入与执行](control-model.md#普通记录的写入与执行)保留管理读回并停止该名称的设备投影。
+DeviceView 的可选 `dns_records` 使用同一值与 ID 排序，名称唯一；没有记录时字段缺席，显式空数组或
+null 均拒绝。这保全旧的空 NetworkIntent 及缺席字段的 View 原字节，不增加版本或旧格式 fallback。
+域值、wire 和持久值可逆，UI/DNS 答案及数据面配置只是单向投影。
+候选 spec 的既有输入仅在存在与所属 Service 名称 matcher 匹配的记录时增加 `dns_records`，
+集合仍按 ID 排序；没有相关记录时该键缺席，保持旧摘要。候选身份、KDF 和 Service 授权不变。
+删除、改名、地址变化及名称冲突导致相关记录集合改变，从而使对应业务观测失效；不相关名称不参与摘要。
 
 空初值的签名与摘要可按以下确定性构造演算；`Sign`、`C`、摘要域均用本文定义，成员数只体现数据。
 演算使用公开的测试种子 `SHA256(UTF8("demo-genesis-control-a"))` 和
