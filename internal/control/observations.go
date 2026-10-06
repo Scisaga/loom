@@ -61,6 +61,7 @@ type ObservationStore struct {
 	state     observationState
 	canonical []byte                      // Rebuildable decode cache, checked against the protected file under its lock.
 	index     atomic.Pointer[reportIndex] // Immutable projection of exact committed bytes; never persisted.
+	indexRead chan struct{}               // Bounds snapshot buffers/rebuilds independently of the writer lock.
 }
 
 func OpenObservationStore(root string) (*ObservationStore, error) {
@@ -75,7 +76,7 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 		return nil, err
 	}
 	defer lock.Close()
-	store := &ObservationStore{path: filepath.Join(root, "observations.json")}
+	store := &ObservationStore{path: filepath.Join(root, "observations.json"), indexRead: make(chan struct{}, 1)}
 	if err := store.reloadLocked(); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -97,7 +98,7 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 	return store, nil
 }
 func (store *ObservationStore) reloadLocked() error {
-	body, err := readProtectedControlFile(store.path)
+	body, err := readProtectedControlFileMatching(store.path, store.canonical)
 	if err != nil {
 		return err
 	}
@@ -259,21 +260,21 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	if err != nil {
 		return err
 	}
-	if err := writeObservationState(store.path, encoded); err != nil {
-		return err
-	}
 	var nextIndex *reportIndex
 	if cached := store.index.Load(); cached != nil && bytes.Equal(cached.canonical, store.canonical) {
-		// Cache failure cannot change an already durable receipt. A missing
-		// index is rebuilt from originals by the next reader.
+		// Prepare the disposable projection before the file becomes visible.
+		// Failure only drops the cache; it cannot change persistence semantics.
 		nextIndex, _ = cached.withReports(additions)
 		if nextIndex != nil {
 			nextIndex.canonical = encoded
 		}
 	}
+	if err := writeObservationState(store.path, encoded); err != nil {
+		return err
+	}
+	store.index.Store(nextIndex)
 	store.state = next
 	store.canonical = encoded
-	store.index.Store(nextIndex)
 	if fork {
 		return ErrReportEquivocation
 	}

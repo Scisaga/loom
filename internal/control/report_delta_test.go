@@ -551,9 +551,61 @@ func TestReportIndexSnapshotsRemainImmutableAndRejectChangedFiles(t *testing.T) 
 			t.Fatalf("committed snapshot waited for an uncommitted writer (cold=%t): %v", cold, readErr)
 		}
 	}
+	// A request waiting for another reader must release its resources on
+	// cancellation without changing the committed cache or taking a write lock.
+	prior := store.index.Load()
+	store.indexRead <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	_, readErr := store.reportIndexSnapshot(ctx)
+	cancel()
+	<-store.indexRead
+	if !errors.Is(readErr, context.DeadlineExceeded) || store.index.Load() != prior {
+		t.Fatal("waiting snapshot did not cancel without changing committed state", readErr)
+	}
+	var readers sync.WaitGroup
+	results := make(chan *reportIndex, 8)
+	failures := make(chan error, 8)
+	for range 8 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			value, err := store.reportIndexSnapshot(context.Background())
+			results <- value
+			failures <- err
+		}()
+	}
+	if err := store.Put(makeReport(4), public); err != nil {
+		t.Fatal(err)
+	}
+	readers.Wait()
+	close(results)
+	close(failures)
+	for err := range failures {
+		if err != nil {
+			t.Fatal("concurrent committed snapshot failed", err)
+		}
+	}
+	for value := range results {
+		if len(value.reports) != 3 && len(value.reports) != 4 {
+			t.Fatal("reader saw a partial report commit")
+		}
+	}
+	if len(third.reports) != 3 || len(snapshot().reports) != 4 {
+		t.Fatal("concurrent commit changed an old snapshot or lost the new report")
+	}
 	raw, err := os.ReadFile(store.path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	changed := bytes.Replace(raw, []byte(`"schema":3`), []byte(`"schema":4`), 1)
+	if bytes.Equal(changed, raw) || len(changed) != len(raw) {
+		t.Fatal("same-length corruption fixture did not change the bytes")
+	}
+	if err := os.WriteFile(store.path, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.reportIndexSnapshot(context.Background()); err == nil {
+		t.Fatal("matching file size bypassed exact byte verification")
 	}
 	if err := os.WriteFile(store.path, append(raw, '\n'), 0600); err != nil {
 		t.Fatal(err)

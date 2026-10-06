@@ -224,15 +224,28 @@ func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*report
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	select {
+	case store.indexRead <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-store.indexRead }()
 	cached := store.index.Load()
 	// Writers replace the complete file atomically. An opened, validated file
 	// is a committed snapshot even while another writer prepares its successor.
-	body, err := readProtectedControlFile(store.path)
+	var known []byte
+	if cached != nil {
+		known = cached.canonical
+	}
+	body, err := readProtectedControlFileMatching(store.path, known)
 	if err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if current := store.index.Load(); current != nil && bytes.Equal(current.canonical, body) {
+		return current, nil
 	}
 	if cached != nil && bytes.Equal(cached.canonical, body) {
 		return cached, nil

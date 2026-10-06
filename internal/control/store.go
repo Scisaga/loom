@@ -664,6 +664,12 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 const maxControlInputBytes = 64 << 20
 
 func readProtectedControlFile(path string) ([]byte, error) {
+	return readProtectedControlFileMatching(path, nil)
+}
+
+// A byte hint is immutable and grants no trust: every byte is read from the
+// protected opened file before the hint can be reused.
+func readProtectedControlFileMatching(path string, known []byte) ([]byte, error) {
 	entry, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -680,11 +686,41 @@ func readProtectedControlFile(path string) ([]byte, error) {
 	if err != nil || !os.SameFile(entry, info) {
 		return nil, errors.New("control input changed while opening")
 	}
-	body, err := io.ReadAll(io.LimitReader(file, maxControlInputBytes+1))
-	if len(body) > maxControlInputBytes {
+	if info.Size() > maxControlInputBytes {
 		return nil, errors.New("control input exceeds the current reader resource bound")
 	}
-	return body, err
+	var body []byte
+	if known != nil && int64(len(known)) == info.Size() {
+		body = known
+		buffer := make([]byte, min(64<<10, len(known)))
+		for offset := 0; offset < len(known); {
+			end := min(offset+len(buffer), len(known))
+			chunk := buffer[:end-offset]
+			if _, err := io.ReadFull(file, chunk); err != nil {
+				return nil, err
+			}
+			if !bytes.Equal(chunk, known[offset:end]) {
+				body = make([]byte, len(known))
+				copy(body, known[:offset])
+				copy(body[offset:end], chunk)
+				if _, err := io.ReadFull(file, body[end:]); err != nil {
+					return nil, err
+				}
+				break
+			}
+			offset = end
+		}
+	} else {
+		body = make([]byte, int(info.Size()))
+		if _, err := io.ReadFull(file, body); err != nil {
+			return nil, err
+		}
+	}
+	var extra [1]byte
+	if _, err := io.ReadFull(file, extra[:]); err != io.EOF {
+		return nil, errors.New("control input changed while reading")
+	}
+	return body, nil
 }
 
 // Hard-link publication is atomic put-if-absent, including against writers
