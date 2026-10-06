@@ -58,8 +58,6 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 	if err := server.Config.Validate(); err != nil {
 		return err
 	}
-	stopSSH := server.startSSHWorkers(ctx)
-	defer stopSSH()
 	parent := filepath.Dir(server.AdminSocket)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
@@ -68,7 +66,7 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return errors.New("admin socket requires an owner-only parent directory")
 	}
-	admin, err := net.Listen("unix", server.AdminSocket)
+	admin, err := listenControlAdmin(ctx, server.AdminSocket)
 	if err != nil {
 		return fmt.Errorf("listen local control admin socket: %w", err)
 	}
@@ -77,9 +75,8 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 			retErr = errors.Join(retErr, err)
 		}
 	}()
-	if err := os.Chmod(server.AdminSocket, 0o600); err != nil {
-		return err
-	}
+	stopSSH := server.startSSHWorkers(ctx)
+	defer stopSSH()
 	endpoint := server.endpointRuntime()
 	if endpoint == nil {
 		endpoint, err = NewEndpointRuntime(server.Runtime.Authority, server.Config.ControlID, server.now)
