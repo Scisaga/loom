@@ -145,9 +145,9 @@ class CertifiedRuntimeInstrumentedTest {
                 (websiteTLS.socketFactory.createSocket(socket, "control.loom", port, false) as SSLSocket).use { stream ->
                     stream.sslParameters = stream.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
                     stream.startHandshake()
-                    stream.outputStream.write("GET /api/control/ui/snapshot HTTP/1.1\r\nHost: control.loom\r\nConnection: close\r\n\r\n".toByteArray())
+                    stream.outputStream.write("GET /api/control/ui/snapshot HTTP/1.1\r\nHost: control.loom:$port\r\nConnection: close\r\n\r\n".toByteArray())
                     val response = stream.inputStream.bufferedReader().readText()
-                    assertTrue("website TLS did not reach authenticated control management", response.startsWith("HTTP/1.1 200") && response.contains("\"admin\":true"))
+                    assertTrue("website TLS did not reach authenticated control management: " + response.lineSequence().firstOrNull(), response.startsWith("HTTP/1.1 200") && response.contains("\"admin\":true"))
                 }
             }
         }
