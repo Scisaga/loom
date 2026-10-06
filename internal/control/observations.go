@@ -105,8 +105,8 @@ func (store *ObservationStore) reloadLocked() error {
 	if len(store.canonical) != 0 && bytes.Equal(body, store.canonical) {
 		return nil
 	}
-	var state observationState
-	if err := DecodeCanonical(body, &state, ContractDecodeLimits{MaxBytes: maxObservationStateBytes, MaxDepth: 128, MaxItems: len(body)}); err != nil {
+	state, err := decodeObservationState(body)
+	if err != nil {
 		return err
 	}
 	store.state = state
@@ -256,7 +256,18 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 		next.Reports = append(next.Reports, report)
 	}
 	next.Reports = append(next.Reports, store.state.Reports[index:]...)
-	encoded, err := CanonicalEncode(next)
+	capacity := len(store.canonical)
+	for _, report := range additions {
+		raw, err := CanonicalEncode(report)
+		if err != nil {
+			return err
+		}
+		capacity += len(raw) + 1
+	}
+	if len(store.state.Reports) == 0 {
+		capacity-- // The first array member does not have a preceding comma.
+	}
+	encoded, err := encodeObservationState(next, capacity)
 	if err != nil {
 		return err
 	}

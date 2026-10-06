@@ -258,8 +258,8 @@ func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*report
 		store.mu.RUnlock()
 	}
 	if reports == nil {
-		var state observationState
-		if err := DecodeCanonical(body, &state, ContractDecodeLimits{MaxBytes: maxObservationStateBytes, MaxDepth: 128, MaxItems: len(body)}); err != nil {
+		state, err := decodeObservationState(body)
+		if err != nil {
 			return nil, err
 		}
 		reports = state.Reports
