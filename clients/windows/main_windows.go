@@ -538,9 +538,10 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if err != nil {
 		return err
 	}
-	if website.Port != 0 && generation != websiteGeneration {
-		return errWindowsRuntimeInputsChanged
-	}
+	// The running fingerprint includes the newly created TUN. Establish its
+	// observation baseline here; comparing it to pre-capture interfaces would
+	// mistake our own successful startup for an underlay change forever.
+	// The resolved website input was checked immediately before capture.
 	activation, activationErr := clientadapter.Activate(ctx, selector, routes, clientadapter.State{
 		Preference: store.Preference(), NetworkGeneration: generation}, nil, time.Now)
 	if ctx.Err() != nil {
