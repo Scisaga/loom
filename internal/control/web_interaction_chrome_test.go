@@ -461,9 +461,12 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if chromeDo(t, debug, `document.querySelector('#invite-uri').value`) != encoded {
 		t.Fatal("transaction refresh generated another invitation")
 	}
+	previousDocument, _ := json.Marshal(chromeDo(t, debug, `String(performance.timeOrigin)`))
 	chromeDo(t, debug, `(()=>{location.reload();return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelector('#invite-uri')&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
-	if chromeDo(t, debug, `document.querySelector('#invite-uri').value`) != encoded {
+	// The old document can satisfy a DOM-only wait before reload begins.
+	// Wait for the new document, and read its invitation in the same evaluation.
+	reloadedInvite := waitChromeEvaluation(t, debug, `(()=>{const uri=document.querySelector('#invite-uri');return String(performance.timeOrigin)!==`+string(previousDocument)+`&&document.readyState==='complete'&&uri&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0?uri.value:false})()`)
+	if reloadedInvite != encoded {
 		t.Fatal("reopening device detail changed the pending transaction")
 	}
 	reopened, err := OpenAuthority(server.Runtime.Authority.root)

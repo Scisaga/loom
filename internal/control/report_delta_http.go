@@ -1,9 +1,6 @@
 package control
 
-import (
-	"net/http"
-	"net/url"
-)
+import "net/http"
 
 func (server *Server) internalReportRanges(w http.ResponseWriter, r *http.Request) {
 	if server.Runtime.Reports == nil {
@@ -14,35 +11,43 @@ func (server *Server) internalReportRanges(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "report index does not accept query parameters", http.StatusBadRequest)
 		return
 	}
-	value, err := server.Runtime.Reports.reportRanges(r.Context(), server.Runtime.Authority.Snapshot())
+	index, err := server.Runtime.Reports.reportIndexSnapshot(r.Context())
 	if err != nil {
 		http.Error(w, "report index unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeReportIndex(w, value)
+	writeReportIndex(w, index.ranges(server.Runtime.Authority.Snapshot()))
 }
-
 func (server *Server) internalReportIDs(w http.ResponseWriter, r *http.Request) {
 	if server.Runtime.Reports == nil {
 		http.Error(w, "report history unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	query, queryErr := url.ParseQuery(r.URL.RawQuery)
-	first, err := ParseU64(query.Get("first_sequence"))
-	device := query.Get("device_id")
-	if queryErr != nil || err != nil || len(query) != 2 || len(query["device_id"]) != 1 || len(query["first_sequence"]) != 1 || !validReportRange(device, first) {
-		http.Error(w, "invalid report range", http.StatusBadRequest)
+	if r.URL.RawQuery != "" {
+		http.Error(w, "report ID request does not accept query parameters", http.StatusBadRequest)
+		return
+	}
+	var request reportRangesRequest
+	if !readDeviceJSON(w, r, &request) {
 		return
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	bodies, err := server.Runtime.Reports.reportRangeBodies(r.Context(), projection, device, first)
+	index, err := server.Runtime.Reports.reportIndexSnapshot(r.Context())
 	if err != nil {
-		http.Error(w, "report range unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "report index unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeReportIndex(w, reportRangeIDs{3, projection.NetworkID, device, first, sortedReportIDs(bodies)})
+	value := reportIDs{3, projection.NetworkID, []reportRangeIDs{}}
+	for _, scope := range request.Ranges {
+		ids, err := index.ids(projection, scope)
+		if err != nil {
+			http.Error(w, "report range unavailable", http.StatusForbidden)
+			return
+		}
+		value.Ranges = append(value.Ranges, reportRangeIDs{scope.DeviceID, scope.FirstSequence, ids})
+	}
+	writeReportIndex(w, value)
 }
-
 func writeReportIndex(w http.ResponseWriter, value any) {
 	body, err := CanonicalEncode(value)
 	if err != nil || len(body) > maxControlInputBytes {
@@ -52,7 +57,6 @@ func writeReportIndex(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
 }
-
 func (server *Server) internalReports(w http.ResponseWriter, r *http.Request) {
 	if server.Runtime.Reports == nil {
 		http.Error(w, "report history unavailable", http.StatusServiceUnavailable)
@@ -67,25 +71,25 @@ func (server *Server) internalReports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	authorization, ok := authorizationFor(projection, request.DeviceID)
-	if !ok {
-		http.Error(w, "report device is not currently authorized", http.StatusForbidden)
-		return
-	}
-	bodies, err := server.Runtime.Reports.reportRangeBodies(r.Context(), projection, request.DeviceID, request.FirstSequence)
+	index, err := server.Runtime.Reports.reportIndexSnapshot(r.Context())
 	if err != nil {
-		http.Error(w, "report range unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "report index unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	body := []byte(`{"reports":[`)
 	for i, id := range request.ReportIDs {
-		raw, found := bodies[id]
+		report, found := index.reports[id]
 		if !found {
-			http.Error(w, "requested report is absent from this range", http.StatusConflict)
+			http.Error(w, "requested report is absent", http.StatusConflict)
 			return
 		}
-		var report DeviceReport
-		if DecodeCanonical(raw, &report, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20}) != nil || report.Verify(authorization.DevicePublicKey) != nil {
+		authorization, ok := authorizationFor(projection, report.DeviceID)
+		if !ok || report.NetworkID != projection.NetworkID {
+			http.Error(w, "report device is not currently authorized", http.StatusForbidden)
+			return
+		}
+		raw, err := CanonicalEncode(report)
+		if err != nil || len(raw) > controlHTTPBodyLimit || report.Verify(authorization.DevicePublicKey) != nil {
 			http.Error(w, "stored report does not verify", http.StatusServiceUnavailable)
 			return
 		}

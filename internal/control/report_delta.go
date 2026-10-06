@@ -1,34 +1,42 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"fmt"
+	"maps"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"sort"
 )
 
+const reportRangeSize U64 = 1024
 const reportBatchBytes = 16 << 20
-const reportBatchCount = 32
+const reportBatchCount = 1024
+const reportScopeCount = 8
 
-// Ranges and content IDs are disposable projections of the original reports.
-// They never establish a sequence floor or certify current business health.
-type reportRangeKey struct {
-	device string
-	first  U64
+type reportScope struct {
+	DeviceID      string `json:"device_id"`
+	FirstSequence U64    `json:"first_sequence"`
 }
 
 func reportRangeStart(sequence U64) U64 {
 	if sequence == 0 {
 		return 0
 	}
-	return 1 + (sequence-1)/64*64
+	return 1 + (sequence-1)/reportRangeSize*reportRangeSize
 }
-
 func validReportRange(device string, first U64) bool {
 	return ValidateID(device) == nil && first != 0 && reportRangeStart(first) == first
+}
+func (v reportScope) Validate() error {
+	if !validReportRange(v.DeviceID, v.FirstSequence) {
+		return errors.New("invalid report range")
+	}
+	return nil
+}
+func scopeBefore(a, b reportScope) bool {
+	return a.DeviceID < b.DeviceID || a.DeviceID == b.DeviceID && a.FirstSequence < b.FirstSequence
 }
 
 type reportRangeSummary struct {
@@ -37,8 +45,9 @@ type reportRangeSummary struct {
 	Digest        string `json:"digest"`
 }
 
-func (value reportRangeSummary) Validate() error {
-	if !validReportRange(value.DeviceID, value.FirstSequence) || ValidateDigest(value.Digest) != nil {
+func (v reportRangeSummary) scope() reportScope { return reportScope{v.DeviceID, v.FirstSequence} }
+func (v reportRangeSummary) Validate() error {
+	if v.scope().Validate() != nil || ValidateDigest(v.Digest) != nil {
 		return errors.New("invalid report range summary")
 	}
 	return nil
@@ -50,32 +59,42 @@ type reportRanges struct {
 	Ranges    []reportRangeSummary `json:"ranges"`
 }
 
-func (value reportRanges) Validate() error {
-	if value.Schema != 3 || ValidateID(value.NetworkID) != nil || value.Ranges == nil {
+func (v reportRanges) Validate() error {
+	if v.Schema != 3 || ValidateID(v.NetworkID) != nil || v.Ranges == nil {
 		return errors.New("invalid report range index")
 	}
-	for i, item := range value.Ranges {
-		if err := item.Validate(); err != nil {
-			return err
+	for i, item := range v.Ranges {
+		if item.Validate() != nil || i > 0 && !scopeBefore(v.Ranges[i-1].scope(), item.scope()) {
+			return errors.New("report ranges are not valid and uniquely sorted")
 		}
-		if i > 0 {
-			prior := value.Ranges[i-1]
-			if prior.DeviceID > item.DeviceID || prior.DeviceID == item.DeviceID && prior.FirstSequence >= item.FirstSequence {
-				return errors.New("report ranges are not uniquely sorted")
-			}
+	}
+	return nil
+}
+
+type reportRangesRequest struct {
+	Schema int           `json:"schema"`
+	Ranges []reportScope `json:"ranges"`
+}
+
+func (v reportRangesRequest) Validate() error {
+	if v.Schema != 3 || len(v.Ranges) == 0 || len(v.Ranges) > reportScopeCount {
+		return errors.New("invalid report range request")
+	}
+	for i, s := range v.Ranges {
+		if s.Validate() != nil || i > 0 && !scopeBefore(v.Ranges[i-1], s) {
+			return errors.New("report scopes are not valid and uniquely sorted")
 		}
 	}
 	return nil
 }
 
 type reportRangeIDs struct {
-	Schema        int      `json:"schema"`
-	NetworkID     string   `json:"network_id"`
 	DeviceID      string   `json:"device_id"`
 	FirstSequence U64      `json:"first_sequence"`
 	ReportIDs     []string `json:"report_ids"`
 }
 
+func (v reportRangeIDs) scope() reportScope { return reportScope{v.DeviceID, v.FirstSequence} }
 func validateReportIDs(ids []string) error {
 	if ids == nil {
 		return errors.New("missing report IDs")
@@ -87,26 +106,48 @@ func validateReportIDs(ids []string) error {
 	}
 	return nil
 }
-
-func (value reportRangeIDs) Validate() error {
-	if value.Schema != 3 || ValidateID(value.NetworkID) != nil || !validReportRange(value.DeviceID, value.FirstSequence) {
+func (v reportRangeIDs) Validate() error {
+	if v.scope().Validate() != nil {
 		return errors.New("invalid report ID scope")
 	}
-	return validateReportIDs(value.ReportIDs)
+	return validateReportIDs(v.ReportIDs)
+}
+
+type reportIDs struct {
+	Schema    int              `json:"schema"`
+	NetworkID string           `json:"network_id"`
+	Ranges    []reportRangeIDs `json:"ranges"`
+}
+
+func (v reportIDs) Validate() error {
+	if v.Schema != 3 || ValidateID(v.NetworkID) != nil || len(v.Ranges) == 0 || len(v.Ranges) > reportScopeCount {
+		return errors.New("invalid report ID index")
+	}
+	seen := map[string]bool{}
+	for i, item := range v.Ranges {
+		if item.Validate() != nil || i > 0 && !scopeBefore(v.Ranges[i-1].scope(), item.scope()) {
+			return errors.New("report ID scopes are not valid and uniquely sorted")
+		}
+		for _, id := range item.ReportIDs {
+			if seen[id] {
+				return errors.New("one report ID occurs in different scopes")
+			}
+			seen[id] = true
+		}
+	}
+	return nil
 }
 
 type reportBatchRequest struct {
-	Schema        int      `json:"schema"`
-	DeviceID      string   `json:"device_id"`
-	FirstSequence U64      `json:"first_sequence"`
-	ReportIDs     []string `json:"report_ids"`
+	Schema    int      `json:"schema"`
+	ReportIDs []string `json:"report_ids"`
 }
 
-func (value reportBatchRequest) Validate() error {
-	if value.Schema != 3 || !validReportRange(value.DeviceID, value.FirstSequence) || len(value.ReportIDs) == 0 || len(value.ReportIDs) > reportBatchCount {
-		return errors.New("invalid report batch scope")
+func (v reportBatchRequest) Validate() error {
+	if v.Schema != 3 || len(v.ReportIDs) == 0 || len(v.ReportIDs) > reportBatchCount {
+		return errors.New("invalid report batch")
 	}
-	return validateReportIDs(value.ReportIDs)
+	return validateReportIDs(v.ReportIDs)
 }
 
 type reportBatch struct {
@@ -114,112 +155,136 @@ type reportBatch struct {
 	Reports []DeviceReport `json:"reports"`
 }
 
-func (value reportBatch) Validate() error {
-	if value.Schema != 3 || len(value.Reports) == 0 || len(value.Reports) > reportBatchCount {
+func (v reportBatch) Validate() error {
+	if v.Schema != 3 || len(v.Reports) == 0 || len(v.Reports) > reportBatchCount {
 		return errors.New("invalid report batch")
 	}
-	previous := ""
-	for _, report := range value.Reports {
+	prior := ""
+	for _, report := range v.Reports {
 		body, err := CanonicalEncode(report)
 		if err != nil || len(body) > controlHTTPBodyLimit {
 			return errors.New("invalid report batch member")
 		}
 		id := ReleaseDigest(body)
-		if id <= previous {
+		if id <= prior {
 			return errors.New("report batch is not in unique content ID order")
 		}
-		previous = id
+		prior = id
 	}
 	return nil
 }
 
-func (store *ObservationStore) withReportState(ctx context.Context, read func([]DeviceReport) error) error {
-	lock, err := lockProtectedControlPath(ctx, filepath.Join(filepath.Dir(store.path), ".observations.lock"))
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if err := store.reloadLocked(); err != nil {
-		return err
-	}
-	return read(store.state.Reports)
+type storedReportRange struct {
+	network string
+	scope   reportScope
 }
 
-func (store *ObservationStore) reportRanges(ctx context.Context, projection Projection) (reportRanges, error) {
-	result := reportRanges{Schema: 3, NetworkID: projection.NetworkID, Ranges: []reportRangeSummary{}}
+// Immutable, disposable projections of the same original collection. No
+// authorization or completion state is cached. Readers may retain a snapshot.
+type reportIndex struct {
+	reports map[string]DeviceReport
+	groups  map[storedReportRange][]string
+	digests map[storedReportRange]string
+}
+
+func emptyReportIndex() *reportIndex {
+	return &reportIndex{map[string]DeviceReport{}, map[storedReportRange][]string{}, map[storedReportRange]string{}}
+}
+func (index *reportIndex) withReports(reports []DeviceReport) (*reportIndex, error) {
+	next := &reportIndex{maps.Clone(index.reports), maps.Clone(index.groups), maps.Clone(index.digests)}
+	changed := map[storedReportRange]bool{}
+	for _, report := range reports {
+		body, err := CanonicalEncode(report)
+		if err != nil {
+			return nil, err
+		}
+		id := ReleaseDigest(body)
+		if _, found := next.reports[id]; found {
+			continue
+		}
+		key := storedReportRange{report.NetworkID, reportScope{report.DeviceID, reportRangeStart(report.ReportSequence)}}
+		if !changed[key] {
+			next.groups[key] = append([]string{}, next.groups[key]...)
+			changed[key] = true
+		}
+		next.groups[key] = append(next.groups[key], id)
+		next.reports[id] = report
+	}
+	for key := range changed {
+		sort.Strings(next.groups[key])
+		body, err := CanonicalEncode(next.groups[key])
+		if err != nil {
+			return nil, err
+		}
+		next.digests[key] = ReleaseDigest(body)
+	}
+	return next, nil
+}
+func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*reportIndex, error) {
+	lock, err := lockProtectedControlPath(ctx, filepath.Join(filepath.Dir(store.path), ".observations.lock"))
+	if err != nil {
+		return nil, err
+	}
+	store.mu.Lock()
+	if err := store.reloadLocked(); err != nil {
+		store.mu.Unlock()
+		lock.Close()
+		return nil, err
+	}
+	cached, reports, canonical := store.index, store.state.Reports, store.canonical
+	store.mu.Unlock()
+	lock.Close()
+	if cached != nil {
+		return cached, nil
+	}
+	// The collection and its nested reports are immutable after publication.
+	// Hashing a large history must not hold the durable writer's file lock.
+	built, err := emptyReportIndex().withReports(reports)
+	if err != nil {
+		return nil, err
+	}
+	store.mu.Lock()
+	if bytes.Equal(canonical, store.canonical) {
+		if store.index == nil {
+			store.index = built
+		}
+		built = store.index
+	}
+	store.mu.Unlock()
+	return built, nil
+}
+func (index *reportIndex) ranges(projection Projection) reportRanges {
+	value := reportRanges{3, projection.NetworkID, []reportRangeSummary{}}
 	allowed := map[string]bool{}
 	for _, device := range projection.DeviceAuthorizations {
 		allowed[device.ID] = true
 	}
-	groups := map[reportRangeKey][]string{}
-	err := store.withReportState(ctx, func(reports []DeviceReport) error {
-		for _, report := range reports {
-			if report.NetworkID != projection.NetworkID || !allowed[report.DeviceID] {
-				continue
-			}
-			body, err := CanonicalEncode(report)
-			if err != nil {
-				return err
-			}
-			key := reportRangeKey{report.DeviceID, reportRangeStart(report.ReportSequence)}
-			groups[key] = append(groups[key], ReleaseDigest(body))
+	for key, digest := range index.digests {
+		if key.network == projection.NetworkID && allowed[key.scope.DeviceID] {
+			value.Ranges = append(value.Ranges, reportRangeSummary{key.scope.DeviceID, key.scope.FirstSequence, digest})
 		}
-		return nil
-	})
-	if err != nil {
-		return result, err
 	}
-	for key, ids := range groups {
-		sort.Strings(ids)
-		body, err := CanonicalEncode(ids)
-		if err != nil {
-			return result, err
-		}
-		result.Ranges = append(result.Ranges, reportRangeSummary{key.device, key.first, ReleaseDigest(body)})
-	}
-	sort.Slice(result.Ranges, func(i, j int) bool {
-		left, right := result.Ranges[i], result.Ranges[j]
-		return left.DeviceID < right.DeviceID || left.DeviceID == right.DeviceID && left.FirstSequence < right.FirstSequence
-	})
-	return result, nil
+	sort.Slice(value.Ranges, func(i, j int) bool { return scopeBefore(value.Ranges[i].scope(), value.Ranges[j].scope()) })
+	return value
 }
-
-func (store *ObservationStore) reportRangeBodies(ctx context.Context, projection Projection, device string, first U64) (map[string][]byte, error) {
-	if _, ok := authorizationFor(projection, device); !ok || !validReportRange(device, first) {
+func (index *reportIndex) ids(projection Projection, scope reportScope) ([]string, error) {
+	if _, ok := authorizationFor(projection, scope.DeviceID); !ok || scope.Validate() != nil {
 		return nil, errors.New("report range is outside current device authorization")
 	}
-	result := map[string][]byte{}
-	err := store.withReportState(ctx, func(reports []DeviceReport) error {
-		start := sort.Search(len(reports), func(i int) bool {
-			r := reports[i]
-			return r.NetworkID > projection.NetworkID || r.NetworkID == projection.NetworkID && (r.DeviceID > device || r.DeviceID == device && r.ReportSequence >= first)
-		})
-		for _, report := range reports[start:] {
-			if report.NetworkID != projection.NetworkID || report.DeviceID != device || reportRangeStart(report.ReportSequence) != first {
-				break
-			}
-			body, err := CanonicalEncode(report)
-			if err != nil {
-				return err
-			}
-			result[ReleaseDigest(body)] = body
-		}
-		return nil
-	})
-	return result, err
+	ids := index.groups[storedReportRange{projection.NetworkID, scope}]
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
 }
-
-func sortedReportIDs(bodies map[string][]byte) []string {
-	ids := make([]string, 0, len(bodies))
-	for id := range bodies {
+func sortedReportIDs[T any](values map[string]T) []string {
+	ids := make([]string, 0, len(values))
+	for id := range values {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	return ids
 }
-
 func (runtime *Runtime) peerReportJSON(ctx context.Context, member Member, method, path string, body []byte, result any, limit int) error {
 	raw, err := runtime.peerBody(ctx, member, method, path, body)
 	if err != nil {
@@ -227,13 +292,12 @@ func (runtime *Runtime) peerReportJSON(ctx context.Context, member Member, metho
 	}
 	return DecodeCanonical(raw, result, ContractDecodeLimits{MaxBytes: limit, MaxDepth: 128, MaxItems: len(raw)})
 }
-
 func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) error {
 	if runtime.Reports == nil {
 		return errors.New("local report history unavailable")
 	}
 	projection := runtime.Authority.Snapshot()
-	local, err := runtime.Reports.reportRanges(ctx, projection)
+	index, err := runtime.Reports.reportIndexSnapshot(ctx)
 	if err != nil {
 		return err
 	}
@@ -244,68 +308,100 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 	if remote.NetworkID != projection.NetworkID {
 		return errors.New("peer report index belongs to another network")
 	}
-	known := map[reportRangeKey]string{}
-	for _, item := range local.Ranges {
-		known[reportRangeKey{item.DeviceID, item.FirstSequence}] = item.Digest
+	latest := map[string]U64{}
+	for _, item := range remote.Ranges {
+		latest[item.DeviceID] = item.FirstSequence
 	}
+	heads, older := []reportScope{}, []reportScope{}
 	var failures error
 	for _, item := range remote.Ranges {
+		if _, ok := authorizationFor(projection, item.DeviceID); !ok {
+			failures = errors.Join(failures, errors.New("peer report range is outside current authorization"))
+			continue
+		}
+		if index.digests[storedReportRange{projection.NetworkID, item.scope()}] == item.Digest {
+			continue
+		}
+		if item.FirstSequence == latest[item.DeviceID] {
+			heads = append(heads, item.scope())
+		} else {
+			older = append(older, item.scope())
+		}
+	}
+	pending := append(heads, older...)
+	for len(pending) > 0 {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(failures, err)
 		}
-		if known[reportRangeKey{item.DeviceID, item.FirstSequence}] == item.Digest {
+		selected := pending[:min(len(pending), reportScopeCount)]
+		request := reportRangesRequest{3, append([]reportScope{}, selected...)}
+		sort.Slice(request.Ranges, func(i, j int) bool { return scopeBefore(request.Ranges[i], request.Ranges[j]) })
+		body, err := CanonicalEncode(request)
+		if err != nil {
+			return err
+		}
+		var ids reportIDs
+		if err := runtime.peerReportJSON(ctx, member, http.MethodPost, "/internal/report-ids", body, &ids, maxControlInputBytes); err != nil {
+			return errors.Join(failures, err)
+		}
+		if ids.NetworkID != projection.NetworkID || len(ids.Ranges) != len(request.Ranges) {
+			return errors.New("peer report IDs differ from requested scope")
+		}
+		byScope := map[reportScope][]string{}
+		for i, value := range ids.Ranges {
+			if value.scope() != request.Ranges[i] {
+				return errors.New("peer report IDs differ from requested scope")
+			}
+			byScope[value.scope()] = value.ReportIDs
+		}
+		wanted := map[string]reportScope{}
+		for _, scope := range selected {
+			for _, id := range byScope[scope] {
+				if report, known := index.reports[id]; known {
+					if report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
+						return errors.New("known report differs from peer ID scope")
+					}
+					continue
+				}
+				if prior, duplicate := wanted[id]; duplicate && prior != scope {
+					return errors.New("peer assigned one report ID to different scopes")
+				}
+				if len(wanted) == reportBatchCount {
+					break
+				}
+				wanted[id] = scope
+			}
+		}
+		if len(wanted) == 0 {
+			pending = pending[len(selected):]
 			continue
 		}
-		// One damaged or unauthorized range must not prevent unrelated reports
-		// from making progress. Every retry derives missing IDs from disk again.
-		failures = errors.Join(failures, runtime.reconcileReportRange(ctx, member, item))
-	}
-	return failures
-}
-
-func (runtime *Runtime) reconcileReportRange(ctx context.Context, member Member, item reportRangeSummary) error {
-	projection := runtime.Authority.Snapshot()
-	local, err := runtime.Reports.reportRangeBodies(ctx, projection, item.DeviceID, item.FirstSequence)
-	if err != nil {
-		return err
-	}
-	query := url.Values{"device_id": {item.DeviceID}, "first_sequence": {fmt.Sprint(uint64(item.FirstSequence))}}
-	var remote reportRangeIDs
-	if err := runtime.peerReportJSON(ctx, member, http.MethodGet, "/internal/report-ids?"+query.Encode(), nil, &remote, maxControlInputBytes); err != nil {
-		return err
-	}
-	if remote.NetworkID != projection.NetworkID || remote.DeviceID != item.DeviceID || remote.FirstSequence != item.FirstSequence {
-		return errors.New("peer report IDs differ from requested scope")
-	}
-	missing := []string{}
-	for _, id := range remote.ReportIDs {
-		if _, found := local[id]; !found {
-			missing = append(missing, id)
-		}
-	}
-	for len(missing) > 0 {
-		wanted := missing[:min(len(missing), reportBatchCount)]
-		body, err := CanonicalEncode(reportBatchRequest{3, item.DeviceID, item.FirstSequence, wanted})
+		ordered := sortedReportIDs(wanted)
+		body, err = CanonicalEncode(reportBatchRequest{3, ordered})
 		if err != nil {
 			return err
 		}
 		var batch reportBatch
 		if err := runtime.peerReportJSON(ctx, member, http.MethodPost, "/internal/reports", body, &batch, reportBatchBytes); err != nil {
-			return err
+			return errors.Join(failures, err)
 		}
-		if len(batch.Reports) > len(wanted) {
+		if len(batch.Reports) > len(ordered) {
 			return errors.New("peer supplied unrequested reports")
 		}
 		for i, report := range batch.Reports {
-			encoded, err := CanonicalEncode(report)
-			if err != nil || ReleaseDigest(encoded) != wanted[i] || report.DeviceID != item.DeviceID || report.NetworkID != projection.NetworkID || reportRangeStart(report.ReportSequence) != item.FirstSequence {
+			raw, err := CanonicalEncode(report)
+			scope := wanted[ordered[i]]
+			if err != nil || ReleaseDigest(raw) != ordered[i] || report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
 				return errors.New("peer report differs from requested content or scope")
 			}
 		}
 		if err := runtime.Reports.mergeReportHistory(ctx, batch.Reports, runtime.Authority.Snapshot()); err != nil && !errors.Is(err, ErrReportEquivocation) {
-			return err
+			return errors.Join(failures, err)
 		}
-		missing = missing[len(batch.Reports):]
+		index, err = runtime.Reports.reportIndexSnapshot(ctx)
+		if err != nil {
+			return errors.Join(failures, err)
+		}
 	}
-	return nil
+	return failures
 }

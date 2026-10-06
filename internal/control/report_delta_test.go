@@ -21,14 +21,51 @@ import (
 )
 
 type reportTransferCapture struct {
-	mu       sync.Mutex
-	calls    int
-	failCall int
-	sent     map[string]int
+	mu          sync.Mutex
+	calls       int
+	failCall    int
+	sent        map[string]int
+	forgedID    string
+	forgedScope reportScope
 }
 
 func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.mu.Lock()
+		forgedID, forgedScope := capture.forgedID, capture.forgedScope
+		capture.mu.Unlock()
+		if forgedID != "" && (r.URL.Path == "/internal/report-ranges" || r.URL.Path == "/internal/report-ids") {
+			recorded := httptest.NewRecorder()
+			next.ServeHTTP(recorded, r)
+			if recorded.Code != http.StatusOK {
+				http.Error(w, "demo index unavailable", recorded.Code)
+				return
+			}
+			var encoded []byte
+			if r.URL.Path == "/internal/report-ranges" {
+				var value reportRanges
+				if err := DecodeCanonical(recorded.Body.Bytes(), &value, ContractDecodeLimits{MaxBytes: maxControlInputBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
+					t.Error(err)
+					http.Error(w, "demo decode failed", 500)
+					return
+				}
+				ids, _ := CanonicalEncode([]string{forgedID})
+				value.Ranges = []reportRangeSummary{{forgedScope.DeviceID, forgedScope.FirstSequence, ReleaseDigest(ids)}}
+				encoded, _ = CanonicalEncode(value)
+			} else {
+				var value reportIDs
+				if err := DecodeCanonical(recorded.Body.Bytes(), &value, ContractDecodeLimits{MaxBytes: maxControlInputBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
+					t.Error(err)
+					http.Error(w, "demo decode failed", 500)
+					return
+				}
+				value.Ranges = []reportRangeIDs{{forgedScope.DeviceID, forgedScope.FirstSequence, []string{forgedID}}}
+				encoded, _ = CanonicalEncode(value)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(encoded)
+			return
+		}
 		if r.URL.Path != "/internal/reports" {
 			next.ServeHTTP(w, r)
 			return
@@ -133,7 +170,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 		}
 	})
 	syncPeer := func(to, from int) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		return peers[to].server.Runtime.reconcilePeer(ctx, members[from])
 	}
@@ -141,6 +178,23 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	submitAuthority(t, joining.Runtime, Operation{Schema: 3, RequestID: "demo-report-target", Operation: "probe_target.put", TargetKind: "probe_target", TargetID: "demo-probe", Dependencies: []string{}, Payload: BusinessProbeTarget{ID: "demo-probe", URL: "https://demo-service.example/probe"}})
 	if response := enrollmentHTTP(t, joining, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
 		t.Fatal("formal enrollment failed", response.Code)
+	}
+	otherInvite := invite
+	otherInvite.ID, otherInvite.DeviceID, otherInvite.Name = "demo-second-enrollment", "demo-second-access", "Demo second access"
+	dependencies := []string{}
+	for _, target := range joining.Runtime.Authority.Snapshot().Targets {
+		if target.TargetKind == "service" || target.TargetKind == "policy" || target.TargetKind == "endpoint" {
+			dependencies = append(dependencies, target.MaterialIDs...)
+		}
+	}
+	issued := submitAuthority(t, joining.Runtime, Operation{Schema: 3, RequestID: "demo-issue-second", Operation: "invite.issue", TargetKind: "invite", TargetID: otherInvite.ID, Dependencies: sortedUniqueDependencies(dependencies), Payload: otherInvite})
+	otherKey := testKey(t)
+	otherClaim, err := SignEnrollmentClaim(EnrollmentClaimRequest{Schema: 3, NetworkID: firstConfig.NetworkID, GenesisDigest: genesisID, TransactionID: otherInvite.ID, InviteMaterialID: issued.MaterialID, RequestID: "demo-claim-second", DevicePublicKey: base64.RawURLEncoding.EncodeToString(otherKey.Public().(ed25519.PublicKey)), Platform: "linux"}, otherKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := enrollmentHTTP(t, joining, "/enrollment/claim", otherClaim, enrollmentTunnel(otherInvite)); response.Code != http.StatusOK {
+		t.Fatal("second formal enrollment failed", response.Code)
 	}
 	if err := syncPeer(1, 0); err != nil {
 		t.Fatal("ordinary authorization did not precede report exchange", err)
@@ -152,7 +206,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	route := view.View.Routes[0]
 	reportFor := func(sequence U64, state string) DeviceReport {
 		t.Helper()
-		at := joining.now().Add(-time.Duration(1000-sequence) * time.Second).UnixMilli()
+		at := joining.now().Add(-time.Duration(10000-int64(sequence)) * time.Second).UnixMilli()
 		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: firstConfig.NetworkID, DeviceID: invite.DeviceID, ReportSequence: sequence, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: joining.now().UnixMilli(), Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}}, Observations: []Observation{{NetworkGeneration: "demo-underlay", Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, SpecDigest: route.SpecDigest, Target: "https://demo-service.example/probe", Action: "https_request", Result: "available", ObservedAt: at, ValidUntil: at + 60000}}, Runtime: RuntimeReadback{State: state, AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, deviceKey)
 		if err != nil {
 			t.Fatal(err)
@@ -161,22 +215,37 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	}
 	post := func(node int, report DeviceReport, want int) {
 		t.Helper()
-		response := enrollmentHTTP(t, peers[node].server, "/device/report", report, tunnelIdentity{Mode: "device", DeviceID: invite.DeviceID})
+		response := enrollmentHTTP(t, peers[node].server, "/device/report", report, tunnelIdentity{Mode: "device", DeviceID: report.DeviceID})
 		if response.Code != want {
 			t.Fatalf("device upload status = %d, want %d: %s", response.Code, want, response.Body.String())
 		}
 	}
-	for sequence := U64(1); sequence <= 40; sequence++ {
-		post(0, reportFor(sequence, "running"), http.StatusOK)
+	history := []DeviceReport{}
+	for sequence := U64(1); sequence <= 1200; sequence++ {
+		history = append(history, reportFor(sequence, "running"))
 	}
-	latest := reportFor(101, "running")
+	if err := peers[0].server.Runtime.Reports.mergeReportHistory(context.Background(), history, peers[0].server.Runtime.Authority.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	latest := reportFor(2049, "running")
 	post(0, latest, http.StatusOK)
-	post(1, latest, http.StatusOK)
+	otherView, err := joining.deviceEnvelope(otherInvite.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherReport, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: firstConfig.NetworkID, DeviceID: otherInvite.DeviceID, ReportSequence: 1, ViewDigest: otherView.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: joining.now().UnixMilli(), Selections: []ReportSelection{}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: otherView.ViewDigest}, Components: []ComponentReadback{}}, otherKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post(0, otherReport, http.StatusOK)
 	if err := syncPeer(1, 0); err == nil {
 		t.Fatal("interrupted range claimed success")
 	}
-	if got := peers[1].server.Runtime.Reports.History(); len(got) != reportBatchCount+1 {
+	if got := peers[1].server.Runtime.Reports.History(); len(got) != reportBatchCount {
 		t.Fatal("complete prefix was not durable before interruption", len(got))
+	}
+	if got := peers[1].server.Runtime.Reports.All(); len(got) != 2 || got[0].ReportSequence != latest.ReportSequence || got[1].DeviceID != otherInvite.DeviceID {
+		t.Fatal("historical backlog hid the latest report or split the cross-device batch")
 	}
 	// Both controls already have the same highest sequence. Restart and retry
 	// must still request only the missing historical IDs, including old slots.
@@ -191,7 +260,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 			t.Error("already received original report was retransmitted")
 		}
 	}
-	if len(capture.sent) != 40 {
+	if len(capture.sent) != 1202 {
 		t.Error("some original reports never crossed the member channel", len(capture.sent))
 	}
 	calls := capture.calls
@@ -235,14 +304,14 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if err := syncPeer(0, 1); err != nil {
 		t.Fatal("old signed fork did not propagate", err)
 	}
-	if !bytes.Equal(readHistory(0), readHistory(1)) || len(peers[0].server.Runtime.Reports.All()) != 1 {
+	if !bytes.Equal(readHistory(0), readHistory(1)) || len(peers[0].server.Runtime.Reports.All()) != 2 {
 		t.Fatal("old fork replaced latest or original histories diverged")
 	}
-	post(1, reportFor(101, "stopped"), http.StatusConflict)
-	if err := syncPeer(0, 1); err != nil || len(peers[0].server.Runtime.Reports.All()) != 0 {
+	post(1, reportFor(2049, "stopped"), http.StatusConflict)
+	if err := syncPeer(0, 1); err != nil || len(peers[0].server.Runtime.Reports.All()) != 1 || peers[0].server.Runtime.Reports.All()[0].DeviceID != otherInvite.DeviceID {
 		t.Fatal("equal-height signed fork acquired a current winner", err)
 	}
-	post(0, reportFor(100, "running"), http.StatusConflict)
+	post(0, reportFor(1500, "running"), http.StatusConflict)
 	for _, path := range []string{
 		"/internal/report-ranges?extra=1",
 		"/internal/report-ids?device_id=" + url.QueryEscape(invite.DeviceID) + "&first_sequence=01",
@@ -252,11 +321,16 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 			t.Fatal("member entry accepted ambiguous range query")
 		}
 	}
-	encodedLatest, _ := CanonicalEncode(latest)
-	wrongRange, _ := CanonicalEncode(reportBatchRequest{3, invite.DeviceID, 1, []string{ReleaseDigest(encodedLatest)}})
-	if _, err := peers[1].server.Runtime.peerBody(context.Background(), members[0], http.MethodPost, "/internal/reports", wrongRange); err == nil {
-		t.Fatal("member entry returned a report outside the requested range")
+	for _, request := range []reportRangesRequest{{3, []reportScope{{invite.DeviceID, 2}}}, {3, []reportScope{{invite.DeviceID, 1}, {invite.DeviceID, 1}}}} {
+		body, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := peers[1].server.Runtime.peerBody(context.Background(), members[0], http.MethodPost, "/internal/report-ids", body); err == nil {
+			t.Fatal("member entry accepted invalid or duplicated scopes")
+		}
 	}
+
 	for _, peer := range peers {
 		for _, path := range []string{"/internal/report-ranges", "/internal/report-ids?device_id=demo-access&first_sequence=1"} {
 			response := httptest.NewRecorder()
@@ -265,6 +339,16 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 				t.Fatal("admin entry exposed private member report exchange")
 			}
 		}
+	}
+	outside := reportFor(4097, "running")
+	post(0, outside, http.StatusOK)
+	raw, _ := CanonicalEncode(outside)
+	capture.mu.Lock()
+	capture.forgedID, capture.forgedScope = ReleaseDigest(raw), reportScope{invite.DeviceID, 1}
+	capture.mu.Unlock()
+	beforeForgedIndex := readHistory(1)
+	if err := syncPeer(1, 0); err == nil || !bytes.Equal(beforeForgedIndex, readHistory(1)) {
+		t.Fatal("a valid signed report entered the wrong range claimed by its peer index")
 	}
 }
 
@@ -314,17 +398,17 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 	if got := server.Runtime.Reports.All(); len(got) != 1 || got[0].ReportSequence != base.ReportSequence {
 		t.Fatal("historical merge lowered the durable high-water mark")
 	}
-	for _, first := range []U64{1, 65, reportRangeStart(^U64(0))} {
+	for _, first := range []U64{1, 1025, reportRangeStart(^U64(0))} {
 		if !validReportRange("demo-access", first) {
 			t.Fatal("valid sparse or final uint64 range was refused")
 		}
 	}
-	for _, first := range []U64{0, 2, 64, ^U64(0)} {
+	for _, first := range []U64{0, 2, 1024, ^U64(0)} {
 		if validReportRange("demo-access", first) {
 			t.Fatal("ambiguous report range was accepted")
 		}
 	}
-	request := reportBatchRequest{3, "demo-access", 1, []string{"sha256:" + strings.Repeat("0", 64)}}
+	request := reportBatchRequest{3, []string{"sha256:" + strings.Repeat("0", 64)}}
 	body, _ := CanonicalEncode(request)
 	var decoded reportBatchRequest
 	for _, invalid := range [][]byte{append(append([]byte{}, body...), '\n'), []byte(strings.Replace(string(body), `"schema":3`, `"schema":3,"unknown":1`, 1))} {
@@ -364,7 +448,7 @@ func TestReportMemberBatchReturnsBoundedOriginalPrefix(t *testing.T) {
 	}
 	missing := sortedReportIDs(originals)
 	for _, wantCount := range []int{2, 1} {
-		body, _ := CanonicalEncode(reportBatchRequest{3, invite.DeviceID, 1, missing})
+		body, _ := CanonicalEncode(reportBatchRequest{3, missing})
 		response := httptest.NewRecorder()
 		server.internalReports(response, httptest.NewRequest(http.MethodPost, "/internal/reports", bytes.NewReader(body)))
 		var batch reportBatch
@@ -381,5 +465,73 @@ func TestReportMemberBatchReturnsBoundedOriginalPrefix(t *testing.T) {
 	}
 	if len(missing) != 0 {
 		t.Fatal("bounded responses left requested originals behind")
+	}
+}
+
+func TestReportIndexSnapshotsRemainImmutableAndRejectChangedFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenObservationStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := testKey(t)
+	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	digest := "sha256:" + strings.Repeat("0", 64)
+	makeReport := func(sequence U64) DeviceReport {
+		t.Helper()
+		value, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ReportSequence: sequence, ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: 1, Selections: []ReportSelection{}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "stopped", AppliedViewDigest: digest}, Components: []ComponentReadback{}}, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	snapshot := func() *reportIndex {
+		t.Helper()
+		value, err := store.reportIndexSnapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	if err := store.Put(makeReport(1), public); err != nil {
+		t.Fatal(err)
+	}
+	first := snapshot()
+	other, err := OpenObservationStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Put(makeReport(2), public); err != nil {
+		t.Fatal(err)
+	}
+	second := snapshot()
+	if len(first.reports) != 1 || len(second.reports) != 2 {
+		t.Fatal("external writer changed an old snapshot or escaped file revalidation")
+	}
+	if err := store.Put(makeReport(3), public); err != nil {
+		t.Fatal(err)
+	}
+	third := snapshot()
+	if len(second.reports) != 2 || len(third.reports) != 3 {
+		t.Fatal("cache update mutated a snapshot still in use by a reader")
+	}
+	store.mu.Lock()
+	store.index = nil
+	store.mu.Unlock()
+	if !reflect.DeepEqual(third, snapshot()) {
+		t.Fatal("deleting the derived index changed report results")
+	}
+	raw, err := os.ReadFile(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.path, append(raw, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.reportIndexSnapshot(context.Background()); err == nil {
+		t.Fatal("warm index bypassed noncanonical protected history")
 	}
 }

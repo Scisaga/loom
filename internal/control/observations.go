@@ -58,7 +58,8 @@ type ObservationStore struct {
 	path      string
 	mu        sync.RWMutex
 	state     observationState
-	canonical []byte // Rebuildable decode cache, checked against the protected file under its lock.
+	canonical []byte       // Rebuildable decode cache, checked against the protected file under its lock.
+	index     *reportIndex // Immutable projection of these exact originals; never persisted.
 }
 
 func OpenObservationStore(root string) (*ObservationStore, error) {
@@ -108,6 +109,7 @@ func (store *ObservationStore) reloadLocked() error {
 	}
 	store.state = state
 	store.canonical = body
+	store.index = nil
 	return nil
 }
 func cloneReport(report DeviceReport) DeviceReport {
@@ -259,6 +261,11 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	}
 	store.state = next
 	store.canonical = encoded
+	if store.index != nil {
+		// Cache failure cannot change an already durable receipt. A missing
+		// index is rebuilt from originals by the next reader.
+		store.index, _ = store.index.withReports(additions)
+	}
 	if fork {
 		return ErrReportEquivocation
 	}

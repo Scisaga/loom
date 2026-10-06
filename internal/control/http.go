@@ -197,7 +197,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/materials/{digest}", server.internalMaterial)
 	mux.HandleFunc("PUT /internal/materials/{digest}", server.internalMaterial)
 	mux.HandleFunc("GET /internal/report-ranges", server.internalReportRanges)
-	mux.HandleFunc("GET /internal/report-ids", server.internalReportIDs)
+	mux.HandleFunc("POST /internal/report-ids", server.internalReportIDs)
 	mux.HandleFunc("POST /internal/reports", server.internalReports)
 	mux.HandleFunc("/", server.page)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
