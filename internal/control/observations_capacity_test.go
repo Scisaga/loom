@@ -61,14 +61,36 @@ func TestAcceptedObservationHistoryRestartsBeyondIndividualItemBudget(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put(replayed, public); !errors.Is(err, ErrReportReplay) {
-		t.Fatal("restart allowed an older report to replace the high-water mark", err)
+	if err := store.Put(replayed, public); !errors.Is(err, ErrReportEquivocation) {
+		t.Fatal("older signed fork was not preserved and rejected", err)
+	}
+	if latest := store.All(); len(latest) != 1 || latest[0].ReportSequence != U64(len(history.Reports)) {
+		t.Fatal("older fork replaced the durable high-water report")
+	}
+	afterFork, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved observationState
+	if err := DecodeCanonical(afterFork, &saved, ContractDecodeLimits{MaxBytes: maxObservationStateBytes, MaxDepth: 128, MaxItems: len(afterFork)}); err != nil || len(saved.Reports) != len(history.Reports)+1 {
+		t.Fatal("older fork or original history was lost", err)
+	}
+	originals := map[string]bool{}
+	for _, report := range saved.Reports {
+		body, _ := CanonicalEncode(report)
+		originals[ReleaseDigest(body)] = true
+	}
+	for _, report := range history.Reports {
+		body, _ := CanonicalEncode(report)
+		if !originals[ReleaseDigest(body)] {
+			t.Fatal("preserving an older fork changed original signed bytes")
+		}
 	}
 	if err := writeObservationState(path, make([]byte, maxObservationStateBytes+1)); err == nil {
 		t.Fatal("write committed bytes that cannot be read after restart")
 	}
 	actual, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(actual, body) {
-		t.Fatal("restart, replay or capacity rejection changed accepted signed history", err)
+	if err != nil || !bytes.Equal(actual, afterFork) {
+		t.Fatal("capacity rejection changed accepted signed history", err)
 	}
 }

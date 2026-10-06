@@ -571,7 +571,7 @@ func (server *Server) deviceConfig(w http.ResponseWriter, r *http.Request) {
 }
 func (server *Server) deviceReport(w http.ResponseWriter, r *http.Request) {
 	identity, ok := tunnelAuth(r)
-	if !ok || identity.Mode != "device" || server.Reports == nil {
+	if !ok || identity.Mode != "device" || server.Runtime.Reports == nil {
 		http.Error(w, "device report channel unavailable", http.StatusForbidden)
 		return
 	}
@@ -585,7 +585,7 @@ func (server *Server) deviceReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authorization, ok := authorizationFor(projection, identity.DeviceID)
-	if !ok || server.Reports.Put(report, authorization.DevicePublicKey) != nil {
+	if !ok || server.Runtime.Reports.Put(report, authorization.DevicePublicKey) != nil {
 		http.Error(w, "device report rejected", http.StatusConflict)
 		return
 	}

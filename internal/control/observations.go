@@ -122,14 +122,47 @@ func cloneReport(report DeviceReport) DeviceReport {
 	return result
 }
 func (store *ObservationStore) Put(report DeviceReport, publicKey string) error {
-	if err := report.Verify(publicKey); err != nil {
-		return err
+	return store.mergeReports(context.Background(), []DeviceReport{report}, map[reportOwner]string{{report.NetworkID, report.DeviceID}: publicKey}, false)
+}
+
+type reportOwner struct{ network, device string }
+type reportPosition struct {
+	owner    reportOwner
+	sequence U64
+}
+
+// Member history and direct uploads share one writer and the same original
+// collection. Only authenticated member exchange may fill an unknown old slot.
+func (store *ObservationStore) mergeReportHistory(ctx context.Context, reports []DeviceReport, projection Projection) error {
+	keys := map[reportOwner]string{}
+	for _, report := range reports {
+		authorization, ok := authorizationFor(projection, report.DeviceID)
+		if !ok || report.NetworkID != projection.NetworkID {
+			return errors.New("peer report is outside current device authorization")
+		}
+		keys[reportOwner{report.NetworkID, report.DeviceID}] = authorization.DevicePublicKey
 	}
-	body, err := CanonicalEncode(report)
-	if err != nil {
-		return err
+	return store.mergeReports(ctx, reports, keys, true)
+}
+
+func (store *ObservationStore) mergeReports(ctx context.Context, reports []DeviceReport, keys map[reportOwner]string, historical bool) error {
+	if len(reports) == 0 {
+		return errors.New("empty report merge")
 	}
-	lock, err := lockProtectedControlPath(context.Background(), filepath.Join(filepath.Dir(store.path), ".observations.lock"))
+	bodies := make([][]byte, len(reports))
+	positions := map[reportPosition]bool{}
+	for i, report := range reports {
+		if err := report.Verify(keys[reportOwner{report.NetworkID, report.DeviceID}]); err != nil {
+			return err
+		}
+		body, err := CanonicalEncode(report)
+		if err != nil || len(body) > controlHTTPBodyLimit {
+			return errors.New("report exceeds its input boundary")
+		}
+		bodies[i] = body
+		positions[reportPosition{reportOwner{report.NetworkID, report.DeviceID}, report.ReportSequence}] = true
+	}
+	lock, err := lockProtectedControlPath(ctx, filepath.Join(filepath.Dir(store.path), ".observations.lock"))
 	if err != nil {
 		return err
 	}
@@ -139,29 +172,57 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 	if err := store.reloadLocked(); err != nil {
 		return err
 	}
-	high := U64(0)
-	fork := false
-	duplicate := false
+	high := map[reportOwner]U64{}
+	known := map[reportPosition]map[string]bool{}
 	for _, prior := range store.state.Reports {
-		if prior.NetworkID != report.NetworkID || prior.DeviceID != report.DeviceID {
+		owner := reportOwner{prior.NetworkID, prior.DeviceID}
+		publicKey, concerned := keys[owner]
+		if !concerned {
 			continue
 		}
 		if err := prior.Verify(publicKey); err != nil {
 			return errors.New("stored observation does not verify against the current immutable device key")
 		}
-		if prior.ReportSequence > high {
-			high = prior.ReportSequence
+		if prior.ReportSequence > high[owner] {
+			high[owner] = prior.ReportSequence
 		}
-		if prior.ReportSequence == report.ReportSequence {
-			old, _ := CanonicalEncode(prior)
-			if bytes.Equal(old, body) {
-				duplicate = true
-				continue
-			}
-			fork = true
+		position := reportPosition{owner, prior.ReportSequence}
+		if !positions[position] {
+			continue
 		}
+		if known[position] == nil {
+			known[position] = map[string]bool{}
+		}
+		body, _ := CanonicalEncode(prior)
+		known[position][ReleaseDigest(body)] = true
 	}
-	if duplicate {
+	additions := []DeviceReport{}
+	fork := false
+	for i, report := range reports {
+		owner := reportOwner{report.NetworkID, report.DeviceID}
+		position := reportPosition{owner, report.ReportSequence}
+		id := ReleaseDigest(bodies[i])
+		ids := known[position]
+		if ids[id] {
+			fork = fork || len(ids) > 1
+			continue
+		}
+		if !historical && report.ReportSequence < high[owner] && len(ids) == 0 {
+			return ErrReportReplay
+		}
+		fork = fork || len(ids) > 0
+		if ids == nil {
+			ids = map[string]bool{}
+			known[position] = ids
+		}
+		ids[id] = true
+		copy := cloneReport(report)
+		if copy.Schema != 3 {
+			return errors.New("report cannot round trip through its input boundary")
+		}
+		additions = append(additions, copy)
+	}
+	if len(additions) == 0 {
 		if err := syncControlDirectory(filepath.Dir(store.path)); err != nil {
 			return err
 		}
@@ -170,21 +231,25 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 		}
 		return nil
 	}
-	if report.ReportSequence < high {
-		return ErrReportReplay
-	}
-	index := sort.Search(len(store.state.Reports), func(i int) bool {
-		prior := store.state.Reports[i]
-		var priorBody []byte
-		if prior.NetworkID == report.NetworkID && prior.DeviceID == report.DeviceID && prior.ReportSequence == report.ReportSequence {
-			priorBody, _ = CanonicalEncode(prior)
+	less := func(left, right DeviceReport) bool {
+		var leftBody, rightBody []byte
+		if left.NetworkID == right.NetworkID && left.DeviceID == right.DeviceID && left.ReportSequence == right.ReportSequence {
+			leftBody, _ = CanonicalEncode(left)
+			rightBody, _ = CanonicalEncode(right)
 		}
-		return !reportBefore(prior, priorBody, report, body)
-	})
-	next := observationState{Schema: 3, Reports: make([]DeviceReport, len(store.state.Reports)+1)}
-	copy(next.Reports, store.state.Reports[:index])
-	next.Reports[index] = cloneReport(report)
-	copy(next.Reports[index+1:], store.state.Reports[index:])
+		return reportBefore(left, leftBody, right, rightBody)
+	}
+	sort.Slice(additions, func(i, j int) bool { return less(additions[i], additions[j]) })
+	next := observationState{Schema: 3, Reports: make([]DeviceReport, 0, len(store.state.Reports)+len(additions))}
+	index := 0
+	for _, report := range additions {
+		for index < len(store.state.Reports) && less(store.state.Reports[index], report) {
+			next.Reports = append(next.Reports, store.state.Reports[index])
+			index++
+		}
+		next.Reports = append(next.Reports, report)
+	}
+	next.Reports = append(next.Reports, store.state.Reports[index:]...)
 	encoded, err := CanonicalEncode(next)
 	if err != nil {
 		return err

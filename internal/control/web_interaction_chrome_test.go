@@ -344,7 +344,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	releaseSource.original.Packages[0].Components[0].ArtifactDigest = "sha256:" + strings.Repeat("a", 64)
 	server.Releases = releaseSource
 	var err error
-	server.Reports, err = OpenObservationStore(server.Runtime.Authority.root)
+	server.Runtime.Reports, err = OpenObservationStore(server.Runtime.Authority.root)
 	if err != nil {
 		t.Fatal(err)
 	}

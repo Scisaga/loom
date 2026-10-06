@@ -19,6 +19,7 @@ import (
 type Runtime struct {
 	Config    NodeConfig
 	Authority *Authority
+	Reports   *ObservationStore
 	Channel   *PrivateChannel
 	stop      chan struct{}
 	done      chan struct{}
@@ -38,7 +39,11 @@ func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
 	if _, err := activeLocalMember(config, a.Snapshot().Config); err != nil {
 		return nil, err
 	}
-	runtime := &Runtime{Config: config, Authority: a, Channel: channel, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
+	reports, err := OpenObservationStore(root)
+	if err != nil {
+		return nil, err
+	}
+	runtime := &Runtime{Config: config, Authority: a, Reports: reports, Channel: channel, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	if channel != nil {
 		channel.AttachAuthority(a)
 		go runtime.reconcileLoop()
@@ -220,7 +225,10 @@ func (runtime *Runtime) reconcilePeer(ctx context.Context, member Member) error 
 			}
 		}
 	}
-	return runtime.fillDependencies(ctx, member)
+	if err := runtime.fillDependencies(ctx, member); err != nil {
+		return err
+	}
+	return runtime.reconcileReports(ctx, member)
 }
 func (runtime *Runtime) fillDependencies(ctx context.Context, member Member) error {
 	fetched := map[string]bool{}

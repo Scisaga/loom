@@ -204,7 +204,11 @@ func TestPrivateMemberDeltaAndBrowserTLSUseCurrentAuthority(t *testing.T) {
 				{Node: "demo-relay-b", Addresses: good.ListenAddresses()},
 			}}}
 		channel.AttachAuthority(authority)
-		recovery := &Runtime{Config: configs[1], Authority: authority, Channel: channel}
+		reports, err := OpenObservationStore(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recovery := &Runtime{Config: configs[1], Authority: authority, Reports: reports, Channel: channel}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := recovery.reconcilePeer(ctx, members[0]); err != nil {

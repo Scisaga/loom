@@ -35,27 +35,25 @@ var staticFiles embed.FS
 const controlHTTPBodyLimit = 8 << 20
 
 type Server struct {
-	Runtime            *Runtime
-	Channel            *PrivateChannel
-	Config             NodeConfig
-	AdminSocket        string
-	Now                func() time.Time
-	Endpoints          *EndpointRuntime
-	Reports            *ObservationStore
-	Releases           ReleaseSource
-	SSH                SSHExecutor
-	ReportSyncInterval time.Duration
-	mu                 sync.Mutex
-	endpointsMu        sync.RWMutex
-	sshMu              sync.Mutex
-	sshContext         context.Context
-	sshExecutions      map[string]SSHExecution
-	sshWorkers         sync.WaitGroup
+	Runtime       *Runtime
+	Channel       *PrivateChannel
+	Config        NodeConfig
+	AdminSocket   string
+	Now           func() time.Time
+	Endpoints     *EndpointRuntime
+	Releases      ReleaseSource
+	SSH           SSHExecutor
+	mu            sync.Mutex
+	endpointsMu   sync.RWMutex
+	sshMu         sync.Mutex
+	sshContext    context.Context
+	sshExecutions map[string]SSHExecution
+	sshWorkers    sync.WaitGroup
 }
 
 func (server *Server) Serve(ctx context.Context) (retErr error) {
-	if server.Runtime == nil || server.AdminSocket == "" {
-		return errors.New("control runtime and protected admin socket are required")
+	if server.Runtime == nil || server.Runtime.Reports == nil || server.AdminSocket == "" {
+		return errors.New("control runtime, protected report history and admin socket are required")
 	}
 	if err := server.Config.Validate(); err != nil {
 		return err
@@ -198,6 +196,9 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/materials", server.internalMaterialsAfter)
 	mux.HandleFunc("GET /internal/materials/{digest}", server.internalMaterial)
 	mux.HandleFunc("PUT /internal/materials/{digest}", server.internalMaterial)
+	mux.HandleFunc("GET /internal/report-ranges", server.internalReportRanges)
+	mux.HandleFunc("GET /internal/report-ids", server.internalReportIDs)
+	mux.HandleFunc("POST /internal/reports", server.internalReports)
 	mux.HandleFunc("/", server.page)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -314,8 +315,8 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	releases := server.expectedReleaseSets(projection)
 	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
-	if server.Reports != nil {
-		latest := server.Reports.All()
+	if server.Runtime.Reports != nil {
+		latest := server.Runtime.Reports.All()
 		projectWebLastReportTimes(&snapshot, latest, projection)
 		reports := []DeviceReport{}
 		for _, report := range latest {

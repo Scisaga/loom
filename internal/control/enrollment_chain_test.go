@@ -27,6 +27,12 @@ func enrollmentAuthorityFixture(t *testing.T, changes ...func(*Invite)) (*Server
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { runtime.Close() })
+	return enrollmentFixtureWithRuntime(t, runtime, changes...)
+}
+
+func enrollmentFixtureWithRuntime(t *testing.T, runtime *Runtime, changes ...func(*Invite)) (*Server, Invite, string, EnrollmentClaimRequest, ed25519.PrivateKey, []string) {
+	t.Helper()
+	config := runtime.Config
 	now := time.Unix(2000000000, 0).UTC()
 	server := &Server{Runtime: runtime, Config: config, Now: func() time.Time { return now }}
 	service := submitAuthority(t, runtime, authorityService("demo-service", "demo-create-service"))

@@ -42,7 +42,7 @@ func (server *Server) pathHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid history scope", http.StatusBadRequest)
 		return
 	}
-	if server.Runtime == nil || server.Runtime.Authority == nil || server.Reports == nil {
+	if server.Runtime == nil || server.Runtime.Authority == nil || server.Runtime.Reports == nil {
 		http.Error(w, "original report history unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -63,7 +63,7 @@ func (server *Server) pathHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, set := range view.BusinessProbeTargets {
 			if set.ServiceID == route.ServiceID && containsString(set.Targets, query.Get("target")) {
-				value := server.Reports.pathHistory(projection.NetworkID, authorization, route, query.Get("target"), server.now())
+				value := server.Runtime.Reports.pathHistory(projection.NetworkID, authorization, route, query.Get("target"), server.now())
 				writeJSON(w, http.StatusOK, value)
 				return
 			}

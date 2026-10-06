@@ -180,17 +180,13 @@ func cmdControlServe(args []string) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, runtime.Close()) }()
-	reports, err := control.OpenObservationStore(*root)
-	if err != nil {
-		return err
-	}
 	admin := *socket
 	if admin == "" {
 		admin = filepath.Join(*root, "admin.sock")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Reports: reports, Releases: releases, SSH: ssh}).Serve(ctx)
+	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Releases: releases, SSH: ssh}).Serve(ctx)
 }
 func cmdControlRelay(args []string) (retErr error) {
 	fs := flag.NewFlagSet("control relay", flag.ContinueOnError)
