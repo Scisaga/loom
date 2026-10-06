@@ -401,6 +401,7 @@ func (value InboundCredential) Validate() error {
 }
 
 type DeviceView struct {
+	PublicTrust          []PublicTrust         `json:"public_trust,omitempty"`
 	DNSRecords           []DNSRecord           `json:"dns_records,omitempty"`
 	Schema               int                   `json:"schema"`
 	DeviceID             string                `json:"device_id"`
@@ -429,6 +430,12 @@ func (view DeviceView) Validate() error {
 	}
 	if view.DNSRecords != nil && len(view.DNSRecords) == 0 {
 		return errors.New("empty overlay DNS must be omitted")
+	}
+	if view.PublicTrust != nil && len(view.PublicTrust) == 0 {
+		return errors.New("empty public trust must be omitted")
+	}
+	if err := validatePublicTrust(view.PublicTrust); err != nil {
+		return err
 	}
 	if err := validateDNSRecords(view.DNSRecords); err != nil {
 		return err

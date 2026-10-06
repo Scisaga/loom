@@ -53,6 +53,11 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 			return Submission{}, nil, err
 		}
 	}
+	if operation.Operation == "public_trust.put" && errors.Is(priorErr, os.ErrNotExist) {
+		if err := server.verifyPublicTrustGrant(operation.Payload.(PublicTrust)); err != nil {
+			return Submission{}, nil, err
+		}
+	}
 	if operation.Operation == "expected_component.put" && errors.Is(priorErr, os.ErrNotExist) {
 		value := operation.Payload.(ExpectedComponent)
 		if server.Releases == nil {

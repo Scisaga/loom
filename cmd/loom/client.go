@@ -27,6 +27,8 @@ const clientUsage = `loom client —— 客户端交付
 	loom client sync [-state <文件>]              经认证设备通道读取并保存最新 DeviceView
 	loom client inspect [-state <文件>] [-identity]
 	                                             回读本机身份与认证 LKG；identity 只给公开身份坐标
+	loom client website-root [-state <文件>] [-id ID -o <文件>]
+	                                             列出认证网站根或显式导出公开 PEM，不安装系统信任
 	loom client run                              Linux 运行入口，默认显式 Mixed proxy
 	loom client exec -- <command>                在当前隔离 TUN 内运行应用，随该运行代退出
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
@@ -54,6 +56,8 @@ func cmdClient(args []string) error {
 		return cmdClientSync(args[1:])
 	case "inspect":
 		return cmdClientInspect(args[1:])
+	case "website-root":
+		return cmdClientWebsiteRoot(args[1:])
 	case "run":
 		return cmdClientRun(args[1:])
 	case "exec", "_tun-worker", "_tun-workload":

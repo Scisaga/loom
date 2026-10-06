@@ -298,6 +298,7 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
 		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
 		DNSServers: append([]string{}, authorization.DNSServers...), BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}
+	view.PublicTrust = append([]PublicTrust(nil), projection.NetworkIntent.PublicTrust...)
 	var componentErr error
 	view.ExpectedComponents, componentErr = deviceExpectedComponents(projection, deviceID, releases)
 	if componentErr != nil {

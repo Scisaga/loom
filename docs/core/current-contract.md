@@ -409,7 +409,7 @@ genesis.network_intent 的字段集固定为下表；schema 为整数 `3`，其�
 | links | 本节 NetworkLink；按 id 排序；节点、方向、资源及 probe_target 同时合法；非空元素不能靠资源握手替代真实探测动作定义 |
 | business_probe_targets | `id:ID,url:HTTPS_URL`；按 id 排序；这是共享目标池，不自动分配 Service 权限 |
 | dns_records | `DNSRecord` 集合，按稳定 id 排序；每项恰好 `id,name,addresses`，规范及并发同名拒绝见下文 |
-| public_trust | 数据面 TLS 和网站信任根的公开值集合；稳定 id 排序；用途及公开证书须与其引用资源/入口一致；完整非空 wire 字段尚待补齐 |
+| public_trust | `PublicTrust{id,purpose,certificate_der}`，按 id 排序；当前 purpose 恰为 website，证书为受约束网站根 DER 的无填充 base64url，id 为 website- 加 DER 的 SHA-256 小写十六进制；规范与撤销规则见[公开网站信任根](control-model.md#公开网站信任根)。数据面认证仍由 TransportResource 的原公开值确定，不继承网站根 |
 | expected_components | 下述 ExpectedComponent；按 node_id、component_id、platform 排序；初始值没有普通设备授权，非空初始期望拒绝，后续通过普通事实逐项修改 |
 
 所有元素稳定 ID 在本类集合内唯一；Service 与 Policy 即使使用相同文本 ID 也分别按目标种类寻址。
@@ -431,8 +431,8 @@ DNS resolver 运行地址与 overlay DNS 记录不同，
 
 字段完整性到此分为两层：本节规定已列出的 genesis、初始成员表及 NetworkIntent 初始字段的编码规则，
 初始节点的首次设备绑定与认证分发地址也使用上文的同一事实链。互联网 Service/Policy 和共享 HTTPS 目标已有完整
-非空值规范；Hy2 authentication 的字段固定于下文。Link 探测动作、LAN、
-公开信任等未定非空值仍有明确缺口。这些输入必须指明缺项并拒绝，不能先落盘后补规范。
+非空值规范；Hy2 authentication 的字段固定于下文，公开网站根使用上述完整 PublicTrust。
+Link 探测动作、LAN 等未定非空值仍有明确缺口。这些输入必须指明缺项并拒绝，不能先落盘后补规范。
 空集合是合法新网络的无配置初态，不是允许忽略其非空内容的测试协议；正式入口与测试使用同一个 decoder，
 对已规定元素执行同一检查，对未规定元素同样拒绝。补齐元素时修订同一 schema 3；既有 genesis 原始
 字节和锚不变，新增普通事实逐对象生效，不把空集合事后解释为隐含默认对象。
@@ -672,6 +672,8 @@ control_proof、Invite 和 View 均不得因此泄漏设备授权的 RuntimeKey 
 本链 DeviceView 的字段为 `schema=3,device_id,name,platform,device_public_key,responsibilities,policy_ids,`
 `services,policies,resources,links,endpoints,dns_servers,business_probe_targets,routes,runtime_profile,`
 `inbound_credentials,expected_components`。所有集合显式出现；没有相应授权时为空集合。
+另有可选非空 `dns_records` 和 `public_trust`，分别按上文的 DNSRecord 和 PublicTrust 规范投影，
+无配置时字段缺席，显式空数组、null、未知用途或不规范证书均拒绝；已有缺席字段的签名字节保持。
 View 职责包含普通设备授权与成员表的有效投影；其中 control 只能来自已经验证的成员表。
 runtime_profile 仅 access 出现，包含 `kind="sing_box",config`，config 是 C 编码的 JSON 字符串，
 包含候选 outbound、Service selector 与权限规则；平台本机 capture/listener 和本机 API secret 由

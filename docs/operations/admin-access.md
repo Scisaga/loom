@@ -143,6 +143,19 @@ loom control website verify-certificate -request /private/demo-delivery/request.
 命令检查受约束根、原 CSR 公钥、精确名称、用途、有效期及直接签发链，回读公开摘要和到期时间。
 它不导入浏览器信任或激活入口；后续正式安装还须核对本机叶私钥并完成 prepared 预检和实际浏览器回读。
 
+在现有受认证 Web 的 Settings → Website trust 上传单个公开根 PEM，可发布该根并回读、导出或撤销。
+设备下一次认证刷新后取得同一公开根；Linux 可从已验证本机 View 列出并显式导出：
+
+```bash
+loom client website-root -state /var/lib/loom-device/state.json
+loom client website-root -state /var/lib/loom-device/state.json \
+  -id <certified-website-root-id> -o /private/demo-delivery/website-root.pem
+```
+
+导出校验名称约束与当前有效期，不安装系统信任。撤销使后续 View 和导出入口不再交付该根，不会删除已由
+用户导入浏览器的证书；既有浏览器信任须在受保护的换根流程中另行处理。公开根交付也不表示网站叶或入口
+已经配置、可达或已通过浏览器验链。
+
 目标 `.loom` 网站根带 critical 名称约束并排除所有 IP，目标网站叶 SAN 仅为 `control.loom`，
 根私钥不在任何 control。该证书链不能验证开发调试浏览器使用的 `127.0.0.1`。
 [控制模型](../core/control-model.md#9-dns-overlay)已将正式 `.loom` 入口和回环调试入口分开；

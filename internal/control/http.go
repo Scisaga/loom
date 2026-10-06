@@ -189,6 +189,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/invites/{transaction}/download", server.inviteDownload)
 	mux.HandleFunc("GET /api/control/releases/{catalog}/{artifact}/{file}", server.releaseDownload)
 	mux.HandleFunc("GET /api/control/releases/inputs", server.releaseDeploymentInputs)
+	mux.HandleFunc("GET /api/control/public-trust/{id}/certificate", server.websiteRootDownload)
 	mux.HandleFunc("GET /internal/frontier", server.internalFrontier)
 	mux.HandleFunc("GET /internal/materials", server.internalMaterialsAfter)
 	mux.HandleFunc("GET /internal/materials/{digest}", server.internalMaterial)

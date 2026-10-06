@@ -236,6 +236,12 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 		return errors.New("material target is invalid")
 	}
 	switch operation {
+	case "public_trust.put":
+		value, ok := payload.(PublicTrust)
+		if !ok || kind != "public_trust" || value.ID != id {
+			return errors.New("public_trust.put has the wrong payload or target")
+		}
+		return value.Validate()
 	case "admin_certificate.put":
 		value, ok := payload.(AdminCertificate)
 		if !ok || kind != "admin_certificate" || value.ID != id {
@@ -261,7 +267,7 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 			return errors.New("policy.put has the wrong payload or target")
 		}
 		return value.Validate()
-	case "dns_record.delete", "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
+	case "public_trust.delete", "dns_record.delete", "service.delete", "policy.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
 		value, ok := payload.(DeleteTarget)
 		if !ok || operation != kind+".delete" && !(operation == "device.revoke" && kind == "device") || value.ID != id {
 			return errors.New("deletion has the wrong payload or target")
@@ -591,6 +597,8 @@ func decodeOperationObject(object map[string]any) (Operation, error) {
 func decodeMaterialPayload(operation, kind string, value any) (MaterialPayload, error) {
 	var target any
 	switch operation {
+	case "public_trust.put":
+		target = &PublicTrust{}
 	case "admin_certificate.put":
 		target = &AdminCertificate{}
 	case "dns_record.put":
@@ -599,7 +607,7 @@ func decodeMaterialPayload(operation, kind string, value any) (MaterialPayload, 
 		target = &Service{}
 	case "policy.put":
 		target = &NetworkPolicy{}
-	case "dns_record.delete", "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
+	case "public_trust.delete", "dns_record.delete", "service.delete", "policy.delete", "probe_target.delete", "device.delete", "device.revoke", "resource.delete", "link.delete", "expected_component.delete", "admin_certificate.delete":
 		target = &DeleteTarget{}
 	case "invite.issue":
 		target = &Invite{}
@@ -877,6 +885,9 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 	for _, value := range genesis.NetworkIntent.DNSRecords {
 		add("dns_record", value.ID, graph.genesisID, "dns_record.put", value)
 	}
+	for _, value := range genesis.NetworkIntent.PublicTrust {
+		add("public_trust", value.ID, graph.genesisID, "public_trust.put", value)
+	}
 	for _, value := range genesis.NetworkIntent.Services {
 		add("service", value.ID, graph.genesisID, "service.put", value)
 	}
@@ -952,6 +963,8 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 			continue
 		}
 		switch value := chosen.payload.(type) {
+		case PublicTrust:
+			projection.NetworkIntent.PublicTrust = append(projection.NetworkIntent.PublicTrust, value)
 		case AdminCertificate:
 			projection.AdminCertificates = append(projection.AdminCertificates, value)
 		case DNSRecord:
@@ -988,7 +1001,7 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 
 func isWithdrawal(operation string) bool {
 	switch operation {
-	case "dns_record.delete", "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "expected_component.delete", "admin_certificate.delete", "invite.cancel", "invite.expire":
+	case "public_trust.delete", "dns_record.delete", "service.delete", "policy.delete", "device.revoke", "device.delete", "resource.delete", "link.delete", "probe_target.delete", "expected_component.delete", "admin_certificate.delete", "invite.cancel", "invite.expire":
 		return true
 	}
 	return false
@@ -1028,6 +1041,8 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		return errors.New("operation requires an existing target")
 	}
 	switch value := material.Payload.(type) {
+	case PublicTrust:
+		return nil // The complete immutable certificate determines its stable ID.
 	case AdminCertificate:
 		return graph.validateAdminCertificate(value, history)
 	case DNSRecord:

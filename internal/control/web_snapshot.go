@@ -10,6 +10,7 @@ import (
 // WebSnapshot is a redacted projection for the existing control UI. It is never
 // accepted as an operation or used to restore authority.
 type WebSnapshot struct {
+	PublicTrust     []PublicTrust      `json:"public_trust"`
 	DNSRecords      []DNSRecord        `json:"dns_records"`
 	Schema          int                `json:"schema"`
 	NetworkID       string             `json:"network_id"`
@@ -116,7 +117,7 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		capabilities.Credential = "local_admin"
 	}
 	if admin && writable {
-		capabilities.Operations = []string{"admin_certificate.delete", "admin_certificate.put", "device.delete", "device.put", "device.revoke", "dns_record.delete", "dns_record.put", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "service.delete", "service.put"}
+		capabilities.Operations = []string{"admin_certificate.delete", "admin_certificate.put", "device.delete", "device.put", "device.revoke", "dns_record.delete", "dns_record.put", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "public_trust.delete", "public_trust.put", "service.delete", "service.put"}
 	}
 	devices := projectWebDevices(projection, releases...)
 	warnings := []WebWarning{}
@@ -142,6 +143,7 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPaths(projection, releases...), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
 		PolicyInvites: []WebPolicyInvite{},
 		DNSRecords:    append([]DNSRecord{}, projection.NetworkIntent.DNSRecords...),
+		PublicTrust:   append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),
 		Services:      append([]Service{}, projection.NetworkIntent.Services...), Releases: []Release{}, Deployments: []Deployment{},
 		Events: []Event{}, Traffic: []TrafficBucket{}, Administrators: projectWebAdministrators(projection)}
 }

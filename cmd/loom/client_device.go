@@ -171,3 +171,41 @@ func cmdClientInspect(args []string) error {
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
+
+func cmdClientWebsiteRoot(args []string) error {
+	fs := flag.NewFlagSet("client website-root", flag.ContinueOnError)
+	statePath := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
+	id := fs.String("id", "", "explicit certified website root identity")
+	output := fs.String("o", "", "public PEM output in an existing private directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || (*id == "") != (*output == "") {
+		return errors.New("website-root lists roots, or requires both id and output for export")
+	}
+	store, err := deviceclient.Load(*statePath)
+	if err != nil {
+		return err
+	}
+	view := store.LKG()
+	if view == nil {
+		return errors.New("website roots require an authenticated device View")
+	}
+	if *id == "" {
+		return json.NewEncoder(os.Stdout).Encode(append([]control.PublicTrust{}, view.View.PublicTrust...))
+	}
+	for _, value := range view.View.PublicTrust {
+		if value.ID != *id {
+			continue
+		}
+		body, err := control.WebsiteTrustPEM(value, time.Now())
+		if err != nil {
+			return err
+		}
+		if err := putWebsitePublicFile(*output, body); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"id": value.ID, "public_certificate_exported": true, "system_trust_installed": false})
+	}
+	return errors.New("selected website root is absent from the authenticated View")
+}

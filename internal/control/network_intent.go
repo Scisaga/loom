@@ -21,23 +21,15 @@ type Service struct {
 // NetworkIntent is reconstructed from signed facts. Empty unsupported
 // collections mean unconfigured; every non-empty unsupported input is rejected.
 type NetworkIntent struct {
-	Schema               int                     `json:"schema"`
-	Services             []Service               `json:"services"`
-	Policies             []NetworkPolicy         `json:"policies"`
-	Resources            []TransportResource     `json:"resources"`
-	Links                []NetworkLink           `json:"links"`
-	BusinessProbeTargets []BusinessProbeTarget   `json:"business_probe_targets"`
-	DNSRecords           []DNSRecord             `json:"dns_records"`
-	PublicTrust          []undefinedNetworkValue `json:"public_trust"`
-	ExpectedComponents   []ExpectedComponent     `json:"expected_components"`
-}
-
-// No non-empty value of this type is valid. It preserves the already defined
-// empty-array bytes without inventing fields for an undefined sub-contract.
-type undefinedNetworkValue struct{}
-
-func (undefinedNetworkValue) Validate() error {
-	return errors.New("network sub-value contract is undefined")
+	Schema               int                   `json:"schema"`
+	Services             []Service             `json:"services"`
+	Policies             []NetworkPolicy       `json:"policies"`
+	Resources            []TransportResource   `json:"resources"`
+	Links                []NetworkLink         `json:"links"`
+	BusinessProbeTargets []BusinessProbeTarget `json:"business_probe_targets"`
+	DNSRecords           []DNSRecord           `json:"dns_records"`
+	PublicTrust          []PublicTrust         `json:"public_trust"`
+	ExpectedComponents   []ExpectedComponent   `json:"expected_components"`
 }
 
 type TransportResource struct {
@@ -278,7 +270,7 @@ func contractUpperHex(value byte) bool {
 
 func EmptyNetworkIntent() NetworkIntent {
 	return NetworkIntent{Schema: 3, Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{},
-		BusinessProbeTargets: []BusinessProbeTarget{}, DNSRecords: []DNSRecord{}, PublicTrust: []undefinedNetworkValue{}, ExpectedComponents: []ExpectedComponent{}}
+		BusinessProbeTargets: []BusinessProbeTarget{}, DNSRecords: []DNSRecord{}, PublicTrust: []PublicTrust{}, ExpectedComponents: []ExpectedComponent{}}
 }
 
 func (intent NetworkIntent) Validate() error {
@@ -286,8 +278,11 @@ func (intent NetworkIntent) Validate() error {
 		intent.BusinessProbeTargets == nil || intent.DNSRecords == nil || intent.PublicTrust == nil || intent.ExpectedComponents == nil {
 		return errors.New("NetworkIntent schema or explicit collections are invalid")
 	}
-	if len(intent.Resources)+len(intent.Links)+len(intent.PublicTrust)+len(intent.ExpectedComponents) != 0 {
-		return errors.New("non-empty resources, links, trust or component expectations require their complete contracts")
+	if len(intent.Resources)+len(intent.Links)+len(intent.ExpectedComponents) != 0 {
+		return errors.New("non-empty resources, links or component expectations require their complete contracts")
+	}
+	if err := validatePublicTrust(intent.PublicTrust); err != nil {
+		return err
 	}
 	if err := validateDNSRecords(intent.DNSRecords); err != nil {
 		return err

@@ -582,6 +582,29 @@ TUN 对获准域名服务保留原有 fake-IP 还原，但 `.loom` 只为当前�
 认证写入与重启读回、真实 A/AAAA/空答案/未知名称、三端业务访问和撤回。非空投影只在消费者具备
 该执行能力后发布；无法执行时报告失败，不丢字段、不降级上游。发布及生产验收状态另见实施状态。
 
+#### 公开网站信任根
+
+已有 `NetworkIntent.public_trust` 表达网站根的公开证书，不能由临时 CSR、证书文件路径或系统信任库
+倒推网络信任。当前非空元素 `PublicTrust` 恰为 `id,purpose,certificate_der`，purpose 固定 `website`，
+certificate_der 是一个完整根证书 DER 的无填充 base64url；id 固定为 `website-` 加该 DER 的 SHA-256
+小写十六进制。摘要身份使同一根不能换 ID 绕过撤销，也不能以相同 ID 换证书。数据面 TLS 继续使用已认证
+TransportResource 中的公开认证值，不继承网站根；未知 purpose 拒绝。
+
+操作者经正式认证操作 `public_trust.put/delete` 授予或撤销公开网站信任，复用普通事实的依赖、并发删除
+优先及显式重新授权规则；换根是新证书身份，不能覆盖原根。写入先验根的自签名、CA 用途、critical
+`.loom` DNS 限制及全部 IP 排除，正式入口另检查当前有效期。事实验证不读取时钟，已签事实不会因证书
+到期改写或消失。信任删除只撤去后续配置中的授权根，不假称已卸载浏览器中由用户安装的证书。
+
+domain、规范 wire 和持久 Material 使用同一 PublicTrust；NetworkIntent 按 id 排序保存投影，
+DeviceView 的可选 `public_trust` 只在非空时出现，集合相同且有序。既有空 NetworkIntent 与没有此配置
+的已签 DeviceView 字节保持。UI 从同一投影展示根和公开证书导出，不拥有信任状态；客户端只能从已验证
+View 交付这些公开根，不能生成根私钥、替换 admin 根、自动导入系统信任或据此授予业务权限。
+
+正常链为管理员提交公开根、事实持久化与重启恢复、设备取得认证 View、正常入口回读公开证书。
+最小测试覆盖规范往返、无约束根/错摘要/未知用途拒绝、并发撤销、同根显式重新授权及原空字节保全。
+根发布、下载或过期提醒均不证明目标浏览器已执行 NameConstraints；导入和实际网站验链仍须按下述边界
+单独验证。不得增加根 registry、第二信任 store、自动签发服务或对无约束根的 fallback。
+
 `control.loom` 是保留的私有 HTTPS 别名，解析为处于 serving、允许 `web` 模式的 `EndpointGeneration` 的客户端地址，即有效 control 的私有 Web 入口。同一浏览器 URL 使用的全部地址须在该 URL 的客户端端口提供服务；使用非默认 HTTPS 端口时 URL 显式带端口，A/AAAA 本身不携带端口。
 
 它不是可签发的普通 DNS 记录。网站证书受信名称覆盖该域名；信任根的公开证书属于 NetworkIntent 并随 DeviceView 交付，网站根证书带 critical NameConstraints，允许 dNSName 仅限 `.loom`，并以 excluded IP 子树 `0.0.0.0/0` 和 `::/0` 排除所有 IP SAN；不满足者禁止导入浏览器；根私钥不得进入任何 control，须由独立受保护的签发输入保管。control 的正式 Web 入口仅持有 SAN 精确为 `control.loom`、不含其他 DNS/IP/URI/email 名称的网站叶证书及对应私钥，不能持有网站 CA 签发能力。网站信任根与可能签发其他名称/IP 的成员或传输 TLS CA 分离；信任锚上的约束可能不被浏览器执行，导入前必须独立校验证书约束并验证目标浏览器的信任行为。可返回多个入口地址，设备按真实连接选择可达端点，不能以 DNS 回答认定治理同步。普通 access 可打开无敏感管理数据的入口页；管理数据读取及操作必须验证 admin 客户端证书和操作授权，受信 admin 叶子名单是 `Projection` 中由普通事实维护的值，所有 control 使用同一份。正式管理认证只需网站证书与 admin 证书，reader 证书属于应删除的漂移；入口页不能匿名暴露管理信息。
