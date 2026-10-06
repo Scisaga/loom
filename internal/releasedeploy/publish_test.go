@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -31,6 +32,7 @@ type demoTransport struct {
 	uploads, selections           int
 	failedIdentity, failSelection string
 	httpComplete                  func() bool
+	transferredBytes              int64
 }
 
 func (d *demoTransport) Resolve(_ context.Context, alias string) (control.SSHTargetReadback, error) {
@@ -41,6 +43,9 @@ var rootPattern = regexp.MustCompile(`-root '([^']+)'`)
 var expectedPattern = regexp.MustCompile(`-expected-current '([^']*)'`)
 
 func (d *demoTransport) Run(_ context.Context, alias, script string) ([]byte, error) {
+	if strings.Contains(script, "# Inspect existing release files;") {
+		return exec.Command("sh", "-c", script).Output()
+	}
 	if strings.Contains(script, "client inspect") {
 		id := d.identities[alias]
 		if alias == d.failedIdentity {
@@ -90,17 +95,47 @@ func (d *demoTransport) Stream(_ context.Context, _ string, script string, input
 	if len(root) != 2 || len(expected) != 2 || !strings.Contains(script, "-prepare-only") {
 		return nil, errors.New("upload tried to select a pointer")
 	}
-	directory, err := clientrelease.ReceiveArchive(input, d.catalog, d.key)
+	// Exercise the same target-side assembly with the unchanged strict receiver.
+	index := strings.Index(script, "\nloom release import ")
+	if index < 0 {
+		return nil, errors.New("missing formal import command")
+	}
+	command := exec.Command("sh", "-c", script[:index]+"\ncat \"$release_tmp/incoming.tar\"\n")
+	command.Stdin = &countedTransfer{Reader: input, count: &d.transferredBytes}
+	output, err := command.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err = command.Start(); err != nil {
+		return nil, err
+	}
+	directory, err := clientrelease.ReceiveArchive(output, d.catalog, d.key)
+	output.Close()
+	completed := command.Wait()
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(directory)
+	if completed != nil {
+		return nil, completed
+	}
 	set, err := clientrelease.Prepare(directory, root[1], d.catalog, d.key, expected[1])
 	if err != nil {
 		return nil, err
 	}
 	d.uploads++
 	return demoCatalogReadback(set), nil
+}
+
+type countedTransfer struct {
+	io.Reader
+	count *int64
+}
+
+func (r *countedTransfer) Read(body []byte) (int, error) {
+	n, err := r.Reader.Read(body)
+	*r.count += int64(n)
+	return n, err
 }
 func demoCatalogReadback(set control.ReleaseSet) []byte {
 	body, _ := json.Marshal(map[string]any{"catalog_digest": set.ID, "generation": set.Catalog.Generation, "entries": set.Catalog.Entries})
@@ -173,6 +208,10 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 		}
 	}
 	t.Log("preserve partial selection and report failure")
+	// The unselected cache lost one signature; send exactly that missing file.
+	if err = os.Remove(filepath.Join(a, "catalogs", strings.TrimPrefix(set.ID, "sha256:"), "catalog.sig")); err != nil {
+		t.Fatal(err)
+	}
 	badHTTP = false
 	transport.failSelection = "demo-b"
 	events = nil
@@ -180,6 +219,15 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 		t.Fatal("partial selection was not reported as incomplete", err)
 	}
 	for _, event := range events {
+		if event.Operation == "prepare" && event.Verified {
+			want := 0
+			if event.Target == 1 {
+				want = 1
+			}
+			if event.Transfer == nil || event.Transfer.SentFiles != want || event.Transfer.SentBytes != int64(want*ed25519.SignatureSize) || event.Transfer.ReusedFiles == 0 {
+				t.Fatal("unchanged public content was retransmitted", event)
+			}
+		}
 		if event.Operation == "complete" {
 			t.Fatal("partial result claimed completion")
 		}
@@ -189,8 +237,12 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 	}
 	t.Log("retry original catalog after partial selection")
 	transport.failSelection = ""
+	networkBefore := transport.transferredBytes
 	if err = run(); err != nil {
 		t.Fatal("same catalog retry could not recover partial publication", err)
+	}
+	if transport.transferredBytes-networkBefore != 2*1024 {
+		t.Fatal("complete target caches received more than two empty tar envelopes")
 	}
 	for _, path := range []string{a, b} {
 		store, _ := clientrelease.New(path, key)

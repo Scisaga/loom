@@ -37,11 +37,18 @@ type TargetReadback struct {
 }
 
 type Result struct {
-	Target            int    `json:"target,omitempty"`
-	Node              int    `json:"node,omitempty"`
-	Operation         string `json:"operation"`
-	Verified          bool   `json:"verified"`
-	CoordinatesDiffer bool   `json:"ssh_coordinates_differ,omitempty"`
+	Target            int             `json:"target,omitempty"`
+	Node              int             `json:"node,omitempty"`
+	Operation         string          `json:"operation"`
+	Verified          bool            `json:"verified,omitempty"`
+	CoordinatesDiffer bool            `json:"ssh_coordinates_differ,omitempty"`
+	Transfer          *TransferCounts `json:"transfer,omitempty"`
+}
+
+type TransferCounts struct {
+	SentFiles   int   `json:"sent_files"`
+	ReusedFiles int   `json:"reused_files"`
+	SentBytes   int64 `json:"sent_bytes"`
 }
 
 type Options struct {
@@ -164,6 +171,10 @@ func Publish(ctx context.Context, o Options) error {
 	if err != nil {
 		return errors.New("selected signed catalog cannot be verified")
 	}
+	files, err := clientrelease.TransferFiles(o.Source, set)
+	if err != nil {
+		return errors.New("selected signed files cannot be read back")
+	}
 	inputs, err := o.Inputs(ctx)
 	if err != nil {
 		return err
@@ -216,11 +227,27 @@ func Publish(ctx context.Context, o Options) error {
 			return err
 		}
 		o.emit(Result{Target: i + 1, Operation: "prepare"})
+		body, err := o.run(ctx, t.alias, reuseQueryScript(t.root, files))
+		if err != nil {
+			return fmt.Errorf("target %d existing files could not be verified for reuse", i+1)
+		}
+		reuse, err := reuseReadback(body, files)
+		if err != nil {
+			return fmt.Errorf("target %d reusable file scope is invalid", i+1)
+		}
+		counts := TransferCounts{SentFiles: len(files) - len(reuse), ReusedFiles: len(reuse)}
+		for _, file := range files {
+			counts.SentBytes += file.Size
+		}
+		for _, file := range reuse {
+			counts.SentBytes -= file.Size
+		}
 		command := "loom release import -stdin -prepare-only -root " + literal(t.root) + " -catalog " + literal(set.ID) + " -expected-current " + literal(t.previous)
+		command = assembleArchiveScript(t.root, reuse) + command + " < \"$release_tmp/incoming.tar\""
 		reader, writer := io.Pipe()
 		finished := make(chan error, 1)
 		go func() {
-			err := clientrelease.WriteArchive(o.Source, set.ID, o.PublicKey, writer)
+			err := clientrelease.WriteArchive(o.Source, set.ID, o.PublicKey, writer, reuse)
 			writer.CloseWithError(err)
 			finished <- err
 		}()
@@ -232,7 +259,7 @@ func Publish(ctx context.Context, o Options) error {
 		if remoteErr != nil || writeErr != nil || !catalogReadback(body, set) {
 			return fmt.Errorf("target %d immutable transfer unconfirmed; pointers were not advanced by this invocation", i+1)
 		}
-		o.emit(Result{Target: i + 1, Operation: "prepare", Verified: true})
+		o.emit(Result{Target: i + 1, Operation: "prepare", Verified: true, Transfer: &counts})
 	}
 	if err = verifyHTTPS(ctx, o.HTTP, inputs.DistributionURLs, set); err != nil {
 		return err

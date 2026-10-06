@@ -13,6 +13,47 @@ import (
 	"loom/internal/control"
 )
 
+// TransferFile is a per-call projection of verified public bytes, not a release
+// record or a persistent cache of what a target is believed to contain.
+type TransferFile struct {
+	Name   string
+	Size   int64
+	Digest string
+}
+
+func TransferFiles(source string, set control.ReleaseSet) ([]TransferFile, error) {
+	if err := set.Catalog.Validate(); err != nil {
+		return nil, err
+	}
+	if err := control.ValidateDigest(set.ID); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(source)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	limits := catalogFiles(set)
+	names := make([]string, 0, len(limits))
+	for name := range limits {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	files := make([]TransferFile, 0, len(names))
+	for _, name := range names {
+		body, err := readFile(root, name, limits[name])
+		if err != nil {
+			return nil, err
+		}
+		digest := control.ReleaseDigest(body)
+		if !strings.HasSuffix(name, ".sig") && digest != "sha256:"+strings.Split(filepath.ToSlash(name), "/")[1] {
+			return nil, errors.New("release source changed after catalog verification")
+		}
+		files = append(files, TransferFile{Name: filepath.ToSlash(name), Size: int64(len(body)), Digest: digest})
+	}
+	return files, nil
+}
+
 func catalogFiles(set control.ReleaseSet) map[string]int64 {
 	files := map[string]int64{digestPath("catalogs", set.ID, "catalog.json"): 1 << 20, digestPath("catalogs", set.ID, "catalog.sig"): ed25519.SignatureSize}
 	for _, e := range set.Catalog.Entries {
@@ -25,7 +66,7 @@ func catalogFiles(set control.ReleaseSet) map[string]int64 {
 
 // WriteArchive transports only files referenced by an independently verified
 // catalog. It never includes the source pointer, private keys or installation state.
-func WriteArchive(source, catalog string, key ed25519.PublicKey, output io.Writer) error {
+func WriteArchive(source, catalog string, key ed25519.PublicKey, output io.Writer, reuse []TransferFile) error {
 	store, err := New(source, key)
 	if err != nil {
 		return err
@@ -34,24 +75,38 @@ func WriteArchive(source, catalog string, key ed25519.PublicKey, output io.Write
 	if err != nil {
 		return err
 	}
+	files, err := TransferFiles(source, set)
+	if err != nil {
+		return err
+	}
+	remaining := make(map[string]TransferFile, len(files))
+	for _, file := range files {
+		remaining[file.Name] = file
+	}
+	for _, file := range reuse {
+		if actual, found := remaining[file.Name]; !found || actual != file {
+			return errors.New("reused file differs from the verified source or is duplicated")
+		}
+		delete(remaining, file.Name)
+	}
 	root, err := os.OpenRoot(source)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	files := catalogFiles(set)
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	writer := tar.NewWriter(output)
-	for _, name := range names {
-		body, err := readFile(root, name, files[name])
+	for _, file := range files {
+		if _, send := remaining[file.Name]; !send {
+			continue
+		}
+		body, err := readFile(root, file.Name, file.Size)
 		if err != nil {
 			return err
 		}
-		if err = writer.WriteHeader(&tar.Header{Name: filepath.ToSlash(name), Mode: 0644, Size: int64(len(body)), Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
+		if int64(len(body)) != file.Size || control.ReleaseDigest(body) != file.Digest {
+			return errors.New("release source changed before transfer")
+		}
+		if err = writer.WriteHeader(&tar.Header{Name: file.Name, Mode: 0644, Size: file.Size, Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
 			return err
 		}
 		if _, err = writer.Write(body); err != nil {

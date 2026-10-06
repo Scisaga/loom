@@ -44,7 +44,7 @@ func TestReviewedPrepareAndTransferPreservePointerAndSignedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var archive bytes.Buffer
-	if err = WriteArchive(*reviewedStore, set.ID, key, &archive); err != nil {
+	if err = WriteArchive(*reviewedStore, set.ID, key, &archive, nil); err != nil {
 		t.Fatal(err)
 	}
 	directory, err := ReceiveArchive(bytes.NewReader(archive.Bytes()), set.ID, key)
