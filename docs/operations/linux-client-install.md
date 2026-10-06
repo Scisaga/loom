@@ -173,7 +173,7 @@ TLS 引用见[本机配置模型](configuration-model.md)。普通 `resource.put
 `client status` 的 resources 以及私有签名报告回读实际 UDP 归属、TLS 身份、认证和当前 ACL 摘要。
 删除最后一个自有资源后，纯服务节点保持配置/报告通道，数据面报告 stopped。配置收窄先关闭旧进程
 与全部已认证会话；父进程异常退出也由内核终止其数据面子进程。失败保留新 LKG，不能复活旧 ACL。
-当前资源拨号地址已验收 IP；资源主机名的认证 resolver 接线和业务 DNS 仍待完成，不使用主机 resolver
+资源主机名沿认证 resolver 接线解析，业务 DNS 与 TLS 名称保持各自身份；不使用主机 resolver
 为该 underlay 拨号补值。hybrid 的 server listener 留在宿主 underlay，access TUN 在单独受监督的 namespace。
 
 包内模板按显式 capture 投影，安装 preflight 与正式 unit 使用相同输入。隔离 TUN 的 unit 额外获得

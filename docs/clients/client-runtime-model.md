@@ -615,6 +615,13 @@ sing-box 与应用在本 generation 的匿名 network namespace。access 只含�
 本机执行环境，不授予任何候选或业务权限；数据面的 namespace 拨号适配须单独构建和真实验证，不能假定
 当前固定的上游版本已有该能力。禁止把新 namespace 字段写入签名 RuntimeProfile 或持久 LKG。
 
+远端资源的拨号名称继续原样进入数据面，由同一 View 的认证解析器经 underlay DNS outbound 解析；
+DNS 与传输 socket 都从固定的原网络引用创建。资源不需要在渲染时先变为字面 IP，也不向 access TUN
+添加它的地址排除：排除并不提供原网络连接，而这里已经存在明确的 socket 隔离。没有认证解析器仍拒绝，
+失败不借系统 DNS；原 CA、TLS 名称、凭据、候选及权限不变，重启从同一认证配置重新解析，不持久化答案。
+最小验证是具名 Hy2 资源的隔离 TUN 实际 HTTPS、认证 DNS 查询、原身份重启和宿主网络回读；缺解析器
+拒绝与运行投影不改变传输认证参数另有定向回归，不新增操作成本或权威字段。
+
 namespace、进程句柄及本 generation 的运行文件都是执行资源，不能成为第二份权威或完成状态。父进程持有
 内核引用，运行回读核对 access namespace 与原网络不同，且实际程序与配置匹配后才开放应用入口。应用
 执行者在接收已核验的 namespace 引用后启动受监督的独立进程树；数据面和应用均核对独立 mount namespace，

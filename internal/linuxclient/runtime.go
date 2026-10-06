@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -168,15 +167,9 @@ func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpo
 	if capture == "mixed" {
 		return deriveLinuxMixedRuntime(config)
 	}
-	for _, resource := range view.Resources {
-		if resource.OwnerNodeID != view.DeviceID {
-			ip, err := netip.ParseAddr(resource.DialHost)
-			if err != nil {
-				return "", errors.New("resource underlay address requires authenticated resolution")
-			}
-			endpointExclusions = append(endpointExclusions, netip.PrefixFrom(ip, ip.BitLen()).String())
-		}
-	}
+	// Resource DNS and transport sockets use the pinned underlay namespace.
+	// Keep their certified names: a TUN route exclusion cannot provide underlay
+	// connectivity and must not require a pure projection to resolve a name.
 	sort.Strings(endpointExclusions)
 	config, err = deriveLinuxAccessRuntime(config, endpointExclusions)
 	if err != nil {
