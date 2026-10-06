@@ -574,8 +574,8 @@ TUN 放进专用 namespace；二者仍消费同一 DeviceView，不新增节点�
   rules 和 DNS 全部进入同一个专用 network namespace；宿主只保留一条有明确所有权的窄 underlay 边界。
 - 宿主 SSH、LAN、默认网关、现有 WireGuard、DNS、HTTP proxy、控制/Enrollment/报告/tunnel endpoint 和 Loom
   自身 underlay 始终保持原路径。业务 report、selector readback、endpoint 排除或单次探测成功不能替代这些回读。
-- namespace、veth 和必要 firewall 对象绑定一个运行 generation。正常停止、child/parent 崩溃、SIGKILL、启动
-  中途失败和重启恢复都通过外部 cleanup 精确删除本 generation 的对象；不得按共享 table 或 rule 范围 flush。
+- 匿名 namespace 与进程句柄绑定一个运行 generation，不创建宿主 veth 或 firewall。正常停止、child/parent
+  崩溃、SIGKILL、启动中途失败和重启恢复均终止所拥有的应用树并关闭引用；不得按共享 table 或 rule 范围 flush。
 - cleanup 及宿主不变量回读成功前 service 不得宣称 running，也不得自动重启。未知对象或所有权冲突使启动失败。
 
 专用终端若产品需求明确为整机 VPN，可以在该专用设备的初始 namespace 使用 TUN，但这不是开发/控制/混合节点
@@ -592,14 +592,55 @@ Linux 的具体映射不增加领域概念：`/var/lib/loom-device/state.json` �
 `/var/lib/loom-device/runtime.json` 只保存一份 `Preference` 和当前底层网络代的有限
 `Observation`；`/run/loom-client/config.json` 与 `status.json` 分别是可删除重建的
 `RuntimeCandidate` 配置和 selector 回读投影。唯一正式 unit `loom-client.service` 运行
-`loom client run`；access/hybrid 进程必须先进入专用 network namespace，再启动精确签名包中的 sing-box、
+`loom client run`；access 数据面子进程必须先进入专用 network namespace，再启动精确签名包中的 sing-box、
 应用共享纯核心给出的候选、逐项回读 selector，
 再以一次真实 TCP/TLS 与 UDP/DNS 业务结果形成 Observation。第一次失败只触发一次由相同纯函数得出的
 必要 fallback；同一网络代已有有效结果时重启不重复采样。
 
-当前专用 namespace 生命周期尚未实现，因此 Linux access/hybrid preflight 和 runtime 在与 PID 1 相同的
-network namespace 中明确拒绝启动，正式 unit 保持 disabled。这个安全暂停不是完成态；只有隔离创建、清理、
-宿主不变量回读和崩溃恢复全部接入 installer 后，才能重新启用 service。
+TUN worker 在与 PID 1 或原 underlay 相同的 network namespace 中拒绝启动。监督进程保留原网络，
+已验收的 Mixed/service unit 继续按原输入运行。隔离 TUN 的源码与正式 CLI 验证进展不代表生产验收完成；
+实际安装、宿主不变量与崩溃恢复结果见[实施状态](../progress.md)。
+
+#### 隔离 TUN 的执行边界
+
+目标是让操作者显式启动的 Linux 应用使用现有 Service/Policy，且同机 control、转发、出网和管理连接保持
+原 underlay。当前 Mixed 已满足显式代理应用，但普通 TUN 应用及其安装、停止恢复没有正式入口。最小变化
+是由同一 `loom client run -capture tun` 监督独立 access 数据面进程，`loom client exec -- <command>`
+是应用进入该边界的唯一产品入口；其他宿主进程不因安装而进入 TUN。新增操作成本是应用须从此入口启动。
+
+认证 DeviceView、LKG、身份、Preference 与报告格式不变。唯一 agent 留在原网络处理私有配置、报告和已有
+服务资源；同一认证 View 单向投影 access 与 server 执行配置。server listener/WG 继续在原网络，access
+sing-box 与应用在本 generation 的匿名 network namespace。access 只含回环与自身 TUN，underlay socket
+从固定的原网络 namespace 引用创建，不创建宿主 veth、地址、route/rule 或 firewall 对象。该引用只定位
+本机执行环境，不授予任何候选或业务权限；数据面的 namespace 拨号适配须单独构建和真实验证，不能假定
+当前固定的上游版本已有该能力。禁止把新 namespace 字段写入签名 RuntimeProfile 或持久 LKG。
+
+namespace、进程句柄及本 generation 的运行文件都是执行资源，不能成为第二份权威或完成状态。父进程持有
+内核引用，运行回读核对 access namespace 与原网络不同，且实际程序与配置匹配后才开放应用入口。应用
+执行者在接收已核验的 namespace 引用后启动受监督的独立进程树；数据面和应用均核对独立 mount namespace，
+将挂载传播设为私有并屏蔽宿主系统总线、networkd、解析服务和服务管理器的控制套接字。只有应用私有 mount namespace 设置业务
+DNS；不修改宿主 resolver。服务停止、数据面异常或执行者退出都先终止相应应用树，再关闭 namespace 引用；
+原应用不跨 generation 自动重启。正常停止、强制退出与启动中途失败均不得留下可继续绕过当前授权的应用。
+应用树以独立 PID namespace 的 init 监督，执行者死亡由内核父死亡信号与固定父进程句柄共同覆盖；
+service 使用经过核验的 pidfd 终止其精确进程树。握手释放前不执行用户命令，service 拒绝其他 UID
+及不属于调用者的 PID namespace init；CLI 还核对服务端正在运行的精确 Loom 制品。应用执行前移除全部 capability，禁止通过 root exec 重新取得网络能力。
+DNS 文件只是运行配置旁可重建的本代投影；传递只读文件引用，在应用私有 mount namespace 内核对 inode
+后绑定，停止时比较所有权再删除。既不改写宿主 `/etc/resolv.conf`，也不保存新的 DNS 权威。
+更新失败保留新 LKG，关闭不再符合授权的 access/server 执行；修复通道仍使用原 underlay。未知残留或清理
+失败保持 failed/inactive，不自动反复施加。重启从原身份、LKG 和偏好创建新执行边界，不恢复旧 namespace。
+
+反例：只把 sing-box 移进 namespace、让应用或 server listener 留在错误网络，分别会造成没有捕获应用或
+破坏原服务；把 agent 整体移入 TUN 则可能递归捕获修复通道。验收须经正式安装/运行/exec 入口完成真实
+DNS 与 HTTPS、授权收窄和恢复，并在正常停止、child/parent 强制退出、启动失败及重启后核对应用树和网络
+清理。每次同时比较宿主 namespace、route/rule、resolver 文件及解析服务的逐接口 DNS/域/default-route，
+并以新 SSH、LAN、WG、代理与公网连接验证原路径。
+源码支持显式 `--capture tun` 生成同一 systemd unit，增加创建 namespace 所需的 `CAP_SYS_ADMIN` 和
+`/dev/net/tun` 访问；Mixed 不增加这些权限。systemd 通过 `OpenFile` 预先打开 `/proc/1/ns/net` 并传入只读
+文件描述符，供限权进程取得同一个初始 namespace 引用；worker 仍必须逐项比较
+初始、underlay 和自身引用，不能因 `/proc` 读取被拒绝就跳过核对，也不为此授予 `CAP_SYS_PTRACE`。TUN 子进程门禁不因 unit 授权而放宽，纯服务节点不创建
+access namespace。unit 沿已签模板与实际本机输入精确回读，升级可以显式切换 capture，但不回退发布代。
+这些检查通过以前，不宣称对应部署完成。[系统总线事故](../incidents/2026-10-06-isolated-tun-host-dns.md)
+说明为何仅比较网络空间或 resolver 文件不足以证明 DNS 隔离。
 
 `loom client route direct|auto|exit <ID>` 是 Linux 唯一偏好写入口；写入后重载同一 service。
 `loom client status` 只读取 `/run` 中的实际 Selection，不把偏好冒充为运行事实。service 启动时可以尝试
@@ -720,7 +761,7 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
 13. **共享业务探测**：一份规范 HTTPS 目标池只投影所选有效 allow Policy 对应的 Service matcher 覆盖的目标；
     不同设备/Service/Policy 范围分别探测、分别选路，一个成功不使另一个变绿。空投影只使相应业务
     范围保持 unknown，不扩大 ACL、不阻断加入；中继链路的精确目标按 `LinkID` 独立验证。
-14. **Linux capture 隔离**：初始 network namespace 的 access/hybrid preflight 与 runtime 均失败关闭；专用
+14. **Linux capture 隔离**：初始 network namespace 的 TUN worker 失败关闭；监督进程只能创建专用
     namespace 中只捕获显式 workload；同机 control + forward + internet_egress 在没有 TUN 时保持业务可用；正常
     停止、child/parent crash、SIGKILL、启动中途失败和重启后，宿主 rule、main route、LAN、WireGuard、DNS、
     代理与 SSH 回读均保持基线，未知所有权对象不会被删除。

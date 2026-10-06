@@ -81,6 +81,9 @@ Loom 的 TUN `~.` DNS 已消失，libc/direct DNS 正常；一个事故前已存
 - 本事故、capture 边界、回滚语义和最小测试加入重建入口、客户端运行模型、安装文档与仓库工作提示。
 - 当前实际 service 保持 disabled/inactive，源码门禁未完成正式隔离前不得绕过。
 
+2026-10-06 的隔离开发还发现[系统总线可改写宿主 DNS](2026-10-06-isolated-tun-host-dns.md)。
+network namespace 必须配合 mount namespace 与宿主控制套接字隔离；DNS 回读必须覆盖解析服务实际状态。
+
 ## 仍未完成的正式架构
 
 事故恢复不等于 Linux 客户端完成。重新启用 access/hybrid 前必须在同一工作项完成：

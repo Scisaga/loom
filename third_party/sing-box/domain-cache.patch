@@ -310,3 +310,278 @@
  )
 +
 +replace github.com/sagernet/sing-tun => ./.loom-sing-tun
+diff --git a/option/outbound.go b/option/outbound.go
+--- a/option/outbound.go
++++ b/option/outbound.go
+@@ -65,6 +65,7 @@
+ }
+ 
+ type DialerOptions struct {
++	NetNs               string                            `json:"netns,omitempty"`
+ 	Detour              string                            `json:"detour,omitempty"`
+ 	BindInterface       string                            `json:"bind_interface,omitempty"`
+ 	Inet4BindAddress    *badoption.Addr                   `json:"inet4_bind_address,omitempty"`
+diff --git a/common/dialer/default.go b/common/dialer/default.go
+--- a/common/dialer/default.go
++++ b/common/dialer/default.go
+@@ -28,6 +28,7 @@
+ )
+ 
+ type DefaultDialer struct {
++	netns                  string
+ 	dialer4                tcpDialer
+ 	dialer6                tcpDialer
+ 	udpDialer4             net.Dialer
+@@ -64,8 +65,21 @@
+ 	} else {
+ 		interfaceFinder = control.NewDefaultInterfaceFinder()
+ 	}
++	if options.NetNs != "" {
++		if options.NetworkStrategy != nil || len(options.NetworkType) != 0 || len(options.FallbackNetworkType) != 0 {
++			return nil, E.New("namespace sockets cannot use platform network selection")
++		}
++		// This finder must resolve in the socket namespace, not the TUN's cache.
++		// Linux BindToInterface uses SO_BINDTODEVICE without a cached index.
++		interfaceFinder = control.NewDefaultInterfaceFinder()
++	}
+ 	if options.BindInterface != "" {
+ 		bindFunc := control.BindToInterface(interfaceFinder, options.BindInterface, -1)
++		if options.NetNs != "" {
++			bindFunc = func(network, address string, conn syscall.RawConn) error {
++				return control.BindToInterface0(control.NewDefaultInterfaceFinder(), conn, network, address, options.BindInterface, -1, true)
++			}
++		}
+ 		dialer.Control = control.Append(dialer.Control, bindFunc)
+ 		listener.Control = control.Append(listener.Control, bindFunc)
+ 	}
+@@ -83,7 +97,7 @@
+ 			listener.Control = control.Append(listener.Control, control.RoutingMark(autoRedirectOutputMark))
+ 		}
+ 	}
+-	disableDefaultBind := options.BindInterface != "" || options.Inet4BindAddress != nil || options.Inet6BindAddress != nil
++	disableDefaultBind := options.NetNs != "" || options.BindInterface != "" || options.Inet4BindAddress != nil || options.Inet6BindAddress != nil
+ 	if disableDefaultBind || options.TCPFastOpen {
+ 		if options.NetworkStrategy != nil || len(options.NetworkType) > 0 && options.FallbackNetworkType == nil && options.FallbackDelay == 0 {
+ 			return nil, E.New("`network_strategy` is conflict with `bind_interface`, `inet4_bind_address`, `inet6_bind_address` and `tcp_fast_open`")
+@@ -197,6 +211,7 @@
+ 		return nil, err
+ 	}
+ 	return &DefaultDialer{
++		netns:                  options.NetNs,
+ 		dialer4:                tcpDialer4,
+ 		dialer6:                tcpDialer6,
+ 		udpDialer4:             udpDialer4,
+@@ -215,6 +230,16 @@
+ }
+ 
+ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address M.Socksaddr) (net.Conn, error) {
++	if d.netns != "" {
++		if !address.IsIP() {
++			return nil, E.New("namespace dial requires a resolved address")
++		}
++		return inNamespace[net.Conn](d.netns, func() (net.Conn, error) { return d.dialContext(ctx, network, address) })
++	}
++	return d.dialContext(ctx, network, address)
++}
++
++func (d *DefaultDialer) dialContext(ctx context.Context, network string, address M.Socksaddr) (net.Conn, error) {
+ 	if !address.IsValid() {
+ 		return nil, E.New("invalid address")
+ 	}
+@@ -238,6 +263,9 @@
+ }
+ 
+ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network string, address M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
++	if d.netns != "" && strategy != nil {
++		return nil, E.New("namespace sockets cannot use platform network selection")
++	}
+ 	if strategy == nil {
+ 		strategy = d.networkStrategy
+ 	}
+@@ -286,6 +314,10 @@
+ }
+ 
+ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	return inNamespace[net.PacketConn](d.netns, func() (net.PacketConn, error) { return d.listenPacket(ctx, destination) })
++}
++
++func (d *DefaultDialer) listenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+ 	if d.networkStrategy == nil {
+ 		if destination.IsIPv6() {
+ 			return trackPacketConn(d.udpListener.ListenPacket(ctx, N.NetworkUDP, d.udpAddr6))
+@@ -300,6 +332,9 @@
+ }
+ 
+ func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
++	if d.netns != "" && strategy != nil {
++		return nil, E.New("namespace sockets cannot use platform network selection")
++	}
+ 	if strategy == nil {
+ 		strategy = d.networkStrategy
+ 	}
+@@ -333,7 +368,9 @@
+ }
+ 
+ func (d *DefaultDialer) ListenPacketCompat(network, address string) (net.PacketConn, error) {
+-	return d.udpListener.ListenPacket(context.Background(), network, address)
++	return inNamespace[net.PacketConn](d.netns, func() (net.PacketConn, error) {
++		return d.udpListener.ListenPacket(context.Background(), network, address)
++	})
+ }
+ 
+ func trackConn(conn net.Conn, err error) (net.Conn, error) {
+diff --git a/common/dialer/namespace_linux.go b/common/dialer/namespace_linux.go
+new file mode 100644
+--- /dev/null
++++ b/common/dialer/namespace_linux.go
+@@ -0,0 +1,70 @@
++//go:build linux
++
++package dialer
++
++import (
++	"errors"
++	"io"
++	"os"
++	"runtime"
++
++	"golang.org/x/sys/unix"
++)
++
++// Only socket creation enters the pinned underlay; TUN, rules and route workers
++// remain in the isolated process namespace. Numeric dials cannot spawn a DNS
++// resolver or a dual-stack race outside this locked thread.
++func inNamespace[T io.Closer](path string, operation func() (T, error)) (T, error) {
++	if path == "" {
++		return operation()
++	}
++	type result struct {
++		value T
++		err   error
++	}
++	done := make(chan result, 1)
++	go func() {
++		runtime.LockOSThread()
++		restored := true
++		defer func() {
++			if restored {
++				runtime.UnlockOSThread()
++			}
++		}()
++		var zero T
++		original, err := os.Open("/proc/thread-self/ns/net")
++		if err != nil {
++			done <- result{zero, err}
++			return
++		}
++		defer original.Close()
++		target, err := os.Open(path)
++		if err != nil {
++			done <- result{zero, err}
++			return
++		}
++		defer target.Close()
++		if err = unix.Setns(int(target.Fd()), unix.CLONE_NEWNET); err != nil {
++			done <- result{zero, err}
++			return
++		}
++		restored = false
++		defer func() {
++			if !restored {
++				restored = unix.Setns(int(original.Fd()), unix.CLONE_NEWNET) == nil
++			}
++		}()
++		value, callErr := operation()
++		restoreErr := unix.Setns(int(original.Fd()), unix.CLONE_NEWNET)
++		restored = restoreErr == nil
++		if restoreErr != nil {
++			if callErr == nil {
++				_ = value.Close()
++			}
++			value = zero
++		}
++		done <- result{value, errors.Join(callErr, restoreErr)}
++	}()
++	resultValue := <-done
++	return resultValue.value, resultValue.err
++}
+diff --git a/common/dialer/namespace_other.go b/common/dialer/namespace_other.go
+new file mode 100644
+--- /dev/null
++++ b/common/dialer/namespace_other.go
+@@ -0,0 +1,16 @@
++//go:build !linux
++
++package dialer
++
++import (
++	"errors"
++	"io"
++)
++
++func inNamespace[T io.Closer](path string, operation func() (T, error)) (T, error) {
++	if path != "" {
++		var zero T
++		return zero, errors.New("network namespace sockets require Linux")
++	}
++	return operation()
++}
+diff --git a/.loom-sing-tun/tun_linux.go b/.loom-sing-tun/tun_linux.go
+--- a/.loom-sing-tun/tun_linux.go
++++ b/.loom-sing-tun/tun_linux.go
+@@ -7,7 +7,6 @@
+ 	"net"
+ 	"net/netip"
+ 	"os"
+-	"os/exec"
+ 	"runtime"
+ 	"sync"
+ 	"syscall"
+@@ -23,7 +22,6 @@
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	N "github.com/sagernet/sing/common/network"
+ 	"github.com/sagernet/sing/common/rw"
+-	"github.com/sagernet/sing/common/shell"
+ 	"github.com/sagernet/sing/common/x/list"
+ 
+ 	"golang.org/x/sys/unix"
+@@ -311,8 +309,6 @@
+ 		return err
+ 	}
+ 
+-	t.setSearchDomainForSystemdResolved()
+-
+ 	if t.options.AutoRoute && runtime.GOOS == "android" {
+ 		t.interfaceCallback = t.options.InterfaceMonitor.RegisterCallback(t.routeUpdate)
+ 	}
+@@ -1050,30 +1046,3 @@
+ 		}
+ 	}
+ }
+-
+-func (t *NativeTun) setSearchDomainForSystemdResolved() {
+-	if t.options.EXP_DisableDNSHijack {
+-		return
+-	}
+-	ctlPath, err := exec.LookPath("resolvectl")
+-	if err != nil {
+-		return
+-	}
+-	dnsServer := t.options.DNSServers
+-	if len(dnsServer) == 0 {
+-		if len(t.options.Inet4Address) > 0 && HasNextAddress(t.options.Inet4Address[0], 1) {
+-			dnsServer = append(dnsServer, t.options.Inet4Address[0].Addr().Next())
+-		}
+-		if len(t.options.Inet6Address) > 0 && HasNextAddress(t.options.Inet6Address[0], 1) {
+-			dnsServer = append(dnsServer, t.options.Inet6Address[0].Addr().Next())
+-		}
+-	}
+-	if len(dnsServer) == 0 {
+-		return
+-	}
+-	go func() {
+-		_ = shell.Exec(ctlPath, "domain", t.options.Name, "~.").Run()
+-		_ = shell.Exec(ctlPath, "default-route", t.options.Name, "true").Run()
+-		_ = shell.Exec(ctlPath, append([]string{"dns", t.options.Name}, common.Map(dnsServer, netip.Addr.String)...)...).Run()
+-	}()
+-}

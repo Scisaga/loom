@@ -51,8 +51,8 @@ func (o InstallOptions) validate() error {
 	if !installPath(o.PackageRoot) || !installPath(o.State) || o.ResourceInputs != "" && !installPath(o.ResourceInputs) {
 		return errors.New("installation paths must be absolute canonical paths")
 	}
-	if !o.NoEnroll && o.Capture != "mixed" {
-		return errors.New("activation requires explicit --capture mixed; TUN installation awaits a dedicated namespace lifecycle")
+	if !o.NoEnroll && o.Capture != "mixed" && o.Capture != "tun" {
+		return errors.New("activation requires explicit --capture mixed or --capture tun")
 	}
 	if o.NoEnroll && (o.Capture != "" || o.ResourceInputs != "") {
 		return errors.New("no-enroll cannot request runtime activation inputs")
@@ -464,7 +464,7 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if lkg == nil {
 		return errors.New("enrollment has not completed; activation withheld")
 	}
-	args := []string{"client", "preflight", "-state", options.State, "-sing-box", filepath.Join(release, "sing-box"), "-capture", "mixed"}
+	args := []string{"client", "preflight", "-state", options.State, "-sing-box", filepath.Join(release, "sing-box"), "-capture", options.Capture}
 	if options.ResourceInputs != "" {
 		args = append(args, "-resource-inputs", options.ResourceInputs)
 	}
@@ -590,8 +590,12 @@ func checkManagedUnit(ctx context.Context, body, candidate []byte, currentPath s
 			return errors.New("accepted service template changed")
 		}
 	}
-	expected, err := serviceUnit(string(template), currentPath, options.State, options.ResourceInputs)
-	if err != nil || len(template) == 0 || !bytes.Equal(body, expected) {
+	matched := false
+	for _, capture := range []string{"mixed", "tun"} {
+		expected, projectionErr := serviceUnit(string(template), currentPath, options.State, options.ResourceInputs, capture)
+		matched = matched || projectionErr == nil && len(template) != 0 && bytes.Equal(body, expected)
+	}
+	if !matched {
 		return errors.New("existing runtime unit differs from the requested managed installation")
 	}
 	if !inactive {
@@ -676,7 +680,7 @@ func installationInputs(ctx context.Context, options InstallOptions, release, cu
 			return nil, nil, errors.New("prior runtime entry remains; verified cutover must remove it")
 		}
 	}
-	unit, err := ServiceUnit(release, options.State, options.ResourceInputs)
+	unit, err := ServiceUnit(release, options.State, options.ResourceInputs, options.Capture)
 	if err != nil {
 		return nil, nil, err
 	}

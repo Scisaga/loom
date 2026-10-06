@@ -12,16 +12,6 @@ func validateCapture(capture string) error {
 	return nil
 }
 
-func requireCaptureBoundary(capture string) error {
-	if err := validateCapture(capture); err != nil {
-		return err
-	}
-	if capture == "mixed" {
-		return nil
-	}
-	return requireIsolatedNetworkNamespace()
-}
-
 // deriveLinuxMixedRuntime changes the local traffic source of an already
 // authenticated access profile and reads missing domain metadata. Keeping its
 // inbound tag preserves every route matcher; selectors and authorization are

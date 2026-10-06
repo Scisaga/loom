@@ -28,6 +28,40 @@ type reviewedArtifact struct {
 }
 
 var reviewedArtifacts = map[string]reviewedArtifact{
+	"1.11.4-loom.4": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "ede01419eaa0f1c8fd2dbebb0c1a912f7da621243d50c33f2c55fedbdba0634a",
+			"domain-cache.patch":     "e3828a17d8bb10b252f5964f5e1d59d885bdeb405be80acb302b22ad45413106",
+			"prepare-sing-box.py":    "f2f18065f4ccf9a295e339971f3e1ddac373c3d70352a45326cef478f58acb5e",
+			"build-dataplane.sh":     "1459c75a54b781bc9279dce0df66c311b08c246dcc3b627eb10580faabcb86cc",
+		},
+		windows: map[string]string{
+			"amd64": "5b34972edf8f75c04cbfb376f0ee04d47e16ceab8c92d1d3cedff842200b1650",
+			"arm64": "81a494f9c6d2c577095f2dd4e30d7a90493e03ba0d967af9890c90454c349631",
+		},
+		linux: map[string]string{
+			"amd64": "93bfb328bbaebdab8c21cee19e5899f862f091ebd1ef2bbaa6f67df7a0fc3c36",
+			"arm64": "a7b96c199feb7461992bbaec84c85e04528b6ecd6a166a8eafed8e18c84042f6",
+		},
+	},
+	"1.11.4-loom.3": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "026ebb21a0bd54a179d02e74806757cecf4d262d9d93a469bdac14072ca93f0c",
+			"domain-cache.patch":     "8c9abc289002ce8711ebb015a4d15d7d34d8811e45204c22037dc22d4f27ce4f",
+			"prepare-sing-box.py":    "3928519376c53f24ee0c0060fb9e8fb275517fff49f493f67a03c74736b357b5",
+			"build-dataplane.sh":     "9c463444e09e23fc9ef2056c9115c78c84240889de0312516acbffb18238c708",
+		},
+		windows: map[string]string{
+			"amd64": "6a73614bcace2c56b3043e85719acfccff4e447cebc82596269ed39bf87494c1",
+			"arm64": "b5ae201ee130d4c86086dd7e30cacceda39bf2c023ca9f7c58fdc7aa925c506a",
+		},
+		linux: map[string]string{
+			"amd64": "b11af45fd03243884d57c6fc5fb0b33d6d516eb669aceba960362fcaf5d03fc3",
+			"arm64": "bb3aaee7dd85c268fbf61b850e3cde8052827385daf1914ad4939f5fb443a203",
+		},
+	},
 	"1.11.4-loom.1": {
 		sources: map[string]string{
 			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",

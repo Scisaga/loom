@@ -21,7 +21,8 @@ func TestInstallExplicitModes(t *testing.T) {
 		{"invitation stdin", func(o *InstallOptions) { o.Upgrade = false; o.InviteStdin = true }, true},
 		{"cache", func(o *InstallOptions) { o.Upgrade = false; o.NoEnroll = true; o.Capture = "" }, true},
 		{"implicit capture", func(o *InstallOptions) { o.Capture = "" }, false},
-		{"tun", func(o *InstallOptions) { o.Capture = "tun" }, false},
+		{"isolated tun", func(o *InstallOptions) { o.Capture = "tun" }, true},
+		{"unknown capture", func(o *InstallOptions) { o.Capture = "host" }, false},
 		{"ambiguous invitation", func(o *InstallOptions) { o.InviteStdin = true }, false},
 		{"no operation", func(o *InstallOptions) { o.Upgrade = false }, false},
 		{"cache activation", func(o *InstallOptions) { o.Upgrade = false; o.NoEnroll = true }, false},
@@ -138,7 +139,7 @@ func TestReplacedProgramsPreserveSignedEvidence(t *testing.T) {
 
 func TestServiceProjectionQuotesLiteralInputs(t *testing.T) {
 	state := `/var/lib/demo space %i $DEVICE/state.json`
-	body, err := ServiceUnit("/opt/demo-release", state, `/etc/demo %i $INPUT.json`)
+	body, err := ServiceUnit("/opt/demo-release", state, `/etc/demo %i $INPUT.json`, "mixed")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,6 +28,7 @@ const clientUsage = `loom client —— 客户端交付
 	loom client inspect [-state <文件>] [-identity]
 	                                             回读本机身份与认证 LKG；identity 只给公开身份坐标
 	loom client run                              Linux 运行入口，默认显式 Mixed proxy
+	loom client exec -- <command>                在当前隔离 TUN 内运行应用，随该运行代退出
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
 	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service
 	loom client status                           回读 selector 已确认的实际路径与观测
@@ -55,6 +56,8 @@ func cmdClient(args []string) error {
 		return cmdClientInspect(args[1:])
 	case "run":
 		return cmdClientRun(args[1:])
+	case "exec", "_tun-worker", "_tun-workload":
+		return cmdClientCapture(args)
 	case "preflight":
 		return cmdClientPreflight(args[1:])
 	case "cleanup":

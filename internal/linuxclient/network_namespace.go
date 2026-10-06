@@ -22,7 +22,3 @@ func requireDifferentNetworkNamespace(currentPath, initialPath string) error {
 	}
 	return nil
 }
-
-func requireIsolatedNetworkNamespace() error {
-	return requireDifferentNetworkNamespace("/proc/self/ns/net", "/proc/1/ns/net")
-}

@@ -20,7 +20,7 @@ func cmdClientInstall(args []string) error {
 	fs.StringVar(&options.PublicKey, "pubkey", "", "带外信任公钥；已有安装默认使用保留的信任输入")
 	fs.StringVar(&options.State, "state", defaultDeviceState, "唯一设备身份/LKG 路径")
 	fs.StringVar(&options.ResourceInputs, "resource-inputs", "", "受保护的本机资源材料引用")
-	fs.StringVar(&options.Capture, "capture", "", "激活须显式选择 mixed")
+	fs.StringVar(&options.Capture, "capture", "", "激活须显式选择 mixed 或隔离 tun")
 	fs.StringVar(&options.InviteFile, "invite-file", "", "owner-only 邀请文件")
 	fs.BoolVar(&options.InviteStdin, "invite-stdin", false, "从标准输入消费邀请")
 	fs.BoolVar(&options.Upgrade, "upgrade", false, "保留现有身份和认证状态的前向升级")

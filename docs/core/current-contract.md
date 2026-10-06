@@ -966,11 +966,12 @@ UI 只能投影验签结果及实际运行报告。此格式不创建 catalog、
 激活。正常链为精确源码构建 → 显式 generation 签名打包 → 带外公钥验证 → 正式安装入口 → 原身份运行/报告。
 最小检查包括规范往返及确定性、源码/架构/文件篡改拒绝、旧格式/未知字段/重复字段拒绝，以及双架构真实包验证。
 
-Linux 安装器在 `--capture mixed` 明确激活时，使用 root 保护的唯一 `current` 符号链接定位 releases 下的
+Linux 安装器在 `--capture mixed` 或 `--capture tun` 明确激活时，使用 root 保护的唯一 `current` 符号链接定位 releases 下的
 规范 manifest 内容 ID；该 manifest 和原始签名共同表达本机已接受的发布代。缓存目录不是接受记录，
 `--no-enroll` 不推进它。同平台低代与同代异值拒绝，同代同值可重试。先停止并禁用旧执行，验证精确程序
 与清理，再写 unit 并原子推进 current；接受后启动失败只禁用执行，不回退 current 或设备认证状态。
-unit 为已签模板与显式本机路径的投影，不能有未核验 drop-in。重试不能用包内公钥覆盖安装信任。
+unit 为已签模板、显式 capture 与本机路径的投影，不能有未核验 drop-in。TUN 只创建隔离 access
+执行边界，不能在宿主初始 namespace 启动 TUN；切换 capture 不改变身份、授权或发布 floor。重试不能用包内公钥覆盖安装信任。
 旧格式 current、已部署 signed-current floor 或未知旧入口不能作为初次安装绕过；它们仍按下面生产切换门禁处理。
 新程序运行回读后仅 compare-and-delete 被替代的两个可执行文件，旧 manifest、原签名和源码证据保留。
 接受后失败再重试时，从同一受保护 releases 目录内已验签的同平台较低代清单识别应退役程序；不新增旧指针

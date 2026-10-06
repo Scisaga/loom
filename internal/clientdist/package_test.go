@@ -123,8 +123,8 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 	if strings.Contains(systemdService, "Restart=always") || !strings.Contains(systemdService, "Restart=no") {
 		t.Fatal("Linux client service may retry a failed host network activation")
 	}
-	if !strings.Contains(installScript, `exec "$base/loom" client install`) || !strings.Contains(systemdService, "client run -capture mixed") || !strings.Contains(systemdService, "client cleanup") {
-		t.Fatal("installer must delegate to the unified explicit Mixed lifecycle")
+	if !strings.Contains(installScript, `exec "$base/loom" client install`) || !strings.Contains(systemdService, "client run -capture @CAPTURE@") || !strings.Contains(systemdService, "client cleanup") {
+		t.Fatal("installer must delegate to the unified explicit capture lifecycle")
 	}
 	if strings.Contains(systemdService, "ReadWritePaths=/etc ") || strings.Contains(systemdService, "DeviceAllow=/dev/net/tun") {
 		t.Fatal("Mixed unit must not grant TUN or all of /etc")

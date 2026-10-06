@@ -24,6 +24,30 @@ const (
 	defaultLinuxSingBox    = "/usr/local/lib/loom-client/current/sing-box"
 )
 
+func cmdClientCapture(args []string) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	switch args[0] {
+	case "_tun-worker":
+		if len(args) != 3 && (len(args) != 4 || args[3] != "check") {
+			return errors.New("invalid isolated data-plane invocation")
+		}
+		return linuxclient.ExecTUNWorker(args[1], args[2], len(args) == 4)
+	case "_tun-workload":
+		return linuxclient.RunTUNWorkload(ctx, args[1:])
+	case "exec":
+		fs := flag.NewFlagSet("client exec", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		config := fs.String("runtime-config", defaultLinuxConfig, "runtime configuration identifying the active isolated capture")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		return linuxclient.ExecuteCapture(ctx, *config, fs.Args())
+	default:
+		return errors.New("invalid capture command")
+	}
+}
+
 func cmdClientRun(args []string) error {
 	fs := flag.NewFlagSet("client run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -32,7 +56,7 @@ func cmdClientRun(args []string) error {
 	status := fs.String("status", defaultLinuxStatus, "deletable selector readback")
 	config := fs.String("runtime-config", defaultLinuxConfig, "ephemeral config projected from the LKG")
 	singBox := fs.String("sing-box", defaultLinuxSingBox, "exact packaged sing-box executable")
-	capture := fs.String("capture", "mixed", "tun (isolated namespace required) or mixed (explicit loopback proxy)")
+	capture := fs.String("capture", "mixed", "tun (supervised isolated applications) or mixed (explicit loopback proxy)")
 	resources := fs.String("resource-inputs", "", "protected local server listener/TLS input file")
 	wgKey := fs.String("wireguard-private-key", "/etc/wireguard/node.key", "protected WireGuard private key file")
 	if err := fs.Parse(args); err != nil {
@@ -55,7 +79,7 @@ func cmdClientPreflight(args []string) error {
 	fs.SetOutput(io.Discard)
 	state := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
 	singBox := fs.String("sing-box", defaultLinuxSingBox, "exact packaged sing-box executable")
-	capture := fs.String("capture", "mixed", "tun (isolated namespace required) or mixed (explicit loopback proxy)")
+	capture := fs.String("capture", "mixed", "tun (supervised isolated applications) or mixed (explicit loopback proxy)")
 	resources := fs.String("resource-inputs", "", "protected local server listener/TLS input file")
 	if err := fs.Parse(args); err != nil {
 		return err

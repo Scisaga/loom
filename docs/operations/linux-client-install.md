@@ -4,13 +4,12 @@
 [客户端运行时最小模型](../clients/client-runtime-model.md)：Direct、Auto 和指定最终出口只是同一候选集合上的
 `Preference`，实际路径必须来自 sing-box selector 回读，授权与可用性不得混为一谈。
 
-> **安全暂停：** 2026-09-21 的宿主网络接管事故证明，access TUN 不能运行在宿主初始 network namespace。
-> 本分支的 TUN preflight 在该环境继续失败关闭。正式 installer 必须显式选择 `--capture mixed`；TUN 安装在专用 namespace 生命周期完成前拒绝。2026-10-04 用户明确授权的正式替换使用显式 Mixed 与认证服务资源，
-> 已完成宿主停止、SIGKILL、精确 WG 清理、重启和基础网络回读；这不开放初始 netns TUN。
-> 不得删除 TUN 门禁或手工添加宿主逃生路由来完成安装。详见
-> [事故记录](../incidents/2026-09-21-host-network-takeover.md)。
-> 旧 TUN unit 与 quarantine 原件已随明确授权的替换保存在受保护证据；当前正式 unit 固定 `-capture mixed`，
-> 使用 `Restart=no` 和 `ExecStopPost=loom client cleanup`。不得将其改回初始 netns TUN。
+> **执行边界：** access TUN 只在专用 network namespace 中运行。默认开发入口仍为 Mixed。
+> installer 显式接收 `--capture mixed` 或 `--capture tun`；后者由同一 agent 创建隔离数据面，应用须从
+> `sudo loom client exec -- <command>` 启动。宿主的管理、DNS、代理与普通流量不因此进入 TUN。
+> 当前生产验收状态见[实施状态](../progress.md)，不能把源码支持或包生成等同于部署完成。
+> unit 使用 `Restart=no`；清理失败保持 failed/inactive，初始 netns 的 TUN worker 始终拒绝。
+> 事故背景见[宿主网络记录](../incidents/2026-09-21-host-network-takeover.md)。
 
 ## 下载与验证
 
@@ -42,14 +41,14 @@ manifest.sig 相同的原始 Ed25519 签名；旧 JSON 签名封装拒绝。构�
 
 ### 正式安装入口
 
-安装入口复用 CLI/runtime 的显式 Mixed、同事务加入和按 generation 清理，不新增安装状态机、receipt 或第二身份 store。
+安装入口复用 CLI/runtime 的显式 capture、同事务加入和按 generation 清理，不新增安装状态机、receipt 或第二身份 store。
 `install.sh` 保留为正常入口，由包内同一 Loom 程序完成严格验签、目录核验与安装，避免 shell 另写规范
 manifest/floor 的解码。脚本入口和直接 CLI 使用同一流程。
 
-激活必须显式选择 `--capture mixed`，邀请来源恰好为 `--invite-file` 或 `--invite-stdin`；升级使用 `--upgrade`，
-只缓存已验证制品使用 `--no-enroll`。TUN 安装在完整 namespace 生命周期接通前明确拒绝，不因安装进程偶然
-位于某个 namespace 就生成会在 PID 1 namespace 运行的 unit。stdin 不写 argv、环境或日志；原加入事务可
-恢复，已有身份不重建。state 与可选 resource-inputs 的路径只用于生成同一 unit 的实际 argv 和受保护读写
+激活必须显式选择 `--capture mixed` 或 `--capture tun`，邀请来源恰好为 `--invite-file` 或 `--invite-stdin`；升级使用 `--upgrade`，
+只缓存已验证制品使用 `--no-enroll`。TUN 安装生成同一监督入口，不因安装进程偶然
+位于某个 namespace 就允许数据面留在 PID 1 namespace。stdin 不写 argv、环境或日志；原加入事务可
+恢复，已有身份不重建。capture、state 与可选 resource-inputs 只用于生成同一 unit 的实际 argv 和受保护读写
 范围，不改变认证授权。路径生成须正确处理 systemd 的引用、百分号和变量转义。
 
 签名 manifest 的 generation 与内容 ID 是已有发布坐标，不增加权威实体。缓存 release 不推进接受代；唯一
@@ -62,9 +61,9 @@ generation 清理成功后，才安装新 unit 和原子推进 current；新服�
 领域到实现的对应只有：已签 Manifest → 规范原始字节及签名 → 内容目录/current → 精确进程文件；
 DeviceIdentity/LKG/Preference → 既有 deviceclient 文件 → 同一 runtime → CLI 与私有签名报告。
 unit、status 和安装输出只是输入或回读投影。正常链为受保护管理入口交付邀请 → stdin/file 加入 → 原子持久
-身份和 LKG → Mixed/service 应用 → CLI 与控制端报告回读 → 停止/异常退出/重启后的同身份恢复。
+身份和 LKG → 显式 capture/service 应用 → CLI 与控制端报告回读 → 停止/异常退出/重启后的同身份恢复。
 最小验证覆盖实际 systemd 安装与业务、同事务重试、升级代比较、损坏制品与失败后的身份/floor 保留，以及
-未授权 TUN 拒绝；正式包生成、缓存安装或单次 status 成功均不抵扣这条链。
+初始 namespace TUN 拒绝及隔离应用树清理；正式包生成、缓存安装或单次 status 成功均不抵扣这条链。
 
 有效 control 在私有控制面按职责签发 Invite，签发即批准；平台由目标识别并在首次 claim 绑定，
 不预先把邀请写成 Linux 专用。纯 access 使用二维码媒介，其同一邀请文件也可交给 CLI 导入；
@@ -154,7 +153,7 @@ installer 不自动处理上述旧部署；本轮人工指定精确制品的正�
 归档失败、摘要不符、旧入口仍可加载
 或新路径尚不能承担原业务时，保留证据并报告具体阻碍，不以 `exact=true` 单项结果宣称完成。
 清理不 flush 共享 route/rule/firewall，也不重新启用初始 namespace access TUN。
-旧隔离 unit 的归档不改变当前源码的 TUN 拒绝门禁。
+旧隔离 unit 的归档不改变初始 namespace TUN 拒绝门禁。
 
 ## 正式运行与回读
 
@@ -175,10 +174,26 @@ TLS 引用见[本机配置模型](configuration-model.md)。普通 `resource.put
 删除最后一个自有资源后，纯服务节点保持配置/报告通道，数据面报告 stopped。配置收窄先关闭旧进程
 与全部已认证会话；父进程异常退出也由内核终止其数据面子进程。失败保留新 LKG，不能复活旧 ACL。
 当前资源拨号地址已验收 IP；资源主机名的认证 resolver 接线和业务 DNS 仍待完成，不使用主机 resolver
-为该 underlay 拨号补值。server listener 与 access TUN 的组合在生命周期分离前明确拒绝。
+为该 underlay 拨号补值。hybrid 的 server listener 留在宿主 underlay，access TUN 在单独受监督的 namespace。
 
-包内模板、安装 preflight 和生成的正式 unit 使用显式 `-capture mixed`。这不抵扣隔离 TUN 验收，
-不得把 Mixed unit 改回初始 netns TUN。
+包内模板按显式 capture 投影，安装 preflight 与正式 unit 使用相同输入。隔离 TUN 的 unit 额外获得
+`CAP_SYS_ADMIN` 与 `/dev/net/tun` 访问，Mixed unit 不获得这两项权限。监督进程保留原网络；
+TUN worker 克隆新的网络空间并再次核对隔离，出站 socket 通过继承的原 namespace 引用创建。
+TUN unit 使用 systemd 253 起提供的 `OpenFile` 传入初始 namespace 引用用于核对；
+无需授予跨进程调试能力，也不跳过原门禁。描述符的数量、名称、接收 PID 与 nsfs 类型逐项核对。
+不创建宿主 veth、route/rule 或 firewall，不把宿主流量默认导入。
+
+```bash
+sudo ./install.sh --capture tun --upgrade
+sudo loom client exec -- curl --fail https://demo-service.example/
+```
+
+`exec` 核对服务端的 UID 与精确 Loom 制品；服务端核对调用 UID 及其持有的独立应用树。应用使用单独 PID/mount namespace，
+仅在其中设置 DNS，并在执行前清空 capability。正常停止、数据面崩溃、agent 或 exec 退出都会
+终止所拥有的应用树；原应用不跨 generation 自动重启。新授权生效前先结束旧应用与旧数据面，
+失败保留已接受身份、授权和发布 floor。数据面停止后 agent 可保留认证修复通道，不能报告 running。
+`config.json.resolv.conf` 是可删除重建的本代 DNS 投影，清理只移除 inode 核对一致的文件；
+它不是宿主 resolver 或新的配置权威。systemd 使用既有 RuntimeDirectory 清理崩溃后的临时文件。
 
 WG 新接口先以不可碰撞的临时名称创建，取得 ifindex 并设置所有权 alias 后才改成资源规定的名称；
 不假定创建命令会保留 alias。`config.json.wg-ownership` 只保存本 generation 的清理凭据，不是网络权威。

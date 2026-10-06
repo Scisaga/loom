@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -48,6 +49,7 @@ type Options struct {
 	Capture             string
 	ResourceInputs      string
 	defaultProbe        bool
+	captureNamespace    *os.File
 }
 
 func (options *Options) defaults() {
@@ -98,6 +100,11 @@ func (options Options) probeForService(view control.DeviceView, scope string) Pr
 		if len(view.DNSServers) == 0 {
 			return nil
 		}
+		if options.captureNamespace != nil {
+			return func(ctx context.Context) ProbeResult {
+				return namespaceBusinessProbe(ctx, options.captureNamespace, group.Targets[0])
+			}
+		}
 		return func(ctx context.Context) ProbeResult { return businessProbe(ctx, view.DNSServers[0], group.Targets[0]) }
 	}
 	return nil
@@ -147,7 +154,7 @@ func runtimeView(store *deviceclient.Store) (*control.DeviceViewEnvelope, error)
 	return accessView(store.LKG())
 }
 func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpointExclusions []string, capture string) (string, error) {
-	if err := requireCaptureBoundary(capture); err != nil {
+	if err := validateCapture(capture); err != nil {
 		return "", err
 	}
 	config, err := clientadapter.ManagedRuntimeConfig(view, secret)
@@ -211,7 +218,7 @@ func PreflightCapture(state, executable, capture string) error {
 	return PreflightResources(state, executable, capture, "")
 }
 func PreflightResources(state, executable, capture, inputPath string) error {
-	if err := requireCaptureBoundary(capture); err != nil {
+	if err := validateCapture(capture); err != nil {
 		return err
 	}
 	store, err := deviceclient.Load(state)
@@ -230,11 +237,39 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	if err != nil {
 		return err
 	}
-	config, err := nodeRuntimeConfig(view.View, secret, nil, capture, executions)
+	config, serverConfig, err := generationConfigs(view.View, secret, nil, capture, executions)
 	if err != nil {
 		return err
 	}
+	if serverConfig != "" {
+		if err := preflightRuntimeConfig(executable, serverConfig); err != nil {
+			return err
+		}
+	}
 	return preflightRuntimeConfig(executable, config)
+}
+
+func generationConfigs(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution) (string, string, error) {
+	if view.RuntimeProfile == nil {
+		capture = "mixed" // No access role means no capture process at all.
+	}
+	if capture != "tun" {
+		config, err := nodeRuntimeConfig(view, secret, exclusions, capture, executions)
+		return config, "", err
+	}
+	config, err := nodeRuntimeConfig(view, secret, exclusions, capture, nil)
+	if err != nil {
+		return "", "", err
+	}
+	config, err = withTUNUnderlay(config)
+	if err != nil || len(executions) == 0 {
+		return config, "", err
+	}
+	// Both processes consume this one accepted View. Removing the access profile
+	// here selects the local server projection, never a second authenticated View.
+	view.RuntimeProfile = nil
+	server, err := nodeRuntimeConfig(view, "", nil, "mixed", executions)
+	return config, server, err
 }
 func acceptCertifiedView(store deviceclient.IdentityStore, envelope control.DeviceViewEnvelope) (bool, error) {
 	current := store.LKG()
@@ -326,6 +361,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		return err
 	}
 	hasAccess := lkg.View.RuntimeProfile != nil
+	if !hasAccess {
+		options.Capture = "mixed"
+	}
 	var routes []clientmodel.RouteCandidate
 	if hasAccess {
 		routes, _, err = clientadapter.AccessProjection(lkg.View)
@@ -341,9 +379,6 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	}
 	exclusions := []string{}
 	if options.Capture == "tun" {
-		if err := requireCaptureBoundary(options.Capture); err != nil {
-			return err
-		}
 		exclusions, err = deviceclient.EndpointRouteExclusions(ctx, lkg.View.Endpoints, lkg.View.DNSServers)
 		if err != nil {
 			return err
@@ -353,7 +388,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	config, err := nodeRuntimeConfig(lkg.View, secret, exclusions, options.Capture, executions)
+	config, serverConfig, err := generationConfigs(lkg.View, secret, exclusions, options.Capture, executions)
 	if err != nil {
 		return err
 	}
@@ -373,6 +408,11 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	}
 	if err := preflightRuntimeConfig(options.SingBox, config); err != nil && (hasAccess || len(executions) != 0) {
 		return err
+	}
+	if serverConfig != "" {
+		if err := preflightRuntimeConfig(options.SingBox, serverConfig); err != nil {
+			return err
+		}
 	}
 	if err := replaceWireGuard(transaction, wg, identity, options); err != nil {
 		return err
@@ -397,8 +437,10 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 	}
 	var done chan error
+	var serverDone chan error
 	var selector Selector
 	pid := 0
+	resourcePID := 0
 	if hasAccess || len(executions) != 0 {
 		if err := writeConfig(options.Config, config); err != nil {
 			return err
@@ -412,20 +454,41 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		// thread until Wait completes, including every error and reload path.
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
-		command := exec.Command(options.SingBox, "run", "-c", options.Config)
-		if options.Capture == "tun" {
-			configPath, err := filepath.Abs(options.Config)
-			if err != nil {
+		if serverConfig != "" {
+			serverPath := options.Config + ".server"
+			if err := writeConfig(serverPath, serverConfig); err != nil {
 				return err
 			}
-			executable, err := filepath.Abs(command.Path)
-			if err != nil {
+			defer func() {
+				if err := os.Remove(serverPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+					retErr = errors.Join(retErr, errRuntimeCleanup, err)
+				}
+			}()
+			server := exec.Command(options.SingBox, "run", "-c", serverPath)
+			server.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+			server.Stdout, server.Stderr = options.Log, options.Log
+			if err := server.Start(); err != nil {
 				return err
 			}
-			command = exec.Command(executable, "run", "-c", configPath)
-			command.Dir = filepath.Dir(configPath)
+			resourcePID = server.Process.Pid
+			serverDone = make(chan error, 1)
+			go func() { serverDone <- server.Wait(); close(serverDone) }()
+			defer func() { retErr = errors.Join(retErr, stopProcess(server, serverDone)) }()
+			if err := waitHY2Resources(ctx, executions, resourcePID, options.Now, serverDone); err != nil {
+				return err
+			}
 		}
+		command := exec.Command(options.SingBox, "run", "-c", options.Config)
 		command.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+		if options.Capture == "tun" {
+			command, err = tunCommand(options, false)
+			if err != nil {
+				return err
+			}
+			for _, file := range command.ExtraFiles {
+				defer file.Close()
+			}
+		}
 		command.Stdout, command.Stderr = options.Log, options.Log
 		if err := command.Start(); err != nil {
 			return err
@@ -434,10 +497,21 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		done = make(chan error, 1)
 		go func() { done <- command.Wait(); close(done) }()
 		defer func() { retErr = errors.Join(retErr, stopProcess(command, done)) }()
+		if options.Capture == "tun" {
+			options.captureNamespace, err = captureNamespace(ctx, command, options.SingBox, command.ExtraFiles[2], done)
+			if err != nil {
+				return err
+			}
+			defer options.captureNamespace.Close()
+		}
 		if hasAccess {
 			selector, err = NewHTTPSelector(config)
 			if err != nil {
 				return err
+			}
+			if options.captureNamespace != nil {
+				httpSelector := selector.(*HTTPSelector)
+				httpSelector.client.Transport.(*http.Transport).DialContext = namespaceDialer(options.captureNamespace)
 			}
 			scopes, _, err := scopesFor(routes)
 			if err != nil {
@@ -447,8 +521,11 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 				return err
 			}
 		}
-		if err := waitHY2Resources(ctx, executions, pid, options.Now, done); err != nil {
-			return err
+		if serverConfig == "" {
+			resourcePID = pid
+			if err := waitHY2Resources(ctx, executions, pid, options.Now, done); err != nil {
+				return err
+			}
 		}
 	}
 	components, componentErr := linuxComponentReadbacks(ctx, pid)
@@ -482,7 +559,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 					return err
 				}
 			}
-			resources, err := readHY2Resources(ctx, executions, pid, options.Now())
+			resources, err := readHY2Resources(ctx, executions, resourcePID, options.Now())
 			if err != nil {
 				return err
 			}
@@ -515,6 +592,17 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err := update(); err != nil {
 		return err
 	}
+	if options.captureNamespace != nil {
+		workloads, err := serveCaptureWorkloads(ctx, options.Config, options.captureNamespace)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := workloads.Close(); err != nil {
+				retErr = errors.Join(retErr, errRuntimeCleanup, err)
+			}
+		}()
+	}
 	ticker := time.NewTicker(options.RefreshPoll)
 	defer ticker.Stop()
 	for {
@@ -526,6 +614,8 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 				return errors.New("sing-box exited unexpectedly")
 			}
 			return errors.New("sing-box process exited")
+		case <-serverDone:
+			return errors.New("server sing-box process exited")
 		case <-ticker.C:
 		case <-options.Reload:
 		}
@@ -646,7 +736,7 @@ func waitForRepair(ctx context.Context, store *deviceclient.Store, options Optio
 // that authority and the authenticated repair channel; it cannot revive a grant.
 func Run(ctx context.Context, options Options) (retErr error) {
 	options.defaults()
-	if err := requireCaptureBoundary(options.Capture); err != nil {
+	if err := validateCapture(options.Capture); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {

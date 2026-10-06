@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare pinned data-plane sources with the reviewed DNS and DLL fixes."""
+"""Prepare pinned data-plane sources with the reviewed local patch."""
 
 import hashlib
 import json
@@ -68,15 +68,22 @@ def prepare(destination):
                 target = stage / ".loom-sing-tun" / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(archive.read(member))
-        subprocess.run(["git", "apply", "--check", str(patch)], cwd=stage, check=True)
-        subprocess.run(["git", "apply", str(patch)], cwd=stage, check=True)
+        # This disposable tree is not part of the enclosing Loom worktree.
+        # Otherwise git-format hunks can be silently skipped as outside its
+        # current directory, while traditional unified hunks still apply.
+        patch_env = {key: value for key, value in os.environ.items()
+                     if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}}
+        patch_env["GIT_CEILING_DIRECTORIES"] = str(stage.parent)
+        subprocess.run(["git", "apply", "--check", str(patch)], cwd=stage, env=patch_env, check=True)
+        subprocess.run(["git", "apply", str(patch)], cwd=stage, env=patch_env, check=True)
+        subprocess.run(["git", "apply", "--reverse", "--check", str(patch)], cwd=stage, env=patch_env, check=True)
         (stage / MARKER).write_text(COMMIT)
         if destination.exists():
             shutil.rmtree(destination)
         stage.rename(destination)
     return {"upstream_version": VERSION, "upstream_commit": COMMIT, "upstream_module_sum": SUM,
             "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
-            "artifact_version": "1.11.4-loom.2"}
+            "artifact_version": "1.11.4-loom.4"}
 
 
 if __name__ == "__main__":

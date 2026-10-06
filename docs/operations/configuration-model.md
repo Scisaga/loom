@@ -106,8 +106,8 @@ schema 3 本机输入：`{"schema":3,"listeners":[...]}`，listeners 按 resourc
 只有当前认证 View 中由本节点承载的资源才能消费对应项，保留的未引用定位项不启动 listener 或授予权限。
 私钥不进入认证资源；公开 CA 和校验名只来自该资源的 authentication，不从本机 trust 文件补权。
 正式启动校验证书/私钥匹配、CA、校验名、用途与有效期；资源报告再从真实 listener 的 QUIC/TLS 与认证回读。
-纯服务节点不启动 access capture；当前 hybrid 只支持显式 Mixed，共享进程中的 server listener 不能跟随
-TUN 进入 access namespace，未接入分离生命周期前对此组合拒绝。该输入不增加根 `.env` 键。
+纯服务节点不启动 access capture；hybrid 的 server listener 留在原 underlay，显式隔离 TUN 的 access
+进程另行监督，两者消费同一认证 View。安装与部署结果见[实施状态](../progress.md)。该输入不增加根 `.env` 键。
 资源删除后未引用的本机输入仍可保留，但没有资源的纯服务节点停止数据面，只维持私有配置与报告通道。
 旧 generation 的进程退出须已回读后才可启动替代配置；父进程异常退出由 Linux 父死亡信号终止子进程，
 创建线程保持到子进程退出，以免 Go 线程生命周期造成误杀或遗留。Mixed capture 与 Hy2 listener 不拥有宿主

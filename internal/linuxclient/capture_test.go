@@ -120,22 +120,16 @@ func TestMixedCaptureRejectsAdditionalFacilitiesAndImplicitRouting(t *testing.T)
 	}
 }
 
-func TestMixedCaptureDoesNotRelaxTUNNamespaceBoundary(t *testing.T) {
-	if err := requireCaptureBoundary("mixed"); err != nil {
-		t.Fatal(err)
-	}
-	for _, invalid := range []string{"", "auto", "Mixed"} {
-		if err := requireCaptureBoundary(invalid); err == nil {
-			t.Fatal("unknown capture mode bypassed the boundary")
+func TestCaptureModeRequiresExplicitKnownInput(t *testing.T) {
+	for _, mode := range []string{"mixed", "tun"} {
+		if err := validateCapture(mode); err != nil {
+			t.Fatal(err)
 		}
 	}
-	current, currentErr := os.Stat("/proc/self/ns/net")
-	initial, initialErr := os.Stat("/proc/1/ns/net")
-	if currentErr != nil || initialErr != nil || !os.SameFile(current, initial) {
-		t.Skip("initial namespace check requires the Linux host namespace")
-	}
-	if err := requireCaptureBoundary("tun"); err == nil || !strings.Contains(err.Error(), "initial network namespace") {
-		t.Fatalf("TUN initial-namespace refusal changed: %v", err)
+	for _, invalid := range []string{"", "auto", "Mixed"} {
+		if err := validateCapture(invalid); err == nil {
+			t.Fatal("unknown capture mode bypassed the boundary")
+		}
 	}
 }
 
