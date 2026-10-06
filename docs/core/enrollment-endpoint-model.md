@@ -123,6 +123,17 @@ EKU 仅 `serverAuth`、`CA=false`，KeyUsage 不含 `keyCertSign`。叶私钥留
 最小验证覆盖正式命令生成与离线核验、同代重试保持私钥和请求字节、错锚/成员/入口/CSR 篡改拒绝，
 以及原子目录发布失败后的原有材料保全。CSR 生成不抵扣网站根、证书签回或 `control.loom` 浏览器验收。
 
+签回材料先通过 `control website verify-certificate` 核验：输入原公开请求、上述独立可信坐标、独立指定
+的网站根公开证书和由该根直接签发的叶证书。沿用标准 PEM/DER，不增加签回对象或持久状态。先核验原请求，
+再检查根的自签名、CA 用途、critical `.loom` DNS 约束及全 IPv4/IPv6 排除；叶必须绑定原 CSR 公钥，
+只有精确 `control.loom` SAN、serverAuth 与 digitalSignature，且 CA=false。根和叶均须在调用方提供的
+当前时间有效，使用该独立根验链，不查询系统信任库或网络。根文件和叶文件各含一个证书；不能以叶文件
+附带的另一根替代操作者选定的根。校验成功只回读公开摘要和有效期，不改变 EndpointGeneration、系统信任
+或 listener。失败不改写原材料。后续安装仍须核对承载 control 本地私钥、当前成员与入口状态。
+
+最小签回验证覆盖匹配请求的真实签名叶、无约束/错根、额外 SAN 或用途、错公钥、过期和临界到期拒绝，
+以及独立根文件的选择。反例是一个能被系统根信任、但不受 `.loom` 限制的正常 HTTPS 证书：仍须拒绝。
+
 承载者核对链、名称、用途、有效期与本地私钥匹配后，以新证书引用建立下一 `EndpointGeneration`。
 在 prepared 阶段用候选地址及 SNI `control.loom` 定向预检 TLS 与 Web；通过后才签发 serving 阶段，
 再用目标浏览器从正式入口回读，成功后旧代转为 draining、retired。正式回读失败时只让**新代**

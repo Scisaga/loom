@@ -55,7 +55,7 @@ func (request WebsiteRequest) csr() (*x509.CertificateRequest, error) {
 	key, ok := csr.PublicKey.(*ecdsa.PublicKey)
 	if !ok || key.Curve != elliptic.P256() || len(csr.DNSNames) != 1 || csr.DNSNames[0] != "control.loom" ||
 		len(csr.IPAddresses) != 0 || len(csr.EmailAddresses) != 0 || len(csr.URIs) != 0 ||
-		len(csr.Extensions) != 1 || !csr.Extensions[0].Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 17}) {
+		len(csr.Extensions) != 1 || !csr.Extensions[0].Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 17}) || !exactWebsiteSAN(csr.Extensions) {
 		return nil, errors.New("website CSR requires P-256 and only the control.loom SAN")
 	}
 	return csr, nil

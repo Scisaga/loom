@@ -129,6 +129,20 @@ loom control website verify-request -request /private/demo-delivery/request.json
 操作者仍须核对当前成员状态，使用受约束的离线网站根按固定模板签发，再将公开叶链交回。
 CSR 不启动 listener，不改变 DNS 或现有证书，不代表 `control.loom` 已可访问。
 
+签回后，用同一组独立可信坐标核验公开证书。`-root` 必须是操作者独立指定的公开根，不能从返回材料中
+自动选根；根、叶各用一个 PEM 文件，不提供根私钥：
+
+```bash
+loom control website verify-certificate -request /private/demo-delivery/request.json \
+  -network-id demo-network -genesis-digest <trusted-genesis-digest> \
+  -control-config-id <trusted-current-config-digest> \
+  -control-id demo-control -node-id demo-node -endpoint-id demo-web -generation 1 \
+  -root /private/demo-delivery/website-root.pem -certificate /private/demo-delivery/website-leaf.pem
+```
+
+命令检查受约束根、原 CSR 公钥、精确名称、用途、有效期及直接签发链，回读公开摘要和到期时间。
+它不导入浏览器信任或激活入口；后续正式安装还须核对本机叶私钥并完成 prepared 预检和实际浏览器回读。
+
 目标 `.loom` 网站根带 critical 名称约束并排除所有 IP，目标网站叶 SAN 仅为 `control.loom`，
 根私钥不在任何 control。该证书链不能验证开发调试浏览器使用的 `127.0.0.1`。
 [控制模型](../core/control-model.md#9-dns-overlay)已将正式 `.loom` 入口和回环调试入口分开；

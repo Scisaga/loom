@@ -2,6 +2,7 @@ package control
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -72,10 +73,18 @@ func TestWebsiteRequestIdentityRetryAndOfflineVerification(t *testing.T) {
 			}
 		})
 	}
+	changedByte := func(encoded string) string {
+		body, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil || len(body) == 0 {
+			t.Fatal("invalid tamper fixture", err)
+		}
+		body[len(body)-1] ^= 1
+		return base64.RawURLEncoding.EncodeToString(body)
+	}
 	for _, change := range []func(*WebsiteRequest){
 		func(v *WebsiteRequest) { v.EndpointID = "demo-substituted-web" },
-		func(v *WebsiteRequest) { v.CSRDER = v.CSRDER[:len(v.CSRDER)-2] + "AA" },
-		func(v *WebsiteRequest) { v.Signature = v.Signature[:len(v.Signature)-2] + "AA" },
+		func(v *WebsiteRequest) { v.CSRDER = changedByte(v.CSRDER) },
+		func(v *WebsiteRequest) { v.Signature = changedByte(v.Signature) },
 	} {
 		wrong := request
 		change(&wrong)
