@@ -27,13 +27,21 @@ type reportTransferCapture struct {
 	sent        map[string]int
 	forgedID    string
 	forgedScope reportScope
+	delay       time.Duration
 }
 
 func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.mu.Lock()
-		forgedID, forgedScope := capture.forgedID, capture.forgedScope
+		forgedID, forgedScope, delay := capture.forgedID, capture.forgedScope, capture.delay
 		capture.mu.Unlock()
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-r.Context().Done():
+				return
+			}
+		}
 		if forgedID != "" && (r.URL.Path == "/internal/report-ranges" || r.URL.Path == "/internal/report-ids") {
 			recorded := httptest.NewRecorder()
 			next.ServeHTTP(recorded, r)
@@ -238,9 +246,16 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	post(0, otherReport, http.StatusOK)
-	if err := syncPeer(1, 0); err == nil {
-		t.Fatal("interrupted range claimed success")
-	}
+	// Exercise the daemon's real round budget: healthy, slower private
+	// requests must commit a batch before the later interrupted transfer.
+	// A shared deadline shorter than the request chain would retry forever.
+	capture.mu.Lock()
+	capture.delay = 3 * time.Second
+	capture.mu.Unlock()
+	peers[1].server.Runtime.reconcilePeers()
+	capture.mu.Lock()
+	capture.delay = 0
+	capture.mu.Unlock()
 	if got := peers[1].server.Runtime.Reports.History(); len(got) != reportBatchCount {
 		t.Fatal("complete prefix was not durable before interruption", len(got))
 	}

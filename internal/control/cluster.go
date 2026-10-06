@@ -128,7 +128,10 @@ func (runtime *Runtime) reconcilePeers() {
 			return
 		default:
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// One report batch needs frontier, ranges, IDs and original bodies.
+		// Each private request already has a 15-second bound; a shorter shared
+		// deadline can repeatedly cancel the first batch before any progress.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		_ = runtime.reconcilePeer(ctx, member)
 		cancel()
 	}
