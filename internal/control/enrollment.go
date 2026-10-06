@@ -24,6 +24,7 @@ type EndpointGeneration struct {
 	ServerName        string   `json:"server_name"`
 	SPKISHA256        string   `json:"spki_sha256"`
 	CertificateDigest string   `json:"certificate_digest"`
+	WebsiteTrustID    string   `json:"website_trust_id,omitempty"`
 	Modes             []string `json:"modes"`
 	State             string   `json:"state"`
 	DrainUntil        int64    `json:"drain_until"`
@@ -48,6 +49,10 @@ func (endpoint EndpointGeneration) Validate() error {
 		if mode != "bootstrap" && mode != "device" && mode != "web" || index > 0 && endpoint.Modes[index-1] >= mode {
 			return errors.New("endpoint modes are invalid or not uniquely sorted")
 		}
+	}
+	website := endpoint.ServerName == "control.loom" && containsString(endpoint.Modes, "web")
+	if website != (endpoint.WebsiteTrustID != "") || website && (ValidateID(endpoint.WebsiteTrustID) != nil || endpoint.Host == "loom" || strings.HasSuffix(endpoint.Host, ".loom")) {
+		return errors.New("control.loom requires an explicit website trust grant and an independent underlay host")
 	}
 	if !validateTime(endpoint.DrainUntil) || endpoint.State == "draining" && endpoint.DrainUntil == 0 || endpoint.State != "draining" && endpoint.DrainUntil != 0 {
 		return errors.New("endpoint drain deadline does not match its state")

@@ -1500,6 +1500,11 @@ func closeEnrollmentConflicts(projection *Projection) {
 }
 
 func (graph *materialGraph) validateEndpoint(material Material, view Projection, history []string, value EndpointGeneration) error {
+	if value.WebsiteTrustID != "" && (value.State == "prepared" || value.State == "serving") {
+		if _, err := endpointWebsiteTrust(view, value); err != nil {
+			return err
+		}
+	}
 	if value.State == "draining" || value.State == "retired" {
 		for _, invite := range view.Invites {
 			if invite.Endpoint.ID != value.ID || invite.Endpoint.Generation != value.Generation {
@@ -1551,7 +1556,7 @@ func (graph *materialGraph) validateEndpoint(material Material, view Projection,
 		}
 		return nil
 	}
-	if value.Host != previous.Host || value.Port != previous.Port || value.ServerName != previous.ServerName || value.SPKISHA256 != previous.SPKISHA256 || value.CertificateDigest != previous.CertificateDigest || !reflect.DeepEqual(value.Modes, previous.Modes) {
+	if value.Host != previous.Host || value.Port != previous.Port || value.ServerName != previous.ServerName || value.SPKISHA256 != previous.SPKISHA256 || value.CertificateDigest != previous.CertificateDigest || value.WebsiteTrustID != previous.WebsiteTrustID || !reflect.DeepEqual(value.Modes, previous.Modes) {
 		return errors.New("endpoint generation changes immutable coordinates")
 	}
 	stages := map[string]int{"prepared": 0, "serving": 1, "draining": 2, "retired": 3}

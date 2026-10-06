@@ -68,12 +68,23 @@ func VerifyWebsiteCertificate(request WebsiteRequest, expected WebsiteRequestExp
 	if err != nil {
 		return nil, err
 	}
+	leaf, err := verifyWebsiteLeaf(leafDER, rootDER, now)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(leaf.RawSubjectPublicKeyInfo, csr.RawSubjectPublicKeyInfo) {
+		return nil, errors.New("website leaf does not bind the original CSR")
+	}
+	return leaf, nil
+}
+
+func verifyWebsiteLeaf(leafDER, rootDER []byte, now time.Time) (*x509.Certificate, error) {
 	root, err := ValidateWebsiteRoot(rootDER)
 	if err != nil {
 		return nil, err
 	}
 	leaf, err := x509.ParseCertificate(leafDER)
-	if err != nil || len(leafDER) > 32<<10 || !bytes.Equal(leaf.Raw, leafDER) || !bytes.Equal(leaf.RawSubjectPublicKeyInfo, csr.RawSubjectPublicKeyInfo) ||
+	if err != nil || len(leafDER) > 32<<10 || !bytes.Equal(leaf.Raw, leafDER) ||
 		leaf.IsCA || !leaf.BasicConstraintsValid || leaf.KeyUsage != x509.KeyUsageDigitalSignature ||
 		len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth || len(leaf.UnknownExtKeyUsage) != 0 ||
 		!exactWebsiteSAN(leaf.Extensions) || !leaf.NotAfter.After(leaf.NotBefore) {

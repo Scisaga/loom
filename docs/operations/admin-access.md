@@ -166,3 +166,11 @@ loom client website-root -state /var/lib/loom-device/state.json \
 `admin-root.crt` 的实际证书与信任存储，先让两条入口及新管理员身份
 通过真实浏览器验收，再按受保护的前向迁移移除不符合目标约束的旧网站根。证书现状未读回前不宣称
 新根已经安装，也不因目标模型已写好而删除当前可用证书。
+
+
+网站签回经上述核验后，沿已有 `control endpoint-inputs` 安装本机输入，再用 `control write` 提交
+prepared 与 serving。网站 EndpointGeneration 的 `website_trust_id` 必须引用已通过 Settings 或同一
+普通操作授权的根；`key_file` 必须定位该 control 原 CSR 目录中的 `key.pem`，`certificate_file`
+定位单张签回叶。网站根私钥不参与安装。正式输入安装会核对当前成员、原请求、公钥与完整根约束。
+同一 TCP 地址可按不同 SNI 分别提供原设备证书和 `control.loom` 网站证书；同名异证书的续签仍需
+另一个可验证的既有拨号地址，不能通过改写原代或关闭原设备通道强行预检。

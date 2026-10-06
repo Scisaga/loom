@@ -74,6 +74,38 @@ func readWebsiteRequest(directory string, expected WebsiteRequestExpectation) (W
 	return request, nil
 }
 
+func verifyLocalWebsiteRequest(root string, projection Projection, endpoint EndpointGeneration, inputs EndpointLocalInputs, now time.Time) error {
+	node, err := LoadNodeConfig(root)
+	if err != nil {
+		return err
+	}
+	if _, err := activeLocalMember(node, projection.Config); err != nil {
+		return err
+	}
+	directory := websiteRequestDirectory(root, endpoint.ID, endpoint.Generation)
+	if inputs.KeyFile != filepath.Join(directory, "key.pem") || endpoint.OwnerControlID != node.ControlID {
+		return errors.New("website endpoint must use its owning control's original CSR key")
+	}
+	expected := WebsiteRequestExpectation{node.NetworkID, node.GenesisID, projection.ControlConfigID,
+		node.ControlID, node.NodeID, endpoint.ID, endpoint.Generation}
+	request, err := readWebsiteRequest(directory, expected)
+	if err != nil {
+		return err
+	}
+	certificate, err := loadAuthorizedEndpointCertificate(projection, endpoint, inputs, now)
+	if err != nil {
+		return err
+	}
+	csr, err := VerifyWebsiteRequest(request, expected)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(csr.RawSubjectPublicKeyInfo, certificate.Leaf.RawSubjectPublicKeyInfo) {
+		return errors.New("website endpoint leaf does not match its original CSR")
+	}
+	return nil
+}
+
 // PrepareWebsiteRequest creates only a leaf key and a public signing request on
 // the control. The authority lock freezes the member and endpoint checks while
 // the complete directory is durably published. No authority fact is written.

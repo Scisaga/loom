@@ -21,6 +21,12 @@ import (
 
 func testWebsiteTrust(t *testing.T, now time.Time) PublicTrust {
 	t.Helper()
+	trust, _ := testWebsiteTrustKey(t, now)
+	return trust
+}
+
+func testWebsiteTrustKey(t *testing.T, now time.Time) (PublicTrust, *ecdsa.PrivateKey) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +40,7 @@ func testWebsiteTrust(t *testing.T, now time.Time) PublicTrust {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return PublicTrust{ID: WebsiteTrustID(der), Purpose: "website", CertificateDER: base64.RawURLEncoding.EncodeToString(der)}
+	return PublicTrust{ID: WebsiteTrustID(der), Purpose: "website", CertificateDER: base64.RawURLEncoding.EncodeToString(der)}, key
 }
 
 func TestPublicTrustCanonicalFactsAndConcurrentWithdrawal(t *testing.T) {

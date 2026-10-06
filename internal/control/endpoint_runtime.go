@@ -64,11 +64,17 @@ func InstallEndpointInputs(root string, endpoint EndpointGeneration, inputs Endp
 	if config.ControlID != endpoint.OwnerControlID {
 		return errors.New("endpoint is owned by another control")
 	}
-	if _, err := OpenAuthority(root); err != nil {
+	authority, err := OpenAuthority(root)
+	if err != nil {
 		return err
 	}
-	if _, err := loadEndpointCertificate(endpoint, inputs, time.Now()); err != nil {
+	if _, err := loadAuthorizedEndpointCertificate(authority.Snapshot(), endpoint, inputs, time.Now()); err != nil {
 		return err
+	}
+	if endpoint.WebsiteTrustID != "" {
+		if err := verifyLocalWebsiteRequest(root, authority.Snapshot(), endpoint, inputs, time.Now()); err != nil {
+			return err
+		}
 	}
 	body, err := CanonicalEncode(inputs)
 	if err != nil {
@@ -204,14 +210,19 @@ type endpointCounters struct {
 	Active    int
 	Successes uint64
 }
-type endpointSocket struct {
+type endpointTLSBinding struct {
 	certificateDigest string
-	listen            string
-	listener          net.Listener
+	serverName        string
+	config            *tls.Config
+}
+type endpointSocket struct {
+	listen   string
+	listener net.Listener
+	bindings map[string]*endpointTLSBinding
 }
 type endpointCandidate struct {
-	generation EndpointGeneration
-	inputs     EndpointLocalInputs
+	generation  EndpointGeneration
+	certificate tls.Certificate
 }
 type endpointSession struct {
 	generation EndpointGeneration
@@ -280,14 +291,15 @@ func (runtime *EndpointRuntime) reconcile() {
 		if err != nil {
 			continue
 		}
-		if _, err := loadEndpointCertificate(endpoint, inputs, now); err != nil {
+		certificate, err := loadAuthorizedEndpointCertificate(projection, endpoint, inputs, now)
+		if err != nil {
 			continue
 		}
 		current[endpointKey(endpoint.ID, endpoint.Generation)] = endpoint
 		if endpoint.State == "draining" {
 			continue
 		}
-		wanted[inputs.Listen] = append(wanted[inputs.Listen], endpointCandidate{endpoint, inputs})
+		wanted[inputs.Listen] = append(wanted[inputs.Listen], endpointCandidate{endpoint, certificate})
 	}
 	runtime.mu.Lock()
 	if runtime.closed {
@@ -295,14 +307,8 @@ func (runtime *EndpointRuntime) reconcile() {
 		runtime.authority.mu.RUnlock()
 		return
 	}
-	// An incompatible candidate never displaces a listener still serving an
-	// authenticated generation. Reusing an address requires the old one to end.
 	for address, socket := range runtime.sockets {
-		keep := false
-		for _, candidate := range wanted[address] {
-			keep = keep || candidate.generation.CertificateDigest == socket.certificateDigest
-		}
-		if !keep {
+		if len(wanted[address]) == 0 {
 			_ = socket.listener.Close()
 			delete(runtime.sockets, address)
 		}
@@ -311,24 +317,19 @@ func (runtime *EndpointRuntime) reconcile() {
 	for address, candidates := range wanted {
 		socket := runtime.sockets[address]
 		if socket == nil {
-			selected := candidates[0]
-			for _, candidate := range candidates {
-				if candidate.generation.State == "serving" {
-					selected = candidate
-					break
-				}
-			}
-			created, err := runtime.openSocket(selected.generation, selected.inputs)
+			listener, err := net.Listen("tcp", address)
 			if err != nil {
 				continue
 			}
-			socket = created
+			socket = &endpointSocket{listen: address, listener: listener}
 			runtime.sockets[address] = socket
 			runtime.workers.Add(1)
 			go runtime.accept(socket)
 		}
+		socket.bindings = runtime.tlsBindings(candidates, socket.bindings)
 		for _, candidate := range candidates {
-			if candidate.generation.CertificateDigest == socket.certificateDigest {
+			binding := socket.bindings[endpointSNI(candidate.generation.ServerName)]
+			if binding != nil && binding.serverName == candidate.generation.ServerName && binding.certificateDigest == candidate.generation.CertificateDigest {
 				runtime.ready[endpointKey(candidate.generation.ID, candidate.generation.Generation)] = true
 			}
 		}
@@ -354,30 +355,59 @@ func (runtime *EndpointRuntime) reconcile() {
 		_ = connection.Close()
 	}
 }
-func (runtime *EndpointRuntime) openSocket(endpoint EndpointGeneration, inputs EndpointLocalInputs) (*endpointSocket, error) {
-	certificate, err := loadEndpointCertificate(endpoint, inputs, runtime.now())
-	if err != nil {
-		return nil, err
+func endpointSNI(serverName string) string {
+	if net.ParseIP(serverName) != nil {
+		return ""
 	}
-	config := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, NextProtos: []string{tunnelALPN}}
-	if containsString(endpoint.Modes, "web") {
-		node, err := LoadNodeConfig(runtime.authority.root)
-		if err != nil {
-			return nil, err
+	return serverName
+}
+
+// This is a disposable TLS projection. It has no authority or lifecycle of its
+// own. Preserve an existing serving certificate when names share a socket.
+func (runtime *EndpointRuntime) tlsBindings(candidates []endpointCandidate, previous map[string]*endpointTLSBinding) map[string]*endpointTLSBinding {
+	selected := map[string]endpointCandidate{}
+	for _, candidate := range candidates {
+		name := endpointSNI(candidate.generation.ServerName)
+		prior, found := selected[name]
+		old := previous[name]
+		isServing := candidate.generation.State == "serving"
+		preserves := isServing && old != nil && old.certificateDigest == candidate.generation.CertificateDigest && old.serverName == candidate.generation.ServerName
+		priorPreserves := found && prior.generation.State == "serving" && old != nil && old.certificateDigest == prior.generation.CertificateDigest && old.serverName == prior.generation.ServerName
+		if !found || isServing && prior.generation.State != "serving" || preserves && !priorPreserves {
+			selected[name] = candidate
 		}
-		browser, err := browserTLSConfig(node)
-		if err != nil {
-			return nil, err
+	}
+	bindings := map[string]*endpointTLSBinding{}
+	for name, candidate := range selected {
+		endpoint := candidate.generation
+		config := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{candidate.certificate}, Time: runtime.now}
+		var web, tunnel bool
+		for _, other := range candidates {
+			if other.generation.ServerName != endpoint.ServerName || other.generation.CertificateDigest != endpoint.CertificateDigest {
+				continue
+			}
+			web = web || containsString(other.generation.Modes, "web")
+			tunnel = tunnel || containsString(other.generation.Modes, "device") || containsString(other.generation.Modes, "bootstrap")
 		}
-		config.ClientAuth = browser.ClientAuth
-		config.ClientCAs = browser.ClientCAs
-		config.NextProtos = append(config.NextProtos, "http/1.1")
+		if tunnel {
+			config.NextProtos = append(config.NextProtos, tunnelALPN)
+		}
+		if web {
+			node, err := LoadNodeConfig(runtime.authority.root)
+			if err != nil || node.BrowserTLS == nil {
+				continue
+			}
+			roots, err := loadTLSRoots(node.BrowserTLS.TrustFile)
+			if err != nil {
+				continue
+			}
+			config.ClientAuth = tls.VerifyClientCertIfGiven
+			config.ClientCAs = roots
+			config.NextProtos = append(config.NextProtos, "http/1.1")
+		}
+		bindings[name] = &endpointTLSBinding{endpoint.CertificateDigest, endpoint.ServerName, config}
 	}
-	listener, err := net.Listen("tcp", inputs.Listen)
-	if err != nil {
-		return nil, err
-	}
-	return &endpointSocket{certificateDigest: endpoint.CertificateDigest, listen: inputs.Listen, listener: tls.NewListener(listener, config)}, nil
+	return bindings
 }
 func (runtime *EndpointRuntime) accept(socket *endpointSocket) {
 	defer runtime.workers.Done()
@@ -463,9 +493,10 @@ func writeFrame(writer io.Writer, value any) error {
 	_, err = io.Copy(writer, bytes.NewReader(body))
 	return err
 }
-func (runtime *EndpointRuntime) socketGeneration(socket *endpointSocket, id string, generation U64, mode string, prepared bool) (EndpointGeneration, bool) {
-	for _, endpoint := range runtime.authority.Snapshot().EndpointGenerations {
-		if endpoint.OwnerControlID != runtime.controlID || endpoint.CertificateDigest != socket.certificateDigest || !containsString(endpoint.Modes, mode) || endpoint.State != "serving" && !(prepared && endpoint.State == "prepared") {
+func (runtime *EndpointRuntime) socketGeneration(socket *endpointSocket, binding *endpointTLSBinding, id string, generation U64, mode string, prepared bool) (EndpointGeneration, bool) {
+	projection := runtime.authority.Snapshot()
+	for _, endpoint := range projection.EndpointGenerations {
+		if endpoint.OwnerControlID != runtime.controlID || endpoint.CertificateDigest != binding.certificateDigest || endpoint.ServerName != binding.serverName || !containsString(endpoint.Modes, mode) || endpoint.State != "serving" && !(prepared && endpoint.State == "prepared") {
 			continue
 		}
 		if id != "" && (endpoint.ID != id || endpoint.Generation != generation) {
@@ -475,7 +506,7 @@ func (runtime *EndpointRuntime) socketGeneration(socket *endpointSocket, id stri
 		if err != nil || inputs.Listen != socket.listen {
 			continue
 		}
-		if _, err := loadEndpointCertificate(endpoint, inputs, runtime.now()); err == nil {
+		if _, err := loadAuthorizedEndpointCertificate(projection, endpoint, inputs, runtime.now()); err == nil {
 			return endpoint, true
 		}
 	}
@@ -488,13 +519,27 @@ func (runtime *EndpointRuntime) authenticate(connection net.Conn, socket *endpoi
 		}
 	}()
 	_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
-	tlsConnection, ok := connection.(*tls.Conn)
-	if !ok || tlsConnection.Handshake() != nil {
+	var binding *endpointTLSBinding
+	tlsConnection := tls.Server(connection, &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			runtime.mu.RLock()
+			defer runtime.mu.RUnlock()
+			if runtime.closed {
+				return nil, errors.New("endpoint runtime is closed")
+			}
+			binding = socket.bindings[hello.ServerName]
+			if binding == nil {
+				return nil, errors.New("endpoint has no authorized TLS identity for this server name")
+			}
+			return binding.config, nil
+		}})
+	connection = tlsConnection
+	if tlsConnection.Handshake() != nil || binding == nil {
 		return
 	}
 	state := tlsConnection.ConnectionState()
 	if state.NegotiatedProtocol == "http/1.1" || state.NegotiatedProtocol == "" {
-		endpoint, found := runtime.socketGeneration(socket, "", 0, "web", true)
+		endpoint, found := runtime.socketGeneration(socket, binding, "", 0, "web", true)
 		if !found {
 			return
 		}
@@ -517,7 +562,7 @@ func (runtime *EndpointRuntime) authenticate(connection net.Conn, socket *endpoi
 	if readFrame(reader, &hello) != nil {
 		return
 	}
-	endpoint, found := runtime.socketGeneration(socket, hello.EndpointID, hello.Generation, hello.Mode, false)
+	endpoint, found := runtime.socketGeneration(socket, binding, hello.EndpointID, hello.Generation, hello.Mode, false)
 	if !found {
 		return
 	}
@@ -597,7 +642,7 @@ func (runtime *EndpointRuntime) track(connection net.Conn, reader *bufio.Reader,
 	if err != nil {
 		return nil, err
 	}
-	if _, err := loadEndpointCertificate(endpoint, inputs, runtime.now()); err != nil {
+	if _, err := loadAuthorizedEndpointCertificate(projection, endpoint, inputs, runtime.now()); err != nil {
 		return nil, err
 	}
 	switch identity.Mode {

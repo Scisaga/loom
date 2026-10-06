@@ -97,6 +97,27 @@ EKU 仅 `serverAuth`、`CA=false`，KeyUsage 不含 `keyCertSign`。叶私钥留
 
 #### 网站 CSR 的受保护交付
 
+网站入口以可选字段 `website_trust_id` 绑定 `NetworkIntent.public_trust` 中的一个公开根；
+只有 `server_name=control.loom` 且包含 web 模式的入口使用并必须提供该字段。删除此引用会使多根并存、
+撤根和续签时无法确定入口应由哪一个已授权根验证，因此不能从浏览器系统信任或证书名称猜测。
+该引用与证书摘要同属本代不可变坐标。其他入口省略字段，既有认证字节保持不变。
+网站 Host 是已提供的 underlay IP 或非 `.loom` 名称，不能依赖自身 overlay 解析启动。
+
+一个既有 TCP listener 可按精确 SNI 承载不同校验名的入口。握手只选择当前有效且已加载材料的名字；
+优先保留同名既有 serving 证书，其次选择可预检的 prepared 证书。握手记住实际发送的证书摘要，
+后续认证不能把旧证书的连接重新归到新代。不同 SNI 共用端口不改变旧入口的名称、SPKI 或协议。
+同 SNI、同拨号地址却使用不同证书时，普通 TLS 无法同时满足旧客户端钉住的证书与新证书定向预检；
+此时新代不就绪，必须消费操作者另一个已提供的地址来验证，不能先顶掉旧证书或增加私有 TLS 选择协议。
+
+prepared/serving 写入必须因果引用一个仍有效的公开根授权；draining/retired 不依赖该授权仍然存在，
+否则撤根会阻止入口正常退休。执行时重新检查当前根授权、叶链和有效期；撤根或成员卸任后关闭该入口
+的会话并停止新握手，不改写其已签阶段，也不影响共用地址的其他入口。本机执行输入必须引用原 CSR
+目录内的叶私钥，签回叶须匹配原请求；没有签回或错误签回不会生成新的入口事实。
+
+domain、wire 与 persistent 使用同一个 `EndpointGeneration.website_trust_id`；runtime 从当前根授权
+和本地证书引用单向派生 TLS 配置，UI 回读入口引用及实际观测。最低验证覆盖原入口字节往返、错根或
+错 CSR 拒绝、同代根引用不可替换、撤根停止会话以及撤根后仍能 draining/retired。
+
 目标是让离线操作者确认待签公钥确实由当前承载 control 为指定入口生成。现有入口输入只能安装已经
 签好的证书，不能生成叶私钥或证明 CSR 的成员来源。最小补充是本机 `control website request` 和离线
 `control website verify-request`：不增加网站 CA、签发服务、控制事实或新的运行状态。新增操作成本是

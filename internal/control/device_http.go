@@ -76,6 +76,15 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 		if value.OwnerControlID != server.Runtime.Config.ControlID {
 			return Submission{}, nil, errors.New("endpoint can only be written by its local owner")
 		}
+		if value.WebsiteTrustID != "" && (value.State == "prepared" || value.State == "serving") {
+			inputs, err := loadEndpointInputs(server.Runtime.Authority.root, value)
+			if err != nil {
+				return Submission{}, nil, err
+			}
+			if err := verifyLocalWebsiteRequest(server.Runtime.Authority.root, server.Runtime.Authority.Snapshot(), value, inputs, server.now()); err != nil {
+				return Submission{}, nil, err
+			}
+		}
 		endpoint := server.endpointRuntime()
 		if value.State == "serving" && (endpoint == nil || !endpoint.Ready(value)) {
 			return Submission{}, nil, errors.New("endpoint serving requires verified advertised TLS readiness")

@@ -640,6 +640,10 @@ completed 必须另有完整 `device_view` envelope，其余状态不带 View。
 
 EndpointGeneration 的普通值字段为 `id,generation:U64,owner_control_id,host,port,server_name,spki_sha256,`
 `certificate_digest,modes,state,drain_until:Time,preference`；generation 至少 1，modes 为 `bootstrap/device/web` 排序集合，
+另有可选 `website_trust_id`：仅 `server_name=control.loom` 且包含 web 模式时必须出现，
+引用唯一已授权的 PublicTrust 根 ID，并与本代坐标一同不可变；其他入口省略，原认证字节不变。
+这类入口的 host 不得是 `.loom` overlay 名称，根授权与原 CSR 的执行检查见
+[网站 CSR 的受保护交付](enrollment-endpoint-model.md#网站-csr-的受保护交付)。
 state 仅 `prepared/serving/draining/retired`，preference 为 0～65535 整数。certificate_digest 只定位公开
 证书字节，本机秘密文件引用不在 wire。draining 的 drain_until 必须大于 0，其他状态固定为 0；
 正式状态变更入口核对 draining 截止期晚于请求时刻，纯值校验不读时钟。到期关闭本代已有会话，
