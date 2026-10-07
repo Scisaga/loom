@@ -1,13 +1,16 @@
 package linuxclient
 
-import "errors"
+import (
+	"errors"
+	"reflect"
+)
 
 func (transaction *wireGuardTransaction) execution() wireGuardExecution {
 	result := wireGuardExecution{WireGuard: []wireGuardExecutionLink{}}
 	if transaction != nil {
 		for _, owned := range transaction.owned {
 			if owned.alias != "" {
-				result.WireGuard = append(result.WireGuard, owned.link)
+				result.WireGuard = append(result.WireGuard, owned.peerLinks()...)
 			}
 		}
 	}
@@ -17,12 +20,13 @@ func (transaction *wireGuardTransaction) execution() wireGuardExecution {
 // Only a live creation handle may preserve an interface. A matching old View,
 // name or crash-cleanup record alone is never sufficient to adopt one.
 func (transaction *wireGuardTransaction) sameExecution(profile wireGuardExecution, identity *wireGuardIdentity) bool {
-	if transaction == nil || len(transaction.owned) != len(profile.WireGuard) {
+	groups, err := groupWireGuardLinks(profile.WireGuard)
+	if transaction == nil || err != nil || len(transaction.owned) != len(groups) {
 		return false
 	}
-	for index, link := range profile.WireGuard {
+	for index, group := range groups {
 		owned := transaction.owned[index]
-		if !owned.configured || owned.alias == "" || owned.link != link || identity == nil || owned.publicKey != identity.WGPublicKey {
+		if !owned.configured || owned.alias == "" || owned.link != group.link || !reflect.DeepEqual(owned.peers, group.peers) || identity == nil || owned.publicKey != identity.WGPublicKey {
 			return false
 		}
 	}

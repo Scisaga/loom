@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"reflect"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -19,7 +17,6 @@ func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardId
 	for _, resource := range view.Resources {
 		resources[resource.ID] = resource
 	}
-	byInterface := map[string]wireGuardExecutionLink{}
 	identity := &wireGuardIdentity{}
 	for _, link := range view.Links {
 		if link.FromNodeID != view.DeviceID && link.ToNodeID != view.DeviceID {
@@ -47,15 +44,16 @@ func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardId
 			value.Mode, value.ListenPort, value.PersistentKeepalive = "initiator", 0, 25
 			value.Endpoint = net.JoinHostPort(peer.DialHost, strconv.Itoa(peer.DialPort))
 		}
-		if prior, found := byInterface[value.Interface]; found && !reflect.DeepEqual(prior, value) {
-			return result, nil, errors.New("WireGuard resource has conflicting peer or direction projections")
-		}
-		byInterface[value.Interface] = value
-	}
-	for _, value := range byInterface {
 		result.WireGuard = append(result.WireGuard, value)
 	}
-	sort.Slice(result.WireGuard, func(i, j int) bool { return result.WireGuard[i].Interface < result.WireGuard[j].Interface })
+	groups, err := groupWireGuardLinks(result.WireGuard)
+	if err != nil {
+		return wireGuardExecution{}, nil, err
+	}
+	result.WireGuard = []wireGuardExecutionLink{}
+	for _, group := range groups {
+		result.WireGuard = append(result.WireGuard, group.peerLinks()...)
+	}
 	if len(result.WireGuard) == 0 {
 		return result, nil, nil
 	}

@@ -13,12 +13,13 @@ import (
 // It contains public configuration and the random kernel ownership token, never
 // private keys or permission facts. It cannot restore a runtime or grant access.
 type wireGuardCleanupEntry struct {
-	Link         wireGuardExecutionLink `json:"link"`
-	Alias        string                 `json:"alias"`
-	CreationName string                 `json:"creation_name"`
-	Index        int                    `json:"index"`
-	PublicKey    string                 `json:"public_key"`
-	Configured   bool                   `json:"configured"`
+	Link         wireGuardExecutionLink   `json:"link"`
+	Peers        []wireGuardExecutionLink `json:"peers,omitempty"`
+	Alias        string                   `json:"alias"`
+	CreationName string                   `json:"creation_name"`
+	Index        int                      `json:"index"`
+	PublicKey    string                   `json:"public_key"`
+	Configured   bool                     `json:"configured"`
 }
 
 func runtimeNetworkLock(options Options) (*os.File, error) {
@@ -47,7 +48,7 @@ func (transaction *wireGuardTransaction) saveOwnership() error {
 	entries := []wireGuardCleanupEntry{}
 	for _, value := range transaction.owned {
 		if value.alias != "" {
-			entries = append(entries, wireGuardCleanupEntry{Link: value.link, Alias: value.alias, CreationName: value.creationName, Index: value.index, PublicKey: value.publicKey, Configured: value.configured})
+			entries = append(entries, wireGuardCleanupEntry{Link: value.link, Peers: value.peers, Alias: value.alias, CreationName: value.creationName, Index: value.index, PublicKey: value.publicKey, Configured: value.configured})
 		}
 	}
 	if len(entries) == 0 {
@@ -76,7 +77,11 @@ func cleanupRecordedWireGuard(options Options) error {
 		if err != nil || len(token) != 16 || value.Alias != "loom-runtime:"+hex.EncodeToString(token) || value.CreationName != "lm"+hex.EncodeToString(token)[:13] || value.Index < 0 || value.Link.Interface == "" {
 			return errors.Join(ErrWireGuardCleanup, ErrWireGuardOwnership)
 		}
-		transaction.owned = append(transaction.owned, wireGuardOwnedLink{link: value.Link, alias: value.Alias, creationName: value.CreationName, index: value.Index, publicKey: value.PublicKey, configured: value.Configured})
+		groups, err := groupWireGuardLinks(append([]wireGuardExecutionLink{value.Link}, value.Peers...))
+		if err != nil || len(groups) != 1 || len(groups[0].peerLinks()) != 1+len(value.Peers) {
+			return errors.Join(ErrWireGuardCleanup, ErrWireGuardOwnership)
+		}
+		transaction.owned = append(transaction.owned, wireGuardOwnedLink{link: value.Link, peers: value.Peers, alias: value.Alias, creationName: value.CreationName, index: value.Index, publicKey: value.PublicKey, configured: value.Configured})
 	}
 	return transaction.Cleanup()
 }

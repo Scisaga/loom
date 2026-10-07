@@ -53,7 +53,7 @@ func invalidateWireGuardObservations(state LocalState, view control.DeviceView, 
 	changed := map[string]bool{}
 	for _, link := range next.WireGuard {
 		for _, prior := range previous.WireGuard {
-			if link.LinkID == prior.LinkID && link.Endpoint != prior.Endpoint {
+			if link.LinkID == prior.LinkID && link.PeerPublicKey == prior.PeerPublicKey && link.Endpoint != prior.Endpoint {
 				changed[link.LinkID] = true
 			}
 		}

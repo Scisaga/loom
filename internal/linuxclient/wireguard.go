@@ -46,6 +46,7 @@ var (
 
 type wireGuardOwnedLink struct {
 	link         wireGuardExecutionLink
+	peers        []wireGuardExecutionLink
 	alias        string
 	creationName string
 	index        int
@@ -296,7 +297,8 @@ func verifyOwnedWireGuardLink(options Options, owned wireGuardOwnedLink) error {
 		return err
 	}
 	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-	if len(body) == 0 || len(body) > 1<<20 || len(lines) > 2 {
+	peers := owned.peerLinks()
+	if len(body) == 0 || len(body) > 1<<20 || len(lines) > len(peers)+1 {
 		return fmt.Errorf("%w: dump shape", ErrWireGuardOwnership)
 	}
 	header := strings.Split(lines[0], "\t")
@@ -305,25 +307,35 @@ func verifyOwnedWireGuardLink(options Options, owned wireGuardOwnedLink) error {
 		return fmt.Errorf("%w: local public key or mark", ErrWireGuardOwnership)
 	}
 	port, err := strconv.Atoi(header[2])
-	if err != nil || port < 0 || port > 65535 || link.Mode == "acceptor" && port != link.ListenPort && (owned.configured || port != 0) {
+	if err != nil || port < 0 || port > 65535 || owned.listenPort() != 0 && port != owned.listenPort() && (owned.configured || port != 0) {
 		return fmt.Errorf("%w: listen port", ErrWireGuardOwnership)
 	}
-	if len(lines) == 2 {
-		peer := strings.Split(lines[1], "\t")
-		if len(peer) != 8 || peer[0] != link.PeerPublicKey || peer[1] != "(none)" ||
-			peer[3] != link.AllowedIP && (owned.configured || peer[3] != "(none)") {
+	expected := map[string]wireGuardExecutionLink{}
+	for _, value := range peers {
+		expected[value.PeerPublicKey] = value
+	}
+	seen := map[string]bool{}
+	for _, line := range lines[1:] {
+		peer := strings.Split(line, "\t")
+		if len(peer) != 8 {
+			return fmt.Errorf("%w: peer shape", ErrWireGuardOwnership)
+		}
+		value, exists := expected[peer[0]]
+		if !exists || seen[peer[0]] || peer[1] != "(none)" ||
+			peer[3] != value.AllowedIP && (owned.configured || peer[3] != "(none)") {
 			return fmt.Errorf("%w: peer or AllowedIPs", ErrWireGuardOwnership)
 		}
+		seen[peer[0]] = true
 		keepalive := peer[7]
 		if keepalive == "off" {
 			keepalive = "0"
 		}
-		if keepalive != strconv.Itoa(link.PersistentKeepalive) && (owned.configured || keepalive != "0") {
+		if keepalive != strconv.Itoa(value.PersistentKeepalive) && (owned.configured || keepalive != "0") {
 			return fmt.Errorf("%w: keepalive", ErrWireGuardOwnership)
 		}
 		// Authenticated WG roaming may change an acceptor's endpoint. Its peer
 		// key and permitted addresses remain exact; no extra peer is accepted.
-		if link.Mode == "initiator" && peer[2] != "(none)" && !endpointMatches(link.Endpoint, peer[2]) {
+		if value.Mode == "initiator" && peer[2] != "(none)" && !endpointMatches(value.Endpoint, peer[2]) {
 			return fmt.Errorf("%w: endpoint", ErrWireGuardOwnership)
 		}
 	}
@@ -362,8 +374,12 @@ func verifyOwnedWireGuardLink(options Options, owned wireGuardOwnedLink) error {
 				return fmt.Errorf("%w: unexpected route metric", ErrWireGuardOwnership)
 			}
 			main := len(route.Table) == 0 || string(route.Table) == `"main"` || string(route.Table) == "254"
+			allowed := false
+			for _, peer := range peers {
+				allowed = allowed || sameRoutePrefix(route.Destination, peer.AllowedIP)
+			}
 			if main && (route.Type == "" || route.Type == "unicast") && route.Protocol == "static" &&
-				route.Scope == "link" && route.Source == "" && sameRoutePrefix(route.Destination, link.AllowedIP) {
+				route.Scope == "link" && route.Source == "" && allowed {
 				continue
 			}
 			// address add installs this exact local route even with
@@ -446,16 +462,12 @@ func configureWireGuardLink(options Options, owned *wireGuardOwnedLink) error {
 		// before and after wg reopens it and remove this generation on change.
 		arguments = append(arguments, "private-key", options.WireGuardPrivateKey)
 	}
-	if link.Mode == "acceptor" {
-		arguments = append(arguments, "listen-port", strconv.Itoa(link.ListenPort))
-	} else {
-		// Clear a previously certified fixed acceptor port. The kernel may use
-		// an ephemeral source port for replies, but no stable ingress remains.
-		arguments = append(arguments, "listen-port", "0")
-	}
-	arguments = append(arguments, "peer", link.PeerPublicKey, "allowed-ips", link.AllowedIP)
-	if link.Mode == "initiator" {
-		arguments = append(arguments, "endpoint", link.Endpoint, "persistent-keepalive", strconv.Itoa(link.PersistentKeepalive))
+	arguments = append(arguments, "listen-port", strconv.Itoa(owned.listenPort()))
+	for _, peer := range owned.peerLinks() {
+		arguments = append(arguments, "peer", peer.PeerPublicKey, "allowed-ips", peer.AllowedIP)
+		if peer.Mode == "initiator" {
+			arguments = append(arguments, "endpoint", peer.Endpoint, "persistent-keepalive", strconv.Itoa(peer.PersistentKeepalive))
+		}
 	}
 	command := exec.Command(options.WireGuard, arguments...)
 	if err := command.Run(); err != nil {
@@ -474,8 +486,12 @@ func configureWireGuardLink(options Options, owned *wireGuardOwnedLink) error {
 	if _, err = runHostCommand(options.IP, "link", "set", "dev", link.Interface, "up"); err != nil {
 		return err
 	}
-	_, err = runHostCommand(options.IP, "route", "add", link.AllowedIP, "dev", link.Interface, "proto", "static", "scope", "link")
-	return err
+	for _, peer := range owned.peerLinks() {
+		if _, err = runHostCommand(options.IP, "route", "add", peer.AllowedIP, "dev", link.Interface, "proto", "static", "scope", "link"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseWireGuardActual(body []byte) (map[string]wireGuardActual, error) {
@@ -488,7 +504,8 @@ func parseWireGuardActual(body []byte) (map[string]wireGuardActual, error) {
 		fields := strings.Split(line, "\t")
 		if len(fields) == 5 {
 			port, err := strconv.Atoi(fields[3])
-			if err != nil {
+			_, duplicate := listenPorts[fields[0]]
+			if err != nil || port < 0 || port > 65535 || fields[0] == "" || duplicate {
 				return nil, errors.New("WireGuard runtime dump is invalid")
 			}
 			listenPorts[fields[0]] = port
@@ -508,10 +525,14 @@ func parseWireGuardActual(body []byte) (map[string]wireGuardActual, error) {
 		if fields[0] == "" || fields[1] == "" {
 			return nil, errors.New("WireGuard runtime dump identity is invalid")
 		}
-		if _, duplicate := result[fields[1]]; duplicate {
+		if _, present := listenPorts[fields[0]]; !present {
+			return nil, errors.New("WireGuard peer has no interface header")
+		}
+		key := fields[0] + "\x00" + fields[1]
+		if _, duplicate := result[key]; duplicate {
 			return nil, errors.New("WireGuard peer appears more than once")
 		}
-		result[fields[1]] = wireGuardActual{Interface: fields[0], PublicKey: fields[1], Endpoint: fields[3],
+		result[key] = wireGuardActual{Interface: fields[0], PublicKey: fields[1], Endpoint: fields[3],
 			AllowedIPs: fields[4], Keepalive: keepalive}
 	}
 	for key, value := range result {
@@ -543,13 +564,31 @@ func readbackWireGuard(profile wireGuardExecution, options Options) error {
 	if err != nil {
 		return err
 	}
+	groups, err := groupWireGuardLinks(profile.WireGuard)
+	if err != nil {
+		return err
+	}
+	for _, group := range groups {
+		count := 0
+		for _, value := range actual {
+			if value.Interface == group.link.Interface {
+				count++
+				if group.listenPort() != 0 && value.ListenPort != group.listenPort() {
+					return errors.New("WireGuard interface listener readback does not match the certified runtime")
+				}
+			}
+		}
+		if count != len(group.peerLinks()) {
+			return errors.New("WireGuard interface peer set does not match the certified runtime")
+		}
+	}
 	for _, link := range profile.WireGuard {
-		peer, ok := actual[link.PeerPublicKey]
+		peer, ok := actual[link.Interface+"\x00"+link.PeerPublicKey]
 		if !ok || peer.Interface != link.Interface || peer.AllowedIPs != link.AllowedIP {
 			return errors.New("WireGuard peer readback does not match the certified runtime")
 		}
-		if link.Mode == "acceptor" && peer.ListenPort != link.ListenPort ||
-			link.Mode == "initiator" && (peer.Keepalive != link.PersistentKeepalive || !endpointMatches(link.Endpoint, peer.Endpoint)) {
+		if peer.Keepalive != link.PersistentKeepalive || link.Mode == "acceptor" && peer.ListenPort != link.ListenPort ||
+			link.Mode == "initiator" && !endpointMatches(link.Endpoint, peer.Endpoint) {
 			return errors.New("WireGuard direction readback does not match the certified runtime")
 		}
 		addresses, err := interfaceAddresses(options.IP, link.Interface)
@@ -580,6 +619,10 @@ func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIden
 			return nil, errors.New("WireGuard runtime requires a resolved literal endpoint")
 		}
 	}
+	groups, err := groupWireGuardLinks(profile.WireGuard)
+	if err != nil {
+		return nil, err
+	}
 	// Previous authority cannot claim an interface. The caller first cleans
 	// any recorded generation using its independent kernel ownership token.
 	links, err := readWireGuardLinks(options)
@@ -588,9 +631,6 @@ func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIden
 	}
 	names := map[string]bool{}
 	for _, link := range profile.WireGuard {
-		if names[link.Interface] {
-			return nil, errors.New("WireGuard runtime reuses an interface")
-		}
 		names[link.Interface] = true
 	}
 	if previous != nil {
@@ -621,13 +661,14 @@ func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIden
 	fail := func(err error) (*wireGuardTransaction, error) {
 		return nil, errors.Join(err, transaction.Cleanup())
 	}
-	for _, link := range profile.WireGuard {
+	for _, desired := range groups {
+		link := desired.link
 		var token [16]byte
 		_, err := rand.Read(token[:])
 		if err != nil {
 			return fail(err)
 		}
-		owned := wireGuardOwnedLink{link: link, alias: "loom-runtime:" + hex.EncodeToString(token[:]), creationName: "lm" + hex.EncodeToString(token[:])[:13], publicKey: localPublicKey}
+		owned := wireGuardOwnedLink{link: link, peers: desired.peers, alias: "loom-runtime:" + hex.EncodeToString(token[:]), creationName: "lm" + hex.EncodeToString(token[:])[:13], publicKey: localPublicKey}
 		// Create with a generation-unique name first. The WG kernel driver on
 		// some supported hosts resets ifalias in its newlink callback. A random
 		// creation name remains an atomic ownership marker through that window.

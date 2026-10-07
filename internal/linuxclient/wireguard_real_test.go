@@ -4,6 +4,7 @@ package linuxclient
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -124,7 +125,7 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		routes, _ := exec.Command("ip", "-n", acceptorNS, "-json", "route", "show", "table", "all", "dev", "wg-demo").Output()
 		t.Fatalf("%v; wg commands=%q stderr=%q namespace links=%s routes=%s", err, arguments, stderr, links, routes)
 	}
-	defer acceptorTransaction.Rollback()
+	defer func() { _ = acceptorTransaction.Rollback() }()
 	initiatorTransaction, err := applyWireGuard(initiatorProfile, nil,
 		&wireGuardIdentity{WGPublicKey: initiatorPublic}, initiatorOptions)
 	if err != nil {
@@ -150,7 +151,7 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	}
 	waitTunnel()
 
-	roundTrip := func(network, listen, connect, payload string) {
+	roundTrip := func(network, listen, connect, payload string, source ...string) {
 		t.Helper()
 		server := exec.Command("ip", "netns", "exec", acceptorNS, "socat", listen, "EXEC:/bin/cat")
 		if err := server.Start(); err != nil {
@@ -162,8 +163,12 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 		}()
 		var output []byte
 		var clientErr error
+		clientNS := initiatorNS
+		if len(source) != 0 {
+			clientNS = source[0]
+		}
 		for until := time.Now().Add(3 * time.Second); time.Now().Before(until); time.Sleep(50 * time.Millisecond) {
-			client := exec.Command("ip", "netns", "exec", initiatorNS, "socat", "-", connect)
+			client := exec.Command("ip", "netns", "exec", clientNS, "socat", "-", connect)
 			client.Stdin = strings.NewReader(payload)
 			output, clientErr = client.Output()
 			if clientErr == nil && string(output) == payload {
@@ -196,6 +201,65 @@ func TestRealReverseWireGuardTransport(t *testing.T) {
 	}
 	roundTrip("TCP after reuse", "TCP4-LISTEN:18082,bind=198.51.100.2,reuseaddr", "TCP4:198.51.100.2:18082", "tcp-after-reuse")
 	roundTrip("UDP after reuse", "UDP4-RECVFROM:18055,bind=198.51.100.2,reuseaddr", "UDP4:198.51.100.2:18055", "udp-after-reuse")
+
+	// One resource accepts its original peer and initiates toward another peer.
+	// The second underlay exists entirely between two dedicated namespaces.
+	thirdNS := "loomwg-t-" + suffix
+	run("netns", "add", thirdNS)
+	t.Cleanup(func() { _ = exec.Command("ip", "netns", "del", thirdNS).Run() })
+	thirdVeth, acceptorVeth := "lwt"+suffix, "lwb"+suffix
+	run("-n", acceptorNS, "link", "add", acceptorVeth, "type", "veth", "peer", "name", thirdVeth, "netns", thirdNS)
+	for _, value := range [][]string{{acceptorNS, acceptorVeth, "203.0.113.1/24"}, {thirdNS, thirdVeth, "203.0.113.2/24"}} {
+		run("-n", value[0], "address", "add", value[2], "dev", value[1])
+		run("-n", value[0], "link", "set", "dev", value[1], "up")
+		run("-n", value[0], "link", "set", "dev", "lo", "up")
+	}
+	thirdKey, thirdPublic := makeKey("third")
+	thirdOptions := Options{IP: makeWrapper("ip-t", thirdNS, "/usr/sbin/ip"), WireGuard: makeWrapper("wg-t", thirdNS, "/usr/bin/wg"), WireGuardPrivateKey: thirdKey, Config: filepath.Join(root, "third.json")}
+	thirdProfile := wireGuardExecution{WireGuard: []wireGuardExecutionLink{{LinkID: "demo-third-resource", Interface: "wg-demo", LocalAddress: "198.51.100.3/32", PeerID: "demo-a", PeerPublicKey: acceptorPublic, AllowedIP: "198.51.100.2/32", Mode: "acceptor", ListenPort: listenPort}}}
+	thirdTransaction, err := applyWireGuard(&thirdProfile, nil, &wireGuardIdentity{WGPublicKey: thirdPublic}, thirdOptions)
+	if err != nil {
+		t.Fatal("third peer", err)
+	}
+	defer thirdTransaction.Rollback()
+	acceptorProfile.WireGuard = append(acceptorProfile.WireGuard, wireGuardExecutionLink{LinkID: "demo-link", Interface: "wg-demo", LocalAddress: "198.51.100.2/32", PeerID: "demo-third", PeerPublicKey: thirdPublic, AllowedIP: "198.51.100.3/32", Mode: "initiator", Endpoint: "203.0.113.2:51888", PersistentKeepalive: 25})
+	if err := replaceWireGuard(&acceptorTransaction, *acceptorProfile, &wireGuardIdentity{WGPublicKey: acceptorPublic}, acceptorOptions); err != nil {
+		t.Fatal("shared interface", err)
+	}
+	if len(acceptorTransaction.owned) != 1 || len(acceptorTransaction.owned[0].peerLinks()) != 2 {
+		t.Fatal("shared resource created more than one interface handle")
+	}
+	for _, source := range []string{initiatorNS, thirdNS} {
+		roundTrip("shared TCP", "TCP4-LISTEN:18083,bind=198.51.100.2,reuseaddr", "TCP4:198.51.100.2:18083", "shared-tcp", source)
+		roundTrip("shared UDP", "UDP4-RECVFROM:18056,bind=198.51.100.2,reuseaddr", "UDP4:198.51.100.2:18056", "shared-udp", source)
+	}
+	if err := CleanupWireGuard(acceptorOptions); err != nil {
+		t.Fatal("shared crash cleanup", err)
+	}
+	acceptorTransaction, err = applyWireGuard(acceptorProfile, nil, &wireGuardIdentity{WGPublicKey: acceptorPublic}, acceptorOptions)
+	if err != nil {
+		t.Fatal("shared restart", err)
+	}
+	roundTrip("shared TCP after restart", "TCP4-LISTEN:18084,bind=198.51.100.2,reuseaddr", "TCP4:198.51.100.2:18084", "shared-restarted", thirdNS)
+	_, foreignPublic := makeKey("foreign")
+	if _, err := runHostCommand(acceptorOptions.WireGuard, "set", "wg-demo", "peer", foreignPublic, "allowed-ips", "198.51.100.4/32"); err != nil {
+		t.Fatal(err)
+	}
+	if err := acceptorTransaction.Cleanup(); !errors.Is(err, ErrWireGuardOwnership) {
+		t.Fatal("shared cleanup accepted an unowned peer", err)
+	}
+	if _, err := runHostCommand(acceptorOptions.WireGuard, "set", "wg-demo", "peer", foreignPublic, "remove"); err != nil {
+		t.Fatal(err)
+	}
+	acceptorProfile.WireGuard = acceptorProfile.WireGuard[:1]
+	if err := replaceWireGuard(&acceptorTransaction, *acceptorProfile, &wireGuardIdentity{WGPublicKey: acceptorPublic}, acceptorOptions); err != nil {
+		t.Fatal("peer withdrawal", err)
+	}
+	if exists, err := wireGuardRouteState(acceptorOptions, "198.51.100.3/32", "wg-demo"); err != nil || exists {
+		t.Fatal("withdrawn peer retained a route", err)
+	}
+	roundTrip("remaining TCP", "TCP4-LISTEN:18085,bind=198.51.100.2,reuseaddr", "TCP4:198.51.100.2:18085", "remaining-peer")
+	roundTrip("remaining UDP", "UDP4-RECVFROM:18057,bind=198.51.100.2,reuseaddr", "UDP4:198.51.100.2:18057", "remaining-peer")
 
 	// A committed runtime retains its cleanup handle. Stop it before creating
 	// the next generation; a previous profile never permits blind host adoption.
