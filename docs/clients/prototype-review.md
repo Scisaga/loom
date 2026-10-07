@@ -458,8 +458,10 @@ Administration 的四个文件对应四个同级内容视图，均使用相同�
 | Web certificates | [公开下载](../../assets/control-center/09-administration-certificates.svg#downloads) · [准备续签](../../assets/control-center/09-administration-certificates.svg#renewal) · [绑定请求已生成](../../assets/control-center/09-administration-certificates.svg#request) · [选择签回文件](../../assets/control-center/09-administration-certificates.svg#import) · [导入失败](../../assets/control-center/09-administration-certificates.svg#import-failed) · [预检通过](../../assets/control-center/09-administration-certificates.svg#ready) · [切换后等待浏览器验证](../../assets/control-center/09-administration-certificates.svg#verify) · [新入口验证失败](../../assets/control-center/09-administration-certificates.svg#activation-failed) · [验证成功并退出旧入口](../../assets/control-center/09-administration-certificates.svg#complete) |
 | Configuration state | [差异](../../assets/control-center/09-administration-configuration.svg#compare) · [采用 A](../../assets/control-center/09-administration-configuration.svg#review-a) · [采用 B](../../assets/control-center/09-administration-configuration.svg#review-b) · [新冲突需重读](../../assets/control-center/09-administration-configuration.svg#changed) · [A 的本地结果](../../assets/control-center/09-administration-configuration.svg#resolved-a) · [B 的本地结果](../../assets/control-center/09-administration-configuration.svg#resolved-b) · [签发来源](../../assets/control-center/09-administration-configuration.svg#sources) |
 
-当前 `internal/control/static/app.js` 的 `/ssot` 仍是旧 quorum/head 界面；当前 Web handler 没有这组证书
-下载、签回导入及续签交互。管理员本机补发的签发者、信任锚及多 control 签发能力仍待模型补齐，
+当前 `internal/control/static/app.js` 的 `/ssot` 已显示 schema 3 签名事实前沿、成员、管理员、公开网站根的
+导入/下载和证书到期信息。网站 CSR 生成、签回叶导入、入口预检/切换及续签尚未接到这组原型网页流程；
+已有正式 CLI 和隔离软件验收见[实施状态](../progress.md)，不能抵扣对应网页交互。
+管理员本机补发的签发者、信任锚及多 control 签发能力仍待模型补齐，
 目标原型中的验链/授信合成结果不是已具备该能力的证明；用户已实际完成过管理员包取回、导入及登录
 的操作史继续保留，见[管理员交付模型](../operations/admin-access.md)。原型按钮不签发证书、不修改现网信任
 或管理入口，也不是已实现的生产功能。
