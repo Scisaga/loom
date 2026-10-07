@@ -51,7 +51,7 @@ class ReportedPreferenceInstrumentedTest {
             while (!ready() && System.nanoTime() < until &&
                 enrollment.status(profile.id).value.phase != EnrollmentPhase.ERROR) Thread.sleep(100)
             assertTrue(label + "; enrollment=" + enrollment.status(profile.id).value +
-                "; routing=" + routing.status(profile.id).value, ready())
+                "; routing=" + routing.status(profile.id).value + "; vpn=" + VpnRuntime.status.value, ready())
         }
         fun click(tag: String) = compose.onNodeWithTag(tag).performScrollTo().performClick()
         fun report(step: String) {
@@ -80,8 +80,14 @@ class ReportedPreferenceInstrumentedTest {
             enrollment.status(profile.id).value.phase == EnrollmentPhase.READY && routing.status(profile.id).value.directAvailable
         }
         compose.onNodeWithTag("tab-connection").performClick()
-        click("connection-toggle")
-        device.wait(Until.findObject(By.res("android:id/button1")), 3_000)?.click()
+        await("retained system VPN must settle before using the connection toggle") {
+            VpnRuntime.status.value.phase !in setOf(ConnectionPhase.STARTING, ConnectionPhase.STOPPING)
+        }
+        if (VpnRuntime.status.value.phase != ConnectionPhase.CONNECTED ||
+            VpnRuntime.status.value.activeProfileId != profile.id) {
+            click("connection-toggle")
+            device.wait(Until.findObject(By.res("android:id/button1")), 3_000)?.click()
+        }
         await("real VPN and selector must be running") {
             VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED && routing.status(profile.id).value.running
         }
