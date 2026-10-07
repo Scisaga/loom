@@ -58,8 +58,8 @@ class CertifiedRuntimeInstrumentedTest {
         val enrollment = EnrollmentManager.get(context)
         val routing = RouteManager.get(context)
         fun click(tag: String) = compose.onNodeWithTag(tag).performScrollTo().performClick()
-        fun await(label: String, condition: () -> Boolean) {
-            val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+        fun await(label: String, seconds: Long = 60, condition: () -> Boolean) {
+            val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds)
             var ready = condition()
             while (!ready && System.nanoTime() < end) {
                 Thread.sleep(100)
@@ -197,7 +197,9 @@ class CertifiedRuntimeInstrumentedTest {
                     mark("demo-resource-refreshed.json")
                 }
             }
-            await("controller must independently verify original resource reports") {
+            // The normal report loop runs once a minute, after actual sampling
+            // and loaded-component measurement. Allow a complete next cycle.
+            await("controller must independently verify original resource reports", 120) {
                 File(directory, "demo-resource-finish-$step").isFile
             }
             click("connection-toggle")
