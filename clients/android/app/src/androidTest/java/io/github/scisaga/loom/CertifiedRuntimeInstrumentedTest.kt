@@ -99,9 +99,14 @@ class CertifiedRuntimeInstrumentedTest {
         }
         fun connect() {
             compose.onNodeWithTag("tab-connection").performClick()
-            click("connection-toggle")
-            // Consent is exercised on this disposable emulator's system UI.
-            device.wait(Until.findObject(By.res("android:id/button1")), 3_000)?.click()
+            val phase = VpnRuntime.status.value.phase
+            if (phase == ConnectionPhase.DISCONNECTED || phase == ConnectionPhase.ERROR) {
+                click("connection-toggle")
+                // Consent is exercised on this disposable emulator's system UI.
+                device.wait(Until.findObject(By.res("android:id/button1")), 3_000)?.click()
+            }
+            // A previous interrupted test can retain the real reconnect intent.
+            // Read its restored runtime instead of blindly toggling it off.
             awaitConnected()
         }
         val ca = CertificateFactory.getInstance("X.509").generateCertificate(File(directory, "demo-ca.pem").inputStream())
