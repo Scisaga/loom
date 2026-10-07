@@ -191,6 +191,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/releases/inputs", server.releaseDeploymentInputs)
 	mux.HandleFunc("GET /api/control/public-trust/{id}/certificate", server.websiteRootDownload)
 	mux.HandleFunc("GET /internal/frontier", server.internalFrontier)
+	mux.HandleFunc("GET /internal/material-conflicts", server.internalMaterialConflicts)
 	mux.HandleFunc("GET /internal/materials", server.internalMaterialsAfter)
 	mux.HandleFunc("GET /internal/materials/{digest}", server.internalMaterial)
 	mux.HandleFunc("PUT /internal/materials/{digest}", server.internalMaterial)

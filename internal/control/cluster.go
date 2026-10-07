@@ -163,6 +163,9 @@ func (runtime *Runtime) reconcilePeer(ctx context.Context, member Member) error 
 	if err := validateRemoteFrontier(remote); err != nil {
 		return err
 	}
+	if err := runtime.reconcileMaterialConflicts(ctx, member); err != nil {
+		return err
+	}
 	for _, tip := range remote {
 		local := frontierFor(runtime.Authority.Frontier(), tip.KeyID)
 		if tip.Sequence > 0 && tip.Sequence <= local.Sequence {
@@ -252,7 +255,7 @@ func (runtime *Runtime) fillDependencies(ctx context.Context, member Member) err
 				continue
 			}
 			fetched[id] = true
-			if err := runtime.fetchMaterial(ctx, member, id); err != nil {
+			if err := runtime.fetchMaterial(ctx, member, id); err != nil && !errors.Is(err, ErrMaterialEquivocation) {
 				return err
 			}
 			progress = true
