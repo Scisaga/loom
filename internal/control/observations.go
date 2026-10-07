@@ -251,6 +251,9 @@ func verifyCurrentReport(report DeviceReport, projection Projection, releases ..
 	return verifyReportViewFields(report, view)
 }
 func verifyReportViewFields(report DeviceReport, view DeviceView) error {
+	if report.Preference != nil && !containsString(view.Responsibilities, "access") {
+		return errors.New("routing preference report requires an access device")
+	}
 	owned := map[string]TransportResource{}
 	for _, resource := range view.Resources {
 		if resource.OwnerNodeID == view.DeviceID && resource.Kind == "hysteria2" {

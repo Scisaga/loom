@@ -12,6 +12,9 @@ func assertChromeLivePaths(t *testing.T, debug *chromeDevTools) {
 	}
 	chromeDo(t, debug, `(()=>{const form=document.querySelector('[name=q]').form;form.elements.q.value='demo-browser-device';form.requestSubmit();[...document.querySelectorAll('.paths-filters a')].find(a=>a.textContent==='Unconfirmed route / target').click();document.querySelector('[data-paths-device="demo-browser-device"] a').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.paths-detail')&&document.querySelector('.paths-current')?.textContent.includes('Current route unknown')`)
+	if chromeDo(t, debug, `document.querySelector('[data-routing-preference]')?.textContent==='Mode: not reported'`) != true {
+		t.Fatal("a Direct selection was used to infer a routing preference")
+	}
 	if chromeDo(t, debug, `(()=>{const back=new URL(document.querySelector('[data-paths-back]').href);return back.searchParams.get('service')==='demo-service'&&back.searchParams.get('q')==='demo-browser-device'&&back.searchParams.get('filter')==='unconfirmed'&&!back.searchParams.has('device')&&document.querySelectorAll('.paths-detail select').length===0&&document.querySelector('.paths-policy').textContent.includes('Any eligible node')})()`) != true {
 		t.Fatal("detail lost the Service/filter return context or reintroduced device/Service choosers")
 	}

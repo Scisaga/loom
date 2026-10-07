@@ -76,6 +76,7 @@ internal data class BusinessProbeInput(
 )
 
 internal data class RuntimeReportData(
+    val preference: ByteArray,
     val resourceObservations: ByteArray,
     val observations: ByteArray,
     val selections: ByteArray,
@@ -283,6 +284,7 @@ class RouteManager private constructor(context: Context) {
                 runCatching { Instant.parse(observation.getString("valid_until")).isAfter(now) }.getOrDefault(false)
         }.sortedBy { it.getString("candidate_id") } else emptyList()
         RuntimeReportData(
+            protected.get(ProfileStorage.routePreference(profileId)) ?: ByteArray(0),
             resources,
             JSONArray(values).toString().encodeToByteArray(),
             selections,

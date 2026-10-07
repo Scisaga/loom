@@ -37,6 +37,7 @@ type Device struct {
 }
 
 type DeviceEvidence struct {
+	Preference        *ReportPreference   `json:"preference,omitempty"`
 	ReportedAt        string              `json:"reported_at"`
 	ViewDigest        string              `json:"view_digest"`
 	NetworkGeneration string              `json:"network_generation"`

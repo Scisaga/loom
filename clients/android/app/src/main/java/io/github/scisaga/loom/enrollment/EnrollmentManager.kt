@@ -143,7 +143,7 @@ class EnrollmentManager private constructor(context: Context) {
             // network failure burns this number; no stale handle can reuse it.
             val reserved = store.updateState(Loomcore::reserveAndroidReportSequence)
             Loomcore.postAndroidDeviceReport(
-                reserved, routing.resourceObservations, routing.observations, routing.selections, runtime.toString().encodeToByteArray(),
+                reserved, routing.preference, routing.resourceObservations, routing.observations, routing.selections, runtime.toString().encodeToByteArray(),
                 Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version()),
                 routing.networkGeneration, Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
             )

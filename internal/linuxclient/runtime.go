@@ -360,6 +360,10 @@ func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io
 	return acceptCertifiedView(store, envelope)
 }
 func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback, links []control.Observation) error {
+	preference, err := clientadapter.ReportedPreference(lkg.View, activation.State.Preference)
+	if err != nil {
+		return err
+	}
 	selections := []control.ReportSelection{}
 	observations := append([]control.Observation{}, links...)
 	observations = append(observations, activation.State.ResourceObservations...)
@@ -392,7 +396,7 @@ func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg 
 			}
 		}
 	}
-	return deviceclient.Report(ctx, store, control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Selections: selections, Observations: observations, Components: components, Runtime: readback})
+	return deviceclient.Report(ctx, store, control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Preference: preference, Selections: selections, Observations: observations, Components: components, Runtime: readback})
 }
 func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool, readback control.RuntimeReadback) Status {
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration, Selections: activation.Selections, Observations: activation.State.Observations, Runtime: readback.State, Reported: reported}
@@ -811,7 +815,10 @@ func waitForRepair(ctx context.Context, store *deviceclient.Store, options Optio
 			return err
 		}
 		pending, cancel := context.WithTimeout(ctx, 20*time.Second)
-		_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: "runtime_apply_failed"}})
+		preference, prefErr := clientadapter.ReportedPreference(store.LKG().View, status.Preference)
+		if prefErr == nil {
+			_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, Preference: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: "runtime_apply_failed"}})
+		}
 		cancel()
 		timer := time.NewTimer(options.RefreshPoll)
 		reloadRequested := false

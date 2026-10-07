@@ -306,9 +306,19 @@ type androidSelection struct {
 	CandidateID string `json:"candidate_id"`
 }
 
-func androidReport(state deviceclient.State, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
+func androidReport(state deviceclient.State, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
 	if state.LKG == nil || state.ReportSequence == 0 {
 		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
+	}
+	preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}
+	if len(preferenceBody) > 0 {
+		if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
+			return control.DeviceReport{}, err
+		}
+	}
+	reportedPreference, err := clientadapter.ReportedPreference(state.LKG.View, preference)
+	if err != nil {
+		return control.DeviceReport{}, err
 	}
 	var observations []androidObservation
 	var selections []androidSelection
@@ -335,7 +345,7 @@ func androidReport(state deviceclient.State, resourceBody, observationsBody, sel
 	if err != nil || now.UTC().Format(time.RFC3339) != reportedAt {
 		return control.DeviceReport{}, errors.New("Android report time is not canonical")
 	}
-	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
+	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Preference: reportedPreference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
 	if len(resourceBody) > 0 {
 		if runtime.State != "running" || runtime.AppliedViewDigest != state.LKG.ViewDigest {
 			return control.DeviceReport{}, errors.New("resource samples require the actual accepted Android runtime")
@@ -392,12 +402,12 @@ func androidReport(state deviceclient.State, resourceBody, observationsBody, sel
 }
 
 // Kotlin commits ReserveAndroidReportSequence before invoking this function.
-func PostAndroidDeviceReport(stateBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, networkGeneration, reportedAt string) error {
+func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, networkGeneration, reportedAt string) error {
 	state, err := decodeState(stateBody)
 	if err != nil {
 		return err
 	}
-	report, err := androidReport(state, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, networkGeneration, reportedAt)
+	report, err := androidReport(state, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, networkGeneration, reportedAt)
 	if err != nil {
 		return err
 	}

@@ -551,7 +551,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	}
 	sendReport(report)
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime [data-runtime-state]')?.textContent==='running'&&document.querySelector('#device-measurements')?.innerText.includes('https://demo-service.example/zero-duration')`)
-	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('#device-measurements tbody tr')];return rows[0].cells[1].textContent==='https://demo-service.example/no-duration'&&rows[0].cells[3].textContent==='—'&&rows[1].cells[1].textContent==='https://demo-service.example/zero-duration'&&rows[1].cells[3].textContent==='0 ms'})()`) != true {
+	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('#device-measurements tbody tr')];return rows[0].cells[1].textContent==='https://demo-service.example/no-duration'&&rows[0].cells[3].firstChild.textContent==='—'&&rows[0].cells[3].querySelector('small').textContent==='Complete HTTPS request'&&rows[1].cells[1].textContent==='https://demo-service.example/zero-duration'&&rows[1].cells[3].firstChild.textContent==='0 ms'&&rows[1].cells[3].querySelector('small').textContent==='Complete HTTPS request'})()`) != true {
 		t.Fatal("measurements confused target/candidate or zero/missing duration")
 	}
 	if chromeDo(t, debug, `(()=>{const fields=[...document.querySelectorAll('#device-runtime dt')].map(v=>v.textContent);return fields.join('|')==='State|Applied view|Error code'&&!document.querySelector('.device-status').textContent.includes('overlay')})()`) != true {
@@ -573,6 +573,20 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("signed component reports did not survive observation store reopen", err)
 	}
 	assertChromeLivePaths(t, debug)
+	for _, sample := range []struct {
+		value *ReportPreference
+		label string
+	}{{&ReportPreference{Mode: "auto"}, "Mode: Auto"}, {&ReportPreference{Mode: "direct"}, "Mode: Direct"}, {&ReportPreference{Mode: "fixed_exit", Exit: "demo-unavailable-exit"}, "Mode: Fixed exit · demo-unavailable-exit"}, {nil, "Mode: not reported"}} {
+		report.ReportSequence++
+		report.Preference = sample.value
+		sendReport(report)
+		chromeDo(t, debug, `(()=>{history.pushState({},'','/routing?service=demo-service&device=demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+		label, _ := json.Marshal(sample.label)
+		waitChromeEvaluation(t, debug, `document.querySelector('[data-routing-preference]')?.textContent.includes(`+string(label)+`)`)
+		if chromeDo(t, debug, `document.querySelector('.paths-current').textContent.includes('Current route unknown')&&[...document.querySelectorAll('tr[data-candidate]')].some(row=>row.cells[0].textContent.includes('Direct')&&row.cells[2].textContent.startsWith('Reported selection'))`) != true {
+			t.Fatal("reported preference rewrote the actual path or created health")
+		}
+	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#expected-component-form');f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')&&document.querySelector('#expected-component-form [data-delete-kind="expected_component"]')`)

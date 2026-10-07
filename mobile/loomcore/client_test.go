@@ -195,7 +195,7 @@ func TestAndroidReportsActualRuntimeAndActualScopedProbe(t *testing.T) {
 	selections, _ := json.Marshal([]androidSelection{{Scope: route.Scope, CandidateID: route.ID}})
 	runtime, _ := json.Marshal(control.RuntimeReadback{State: "running", AppliedViewDigest: state.LKG.ViewDigest})
 	components, _ := json.Marshal([]control.ComponentReadback{{ComponentID: "agent", Platform: androidComponentPlatform(), Version: "demo-agent", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}, {ComponentID: "sing-box", Platform: androidComponentPlatform(), Version: "demo-native", ArtifactDigest: "sha256:" + strings.Repeat("b", 64)}})
-	report, err := androidReport(state, nil, observations, selections, runtime, components, "demo-network-generation", "2030-01-01T00:01:00Z")
+	report, err := androidReport(state, nil, nil, observations, selections, runtime, components, "demo-network-generation", "2030-01-01T00:01:00Z")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestAndroidReportsActualRuntimeAndActualScopedProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime, _ = json.Marshal(control.RuntimeReadback{State: "error", ErrorCode: "demo-start-failed"})
-	report, err = androidReport(state, nil, []byte("[]"), []byte("[]"), runtime, components, "demo-network-generation", "2030-01-01T00:01:00Z")
+	report, err = androidReport(state, nil, nil, []byte("[]"), []byte("[]"), runtime, components, "demo-network-generation", "2030-01-01T00:01:00Z")
 	if err != nil || report.Runtime.AppliedViewDigest != "" {
 		t.Fatal("failed runtime manufactured applied digest")
 	}
@@ -218,15 +218,15 @@ func TestAndroidReportsActualRuntimeAndActualScopedProbe(t *testing.T) {
 		bytes.ReplaceAll(components, []byte("sha256:"), []byte("unknown:")),
 		append([]byte(`[{"unknown":true},`), components[1:]...),
 	} {
-		if _, err := androidReport(state, nil, []byte("[]"), []byte("[]"), runtime, badComponents, "demo-network-generation", "2030-01-01T00:01:00Z"); err == nil {
+		if _, err := androidReport(state, nil, nil, []byte("[]"), []byte("[]"), runtime, badComponents, "demo-network-generation", "2030-01-01T00:01:00Z"); err == nil {
 			t.Fatal("invalid Android runtime components were signed")
 		}
 	}
-	if empty, err := androidReport(state, nil, []byte("[]"), []byte("[]"), runtime, []byte("[]"), "demo-network-generation", "2030-01-01T00:01:00Z"); err != nil || len(empty.Components) != 0 {
+	if empty, err := androidReport(state, nil, nil, []byte("[]"), []byte("[]"), runtime, []byte("[]"), "demo-network-generation", "2030-01-01T00:01:00Z"); err != nil || len(empty.Components) != 0 {
 		t.Fatal("measurement failure blocked otherwise valid report")
 	}
 	bad := bytes.ReplaceAll(observations, []byte("demo.example:8443"), []byte("other.example:8443"))
-	if _, err := androidReport(state, nil, bad, selections, runtime, components, "demo-network-generation", "2030-01-01T00:01:00Z"); err == nil {
+	if _, err := androidReport(state, nil, nil, bad, selections, runtime, components, "demo-network-generation", "2030-01-01T00:01:00Z"); err == nil {
 		t.Fatal("report accepted undeclared probe target")
 	}
 }

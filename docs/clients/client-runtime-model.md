@@ -435,7 +435,7 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
 | `RouteCandidate` | 允许路径、首跳资源、受管节点链、按序 `LinkID`、最终出口和 Service 范围 | 不单独传输；由认证设备视图中的授权链路与资源派生 | 不持久化 | 每次从 LKG 纯函数重建 | 显示 Direct / 节点链 / 链路传输 / 最终出口 |
 | `RuntimeCandidate` | 路径的可执行投影及稳定身份 | 不单独传输；所需入口和资源材料来自私有认证配置 | 不持久化独立副本 | 按调用方平台能力投影，供 adapter 按资源 ID 复用 transport / outbound | 通常只显示协议和入口类别，不暴露秘密参数 |
 | `Observation` | 某网络代、某 Service、某候选、实际目标及链路规范摘要的真实结果 | 私有认证报告保留来源、目标、范围和 `link_spec_digest` | 不作为配置权威；可留诊断历史，但恢复时不得直接当作当前结果 | 当前网络代的有限集合，摘要不匹配即失效 | 显示 available / unavailable / unknown、实测范围与陈旧状态 |
-| `Preference` | Direct、Auto 或指定最终出口 | 如需跨设备同步，只能走私有认证配置；没有同步需求时无 wire | 只保存一份本机用户设置 | 作为纯选择函数输入 | 唯一可编辑的选路意图 |
+| `Preference` | Direct、Auto 或指定最终出口 | 私有签名 Report 的可选 preference 只读投影本次采样读取的本机设置，不是设置同步 | 只保存一份本机用户设置；报告历史不成为设置权威 | 作为纯选择函数输入；停止或执行失败仍可上报保存的设置 | 客户端唯一可编辑的选路意图；Web 分别展示已报告设置、原时间和实际选择 |
 | `Selection` | selector 回读确认的实际候选 | 可通过私有认证状态报告上送 | 不作为下次启动的权威；事件可供诊断 | 当前实际候选及回读时间 | 与 Preference 分栏显示，明确“当前实际路径” |
 | `HostAdapter` | 平台能力边界 | 无独立 wire 对象 | 只使用平台既有安全存储与服务配置 | 在平台隔离边界内执行 load、apply、readback 和真实 outcome 采集 | 提供能力/错误，不提供第二套选路开关 |
 

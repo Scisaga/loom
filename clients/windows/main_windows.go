@@ -310,8 +310,12 @@ func windowsNetworkGeneration() (string, error) {
 
 func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapter.Activation,
 	components []control.ComponentReadback, reportedAt time.Time) (control.DeviceReport, error) {
+	preference, err := clientadapter.ReportedPreference(lkg.View, activation.State.Preference)
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
 	report := control.DeviceReport{ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, ReportedAt: reportedAt.UnixMilli(),
-		Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: append([]control.ComponentReadback{}, components...),
+		Preference: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: append([]control.ComponentReadback{}, components...),
 		Runtime: control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}}
 	routes := map[string]control.RouteCandidate{}
 	for _, route := range lkg.View.Routes {
@@ -379,11 +383,12 @@ func windowsActivationApplied(activation clientadapter.Activation, routes []clie
 
 func windowsRuntimeFactsDigest(activation clientadapter.Activation, components []control.ComponentReadback) string {
 	body, _ := json.Marshal(struct {
+		Preference           clientmodel.Preference          `json:"preference"`
 		Selections           []clientadapter.SelectionStatus `json:"selections"`
 		Observations         []clientmodel.Observation       `json:"observations"`
 		ResourceObservations []control.Observation           `json:"resource_observations,omitempty"`
 		Components           []control.ComponentReadback     `json:"components"`
-	}{Selections: activation.Selections, Observations: activation.State.Observations,
+	}{Preference: activation.State.Preference, Selections: activation.Selections, Observations: activation.State.Observations,
 		ResourceObservations: activation.State.ResourceObservations, Components: components})
 	digest := sha256.Sum256(body)
 	return hex.EncodeToString(digest[:])

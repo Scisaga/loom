@@ -151,6 +151,28 @@ type ReportSelection struct {
 	ServiceID   string `json:"service_id"`
 	CandidateID string `json:"candidate_id"`
 }
+
+// ReportPreference is a signed, read-only sample of the device's local setting.
+// It neither authorizes the named exit nor asserts that a selector applied it.
+type ReportPreference struct {
+	Mode string `json:"mode"`
+	Exit string `json:"exit,omitempty"`
+}
+
+func (value ReportPreference) Validate() error {
+	switch value.Mode {
+	case "auto", "direct":
+		if value.Exit == "" {
+			return nil
+		}
+	case "fixed_exit":
+		if ValidateID(value.Exit) == nil && value.Exit != "auto" && value.Exit != "direct" {
+			return nil
+		}
+	}
+	return errors.New("reported routing preference is invalid")
+}
+
 type RuntimeReadback struct {
 	State             string              `json:"state"`
 	AppliedViewDigest string              `json:"applied_view_digest"`
@@ -279,6 +301,7 @@ type DeviceReport struct {
 	NetworkGeneration string              `json:"network_generation"`
 	ReportedAt        int64               `json:"reported_at"`
 	Selections        []ReportSelection   `json:"selections"`
+	Preference        *ReportPreference   `json:"preference,omitempty"`
 	Observations      []Observation       `json:"observations"`
 	Runtime           RuntimeReadback     `json:"runtime"`
 	Components        []ComponentReadback `json:"components"`
@@ -286,12 +309,19 @@ type DeviceReport struct {
 }
 
 func (report DeviceReport) unsigned() map[string]any {
-	return map[string]any{"schema": report.Schema, "network_id": report.NetworkID, "device_id": report.DeviceID, "report_sequence": report.ReportSequence, "view_digest": report.ViewDigest, "network_generation": report.NetworkGeneration, "reported_at": report.ReportedAt, "selections": report.Selections, "observations": report.Observations, "runtime": report.Runtime, "components": report.Components}
+	value := map[string]any{"schema": report.Schema, "network_id": report.NetworkID, "device_id": report.DeviceID, "report_sequence": report.ReportSequence, "view_digest": report.ViewDigest, "network_generation": report.NetworkGeneration, "reported_at": report.ReportedAt, "selections": report.Selections, "observations": report.Observations, "runtime": report.Runtime, "components": report.Components}
+	if report.Preference != nil {
+		value["preference"] = *report.Preference
+	}
+	return value
 }
 
 func (report DeviceReport) validateFields() error {
 	if report.Schema != 3 || ValidateID(report.NetworkID) != nil || ValidateID(report.DeviceID) != nil || report.DeviceID == "direct" || report.ReportSequence == 0 || ValidateDigest(report.ViewDigest) != nil || ValidateID(report.NetworkGeneration) != nil || !validateTime(report.ReportedAt) || report.Selections == nil || report.Observations == nil || report.Components == nil || report.Runtime.Validate() != nil {
 		return errors.New("device report is invalid")
+	}
+	if report.Preference != nil && report.Preference.Validate() != nil {
+		return errors.New("device report preference is invalid")
 	}
 	for index, selection := range report.Selections {
 		if ValidateID(selection.ServiceID) != nil || ValidateDigest(selection.CandidateID) != nil || index > 0 && report.Selections[index-1].ServiceID >= selection.ServiceID {

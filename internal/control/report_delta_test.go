@@ -214,8 +214,12 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	route := view.View.Routes[0]
 	reportFor := func(sequence U64, state string) DeviceReport {
 		t.Helper()
+		var preference *ReportPreference
+		if sequence%2 == 0 {
+			preference = &ReportPreference{Mode: "fixed_exit", Exit: "demo-unavailable-exit"}
+		}
 		at := joining.now().Add(-time.Duration(10000-int64(sequence)) * time.Second).UnixMilli()
-		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: firstConfig.NetworkID, DeviceID: invite.DeviceID, ReportSequence: sequence, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: joining.now().UnixMilli(), Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}}, Observations: []Observation{{NetworkGeneration: "demo-underlay", Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, SpecDigest: route.SpecDigest, Target: "https://demo-service.example/probe", Action: "https_request", Result: "available", ObservedAt: at, ValidUntil: at + 60000}}, Runtime: RuntimeReadback{State: state, AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, deviceKey)
+		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: firstConfig.NetworkID, DeviceID: invite.DeviceID, ReportSequence: sequence, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: joining.now().UnixMilli(), Preference: preference, Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}}, Observations: []Observation{{NetworkGeneration: "demo-underlay", Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, SpecDigest: route.SpecDigest, Target: "https://demo-service.example/probe", Action: "https_request", Result: "available", ObservedAt: at, ValidUntil: at + 60000}}, Runtime: RuntimeReadback{State: state, AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, deviceKey)
 		if err != nil {
 			t.Fatal(err)
 		}

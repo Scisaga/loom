@@ -797,6 +797,16 @@ DeviceReport 字段为 `schema=3,network_id,device_id,report_sequence:U64,view_d
 `selections,observations,runtime,components,signature`，report_sequence 至少 1，签名域固定 `loom-report-v3\0`。
 设备在发送前将下一序列与本机身份状态持久保存，重试只重发同一原始报告；崩溃允许序列跳号，不允许复用。
 selections 每项为 `service_id,candidate_id`，按 Service ID 排序，表示实际 selector 回读；没有实际选择则为空。
+access 设备可另外报告 `preference:{mode,exit?}`，mode 仅 `direct/auto/fixed_exit`；只有 fixed_exit
+必须携带规范 NodeID 的 exit，且不得为 direct 或 auto，其余模式必须省略 exit。对象缺席表示未报告，
+不能解释为 Auto；空对象、null、空 exit、未知字段及模式均拒绝。它是本次采样读取的本机
+Preference 的只读投影（未设置时使用现行默认 Auto），签名覆盖该字段，原来缺席该字段的报告字节和签名保持不变。没有 access
+职责的当前 View 不接受此字段。指定出口暂时不在授权候选中也不改变用户设置，不把其存在当成权限。
+偏好与实际 Selection 分别报告，异步切换期间允许二者不同；停止或执行失败也不抹去已保存的偏好。
+接收、同步与重启沿原始 DeviceReport 保存，不新增配置事实、同步设置入口或独立 store。控制面只
+展示与当前 View 相符报告中的设置和原采样时间，不从候选反推设置，也不将报告写回客户端 Preference。
+最小验证覆盖三种模式、非规范拒绝和签名绑定、历史缺席字节保全、偏好与实际选择不同、旧 View/分叉
+不投影、原始报告重启恢复，以及三端正式设置入口到签名报告和浏览器回读。
 runtime 为 `state,applied_view_digest,error_code`；state 仅 `running/error/stopped/unknown`，
 无故障时 error_code 为空字符串，不能承载含秘密的错误正文。运行摘要必须来自实际加载结果，失败时不能将
 当前获认证 View 摘要冒充已应用摘要；尚未加载任何 View 时 applied_view_digest 为空字符串。

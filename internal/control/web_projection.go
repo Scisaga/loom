@@ -193,6 +193,10 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
 			device.RuntimeState = report.Runtime.State
 			runtime := report.Runtime
 			device.Evidence = &DeviceEvidence{ReportedAt: device.LastReportAt, ViewDigest: report.ViewDigest, NetworkGeneration: report.NetworkGeneration, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...), Measurements: append([]Observation{}, report.Observations...)}
+			if report.Preference != nil {
+				preference := *report.Preference
+				device.Evidence.Preference = &preference
+			}
 			// A device may have different results for different services. Do not fold
 			// one success or failure into a global device business-health assertion.
 			for pathIndex := range snapshot.Paths {
