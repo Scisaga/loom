@@ -377,10 +377,15 @@ func (server *Server) live(w http.ResponseWriter, r *http.Request) {
 	}
 	defer connection.Close(websocket.StatusNormalClosure, "")
 	connection.SetReadLimit(1024)
+	ctx := connection.CloseRead(r.Context())
+	r = r.WithContext(ctx)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	previous := []byte(nil)
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		if !server.admin(r) {
 			_ = connection.Close(websocket.StatusPolicyViolation, "administrator authorization removed")
 			return

@@ -5,6 +5,7 @@ package clientrelease
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -44,7 +45,7 @@ func packageCacheKey(entry control.ReleaseEntry) string {
 	return entry.Artifact.Digest + "/" + entry.ManifestDigest
 }
 
-func readFile(root *os.Root, path string, limit int64) ([]byte, error) {
+func openFile(root *os.Root, path string, limit int64) (*os.File, error) {
 	info, err := root.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -56,16 +57,44 @@ func readFile(root *os.Root, path string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	current, err := f.Stat()
 	if err != nil || !os.SameFile(info, current) {
+		f.Close()
 		return nil, errors.New("release entry changed while opening")
 	}
+	return f, nil
+}
+
+func readFile(root *os.Root, path string, limit int64) ([]byte, error) {
+	f, err := openFile(root, path, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
 	body, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(body)) > limit {
 		return nil, errors.New("release entry exceeds its read boundary")
 	}
 	return body, nil
+}
+
+// A cached parse is reusable only after the actual complete package still
+// matches its signed bytes. Hashing that file needs no second in-memory copy.
+func verifyArtifactFile(root *os.Root, artifact control.ReleaseArtifact) error {
+	f, err := openFile(root, digestPath("bin", artifact.Digest, ""), int64(artifact.Size))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	n, err := io.CopyBuffer(hash, io.LimitReader(f, int64(artifact.Size)+1), make([]byte, 32<<10))
+	if err != nil {
+		return err
+	}
+	if n != int64(artifact.Size) || fmt.Sprintf("sha256:%x", hash.Sum(nil)) != artifact.Digest {
+		return errors.New("release package differs from its signed digest or size")
+	}
+	return nil
 }
 
 func (store *Store) Read() (control.ReleaseSet, error) {
@@ -127,13 +156,6 @@ func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, e
 		if uint64(entry.Artifact.Size) > maxPackageBytes {
 			return zero, errors.New("release package exceeds the reader boundary")
 		}
-		artifact, err := readFile(root, digestPath("bin", entry.Artifact.Digest, ""), int64(entry.Artifact.Size))
-		if err != nil {
-			return zero, err
-		}
-		if len(artifact) != int(entry.Artifact.Size) || control.ReleaseDigest(artifact) != entry.Artifact.Digest {
-			return zero, errors.New("release package differs from its signed digest or size")
-		}
 		manifest, err := readFile(root, digestPath("manifests", entry.ManifestDigest, "manifest.json"), 64<<10)
 		if err != nil {
 			return zero, err
@@ -144,11 +166,20 @@ func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, e
 		}
 		parsed, ok := store.packages[packageCacheKey(entry)]
 		if !ok {
+			artifact, err := readFile(root, digestPath("bin", entry.Artifact.Digest, ""), int64(entry.Artifact.Size))
+			if err != nil {
+				return zero, err
+			}
+			if len(artifact) != int(entry.Artifact.Size) || control.ReleaseDigest(artifact) != entry.Artifact.Digest {
+				return zero, errors.New("release package differs from its signed digest or size")
+			}
 			parsed, err = InspectInput(entry.Artifact.Name, Input{Body: artifact, Manifest: manifest, Signature: signed}, store.key)
 			if err != nil {
 				return zero, err
 			}
 			store.packages[packageCacheKey(entry)] = parsed
+		} else if err := verifyArtifactFile(root, entry.Artifact); err != nil {
+			return zero, err
 		}
 		if parsed.Entry != entry {
 			return zero, errors.New("release catalog coordinates differ from the original package manifest")

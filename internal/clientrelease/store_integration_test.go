@@ -88,7 +88,14 @@ func TestReviewedStoreRechecksBytesAndRebuildsCache(t *testing.T) {
 		}
 		changed := bytes.Clone(original)
 		changed[len(changed)/2] ^= 1
+		before, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(path, changed, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, before.ModTime(), before.ModTime()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.Read(); err == nil {
@@ -100,6 +107,22 @@ func TestReviewedStoreRechecksBytesAndRebuildsCache(t *testing.T) {
 		if err := os.WriteFile(path, original, 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	artifactPath := filepath.Join(directory, digestPath("bin", entry.Artifact.Digest, ""))
+	original, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, changed := range [][]byte{original[:len(original)-1], append(bytes.Clone(original), 0)} {
+		if err := os.WriteFile(artifactPath, changed, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Read(); err == nil {
+			t.Fatal("cached source accepted truncated or extended package")
+		}
+	}
+	if err := os.WriteFile(artifactPath, original, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	final, err := store.Read()
 	if err != nil || !reflect.DeepEqual(initial, final) {
