@@ -136,13 +136,13 @@ class EnrollmentManager private constructor(context: Context) {
         val acceptedView = store.acceptedViewDigest().also { check(it.isNotEmpty()) { "设备尚未获得认证配置" } }
         LoomVpnService.withRuntimeReport(profileId) { runtime ->
             val routing = RouteManager.get(appContext).reportData(
-                profileId, acceptedView, runtime.optString("applied_view_digest"),
+                profileId, checkNotNull(store.state()), acceptedView, runtime.optString("applied_view_digest"),
             )
             // The sequence and complete identity/LKG are one durable write. A
             // network failure burns this number; no stale handle can reuse it.
             val reserved = store.updateState(Loomcore::reserveAndroidReportSequence)
             Loomcore.postAndroidDeviceReport(
-                reserved, routing.observations, routing.selections, runtime.toString().encodeToByteArray(),
+                reserved, routing.resourceObservations, routing.observations, routing.selections, runtime.toString().encodeToByteArray(),
                 Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version()),
                 routing.networkGeneration, Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
             )

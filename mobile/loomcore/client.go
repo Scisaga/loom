@@ -287,7 +287,7 @@ type androidSelection struct {
 	CandidateID string `json:"candidate_id"`
 }
 
-func androidReport(state deviceclient.State, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
+func androidReport(state deviceclient.State, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
 	if state.LKG == nil || state.ReportSequence == 0 {
 		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
 	}
@@ -317,6 +317,20 @@ func androidReport(state deviceclient.State, observationsBody, selectionsBody, r
 		return control.DeviceReport{}, errors.New("Android report time is not canonical")
 	}
 	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
+	if len(resourceBody) > 0 {
+		if runtime.State != "running" || runtime.AppliedViewDigest != state.LKG.ViewDigest {
+			return control.DeviceReport{}, errors.New("resource samples require the actual accepted Android runtime")
+		}
+		values, err := clientadapter.DecodeResourceObservations(resourceBody, *state.LKG, generation)
+		if err != nil {
+			return control.DeviceReport{}, err
+		}
+		for _, value := range values {
+			if value.ObservedAt <= report.ReportedAt && report.ReportedAt < value.ValidUntil {
+				report.Observations = append(report.Observations, value)
+			}
+		}
+	}
 	routes := map[string]control.RouteCandidate{}
 	targets := map[string]map[string]bool{}
 	for _, route := range state.LKG.View.Routes {
@@ -350,7 +364,7 @@ func androidReport(state deviceclient.State, observationsBody, selectionsBody, r
 	}
 	sort.Slice(report.Observations, func(i, j int) bool {
 		a, b := report.Observations[i], report.Observations[j]
-		return strings.Join([]string{a.ServiceID, a.CandidateID, a.Target, a.Action, a.SpecDigest}, "\x00") < strings.Join([]string{b.ServiceID, b.CandidateID, b.Target, b.Action, b.SpecDigest}, "\x00")
+		return strings.Join([]string{a.Level, a.ServiceID, a.CandidateID, a.ResourceID, a.LinkID, a.Target, a.Action, a.SpecDigest}, "\x00") < strings.Join([]string{b.Level, b.ServiceID, b.CandidateID, b.ResourceID, b.LinkID, b.Target, b.Action, b.SpecDigest}, "\x00")
 	})
 	if runtime.State == "running" && runtime.AppliedViewDigest != state.LKG.ViewDigest {
 		return control.DeviceReport{}, errors.New("running report is not the actual accepted configuration")
@@ -359,12 +373,12 @@ func androidReport(state deviceclient.State, observationsBody, selectionsBody, r
 }
 
 // Kotlin commits ReserveAndroidReportSequence before invoking this function.
-func PostAndroidDeviceReport(stateBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, networkGeneration, reportedAt string) error {
+func PostAndroidDeviceReport(stateBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, networkGeneration, reportedAt string) error {
 	state, err := decodeState(stateBody)
 	if err != nil {
 		return err
 	}
-	report, err := androidReport(state, observationsBody, selectionsBody, runtimeBody, componentsBody, networkGeneration, reportedAt)
+	report, err := androidReport(state, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, networkGeneration, reportedAt)
 	if err != nil {
 		return err
 	}

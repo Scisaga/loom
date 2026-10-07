@@ -49,6 +49,8 @@ object ProfileStorage {
 
     fun observations(profileId: String): String = key(profileId, "route-observations-v2")
 
+    fun resourceObservations(profileId: String): String = key(profileId, "resource-observations")
+
     fun networkGeneration(profileId: String): String = key(profileId, "network-generation-v2")
 
     fun networkIdentity(profileId: String): String = key(profileId, "network-identity-v2")

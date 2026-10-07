@@ -164,6 +164,49 @@ class CertifiedRuntimeInstrumentedTest {
         await("private join or protected restart must restore the certified profile") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
         connect()
         website()
+        args.getString("demoResourceStep")?.let { step ->
+            require(step in setOf("refresh", "restart", "recovery"))
+            await("resource sample must follow the actual authorized selector") {
+                routing.status(profileID).value.currentPaths.size == 1
+            }
+            if (step == "recovery") {
+                assertFalse("stopped first hop unexpectedly carried business", business())
+                mark("demo-resource-failed.json")
+                await("controller must restore the same first-hop execution inputs") {
+                    File(directory, "demo-resource-restored").isFile
+                }
+                await("restored first hop must carry real application HTTPS") { business() }
+                mark("demo-resource-recovered.json")
+            } else {
+                await("first hop must carry real application HTTPS") { business() }
+                mark("demo-resource-$step.json")
+                if (step == "refresh") {
+                    val previous = enrollment.status(profileID).value.viewDigest
+                    await("controller must publish unrelated configuration") {
+                        File(directory, "demo-resource-refresh").isFile
+                    }
+                    compose.onNodeWithTag("tab-configuration").performClick()
+                    click("refresh-config")
+                    await("unrelated View must be accepted and applied") {
+                        enrollment.status(profileID).value.viewDigest != previous &&
+                            routing.status(profileID).value.currentPaths.size == 1
+                    }
+                    compose.onNodeWithTag("tab-connection").performClick()
+                    awaitConnected()
+                    await("unrelated refresh must preserve authorized HTTPS") { business() }
+                    mark("demo-resource-refreshed.json")
+                }
+            }
+            await("controller must independently verify original resource reports") {
+                File(directory, "demo-resource-finish-$step").isFile
+            }
+            click("connection-toggle")
+            await("normal disconnect must release the VPN") { VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED }
+            await("controller must read the signed stopped report") {
+                File(directory, "demo-resource-stopped-$step").isFile
+            }
+            return
+        }
         if (!resume) {
             await("authorized path must be consumed after protected restart") {
                 routing.status(profileID).value.currentPaths.size == 1

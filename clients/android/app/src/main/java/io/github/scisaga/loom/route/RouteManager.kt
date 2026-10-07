@@ -1,6 +1,7 @@
 package io.github.scisaga.loom.route
 
 import android.content.Context
+import android.util.Log
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.profiles.ProfileStorage
@@ -75,6 +76,7 @@ internal data class BusinessProbeInput(
 )
 
 internal data class RuntimeReportData(
+    val resourceObservations: ByteArray,
     val observations: ByteArray,
     val selections: ByteArray,
     val networkGeneration: String,
@@ -249,11 +251,31 @@ class RouteManager private constructor(context: Context) {
         singleBusinessProbeInput(profile, next, runtime.generation)
     }
 
-    internal suspend fun reportData(profileId: String, acceptedView: String, appliedView: String): RuntimeReportData = operation.withLock {
+    internal suspend fun reportData(profileId: String, state: ByteArray, acceptedView: String, appliedView: String): RuntimeReportData = operation.withLock {
         val runtime = runtime(profileId)
         ensureNetworkGeneration(profileId, runtime)
         val running = appliedView == acceptedView && runtime.runningProfile?.viewDigest == acceptedView
         val selected = if (running) runtime.application?.selectors.orEmpty() else emptyList()
+        val selections = JSONArray(selected.sortedBy { it.selector }.map {
+            JSONObject().put("scope", it.selector).put("candidate_id", it.candidate)
+        }).toString().encodeToByteArray()
+        val resources = if (running) {
+            runCatching {
+                val key = ProfileStorage.resourceObservations(profileId)
+                val previous = runtime.resourceObservations ?: protected.get(key) ?: ByteArray(0)
+                val sampled = Loomcore.observeAndroidFirstHops(state, selections, previous, runtime.generation)
+                runtime.resourceObservations = sampled
+                if (!sampled.contentEquals(previous)) {
+                    runCatching { protected.put(key, sampled) }.onFailure {
+                        Log.w("Loom", "首跳样本缓存写入失败；本进程保留原样本")
+                    }
+                }
+                sampled
+            }.getOrElse {
+                Log.w("Loom", "首跳样本不可用；保留原缓存与独立业务结果")
+                ByteArray(0)
+            }
+        } else ByteArray(0)
         val now = Instant.now()
         val values = if (running) observations(profileId).objects().filter { observation ->
             observation.getString("network_generation") == runtime.generation &&
@@ -261,10 +283,9 @@ class RouteManager private constructor(context: Context) {
                 runCatching { Instant.parse(observation.getString("valid_until")).isAfter(now) }.getOrDefault(false)
         }.sortedBy { it.getString("candidate_id") } else emptyList()
         RuntimeReportData(
+            resources,
             JSONArray(values).toString().encodeToByteArray(),
-            JSONArray(selected.sortedBy { it.selector }.map {
-                JSONObject().put("scope", it.selector).put("candidate_id", it.candidate)
-            }).toString().encodeToByteArray(),
+            selections,
             runtime.generation,
         )
     }
@@ -286,6 +307,7 @@ class RouteManager private constructor(context: Context) {
         }
         protected.remove(ProfileStorage.routePreference(profileId))
         protected.remove(ProfileStorage.observations(profileId))
+        protected.remove(ProfileStorage.resourceObservations(profileId))
         protected.remove(ProfileStorage.networkGeneration(profileId))
         protected.remove(ProfileStorage.networkIdentity(profileId))
     }
@@ -383,6 +405,7 @@ class RouteManager private constructor(context: Context) {
         @Volatile var networkIdentity: String = ""
         @Volatile var actual = linkedMapOf<String, String>()
         @Volatile var application: AppliedRoute? = null
+        var resourceObservations: ByteArray? = null
     }
 
     companion object {

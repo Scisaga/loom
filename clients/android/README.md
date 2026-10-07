@@ -31,6 +31,8 @@ The protected Android Keystore store contains:
   control membership proof, and complete signed LKG as one state record;
 - the user's Direct / Auto / fixed-exit preference;
 - bounded business observations keyed by network generation.
+- a deletable first-hop observation cache bound to the profile identity, exact
+  authorized resource inputs and network generation; original sample times survive restart.
 
 Enrollment claim/resume, configuration sync, and signed reporting all use the
 TLS 1.3 private tunnel described by the certified endpoint generation. The
@@ -46,6 +48,16 @@ and network generation. Each result binds the actual target and candidate; a suc
 for one Service does not establish another Service's health.
 If the selected candidate is unavailable, the model may choose one same-exit fallback and
 the host performs one second business check—there is no full candidate scan.
+
+After selector readback, the existing report loop separately authenticates the
+public Hy2 first hops actually needed by the selection. Shared resources are
+sampled once per original validity window through protected underlay sockets.
+These resource observations enter the original signed report and management
+device page; they do not establish a Service's availability. Normal stop retains
+the diagnostic cache but reports no current resource health. Revocation, changed
+execution inputs or a different network generation prevent reuse; profile deletion
+removes its cache. Corrupt cache bytes are retained and resource samples stay
+unknown while authorized business execution remains independent.
 
 Ordinary Direct has `final_exit=direct` and no managed hops. An authorized local
 egress candidate also has no network hops, but retains this device's NodeID as
