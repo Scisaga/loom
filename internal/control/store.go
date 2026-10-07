@@ -181,11 +181,7 @@ func InitializeAuthority(root string, config NodeConfig, genesis Material) (*Aut
 	if err := putControlBytes(path, body); err != nil {
 		return nil, err
 	}
-	observations, err := CanonicalEncode(observationState{Schema: 3, Reports: []DeviceReport{}})
-	if err != nil {
-		return nil, err
-	}
-	if err := putControlBytes(filepath.Join(root, "observations.json"), observations); err != nil {
+	if err := initializeObservationDB(filepath.Join(root, "observations.db")); err != nil {
 		return nil, err
 	}
 	encoded, err := CanonicalEncode(config)

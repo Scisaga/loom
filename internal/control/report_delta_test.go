@@ -290,11 +290,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	capture.mu.Unlock()
 	readHistory := func(node int) []byte {
 		t.Helper()
-		body, err := os.ReadFile(filepath.Join(roots[node], "observations.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return body
+		return testObservationBytes(t, roots[node])
 	}
 	if !bytes.Equal(readHistory(0), readHistory(1)) {
 		t.Fatal("member history changed original canonical signed bytes")
@@ -379,7 +375,7 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 	if err != nil || server.Runtime.Reports.Put(base, claim.DevicePublicKey) != nil {
 		t.Fatal("could not persist original report", err)
 	}
-	path := filepath.Join(server.Runtime.Authority.root, "observations.json")
+	path := filepath.Join(server.Runtime.Authority.root, "observations.db")
 	before, _ := os.ReadFile(path)
 	lower := base
 	lower.ReportSequence, lower.Signature = 2, ""
@@ -593,24 +589,13 @@ func TestReportIndexSnapshotsRemainImmutableAndRejectChangedFiles(t *testing.T) 
 	if len(third.reports) != 3 || len(snapshot().reports) != 4 {
 		t.Fatal("concurrent commit changed an old snapshot or lost the new report")
 	}
-	raw, err := os.ReadFile(store.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed := bytes.Replace(raw, []byte(`"schema":3`), []byte(`"schema":4`), 1)
-	if bytes.Equal(changed, raw) || len(changed) != len(raw) {
-		t.Fatal("same-length corruption fixture did not change the bytes")
-	}
-	if err := os.WriteFile(store.path, changed, 0600); err != nil {
-		t.Fatal(err)
-	}
+	testCorruptReport(t, store.path, func(raw []byte) []byte { return bytes.Replace(raw, []byte(`"schema":3`), []byte(`"schema":4`), 1) })
 	if _, err := store.reportIndexSnapshot(context.Background()); err == nil {
-		t.Fatal("matching file size bypassed exact byte verification")
+		t.Fatal("same-length corruption bypassed original-byte verification")
 	}
-	if err := os.WriteFile(store.path, append(raw, '\n'), 0600); err != nil {
-		t.Fatal(err)
-	}
+	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(4)})
+	testCorruptReport(t, store.path, func(raw []byte) []byte { return append(raw, '\n') })
 	if _, err := store.reportIndexSnapshot(context.Background()); err == nil {
-		t.Fatal("warm index bypassed noncanonical protected history")
+		t.Fatal("warm index bypassed noncanonical original")
 	}
 }

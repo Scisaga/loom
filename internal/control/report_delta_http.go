@@ -71,17 +71,16 @@ func (server *Server) internalReports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	index, err := server.Runtime.Reports.reportIndexSnapshot(r.Context())
+	reports, err := server.Runtime.Reports.readReports(r.Context(), request.ReportIDs)
 	if err != nil {
 		http.Error(w, "report index unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	body := []byte(`{"reports":[`)
 	for i, id := range request.ReportIDs {
-		report, found := index.reports[id]
+		report, found := reports[id]
 		if !found {
-			http.Error(w, "requested report is absent", http.StatusConflict)
-			return
+			break
 		}
 		authorization, ok := authorizationFor(projection, report.DeviceID)
 		if !ok || report.NetworkID != projection.NetworkID {

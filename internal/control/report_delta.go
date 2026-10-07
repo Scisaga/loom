@@ -1,12 +1,12 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"maps"
 	"net/http"
 	"sort"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 const reportRangeSize U64 = 1024
@@ -181,101 +181,67 @@ type storedReportRange struct {
 // Immutable, disposable projections of the same original collection. No
 // authorization or completion state is cached. Readers may retain a snapshot.
 type reportIndex struct {
-	canonical []byte
-	reports   map[string]DeviceReport
-	groups    map[storedReportRange][]string
-	digests   map[storedReportRange]string
+	reports map[string]reportReference
+	groups  map[storedReportRange][]string
+	digests map[storedReportRange]string
 }
 
 func emptyReportIndex() *reportIndex {
-	return &reportIndex{reports: map[string]DeviceReport{}, groups: map[storedReportRange][]string{}, digests: map[storedReportRange]string{}}
+	return &reportIndex{reports: map[string]reportReference{}, groups: map[storedReportRange][]string{}, digests: map[storedReportRange]string{}}
+}
+func (index *reportIndex) rebuildGroups() error {
+	for id, ref := range index.reports {
+		key := storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence)}}
+		index.groups[key] = append(index.groups[key], id)
+	}
+	for key, ids := range index.groups {
+		sort.Strings(ids)
+		body, err := CanonicalEncode(ids)
+		if err != nil {
+			return err
+		}
+		index.digests[key] = ReleaseDigest(body)
+	}
+	return nil
 }
 func (index *reportIndex) withReports(reports []DeviceReport) (*reportIndex, error) {
-	next := &reportIndex{reports: maps.Clone(index.reports), groups: maps.Clone(index.groups), digests: maps.Clone(index.digests)}
-	changed := map[storedReportRange]bool{}
-	for _, report := range reports {
-		body, err := CanonicalEncode(report)
-		if err != nil {
-			return nil, err
-		}
-		id := ReleaseDigest(body)
-		if _, found := next.reports[id]; found {
-			continue
-		}
-		key := storedReportRange{report.NetworkID, reportScope{report.DeviceID, reportRangeStart(report.ReportSequence)}}
-		if !changed[key] {
-			next.groups[key] = append([]string{}, next.groups[key]...)
-			changed[key] = true
-		}
-		next.groups[key] = append(next.groups[key], id)
-		next.reports[id] = report
+	if len(reports) == 0 {
+		return index, nil
 	}
-	for key := range changed {
-		sort.Strings(next.groups[key])
-		body, err := CanonicalEncode(next.groups[key])
+	next := emptyReportIndex()
+	for id, ref := range index.reports {
+		next.reports[id] = ref
+	}
+	for _, report := range reports {
+		raw, err := CanonicalEncode(report)
 		if err != nil {
 			return nil, err
 		}
-		next.digests[key] = ReleaseDigest(body)
+		next.reports[ReleaseDigest(raw)] = referenceOf(report)
+	}
+	if err := next.rebuildGroups(); err != nil {
+		return nil, err
 	}
 	return next, nil
 }
 func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*reportIndex, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	select {
 	case store.indexRead <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	defer func() { <-store.indexRead }()
-	cached := store.index.Load()
-	// Writers replace the complete file atomically. An opened, validated file
-	// is a committed snapshot even while another writer prepares its successor.
-	var known []byte
-	if cached != nil {
-		known = cached.canonical
-	}
-	body, err := readProtectedControlFileMatching(store.path, known)
+	var index *reportIndex
+	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+		var err error
+		index, err = scanObservationIndex(ctx, tx, store.index.Load())
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if current := store.index.Load(); current != nil && bytes.Equal(current.canonical, body) {
-		return current, nil
-	}
-	if cached != nil && bytes.Equal(cached.canonical, body) {
-		return cached, nil
-	}
-	var reports []DeviceReport
-	if store.mu.TryRLock() {
-		if bytes.Equal(store.canonical, body) {
-			reports = store.state.Reports
-		}
-		store.mu.RUnlock()
-	}
-	if reports == nil {
-		state, err := decodeObservationState(body)
-		if err != nil {
-			return nil, err
-		}
-		reports = state.Reports
-	}
-	built, err := emptyReportIndex().withReports(reports)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	built.canonical = body
-	// A concurrent publication wins. This reader still returns its own complete
-	// committed snapshot; the next request rechecks the actual file bytes.
-	store.index.CompareAndSwap(cached, built)
-	return built, nil
+	store.index.Store(index)
+	return index, nil
 }
 func (index *reportIndex) ranges(projection Projection) reportRanges {
 	value := reportRanges{3, projection.NetworkID, []reportRangeSummary{}}

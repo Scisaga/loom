@@ -270,14 +270,11 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := store.Put(report, public); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(filepath.Join(root, "observations.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := testObservationBytes(t, root)
 	if err := store.Put(report, public); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := os.ReadFile(filepath.Join(root, "observations.json"))
+	after := testObservationBytes(t, root)
 	if !bytes.Equal(before, after) {
 		t.Fatal("report retry changed original signed values")
 	}
@@ -302,7 +299,7 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if len(store.History()) != 2 || len(store.All()) != 0 {
 		t.Fatal("report fork evidence lost or one fork was chosen")
 	}
-	forkBytes, _ := os.ReadFile(filepath.Join(root, "observations.json"))
+	forkBytes := testObservationBytes(t, root)
 	reverseRoot := t.TempDir()
 	if err := os.Chmod(reverseRoot, 0o700); err != nil {
 		t.Fatal(err)
@@ -317,7 +314,7 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := reverse.Put(report, public); !errors.Is(err, ErrReportEquivocation) {
 		t.Fatal("reverse arrival order lost the signed fork", err)
 	}
-	reversedBytes, _ := os.ReadFile(filepath.Join(reverseRoot, "observations.json"))
+	reversedBytes := testObservationBytes(t, reverseRoot)
 	if !bytes.Equal(forkBytes, reversedBytes) {
 		t.Fatal("arrival order changed canonical signed history")
 	}
@@ -347,17 +344,14 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if len(store.Verified(server.Runtime.Authority.Snapshot())) != 1 {
 		t.Fatal("latest signed current-view report unavailable")
 	}
-	path := filepath.Join(root, "observations.json")
-	valid, _ := os.ReadFile(path)
-	invalid := append(append([]byte{}, valid...), '\n')
-	if err := os.WriteFile(path, invalid, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(root, "observations.db")
+	testCorruptReport(t, path, func(raw []byte) []byte { return append(raw, '\n') })
+	invalid, _ := os.ReadFile(path)
 	if err := store.Put(next, public); err == nil {
-		t.Fatal("cached report history bypassed strict file decoding")
+		t.Fatal("cached report history bypassed strict original decoding")
 	}
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, invalid) {
-		t.Fatal("rejected history was overwritten from the cache")
+		t.Fatal("rejected history was overwritten from cache")
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -411,7 +405,7 @@ func TestInitialControlBindsItsOwnDeviceIdentityWithoutChangingMembership(t *tes
 	}
 }
 
-func TestObservationEvidenceCannotBeReinitializedOrMigrated(t *testing.T) {
+func TestObservationEvidenceCannotBeReinitializedOrImplicitlyMigrated(t *testing.T) {
 	root, config, genesis := authorityFixture(t)
 	if _, err := InitializeAuthority(root, config, genesis); err != nil {
 		t.Fatal(err)
@@ -419,7 +413,7 @@ func TestObservationEvidenceCannotBeReinitializedOrMigrated(t *testing.T) {
 	if _, err := OpenObservationStore(root); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "observations.json")
+	path := filepath.Join(root, "observations.db")
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

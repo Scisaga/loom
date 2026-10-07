@@ -51,7 +51,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <init|serve|relay|edge|inspect|endpoint-inputs|website|admin|write>")
+		return errors.New("用法: loom control <init|serve|relay|edge|inspect|migrate-reports|endpoint-inputs|website|admin|write>")
 	}
 	switch args[0] {
 	case "admin":
@@ -66,6 +66,8 @@ func cmdControl(args []string) error {
 		return cmdControlEdge(args[1:])
 	case "inspect":
 		return cmdControlInspect(args[1:])
+	case "migrate-reports":
+		return cmdControlMigrateReports(args[1:])
 	case "endpoint-inputs":
 		return cmdControlEndpointInputs(args[1:])
 	case "website":
@@ -75,6 +77,26 @@ func cmdControl(args []string) error {
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
+}
+func cmdControlMigrateReports(args []string) error {
+	fs := flag.NewFlagSet("control migrate-reports", flag.ContinueOnError)
+	root := fs.String("state-dir", "/var/lib/loom-control", "现行控制目录")
+	socket := fs.String("admin-socket", "", "已停止 control 的实际管理 socket，默认由 state-dir 定位")
+	evidence := fs.String("evidence", "", "外部受保护目录中的原报告集合证据文件")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *evidence == "" {
+		return errors.New("migrate-reports 需要明确 evidence 文件；先停止对应 control")
+	}
+	if *socket == "" {
+		*socket = filepath.Join(*root, "admin.sock")
+	}
+	result, err := control.MigrateObservationHistory(context.Background(), *root, *socket, *evidence)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
 }
 func readCanonicalControlInput(path string, value any) error {
 	info, err := os.Lstat(path)

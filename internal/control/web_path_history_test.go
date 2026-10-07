@@ -2,8 +2,8 @@ package control
 
 import (
 	"bytes"
+	"context"
 	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -106,24 +106,21 @@ func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 		right, _ := CanonicalEncode(reports[j])
 		return reportBefore(reports[i], left, reports[j], right)
 	})
-	body, err := CanonicalEncode(observationState{Schema: 3, Reports: reports})
-	if err != nil {
-		t.Fatal(err)
-	}
 	root := t.TempDir()
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "observations.json")
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testSetObservationReports(t, root, reports)
+	body := testObservationBytes(t, root)
 	for attempt := 0; attempt < 2; attempt++ {
 		store, err := OpenObservationStore(root)
 		if err != nil {
 			t.Fatal(err)
 		}
-		result := store.pathHistory(projection.NetworkID, projection.DeviceAuthorizations[0], route, base.Target, now)
+		result, err := store.pathHistory(context.Background(), projection.NetworkID, projection.DeviceAuthorizations[0], route, base.Target, now)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(result.Buckets) != 24 || result.Buckets[23].Observation == nil || result.Buckets[23].Observation.DurationMS == nil || *result.Buckets[23].Observation.DurationMS != 0 || result.Buckets[22].Observation == nil || result.Buckets[22].Observation.Result != "unavailable" || result.Buckets[22].Observation.DurationMS != nil || result.Buckets[21].Observation == nil {
 			t.Fatal("original success, failure, zero duration or expired history lost")
 		}
@@ -138,7 +135,7 @@ func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 				t.Fatal("old scope, target, generation, signature, fork or out-of-window sample entered history", index)
 			}
 		}
-		readback, _ := os.ReadFile(path)
+		readback := testObservationBytes(t, root)
 		if !bytes.Equal(body, readback) {
 			t.Fatal("history query or restart changed signed reports")
 		}

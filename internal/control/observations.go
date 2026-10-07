@@ -9,39 +9,13 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 var ErrReportEquivocation = errors.New("device signed different reports at one sequence")
 var ErrReportReplay = errors.New("device report sequence is below the durable high-water mark")
 
-// The protected file reader applies this same capacity. A history may contain
-// more JSON values than any individual report; its bytes already bound them.
-const maxObservationStateBytes = maxControlInputBytes
-
-// This collection preserves the signed observations, including fork evidence.
-// Latest values and high-water marks are rebuilt, never separately persisted.
-type observationState struct {
-	Schema  int            `json:"schema"`
-	Reports []DeviceReport `json:"reports"`
-}
-
-func (state observationState) Validate() error {
-	if state.Schema != 3 || state.Reports == nil {
-		return errors.New("observation collection schema is invalid")
-	}
-	var previous []byte
-	for index, report := range state.Reports {
-		body, err := CanonicalEncode(report)
-		if err != nil {
-			return err
-		}
-		if index > 0 && !reportBefore(state.Reports[index-1], previous, report, body) {
-			return errors.New("signed observations are not uniquely sorted")
-		}
-		previous = body
-	}
-	return nil
-}
 func reportBefore(left DeviceReport, leftBody []byte, right DeviceReport, rightBody []byte) bool {
 	if left.NetworkID != right.NetworkID {
 		return left.NetworkID < right.NetworkID
@@ -56,83 +30,11 @@ func reportBefore(left DeviceReport, leftBody []byte, right DeviceReport, rightB
 }
 
 type ObservationStore struct {
-	path       string
-	mu         sync.RWMutex
-	state      observationState
-	canonical  []byte                      // Rebuildable decode cache, checked against the protected file under its lock.
-	rawReports [][]byte                    // Slices of canonical, never another persisted collection.
-	verified   map[reportOwner]string      // Signature-check memoization for exactly these bytes and each supplied public key.
-	index      atomic.Pointer[reportIndex] // Immutable projection of exact committed bytes; never persisted.
-	indexRead  chan struct{}               // Bounds snapshot buffers/rebuilds independently of the writer lock.
-}
-
-func OpenObservationStore(root string) (*ObservationStore, error) {
-	if err := validateControlRoot(root); err != nil {
-		return nil, err
-	}
-	lockPath := filepath.Join(root, ".observations.lock")
-	_, previousLockErr := os.Lstat(lockPath)
-	_, nodeErr := os.Lstat(filepath.Join(root, "node.json"))
-	lock, err := lockProtectedControlPath(context.Background(), lockPath)
-	if err != nil {
-		return nil, err
-	}
-	defer lock.Close()
-	store := &ObservationStore{path: filepath.Join(root, "observations.json"), indexRead: make(chan struct{}, 1)}
-	if err := store.reloadLocked(); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		if !errors.Is(previousLockErr, os.ErrNotExist) || !errors.Is(nodeErr, os.ErrNotExist) {
-			return nil, errors.New("existing observation history is missing; report high-water marks cannot be reinitialized")
-		}
-		state := observationState{Schema: 3, Reports: []DeviceReport{}}
-		body, err := CanonicalEncode(state)
-		if err != nil {
-			return nil, err
-		}
-		if err := putControlBytes(store.path, body); err != nil {
-			return nil, err
-		}
-		store.state = state
-		store.canonical = body
-	}
-	return store, nil
-}
-func (store *ObservationStore) reloadLocked() error {
-	body, err := readProtectedControlFileMatching(store.path, store.canonical)
-	if err != nil {
-		return err
-	}
-	if len(store.canonical) != 0 && bytes.Equal(body, store.canonical) {
-		return nil
-	}
-	state, raw, err := decodeObservationStateWithBytes(body)
-	if err != nil {
-		return err
-	}
-	store.state = state
-	store.canonical = body
-	store.rawReports = raw
-	store.verified = nil
-	if cached := store.index.Load(); cached != nil && !bytes.Equal(cached.canonical, body) {
-		store.index.CompareAndSwap(cached, nil)
-	}
-	return nil
-}
-func cloneReport(report DeviceReport) DeviceReport {
-	body, err := CanonicalEncode(report)
-	var result DeviceReport
-	if err == nil {
-		err = DecodeCanonical(body, &result, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20})
-	}
-	if err != nil {
-		return DeviceReport{}
-	}
-	return result
-}
-func (store *ObservationStore) Put(report DeviceReport, publicKey string) error {
-	return store.mergeReports(context.Background(), []DeviceReport{report}, map[reportOwner]string{{report.NetworkID, report.DeviceID}: publicKey}, false)
+	path      string
+	mu        sync.Mutex
+	verified  map[string]string // Exact content ID -> immutable verification key; disposable.
+	index     atomic.Pointer[reportIndex]
+	indexRead chan struct{}
 }
 
 type reportOwner struct{ network, device string }
@@ -141,8 +43,41 @@ type reportPosition struct {
 	sequence U64
 }
 
-// Member history and direct uploads share one writer and the same original
-// collection. Only authenticated member exchange may fill an unknown old slot.
+func OpenObservationStore(root string) (*ObservationStore, error) {
+	if err := validateControlRoot(root); err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(root, ".observations.lock")
+	_, priorLock := os.Lstat(lockPath)
+	_, nodeErr := os.Lstat(filepath.Join(root, "node.json"))
+	lock, err := lockProtectedControlPath(context.Background(), lockPath)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := rejectObservationJSON(root); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(root, "observations.db")
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		if !errors.Is(priorLock, os.ErrNotExist) || !errors.Is(nodeErr, os.ErrNotExist) {
+			return nil, errors.New("existing observation history is missing; report high-water marks cannot be reinitialized")
+		}
+		if err := initializeObservationDB(path); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+	store := &ObservationStore{path: path, indexRead: make(chan struct{}, 1), verified: map[string]string{}}
+	if _, err := store.reportIndexSnapshot(context.Background()); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+func (store *ObservationStore) Put(report DeviceReport, publicKey string) error {
+	return store.mergeReports(context.Background(), []DeviceReport{report}, map[reportOwner]string{{report.NetworkID, report.DeviceID}: publicKey}, false)
+}
 func (store *ObservationStore) mergeReportHistory(ctx context.Context, reports []DeviceReport, projection Projection) error {
 	keys := map[reportOwner]string{}
 	for _, report := range reports {
@@ -154,7 +89,6 @@ func (store *ObservationStore) mergeReportHistory(ctx context.Context, reports [
 	}
 	return store.mergeReports(ctx, reports, keys, true)
 }
-
 func (store *ObservationStore) mergeReports(ctx context.Context, reports []DeviceReport, keys map[reportOwner]string, historical bool) error {
 	if len(reports) == 0 {
 		return errors.New("empty report merge")
@@ -179,171 +113,124 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	defer lock.Close()
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if err := store.reloadLocked(); err != nil {
-		return err
-	}
-	high := map[reportOwner]U64{}
-	known := map[reportPosition]map[string]bool{}
-	for priorIndex, prior := range store.state.Reports {
-		owner := reportOwner{prior.NetworkID, prior.DeviceID}
-		publicKey, concerned := keys[owner]
-		if !concerned {
-			continue
-		}
-		if store.verified[owner] != publicKey {
-			if err := prior.Verify(publicKey); err != nil {
-				return errors.New("stored observation does not verify against the current immutable device key")
-			}
-		}
-		if prior.ReportSequence > high[owner] {
-			high[owner] = prior.ReportSequence
-		}
-		position := reportPosition{owner, prior.ReportSequence}
-		if !positions[position] {
-			continue
-		}
-		if known[position] == nil {
-			known[position] = map[string]bool{}
-		}
-		known[position][ReleaseDigest(store.rawReports[priorIndex])] = true
-	}
-	if store.verified == nil {
-		store.verified = map[reportOwner]string{}
-	}
-	for owner, key := range keys {
-		store.verified[owner] = key
-	}
-	additions := []DeviceReport{}
+	var committed *reportIndex
 	fork := false
-	for i, report := range reports {
-		owner := reportOwner{report.NetworkID, report.DeviceID}
-		position := reportPosition{owner, report.ReportSequence}
-		id := ReleaseDigest(bodies[i])
-		ids := known[position]
-		if ids[id] {
-			fork = fork || len(ids) > 1
-			continue
-		}
-		if !historical && report.ReportSequence < high[owner] && len(ids) == 0 {
-			return ErrReportReplay
-		}
-		fork = fork || len(ids) > 0
-		if ids == nil {
-			ids = map[string]bool{}
-			known[position] = ids
-		}
-		ids[id] = true
-		copy := cloneReport(report)
-		if copy.Schema != 3 {
-			return errors.New("report cannot round trip through its input boundary")
-		}
-		additions = append(additions, copy)
-	}
-	if len(additions) == 0 {
-		if err := syncControlDirectory(filepath.Dir(store.path)); err != nil {
-			return err
-		}
-		if fork {
-			return ErrReportEquivocation
-		}
-		return nil
-	}
-	less := func(left, right DeviceReport) bool {
-		var leftBody, rightBody []byte
-		if left.NetworkID == right.NetworkID && left.DeviceID == right.DeviceID && left.ReportSequence == right.ReportSequence {
-			leftBody, _ = CanonicalEncode(left)
-			rightBody, _ = CanonicalEncode(right)
-		}
-		return reportBefore(left, leftBody, right, rightBody)
-	}
-	sort.Slice(additions, func(i, j int) bool { return less(additions[i], additions[j]) })
-	next := observationState{Schema: 3, Reports: make([]DeviceReport, 0, len(store.state.Reports)+len(additions))}
-	nextRaw := make([][]byte, 0, len(store.state.Reports)+len(additions))
-	index := 0
-	for _, report := range additions {
-		for index < len(store.state.Reports) && less(store.state.Reports[index], report) {
-			next.Reports = append(next.Reports, store.state.Reports[index])
-			nextRaw = append(nextRaw, store.rawReports[index])
-			index++
-		}
-		next.Reports = append(next.Reports, report)
-		raw, err := CanonicalEncode(report)
+	err = withObservationDB(ctx, store.path, true, func(tx *bolt.Tx) error {
+		base, err := scanObservationIndex(ctx, tx, store.index.Load())
 		if err != nil {
 			return err
 		}
-		nextRaw = append(nextRaw, raw)
-	}
-	next.Reports = append(next.Reports, store.state.Reports[index:]...)
-	nextRaw = append(nextRaw, store.rawReports[index:]...)
-	encoded, nextRaw, err := encodeOriginalObservationReports(next, nextRaw)
+		bucket := tx.Bucket(observationBucket)
+		high := map[reportOwner]U64{}
+		known := map[reportPosition]map[string]bool{}
+		for id, ref := range base.reports {
+			owner := reportOwner{ref.NetworkID, ref.DeviceID}
+			key, concerned := keys[owner]
+			if !concerned {
+				continue
+			}
+			if store.verified[id] != key {
+				var prior DeviceReport
+				if err := decodeStoredReport(bucket.Get(ref.key(id)), &prior); err != nil {
+					return err
+				}
+				if err := prior.Verify(key); err != nil {
+					return errors.New("stored observation does not verify against the current immutable device key")
+				}
+				store.verified[id] = key
+			}
+			if ref.ReportSequence > high[owner] {
+				high[owner] = ref.ReportSequence
+			}
+			position := reportPosition{owner, ref.ReportSequence}
+			if positions[position] {
+				if known[position] == nil {
+					known[position] = map[string]bool{}
+				}
+				known[position][id] = true
+			}
+		}
+		additions := []DeviceReport{}
+		for i, report := range reports {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			owner := reportOwner{report.NetworkID, report.DeviceID}
+			position := reportPosition{owner, report.ReportSequence}
+			id := ReleaseDigest(bodies[i])
+			ids := known[position]
+			if ids[id] {
+				fork = fork || len(ids) > 1
+				continue
+			}
+			if !historical && report.ReportSequence < high[owner] && len(ids) == 0 {
+				return ErrReportReplay
+			}
+			fork = fork || len(ids) > 0
+			if ids == nil {
+				ids = map[string]bool{}
+				known[position] = ids
+			}
+			ids[id] = true
+			if err := bucket.Put(referenceOf(report).key(id), bodies[i]); err != nil {
+				return err
+			}
+			additions = append(additions, report)
+		}
+		committed, err = base.withReports(additions)
+		if err != nil {
+			return err
+		}
+		return ctx.Err()
+	})
 	if err != nil {
 		return err
 	}
-	var nextIndex *reportIndex
-	if cached := store.index.Load(); cached != nil && bytes.Equal(cached.canonical, store.canonical) {
-		// Prepare the disposable projection before the file becomes visible.
-		// Failure only drops the cache; it cannot change persistence semantics.
-		nextIndex, _ = cached.withReports(additions)
-		if nextIndex != nil {
-			nextIndex.canonical = encoded
-		}
-	}
-	if err := writeObservationState(store.path, encoded); err != nil {
+	if err := syncControlDirectory(filepath.Dir(store.path)); err != nil {
 		return err
 	}
-	store.index.Store(nextIndex)
-	store.state = next
-	store.canonical = encoded
-	store.rawReports = nextRaw
+	store.index.Store(committed)
 	if fork {
 		return ErrReportEquivocation
 	}
 	return nil
 }
 
-func writeObservationState(path string, body []byte) error {
-	if len(body) > maxObservationStateBytes {
-		return errors.New("observation history exceeds the current reader resource bound")
-	}
-	return atomicWrite(path, body)
-}
-
-// All is a diagnostic latest-report readback. It never claims freshness or
-// applied authorization. A fork at the highest sequence has no chosen winner.
-func (store *ObservationStore) All() []DeviceReport {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
+// Latest returns original highest reports. A highest-sequence fork has no winner.
+// Read failures are explicit so the UI cannot silently serve a cached success.
+func (store *ObservationStore) Latest(ctx context.Context) ([]DeviceReport, error) {
 	result := []DeviceReport{}
-	for index := 0; index < len(store.state.Reports); {
-		end := index + 1
-		for end < len(store.state.Reports) && store.state.Reports[end].NetworkID == store.state.Reports[index].NetworkID && store.state.Reports[end].DeviceID == store.state.Reports[index].DeviceID {
-			end++
+	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+		index, err := scanObservationIndex(ctx, tx, store.index.Load())
+		if err != nil {
+			return err
 		}
-		last := store.state.Reports[end-1]
-		if end-index == 1 || store.state.Reports[end-2].ReportSequence != last.ReportSequence {
-			result = append(result, cloneReport(last))
+		heads := map[reportOwner][]string{}
+		for id, ref := range index.reports {
+			owner := reportOwner{ref.NetworkID, ref.DeviceID}
+			ids := heads[owner]
+			if len(ids) == 0 || ref.ReportSequence > index.reports[ids[0]].ReportSequence {
+				heads[owner] = []string{id}
+			} else if ref.ReportSequence == index.reports[ids[0]].ReportSequence {
+				heads[owner] = append(ids, id)
+			}
 		}
-		index = end
-	}
-	return result
-}
-func (store *ObservationStore) History() []DeviceReport {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-	result := make([]DeviceReport, 0, len(store.state.Reports))
-	for _, report := range store.state.Reports {
-		result = append(result, cloneReport(report))
-	}
-	return result
-}
-func (store *ObservationStore) Verified(projection Projection, releases ...ReleaseSet) []DeviceReport {
-	result := []DeviceReport{}
-	for _, report := range store.All() {
-		if verifyCurrentReport(report, projection, releases...) == nil {
+		for _, ids := range heads {
+			if len(ids) != 1 {
+				continue
+			}
+			id := ids[0]
+			var report DeviceReport
+			if err := decodeStoredReport(tx.Bucket(observationBucket).Get(index.reports[id].key(id)), &report); err != nil {
+				return err
+			}
 			result = append(result, report)
 		}
-	}
-	return result
+		store.index.Store(index)
+		return nil
+	})
+	sort.Slice(result, func(i, j int) bool { return reportBefore(result[i], nil, result[j], nil) })
+	return result, err
 }
 func verifyCurrentReport(report DeviceReport, projection Projection, releases ...ReleaseSet) error {
 	if report.NetworkID != projection.NetworkID {

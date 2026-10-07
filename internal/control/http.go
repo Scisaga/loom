@@ -315,7 +315,10 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Runtime.Reports != nil {
-		latest := server.Runtime.Reports.All()
+		latest, err := server.Runtime.Reports.Latest(r.Context())
+		if err != nil {
+			return WebSnapshot{}, err
+		}
 		projectWebLastReportTimes(&snapshot, latest, projection)
 		reports := []DeviceReport{}
 		for _, report := range latest {

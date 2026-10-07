@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestObservationCollectionStreamingPreservesCanonicalContract(t *testing.T) {
+func TestReportMigrationDecoderPreservesCanonicalOriginals(t *testing.T) {
 	key := testKey(t)
 	digest := "sha256:" + strings.Repeat("0", 64)
 	state := observationState{Schema: 3, Reports: []DeviceReport{}}
@@ -23,10 +23,6 @@ func TestObservationCollectionStreamingPreservesCanonicalContract(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := encodeObservationState(value, len(want))
-		if err != nil || !bytes.Equal(got, want) {
-			t.Fatal("streaming encoder changed existing canonical bytes", err)
-		}
 		decoded, err := decodeObservationState(want)
 		if err != nil || !reflect.DeepEqual(decoded, value) {
 			t.Fatal("streaming decoder changed the domain value", err)
@@ -35,20 +31,13 @@ func TestObservationCollectionStreamingPreservesCanonicalContract(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		copied, nextSpans, err := encodeOriginalObservationReports(decoded, spans)
-		if err != nil || !bytes.Equal(copied, want) {
-			t.Fatal("copying original reports changed canonical bytes", err)
-		}
-		offset := len(observationPrefix)
-		for i, span := range nextSpans {
-			if i > 0 {
-				offset++
+		for i, span := range spans {
+			original, _ := CanonicalEncode(decoded.Reports[i])
+			if !bytes.Equal(span, original) {
+				t.Fatal("migration decoder changed original report bytes")
 			}
-			if len(span) != len(spans[i]) || &span[0] != &copied[offset] {
-				t.Fatal("new report span retained an old collection buffer")
-			}
-			offset += len(span)
 		}
+
 	}
 	body, _ := CanonicalEncode(state)
 	first, _ := CanonicalEncode(state.Reports[0])

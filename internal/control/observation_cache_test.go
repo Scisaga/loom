@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestObservationSignatureMemoRequiresExactFileAndPublicKey(t *testing.T) {
+func TestObservationSignatureMemoRequiresExactOriginalAndPublicKey(t *testing.T) {
 	key, other := testKey(t), testKey(t)
 	public := func(key ed25519.PrivateKey) string {
 		return base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
@@ -41,7 +41,7 @@ func TestObservationSignatureMemoRequiresExactFileAndPublicKey(t *testing.T) {
 	if err := store.Put(first, public(key)); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "observations.json")
+	path := filepath.Join(root, "observations.db")
 	original, _ := os.ReadFile(path)
 	if store.Put(sign(2, other), public(other)) == nil {
 		t.Fatal("cached verification accepted another public key for immutable history")
@@ -50,13 +50,8 @@ func TestObservationSignatureMemoRequiresExactFileAndPublicKey(t *testing.T) {
 	if !bytes.Equal(original, unchanged) {
 		t.Fatal("rejected key changed original history")
 	}
-	forged, err := CanonicalEncode(observationState{Schema: 3, Reports: []DeviceReport{sign(1, other)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, forged, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testSetObservationReports(t, root, []DeviceReport{sign(1, other)})
+	forged, _ := os.ReadFile(path)
 	if store.Put(next, public(key)) == nil {
 		t.Fatal("same position with changed signature bypassed cached-file verification")
 	}
@@ -64,14 +59,12 @@ func TestObservationSignatureMemoRequiresExactFileAndPublicKey(t *testing.T) {
 	if !bytes.Equal(forged, unchanged) {
 		t.Fatal("failed verification silently repaired the changed file")
 	}
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testSetObservationReports(t, root, []DeviceReport{first})
 	if err := store.Put(next, public(key)); err != nil {
 		t.Fatal(err)
 	}
 	want, _ := CanonicalEncode(observationState{Schema: 3, Reports: []DeviceReport{first, next}})
-	actual, _ := os.ReadFile(path)
+	actual := testObservationBytes(t, root)
 	if !bytes.Equal(actual, want) {
 		t.Fatal("resumed write changed the original schema or bytes")
 	}

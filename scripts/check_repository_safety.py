@@ -58,6 +58,7 @@ APPROVED_DOMAIN_BASES = {
     "cloudflare.com",
     "docker.com",
     "github.com",
+    "go.etcd.io",  # Pinned bbolt module used for the original report collection.
     "golang.org",
     "google.com",
     "gradle.org",  # Official Gradle wrapper distribution host.

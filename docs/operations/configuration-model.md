@@ -125,7 +125,9 @@ control 根目录的 `node.json` 是唯一规范 schema 3 本机身份输入，�
 各引用证书、私钥和根证书文件。genesis_id 固定网络初始签名材料的摘要，私钥文件必须为受保护的
 PKCS8 Ed25519 材料；不把密钥正文、第二份 Projection 或旧认证 floor 写入这个值。
 `loom control init` 只接受显式提供且验签成立的初始材料和空目录，并同时建立空的 schema 3
-`observations.json`。已有 node 或报告锁而报告文件缺失时必须拒绝重新初始化，不能丢失设备报告序列高水位。
+`observations.db`。已有 node 或报告锁而报告库缺失时必须拒绝重新初始化，不能丢失设备报告序列高水位。
+原 schema 3 JSON 集合仅由显式 `loom control migrate-reports` 在停服后逐条校验、保全和迁移；
+启动不读双容器或自动重建，见[报告原件的事务持久化](../core/current-contract.md#报告原件的事务持久化)。
 旧权威目录或部分初始化不能被自动覆盖；原字节保留，等待验证前向映射。
 
 `EndpointGeneration` 只声明公开坐标、证书与 SPKI 摘要、模式和签名阶段。本机通过
