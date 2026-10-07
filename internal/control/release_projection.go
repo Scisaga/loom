@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func releaseDownloadBase(catalog, artifact string) string {
@@ -88,7 +89,7 @@ func (server *Server) releaseDownload(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", media)
 			w.Header().Set("Content-Length", strconv.FormatUint(uint64(file.Size), 10))
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
-			_, _ = io.Copy(w, reader)
+			_, _ = copyRelease(w, reader, 2*time.Minute)
 			return
 		case "checksum":
 			name, media, body = name+".sha256", "text/plain; charset=utf-8", releaseChecksum(file)
@@ -107,4 +108,25 @@ func (server *Server) releaseDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.NotFound(w, r)
+}
+
+// Keep each blocked write bounded without truncating an immutable download
+// merely because the complete transfer takes longer than an ordinary API call.
+func copyRelease(w http.ResponseWriter, reader io.Reader, wait time.Duration) (int64, error) {
+	// Verified in-memory artifacts expose WriterTo, which would otherwise send
+	// the entire package in one Write and recreate the total-transfer deadline.
+	return io.Copy(releaseWriter{w, http.NewResponseController(w), wait}, struct{ io.Reader }{reader})
+}
+
+type releaseWriter struct {
+	writer     io.Writer
+	controller *http.ResponseController
+	wait       time.Duration
+}
+
+func (writer releaseWriter) Write(body []byte) (int, error) {
+	if err := writer.controller.SetWriteDeadline(time.Now().Add(writer.wait)); err != nil {
+		return 0, err
+	}
+	return writer.writer.Write(body)
 }
