@@ -230,6 +230,12 @@ LocalDeploymentConfig.deploy_hosts
 6. planner 产生一个可脱敏回读的 `DeployPlan`；只有获得本次发布授权后才执行。
 7. executor 发布同一制品并记录每个目标的真实结果；证据、LKG 和 UI 从结果投影，不回写 `.env`。
 
+当前 Linux client 与 control 共用同一程序路径，control unit 的启动前检查通过该路径读取 client 状态。
+若本次修订改变了 `/run` 下可删除状态投影的字段，须先沿正常 service 入口启动同制品 client，
+由它从原身份和 LKG 重建当前状态，再启动 control。不能让新检查器读取仍由旧进程写入的临时格式，
+也不能手改临时状态、放宽 decoder 或增加旧格式 fallback 使检查通过。此顺序不迁移认证原件、
+floor 或身份；只重启 control 时，仍运行 client 的 WG 对象继续由该 client 拥有和维护。
+
 读取配置、生成 plan 或显示 readiness 都不构成生产发布授权。配置陈旧只会让下一次命令失败，不能改变
 已经运行的 daemon。
 
