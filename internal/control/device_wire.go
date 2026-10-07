@@ -253,7 +253,13 @@ func (observation Observation) Validate() error {
 			return errors.New("Link observation is invalid")
 		}
 	case "resource":
-		return errors.New("transport observation actions are not yet specified")
+		host, port, err := net.SplitHostPort(observation.Target)
+		number, portErr := strconv.Atoi(port)
+		if ValidateID(observation.ResourceID) != nil || observation.ServiceID != "" || observation.CandidateID != "" || observation.LinkID != "" ||
+			observation.Action != "hysteria2_tls" || err != nil || !contractHost(host) || portErr != nil || number < 1 || number > 65535 ||
+			net.JoinHostPort(host, strconv.Itoa(number)) != observation.Target {
+			return errors.New("resource observation is invalid")
+		}
 	default:
 		return errors.New("observation level is invalid")
 	}

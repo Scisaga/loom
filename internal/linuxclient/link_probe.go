@@ -2,21 +2,16 @@ package linuxclient
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
-	"io"
 	"net"
-	"net/http"
 	"net/netip"
 	"sort"
 	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/sagernet/quic-go"
-	"github.com/sagernet/quic-go/http3"
 	"golang.org/x/sys/unix"
+	"loom/internal/clientadapter"
 	"loom/internal/control"
 )
 
@@ -38,16 +33,6 @@ func linkProbeSocket(ctx context.Context, source control.TransportResource) (net
 }
 
 func probeLink(ctx context.Context, source, target control.TransportResource, destination, password string, now time.Time) error {
-	certificates, err := control.HY2TrustPEM(target)
-	if err != nil {
-		return err
-	}
-	roots := x509.NewCertPool()
-	for _, certificate := range certificates {
-		if !roots.AppendCertsFromPEM([]byte(certificate)) {
-			return errors.New("Link probe trust is invalid")
-		}
-	}
 	address, err := netip.ParseAddrPort(destination)
 	if err != nil {
 		return err
@@ -57,30 +42,7 @@ func probeLink(ctx context.Context, source, target control.TransportResource, de
 		return err
 	}
 	defer socket.Close()
-	udp := &quic.Transport{Conn: socket}
-	defer udp.Close()
-	transport := &http3.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots,
-		ServerName: *target.Authentication.ServerName, Time: func() time.Time { return now }},
-		Dial: func(ctx context.Context, _ string, tlsConfig *tls.Config, config *quic.Config) (quic.EarlyConnection, error) {
-			return udp.DialEarly(ctx, net.UDPAddrFromAddrPort(address), tlsConfig, config)
-		}}
-	defer transport.Close()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://hysteria/auth", nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Hysteria-Auth", password)
-	request.Header.Set("Hysteria-CC-RX", "0")
-	response, err := transport.RoundTrip(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 233 || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
-		return errors.New("Link probe did not complete authenticated Hy2 transport")
-	}
-	_, err = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	return err
+	return clientadapter.AuthenticateHY2(ctx, target, socket, net.UDPAddrFromAddrPort(address), password, now)
 }
 
 // Samples are rebuilt on each refresh. They never enter the Service selection

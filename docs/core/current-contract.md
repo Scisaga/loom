@@ -815,6 +815,27 @@ resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，se
 按 `(network_generation,level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest)` 排序且无重复。
 目标为确切 HTTPS URL 或相应传输动作的确切坐标，不能用一个聚合颜色替代。
 
+Resource 层当前 action 仅 `hysteria2_tls`，仅报告本设备获授权的普通公开 Hy2 首跳；
+target 为该资源的规范 dial_host:port，名称不替换成某次 DNS 答案。每个资源取当前获授权候选中
+ID 最小者的首跳凭据（中继候选取首个 hop，不取最终出口的凭据），因此多个 Service 或路径共用
+资源时只需一次认证。该成功仅证明这个凭据完成了资源认证，不证明其他 Service 的凭据或目标可用。
+私有凭据仍只取已认证 RuntimeProfile，不新增 View 字段、探测用户或接收端权限。
+spec_digest 为 `loom-resource-probe-spec-v3\0` 加
+`C({device_id,resource:完整TransportResource,dns_servers:规范数组,credential_digest})` 的 SHA-256；
+未配置 DNS 时数组为空。credential_digest 为 `loom-resource-probe-credential-v3\0` 加
+`C(所选规范凭据字符串)` 的 SHA-256。它绑定用途凭据变化，不公开秘密正文，也不是独立身份。
+接收方从当前 View 重算唯一投影并核对资源、动作、目标和摘要；没有普通公开首跳授权的 Link
+或服务节点不能借此上报资源成功。原 Link/Service 报告及 DeviceView 字节保持。
+
+Resource 执行只在本轮实际应用并回读的选择需要该资源时触发，包含必要 fallback 前的真实选择，
+按资源去重并行；Direct、本机出网及以 WG Link
+起步的 hybrid 没有此项公开首跳采样。沿平台 underlay socket 和认证 DNS 完成真实 QUIC/TLS/Hy2
+认证，只有校验成功并收到 233 才为 available；超时、拒绝和 TLS 失败为该资源样本的 unavailable，
+取消不产生样本。完整耗时含本次必要解析及认证，不是 RTT 或完整 Service 请求耗时。
+新样本成功保存十分钟、失败三十秒，复用时原时间不变；这是客户端必要重测窗口，不是 control
+全局新鲜性规则。缓存只保留同网络代、同规范执行摘要且仍授权的原样本，可删除重建；撤权、
+凭据/资源/DNS 变化、到期或换网后不能复用。资源结果不修改现有 Service 选择算法或整体健康。
+
 Link 层当前 action 仅 `hysteria2_tls`，resource_id 为 Link 的接收端 WG resource_id，target 为
 probe_target 的规范 IP:Port（IPv6 使用方括号）。spec_digest 为 `loom-link-spec-v3\0` 加
 `C({link:NetworkLink,resources:[TransportResource]})` 的 SHA-256 摘要；resources 恰含两端 WG
@@ -842,6 +863,15 @@ duration_ms 是本次完整认证往返的单调时钟耗时，不是 WG RTT 或
 或第二份历史。新报告只插入既定规范排序位置，保留全部原签名字节、重放边界与分叉证据；不能靠清空历史、
 缩短报告内容或先确认后落盘解决确认超时。最小验证包括并行 writer 的新值回读、缓存后的非法文件拒绝、
 两种到达顺序的同序列分叉、重启和原始字节相等。
+
+当历史增长后，每次报告重编码全部旧记录、反复验证同一公钥下未变的历史签名，会使正常周期写入
+排队超过客户端确认期限。最小修正沿用同一文件与排他锁：严格解码时记住每条原规范字节在现有
+内存缓冲区内的范围，新值合并仅拷贝这些原字节并编码新增记录。已成功的历史签名检查只按
+本次完整已核对文件字节及当前设备验证公钥在内存复用；任何外部文件变化均重新严格解码并丢弃
+该验证缓存，公钥不同必须重新验签。新报告始终验签，旧高水位、同序列分叉与耐久确认不变。
+新增运行成本只是现有解码缓存的字节范围与验证键映射，均可删除重建，不保存独立完成状态，
+不改变 schema、规范 wire、持久字节、历史容量或 UI 语义。验证须覆盖原字节精确相等、外部
+writer 更新、缓存后替换为另一签名键的历史拒绝、分叉双到达顺序、重启和真实报告确认。
 同一持久集合的资源边界必须同时约束写入和重启读取。此前历史集合读取另限一百万个 JSON 值，
 写入却只编码后提交；合法报告积累后可出现“已确认落盘、重启不能读取”的反例。最小修正保持原
 schema 3 集合、规范字节与全部报告，只用既有的 64 MiB 受保护文件上限约束集合容量，解析深度仍

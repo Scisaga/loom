@@ -362,6 +362,7 @@ func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io
 func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback, links []control.Observation) error {
 	selections := []control.ReportSelection{}
 	observations := append([]control.Observation{}, links...)
+	observations = append(observations, activation.State.ResourceObservations...)
 	for _, selection := range activation.Selections {
 		for _, route := range lkg.View.Routes {
 			if route.ID == selection.CandidateID {
@@ -395,6 +396,7 @@ func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg 
 }
 func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool, readback control.RuntimeReadback) Status {
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration, Selections: activation.Selections, Observations: activation.State.Observations, Runtime: readback.State, Reported: reported}
+	value.ResourceObservations = append([]control.Observation(nil), activation.State.ResourceObservations...)
 	if readback.Resources != nil {
 		value.Resources = *readback.Resources
 	}
@@ -644,12 +646,26 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		if err := WriteStatus(options.Status, runtimeStatus(lkg, activation, false, readback)); err != nil {
 			return err
 		}
+		// Keep the actual first attempt even if its Service probe subsequently
+		// blocks the selector. Authentication and business failure are distinct.
+		selected := make([]string, 0, len(activation.Selections))
+		for _, selection := range activation.Selections {
+			selected = append(selected, selection.CandidateID)
+		}
 		if len(routes) > 0 {
 			activation, err = activateServices(ctx, options, lkg.View, selector, routes, local)
 			if activation.State.Schema == 0 {
 				return err
 			}
 		}
+		for _, selection := range activation.Selections {
+			selected = append(selected, selection.CandidateID)
+		}
+		resourceObservations, err := clientadapter.ObserveFirstHops(ctx, lkg.View, selected, activation.State.ResourceObservations, generation, options.Now)
+		if err != nil {
+			return err
+		}
+		activation.State.ResourceObservations = append([]control.Observation(nil), resourceObservations...)
 		saved, saveErr := SaveObservations(options.LocalState, activation.State)
 		if saveErr != nil {
 			return saveErr

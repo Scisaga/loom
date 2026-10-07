@@ -56,12 +56,14 @@ func reportBefore(left DeviceReport, leftBody []byte, right DeviceReport, rightB
 }
 
 type ObservationStore struct {
-	path      string
-	mu        sync.RWMutex
-	state     observationState
-	canonical []byte                      // Rebuildable decode cache, checked against the protected file under its lock.
-	index     atomic.Pointer[reportIndex] // Immutable projection of exact committed bytes; never persisted.
-	indexRead chan struct{}               // Bounds snapshot buffers/rebuilds independently of the writer lock.
+	path       string
+	mu         sync.RWMutex
+	state      observationState
+	canonical  []byte                      // Rebuildable decode cache, checked against the protected file under its lock.
+	rawReports [][]byte                    // Slices of canonical, never another persisted collection.
+	verified   map[reportOwner]string      // Signature-check memoization for exactly these bytes and each supplied public key.
+	index      atomic.Pointer[reportIndex] // Immutable projection of exact committed bytes; never persisted.
+	indexRead  chan struct{}               // Bounds snapshot buffers/rebuilds independently of the writer lock.
 }
 
 func OpenObservationStore(root string) (*ObservationStore, error) {
@@ -105,12 +107,14 @@ func (store *ObservationStore) reloadLocked() error {
 	if len(store.canonical) != 0 && bytes.Equal(body, store.canonical) {
 		return nil
 	}
-	state, err := decodeObservationState(body)
+	state, raw, err := decodeObservationStateWithBytes(body)
 	if err != nil {
 		return err
 	}
 	store.state = state
 	store.canonical = body
+	store.rawReports = raw
+	store.verified = nil
 	if cached := store.index.Load(); cached != nil && !bytes.Equal(cached.canonical, body) {
 		store.index.CompareAndSwap(cached, nil)
 	}
@@ -180,14 +184,16 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	}
 	high := map[reportOwner]U64{}
 	known := map[reportPosition]map[string]bool{}
-	for _, prior := range store.state.Reports {
+	for priorIndex, prior := range store.state.Reports {
 		owner := reportOwner{prior.NetworkID, prior.DeviceID}
 		publicKey, concerned := keys[owner]
 		if !concerned {
 			continue
 		}
-		if err := prior.Verify(publicKey); err != nil {
-			return errors.New("stored observation does not verify against the current immutable device key")
+		if store.verified[owner] != publicKey {
+			if err := prior.Verify(publicKey); err != nil {
+				return errors.New("stored observation does not verify against the current immutable device key")
+			}
 		}
 		if prior.ReportSequence > high[owner] {
 			high[owner] = prior.ReportSequence
@@ -199,8 +205,13 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 		if known[position] == nil {
 			known[position] = map[string]bool{}
 		}
-		body, _ := CanonicalEncode(prior)
-		known[position][ReleaseDigest(body)] = true
+		known[position][ReleaseDigest(store.rawReports[priorIndex])] = true
+	}
+	if store.verified == nil {
+		store.verified = map[reportOwner]string{}
+	}
+	for owner, key := range keys {
+		store.verified[owner] = key
 	}
 	additions := []DeviceReport{}
 	fork := false
@@ -247,27 +258,24 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	}
 	sort.Slice(additions, func(i, j int) bool { return less(additions[i], additions[j]) })
 	next := observationState{Schema: 3, Reports: make([]DeviceReport, 0, len(store.state.Reports)+len(additions))}
+	nextRaw := make([][]byte, 0, len(store.state.Reports)+len(additions))
 	index := 0
 	for _, report := range additions {
 		for index < len(store.state.Reports) && less(store.state.Reports[index], report) {
 			next.Reports = append(next.Reports, store.state.Reports[index])
+			nextRaw = append(nextRaw, store.rawReports[index])
 			index++
 		}
 		next.Reports = append(next.Reports, report)
-	}
-	next.Reports = append(next.Reports, store.state.Reports[index:]...)
-	capacity := len(store.canonical)
-	for _, report := range additions {
 		raw, err := CanonicalEncode(report)
 		if err != nil {
 			return err
 		}
-		capacity += len(raw) + 1
+		nextRaw = append(nextRaw, raw)
 	}
-	if len(store.state.Reports) == 0 {
-		capacity-- // The first array member does not have a preceding comma.
-	}
-	encoded, err := encodeObservationState(next, capacity)
+	next.Reports = append(next.Reports, store.state.Reports[index:]...)
+	nextRaw = append(nextRaw, store.rawReports[index:]...)
+	encoded, nextRaw, err := encodeOriginalObservationReports(next, nextRaw)
 	if err != nil {
 		return err
 	}
@@ -286,6 +294,7 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	store.index.Store(nextIndex)
 	store.state = next
 	store.canonical = encoded
+	store.rawReports = nextRaw
 	if fork {
 		return ErrReportEquivocation
 	}
@@ -385,7 +394,21 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 			return errors.New("report selection is outside the current view")
 		}
 	}
+	var resourceProbes []ResourceProbe
 	for _, observation := range report.Observations {
+		if observation.Level == "resource" {
+			if resourceProbes == nil {
+				var err error
+				resourceProbes, err = FirstHopProbes(view)
+				if err != nil {
+					return err
+				}
+			}
+			if err := verifyResourceObservation(observation, resourceProbes); err != nil {
+				return err
+			}
+			continue
+		}
 		if observation.Level == "link" {
 			if err := verifyLinkObservation(observation, view); err != nil {
 				return err

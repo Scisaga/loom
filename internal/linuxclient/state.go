@@ -30,6 +30,7 @@ type LocalState struct {
 	NetworkGeneration     string                    `json:"network_generation"`
 	ObservationViewDigest string                    `json:"observation_view_digest,omitempty"`
 	Observations          []clientmodel.Observation `json:"observations"`
+	ResourceObservations  []control.Observation     `json:"resource_observations,omitempty"`
 }
 
 type SelectionStatus struct {
@@ -43,17 +44,18 @@ type SelectionStatus struct {
 // Status is a deletable readback projection. It is written under /run by the
 // service and never used as authority on the next start.
 type Status struct {
-	Schema            int                        `json:"schema"`
-	DeviceID          string                     `json:"device_id"`
-	ViewDigest        string                     `json:"view_digest"`
-	FactFrontier      []control.FactFrontier     `json:"fact_frontier"`
-	Preference        clientmodel.Preference     `json:"preference"`
-	NetworkGeneration string                     `json:"network_generation"`
-	Selections        []SelectionStatus          `json:"selections"`
-	Observations      []clientmodel.Observation  `json:"observations"`
-	Runtime           string                     `json:"runtime"`
-	Reported          bool                       `json:"reported"`
-	Resources         []control.ResourceReadback `json:"resources,omitempty"`
+	Schema               int                        `json:"schema"`
+	DeviceID             string                     `json:"device_id"`
+	ViewDigest           string                     `json:"view_digest"`
+	FactFrontier         []control.FactFrontier     `json:"fact_frontier"`
+	Preference           clientmodel.Preference     `json:"preference"`
+	NetworkGeneration    string                     `json:"network_generation"`
+	Selections           []SelectionStatus          `json:"selections"`
+	Observations         []clientmodel.Observation  `json:"observations"`
+	Runtime              string                     `json:"runtime"`
+	Reported             bool                       `json:"reported"`
+	Resources            []control.ResourceReadback `json:"resources,omitempty"`
+	ResourceObservations []control.Observation      `json:"resource_observations,omitempty"`
 }
 
 func defaultState(generation string) LocalState {
@@ -77,6 +79,22 @@ func (state LocalState) validate() error {
 		if observation.Validate() != nil || observation.NetworkGeneration != state.NetworkGeneration ||
 			index > 0 && state.Observations[index-1].CandidateID >= observation.CandidateID {
 			return errors.New("Linux client observations are not current and uniquely sorted")
+		}
+	}
+	if state.ResourceObservations != nil && (len(state.ResourceObservations) == 0 || state.ObservationViewDigest == "") {
+		return errors.New("resource observation cache has no view binding or is noncanonical")
+	}
+	if err := validateResourceObservations(state.ResourceObservations, state.NetworkGeneration); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateResourceObservations(values []control.Observation, generation string) error {
+	for i, value := range values {
+		if value.Validate() != nil || value.Level != "resource" || value.NetworkGeneration != generation ||
+			i > 0 && values[i-1].ResourceID >= value.ResourceID {
+			return errors.New("resource observations are not current and uniquely sorted")
 		}
 	}
 	return nil
@@ -179,7 +197,7 @@ func loadLocalState(path, generation, viewDigest string) (LocalState, error) {
 	return loadLocalStateWithEvidence(path, generation, viewDigest, nil)
 }
 
-func loadLocalStateWithEvidence(path, generation, viewDigest string, retain func(LocalState) []clientmodel.Observation) (LocalState, error) {
+func loadLocalStateWithEvidence(path, generation, viewDigest string, retain func(LocalState) ([]clientmodel.Observation, []control.Observation)) (LocalState, error) {
 	var result LocalState
 	err := withLock(path, func() error {
 		var state LocalState
@@ -196,12 +214,14 @@ func loadLocalStateWithEvidence(path, generation, viewDigest string, retain func
 		}
 		if state.NetworkGeneration != generation || viewDigest != "" && state.ObservationViewDigest != viewDigest {
 			observations := []clientmodel.Observation{}
+			var resources []control.Observation
 			if state.NetworkGeneration == generation && retain != nil {
-				observations = retain(state)
+				observations, resources = retain(state)
 			}
 			state.NetworkGeneration = generation
 			state.ObservationViewDigest = viewDigest
 			state.Observations = observations
+			state.ResourceObservations = append([]control.Observation(nil), resources...)
 			if err := atomicJSON(path, state); err != nil {
 				return err
 			}
@@ -238,6 +258,7 @@ func SaveObservations(path string, state LocalState) (LocalState, error) {
 			return errors.New("network generation or certified view changed while recording observations")
 		}
 		current.Observations = append([]clientmodel.Observation{}, state.Observations...)
+		current.ResourceObservations = append([]control.Observation(nil), state.ResourceObservations...)
 		if err := atomicJSON(path, current); err != nil {
 			return err
 		}
@@ -264,6 +285,7 @@ func SetPreference(path, generation string, preference clientmodel.Preference) e
 		if state.NetworkGeneration != generation {
 			state.NetworkGeneration = generation
 			state.Observations = []clientmodel.Observation{}
+			state.ResourceObservations = nil
 		}
 		state.Preference = preference
 		return atomicJSON(path, state)
@@ -283,6 +305,10 @@ func (status Status) validate() error {
 		status.Runtime != "running" && status.Runtime != "error" && status.Runtime != "stopped" ||
 		status.Runtime != "running" && (len(status.Selections) != 0 || len(status.Observations) != 0) {
 		return errors.New("Linux client status is incomplete")
+	}
+	if err := validateResourceObservations(status.ResourceObservations, status.NetworkGeneration); err != nil ||
+		status.Runtime != "running" && len(status.ResourceObservations) > 0 {
+		return errors.New("Linux resource observation status is invalid")
 	}
 	for index, value := range status.Resources {
 		if status.Runtime != "running" || value.Validate() != nil || index > 0 && status.Resources[index-1].ResourceID >= value.ResourceID {

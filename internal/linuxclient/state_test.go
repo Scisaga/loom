@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,37 @@ import (
 	"loom/internal/clientmodel"
 	"loom/internal/control"
 )
+
+func TestResourceCacheRestartPreservesFailureAndConcurrentPreference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.json")
+	digest := "sha256:" + strings.Repeat("1", 64)
+	state, err := loadLocalState(path, "demo-underlay", digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	if bytes.Contains(before, []byte("resource_observations")) {
+		t.Fatal("absent optional cache changed old file shape")
+	}
+	state.ResourceObservations = []control.Observation{{Level: "resource", ResourceID: "demo-resource", Target: "demo.example:443", Action: "hysteria2_tls",
+		SpecDigest: digest, NetworkGeneration: state.NetworkGeneration, Result: "unavailable", ObservedAt: 1000, ValidUntil: 31000}}
+	preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}
+	if err := SetPreference(path, state.NetworkGeneration, preference); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := SaveObservations(path, state)
+	if err != nil || saved.Preference != preference {
+		t.Fatal("resource sample overwrote the CLI preference", err)
+	}
+	restarted, err := loadLocalState(path, state.NetworkGeneration, digest)
+	if err != nil || !reflect.DeepEqual(restarted.ResourceObservations, state.ResourceObservations) || restarted.Preference != preference {
+		t.Fatal("restart replaced original failure or its validity", err)
+	}
+	changed, err := loadLocalState(path, "demo-new-underlay", digest)
+	if err != nil || changed.ResourceObservations != nil || changed.Preference != preference {
+		t.Fatal("network change retained stale authentication", err)
+	}
+}
 
 func TestLocalStateRejectsNoncanonicalBytesWithoutRepairingThem(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime.json")

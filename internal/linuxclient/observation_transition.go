@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"reflect"
 
+	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
 	"loom/internal/control"
 )
@@ -13,17 +14,27 @@ import (
 // previous value is only a comparison input, never an execution fallback. A
 // restart without that input retains the conservative exact-view cache rule.
 func loadLocalStateForView(path, generation string, current, previous *control.DeviceViewEnvelope) (LocalState, error) {
-	return loadLocalStateWithEvidence(path, generation, current.ViewDigest, func(state LocalState) []clientmodel.Observation {
-		return unchangedObservations(state, previous, current)
+	return loadLocalStateWithEvidence(path, generation, current.ViewDigest, func(state LocalState) ([]clientmodel.Observation, []control.Observation) {
+		var resources []control.Observation
+		if sameObservationIdentity(state, previous, current) {
+			if probes, err := control.FirstHopProbes(current.View); err == nil {
+				resources = clientadapter.RetainResourceObservations(probes, state.ResourceObservations, generation)
+			}
+		}
+		return unchangedObservations(state, previous, current), resources
 	})
+}
+
+func sameObservationIdentity(state LocalState, previous, current *control.DeviceViewEnvelope) bool {
+	return previous != nil && current != nil && state.ObservationViewDigest == previous.ViewDigest &&
+		previous.NetworkID == current.NetworkID && previous.GenesisDigest == current.GenesisDigest &&
+		previous.View.DeviceID == current.View.DeviceID && previous.View.DevicePublicKey == current.View.DevicePublicKey &&
+		previous.View.Platform == current.View.Platform && reflect.DeepEqual(previous.View.DNSServers, current.View.DNSServers)
 }
 
 func unchangedObservations(state LocalState, previous, current *control.DeviceViewEnvelope) []clientmodel.Observation {
 	result := []clientmodel.Observation{}
-	if previous == nil || current == nil || state.ObservationViewDigest != previous.ViewDigest ||
-		previous.NetworkID != current.NetworkID || previous.GenesisDigest != current.GenesisDigest ||
-		previous.View.DeviceID != current.View.DeviceID || previous.View.DevicePublicKey != current.View.DevicePublicKey ||
-		previous.View.Platform != current.View.Platform || !reflect.DeepEqual(previous.View.DNSServers, current.View.DNSServers) {
+	if !sameObservationIdentity(state, previous, current) {
 		return result
 	}
 	before, after := previous.View, current.View
