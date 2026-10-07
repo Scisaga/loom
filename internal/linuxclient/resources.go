@@ -98,6 +98,19 @@ func prepareHY2Executions(view control.DeviceView, inputPath string, now time.Ti
 			return nil, errors.New("resource execution input is missing or a listener is duplicated")
 		}
 		listeners[input.Listen] = true
+		for _, peer := range view.WireGuardPeers {
+			for _, wg := range view.Resources {
+				if wg.ID != peer.ResourceID || wg.AccessHY2ResourceID != resource.ID {
+					continue
+				}
+				address, err := control.WireGuardAccessAddress(wg, "")
+				host, port, _ := net.SplitHostPort(input.Listen)
+				listen, _ := netip.ParseAddr(host)
+				if err != nil || port != strconv.Itoa(resource.DialPort) || !listen.Is6() || !listen.IsUnspecified() && listen != address {
+					return nil, errors.New("WireGuard access requires its Hy2 listener on the exact IPv6 target and resource port")
+				}
+			}
+		}
 		pair, err := control.LoadTLSCertificate(input.CertificateFile, input.KeyFile)
 		if err != nil {
 			return nil, err

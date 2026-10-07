@@ -9,10 +9,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"loom/internal/deviceclient"
 )
 
@@ -48,7 +50,12 @@ func windowsObservationDisplay(result string) (health, summary, selected string)
 
 func readWindowsRuntimeStatus(root string) (windowsRuntimeStatus, error) {
 	var status windowsRuntimeStatus
-	body, err := os.ReadFile(windowsRuntimeStatusPath(root))
+	file, err := openWindowsRuntimeStatus(root)
+	if err != nil {
+		return status, err
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
 	if err != nil {
 		return status, err
 	}
@@ -62,6 +69,38 @@ func readWindowsRuntimeStatus(root string) (windowsRuntimeStatus, error) {
 		return windowsRuntimeStatus{}, errors.New("Windows runtime status is invalid")
 	}
 	return status, nil
+}
+
+// The status writer atomically replaces a disposable projection. UI readers
+// must keep their opened snapshot without preventing that replace or cleanup.
+// This does not relax the separately pinned executable or identity handles.
+func openWindowsRuntimeStatus(root string) (*os.File, error) {
+	path := windowsRuntimeStatusPath(root)
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(name, windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(handle), path), nil
+}
+
+// Root.Rename uses Windows replacement semantics that preserve an opened
+// reader's snapshot. Limit this to the disposable status projection; identity
+// and profile writes retain their existing durable replacement contract.
+func writeWindowsRuntimeStatusFile(path string, body []byte) error {
+	return writeWindowsMetadata(path, body, func(temporary, path string) error {
+		directory, err := os.OpenRoot(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		defer directory.Close()
+		return directory.Rename(filepath.Base(temporary), filepath.Base(path))
+	})
 }
 
 func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) {

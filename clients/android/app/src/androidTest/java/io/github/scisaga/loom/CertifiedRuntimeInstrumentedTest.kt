@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
@@ -54,6 +55,17 @@ class CertifiedRuntimeInstrumentedTest {
         val directory = checkNotNull(context.getExternalFilesDir(null))
         val fixture = JSONObject(File(directory, "demo-runtime.json").readText())
         val resume = args.getString("demoResume") == "true"
+        args.getString("demoNewProfile")?.let { name ->
+            check(!resume)
+            compose.onNodeWithTag("tab-configuration").performClick()
+            compose.onNodeWithTag("add-profile").performScrollTo().performClick()
+            compose.onNodeWithTag("profile-name-input").performTextReplacement(name)
+            compose.onNodeWithText("保存").performClick()
+            compose.waitUntil(10_000) {
+                val catalog = ProfileCatalog.get(context).state.value
+                catalog.profiles.any { it.id == catalog.viewedProfileId && it.name == name }
+            }
+        }
         val profileID = ProfileCatalog.get(context).state.value.viewedProfileId
         val enrollment = EnrollmentManager.get(context)
         val routing = RouteManager.get(context)

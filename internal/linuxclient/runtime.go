@@ -38,6 +38,7 @@ type Options struct {
 	SingBox             string
 	WireGuard           string
 	IP                  string
+	NFT                 string
 	WireGuardPrivateKey string
 	Log                 io.Writer
 	Now                 func() time.Time
@@ -73,6 +74,9 @@ func (options *Options) defaults() {
 	}
 	if options.IP == "" {
 		options.IP = "/usr/sbin/ip"
+	}
+	if options.NFT == "" {
+		options.NFT = "/usr/sbin/nft"
 	}
 	if options.WireGuardPrivateKey == "" {
 		options.WireGuardPrivateKey = "/etc/wireguard/node.key"
@@ -626,6 +630,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		activation := Activation{State: local, Selections: []SelectionStatus{}}
 		if err := readbackWireGuard(wg, options); err != nil {
+			return err
+		}
+		if err := (*transaction).verifyFilters(); err != nil {
 			return err
 		}
 		readback := control.RuntimeReadback{State: "stopped"}

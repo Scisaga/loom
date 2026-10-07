@@ -120,6 +120,44 @@ func TestMixedCaptureRejectsAdditionalFacilitiesAndImplicitRouting(t *testing.T)
 	}
 }
 
+func TestWGAccessCaptureKeepsInnerHy2AndUnderlaySeparate(t *testing.T) {
+	source := mixedSourceDocument()
+	wg := map[string]any{"type": "wireguard", "tag": "wg-access.demo-resource", "system_interface": false, "local_address": []string{"fdab::2/128"}, "private_key": "demo-private-input", "peers": []any{map[string]any{"server": "192.0.2.10", "server_port": 51820, "public_key": "demo-public-input", "allowed_ips": []string{"fdab::1/128"}}}}
+	hy2 := source["outbounds"].([]any)[0].(map[string]any)
+	hy2["type"] = "hysteria2"
+	hy2["detour"] = wg["tag"]
+	source["outbounds"] = append(source["outbounds"].([]any), wg)
+	body, _ := json.Marshal(source)
+	mixed, err := deriveLinuxMixedRuntime(string(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	_ = json.Unmarshal([]byte(mixed), &parsed)
+	before, _ := json.Marshal(source["outbounds"])
+	after, _ := json.Marshal(parsed["outbounds"])
+	if !bytes.Equal(before, after) {
+		t.Fatal("Mixed rewrote certified WG or inner Hy2")
+	}
+	tun, err := withTUNUnderlay(string(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal([]byte(tun), &parsed)
+	values := parsed["outbounds"].([]any)
+	if values[0].(map[string]any)["netns"] != nil || values[len(values)-1].(map[string]any)["netns"] != tunUnderlayReference {
+		t.Fatal("inner Hy2 escaped WG or WG UDP lost underlay namespace")
+	}
+	wg["system_interface"] = true
+	body, _ = json.Marshal(source)
+	if _, err := deriveLinuxMixedRuntime(string(body)); err == nil {
+		t.Fatal("Mixed permitted kernel WG")
+	}
+	if _, err := withTUNUnderlay(string(body)); err == nil {
+		t.Fatal("TUN permitted unreviewed system WG")
+	}
+}
+
 func TestCaptureModeRequiresExplicitKnownInput(t *testing.T) {
 	for _, mode := range []string{"mixed", "tun"} {
 		if err := validateCapture(mode); err != nil {

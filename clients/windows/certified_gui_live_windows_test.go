@@ -32,15 +32,22 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		t.Skip("requires an isolated live fixture and an interactive Windows desktop")
 	}
 	var fixture struct {
-		Root   string `json:"root"`
-		Target string `json:"target"`
-		Resume bool   `json:"resume"`
+		Root    string `json:"root"`
+		Target  string `json:"target"`
+		Resume  bool   `json:"resume"`
+		Capture string `json:"capture,omitempty"`
 	}
 	body, err := os.ReadFile(input)
 	if err != nil || json.Unmarshal(body, &fixture) != nil || !filepath.IsAbs(fixture.Root) {
 		t.Fatal("invalid native fixture input")
 	}
 	base := filepath.Dir(input)
+	edition := editionPortableMixed
+	if fixture.Capture == "tun" {
+		edition = editionPortableTUN
+	} else if fixture.Capture != "" && fixture.Capture != "mixed" {
+		t.Fatal("unsupported native fixture capture")
+	}
 	evidence := filepath.Join(base, "evidence")
 	if err := os.MkdirAll(evidence, 0700); err != nil {
 		t.Fatal(err)
@@ -59,7 +66,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lock.close()
-	app := &portableGUI{profileHost: true, edition: editionPortableMixed, root: fixture.Root,
+	app := &portableGUI{profileHost: true, edition: edition, root: fixture.Root,
 		ctx: ctx, cancel: cancel, state: guiLoading, hostname: "demo-windows", routeSelected: -1}
 	hwnd, err := createPortableWindow(app)
 	if err != nil {
@@ -182,6 +189,9 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		proxy, _ := url.Parse("http://127.0.0.1:1080")
 		transport := &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true,
 			TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "demo.example", MinVersion: tls.VersionTLS12}}
+		if edition == editionPortableTUN {
+			transport.Proxy = nil
+		}
 		defer transport.CloseIdleConnections()
 		client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 		response, err := client.Get(fixture.Target)
@@ -197,7 +207,13 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 	}
 	if !fixture.Resume {
 		status := readback(true)
-		wait("Hy2 HTTPS business", func() bool { return business() == nil })
+		var lastBusinessError error
+		t.Cleanup(func() {
+			if t.Failed() && lastBusinessError != nil {
+				t.Log("last actual business error:", lastBusinessError)
+			}
+		})
+		wait("Hy2 HTTPS business", func() bool { lastBusinessError = business(); return lastBusinessError == nil })
 		captureProfileGUITestWindow(t, app, filepath.Join(evidence, "allowed.png"))
 		mark("allowed", status)
 		signal("withdrawn")

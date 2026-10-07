@@ -582,6 +582,11 @@ PublisherInput、部署计划与 UI 是单向投影，不新增节点属性 stor
 
 TransportResource 字段为 `id,kind,owner_node_id,listener_id,dial_host,dial_port,authentication`，
 Hy2 可另外保存 `link_only:true`，表示仅经显式 Link 使用；false 的唯一编码是省略该字段。
+WG 可另外保存非空 `access_hy2_resource_id:ID`，明确选择同节点的 Hy2 作为普通首跳的
+业务执行入口；省略时保持原来的中继语义与规范字节，不从现有 WG 资源推测开放普通接入。
+引用必须指向同承载节点、非 link_only 的有效 Hy2，WG 承载者仍须有 forward 职责。
+目标缺失、撤销或不再满足关系时不投影这项接入；既有显式 Link 仍按自身引用判断。
+该字段不能用于其他资源类型，不能引用自身，也不改变 Link 的身份或给设备创建 Link。
 listener_id 是稳定本机资源身份，不是私钥文件路径。dial_host 是规范 IP 或上述规范 DNS 名，
 dial_port 是 Port。kind 仅 `wireguard/hysteria2/tls_tunnel`，authentication 按种类精确匹配：
 
@@ -594,6 +599,80 @@ dial_port 是 Port。kind 仅 `wireguard/hysteria2/tls_tunnel`，authentication 
   这是现有公开 CA 与校验名方案的唯一规范字段；此前非空 Hy2 值未有合法现行解码路径，不改写旧材料。
 - tls_tunnel：`spki_sha256,alpn`，可选 `server_name`；SPKI 固定值与专用 ALPN 必须匹配，
   有 server_name 时还须匹配该名称。内部请求继续验证成员/设备身份，TLS 成功不产生业务授权。
+
+#### 普通 WG 首跳的私有执行投影
+
+操作者要求普通设备通过已有共享 WG 首跳访问获授权业务，并已明确允许依赖接收节点同机的 Hy2。
+现有执行只能为显式 Link 安装节点 peer，缺少普通设备 peer、地址及接收边界。最小变化是在原资源
+上明确引用一个同机 Hy2，按现有设备授权派生 peer；不增加参与者权威、地址分配库或每设备接口。
+新增操作成本是为要开放接入的 WG 资源选择 Hy2，并让该 Hy2 的受保护本机 listener 接受下面的
+IPv6 地址及认证资源端口。不能仅凭现有 IPv4 listener 假定这一步成立。
+
+首跳候选的 first_resource_id 是 WG，节点链只计接收节点一次；规范摘要同时包含 WG 与被引用
+Hy2 的完整值。后续显式 Link、最终出口、Policy 路径限制及 Service ACL 保持同一算法。
+同节点的公开 Hy2 候选可以并存，各自观测；普通 WG 首跳不增加中继 LinkID。
+access 在每个 WG 资源上共用一个用户态 WG outbound，第一段 Hy2 经它访问同机 listener；
+不能为每条 Service 候选创建相同密钥的多个 WG 会话，避免对端 endpoint 来回漂移。
+
+WG 私钥使用本节定义的 HKDF 算法、salt 与 32 字节输出，info 精确为
+`network_id,device_id,resource_id,resource_auth_digest,receiver_node_id,purpose`，purpose 固定
+`wireguard-access`。resource_auth_digest 绑定 WG authentication。输出按 X25519 clamp
+（首字节清低三位，末字节清最高位并置次高位）后作为私钥；公钥由 X25519 basepoint 导出。
+私钥仅进入来源设备的认证 RuntimeProfile，以标准带填充 base64 表示；接收节点仅取得公钥。
+根 RuntimeKey 不交付。Service/Policy 不在此 KDF 中：WG 只允许到固定 Hy2，实际业务仍由原来
+按设备、Service、Policy 和用途派生的 Hy2 凭据与 ACL 决定。另加 Service 不改变已有 WG 身份。
+
+只在接收节点的私有 DeviceView 增加可选非空
+`wireguard_peers:[{resource_id,device_id,public_key}]`，按 resource_id、device_id 排序、无重复；
+public_key 是无填充 base64url 的 32 字节 X25519 公钥。每一项必须有允许以该节点为入口的
+现行 Policy 和对应 Hy2 入站权限；自身、无权限、重复公钥、缺失引用、空数组和 null 均拒绝。
+来源设备及其他节点不得取得别人的 peer 清单。该清单是授权到执行的一次性投影，随唯一 LKG
+保存和重建，不独立写入、不形成第二 store，也不能倒写共享资源的参与者列表。
+
+IPv6 地址不由设备申报或依赖加入顺序分配。令 B 为 C 编码的
+`{resource_id,receiver_node_id,receiver_public_key,peer_public_key}`，两个公钥均为规范无填充
+base64url；接收地址的 peer_public_key 固定空字符串，客户端地址则取上述派生公钥。
+取 `SHA256("loom-wg-access-address-v3\0" || B)` 的前 16 字节并把首字节置为 `fd`，得到唯一
+规范 IPv6 /128。接收端在原 WG 地址之外增加该接收地址；客户端只使用自己的 /128，WG
+AllowedIPs 只允许对端精确 /128。不同 peer、接收地址或已有资源地址的碰撞必须拒绝，不能
+重排、自动换号或扩成网段。运行前还须核对宿主已分配的本机地址，不能用新接收地址或 peer
+精确路由覆盖另一个接口上的地址。密钥变化引起对应地址变化；无关设备加入不改变任何已有地址。
+
+接收端必须先安装并回读本运行代精确拥有的包过滤边界，再启用普通 peer：只允许该 peer 源
+/128 到本资源接收 /128、指定 Hy2 UDP 端口及相反方向返回。其他本机目标、LAN、转发、DNS、
+管理入口及 peer 之间访问均拒绝；WG 握手与 AllowedIPs 本身不能代替这一边界。已有 Link peer
+继续只使用其原执行地址与权限，普通 peer 不得冒用它们。Linux 使用独立、带所有权标记的
+过滤对象，不改共享链或 flush；更新先停止旧业务，撤去旧 peer，最后 compare-and-delete
+本代过滤对象。过滤安装、精确回读或清理失败时保持 failed/inactive，不自动重施。
+宿主部署仍受宿主网络门禁约束；该模型不授予修改宿主防火墙的额外权限。
+
+过滤表按共享资源与既有 Link peer 投影：明确的 Link 源/目的地址只在各自方向保留原有通行，
+其余该接口流量只允许上述 Hy2 往返。forward 的入、出方向分别检查，指向一个 Link peer
+不能绕过普通来源的拒绝。普通来源身份和精确源地址仍由 WG 公钥及 AllowedIPs 约束，因此
+增删普通 peer 不必重写过滤表；不能把任何客户端自报地址当成 Link 例外。
+
+正式撤权验证已暴露整体重建接口会丢失其他设备的接收会话。资源、公钥、接口代、地址、监听、
+Link peer 和完整过滤规则都未变时，执行器在同一已核对的所有权句柄内只增删普通 peer 与其
+精确路由。先保存旧、新 peer 并集作为原清理记录，再删除撤权 peer、添加新 peer、更新精确路由，
+完整回读后把记录收敛为当前集合；未变 peer 保留内核会话。并集只允许崩溃后的清理，不可用于
+启动或恢复授权。部分失败清理本代，不能复活已撤权 peer；任一共享输入变化仍按原规则重建。
+没有新增操作者步骤或独立持久实体；最小验证必须含在线新增、单 peer 撤销、另一 peer 的新建
+HTTPS、精确剩余 peer/路由、路由更新失败、peer 已改而路由未改时的进程崩溃，以及重启清理和
+原清理记录收敛。保留 WG 会话不保证 Hy2 授权更新期间业务无中断，仍须单独记录真实重连结果。
+
+resource.put → 签名事实持久化 → 两端 DeviceView → 用户态 WG / 接收端共享接口与 Hy2 ACL →
+正常代理入口的真实 HTTPS → 原签名 Service 报告与节点页面，是正常业务链。删除策略、deny、
+资源撤销或设备撤权移除对应 Hy2 权限；最后一项允许接入的业务消失时 peer 一并退出。执行失败
+不得恢复旧 LKG 或旧会话；重启从唯一认证 LKG 重建，残留对象只按原所有权清理。
+单个 Service 撤权而另一个仍有效是必要反例：peer 可以保留，但被撤业务必须实际拒绝。
+
+domain 的原资源与授权、规范事实及持久字节保持可逆；peer、地址、RuntimeProfile、内核对象和
+UI 是单向投影。原缺席新字段的事实、View 和候选必须逐字保留；只有显式新 resource.put 才
+开放接入。最小验证覆盖规范往返/拒绝、旧字节、两设备共享资源且互不换钥、同出口候选并存、
+单服务及整设备撤权、原始 WG 包不能越过 Hy2、重启与异常清理，以及三端正式运行入口。
+真实内核实验位于独立 network/mount namespace；实体机终验仍由操作者完成。
+
+#### 显式中继与服务凭据
 
 NetworkLink 字段为 `id,from_node_id,to_node_id,from_resource_id,resource_id,initiator_node_id,purpose,probe_target`。
 当前 WG 中继中，from_resource_id 与 resource_id 分别固定引用 From、To 的 WG 资源；两端不同且都有 forward

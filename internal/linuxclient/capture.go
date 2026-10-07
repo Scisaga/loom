@@ -45,8 +45,10 @@ func deriveLinuxMixedRuntime(config string) (string, error) {
 		return "", errors.New("explicit Mixed requires exactly one managed access inbound")
 	}
 	var outbounds []struct {
-		Type string `json:"type"`
-		Tag  string `json:"tag"`
+		Type            string `json:"type"`
+		Tag             string `json:"tag"`
+		SystemInterface *bool  `json:"system_interface"`
+		InterfaceName   string `json:"interface_name"`
 	}
 	if err := json.Unmarshal(document["outbounds"], &outbounds); err != nil || len(outbounds) == 0 {
 		return "", errors.New("explicit Mixed outbounds are invalid")
@@ -59,6 +61,10 @@ func deriveLinuxMixedRuntime(config string) (string, error) {
 		types[outbound.Tag] = outbound.Type
 		switch outbound.Type {
 		case "direct", "block", "dns", "selector", "hysteria2", "trojan":
+		case "wireguard":
+			if outbound.SystemInterface == nil || *outbound.SystemInterface || outbound.InterfaceName != "" {
+				return "", errors.New("Mixed WireGuard must use an explicit user-space interface")
+			}
 		default:
 			return "", errors.New("explicit Mixed source contains an unsupported outbound")
 		}

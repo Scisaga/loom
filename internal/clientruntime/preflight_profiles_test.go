@@ -103,3 +103,42 @@ func TestWindowsRejectsOldRuntimeFacilities(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsWGAccessPreservesUserSpaceTransportAcrossDeliveries(t *testing.T) {
+	source, _ := pathPlanFixture(t)
+	c, _ := decodeWindowsConfig(source)
+	userspace := false
+	key := bytes.Repeat([]byte{8}, 32)
+	key[31] = 64
+	wg := singBoxOutbound{Type: "wireguard", Tag: "wg-access.demo-resource", SystemInterface: &userspace,
+		LocalAddress: []string{"fdab::2/128"}, PrivateKey: base64.StdEncoding.EncodeToString(key),
+		Peers: []singBoxWGPeer{{Server: "192.0.2.10", ServerPort: 51820, PublicKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)), AllowedIPs: []string{"fdab::1/128"}}}}
+	hy2 := singBoxOutbound{Type: "hysteria2", Tag: "demo-candidate", Server: "fdab::1", ServerPort: 443, Detour: wg.Tag,
+		Password: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), TLS: &singBoxTLS{Enabled: true, ServerName: "demo.example", Certificate: []string{"demo CA PEM"}}}
+	c.Outbounds = append(c.Outbounds[:1], wg, hy2, c.Outbounds[2])
+	source, _ = json.Marshal(c)
+	for _, profile := range []WindowsRuntimeProfile{WindowsPortableMixedProfile, WindowsInstalledProfile, WindowsPortableTUNProfile} {
+		body, err := DeriveWindowsRuntimeConfig(source, profile, nil, nil)
+		if err != nil {
+			t.Fatal(profile, err)
+		}
+		got, err := decodeWindowsConfig(body)
+		if err != nil || !reflect.DeepEqual(got.Outbounds, c.Outbounds) {
+			t.Fatal("Windows capture changed WG private identity or same-node Hy2", err)
+		}
+	}
+	for _, change := range []func(*singBoxConfig){
+		func(c *singBoxConfig) { v := true; c.Outbounds[1].SystemInterface = &v },
+		func(c *singBoxConfig) { c.Outbounds[1].Peers[0].AllowedIPs = []string{"::/0"} },
+		func(c *singBoxConfig) { c.Outbounds[1].LocalAddress = []string{"fdab::2/64"} },
+		func(c *singBoxConfig) { c.Outbounds[1].Detour = "demo-candidate" },
+		func(c *singBoxConfig) { c.Outbounds[1].PrivateKey = "demo-invalid" },
+	} {
+		bad, _ := decodeWindowsConfig(source)
+		change(&bad)
+		body, _ := json.Marshal(bad)
+		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, nil, nil); err == nil {
+			t.Fatal("accepted a broader or host WG execution")
+		}
+	}
+}

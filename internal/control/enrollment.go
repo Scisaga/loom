@@ -418,6 +418,7 @@ func (value InboundCredential) Validate() error {
 }
 
 type DeviceView struct {
+	WireGuardPeers       []WireGuardAccessPeer `json:"wireguard_peers,omitempty"`
 	LinkProbeCredentials []LinkProbeCredential `json:"link_probe_credentials,omitempty"`
 	WebEndpoints         []EndpointGeneration  `json:"web_endpoints,omitempty"`
 	PublicTrust          []PublicTrust         `json:"public_trust,omitempty"`

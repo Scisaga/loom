@@ -94,9 +94,10 @@ func profileCredentials(view DeviceView) (map[string]string, error) {
 	}
 	var document struct {
 		Outbounds []struct {
-			Type     string `json:"type"`
-			Tag      string `json:"tag"`
-			Password string `json:"password"`
+			Type       string `json:"type"`
+			Tag        string `json:"tag"`
+			Password   string `json:"password"`
+			PrivateKey string `json:"private_key"`
 		} `json:"outbounds"`
 	}
 	if err := json.Unmarshal([]byte(view.RuntimeProfile.Config), &document); err != nil {
@@ -108,6 +109,14 @@ func profileCredentials(view DeviceView) (map[string]string, error) {
 				return nil, errors.New("runtime credentials are duplicated or invalid")
 			}
 			result[outbound.Tag] = outbound.Password
+		} else if outbound.Type == "wireguard" {
+			if _, duplicate := result[outbound.Tag]; duplicate {
+				return nil, errors.New("runtime credentials are duplicated")
+			}
+			if _, err := wireGuardAccessPrivate(outbound.PrivateKey); err != nil {
+				return nil, err
+			}
+			result[outbound.Tag] = outbound.PrivateKey
 		}
 	}
 	return result, nil
@@ -175,6 +184,9 @@ func validateViewResources(view DeviceView) error {
 		}
 		passwords[key] = true
 	}
+	if err := validateWireGuardAccessPeers(view, resources, policies); err != nil {
+		return err
+	}
 	return validateLinkProbeCredentials(view, passwords)
 }
 
@@ -224,6 +236,7 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 	visibleServices := map[string]Service{}
 	visiblePolicies := map[string]NetworkPolicy{}
 	permissions := map[string]InboundCredential{}
+	wireGuardPeers := map[string]WireGuardAccessPeer{}
 	for _, value := range view.Services {
 		visibleServices[value.ID] = value
 	}
@@ -293,6 +306,21 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 				if !visible {
 					continue
 				}
+				if path.accessWG != nil {
+					visibleResources[path.accessWG.ID] = *path.accessWG
+					if source.ID == view.DeviceID || path.accessWG.OwnerNodeID == view.DeviceID {
+						private, peer, err := deriveWireGuardAccess(projection.NetworkID, source, *path.accessWG)
+						if err != nil {
+							return nil, err
+						}
+						if source.ID == view.DeviceID {
+							credentials[wireGuardAccessTag(path.accessWG.ID)] = private
+						}
+						if path.accessWG.OwnerNodeID == view.DeviceID {
+							wireGuardPeers[wireGuardPeerOrder(peer)] = peer
+						}
+					}
+				}
 				for _, hop := range path.hops {
 					visibleResources[hop.ID] = hop
 				}
@@ -338,6 +366,13 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 		}
 	}
 	view.Resources, view.Links, view.Services, view.Policies, view.InboundCredentials = []TransportResource{}, []NetworkLink{}, []Service{}, []NetworkPolicy{}, []InboundCredential{}
+	view.WireGuardPeers = nil
+	for _, peer := range wireGuardPeers {
+		view.WireGuardPeers = append(view.WireGuardPeers, peer)
+	}
+	sort.Slice(view.WireGuardPeers, func(i, j int) bool {
+		return wireGuardPeerOrder(view.WireGuardPeers[i]) < wireGuardPeerOrder(view.WireGuardPeers[j])
+	})
 	for _, value := range visibleResources {
 		view.Resources = append(view.Resources, value)
 	}

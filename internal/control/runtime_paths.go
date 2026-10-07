@@ -15,6 +15,7 @@ type transportPath struct {
 	hops      []TransportResource
 	links     []NetworkLink
 	local     bool
+	accessWG  *TransportResource
 }
 
 func WGResourceAddress(resource TransportResource) (netip.Addr, error) {
@@ -76,13 +77,13 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 	edges := append([]NetworkLink{}, links...)
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
 	result := []transportPath{}
-	var walk func([]string, []TransportResource, []NetworkLink, bool) error
-	walk = func(chain []string, hops []TransportResource, pathLinks []NetworkLink, local bool) error {
+	var walk func([]string, []TransportResource, []NetworkLink, bool, *TransportResource) error
+	walk = func(chain []string, hops []TransportResource, pathLinks []NetworkLink, local bool, accessWG *TransportResource) error {
 		last := chain[len(chain)-1]
 		if len(hops) > 0 && policy.ExitScope.Allows(last) {
 			var candidate RouteCandidate
 			var err error
-			if !local && len(chain) == 1 {
+			if !local && len(chain) == 1 && accessWG == nil {
 				candidate, err = oneHopCandidate(service, policy, hops[0], records...)
 			} else {
 				first := hops[0].ID
@@ -91,6 +92,10 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 				}
 				ids := []string{}
 				used := map[string]TransportResource{}
+				if accessWG != nil {
+					first = accessWG.ID
+					used[accessWG.ID] = *accessWG
+				}
 				for _, hop := range hops {
 					used[hop.ID] = hop
 				}
@@ -119,7 +124,7 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 			if err != nil {
 				return err
 			}
-			result = append(result, transportPath{candidate: candidate, hops: append([]TransportResource{}, hops...), links: append([]NetworkLink{}, pathLinks...), local: local})
+			result = append(result, transportPath{candidate: candidate, hops: append([]TransportResource{}, hops...), links: append([]NetworkLink{}, pathLinks...), local: local, accessWG: accessWG})
 		}
 		if policy.MaxHops > 0 && len(chain) >= policy.MaxHops || len(chain) > 1 && !policy.RelayScope.Allows(last) {
 			return nil
@@ -132,22 +137,33 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 			if err != nil {
 				continue
 			}
-			if err := walk(append(append([]string{}, chain...), link.ToNodeID), append(append([]TransportResource{}, hops...), target), append(append([]NetworkLink{}, pathLinks...), link), local); err != nil {
+			if err := walk(append(append([]string{}, chain...), link.ToNodeID), append(append([]TransportResource{}, hops...), target), append(append([]NetworkLink{}, pathLinks...), link), local, accessWG); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, resource := range ordered {
-		if resource.Kind != "hysteria2" || resource.LinkOnly || resource.OwnerNodeID == source || !policy.EntryScope.Allows(resource.OwnerNodeID) {
+		if resource.OwnerNodeID == source || !policy.EntryScope.Allows(resource.OwnerNodeID) {
 			continue
 		}
-		if err := walk([]string{resource.OwnerNodeID}, []TransportResource{resource}, []NetworkLink{}, false); err != nil {
+		first := resource
+		var accessWG *TransportResource
+		if resource.Kind == "wireguard" {
+			target, err := WireGuardAccessTarget(resource, resources)
+			if err != nil {
+				continue
+			}
+			first, accessWG = target, &resource
+		} else if resource.Kind != "hysteria2" || resource.LinkOnly {
+			continue
+		}
+		if err := walk([]string{resource.OwnerNodeID}, []TransportResource{first}, []NetworkLink{}, false, accessWG); err != nil {
 			return nil, err
 		}
 	}
 	if localForward && policy.EntryScope.Allows(source) {
-		if err := walk([]string{source}, []TransportResource{}, []NetworkLink{}, true); err != nil {
+		if err := walk([]string{source}, []TransportResource{}, []NetworkLink{}, true, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -185,6 +201,13 @@ func renderTransportPath(path transportPath, resources []TransportResource, cred
 		}
 		if index > 0 {
 			outbound["detour"] = pathHopTag(path, index-1)
+		} else if path.accessWG != nil {
+			address, err := WireGuardAccessAddress(*path.accessWG, "")
+			if err != nil {
+				return nil, err
+			}
+			outbound["detour"] = wireGuardAccessTag(path.accessWG.ID)
+			outbound["server"], outbound["server_port"] = address.String(), hop.DialPort
 		}
 		result = append(result, outbound)
 	}

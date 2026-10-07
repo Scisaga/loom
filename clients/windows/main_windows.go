@@ -259,7 +259,7 @@ func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, act
 	if err != nil {
 		return err
 	}
-	return writeWindowsJoinFile(windowsRuntimeStatusPath(root), append(body, '\n'))
+	return writeWindowsRuntimeStatusFile(windowsRuntimeStatusPath(root), append(body, '\n'))
 }
 
 func windowsProbeTarget(view control.DeviceView) (string, string) {

@@ -32,6 +32,8 @@ type wireGuardExecutionLink struct {
 	ProbeTarget         string `json:"probe_target"`
 	ListenPort          int    `json:"listen_port"`
 	PersistentKeepalive int    `json:"persistent_keepalive"`
+	AccessAddress       string `json:"access_address,omitempty"`
+	AccessPort          int    `json:"access_port,omitempty"`
 }
 type wireGuardExecution struct{ WireGuard []wireGuardExecutionLink }
 type wireGuardIdentity struct{ WGPublicKey string }
@@ -248,6 +250,10 @@ func (transaction *wireGuardTransaction) Cleanup() error {
 		}
 		actual, exists, err := inspectOwnedWireGuardInterface(transaction.options, *owned)
 		if err == nil && !exists {
+			if err := cleanupWireGuardFilter(transaction.options, *owned); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+				continue
+			}
 			owned.alias = ""
 			continue
 		}
@@ -275,6 +281,9 @@ func (transaction *wireGuardTransaction) Cleanup() error {
 			if readErr != nil || remains {
 				err = errors.New("WireGuard interface removal could not be verified")
 			}
+		}
+		if err == nil {
+			err = cleanupWireGuardFilter(transaction.options, *owned)
 		}
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
@@ -343,12 +352,20 @@ func verifyOwnedWireGuardLink(options Options, owned wireGuardOwnedLink) error {
 	if err != nil {
 		return err
 	}
-	if len(addresses) > 1 || len(addresses) == 1 && addresses[0] != link.LocalAddress {
-		return fmt.Errorf("%w: local addresses", ErrWireGuardOwnership)
+	localIPs := []net.IP{}
+	wantedAddresses := owned.localAddresses()
+	for _, address := range addresses {
+		index := sort.SearchStrings(wantedAddresses, address)
+		if index == len(wantedAddresses) || wantedAddresses[index] != address {
+			return fmt.Errorf("%w: local addresses", ErrWireGuardOwnership)
+		}
 	}
-	localIP, _, parseErr := net.ParseCIDR(link.LocalAddress)
-	if parseErr != nil {
-		return fmt.Errorf("%w: local prefix", ErrWireGuardOwnership)
+	for _, address := range wantedAddresses {
+		localIP, _, parseErr := net.ParseCIDR(address)
+		if parseErr != nil {
+			return fmt.Errorf("%w: local prefix", ErrWireGuardOwnership)
+		}
+		localIPs = append(localIPs, localIP)
 	}
 	for _, family := range []string{"-4", "-6"} {
 		body, err := runHostCommand(options.IP, "-json", family, "route", "show", "table", "all", "dev", link.Interface)
@@ -370,23 +387,23 @@ func verifyOwnedWireGuardLink(options Options, owned wireGuardOwnedLink) error {
 			if family == "-6" && local && route.Type == "multicast" && route.Destination == "ff00::/8" && route.Protocol == "kernel" && route.Metric == 256 && route.Source == "" && route.Scope == "" {
 				continue
 			}
-			if route.Metric != 0 {
-				return fmt.Errorf("%w: unexpected route metric", ErrWireGuardOwnership)
-			}
 			main := len(route.Table) == 0 || string(route.Table) == `"main"` || string(route.Table) == "254"
 			allowed := false
 			for _, peer := range peers {
 				allowed = allowed || sameRoutePrefix(route.Destination, peer.AllowedIP)
 			}
 			if main && (route.Type == "" || route.Type == "unicast") && route.Protocol == "static" &&
-				route.Scope == "link" && route.Source == "" && allowed {
+				(family == "-4" && route.Scope == "link" && route.Metric == 0 || family == "-6" && route.Scope == "" && route.Metric == 1) && route.Source == "" && allowed {
 				continue
 			}
 			// address add installs this exact local route even with
 			// noprefixroute. No connected subnet or unrelated route is owned.
-			if local && route.Type == "local" && route.Protocol == "kernel" &&
-				(route.Scope == "host" || route.Scope == "") && net.ParseIP(route.Destination).Equal(localIP) &&
-				(route.Source == "" || net.ParseIP(route.Source).Equal(localIP)) {
+			ownedLocal := false
+			for _, localIP := range localIPs {
+				ownedLocal = ownedLocal || net.ParseIP(route.Destination).Equal(localIP) && (route.Source == "" || net.ParseIP(route.Source).Equal(localIP))
+			}
+			if local && route.Type == "local" && route.Protocol == "kernel" && route.Metric == 0 &&
+				(route.Scope == "host" || route.Scope == "") && ownedLocal {
 				continue
 			}
 			return ErrWireGuardOwnership
@@ -480,14 +497,16 @@ func configureWireGuardLink(options Options, owned *wireGuardOwnedLink) error {
 			return errors.New("WireGuard private key changed during configuration")
 		}
 	}
-	if _, err := runHostCommand(options.IP, "address", "add", link.LocalAddress, "dev", link.Interface, "noprefixroute"); err != nil {
-		return err
+	for _, address := range owned.localAddresses() {
+		if _, err := runHostCommand(options.IP, "address", "add", address, "dev", link.Interface, "noprefixroute"); err != nil {
+			return err
+		}
 	}
 	if _, err = runHostCommand(options.IP, "link", "set", "dev", link.Interface, "up"); err != nil {
 		return err
 	}
 	for _, peer := range owned.peerLinks() {
-		if _, err = runHostCommand(options.IP, "route", "add", peer.AllowedIP, "dev", link.Interface, "proto", "static", "scope", "link"); err != nil {
+		if _, err = runHostCommand(options.IP, wireGuardRouteArguments("add", peer, link.Interface)...); err != nil {
 			return err
 		}
 	}
@@ -581,6 +600,10 @@ func readbackWireGuard(profile wireGuardExecution, options Options) error {
 		if count != len(group.peerLinks()) {
 			return errors.New("WireGuard interface peer set does not match the certified runtime")
 		}
+		addresses, err := interfaceAddresses(options.IP, group.link.Interface)
+		if err != nil || strings.Join(addresses, "\x00") != strings.Join(group.localAddresses(), "\x00") {
+			return errors.New("WireGuard local address set differs from its certified runtime")
+		}
 	}
 	for _, link := range profile.WireGuard {
 		peer, ok := actual[link.Interface+"\x00"+link.PeerPublicKey]
@@ -643,6 +666,9 @@ func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIden
 			return nil, ErrWireGuardOwnership
 		}
 	}
+	if err := checkWireGuardAccessAddresses(options, groups); err != nil {
+		return nil, err
+	}
 	for _, link := range profile.WireGuard {
 		exists, err := wireGuardRouteState(options, link.AllowedIP, link.Interface)
 		if err != nil || exists {
@@ -702,6 +728,9 @@ func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIden
 		if err != nil || !exists || actual.Index != current.index || actual.Alias != owned.alias || actual.Info.Kind != "wireguard" {
 			return fail(ErrWireGuardOwnership)
 		}
+		if err := installWireGuardFilter(options, *current); err != nil {
+			return fail(err)
+		}
 		if err := configureWireGuardLink(options, current); err != nil {
 			return fail(err)
 		}
@@ -713,6 +742,9 @@ func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIden
 		}
 	}
 	if err := readbackWireGuard(*profile, options); err != nil {
+		return fail(err)
+	}
+	if err := transaction.verifyFilters(); err != nil {
 		return fail(err)
 	}
 	return transaction, nil

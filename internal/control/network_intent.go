@@ -33,14 +33,15 @@ type NetworkIntent struct {
 }
 
 type TransportResource struct {
-	ID             string                 `json:"id"`
-	Kind           string                 `json:"kind"`
-	OwnerNodeID    string                 `json:"owner_node_id"`
-	ListenerID     string                 `json:"listener_id"`
-	DialHost       string                 `json:"dial_host"`
-	DialPort       int                    `json:"dial_port"`
-	Authentication ResourceAuthentication `json:"authentication"`
-	LinkOnly       bool                   `json:"link_only,omitempty"`
+	ID                  string                 `json:"id"`
+	Kind                string                 `json:"kind"`
+	OwnerNodeID         string                 `json:"owner_node_id"`
+	ListenerID          string                 `json:"listener_id"`
+	DialHost            string                 `json:"dial_host"`
+	DialPort            int                    `json:"dial_port"`
+	Authentication      ResourceAuthentication `json:"authentication"`
+	LinkOnly            bool                   `json:"link_only,omitempty"`
+	AccessHY2ResourceID string                 `json:"access_hy2_resource_id,omitempty"`
 }
 
 // The containing resource kind selects one complete authentication shape.
@@ -84,6 +85,9 @@ func (resource TransportResource) Validate() error {
 	if resource.LinkOnly && resource.Kind != "hysteria2" {
 		return errors.New("link_only is only defined for Hy2 listeners")
 	}
+	if resource.AccessHY2ResourceID != "" && (resource.Kind != "wireguard" || ValidateID(resource.AccessHY2ResourceID) != nil || resource.AccessHY2ResourceID == resource.ID) {
+		return errors.New("ordinary WireGuard access requires a distinct Hy2 resource")
+	}
 	switch resource.Kind {
 	case "wireguard":
 		if auth.PublicKey == nil || auth.LocalAddresses == nil || *auth.LocalAddresses == nil || ValidatePublicKey(*auth.PublicKey) != nil ||
@@ -97,6 +101,9 @@ func (resource TransportResource) Validate() error {
 				return errors.New("WireGuard interface addresses are not canonical or uniquely sorted")
 			}
 			previous = prefix
+		}
+		if resource.AccessHY2ResourceID != "" && (len(*auth.LocalAddresses) != 1 || previous.Bits() != previous.Addr().BitLen() || !previous.Addr().IsGlobalUnicast() || validateWireGuardPublicKey(*auth.PublicKey) != nil) {
+			return errors.New("WireGuard access requires a usable public key and exact interface address")
 		}
 	case "tls_tunnel":
 		if auth.PublicKey != nil || auth.LocalAddresses != nil || auth.CACertificates != nil || auth.SPKISHA256 == nil || auth.ALPN == nil ||

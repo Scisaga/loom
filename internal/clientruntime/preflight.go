@@ -2,6 +2,7 @@ package clientruntime
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,19 +103,30 @@ type singBoxTLS struct {
 }
 
 type singBoxOutbound struct {
-	Type            string      `json:"type"`
-	Tag             string      `json:"tag"`
-	Server          string      `json:"server,omitempty"`
-	ServerPort      int         `json:"server_port,omitempty"`
-	Password        string      `json:"password,omitempty"`
-	Version         string      `json:"version,omitempty"`
-	TLS             *singBoxTLS `json:"tls,omitempty"`
-	Detour          string      `json:"detour,omitempty"`
-	Outbounds       []string    `json:"outbounds,omitempty"`
-	Default         string      `json:"default,omitempty"`
-	BindInterface   string      `json:"bind_interface,omitempty"`
-	OverrideAddress string      `json:"override_address,omitempty"`
-	OverridePort    int         `json:"override_port,omitempty"`
+	SystemInterface *bool           `json:"system_interface,omitempty"`
+	LocalAddress    []string        `json:"local_address,omitempty"`
+	PrivateKey      string          `json:"private_key,omitempty"`
+	Peers           []singBoxWGPeer `json:"peers,omitempty"`
+	Type            string          `json:"type"`
+	Tag             string          `json:"tag"`
+	Server          string          `json:"server,omitempty"`
+	ServerPort      int             `json:"server_port,omitempty"`
+	Password        string          `json:"password,omitempty"`
+	Version         string          `json:"version,omitempty"`
+	TLS             *singBoxTLS     `json:"tls,omitempty"`
+	Detour          string          `json:"detour,omitempty"`
+	Outbounds       []string        `json:"outbounds,omitempty"`
+	Default         string          `json:"default,omitempty"`
+	BindInterface   string          `json:"bind_interface,omitempty"`
+	OverrideAddress string          `json:"override_address,omitempty"`
+	OverridePort    int             `json:"override_port,omitempty"`
+}
+
+type singBoxWGPeer struct {
+	Server     string   `json:"server"`
+	ServerPort int      `json:"server_port"`
+	PublicKey  string   `json:"public_key"`
+	AllowedIPs []string `json:"allowed_ips"`
 }
 
 type singBoxRoute struct {
@@ -422,6 +434,30 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 			}
 			shape.Server, shape.ServerPort, shape.Password, shape.Detour = o.Server, o.ServerPort, o.Password, o.Detour
 			shape.TLS = &singBoxTLS{Enabled: true, ServerName: o.TLS.ServerName, Certificate: o.TLS.Certificate}
+		case "wireguard":
+			if o.SystemInterface == nil || *o.SystemInterface || len(o.LocalAddress) != 1 || len(o.Peers) != 1 {
+				return errors.New("WireGuard access must use one explicit user-space peer")
+			}
+			key, err := base64.StdEncoding.DecodeString(o.PrivateKey)
+			if err != nil || len(key) != 32 || base64.StdEncoding.EncodeToString(key) != o.PrivateKey || key[0]&7 != 0 || key[31]&192 != 64 {
+				return errors.New("WireGuard access private key is invalid")
+			}
+			clear(key)
+			peer := o.Peers[0]
+			public, err := base64.StdEncoding.DecodeString(peer.PublicKey)
+			if err != nil || len(public) != 32 || base64.StdEncoding.EncodeToString(public) != peer.PublicKey || peer.Server == "" || peer.ServerPort < 1 || peer.ServerPort > 65535 || len(peer.AllowedIPs) != 1 {
+				return errors.New("WireGuard access peer is invalid")
+			}
+			for _, text := range []string{o.LocalAddress[0], peer.AllowedIPs[0]} {
+				address, err := netip.ParsePrefix(text)
+				if err != nil || address.String() != text || !address.Addr().Is6() || !address.Addr().IsPrivate() || address.Bits() != 128 {
+					return errors.New("WireGuard access requires exact private IPv6 addresses")
+				}
+			}
+			if o.LocalAddress[0] == peer.AllowedIPs[0] {
+				return errors.New("WireGuard access peer address conflicts")
+			}
+			shape.SystemInterface, shape.LocalAddress, shape.PrivateKey, shape.Peers = o.SystemInterface, o.LocalAddress, o.PrivateKey, o.Peers
 		default:
 			return errors.New("unsupported authorization transport")
 		}
@@ -436,7 +472,7 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 		if o.Detour != "" {
 			seen := map[string]bool{o.Tag: true}
 			for next := o.Detour; next != ""; {
-				if seen[next] || tags[next] != "hysteria2" {
+				if seen[next] || tags[next] != "hysteria2" && tags[next] != "wireguard" {
 					return errors.New("invalid Hy2 relay detour")
 				}
 				seen[next] = true

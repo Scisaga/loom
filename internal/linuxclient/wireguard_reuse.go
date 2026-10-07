@@ -52,7 +52,13 @@ func replaceWireGuard(current **wireGuardTransaction, profile wireGuardExecution
 				return errors.Join(ErrWireGuardOwnership, err)
 			}
 		}
+		if err := (*current).verifyFilters(); err != nil {
+			return err
+		}
 		return readbackWireGuard(profile, options)
+	}
+	if handled, err := (*current).reconcileAccessPeers(profile, identity); handled {
+		return err
 	}
 	if err := (*current).Cleanup(); err != nil {
 		return err

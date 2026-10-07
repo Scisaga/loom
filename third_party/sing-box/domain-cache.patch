@@ -419,11 +419,23 @@ diff --git a/common/dialer/default.go b/common/dialer/default.go
  	if strategy == nil {
  		strategy = d.networkStrategy
  	}
-@@ -333,7 +368,9 @@
+@@ -333,7 +368,21 @@
  }
  
  func (d *DefaultDialer) ListenPacketCompat(network, address string) (net.PacketConn, error) {
 -	return d.udpListener.ListenPacket(context.Background(), network, address)
++	// WG supplies ":port" for both families. An empty IPv6 host makes the
++	// Windows interface control try IPv4 options on an IPv6-only socket.
++	// Keep the requested family explicit without changing its bind scope.
++	if C.IsWindows && network == "udp6" {
++		host, port, err := net.SplitHostPort(address)
++		if err != nil {
++			return nil, err
++		}
++		if host == "" {
++			address = net.JoinHostPort("::", port)
++		}
++	}
 +	return inNamespace[net.PacketConn](d.netns, func() (net.PacketConn, error) {
 +		return d.udpListener.ListenPacket(context.Background(), network, address)
 +	})

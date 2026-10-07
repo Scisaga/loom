@@ -1142,6 +1142,21 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		if !found || !containsString(owner.Responsibilities, "forward") && !containsString(owner.Responsibilities, "internet_egress") {
 			return errors.New("resource owner has no transport responsibility")
 		}
+		if value.AccessHY2ResourceID != "" {
+			resources := map[string]TransportResource{}
+			for _, resource := range view.NetworkIntent.Resources {
+				resources[resource.ID] = resource
+			}
+			if !containsString(owner.Responsibilities, "forward") {
+				return errors.New("WireGuard access owner has no forwarding responsibility")
+			}
+			if _, err := WireGuardAccessTarget(value, resources); err != nil {
+				return err
+			}
+			if err := requireTargetDependency(material, view, "resource", value.AccessHY2ResourceID, true); err != nil {
+				return err
+			}
+		}
 		return requireTargetDependency(material, view, "device", value.OwnerNodeID, true)
 	case NetworkLink:
 		resources := map[string]TransportResource{}

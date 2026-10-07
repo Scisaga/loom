@@ -123,6 +123,7 @@ func projectAccessRuntime(view DeviceView, credentials map[string]string) ([]Rou
 	sort.Strings(ids)
 	routes := []RouteCandidate{}
 	outbounds := []any{map[string]any{"type": "block", "tag": "reject"}}
+	usedWireGuard := map[string]bool{}
 	rules := []any{}
 	// A request that simultaneously identifies two Services is ambiguous. Keep
 	// the rejection before every allow rule, including deny-assigned Services.
@@ -173,7 +174,16 @@ func projectAccessRuntime(view DeviceView, credentials map[string]string) ([]Rou
 			if candidate.FirstResourceID == "" {
 				outbounds = append(outbounds, map[string]any{"type": "direct", "tag": candidate.ID})
 			} else {
-				values, err := renderTransportPath(byPath[candidate.ID], view.Resources, credentials)
+				path := byPath[candidate.ID]
+				if path.accessWG != nil && !usedWireGuard[path.accessWG.ID] {
+					outbound, err := wireGuardAccessOutbound(*path.accessWG, credentials[wireGuardAccessTag(path.accessWG.ID)])
+					if err != nil {
+						return nil, nil, err
+					}
+					outbounds = append(outbounds, outbound)
+					usedWireGuard[path.accessWG.ID] = true
+				}
+				values, err := renderTransportPath(path, view.Resources, credentials)
 				if err != nil {
 					return nil, nil, err
 				}

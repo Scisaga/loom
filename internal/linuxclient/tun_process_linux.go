@@ -36,6 +36,13 @@ func withTUNUnderlay(config string) (string, error) {
 			return "", errors.New("TUN runtime contains an untrusted namespace reference")
 		}
 		switch outbound["type"] {
+		case "wireguard":
+			if outbound["system_interface"] != false || outbound["interface_name"] != nil {
+				return "", errors.New("TUN WireGuard must remain a user-space transport")
+			}
+			if outbound["detour"] == nil {
+				outbound["netns"] = tunUnderlayReference
+			}
 		case "direct", "hysteria2", "trojan":
 			// Detoured connections are created by the referenced outbound.
 			if outbound["detour"] == nil {

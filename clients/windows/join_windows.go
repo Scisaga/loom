@@ -218,6 +218,10 @@ func decodeWindowsPlatformKey(body []byte) (ed25519.PublicKey, error) {
 }
 
 func writeWindowsJoinFile(path string, body []byte) (retErr error) {
+	return writeWindowsMetadata(path, body, replaceWindowsJoinFile)
+}
+
+func writeWindowsMetadata(path string, body []byte, replace func(string, string) error) (retErr error) {
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || len(body) == 0 {
 		return errors.New("invalid Windows local metadata path or body")
 	}
@@ -245,6 +249,10 @@ func writeWindowsJoinFile(path string, body []byte) (retErr error) {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	return replace(temporary, path)
+}
+
+func replaceWindowsJoinFile(temporary, path string) error {
 	from, err := windows.UTF16PtrFromString(temporary)
 	if err != nil {
 		return err
@@ -253,5 +261,8 @@ func writeWindowsJoinFile(path string, body []byte) (retErr error) {
 	if err != nil {
 		return err
 	}
-	return windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+	if err := windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH); err != nil {
+		return fmt.Errorf("replace Windows local metadata %s: %w", filepath.Base(path), err)
+	}
+	return nil
 }
