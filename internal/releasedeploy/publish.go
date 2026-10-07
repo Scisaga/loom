@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"loom/internal/clientrelease"
@@ -25,6 +26,7 @@ import (
 )
 
 type Transport interface {
+	// Independent nodes may be called concurrently. Calls for one node remain ordered.
 	Resolve(context.Context, string) (control.SSHTargetReadback, error)
 	Run(context.Context, string, string) ([]byte, error)
 	Stream(context.Context, string, string, io.Reader) ([]byte, error)
@@ -37,8 +39,10 @@ type TargetReadback struct {
 }
 
 type Result struct {
+	ElapsedMillis     int64           `json:"elapsed_ms"`
 	Target            int             `json:"target,omitempty"`
 	Node              int             `json:"node,omitempty"`
+	DistributionRoot  int             `json:"distribution_root,omitempty"`
 	Operation         string          `json:"operation"`
 	Verified          bool            `json:"verified,omitempty"`
 	CoordinatesDiffer bool            `json:"ssh_coordinates_differ,omitempty"`
@@ -60,6 +64,7 @@ type Options struct {
 	PublicKey       ed25519.PublicKey
 	HTTP            *http.Client
 	Observe         func(Result)
+	inputMu         *sync.Mutex
 }
 
 type target struct {
@@ -114,6 +119,11 @@ func (o Options) emit(value Result) {
 	}
 }
 func (o Options) unchanged(ctx context.Context, initial control.ReleaseDeploymentInputs) error {
+	o.inputMu.Lock()
+	defer o.inputMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	config, err := o.ReloadConfig()
 	if err != nil || !reflect.DeepEqual(config, o.Config) {
 		return errors.New("deployment inputs changed during publication")
@@ -159,6 +169,18 @@ func Publish(ctx context.Context, o Options) error {
 	if o.ReloadConfig == nil || o.Inputs == nil || o.Transport == nil || o.HTTP == nil {
 		return errors.New("publication adapters are incomplete")
 	}
+	o.inputMu = &sync.Mutex{}
+	started := time.Now()
+	observe := o.Observe
+	var outputMu sync.Mutex
+	o.Observe = func(value Result) {
+		outputMu.Lock()
+		defer outputMu.Unlock()
+		value.ElapsedMillis = time.Since(started).Milliseconds()
+		if observe != nil {
+			observe(value)
+		}
+	}
 	all, err := targets(o.Config)
 	if err != nil {
 		return err
@@ -167,6 +189,7 @@ func Publish(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	o.emit(Result{Operation: "source"})
 	set, err := store.ReadCatalog(o.Catalog)
 	if err != nil {
 		return errors.New("selected signed catalog cannot be verified")
@@ -175,6 +198,7 @@ func Publish(ctx context.Context, o Options) error {
 	if err != nil {
 		return errors.New("selected signed files cannot be read back")
 	}
+	o.emit(Result{Operation: "source", Verified: true})
 	inputs, err := o.Inputs(ctx)
 	if err != nil {
 		return err
@@ -187,8 +211,9 @@ func Publish(ctx context.Context, o Options) error {
 			return errors.New("authenticated distribution roots are invalid")
 		}
 	}
-	for i, alias := range o.Config.DeployHosts {
-		if err = o.unchanged(ctx, inputs); err != nil {
+	if err = parallelByNode(ctx, o.Config.DeployHosts, func(i int) error {
+		alias := o.Config.DeployHosts[i]
+		if err := o.unchanged(ctx, inputs); err != nil {
 			return err
 		}
 		resolved, err := o.Transport.Resolve(ctx, alias)
@@ -204,8 +229,15 @@ func Publish(ctx context.Context, o Options) error {
 			return fmt.Errorf("node %d authenticated identity differs", i+1)
 		}
 		o.emit(Result{Node: i + 1, Operation: "identity", Verified: true, CoordinatesDiffer: resolved.CoordinatesDiffer})
+		return nil
+	}); err != nil {
+		return err
 	}
-	for i := range all {
+	nodes := make([]string, len(all))
+	for i, t := range all {
+		nodes[i] = t.alias
+	}
+	if err = parallelByNode(ctx, nodes, func(i int) error {
 		readback, err := o.readTarget(ctx, all[i])
 		if err != nil {
 			return fmt.Errorf("target %d current readback unconfirmed", i+1)
@@ -221,9 +253,13 @@ func Publish(ctx context.Context, o Options) error {
 		}
 		all[i].previous, all[i].generation = readback.CatalogDigest, readback.Generation
 		o.emit(Result{Target: i + 1, Operation: "current", Verified: true})
+		return nil
+	}); err != nil {
+		return err
 	}
-	for i, t := range all {
-		if err = o.unchanged(ctx, inputs); err != nil {
+	if err = parallelByNode(ctx, nodes, func(i int) error {
+		t := all[i]
+		if err := o.unchanged(ctx, inputs); err != nil {
 			return err
 		}
 		o.emit(Result{Target: i + 1, Operation: "prepare"})
@@ -260,13 +296,17 @@ func Publish(ctx context.Context, o Options) error {
 			return fmt.Errorf("target %d immutable transfer unconfirmed; pointers were not advanced by this invocation", i+1)
 		}
 		o.emit(Result{Target: i + 1, Operation: "prepare", Verified: true, Transfer: &counts})
+		return nil
+	}); err != nil {
+		return err
 	}
-	if err = verifyHTTPS(ctx, o.HTTP, inputs.DistributionURLs, set); err != nil {
+	if err = verifyHTTPS(ctx, o.HTTP, inputs.DistributionURLs, set, o.emit); err != nil {
 		return err
 	}
 	o.emit(Result{Operation: "https", Verified: true})
-	for i, t := range all {
-		if err = o.unchanged(ctx, inputs); err != nil {
+	if err = parallelByNode(ctx, nodes, func(i int) error {
+		t := all[i]
+		if err := o.unchanged(ctx, inputs); err != nil {
 			return err
 		}
 		// Reading the same target tree as source reuses its exact prepared catalog;
@@ -282,13 +322,20 @@ func Publish(ctx context.Context, o Options) error {
 			return fmt.Errorf("target %d final readback unconfirmed", i+1)
 		}
 		o.emit(Result{Target: i + 1, Operation: "selected", Verified: true})
+		return nil
+	}); err != nil {
+		return err
 	}
-	for i, t := range all {
+	if err = parallelByNode(ctx, nodes, func(i int) error {
+		t := all[i]
 		final, err := o.readTarget(ctx, t)
 		if err != nil || final.CatalogDigest != set.ID || final.Generation != set.Catalog.Generation || matchIdentity(t.alias, final.Identity, inputs) != nil {
 			return fmt.Errorf("target %d changed before overall publication readback", i+1)
 		}
 		o.emit(Result{Target: i + 1, Operation: "verified", Verified: true})
+		return nil
+	}); err != nil {
+		return err
 	}
 	if err = o.unchanged(ctx, inputs); err != nil {
 		return err
@@ -306,14 +353,16 @@ func catalogReadback(body []byte, set control.ReleaseSet) bool {
 	return json.Unmarshal(body, &value) == nil && value.Catalog == set.ID && value.Generation == set.Catalog.Generation && reflect.DeepEqual(value.Entries, set.Catalog.Entries)
 }
 
-func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set control.ReleaseSet) error {
+func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set control.ReleaseSet, observe func(Result)) error {
 	// Do not follow redirects, use process proxy settings, or accept transparent
 	// decompression as an exact artifact readback. Those are caller transport rules.
 	copy := *client
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	entries := append([]control.ReleaseEntry{}, set.Catalog.Entries...)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Artifact.Digest < entries[j].Artifact.Digest })
-	for i, base := range bases {
+	return parallelByNode(ctx, bases, func(i int) error {
+		base := bases[i]
+		observe(Result{DistributionRoot: i + 1, Operation: "https"})
 		for j, entry := range entries {
 			url, err := control.DistributionURL(base, entry.Artifact.Digest)
 			if err != nil {
@@ -334,6 +383,51 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 				return fmt.Errorf("HTTPS root %d artifact %d exact bytes unconfirmed; pointers were not advanced by this invocation", i+1, j+1)
 			}
 		}
+		observe(Result{DistributionRoot: i + 1, Operation: "https", Verified: true})
+		return nil
+	})
+}
+
+// parallelByNode waits for all workers, including on failure. A failed node does
+// not run more operations in this round; independent nodes retain their results.
+// Errors use input order rather than completion order. No task state survives.
+func parallelByNode(ctx context.Context, nodes []string, operation func(int) error) error {
+	groups := [][]int{}
+	indexes := map[string]int{}
+	for i, node := range nodes {
+		group, ok := indexes[node]
+		if !ok {
+			group = len(groups)
+			indexes[node] = group
+			groups = append(groups, nil)
+		}
+		groups[group] = append(groups[group], i)
 	}
-	return nil
+	jobs := make(chan []int, len(groups))
+	for _, group := range groups {
+		jobs <- group
+	}
+	close(jobs)
+	errorsByTarget := make([]error, len(nodes))
+	var workers sync.WaitGroup
+	for range min(8, len(groups)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for group := range jobs {
+				for _, i := range group {
+					err := ctx.Err()
+					if err == nil {
+						err = operation(i)
+					}
+					errorsByTarget[i] = err
+					if err != nil {
+						break
+					}
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	return errors.Join(errorsByTarget...)
 }

@@ -15,7 +15,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"loom/internal/clientrelease"
 	"loom/internal/control"
@@ -26,13 +29,15 @@ var reviewedStore = flag.String("release-store-dir", "", "explicit real signed c
 var reviewedPublic = flag.String("release-pubkey", "", "independently fixed verification key")
 
 type demoTransport struct {
+	mu                            sync.Mutex
 	key                           ed25519.PublicKey
 	catalog                       string
 	identities                    map[string]control.DeviceIdentityReadback
 	uploads, selections           int
 	failedIdentity, failSelection string
 	httpComplete                  func() bool
-	transferredBytes              int64
+	transferredBytes              atomic.Int64
+	before                        func(context.Context, string) error
 }
 
 func (d *demoTransport) Resolve(_ context.Context, alias string) (control.SSHTargetReadback, error) {
@@ -42,7 +47,19 @@ func (d *demoTransport) Resolve(_ context.Context, alias string) (control.SSHTar
 var rootPattern = regexp.MustCompile(`-root '([^']+)'`)
 var expectedPattern = regexp.MustCompile(`-expected-current '([^']*)'`)
 
-func (d *demoTransport) Run(_ context.Context, alias, script string) ([]byte, error) {
+func (d *demoTransport) Run(ctx context.Context, alias, script string) ([]byte, error) {
+	operation := "select"
+	for _, match := range []struct{ text, operation string }{{"# Inspect existing release files;", "reuse"}, {"client inspect", "identity"}, {"release target", "current"}} {
+		if strings.Contains(script, match.text) {
+			operation = match.operation
+			break
+		}
+	}
+	if d.before != nil {
+		if err := d.before(ctx, operation); err != nil {
+			return nil, err
+		}
+	}
 	if strings.Contains(script, "# Inspect existing release files;") {
 		return exec.Command("sh", "-c", script).Output()
 	}
@@ -86,10 +103,17 @@ func (d *demoTransport) Run(_ context.Context, alias, script string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	d.mu.Lock()
 	d.selections++
+	d.mu.Unlock()
 	return demoCatalogReadback(set), nil
 }
-func (d *demoTransport) Stream(_ context.Context, _ string, script string, input io.Reader) ([]byte, error) {
+func (d *demoTransport) Stream(ctx context.Context, _ string, script string, input io.Reader) ([]byte, error) {
+	if d.before != nil {
+		if err := d.before(ctx, "transfer"); err != nil {
+			return nil, err
+		}
+	}
 	root := rootPattern.FindStringSubmatch(script)
 	expected := expectedPattern.FindStringSubmatch(script)
 	if len(root) != 2 || len(expected) != 2 || !strings.Contains(script, "-prepare-only") {
@@ -123,18 +147,20 @@ func (d *demoTransport) Stream(_ context.Context, _ string, script string, input
 	if err != nil {
 		return nil, err
 	}
+	d.mu.Lock()
 	d.uploads++
+	d.mu.Unlock()
 	return demoCatalogReadback(set), nil
 }
 
 type countedTransfer struct {
 	io.Reader
-	count *int64
+	count *atomic.Int64
 }
 
 func (r *countedTransfer) Read(body []byte) (int, error) {
 	n, err := r.Reader.Read(body)
-	*r.count += int64(n)
+	r.count.Add(int64(n))
 	return n, err
 }
 func demoCatalogReadback(set control.ReleaseSet) []byte {
@@ -171,11 +197,11 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 	for _, alias := range config.DeployHosts {
 		transport.identities[alias] = control.DeviceIdentityReadback{NetworkID: inputs.NetworkID, GenesisDigest: inputs.GenesisDigest, DeviceID: alias, TransactionID: "demo-join", InviteMaterialID: control.ReleaseDigest([]byte("demo-invite")), ClaimRequestID: "demo-claim", DevicePublicKey: public, Platform: "linux", Joined: true}
 	}
-	httpCalls := 0
+	var httpCalls atomic.Int64
 	badHTTP := false
-	transport.httpComplete = func() bool { return httpCalls == len(set.Catalog.Entries)*len(inputs.DistributionURLs) }
+	transport.httpComplete = func() bool { return httpCalls.Load() == int64(len(set.Catalog.Entries)*len(inputs.DistributionURLs)) }
 	client := &http.Client{Transport: demoHTTP(func(request *http.Request) (*http.Response, error) {
-		httpCalls++
+		httpCalls.Add(1)
 		name := strings.TrimPrefix(request.URL.Path, "/bin/")
 		file, err := os.Open(filepath.Join(*reviewedStore, "bin", name))
 		if err != nil {
@@ -190,7 +216,7 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 	})}
 	events := []Result{}
 	options := Options{Config: config, ReloadConfig: func() (localconfig.Config, error) { return config, nil }, Inputs: func(context.Context) (control.ReleaseDeploymentInputs, error) { return inputs, nil }, Transport: transport, Source: *reviewedStore, Catalog: set.ID, PublicKey: key, HTTP: client, Observe: func(r Result) { events = append(events, r) }}
-	run := func() error { httpCalls = 0; return Publish(context.Background(), options) }
+	run := func() error { httpCalls.Store(0); return Publish(context.Background(), options) }
 	t.Log("reject mismatched identity before upload")
 	transport.failedIdentity = "demo-b"
 	if err = run(); err == nil || transport.uploads != 0 {
@@ -237,11 +263,15 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 	}
 	t.Log("retry original catalog after partial selection")
 	transport.failSelection = ""
-	networkBefore := transport.transferredBytes
+	// Each actual transport operation must overlap its independent peer. Serial
+	// publication cannot cross these barriers, even with fully cached artifacts.
+	transport.before = pairedOperations()
+	networkBefore := transport.transferredBytes.Load()
 	if err = run(); err != nil {
 		t.Fatal("same catalog retry could not recover partial publication", err)
 	}
-	if transport.transferredBytes-networkBefore != 2*1024 {
+	transport.before = nil
+	if transport.transferredBytes.Load()-networkBefore != 2*1024 {
 		t.Fatal("complete target caches received more than two empty tar envelopes")
 	}
 	for _, path := range []string{a, b} {
@@ -254,11 +284,15 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 	// A changed authority while transferring must stop before either selection.
 	t.Log("reject authorization changes before selection")
 	saved := inputs
-	calls := 0
+	var changed atomic.Bool
+	options.Observe = func(r Result) {
+		if r.Operation == "prepare" && r.Verified {
+			changed.Store(true)
+		}
+	}
 	options.Inputs = func(context.Context) (control.ReleaseDeploymentInputs, error) {
-		calls++
 		value := saved
-		if calls > 5 {
+		if changed.Load() {
 			value.DistributionURLs = []string{"https://changed.example/"}
 		}
 		return value, nil
@@ -266,6 +300,31 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 	before := transport.selections
 	if err = run(); err == nil || transport.selections != before {
 		t.Fatal("changed authority authorized further pointer writes", err)
+	}
+}
+
+func pairedOperations() func(context.Context, string) error {
+	var mu sync.Mutex
+	waiting := map[string]chan struct{}{}
+	return func(ctx context.Context, operation string) error {
+		mu.Lock()
+		ready, ok := waiting[operation]
+		if ok {
+			delete(waiting, operation)
+			close(ready)
+		} else {
+			ready = make(chan struct{})
+			waiting[operation] = ready
+		}
+		mu.Unlock()
+		bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		select {
+		case <-ready:
+			return nil
+		case <-bounded.Done():
+			return errors.New("independent operation did not overlap: " + operation)
+		}
 	}
 }
 
