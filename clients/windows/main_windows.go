@@ -236,14 +236,15 @@ func waitForJoinedClient(root string, protector clientsecret.Protector, edition 
 }
 
 type windowsRuntimeStatus struct {
-	Schema       int                             `json:"schema"`
-	DeviceID     string                          `json:"device_id"`
-	ViewDigest   string                          `json:"view_digest"`
-	RuntimeState string                          `json:"runtime_state"`
-	Preference   clientmodel.Preference          `json:"preference"`
-	Selections   []clientadapter.SelectionStatus `json:"selections"`
-	Observations []clientmodel.Observation       `json:"observations"`
-	Reported     bool                            `json:"reported"`
+	Schema               int                             `json:"schema"`
+	DeviceID             string                          `json:"device_id"`
+	ViewDigest           string                          `json:"view_digest"`
+	RuntimeState         string                          `json:"runtime_state"`
+	Preference           clientmodel.Preference          `json:"preference"`
+	Selections           []clientadapter.SelectionStatus `json:"selections"`
+	Observations         []clientmodel.Observation       `json:"observations"`
+	ResourceObservations []control.Observation           `json:"resource_observations,omitempty"`
+	Reported             bool                            `json:"reported"`
 }
 
 func windowsRuntimeStatusPath(root string) string {
@@ -253,7 +254,7 @@ func windowsRuntimeStatusPath(root string) string {
 func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, activation clientadapter.Activation, reported bool) error {
 	status := windowsRuntimeStatus{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, RuntimeState: "running",
 		Preference: activation.State.Preference, Selections: activation.Selections,
-		Observations: activation.State.Observations, Reported: reported}
+		Observations: activation.State.Observations, ResourceObservations: activation.State.ResourceObservations, Reported: reported}
 	body, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
 		return err
@@ -324,6 +325,12 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, CandidateID: route.ID})
 	}
 	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
+	for _, observation := range activation.State.ResourceObservations {
+		if observation.Validate() != nil || observation.Level != "resource" || observation.NetworkGeneration != report.NetworkGeneration {
+			return control.DeviceReport{}, errors.New("resource sample does not belong to this Windows runtime")
+		}
+		report.Observations = append(report.Observations, observation)
+	}
 	service, target := windowsProbeTarget(lkg.View)
 	for _, observation := range activation.State.Observations {
 		route, ok := routes[observation.CandidateID]
@@ -341,7 +348,10 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 		duration := observation.MetricMillis
 		report.Observations = append(report.Observations, control.Observation{Level: "service", ServiceID: service, CandidateID: route.ID, Target: target, Action: "https_request", SpecDigest: route.SpecDigest, NetworkGeneration: report.NetworkGeneration, Result: observation.Result, ObservedAt: observed.UnixMilli(), ValidUntil: valid.UnixMilli(), DurationMS: &duration})
 	}
-	sort.Slice(report.Observations, func(i, j int) bool { return report.Observations[i].CandidateID < report.Observations[j].CandidateID })
+	order := func(value control.Observation) string {
+		return strings.Join([]string{value.Level, value.ServiceID, value.CandidateID, value.ResourceID, value.LinkID, value.Target, value.Action, value.SpecDigest}, "\x00")
+	}
+	sort.Slice(report.Observations, func(i, j int) bool { return order(report.Observations[i]) < order(report.Observations[j]) })
 	return report, nil
 }
 
@@ -369,10 +379,12 @@ func windowsActivationApplied(activation clientadapter.Activation, routes []clie
 
 func windowsRuntimeFactsDigest(activation clientadapter.Activation, components []control.ComponentReadback) string {
 	body, _ := json.Marshal(struct {
-		Selections   []clientadapter.SelectionStatus `json:"selections"`
-		Observations []clientmodel.Observation       `json:"observations"`
-		Components   []control.ComponentReadback     `json:"components"`
-	}{activation.Selections, activation.State.Observations, components})
+		Selections           []clientadapter.SelectionStatus `json:"selections"`
+		Observations         []clientmodel.Observation       `json:"observations"`
+		ResourceObservations []control.Observation           `json:"resource_observations,omitempty"`
+		Components           []control.ComponentReadback     `json:"components"`
+	}{Selections: activation.Selections, Observations: activation.State.Observations,
+		ResourceObservations: activation.State.ResourceObservations, Components: components})
 	digest := sha256.Sum256(body)
 	return hex.EncodeToString(digest[:])
 }
@@ -438,7 +450,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	// application may fail, but cannot put the previous authorization back.
 	components, err := loadWindowsRuntimeComponents(root)
 	if err != nil {
-		return err
+		return fmt.Errorf("load signed Windows runtime components: %w", err)
 	}
 	heldComponents, err := pinWindowsRuntimeComponents(components)
 	if err != nil {
@@ -553,6 +565,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if err := writeWindowsRuntimeStatus(root, lkg, activation, false); err != nil {
 		return err
 	}
+	initiallySelected := windowsSelectedCandidates(activation)
 	probe, probeErr := windowsBusinessProbe(lkg.View)
 	if probeErr != nil {
 		log.Printf("certified Windows business probe unavailable; keeping unknown: %v", probeErr)
@@ -565,6 +578,10 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		if !windowsActivationApplied(activation, routes) {
 			return activationErr
 		}
+	}
+	observeWindowsFirstHops(ctx, root, *lkg, &activation, initiallySelected)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	componentReadbacks, componentErr := windowsComponentReadbacks(dataPlanePID, components, heldComponents)
 	if componentErr != nil {
@@ -624,6 +641,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 				}
 				nextState.NetworkGeneration = nextGeneration
 				nextState.Observations = nil
+				nextState.ResourceObservations = nil
 			}
 			next, nextErr := clientadapter.Activate(ctx, selector, routes, nextState,
 				probe, time.Now)
@@ -633,6 +651,11 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			if !windowsActivationApplied(next, routes) {
 				return fmt.Errorf("Windows selector application failed: %w", nextErr)
 			}
+			observeWindowsFirstHops(ctx, root, *lkg, &next, nil)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			now = time.Now()
 			facts := windowsRuntimeFactsDigest(next, componentReadbacks)
 			if facts != lastFacts || now.Sub(lastReportAt) >= 60*time.Second {
 				nextReport, buildErr := windowsDeviceReport(lkg, next, componentReadbacks, now)

@@ -107,11 +107,11 @@ func testWindowsRevocationRecovery(t *testing.T, protector clientsecret.Protecto
 		t.Fatal(err)
 	}
 	next := windowsCertifiedTestView(t, store, 8, true)
-	// A broken local component is an application failure, independent of the
-	// private View. It also ensures this test never starts a data plane or TUN.
-	if err := os.WriteFile(filepath.Join(root, "state", "components.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// The current application verifies its bundled component, not an old local
+	// component state. Missing bundle trust prevents all data-plane execution.
+	originalKey := buildPlatformPublicKey
+	buildPlatformPublicKey = ""
+	t.Cleanup(func() { buildPlatformPublicKey = originalKey })
 	if run, err := prepareClientAt(root, protector, edition); err != nil || run == nil {
 		t.Fatalf("component failure prevented preparation of the authenticated repair path: %v", err)
 	}
@@ -119,7 +119,7 @@ func testWindowsRevocationRecovery(t *testing.T, protector clientsecret.Protecto
 		return next, nil
 	}
 	err = runWindowsGeneration(context.Background(), root, store, profile, fetch)
-	if err == nil || !strings.Contains(err.Error(), "read signed component state") {
+	if err == nil || !strings.Contains(err.Error(), "load signed Windows runtime components") {
 		t.Fatalf("expected component application failure, got %v", err)
 	}
 	if !reflect.DeepEqual(store.LKG(), &next) {

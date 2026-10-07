@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"loom/internal/clientmodel"
+	"loom/internal/control"
 )
 
 type State struct {
-	Preference        clientmodel.Preference
-	NetworkGeneration string
-	Observations      []clientmodel.Observation
+	Preference           clientmodel.Preference
+	NetworkGeneration    string
+	Observations         []clientmodel.Observation
+	ResourceObservations []control.Observation
 }
 
 type SelectionStatus struct {
