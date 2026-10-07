@@ -139,6 +139,11 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 					log.Print("control: could not persist expired invitation; will retry")
 				}
 			}
+			memberCheck, cancelMembers := context.WithTimeout(ctx, 5*time.Second)
+			if err := server.Runtime.ReconcileControlChanges(memberCheck, server.now()); err != nil && ctx.Err() == nil {
+				log.Print("control: member decision remains pending; original evidence retained")
+			}
+			cancelMembers()
 			expiry.Reset(5 * time.Second)
 		case err := <-errorsOut:
 			if errors.Is(err, http.ErrServerClosed) {
@@ -181,6 +186,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/path-history", server.pathHistory)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
+	mux.HandleFunc("POST /api/control/members", server.controlChange)
 	mux.HandleFunc("GET /api/control/ui/enrollment-options", server.enrollmentOptions)
 	mux.HandleFunc("POST /api/control/ui/ssh/check", server.sshPreflight)
 	mux.HandleFunc("POST /api/control/ui/invites/{transaction}/ssh", server.sshExecute)
@@ -190,6 +196,10 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/releases/{catalog}/{artifact}/{file}", server.releaseDownload)
 	mux.HandleFunc("GET /api/control/releases/inputs", server.releaseDeploymentInputs)
 	mux.HandleFunc("GET /api/control/public-trust/{id}/certificate", server.websiteRootDownload)
+	mux.HandleFunc("POST /internal/control-prepare", server.internalControlPrepare)
+	mux.HandleFunc("POST /internal/control-vote", server.internalControlVote)
+	mux.HandleFunc("GET /internal/control-proof", server.internalControlProof)
+	mux.HandleFunc("PUT /internal/control-proof", server.internalControlProof)
 	mux.HandleFunc("GET /internal/frontier", server.internalFrontier)
 	mux.HandleFunc("GET /internal/material-conflicts", server.internalMaterialConflicts)
 	mux.HandleFunc("GET /internal/materials", server.internalMaterialsAfter)
@@ -220,7 +230,7 @@ func (server *Server) Handler() http.Handler {
 				return
 			}
 			if internal {
-				if !server.memberRequest(r) {
+				if !server.memberRequest(r) && !(r.Method == http.MethodGet && r.URL.Path == "/internal/control-proof" && r.URL.RawQuery == "" && server.historicalProofRequest(r)) {
 					http.NotFound(w, r)
 					return
 				}
@@ -232,6 +242,10 @@ func (server *Server) Handler() http.Handler {
 		if internal {
 			if localAdmin(r) {
 				http.NotFound(w, r)
+				return
+			}
+			if _, err := activeLocalMember(server.Runtime.Config, server.Runtime.Authority.Snapshot().Config); err != nil && !(r.Method == http.MethodGet && r.URL.Path == "/internal/control-proof" && r.URL.RawQuery == "") {
+				http.Error(w, "local control qualification has ended", http.StatusServiceUnavailable)
 				return
 			}
 		} else if strings.HasPrefix(r.URL.Path, "/api/") && !server.admin(r) {
@@ -278,6 +292,15 @@ func (server *Server) memberRequest(r *http.Request) bool {
 	}
 	return false
 }
+func (server *Server) historicalProofRequest(r *http.Request) bool {
+	if server.Runtime == nil || r.TLS == nil || r.TLS.NegotiatedProtocol != controlALPN || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
+		return false
+	}
+	leaf := r.TLS.PeerCertificates[0]
+	public, ok := leaf.PublicKey.(ed25519.PublicKey)
+	return ok && server.Runtime.Authority.historicalMember(leaf.Subject.CommonName, base64.RawURLEncoding.EncodeToString(public))
+}
+
 func (server *Server) admin(r *http.Request) bool {
 	if localAdmin(r) {
 		return true
@@ -313,6 +336,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	projection := server.Runtime.Authority.Snapshot()
 	releases := server.expectedReleaseSets(projection)
 	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
+	server.memberSnapshot(&snapshot)
 	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Runtime.Reports != nil {
@@ -411,6 +435,7 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snapshot := buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)
+	server.memberSnapshot(&snapshot)
 	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
 	snapshot.PolicyInvites = projectWebPolicyInvites(result.Projection, server.now())
 	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": snapshot}

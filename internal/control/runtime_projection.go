@@ -291,10 +291,11 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 			authorization, found = value, true
 		}
 	}
-	if !found || authorization.Validate() != nil {
-		return DeviceView{}, errors.New("device authorization is unavailable")
+	identity, identityFound := identityFor(projection, deviceID)
+	if !identityFound || found && authorization.Validate() != nil {
+		return DeviceView{}, errors.New("device identity or authorization is unavailable")
 	}
-	view := DeviceView{DNSRecords: projectDNSRecords(projection.NetworkIntent.DNSRecords), Schema: 3, DeviceID: authorization.ID, Name: authorization.Name, Platform: authorization.Platform, DevicePublicKey: authorization.DevicePublicKey,
+	view := DeviceView{DNSRecords: projectDNSRecords(projection.NetworkIntent.DNSRecords), Schema: 3, DeviceID: identity.ID, Name: identity.Name, Platform: identity.Platform, DevicePublicKey: identity.DevicePublicKey,
 		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
 		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
 		DNSServers: append([]string{}, authorization.DNSServers...), BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}

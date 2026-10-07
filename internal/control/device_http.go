@@ -213,6 +213,12 @@ func (a *Authority) inviteLocked(transactionID string) (Material, error) {
 	if state.Conflicted {
 		return Material{}, errors.New("invite is conflicted")
 	}
+	return a.inviteOriginalLocked(transactionID)
+}
+
+// Original evidence is also needed to terminate a conflicting bound member
+// transaction. Reading it does not authorize another claim or device view.
+func (a *Authority) inviteOriginalLocked(transactionID string) (Material, error) {
 	var found Material
 	count := 0
 	for _, material := range a.materials {
@@ -265,7 +271,18 @@ func (a *Authority) Binding(transactionID string) (EnrollmentBind, bool, error) 
 	return material.Payload.(EnrollmentBind), true, nil
 }
 func (a *Authority) enrollmentStateLocked(transactionID string) (string, error) {
-	if _, err := a.inviteLocked(transactionID); err != nil {
+	// A member transaction finishes only with its original majority
+	// certificate. Later removal does not rewrite its completed history.
+	for _, certificate := range a.certificates {
+		if join := certificate.Config.Join; join != nil && join.TransactionID == transactionID {
+			return "completed", nil
+		}
+		if invalidation := certificate.Config.Invalidation; invalidation != nil && invalidation.TransactionID == transactionID {
+			return invalidation.Reason, nil
+		}
+	}
+	original, err := a.inviteLocked(transactionID)
+	if err != nil {
 		return "", err
 	}
 	target, _ := a.projection.CurrentTarget("invite", transactionID)
@@ -281,6 +298,12 @@ func (a *Authority) enrollmentStateLocked(transactionID string) (string, error) 
 		return "cancelled", nil
 	case "invite.expire":
 		return "expired", nil
+	}
+	if a.memberEnrollmentLocked(original) {
+		if material.Operation == "invite.bind" {
+			return "bound", nil
+		}
+		return "open", nil
 	}
 	for _, authorization := range a.projection.DeviceAuthorizations {
 		if authorization.TransactionID == transactionID {
@@ -302,6 +325,23 @@ func (a *Authority) enrollmentStateLocked(transactionID string) (string, error) 
 	}
 	return "", errors.New("invite current fact has no enrollment state")
 }
+
+func (a *Authority) memberEnrollmentLocked(original Material) bool {
+	invite, ok := original.Payload.(Invite)
+	if !ok || !containsString(invite.Responsibilities, "control") {
+		return false
+	}
+	base, found := proofConfig(ControlProof{Genesis: a.genesis, Successors: a.certificates}, original.ControlConfigID)
+	if !found {
+		return false
+	}
+	for _, member := range base.Members {
+		if member.NodeID == invite.DeviceID {
+			return false
+		}
+	}
+	return true
+}
 func (a *Authority) EnrollmentState(transactionID string) (string, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -312,12 +352,12 @@ func (server *Server) bootstrapInvite(transactionID string) (BootstrapInvite, er
 	if err != nil {
 		return BootstrapInvite{}, err
 	}
-	genesis, err := server.Runtime.Authority.Genesis()
+	proof, err := server.Runtime.Authority.ControlProof()
 	if err != nil {
 		return BootstrapInvite{}, err
 	}
 	result := BootstrapInvite{Schema: 3, NetworkID: server.Runtime.Config.NetworkID, GenesisDigest: server.Runtime.Config.GenesisID,
-		ControlProof: ControlProof{Genesis: genesis, Successors: []ControlCertificate{}}, Material: material}
+		ControlProof: proof, Material: material}
 	return result, result.Validate()
 }
 
@@ -403,6 +443,10 @@ func (a *Authority) CompleteEnrollment(ctx context.Context, request EnrollmentCl
 		if !bound {
 			return Submission{}, errors.New("completed enrollment lost its verified binding")
 		}
+		if device, ok := controlOnlyIdentity(a.projection, invite.DeviceID); ok && device.TransactionID == invite.ID {
+			bindingID, _ := MaterialID(bindingMaterial)
+			return Submission{MaterialID: bindingID, Projection: cloneAuthorityProjection(a.projection)}, nil
+		}
 		for _, authorization := range a.projection.DeviceAuthorizations {
 			if authorization.TransactionID == invite.ID {
 				target, ok := a.projection.CurrentTarget("device", authorization.ID)
@@ -423,20 +467,9 @@ func (a *Authority) CompleteEnrollment(ctx context.Context, request EnrollmentCl
 		}
 		return Submission{}, errors.New("enrollment expired")
 	}
-	policyDependencies := []string{originalID}
-	for _, policyID := range invite.PolicyIDs {
-		target, ok := a.projection.CurrentTarget("policy", policyID)
-		if !ok || target.Conflicted || target.Deleted {
-			return Submission{}, errors.New("invited policy is no longer available")
-		}
-		policyDependencies = append(policyDependencies, target.MaterialIDs...)
-		for _, policy := range a.projection.NetworkIntent.Policies {
-			if policy.ID == policyID {
-				if service, ok := a.projection.CurrentTarget("service", policy.ServiceID); ok {
-					policyDependencies = append(policyDependencies, service.MaterialIDs...)
-				}
-			}
-		}
+	policyDependencies, err := enrollmentPolicyDependencies(a.projection, invite, originalID)
+	if err != nil {
+		return Submission{}, err
 	}
 	if !bound {
 		result, err := a.submitOperationLocked(ctx, Operation{Schema: 3, RequestID: enrollmentRequestID("bind", invite.ID), Operation: "invite.bind", TargetKind: "invite", TargetID: invite.ID, Dependencies: sortedUniqueDependencies(policyDependencies), Payload: binding}, local)
@@ -445,7 +478,46 @@ func (a *Authority) CompleteEnrollment(ctx context.Context, request EnrollmentCl
 		}
 		bindingMaterial, _ = a.materialValueLocked(result.MaterialID)
 	}
+	return a.completeBoundAuthorizationLocked(ctx, original, bindingMaterial, policyDependencies, local)
+}
+
+func enrollmentPolicyDependencies(projection Projection, invite Invite, originalID string) ([]string, error) {
+	policyDependencies := []string{originalID}
+	for _, policyID := range invite.PolicyIDs {
+		target, ok := projection.CurrentTarget("policy", policyID)
+		if !ok || target.Conflicted || target.Deleted {
+			return nil, errors.New("invited policy is no longer available")
+		}
+		policyDependencies = append(policyDependencies, target.MaterialIDs...)
+		for _, policy := range projection.NetworkIntent.Policies {
+			if policy.ID == policyID {
+				if service, ok := projection.CurrentTarget("service", policy.ServiceID); ok {
+					policyDependencies = append(policyDependencies, service.MaterialIDs...)
+				}
+			}
+		}
+	}
+	return policyDependencies, nil
+}
+
+func (a *Authority) completeBoundAuthorizationLocked(ctx context.Context, original, bindingMaterial Material, policyDependencies []string, local NodeConfig) (Submission, error) {
+	originalID, _ := MaterialID(original)
+	invite := original.Payload.(Invite)
+	binding := bindingMaterial.Payload.(EnrollmentBind)
 	bindingID, _ := MaterialID(bindingMaterial)
+	memberEnrollment := a.memberEnrollmentLocked(original)
+	if memberEnrollment && len(invite.Responsibilities) == 1 {
+		return Submission{MaterialID: bindingID, Projection: cloneAuthorityProjection(a.projection)}, nil
+	}
+	if memberEnrollment {
+		id, err := a.conditionalAuthorizationLocked(original, bindingMaterial)
+		if err != nil {
+			return Submission{}, err
+		}
+		if id != "" {
+			return Submission{MaterialID: id, Projection: cloneAuthorityProjection(a.projection)}, nil
+		}
+	}
 	if _, exists := a.projection.CurrentTarget("device", invite.DeviceID); exists {
 		return Submission{}, errors.New("device identity already has authorization history")
 	}
@@ -476,7 +548,7 @@ func (server *Server) deviceEnvelope(deviceID string) (DeviceViewEnvelope, error
 	if err != nil {
 		return DeviceViewEnvelope{}, err
 	}
-	genesis, err := server.Runtime.Authority.Genesis()
+	proof, err := server.Runtime.Authority.ControlProof()
 	if err != nil {
 		return DeviceViewEnvelope{}, err
 	}
@@ -489,7 +561,7 @@ func (server *Server) deviceEnvelope(deviceID string) (DeviceViewEnvelope, error
 		return DeviceViewEnvelope{}, err
 	}
 	return SignDeviceViewEnvelope(DeviceViewEnvelope{Schema: 3, NetworkID: projection.NetworkID, GenesisDigest: server.Runtime.Config.GenesisID,
-		IssuerControlID: member.ControlID, IssuerKeyID: keyID, ControlProof: ControlProof{Genesis: genesis, Successors: []ControlCertificate{}}, FactFrontier: projection.Frontier, View: view}, key)
+		IssuerControlID: member.ControlID, IssuerKeyID: keyID, ControlProof: proof, FactFrontier: projection.Frontier, View: view}, key)
 }
 func (server *Server) EnrollmentResponse(transactionID string) (EnrollmentResponse, error) {
 	state, err := server.Runtime.Authority.EnrollmentState(transactionID)
@@ -516,10 +588,37 @@ func (server *Server) DeviceHandler() http.Handler {
 	mux.HandleFunc("POST /enrollment/resume", server.resume)
 	mux.HandleFunc("POST /device/config", server.deviceConfig)
 	mux.HandleFunc("POST /device/report", server.deviceReport)
+	mux.Handle("GET /device/control/proof", server.deviceMemberRead(http.HandlerFunc(server.internalControlProof)))
+	mux.Handle("GET /device/control/frontier", server.deviceMemberRead(http.HandlerFunc(server.internalFrontier)))
+	mux.Handle("GET /device/control/material-conflicts", server.deviceMemberRead(http.HandlerFunc(server.internalMaterialConflicts)))
+	mux.Handle("GET /device/control/material/{digest}", server.deviceMemberRead(http.HandlerFunc(server.internalMaterial)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if _, err := activeLocalMember(server.Runtime.Config, server.Runtime.Authority.Snapshot().Config); err != nil {
+			http.Error(w, "local control qualification has ended", http.StatusServiceUnavailable)
+			return
+		}
 		mux.ServeHTTP(w, r)
+	})
+}
+
+func (server *Server) deviceMemberRead(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, authenticated := tunnelAuth(r)
+		projection := server.Runtime.Authority.Snapshot()
+		device, found := identityFor(projection, identity.DeviceID)
+		allowed := false
+		if authenticated && identity.Mode == "device" && found {
+			for _, member := range projection.Config.Members {
+				allowed = allowed || member.NodeID == device.ID && member.PublicKey == device.DevicePublicKey
+			}
+		}
+		if !allowed {
+			http.Error(w, "current member key authentication required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 func readDeviceJSON(w http.ResponseWriter, r *http.Request, value any) bool {
@@ -563,6 +662,19 @@ func (server *Server) finishEnrollment(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
+	// Failure to obtain a majority leaves the durable transaction bound. The
+	// normal resume entry retries it without changing the proven identity.
+	if state, _ := server.Runtime.Authority.EnrollmentState(request.TransactionID); state == "bound" {
+		original, err := server.Runtime.Authority.Invite(request.TransactionID)
+		if err == nil && containsString(original.Payload.(Invite).Responsibilities, "control") {
+			invite := original.Payload.(Invite)
+			change := ControlChangeRequest{Schema: 3, BaseConfigID: server.Runtime.Authority.Snapshot().ControlConfigID, Operation: "add", TargetNodeID: invite.DeviceID, TransactionID: invite.ID}
+			if !server.now().Before(time.UnixMilli(invite.ExpiresAt)) {
+				change.Operation, change.Reason = "invalidate_join", "expired"
+			}
+			_, _ = server.Runtime.ChangeControl(r.Context(), change, server.now())
+		}
+	}
 	response, err := server.EnrollmentResponse(request.TransactionID)
 	if err != nil {
 		http.Error(w, "enrollment view unavailable", http.StatusServiceUnavailable)
@@ -598,7 +710,7 @@ func (server *Server) deviceReport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device report identity rejected", http.StatusForbidden)
 		return
 	}
-	authorization, ok := authorizationFor(projection, identity.DeviceID)
+	authorization, ok := identityFor(projection, identity.DeviceID)
 	if !ok || server.Runtime.Reports.Put(report, authorization.DevicePublicKey) != nil {
 		http.Error(w, "device report rejected", http.StatusConflict)
 		return

@@ -6,12 +6,15 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 
 	"loom/internal/clientmodel"
@@ -72,7 +75,24 @@ func AcceptLKG(state State, envelope control.DeviceViewEnvelope) (State, error) 
 	}
 	next := state
 	next.LKG = &envelope
-	next.HighWater = append([]control.FactFrontier{}, envelope.FactFrontier...)
+	highWater := map[string]control.FactFrontier{}
+	inviteID, err := control.MaterialID(state.Invite.Material)
+	if err != nil {
+		return State{}, err
+	}
+	invitation := state.Invite.Material
+	highWater[invitation.IssuerKeyID] = control.FactFrontier{KeyID: invitation.IssuerKeyID, Sequence: invitation.Sequence, TipMaterialID: inviteID}
+	for _, prefix := range append(append([]control.FactFrontier{}, state.HighWater...), envelope.FactFrontier...) {
+		previous, found := highWater[prefix.KeyID]
+		if !found || prefix.Sequence > previous.Sequence {
+			highWater[prefix.KeyID] = prefix
+		}
+	}
+	next.HighWater = make([]control.FactFrontier, 0, len(highWater))
+	for _, prefix := range highWater {
+		next.HighWater = append(next.HighWater, prefix)
+	}
+	sort.Slice(next.HighWater, func(i, j int) bool { return next.HighWater[i].KeyID < next.HighWater[j].KeyID })
 	if err := next.Validate(); err != nil {
 		return State{}, err
 	}
@@ -293,6 +313,21 @@ func checkStateAdvance(next, previous State) error {
 	if !fixedIdentityEqual(next, previous) || next.ReportSequence < previous.ReportSequence {
 		return errors.New("persistent device identity or report sequence cannot roll back")
 	}
+	for _, before := range previous.HighWater {
+		found := false
+		for _, after := range next.HighWater {
+			if after.KeyID != before.KeyID {
+				continue
+			}
+			if after.Sequence < before.Sequence || after.Sequence == before.Sequence && after.TipMaterialID != before.TipMaterialID {
+				return errors.New("persistent authenticated high-water cannot roll back or fork")
+			}
+			found = true
+		}
+		if !found {
+			return errors.New("persistent authenticated high-water cannot be removed")
+		}
+	}
 	if previous.LKG != nil {
 		if next.LKG == nil {
 			return errors.New("accepted LKG cannot be removed")
@@ -353,6 +388,7 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 	if err := store.validateState(next); err != nil {
 		return err
 	}
+	review := ReviewMemberTransition(next, current)
 	body, err := control.CanonicalEncode(next)
 	if err != nil {
 		return err
@@ -419,6 +455,10 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 	}
 	clear(got)
 	store.state = committed
+	if review.PossiblePermissionRestoration {
+		body, _ := json.Marshal(review)
+		log.Printf("member certificate accepted; permission review is incomplete: %s", body)
+	}
 	return nil
 }
 func (store *Store) PrivateKey() ed25519.PrivateKey {

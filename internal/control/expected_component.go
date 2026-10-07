@@ -107,7 +107,7 @@ func deviceExpectedComponents(projection Projection, node string, sets []Release
 }
 
 func validateExpectedNode(value ExpectedComponent, projection Projection) error {
-	node, found := authorizationFor(projection, value.NodeID)
+	node, found := identityFor(projection, value.NodeID)
 	if !found || !strings.HasPrefix(value.Platform, node.Platform+"-") {
 		return errors.New("expected component has no matching authorized device platform")
 	}

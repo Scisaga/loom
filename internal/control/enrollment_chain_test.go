@@ -403,6 +403,12 @@ func TestInitialControlBindsItsOwnDeviceIdentityWithoutChangingMembership(t *tes
 	if !containsString(view.View.Responsibilities, "control") || !containsString(view.View.Responsibilities, "access") || view.View.DevicePublicKey == base64.RawURLEncoding.EncodeToString(controlKey.Public().(ed25519.PublicKey)) {
 		t.Fatal("combined responsibilities lost their independent identities")
 	}
+	target, _ := result.Projection.CurrentTarget("device", invite.DeviceID)
+	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-initial-ordinary-revoke", Operation: "device.revoke", TargetKind: "device", TargetID: invite.DeviceID, Dependencies: target.MaterialIDs, Payload: DeleteTarget{ID: invite.DeviceID}})
+	view, err = server.deviceEnvelope(invite.DeviceID)
+	if err != nil || len(view.View.Responsibilities) != 1 || view.View.Responsibilities[0] != "control" || view.View.DevicePublicKey != signed.DevicePublicKey || view.View.RuntimeProfile != nil {
+		t.Fatal("ordinary revocation changed the genesis member's separate device identity", err)
+	}
 }
 
 func TestObservationEvidenceCannotBeReinitializedOrImplicitlyMigrated(t *testing.T) {

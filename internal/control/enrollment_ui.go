@@ -73,19 +73,30 @@ func (server *Server) inviteValue(r *http.Request) (Invite, string, error) {
 }
 func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 	transactionID := r.PathValue("transaction")
-	material, err := server.Runtime.Authority.Invite(transactionID)
+	authority := server.Runtime.Authority
+	authority.mu.RLock()
+	material, err := authority.inviteOriginalLocked(transactionID)
+	state, stateErr := authority.enrollmentStateLocked(transactionID)
+	target, _ := authority.projection.CurrentTarget("invite", transactionID)
+	memberEnrollment := err == nil && authority.memberEnrollmentLocked(material)
+	if stateErr != nil && target.Conflicted {
+		state, stateErr = "conflicted", nil
+		if _, bound, bindingErr := authority.bindingLocked(transactionID); memberEnrollment && bound && bindingErr == nil {
+			state = "bound"
+		}
+	}
+	authority.mu.RUnlock()
 	if err != nil {
 		http.Error(w, "invite readback unavailable", http.StatusNotFound)
 		return
 	}
-	state, err := server.Runtime.Authority.EnrollmentState(transactionID)
-	if err != nil {
+	if stateErr != nil {
 		http.Error(w, "invite state unavailable", http.StatusConflict)
 		return
 	}
 	value := material.Payload.(Invite)
 	encoded := ""
-	if state == "open" && server.now().Before(time.UnixMilli(value.ExpiresAt)) {
+	if state == "open" && !target.Conflicted && server.now().Before(time.UnixMilli(value.ExpiresAt)) {
 		_, encoded, err = server.inviteValue(r)
 		if err != nil {
 			http.Error(w, "invite readback unavailable", http.StatusConflict)
@@ -120,6 +131,7 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	response := map[string]any{"schema": 3, "transaction": value, "state": state, "material_id": id, "invite": encoded, "expires_at": value.ExpiresAt, "shell_command": command, "qr_available": qrAvailable, "delivery_error": deliveryError}
+	response["member_enrollment"], response["identity_conflicted"] = memberEnrollment, target.Conflicted
 	if value.Medium == "ssh" {
 		response["ssh_execution"] = server.sshObservation(value.ID, value.SSHTarget)
 		_, _, err := server.sshInvite(value.ID)

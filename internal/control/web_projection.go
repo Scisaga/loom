@@ -9,7 +9,15 @@ import (
 func projectWebDevices(projection Projection, releases ...ReleaseSet) []Device {
 	byID := map[string]Device{}
 	for _, member := range projection.Config.Members {
-		byID[member.NodeID] = Device{ID: member.NodeID, Name: member.NodeID, Roles: []string{"control"}, Authorized: true, Availability: "unknown", PolicyIDs: []string{}, DistributionURLs: []string{}, Dependencies: []string{}, Presence: "unknown", RuntimeState: "unknown"}
+		device := Device{ID: member.NodeID, Name: member.NodeID, Roles: []string{"control"}, Authorized: true, Availability: "unknown", PolicyIDs: []string{}, DistributionURLs: []string{}, Dependencies: []string{}, Presence: "unknown", RuntimeState: "unknown"}
+		if identity, found := controlOnlyIdentity(projection, member.NodeID); found {
+			device.Name, device.Platform = identity.Name, identity.Platform
+			device.Enrollment, device.EnrollmentID = "completed", identity.TransactionID
+			if join, found := memberBindingFor(projection, member.NodeID); found {
+				device.Dependencies = []string{join.BindingMaterialID}
+			}
+		}
+		byID[member.NodeID] = device
 	}
 	for _, authorization := range projection.DeviceAuthorizations {
 		device := byID[authorization.ID]
@@ -80,6 +88,14 @@ func projectWebDevices(projection Projection, releases ...ReleaseSet) []Device {
 				device.DistributionURLs = append([]string{}, value.DistributionURLs...)
 				device.DNSServers = append([]string{}, value.DNSServers...)
 			}
+		}
+		if identity, currentControl := controlOnlyIdentity(projection, device.ID); currentControl && target.Deleted && !target.Conflicted {
+			// The revoked ordinary value is only available in DeviceForReview.
+			// Membership continues to authorize this identity and its control role.
+			device.Authorized, device.Deleted, device.Enrollment = true, false, "completed"
+			device.Name, device.Platform, device.EnrollmentID = identity.Name, identity.Platform, identity.TransactionID
+			device.Roles, device.PolicyIDs = []string{"control"}, []string{}
+			device.DistributionURLs, device.DNSServers = []string{}, []string{}
 		}
 		byID[device.ID] = device
 	}
@@ -199,7 +215,7 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
 
 func projectWebLastReportTimes(snapshot *WebSnapshot, reports []DeviceReport, projection Projection) {
 	for _, report := range reports {
-		authorization, found := authorizationFor(projection, report.DeviceID)
+		authorization, found := identityFor(projection, report.DeviceID)
 		if !found || report.NetworkID != projection.NetworkID || report.Verify(authorization.DevicePublicKey) != nil {
 			continue
 		}

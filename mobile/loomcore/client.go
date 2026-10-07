@@ -24,17 +24,18 @@ import (
 
 // This is a disposable Android host projection, never a second authority wire.
 type androidProfile struct {
-	HasWebsite           bool                          `json:"has_website"`
-	Schema               int                           `json:"schema"`
-	NodeID               string                        `json:"node_id"`
-	Name                 string                        `json:"name"`
-	ViewDigest           string                        `json:"view_digest"`
-	FactFrontier         []control.FactFrontier        `json:"fact_frontier"`
-	Config               string                        `json:"config"`
-	Routes               []clientmodel.RouteCandidate  `json:"routes"`
-	RecordID             string                        `json:"record_id"`
-	DNS                  []string                      `json:"dns"`
-	BusinessProbeTargets []control.ServiceProbeTargets `json:"business_probe_targets"`
+	PossiblePermissionRestoration bool                          `json:"possible_permission_restoration"`
+	HasWebsite                    bool                          `json:"has_website"`
+	Schema                        int                           `json:"schema"`
+	NodeID                        string                        `json:"node_id"`
+	Name                          string                        `json:"name"`
+	ViewDigest                    string                        `json:"view_digest"`
+	FactFrontier                  []control.FactFrontier        `json:"fact_frontier"`
+	Config                        string                        `json:"config"`
+	Routes                        []clientmodel.RouteCandidate  `json:"routes"`
+	RecordID                      string                        `json:"record_id"`
+	DNS                           []string                      `json:"dns"`
+	BusinessProbeTargets          []control.ServiceProbeTargets `json:"business_probe_targets"`
 }
 
 func decodeState(body []byte) (deviceclient.State, error) {
@@ -79,20 +80,38 @@ func CheckAndroidDeviceStateAdvance(nextBody, previousBody []byte) error {
 	}
 	return deviceclient.CheckIdentityStateAdvance(next, previous)
 }
+
+// This review contains public object IDs and change kinds, never credentials.
+// The host requests it before atomically replacing its one encrypted LKG.
+func AndroidMemberReview(nextBody, previousBody []byte) ([]byte, error) {
+	next, err := decodeState(nextBody)
+	if err != nil {
+		return nil, err
+	}
+	previous, err := decodeState(previousBody)
+	if err != nil {
+		return nil, err
+	}
+	if err = deviceclient.CheckIdentityStateAdvance(next, previous); err != nil {
+		return nil, err
+	}
+	return json.Marshal(deviceclient.ReviewMemberTransition(next, previous))
+}
 func AndroidEnrollmentState(body []byte) ([]byte, error) {
 	state, err := decodeState(body)
 	if err != nil {
 		return nil, err
 	}
 	value := struct {
-		Schema        int                    `json:"schema"`
-		TransactionID string                 `json:"transaction_id"`
-		Claimed       bool                   `json:"claimed"`
-		Ready         bool                   `json:"ready"`
-		NodeID        string                 `json:"node_id"`
-		ViewDigest    string                 `json:"view_digest"`
-		FactFrontier  []control.FactFrontier `json:"fact_frontier"`
-	}{Schema: 3, TransactionID: state.Invite.Material.Payload.(control.Invite).ID, Claimed: state.LKG != nil, Ready: state.LKG != nil, FactFrontier: []control.FactFrontier{}}
+		PossiblePermissionRestoration bool                   `json:"possible_permission_restoration"`
+		Schema                        int                    `json:"schema"`
+		TransactionID                 string                 `json:"transaction_id"`
+		Claimed                       bool                   `json:"claimed"`
+		Ready                         bool                   `json:"ready"`
+		NodeID                        string                 `json:"node_id"`
+		ViewDigest                    string                 `json:"view_digest"`
+		FactFrontier                  []control.FactFrontier `json:"fact_frontier"`
+	}{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), Schema: 3, TransactionID: state.Invite.Material.Payload.(control.Invite).ID, Claimed: state.LKG != nil, Ready: state.LKG != nil, FactFrontier: []control.FactFrontier{}}
 	if state.LKG != nil {
 		value.NodeID = state.LKG.View.DeviceID
 		value.ViewDigest = state.LKG.ViewDigest
@@ -150,7 +169,7 @@ func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.We
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(androidProfile{HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...)})
+	return json.Marshal(androidProfile{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...)})
 }
 func androidRuntimeConfig(view control.DeviceView, secret string, websites ...clientadapter.WebsiteAccess) (string, error) {
 	raw, err := clientadapter.ManagedRuntimeConfig(view, secret, websites...)

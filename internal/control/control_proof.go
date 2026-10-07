@@ -9,10 +9,7 @@ import (
 )
 
 // These values describe the existing member proof, not another authority.
-// Successor verification and durable voting must be implemented together;
-// until then a nonempty successor chain is rejected at every entry point.
-var ErrControlSuccessionUnsupported = errors.New("control successor verification is not implemented")
-
+// Original majority certificates extend the fixed genesis trust anchor.
 type ControlRound struct {
 	Counter           U64    `json:"counter"`
 	ProposerControlID string `json:"proposer_control_id"`
@@ -94,9 +91,11 @@ type ControlCertificate struct {
 	Votes    []ControlVote    `json:"votes"`
 }
 
-func (ControlCertificate) Validate() error { return ErrControlSuccessionUnsupported }
+func (cert ControlCertificate) Validate() error { return validateControlCertificateShape(cert) }
 
-func validateControlConfigSuccessor(ControlConfig) error { return ErrControlSuccessionUnsupported }
+func validateControlConfigSuccessor(config ControlConfig) error {
+	return validateControlSuccessorShape(config)
+}
 
 type ControlProof struct {
 	Genesis    Material             `json:"genesis"`
@@ -118,9 +117,6 @@ func VerifyControlProof(proof ControlProof, networkID, genesisDigest string) (Co
 	if proof.Successors == nil || ValidateID(networkID) != nil || ValidateDigest(genesisDigest) != nil {
 		return ControlConfig{}, errors.New("control proof boundary is invalid")
 	}
-	if len(proof.Successors) != 0 {
-		return ControlConfig{}, ErrControlSuccessionUnsupported
-	}
 	genesis, ok := proof.Genesis.Payload.(Genesis)
 	if !ok || proof.Genesis.Operation != "genesis" || proof.Genesis.NetworkID != networkID || genesis.ControlConfig.NetworkID != networkID {
 		return ControlConfig{}, errors.New("control proof has no matching genesis")
@@ -138,7 +134,7 @@ func VerifyControlProof(proof ControlProof, networkID, genesisDigest string) (Co
 	if err := VerifyMaterial(proof.Genesis, ed25519.PublicKey(key)); err != nil {
 		return ControlConfig{}, err
 	}
-	return genesis.ControlConfig, nil
+	return verifyControlSuccessors(genesis.ControlConfig, proof.Successors)
 }
 
 // VerifyControlProofExtension preserves an already accepted chain. No fallback
@@ -150,7 +146,18 @@ func VerifyControlProofExtension(proof, previous ControlProof, networkID, genesi
 	if _, err := VerifyControlProof(previous, networkID, genesisDigest); err != nil {
 		return ControlConfig{}, err
 	}
-	return VerifyControlProof(proof, networkID, genesisDigest)
+	config, err := VerifyControlProof(proof, networkID, genesisDigest)
+	if err != nil {
+		return ControlConfig{}, err
+	}
+	for i, cert := range previous.Successors {
+		prior, _ := ConfigID(cert.Config)
+		next, _ := ConfigID(proof.Successors[i].Config)
+		if prior != next {
+			return ControlConfig{}, errors.New("control proof replaces a previously accepted successor")
+		}
+	}
+	return config, nil
 }
 
 func proofMember(config ControlConfig, controlID string) (Member, bool) {
@@ -160,4 +167,22 @@ func proofMember(config ControlConfig, controlID string) (Member, bool) {
 		}
 	}
 	return Member{}, false
+}
+
+func proofConfig(proof ControlProof, id string) (ControlConfig, bool) {
+	initial, ok := proof.Genesis.Payload.(Genesis)
+	if !ok {
+		return ControlConfig{}, false
+	}
+	first, _ := ConfigID(initial.ControlConfig)
+	if first == id {
+		return initial.ControlConfig, true
+	}
+	for _, cert := range proof.Successors {
+		current, _ := ConfigID(cert.Config)
+		if current == id {
+			return cert.Config, true
+		}
+	}
+	return ControlConfig{}, false
 }

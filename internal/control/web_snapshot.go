@@ -10,6 +10,8 @@ import (
 // WebSnapshot is a redacted projection for the existing control UI. It is never
 // accepted as an operation or used to restore authority.
 type WebSnapshot struct {
+	Members             []WebControlMember           `json:"members"`
+	LocalNodeID         string                       `json:"local_node_id"`
 	WebsiteCertificates []WebsiteCertificateReadback `json:"website_certificates"`
 	WebEndpoints        []EndpointGeneration         `json:"web_endpoints"`
 	PublicTrust         []PublicTrust                `json:"public_trust"`
@@ -35,6 +37,12 @@ type WebSnapshot struct {
 	Administrators      []WebAdministrator           `json:"administrators"`
 }
 
+type WebControlMember struct {
+	ControlID string `json:"control_id"`
+	NodeID    string `json:"node_id"`
+	KeyID     string `json:"key_id"`
+}
+
 type WebAdministrator struct {
 	ID          string `json:"id"`
 	Subject     string `json:"subject"`
@@ -44,9 +52,10 @@ type WebAdministrator struct {
 }
 
 type WebCapabilities struct {
-	Credential string   `json:"credential"`
-	Admin      bool     `json:"admin"`
-	Operations []string `json:"operations"`
+	Credential    string   `json:"credential"`
+	Admin         bool     `json:"admin"`
+	Operations    []string `json:"operations"`
+	MemberChanges bool     `json:"member_changes"`
 }
 
 type WebWarning struct {
@@ -111,6 +120,11 @@ func snapshotEvents(events []Event) []Event {
 }
 
 func buildWebSnapshot(projection Projection, admin, local, writable bool, releases ...ReleaseSet) WebSnapshot {
+	members := []WebControlMember{}
+	for _, member := range projection.Config.Members {
+		key, _ := KeyID(member.PublicKey)
+		members = append(members, WebControlMember{member.ControlID, member.NodeID, key})
+	}
 	capabilities := WebCapabilities{Credential: "none", Admin: admin, Operations: []string{}}
 	if admin {
 		capabilities.Credential = "admin"
@@ -143,7 +157,7 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 	if len(projection.PendingMaterialIDs) > 0 {
 		warnings = append(warnings, WebWarning{Code: "missing_dependencies", Message: "Some authenticated facts await their dependencies; affected targets are unavailable."})
 	}
-	return WebSnapshot{Schema: 3, NetworkID: projection.NetworkID, ControlConfigID: projection.ControlConfigID,
+	return WebSnapshot{Schema: 3, NetworkID: projection.NetworkID, ControlConfigID: projection.ControlConfigID, Members: members,
 		WebsiteCertificates: []WebsiteCertificateReadback{},
 		FactFrontier:        append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},

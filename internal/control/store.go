@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const NodeSchema = 3
@@ -114,11 +116,13 @@ type Submission struct {
 	Projection Projection
 }
 type Authority struct {
-	root       string
-	mu         sync.RWMutex
-	genesis    Material
-	materials  []Material
-	projection Projection
+	root         string
+	mu           sync.RWMutex
+	genesis      Material
+	materials    []Material
+	certificates []ControlCertificate
+	blocked      error
+	projection   Projection
 }
 
 func OpenAuthority(root string) (*Authority, error) {
@@ -139,8 +143,60 @@ func OpenAuthority(root string) (*Authority, error) {
 
 // Initialization is explicit and never overwrites a partial or historical store.
 func InitializeAuthority(root string, config NodeConfig, genesis Material) (*Authority, error) {
+	return initializeAuthority(root, config, ControlProof{Genesis: genesis, Successors: []ControlCertificate{}}, nil)
+}
+
+// InitializeMemberAuthority uses exactly the existing signed objects. Original
+// claim facts and the entire verified member chain are required before signing.
+func InitializeMemberAuthority(root string, config NodeConfig, proof ControlProof, materials []Material) (*Authority, error) {
+	if len(proof.Successors) == 0 {
+		return nil, errors.New("member join requires its original majority certificate")
+	}
+	if _, err := peerTLSConfig(config); err != nil {
+		return nil, err
+	}
+	if _, err := browserTLSConfig(config); err != nil {
+		return nil, err
+	}
+	return initializeAuthority(root, config, proof, materials)
+}
+
+func initializeAuthority(root string, config NodeConfig, proof ControlProof, materials []Material) (*Authority, error) {
+	genesis := proof.Genesis
 	if !absoluteControlPath(root) || config.Validate() != nil {
 		return nil, errors.New("explicit initialization requires an absolute root and valid identity")
+	}
+	if _, err := VerifyControlProof(proof, config.NetworkID, config.GenesisID); err != nil {
+		return nil, err
+	}
+	projection, err := Project(genesis, proof.Successors, materials)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := activeLocalMember(config, projection.Config); err != nil {
+		return nil, err
+	}
+	prepared := &Authority{genesis: genesis, certificates: proof.Successors, materials: materials, projection: projection}
+	graph, err := newMaterialGraph(genesis, proof.Successors, materials)
+	if err != nil {
+		return nil, err
+	}
+	for _, material := range materials {
+		id, err := MaterialID(material)
+		if err != nil {
+			return nil, err
+		}
+		if err = graph.validate(id); err != nil && !errors.Is(err, ErrMaterialEquivocation) {
+			return nil, err
+		}
+	}
+	for _, cert := range proof.Successors {
+		if err := prepared.verifyMemberProposalMaterials(cert.Config, true, time.Time{}); err != nil {
+			return nil, err
+		}
+	}
+	if len(projection.PendingMaterialIDs) != 0 {
+		return nil, errors.New("member initialization is missing original fact dependencies")
 	}
 	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, err
@@ -166,13 +222,6 @@ func InitializeAuthority(root string, config NodeConfig, genesis Material) (*Aut
 	if err != nil || genesis.Operation != "genesis" || id != config.GenesisID || genesis.NetworkID != config.NetworkID {
 		return nil, errors.New("genesis does not match the protected network anchor")
 	}
-	projection, err := Project(genesis, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := activeLocalMember(config, projection.Config); err != nil {
-		return nil, err
-	}
 	a := &Authority{root: root}
 	path, _ := a.materialPath(id)
 	if err := os.Mkdir(filepath.Dir(path), 0o700); err != nil {
@@ -180,6 +229,31 @@ func InitializeAuthority(root string, config NodeConfig, genesis Material) (*Aut
 	}
 	if err := putControlBytes(path, body); err != nil {
 		return nil, err
+	}
+	for _, material := range materials {
+		body, id, err := EncodeMaterial(material)
+		if err != nil {
+			return nil, err
+		}
+		path, _ := a.materialPath(id)
+		if err = putControlBytes(path, body); err != nil {
+			return nil, err
+		}
+	}
+	if len(proof.Successors) > 0 {
+		dir, err := protectedMemberDirectory(root, "control-certificates")
+		if err != nil {
+			return nil, err
+		}
+		for _, cert := range proof.Successors {
+			body, err := CanonicalEncode(cert)
+			if err != nil {
+				return nil, err
+			}
+			if err = putControlBytes(filepath.Join(dir, strings.TrimPrefix(endpointByteDigest(body), "sha256:")+".json"), body); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := initializeObservationDB(filepath.Join(root, "observations.db")); err != nil {
 		return nil, err
@@ -235,7 +309,8 @@ func lockProtectedControlPath(ctx context.Context, path string) (*os.File, error
 	}
 	return file, nil
 }
-func (a *Authority) reloadLocked() error {
+func (a *Authority) reloadLocked() (retErr error) {
+	defer func() { a.blocked = retErr }()
 	entries, err := os.ReadDir(a.root)
 	if err != nil {
 		return err
@@ -266,14 +341,18 @@ func (a *Authority) reloadLocked() error {
 	if err != nil {
 		return err
 	}
-	projection, err := Project(genesis, nil, materials)
+	certificates, err := a.readControlCertificates(genesis)
+	if err != nil {
+		return err
+	}
+	projection, err := Project(genesis, certificates, materials)
 	if err != nil {
 		return err
 	}
 	if err := syncControlDirectory(filepath.Join(a.root, "materials")); err != nil {
 		return err
 	}
-	a.genesis, a.materials, a.projection = genesis, materials, projection
+	a.genesis, a.materials, a.projection, a.certificates = genesis, materials, projection, certificates
 	return nil
 }
 func (a *Authority) materialPath(id string) (string, error) {
@@ -469,7 +548,7 @@ func (a *Authority) PutMaterial(body []byte) (string, error) {
 		if err := syncControlDirectory(filepath.Dir(path)); err != nil {
 			return "", err
 		}
-		if err := ValidateAdmission(material, a.genesis, nil, a.materials); errors.Is(err, ErrMaterialEquivocation) {
+		if err := ValidateAdmission(material, a.genesis, a.certificates, a.materials); errors.Is(err, ErrMaterialEquivocation) {
 			return id, err
 		}
 		return id, nil
@@ -479,12 +558,12 @@ func (a *Authority) PutMaterial(body []byte) (string, error) {
 	if material.Operation == "genesis" {
 		return "", errors.New("another genesis cannot replace the fixed network")
 	}
-	admissionErr := ValidateAdmission(material, a.genesis, nil, a.materials)
+	admissionErr := ValidateAdmission(material, a.genesis, a.certificates, a.materials)
 	if admissionErr != nil && !errors.Is(admissionErr, ErrMissingDependencies) && !errors.Is(admissionErr, ErrMaterialEquivocation) {
 		return "", admissionErr
 	}
 	next := append(append([]Material{}, a.materials...), material)
-	projection, err := Project(a.genesis, nil, next)
+	projection, err := Project(a.genesis, a.certificates, next)
 	if err != nil {
 		return "", err
 	}
@@ -567,6 +646,9 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 		id, _ := MaterialID(m)
 		return Submission{MaterialID: id, Projection: cloneAuthorityProjection(a.projection)}, nil
 	}
+	if _, stopped, err := a.stoppedOrdinaryKey(keyID); err != nil || stopped {
+		return Submission{}, errors.New("local key has permanently stopped ordinary signing")
+	}
 	for _, target := range a.projection.Targets {
 		if target.TargetKind != op.TargetKind || target.TargetID != op.TargetID {
 			continue
@@ -599,6 +681,10 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 	if op.Operation == "device.put" {
 		public := op.Payload.(DevicePut)
 		var original *DeviceAuthorization
+		graph, err := newMaterialGraph(a.genesis, a.certificates, a.materials)
+		if err != nil {
+			return Submission{}, err
+		}
 		excluded := map[string]bool{}
 		for _, id := range a.projection.PendingMaterialIDs {
 			excluded[id] = true
@@ -607,21 +693,31 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 			excluded[rejected.MaterialID] = true
 		}
 		for _, fact := range a.materials {
-			if fact.Operation != "device.join" || fact.TargetID != op.TargetID {
+			if fact.Operation != "device.join" && fact.Operation != "device.put" || fact.TargetID != op.TargetID {
 				continue
 			}
 			id, _ := MaterialID(fact)
-			if excluded[id] {
+			if excluded[id] || !graph.memberAuthorizationEffective(id, a.projection.ControlConfigID) {
 				continue
 			}
 			value := fact.Payload.(DeviceAuthorization)
-			if original != nil {
-				return Submission{}, errors.New("device has no unique original identity binding")
+			if original != nil && (original.DevicePublicKey != value.DevicePublicKey || original.RuntimeKey != value.RuntimeKey || original.Platform != value.Platform || original.TransactionID != value.TransactionID || original.InviteMaterialID != value.InviteMaterialID || original.BindingMaterialID != value.BindingMaterialID) {
+				return Submission{}, errors.New("device has conflicting original identity or credential bindings")
 			}
 			original = &value
 		}
 		if original == nil {
-			return Submission{}, errors.New("device update has no verified original binding")
+			identity, found := controlOnlyIdentity(a.projection, public.ID)
+			join, bound := memberBindingFor(a.projection, public.ID)
+			if !found || !bound || join.AuthorizationMaterialID != "" || len(public.Responsibilities) == 0 {
+				return Submission{}, errors.New("first ordinary grant requires a completed control binding and an ordinary responsibility")
+			}
+			key := make([]byte, 32)
+			if _, err := rand.Read(key); err != nil {
+				return Submission{}, err
+			}
+			original = &DeviceAuthorization{ID: public.ID, DevicePublicKey: identity.DevicePublicKey, Platform: identity.Platform, TransactionID: join.TransactionID, InviteMaterialID: join.InviteMaterialID, BindingMaterialID: join.BindingMaterialID, RuntimeKey: base64.RawURLEncoding.EncodeToString(key)}
+			clear(key)
 		}
 		original.Name, original.Responsibilities, original.PolicyIDs, original.DistributionURLs = public.Name,
 			append([]string{}, public.Responsibilities...), append([]string{}, public.PolicyIDs...), append([]string{}, public.DistributionURLs...)
@@ -637,11 +733,11 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 	if err != nil {
 		return Submission{}, err
 	}
-	if err := ValidateAdmission(material, a.genesis, nil, a.materials); err != nil {
+	if err := ValidateAdmission(material, a.genesis, a.certificates, a.materials); err != nil {
 		return Submission{}, err
 	}
 	next := append(append([]Material{}, a.materials...), material)
-	projection, err := Project(a.genesis, nil, next)
+	projection, err := Project(a.genesis, a.certificates, next)
 	if err != nil {
 		return Submission{}, err
 	}

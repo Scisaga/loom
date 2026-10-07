@@ -92,9 +92,9 @@ class ManagedProfileStoreTest {
         val before = "demo-access".encodeToByteArray()
         store(storage).acceptCertified(before)
         val revoked = "demo-no-access".encodeToByteArray()
-        val unexecutable = ManagedProfileStore(storage, profileId, {}, { _, _ -> }, { "demo-revoked" }) {
+        val unexecutable = ManagedProfileStore(storage, profileId, {}, { _, _ -> }, { "demo-revoked" }, project = {
             error("access runtime is unavailable")
-        }
+        })
         assertThrows(IllegalStateException::class.java) { unexecutable.acceptCertified(revoked) }
         assertArrayEquals(revoked, unexecutable.state())
         assertEquals("demo-revoked", unexecutable.acceptedViewDigest())
@@ -106,12 +106,12 @@ class ManagedProfileStoreTest {
         validate: (ByteArray) -> Unit = {},
         checkAdvance: (ByteArray, ByteArray) -> Unit = { _, _ -> },
     ) =
-        ManagedProfileStore(storage, profileId, validate, checkAdvance, { "demo-digest" }) { bytes ->
+        ManagedProfileStore(storage, profileId, validate, checkAdvance, { "demo-digest" }, project = { bytes ->
             ManagedProfile(
                 "demo-device", "Demo", "demo-digest", "[]",
                 "native-runtime-not-started", "[]", bytes.decodeToString(),
             )
-        }
+        })
 
     private class MemoryStorage : ProfileByteStore {
         private val records = mutableMapOf<String, ByteArray>()

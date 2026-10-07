@@ -222,19 +222,31 @@ func (bootstrap BootstrapInvite) Validate() error {
 	if err != nil {
 		return err
 	}
-	configID, err := ConfigID(config)
+	historical, found := proofConfig(bootstrap.ControlProof, bootstrap.Material.ControlConfigID)
 	invite, ok := bootstrap.Material.Payload.(Invite)
-	if err != nil || !ok || invite.Validate() != nil || invite.GenesisDigest != bootstrap.GenesisDigest || invite.IssuerControlID != bootstrap.Material.IssuerControlID || bootstrap.Material.ControlConfigID != configID || bootstrap.Material.TargetID != invite.ID {
+	if !found || !ok || invite.Validate() != nil || invite.GenesisDigest != bootstrap.GenesisDigest || invite.IssuerControlID != bootstrap.Material.IssuerControlID || bootstrap.Material.TargetID != invite.ID {
 		return errors.New("bootstrap invite does not match its material or member proof")
 	}
-	member, found := proofMember(config, invite.IssuerControlID)
+	member, found := proofMember(historical, invite.IssuerControlID)
 	keyID, keyErr := KeyID(member.PublicKey)
 	key, decodeErr := base64.RawURLEncoding.DecodeString(member.PublicKey)
 	if !found || keyErr != nil || decodeErr != nil || keyID != bootstrap.Material.IssuerKeyID {
 		return errors.New("invite issuer is not a proven member")
 	}
-	if containsString(invite.Responsibilities, "control") && invite.DeviceID != member.NodeID {
-		return errors.New("initial control binding must target the issuer's own member node")
+	if _, active := proofMember(config, invite.IssuerControlID); !active {
+		return errors.New("invitation issuer is no longer an active member")
+	}
+	for _, certificate := range bootstrap.ControlProof.Successors {
+		for _, seal := range certificate.Config.SealedKeys {
+			if seal.KeyID == bootstrap.Material.IssuerKeyID && bootstrap.Material.Sequence > seal.Sequence {
+				return errors.New("invitation exceeds its issuer's certified final prefix")
+			}
+		}
+	}
+	for _, existing := range historical.Members {
+		if existing.NodeID == invite.DeviceID && (existing.ControlID != member.ControlID || !containsString(invite.Responsibilities, "control")) {
+			return errors.New("initial control binding must target the issuer's own member node")
+		}
 	}
 	return VerifyMaterial(bootstrap.Material, ed25519.PublicKey(key))
 }
@@ -535,6 +547,18 @@ func (envelope DeviceViewEnvelope) Validate() error {
 			}
 		}
 	}
+	sealed := map[string]ControlSealedKey{}
+	for _, certificate := range envelope.ControlProof.Successors {
+		for _, seal := range certificate.Config.SealedKeys {
+			sealed[seal.KeyID] = seal
+			memberKeys[seal.KeyID] = true
+		}
+	}
+	for _, seal := range sealed {
+		if frontierFor(envelope.FactFrontier, seal.KeyID) != seal {
+			return errors.New("retired fact frontier differs from the certified seal")
+		}
+	}
 	for _, prefix := range envelope.FactFrontier {
 		if !memberKeys[prefix.KeyID] {
 			return errors.New("device fact frontier key is not proven")
@@ -585,6 +609,9 @@ func VerifyDeviceViewEnvelope(envelope DeviceViewEnvelope, trusted BootstrapInvi
 	if trusted.Validate() != nil || envelope.NetworkID != trusted.NetworkID || envelope.GenesisDigest != trusted.GenesisDigest {
 		return errors.New("device view does not match its fixed network anchor")
 	}
+	if _, err := VerifyControlProofExtension(envelope.ControlProof, trusted.ControlProof, trusted.NetworkID, trusted.GenesisDigest); err != nil {
+		return err
+	}
 	invite := trusted.Material.Payload.(Invite)
 	if envelope.View.DeviceID != invite.DeviceID {
 		return errors.New("device view is bound to another device")
@@ -597,6 +624,15 @@ func VerifyDeviceViewEnvelope(envelope DeviceViewEnvelope, trusted BootstrapInvi
 	for _, prefix := range envelope.FactFrontier {
 		if prefix.KeyID == trusted.Material.IssuerKeyID {
 			foundPrefix = prefix.Sequence >= trusted.Material.Sequence && (prefix.Sequence != trusted.Material.Sequence || prefix.TipMaterialID == inviteID)
+		}
+	}
+	if !foundPrefix {
+		for _, certificate := range envelope.ControlProof.Successors {
+			for _, seal := range certificate.Config.SealedKeys {
+				if seal.KeyID == trusted.Material.IssuerKeyID && seal.Sequence < trusted.Material.Sequence && frontierFor(envelope.FactFrontier, seal.KeyID) == seal {
+					foundPrefix = true
+				}
+			}
 		}
 	}
 	if !foundPrefix {
@@ -624,8 +660,20 @@ func CheckDeviceViewAdvance(next, previous DeviceViewEnvelope, highWater []FactF
 	for _, prefix := range next.FactFrontier {
 		current[prefix.KeyID] = prefix
 	}
+	sealed := map[string]ControlSealedKey{}
+	for _, certificate := range next.ControlProof.Successors {
+		for _, seal := range certificate.Config.SealedKeys {
+			sealed[seal.KeyID] = seal
+		}
+	}
 	for _, prefix := range append(append([]FactFrontier(nil), highWater...), previous.FactFrontier...) {
 		value, found := current[prefix.KeyID]
+		if seal, exists := sealed[prefix.KeyID]; exists && prefix.Sequence > seal.Sequence {
+			if !found || value != seal {
+				return errors.New("device view does not carry the certified retired prefix")
+			}
+			continue
+		}
 		if prefix.Sequence != 0 && !found || found && (value.Sequence < prefix.Sequence || value.Sequence == prefix.Sequence && value.TipMaterialID != prefix.TipMaterialID) {
 			return errors.New("device view rolls back or forks a verified fact prefix")
 		}
@@ -634,7 +682,7 @@ func CheckDeviceViewAdvance(next, previous DeviceViewEnvelope, highWater []FactF
 	for _, prefix := range previous.FactFrontier {
 		previousPrefixes[prefix.KeyID] = prefix.Sequence
 	}
-	advanced := false
+	advanced := len(next.ControlProof.Successors) > len(previous.ControlProof.Successors)
 	for _, prefix := range next.FactFrontier {
 		if prefix.Sequence > previousPrefixes[prefix.KeyID] {
 			advanced = true

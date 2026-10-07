@@ -146,6 +146,10 @@ func (channel *PrivateChannel) AttachAuthority(authority *Authority) { // runtim
 }
 
 func (channel *PrivateChannel) authorizeMember(certificates []*x509.Certificate) bool {
+	return channel.authorizeMemberFor(certificates, false)
+}
+
+func (channel *PrivateChannel) authorizeMemberFor(certificates []*x509.Certificate, history bool) bool {
 	channel.authorityM.RLock()
 	authority := channel.authority
 	channel.authorityM.RUnlock()
@@ -164,6 +168,9 @@ func (channel *PrivateChannel) authorizeMember(certificates []*x509.Certificate)
 	public, ok := certificate.PublicKey.(ed25519.PublicKey)
 	if !ok {
 		return false
+	}
+	if history {
+		return authority.historicalMember(certificate.Subject.CommonName, base64.RawURLEncoding.EncodeToString(public))
 	}
 	projection := authority.Snapshot()
 	for _, member := range projection.Config.Members {
@@ -232,7 +239,7 @@ func (channel *PrivateChannel) classify(connection net.Conn) {
 		_ = tlsConnection.Close()
 		return
 	}
-	if state.NegotiatedProtocol == controlALPN && !channel.authorizeMember(state.PeerCertificates) {
+	if state.NegotiatedProtocol == controlALPN && !channel.authorizeMemberFor(state.PeerCertificates, true) {
 		_ = tlsConnection.Close()
 		return
 	}
@@ -332,14 +339,31 @@ func (channel *PrivateChannel) endpoints(node string) []string {
 }
 
 func (channel *PrivateChannel) peerClient(node string) (*http.Client, error) {
+	return channel.peerClientFor(node, false)
+}
+
+type controlProofRoundTripper struct{ transport http.RoundTripper }
+
+func (t controlProofRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method != http.MethodGet || r.URL.Path != "/internal/control-proof" || r.URL.RawPath != "" || r.URL.RawQuery != "" {
+		return nil, errors.New("member proof transport cannot carry privileged requests")
+	}
+	return t.transport.RoundTrip(r)
+}
+
+func (channel *PrivateChannel) peerClientFor(node string, proofOnly bool) (*http.Client, error) {
 	if _, ok := channel.memberForNode(node); !ok {
 		return nil, errors.New("control HTTP target is not a configured member")
 	}
 	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, DisableKeepAlives: true}
 	transport.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return channel.dialMemberTLS(ctx, node, controlALPN, controlRelayALPN, 15*time.Second)
+		return channel.dialMemberTLSFor(ctx, node, controlALPN, controlRelayALPN, 15*time.Second, proofOnly)
 	}
-	return &http.Client{Timeout: 15 * time.Second, Transport: transport}, nil
+	client := &http.Client{Timeout: 15 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("member request redirect is forbidden") }}
+	if proofOnly {
+		client.Transport = controlProofRoundTripper{transport}
+	}
+	return client, nil
 }
 
 func (channel *PrivateChannel) Close() error {
@@ -421,6 +445,10 @@ func (address channelAddress) Network() string { return "loom-private" }
 func (address channelAddress) String() string  { return string(address) }
 
 func (channel *PrivateChannel) dialMemberTLS(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration) (net.Conn, error) {
+	return channel.dialMemberTLSFor(ctx, target, protocol, relayProtocol, timeout, false)
+}
+
+func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration, proofOnly bool) (net.Conn, error) {
 	if _, ok := channel.memberForNode(target); !ok {
 		return nil, errors.New("private control target is not a current member")
 	}
@@ -454,7 +482,7 @@ func (channel *PrivateChannel) dialMemberTLS(ctx context.Context, target, protoc
 	results := make(chan result)
 	for _, candidate := range routes {
 		go func(candidate route) {
-			connection, err := channel.dialMemberRoute(ctx, target, candidate.endpoint, protocol, relayProtocol, candidate.relay)
+			connection, err := channel.dialMemberRoute(ctx, target, candidate.endpoint, protocol, relayProtocol, candidate.relay, proofOnly)
 			select {
 			case results <- result{connection, err}:
 			case <-ctx.Done():
@@ -481,7 +509,7 @@ func (channel *PrivateChannel) dialMemberTLS(ctx context.Context, target, protoc
 
 // All establishment steps share one deadline and cancellation, including the
 // relay's target response. The losing attempts cannot outlive the request.
-func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endpoint, protocol, relayProtocol string, relay bool) (net.Conn, error) {
+func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endpoint, protocol, relayProtocol string, relay, proofOnly bool) (net.Conn, error) {
 	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", endpoint)
 	if err != nil {
 		return nil, err
@@ -526,7 +554,7 @@ func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endp
 		}
 		transport = outer
 	}
-	connection := tls.Client(transport, channel.relayTargetTLS(target, protocol))
+	connection := tls.Client(transport, channel.relayTargetTLS(target, protocol, proofOnly))
 	if err := connection.HandshakeContext(ctx); err != nil {
 		return nil, err
 	}
@@ -538,13 +566,13 @@ func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endp
 	return connection, nil
 }
 
-func (channel *PrivateChannel) relayTargetTLS(node, protocol string) *tls.Config {
+func (channel *PrivateChannel) relayTargetTLS(node, protocol string, proofOnly bool) *tls.Config {
 	member, _ := channel.memberForNode(node)
 	want, _ := decodePublicKey(member.PublicKey)
 	config := channel.peerTLS.Clone()
 	config.NextProtos = []string{protocol}
 	config.ServerName = ""
-	config.InsecureSkipVerify = true // VerifyConnection binds CA and member ID; the current member key is required.
+	config.InsecureSkipVerify = true // VerifyConnection binds the CA and ID; ordinary requests also require the current member key.
 	config.VerifyConnection = func(state tls.ConnectionState) error {
 		if len(state.PeerCertificates) == 0 {
 			return errors.New("private relay target certificate is missing")
@@ -562,7 +590,7 @@ func (channel *PrivateChannel) relayTargetTLS(node, protocol string) *tls.Config
 			return errors.New("private relay target is not the configured member")
 		}
 		public, ok := leaf.PublicKey.(ed25519.PublicKey)
-		if !ok || want == nil || !want.Equal(public) {
+		if !ok || want == nil || !proofOnly && !want.Equal(public) {
 			return errors.New("private target key is not the current member key")
 		}
 		return nil

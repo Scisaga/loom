@@ -78,11 +78,11 @@ envelope、Invite 与 claim/resume、设备 report——统一使用 schema **3*
 | 对象或既有值 | 已确定的字段语义 | 字段规范及剩余边界 | 受影响的业务行为 |
 |---|---|---|---|
 | `Material` | 网络、签发 control 与验证键、所引成员表、该键序列和前事实 ID、因果依赖、稳定目标、操作及对应内容、签名；genesis 固定初始成员、网络意图和管理员信任。 | 下方固定普通授权链的操作、ID、签名及规范字节，以及 genesis、初始成员表和 NetworkIntent 外层；未定非空子值、DNS/LAN 分配与发布期望操作仍须补齐，不用全量 network.update 代替。 | 管理 operation、事实同步、持久重建与运行消费仍需实现；字段表不抵扣正式验收。 |
-| 成员承诺、投票、证书 | 基础表、轮次、发起者、成员、完整投票史、按键已验证前缀、后继提案、封存点和同轮多数签名。 | 初始表、内容 ID、完整后继载荷及历史／前缀／签名集合的字段与排序见下文；非空后继的验证和持久投票运行尚未实现，正式入口明确拒绝。 | control 加入、移除、换键及离线设备验证连续成员证明需要相同的签名字节；不能用初始表代替后继证明。 |
+| 成员承诺、投票、证书 | 基础表、轮次、发起者、成员、完整投票史、按键已验证前缀、后继提案、封存点和同轮多数签名。 | 初始表、内容 ID、完整后继载荷及历史／前缀／签名集合的字段与排序见下文；非空后继与初始表共用连续证明验证，持久原件和正式入口见控制模型。 | control 加入、移除、换键及离线设备验证连续成员证明需要相同的签名字节；不能用初始表代替后继证明。 |
 | `NetworkIntent` 内的 `TransportResource` | 稳定资源 ID、种类、承载节点、interface/listener 身份、拨号坐标和公开认证参数；共享首跳与中继复用同一资源，私钥留在本机。 | 下方固定资源公共字段及 Hy2 的 CA/校验名、凭据和接收端 ACL 投影；WG 的普通设备参与身份和地址投影、各 Link 真实探测动作仍须与 adapter 入口核对。真实执行以实施状态为准。 | WG、Hy2、私有 TLS 的真实身份校验、资源复用和参数变化后的观测失效；无公网域名不能成为关闭 Hy2 验签的理由。 |
 | 设备授权内的 `RuntimeKey` 与凭据派生 | 只在 control 间保管根密钥；派生绑定设备、Service、Policy、用途、资源和接收节点，不向设备交付根密钥。 | 下方固定 32 字节根密钥、HKDF-SHA256、最小 info、输出及执行失败收口，不用整份授权/Policy 摘要引入无关换钥。资源认证值及实际凭据/ACL 替换仍须完成；现网旧凭据不能直接解释为新凭据。 | 同一授权在客户端与服务节点产生匹配且用途隔离的凭据；撤权、策略替换或换钥后旧凭据的拒绝不能依赖旧派生规则。 |
 | `DeviceView` 与 envelope | 单设备配置、签发者资格、连续成员证明、签发者事实前沿、View 摘要、设备绑定与签名。 | 下方固定普通互联网授权的外层字段、摘要和设备绑定；连续成员证明及服务节点执行回读仍是完整 writer 的前置。 | 配置领取、认证 LKG 原子保存、离线恢复与运行消费须验证同一完整 View，不能拼接或补造缺项。 |
-| Invite、claim、resume | Invite 的签发者/锚/设备/职责/PolicyIDs/入口/一次性约束；首次 claim 的设备公钥、目标端识别的平台与 request ID；Invite 不预锁平台，平台随绑定事实及设备授权签名；resume 同事务同密钥同平台。 | 下方固定普通加入的交付、请求、绑定与响应；申请 control 的条件授权及多数后继仍须完成成员消息的字段规格。 | SSH、脚本与二维码共用加入协议；目标平台绑定、同事务恢复和重复提交拒绝需要统一字节。 |
+| Invite、claim、resume | Invite 的签发者/锚/设备/职责/PolicyIDs/入口/一次性约束；首次 claim 的设备公钥、目标端识别的平台与 request ID；Invite 不预锁平台，平台随绑定事实及设备授权签名；resume 同事务同密钥同平台。 | 下方固定普通加入的交付、请求、绑定与响应；申请 control 的条件授权及多数后继使用本文固定的成员消息与原绑定引用。 | SSH、脚本与二维码共用加入协议；目标平台绑定、同事务恢复和重复提交拒绝需要统一字节。 |
 | 设备 report 与逐条 Observation | 当前 View 摘要、按设备递增序列、真实观测与运行回读；观测绑定设备、网络代、层级、Service/候选或 LinkID、实际目标及规范摘要，缺失或失效为 unknown。 | 下方固定普通 access 报告字段、签名、时间编码及重放拒绝；最大可接受寿命、时钟偏差、服务节点 listener/ACL/返回路径的逐项回读仍须补齐。 | 当前路径、业务状态、链路测量和部署回读的新鲜性及重放拒绝；不能由签名有效或单项成功推定其他范围仍可用。 |
 | release catalog 与 manifest | generation、组件/平台、不可变文件摘要、长度、媒体类型、受众、版本和最低兼容约束，发布密钥签名。 | catalog 与 manifest 的分层字段、路径规则、排序、签名和摘要字节；旧 floor 与新发布坐标的迁移证明。 | 精确制品验签、下载、期望摘要与实际应用对照，以及维持既有反重放边界的生产切换。 |
 
@@ -391,9 +391,27 @@ successors 按前驱顺序排列，空链唯一值为 `[]`，不是省略或 nul
 | ControlPromise | `schema=3,network_id:ID,base_config_id:Digest,round:ControlRound,responder_control_id:ID,votes:[]ControlVoteHistoryItem,prefixes:[]ControlSealedKey,signature:Signature`；votes 按轮次排序，包含该成员对此基础表的完整已投历史；prefixes 按 key_id 排序，覆盖基础表的每把验证键 |
 | ControlCertificate | `config:完整后继ControlConfig,round:ControlRound,promises:[]ControlPromise,votes:[]ControlVote`；promises 按 responder_control_id、votes 按 voter_control_id 排序，分别为同轮旧表多数；每票绑定同一基础表、轮次和 config 内容 ID |
 
+管理成员操作请求为 `schema=3,base_config_id,operation,target_node_id`，operation 使用成员表的六种
+后继操作；add 另含 `transaction_id`，invalidate_join 另含 `transaction_id,reason`，rotate 另含
+`public_key`，其他字段拒绝。它是本次请求参数，不是持久权威。base 指向管理员已读回的完整成员表，
+超时后重试同一 base；已形成后继时返回实际原证书及请求是否已满足，不把安全继承选出的其他操作
+报告为请求完成。新 control 的 control_id 确定为其新 node_id，既有身份不改名。
+
+管理请求沿 `POST /api/control/members` 使用与普通写入相同的私有管理员认证和同源规则；CLI
+`loom control member` 使用同一路径。成功响应为原 `certificate` 与布尔
+`requested_change_applied`，后者为 false 时必须展示实际决定并重新读取成员表，不能显示请求完成。
+多数不足返回失败且保留已持久承诺、票和 claim；重试不会清空它们。成员页面直接读取当前 members
+及 ControlConfig ID，不建立成员操作状态库。已绑定 control 事务不能降级成普通 invite.cancel/expire。
+
+私有成员 prepare 请求恰为 `schema=3,base_config_id,round`，vote 请求恰为
+`schema=3,config,round,promises`，成功分别返回原 `ControlPromise` 和 `ControlVote`。
+证书发送使用原 `ControlCertificate`，成员链读取返回原 `ControlProof`。请求沿当前成员的既有
+端到端 TLS 通道发送，prepare 的 proposer 必须是该认证成员；vote 的当前轮 proposer 同样核对。
+这些是操作参数与原证据的交付，不持久化请求包装或新状态。
+
 上述消息没有省略的空集合；ControlConfig 的 join/invalidation 只在对应操作出现，其余操作出现即拒绝。
 genesis 拒绝 target_node_id、origin_promises、join 和 invalidation。delete 与 target_node_id 一起构成该
-节点的不可复活删除事实；不再增加第二份墓碑实体。add 的事务、公钥、目标及所引条件授权必须一致，
+节点的不可复活删除事实；不再增加第二份墓碑实体。add 的事务、公钥、目标及所引条件授权必须一致，新增 Member.public_key 等于 join.device_public_key；
 其他操作的成员差量、封存集合和节点资格按控制模型验证，字段存在本身不授予资格。
 
 Vote、Promise 分别使用既定 `loom-control-vote-v3\0`、`loom-control-promise-v3\0` 域，签名覆盖删除自身
@@ -408,9 +426,16 @@ origin_promises 的 prefixes 给出各被封存键的序列最大值及对应 ti
 当时完整已投历史、前缀和原始签名回复；同轮重试返回完全相同字节，不能在投票后重生成同轮回复，
 否则会把当前票放回自己的起源证明或破坏历史约束。这些是已有成员承诺持久值，不另增 store。
 
-字段明确不表示动态成员运行已经实现。未完成完整后继验证和持久投票运行时，正式入口明确拒绝非空
-successors 与后继写入；不得把元素声明成空类型、任意 JSON 或跳过验签。真实 genesis 加空链与后续
-完整链属于同一证明结构，不存在 N=1 或测试专用 decoder，也不能称成员治理已经完成。
+某提案可以在后轮得到多数票，而其 origin_promises 保留首次轮次。完整投票历史不包含每个投票轮次的
+全部承诺，不能单凭这些历史票拼造该轮 Certificate.promises。已知同轮多数票时，该完整提案值已经
+选定：优先取得原始证书；原证书无法取得时，以当前轮的有效 promises 和同轮多数 votes 为同一 config
+形成证书。提案字节及 ConfigID 保持，新增成本仅为补取证书失败后的同值收票；未取得完整证书前不推进
+成员链。这不增加消息字段、权威对象或成员状态，旧轮多数决定不能因响应丢失被撤销。
+
+成员 writer 必须完整执行后继验证、持久承诺与票史、安全继承及原事实验收；不得把 successors
+元素声明成空类型、任意 JSON 或跳过验签。真实 genesis 加空链与后续完整链属于同一证明结构，
+不存在 N=1 或测试专用 decoder。正式入口、持久和重启映射见[控制模型](control-model.md#成员消息的持久与重启映射)，
+实际部署与业务验收结果单独记录在[实施状态](../progress.md)。
 
 ### 初始 NetworkIntent 的字段与引用边界
 

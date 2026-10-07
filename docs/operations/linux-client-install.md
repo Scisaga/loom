@@ -171,7 +171,7 @@ installer 不自动处理上述旧部署；本轮人工指定精确制品的正�
 TLS 引用见[本机配置模型](configuration-model.md)。普通 `resource.put` 与 Service/Policy 事实经私有
 配置通道投影出 listener 和入站用户；本机文件只能定位材料，不能增加资源、用户或目标权限。
 `client status` 的 resources 以及私有签名报告回读实际 UDP 归属、TLS 身份、认证和当前 ACL 摘要。
-删除最后一个自有资源后，纯服务节点保持配置/报告通道，数据面报告 stopped。配置收窄先关闭旧进程
+删除最后一个自有资源后，纯服务节点保持配置/报告通道，数据面报告 stopped。纯 control 节点同样保持该通道，不创建数据面进程，报告 stopped；成员 daemon 的实际签发与同步须另经正式业务读回，不能由 control 职责声明推断运行成功。配置收窄先关闭旧进程
 与全部已认证会话；父进程异常退出也由内核终止其数据面子进程。失败保留新 LKG，不能复活旧 ACL。
 资源主机名沿认证 resolver 接线解析，业务 DNS 与 TLS 名称保持各自身份；不使用主机 resolver
 为该 underlay 拨号补值。hybrid 的 server listener 留在宿主 underlay，access TUN 在单独受监督的 namespace。

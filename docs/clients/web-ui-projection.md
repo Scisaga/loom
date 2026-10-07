@@ -443,6 +443,8 @@ sequenceDiagram
   Grant ordinary authorization；历史字段不代表当前权限。管理员审阅后提交原 `device.put`，引用当前撤权
   和所选 Policy/Service 的已审阅依赖，不重新扫码或生成身份。缺少唯一历史、目标冲突或永久删除时
   不提供此恢复入口；不得从 Invite 初值、旧报告或浏览器缓存猜测最后配置。操作重试及陈旧草稿遵守同一规则。
+  control 的普通职责被撤销时，当前职责只显示仍由成员表授予的 control，历史普通职责只放在重新授权表单。
+  原邀请的只读详情可在身份冲突时继续显示唯一原件和多数取消入口，但不重新交付邀请或恢复设备认证。
 - **Topology/Services**：可复用 WG、hy2、私有 TLS `TransportResource`；显式中继才配置
   `NetworkLink`，增加节点不自动形成全互联。共享 HTTPS 探测目标按 Service 和设备授权过滤，
   没有目标显示 `unknown`。

@@ -156,14 +156,15 @@ func cmdClientInspect(args []string) error {
 	}
 	lkg := store.LKG()
 	result := struct {
-		Joined       bool                     `json:"joined"`
-		DeviceID     string                   `json:"device_id,omitempty"`
-		ViewDigest   string                   `json:"view_digest,omitempty"`
-		FactFrontier []control.FactFrontier   `json:"fact_frontier"`
-		Endpoints    int                      `json:"endpoints,omitempty"`
-		Routes       int                      `json:"routes,omitempty"`
-		Candidates   []control.RouteCandidate `json:"route_candidates"`
-	}{Joined: lkg != nil, DeviceID: identity.DeviceID, Candidates: []control.RouteCandidate{}}
+		PossiblePermissionRestoration bool                     `json:"possible_permission_restoration"`
+		Joined                        bool                     `json:"joined"`
+		DeviceID                      string                   `json:"device_id,omitempty"`
+		ViewDigest                    string                   `json:"view_digest,omitempty"`
+		FactFrontier                  []control.FactFrontier   `json:"fact_frontier"`
+		Endpoints                     int                      `json:"endpoints,omitempty"`
+		Routes                        int                      `json:"routes,omitempty"`
+		Candidates                    []control.RouteCandidate `json:"route_candidates"`
+	}{PossiblePermissionRestoration: store.PossiblePermissionRestoration(), Joined: lkg != nil, DeviceID: identity.DeviceID, Candidates: []control.RouteCandidate{}}
 	if lkg != nil {
 		result.DeviceID, result.ViewDigest, result.FactFrontier = lkg.View.DeviceID, lkg.ViewDigest, lkg.FactFrontier
 		result.Endpoints, result.Routes = len(lkg.View.Endpoints), len(lkg.View.Routes)

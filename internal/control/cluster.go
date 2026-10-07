@@ -83,12 +83,18 @@ func (runtime *Runtime) Submit(ctx context.Context, body []byte) (Submission, er
 func (a *Authority) signingReady(config NodeConfig) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	if a.blocked != nil {
+		return false
+	}
 	member, err := activeLocalMember(config, a.projection.Config)
 	if err != nil {
 		return false
 	}
 	keyID, err := KeyID(member.PublicKey)
 	if err != nil {
+		return false
+	}
+	if _, stopped, err := a.stoppedOrdinaryKey(keyID); err != nil || stopped {
 		return false
 	}
 	sequence := U64(0)
@@ -153,6 +159,9 @@ func validateRemoteFrontier(values []FactFrontier) error {
 	return nil
 }
 func (runtime *Runtime) reconcilePeer(ctx context.Context, member Member) error {
+	if err := runtime.reconcileControlProof(ctx, member); err != nil {
+		return err
+	}
 	var remote []FactFrontier
 	if err := runtime.peerJSON(ctx, member, http.MethodGet, "/internal/frontier", nil, &remote); err != nil {
 		return err
@@ -310,7 +319,7 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 	if !current {
 		return nil, errors.New("peer is no longer a control member")
 	}
-	client, err := runtime.Channel.peerClient(member.NodeID)
+	client, err := runtime.Channel.peerClientFor(member.NodeID, method == http.MethodGet && path == "/internal/control-proof")
 	if err != nil {
 		return nil, err
 	}

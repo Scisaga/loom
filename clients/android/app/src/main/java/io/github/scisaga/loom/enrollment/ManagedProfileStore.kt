@@ -1,6 +1,7 @@
 package io.github.scisaga.loom.enrollment
 
 import android.content.Context
+import android.util.Log
 import io.github.scisaga.loom.profiles.ProfileByteStore
 import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.security.EncryptedStore
@@ -21,6 +22,7 @@ data class ManagedProfile(
     val dns: List<String> = emptyList(),
     val businessProbeTargets: List<ServiceProbeTargets> = emptyList(),
     internal val hasWebsite: Boolean = false,
+    val possiblePermissionRestoration: Boolean = false,
 )
 
 data class ServiceProbeTargets(val serviceID: String, val targets: List<String>)
@@ -33,6 +35,7 @@ internal class ManagedProfileStore internal constructor(
     private val checkAdvance: (ByteArray, ByteArray) -> Unit,
     private val authenticatedView: (ByteArray) -> String,
     private val project: (ByteArray) -> ManagedProfile?,
+    private val restorationRisk: (ByteArray) -> Boolean = { false },
 ) {
     constructor(context: Context, profileId: String) : this(
         object : ProfileByteStore {
@@ -43,12 +46,19 @@ internal class ManagedProfileStore internal constructor(
         },
         profileId,
         Loomcore::validateAndroidDeviceState,
-        Loomcore::checkAndroidDeviceStateAdvance,
+        { next, previous ->
+            Loomcore.checkAndroidDeviceStateAdvance(next, previous)
+            val review = JSONObject(Loomcore.androidMemberReview(next, previous).decodeToString())
+            if (review.getBoolean("possible_permission_restoration")) {
+                Log.w("Loom", "成员变更待写入，可能复权；可见差异并非完整审计：$review")
+            }
+        },
         { body -> JSONObject(Loomcore.androidEnrollmentState(body).decodeToString()).getString("view_digest") },
         { body ->
             val status = JSONObject(Loomcore.androidEnrollmentState(body).decodeToString())
             if (status.getBoolean("ready")) decodeManagedProfile(body) else null
         },
+        { body -> JSONObject(Loomcore.androidEnrollmentState(body).decodeToString()).getBoolean("possible_permission_restoration") },
     )
 
     private val stateKey = ProfileStorage.state(profileId)
@@ -94,6 +104,7 @@ internal class ManagedProfileStore internal constructor(
     }
 
     fun acceptedViewDigest(): String = synchronized(stateLock) { state()?.let(authenticatedView).orEmpty() }
+    fun possiblePermissionRestoration(): Boolean = synchronized(stateLock) { state()?.let(restorationRisk) ?: false }
 
     fun certifiedViewDigest(body: ByteArray): String {
         validate(body)
@@ -137,6 +148,7 @@ private fun decodeAndroidProfile(body: ByteArray): ManagedProfile {
         factFrontier = root.getJSONArray("fact_frontier").toString(),
         config = config,
         hasWebsite = root.getBoolean("has_website"),
+        possiblePermissionRestoration = root.getBoolean("possible_permission_restoration"),
         routes = root.getJSONArray("routes").toString(),
         recordID = root.getString("record_id"),
         dns = root.optJSONArray("dns")?.let { values -> (0 until values.length()).map(values::getString) }.orEmpty(),

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,7 +31,7 @@ func deviceContractFixture(t *testing.T) (materialFixture, ControlProof, Project
 	return f, ControlProof{Genesis: f.genesis, Successors: []ControlCertificate{}}, p
 }
 
-func TestControlProofAuthenticatesAnyInitialMemberAndRefusesUnsupportedSuccessors(t *testing.T) {
+func TestControlProofAuthenticatesAnyInitialMemberAndRefusesIncompleteSuccessors(t *testing.T) {
 	f, proof, _ := deviceContractFixture(t)
 	anchor := materialTestID(t, f.genesis)
 	config, err := VerifyControlProof(proof, "demo-network", anchor)
@@ -49,7 +48,7 @@ func TestControlProofAuthenticatesAnyInitialMemberAndRefusesUnsupportedSuccessor
 	}
 	for _, bad := range []ControlProof{{Genesis: f.genesis}, {Genesis: f.genesis, Successors: []ControlCertificate{{}}}} {
 		if _, err := VerifyControlProof(bad, "demo-network", anchor); err == nil {
-			t.Fatal("incomplete/unsupported proof accepted")
+			t.Fatal("incomplete proof accepted")
 		}
 	}
 	if _, err := VerifyControlProof(proof, "demo-other", anchor); err == nil {
@@ -63,7 +62,7 @@ func TestControlProofAuthenticatesAnyInitialMemberAndRefusesUnsupportedSuccessor
 	if _, err := VerifyControlProof(corrupted, "demo-network", materialTestID(t, corrupted.Genesis)); err == nil {
 		t.Fatal("self-consistent digest replaced signature verification")
 	}
-	if _, err := VerifyControlProof(ControlProof{Genesis: f.genesis, Successors: []ControlCertificate{{}}}, "demo-network", anchor); !errors.Is(err, ErrControlSuccessionUnsupported) {
+	if _, err := VerifyControlProof(ControlProof{Genesis: f.genesis, Successors: []ControlCertificate{{}}}, "demo-network", anchor); err == nil {
 		t.Fatal("successor rejection was not explicit")
 	}
 }

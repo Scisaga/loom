@@ -123,6 +123,7 @@ func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uin
 	}
 	app.mu.Lock()
 	if sequence == app.runSequence && app.runCancel != nil {
+		app.possiblePermissionRestoration = store.PossiblePermissionRestoration()
 		app.routeOptions = options
 		app.routeSelected = routeOptionIndex(options, store.Preference())
 		app.routeBusy = false

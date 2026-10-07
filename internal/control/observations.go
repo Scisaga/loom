@@ -81,7 +81,7 @@ func (store *ObservationStore) Put(report DeviceReport, publicKey string) error 
 func (store *ObservationStore) mergeReportHistory(ctx context.Context, reports []DeviceReport, projection Projection) error {
 	keys := map[reportOwner]string{}
 	for _, report := range reports {
-		authorization, ok := authorizationFor(projection, report.DeviceID)
+		authorization, ok := identityFor(projection, report.DeviceID)
 		if !ok || report.NetworkID != projection.NetworkID {
 			return errors.New("peer report is outside current device authorization")
 		}
@@ -236,7 +236,7 @@ func verifyCurrentReport(report DeviceReport, projection Projection, releases ..
 	if report.NetworkID != projection.NetworkID {
 		return errors.New("device report belongs to another network")
 	}
-	authorization, found := authorizationFor(projection, report.DeviceID)
+	authorization, found := identityFor(projection, report.DeviceID)
 	if !found || report.Verify(authorization.DevicePublicKey) != nil {
 		return errors.New("device report signature or authorization rejected")
 	}

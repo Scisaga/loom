@@ -339,7 +339,7 @@ func (runtime *EndpointRuntime) reconcile() {
 		endpoint, found := current[endpointKey(session.generation.ID, session.generation.Generation)]
 		closeSession := !found || endpoint.State == "draining" && now.UnixMilli() >= endpoint.DrainUntil
 		if !closeSession && session.identity.Mode == "device" {
-			_, found := authorizationFor(projection, session.identity.DeviceID)
+			_, found := identityFor(projection, session.identity.DeviceID)
 			closeSession = !found
 		}
 		if !closeSession && session.identity.Mode == "bootstrap" {
@@ -457,7 +457,7 @@ func (runtime *EndpointRuntime) bootstrapSessionValidLocked(transactionID string
 		return false
 	}
 	if state == "completed" {
-		authorization, found := authorizationFor(projection, invite.DeviceID)
+		authorization, found := identityFor(projection, invite.DeviceID)
 		return found && authorization.TransactionID == transactionID
 	}
 	return state == "open" || state == "bound"
@@ -576,7 +576,7 @@ func (runtime *EndpointRuntime) authenticate(connection net.Conn, socket *endpoi
 		}
 		identity.TransactionID = hello.Invite.Material.TargetID
 	case "device":
-		authorization, found := authorizationFor(projection, hello.DeviceID)
+		authorization, found := identityFor(projection, hello.DeviceID)
 		if !found {
 			return
 		}
@@ -647,7 +647,7 @@ func (runtime *EndpointRuntime) track(connection net.Conn, reader *bufio.Reader,
 	}
 	switch identity.Mode {
 	case "device":
-		authorization, found := authorizationFor(projection, identity.DeviceID)
+		authorization, found := identityFor(projection, identity.DeviceID)
 		if !found || verifiedPublicKey == "" || authorization.DevicePublicKey != verifiedPublicKey {
 			return nil, errors.New("device changed authorization during authentication")
 		}

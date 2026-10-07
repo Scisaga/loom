@@ -44,18 +44,19 @@ type SelectionStatus struct {
 // Status is a deletable readback projection. It is written under /run by the
 // service and never used as authority on the next start.
 type Status struct {
-	Schema               int                        `json:"schema"`
-	DeviceID             string                     `json:"device_id"`
-	ViewDigest           string                     `json:"view_digest"`
-	FactFrontier         []control.FactFrontier     `json:"fact_frontier"`
-	Preference           clientmodel.Preference     `json:"preference"`
-	NetworkGeneration    string                     `json:"network_generation"`
-	Selections           []SelectionStatus          `json:"selections"`
-	Observations         []clientmodel.Observation  `json:"observations"`
-	Runtime              string                     `json:"runtime"`
-	Reported             bool                       `json:"reported"`
-	Resources            []control.ResourceReadback `json:"resources,omitempty"`
-	ResourceObservations []control.Observation      `json:"resource_observations,omitempty"`
+	PossiblePermissionRestoration bool                       `json:"possible_permission_restoration"`
+	Schema                        int                        `json:"schema"`
+	DeviceID                      string                     `json:"device_id"`
+	ViewDigest                    string                     `json:"view_digest"`
+	FactFrontier                  []control.FactFrontier     `json:"fact_frontier"`
+	Preference                    clientmodel.Preference     `json:"preference"`
+	NetworkGeneration             string                     `json:"network_generation"`
+	Selections                    []SelectionStatus          `json:"selections"`
+	Observations                  []clientmodel.Observation  `json:"observations"`
+	Runtime                       string                     `json:"runtime"`
+	Reported                      bool                       `json:"reported"`
+	Resources                     []control.ResourceReadback `json:"resources,omitempty"`
+	ResourceObservations          []control.Observation      `json:"resource_observations,omitempty"`
 }
 
 func defaultState(generation string) LocalState {

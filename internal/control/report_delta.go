@@ -245,12 +245,8 @@ func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*report
 }
 func (index *reportIndex) ranges(projection Projection) reportRanges {
 	value := reportRanges{3, projection.NetworkID, []reportRangeSummary{}}
-	allowed := map[string]bool{}
-	for _, device := range projection.DeviceAuthorizations {
-		allowed[device.ID] = true
-	}
 	for key, digest := range index.digests {
-		if key.network == projection.NetworkID && allowed[key.scope.DeviceID] {
+		if _, allowed := identityFor(projection, key.scope.DeviceID); key.network == projection.NetworkID && allowed {
 			value.Ranges = append(value.Ranges, reportRangeSummary{key.scope.DeviceID, key.scope.FirstSequence, digest})
 		}
 	}
@@ -258,7 +254,7 @@ func (index *reportIndex) ranges(projection Projection) reportRanges {
 	return value
 }
 func (index *reportIndex) ids(projection Projection, scope reportScope) ([]string, error) {
-	if _, ok := authorizationFor(projection, scope.DeviceID); !ok || scope.Validate() != nil {
+	if _, ok := identityFor(projection, scope.DeviceID); !ok || scope.Validate() != nil {
 		return nil, errors.New("report range is outside current device authorization")
 	}
 	ids := index.groups[storedReportRange{projection.NetworkID, scope}]
@@ -305,7 +301,7 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 	heads, older := []reportScope{}, []reportScope{}
 	var failures error
 	for _, item := range remote.Ranges {
-		if _, ok := authorizationFor(projection, item.DeviceID); !ok {
+		if _, ok := identityFor(projection, item.DeviceID); !ok {
 			failures = errors.Join(failures, errors.New("peer report range is outside current authorization"))
 			continue
 		}

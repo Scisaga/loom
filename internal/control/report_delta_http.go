@@ -82,7 +82,7 @@ func (server *Server) internalReports(w http.ResponseWriter, r *http.Request) {
 		if !found {
 			break
 		}
-		authorization, ok := authorizationFor(projection, report.DeviceID)
+		authorization, ok := identityFor(projection, report.DeviceID)
 		if !ok || report.NetworkID != projection.NetworkID {
 			http.Error(w, "report device is not currently authorized", http.StatusForbidden)
 			return

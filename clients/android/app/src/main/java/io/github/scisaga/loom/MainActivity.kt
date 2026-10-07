@@ -303,6 +303,8 @@ private fun LoomHomeRoute(
     val activeRouteId = status.activeProfileId.ifBlank { viewedProfile.id }
     val activeRouteStatus = remember(activeRouteId) { routeManager.status(activeRouteId) }
     val activeRoute by activeRouteStatus.collectAsStateWithLifecycle()
+    val activeEnrollmentStatus = remember(activeRouteId) { enrollment.status(activeRouteId) }
+    val activeJoin by activeEnrollmentStatus.collectAsStateWithLifecycle()
     var diagnostics by remember { mutableStateOf("正在检查…") }
     var scanning by remember { mutableStateOf(false) }
     var profileSheet by remember { mutableStateOf(false) }
@@ -332,6 +334,7 @@ private fun LoomHomeRoute(
                 diagnostics = diagnostics,
                 selectedTab = selectedTab,
                 scanning = scanning,
+                activePermissionRestorationWarning = status.activeProfileId.isNotBlank() && activeJoin.possiblePermissionRestoration,
             ),
             actions = HomeUiActions(
                 onTabSelected = {

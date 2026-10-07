@@ -130,6 +130,18 @@ PKCS8 Ed25519 材料；不把密钥正文、第二份 Projection 或旧认证 fl
 启动不读双容器或自动重建，见[报告原件的事务持久化](../core/current-contract.md#报告原件的事务持久化)。
 旧权威目录或部分初始化不能被自动覆盖；原字节保留，等待验证前向映射。
 
+计划成员换键先用 `loom control prepare-key -state-dir ... -node-config ...` 提供下一份同格式
+NodeConfig。它必须保留 network/genesis/control/node 身份和浏览器入口，引用已准备的新 Ed25519
+私钥及与该公钥、ControlID 匹配、由既有成员传输根签发的 TLS 叶证书。准备命令不生成 CA、不改变
+成员资格、不停止旧键；输入缺失或不匹配时换键请求必须在封笔前拒绝。规范输入暂存为本机
+`node-next.json`，只是待消费的执行文件，不是第二份成员权威或运行 fallback。
+
+成员证书决定该新键后，下次 `control serve` 启动先验证原证书链及仍有效的新成员键，保全原 node.json
+到 control-retired 内，再原子替换 node.json、删除已消费的暂存文件；仍使用原事实、报告与承诺目录。
+中途失败可从原证书和同一准备输入继续，旧键封笔不可取消，新键未取得多数资格前不能激活。旧私钥与
+原证书保留为受保护证据。新增操作成本为准备已有传输根签发的新叶和重启该 control；不会因仅写入
+公钥便把新成员传输或实际服务报告为可用。
+
 `EndpointGeneration` 只声明公开坐标、证书与 SPKI 摘要、模式和签名阶段。本机通过
 `loom control endpoint-inputs` 提供 `listen,certificate_file,key_file` 三个精确字段；文件引用必须为
 规范绝对路径，私钥与输入文件受 owner-only 权限保护。命令验证证书 DER、SPKI、名称、用途、有效期与

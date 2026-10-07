@@ -35,6 +35,7 @@ internal data class HomeUiState(
     val diagnostics: String,
     val selectedTab: HomeTab,
     val scanning: Boolean = false,
+    val activePermissionRestorationWarning: Boolean = false,
 )
 
 /** User intents emitted by [LoomHomeScreen]; the route owns every side effect. */
@@ -77,6 +78,18 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
     ) { contentPadding ->
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
             LoomHeader(headerProfile.name, status)
+            if (state.join.possiblePermissionRestoration || state.activePermissionRestorationWarning) {
+                val affectedProfiles = buildList {
+                    if (state.join.possiblePermissionRestoration) add(viewedProfile)
+                    if (state.activePermissionRestorationWarning && activeProfile != null) add(activeProfile)
+                }.distinctBy { it.id }.joinToString("、") { it.name }
+                Text(
+                    "$affectedProfiles：成员变更可能恢复部分权限。已保留原认证记录；请管理员核对并补做遗漏的撤权。",
+                    color = Ink,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("member-permission-warning"),
+                    fontSize = 13.sp,
+                )
+            }
             when (state.selectedTab) {
                 HomeTab.CONNECTION -> HomePage(
                     title = "连接",

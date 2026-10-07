@@ -38,6 +38,7 @@ data class EnrollmentStatus(
     val viewDigest: String = "",
     val canAbandonPending: Boolean = false,
     val diagnostic: String = "",
+    val possiblePermissionRestoration: Boolean = false,
 )
 
 class EnrollmentManager private constructor(context: Context) {
@@ -251,6 +252,7 @@ class EnrollmentManager private constructor(context: Context) {
             nodeID = profile.nodeID,
             deviceName = profile.deviceName,
             viewDigest = profile.viewDigest,
+            possiblePermissionRestoration = profile.possiblePermissionRestoration,
         )
     }
 
@@ -301,6 +303,7 @@ class EnrollmentManager private constructor(context: Context) {
             EnrollmentPhase.ERROR,
             "$prefix：${error.message ?: error.javaClass.simpleName}",
             viewDigest = runCatching { store.acceptedViewDigest() }.getOrDefault(""),
+            possiblePermissionRestoration = runCatching { store.possiblePermissionRestoration() }.getOrDefault(false),
             canAbandonPending = runCatching { store.acceptedViewDigest().isEmpty() && store.state() != null }.getOrDefault(false),
         )
     }

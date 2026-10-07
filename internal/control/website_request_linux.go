@@ -179,7 +179,7 @@ func PrepareWebsiteRequest(root, endpointID string, generation U64) (WebsiteRequ
 		return empty, err
 	}
 	request := WebsiteRequest{Schema: 3, NetworkID: node.NetworkID, GenesisDigest: node.GenesisID,
-		ControlProof: ControlProof{Genesis: authority.genesis, Successors: []ControlCertificate{}},
+		ControlProof: ControlProof{Genesis: authority.genesis, Successors: authority.certificates},
 		ControlID:    node.ControlID, NodeID: node.NodeID, EndpointID: endpointID, Generation: generation,
 		CSRDER: base64.RawURLEncoding.EncodeToString(csr)}
 	message, err := request.message()

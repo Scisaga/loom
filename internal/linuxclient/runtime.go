@@ -141,7 +141,7 @@ func accessView(envelope *control.DeviceViewEnvelope) (*control.DeviceViewEnvelo
 	if envelope.View.RuntimeProfile == nil {
 		server := false
 		for _, role := range envelope.View.Responsibilities {
-			server = server || role == "internet_egress" || role == "forward"
+			server = server || role == "internet_egress" || role == "forward" || role == "control"
 		}
 		if !server {
 			return nil, errors.New("Linux device has no execution responsibility")
@@ -643,7 +643,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 				readback.Resources = &resources
 			}
 		}
-		if err := WriteStatus(options.Status, runtimeStatus(lkg, activation, false, readback)); err != nil {
+		status := runtimeStatus(lkg, activation, false, readback)
+		status.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
+		if err := WriteStatus(options.Status, status); err != nil {
 			return err
 		}
 		// Keep the actual first attempt even if its Service probe subsequently
@@ -681,7 +683,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		if reportErr != nil {
 			fmt.Fprintln(options.Log, "private runtime report unavailable")
 		}
-		return WriteStatus(options.Status, runtimeStatus(lkg, activation, reportErr == nil, readback))
+		status = runtimeStatus(lkg, activation, reportErr == nil, readback)
+		status.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
+		return WriteStatus(options.Status, status)
 	}
 	if err := update(); err != nil {
 		return err
@@ -796,6 +800,7 @@ func writeInactiveStatus(store *deviceclient.Store, options Options, state strin
 		return Status{}, err
 	}
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: local.Preference, NetworkGeneration: generation, Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}, Runtime: state}
+	value.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
 	return value, WriteStatus(options.Status, value)
 }
 func waitForRepair(ctx context.Context, store *deviceclient.Store, options Options) error {

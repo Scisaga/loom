@@ -82,29 +82,30 @@ func cloneProfileDraft(value *windowsProfileDraftDisplay) *windowsProfileDraftDi
 }
 
 type portableGUI struct {
-	brokerClient        bool
-	brokerMu            sync.Mutex
-	routeMu             sync.Mutex
-	edition             clientEdition
-	root                string
-	hwnd                uintptr
-	windowDPI           int32
-	controls            portableGUIControls
-	skin                *misakaUI
-	rendered            *portableGUISnapshot // §7.2：仅 UI 线程访问；服务轮询不等于界面变化。
-	fonts               []uintptr
-	statusIcon          uintptr
-	statusIcons         *portableStatusIcons
-	statusFrame         int
-	statusAnimating     bool
-	pathsExpanded       bool
-	profileListUpdating bool
-	trayConnectedIcon   uintptr
-	trayAdded           bool
-	routeFiltering      bool
-	routeFilter         string
-	routeVisible        []int
-	routeUpdating       bool
+	possiblePermissionRestoration bool
+	brokerClient                  bool
+	brokerMu                      sync.Mutex
+	routeMu                       sync.Mutex
+	edition                       clientEdition
+	root                          string
+	hwnd                          uintptr
+	windowDPI                     int32
+	controls                      portableGUIControls
+	skin                          *misakaUI
+	rendered                      *portableGUISnapshot // §7.2：仅 UI 线程访问；服务轮询不等于界面变化。
+	fonts                         []uintptr
+	statusIcon                    uintptr
+	statusIcons                   *portableStatusIcons
+	statusFrame                   int
+	statusAnimating               bool
+	pathsExpanded                 bool
+	profileListUpdating           bool
+	trayConnectedIcon             uintptr
+	trayAdded                     bool
+	routeFiltering                bool
+	routeFilter                   string
+	routeVisible                  []int
+	routeUpdating                 bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -577,6 +578,7 @@ func (app *portableGUI) deleteLocalDevice(expectedProfile string) {
 		}
 		app.mu.Lock()
 		app.joined = false
+		app.possiblePermissionRestoration = false
 		app.deviceID = ""
 		app.state = guiNeedsJoin
 		app.detail = ""
@@ -766,12 +768,15 @@ func (app *portableGUI) snapshot() portableGUISnapshot {
 		app.mu.RUnlock()
 		s := manager.snapshot()
 		if message != "" {
-			s.detail = message
+			s.detail = strings.TrimSpace(message + "\r\n" + s.detail)
 		}
 		return s
 	}
 	defer app.mu.RUnlock()
 	detail := app.detail
+	if app.joined && app.possiblePermissionRestoration {
+		detail += "\r\n成员变更可能恢复部分权限。已保留原认证记录；请管理员核对并补做遗漏的撤权。"
+	}
 	if app.state == guiJoining && !app.joinStarted.IsZero() {
 		elapsed := int64(time.Since(app.joinStarted) / time.Second)
 		detail += fmt.Sprintf("\r\n已用时 %d 分 %02d 秒", elapsed/60, elapsed%60)

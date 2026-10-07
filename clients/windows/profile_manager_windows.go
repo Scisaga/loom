@@ -145,6 +145,7 @@ func (app *portableGUI) loadOfflineProfileRoutes() {
 		return
 	}
 	app.mu.Lock()
+	app.possiblePermissionRestoration = store.PossiblePermissionRestoration()
 	app.routeOptions, app.routeSelected = options, routeOptionIndex(options, store.Preference())
 	app.mu.Unlock()
 }

@@ -166,6 +166,7 @@ type Projection struct {
 	Invites              []Invite              `json:"invites"`
 	Bindings             []EnrollmentBind      `json:"bindings"`
 	EndpointGenerations  []EndpointGeneration  `json:"endpoint_generations"`
+	ControlJoins         []ControlJoinBinding  `json:"control_joins"`
 }
 
 func (projection Projection) CurrentTarget(kind, id string) (TargetState, bool) {
@@ -678,6 +679,9 @@ type materialGraph struct {
 	genesisID string
 	config    ControlConfig
 	configID  string
+	configs   map[string]ControlConfig
+	chain     []ControlConfig
+	seals     map[string]ControlSealedKey
 	facts     map[string]Material
 	ordered   []string
 	forks     map[string]U64
@@ -687,10 +691,7 @@ type materialGraph struct {
 	ancestors map[string]map[string]bool
 }
 
-func newMaterialGraph(genesis Material, configs []ControlConfig, materials []Material) (*materialGraph, error) {
-	if len(configs) != 0 {
-		return nil, ErrControlSuccessionUnsupported
-	}
+func newMaterialGraph(genesis Material, certificates []ControlCertificate, materials []Material) (*materialGraph, error) {
 	genesisID, err := MaterialID(genesis)
 	if err != nil {
 		return nil, err
@@ -699,11 +700,29 @@ func newMaterialGraph(genesis Material, configs []ControlConfig, materials []Mat
 	if err != nil {
 		return nil, err
 	}
+	initial := config
+	config, err = verifyControlSuccessors(initial, certificates)
+	if err != nil {
+		return nil, err
+	}
 	configID, err := ConfigID(config)
 	if err != nil {
 		return nil, err
 	}
 	graph := &materialGraph{genesis: genesis, genesisID: genesisID, config: config, configID: configID, facts: map[string]Material{}, forks: map[string]U64{}, visiting: map[string]bool{}, checked: map[string]bool{}, failures: map[string]error{}, ancestors: map[string]map[string]bool{}}
+	graph.chain = []ControlConfig{initial}
+	for _, cert := range certificates {
+		graph.chain = append(graph.chain, cert.Config)
+	}
+	graph.configs = map[string]ControlConfig{}
+	graph.seals = map[string]ControlSealedKey{}
+	for _, table := range graph.chain {
+		id, _ := ConfigID(table)
+		graph.configs[id] = table
+		for _, seal := range table.SealedKeys {
+			graph.seals[seal.KeyID] = seal
+		}
+	}
 	sequences := map[string]map[U64]string{}
 	for _, material := range materials {
 		if err := graph.verifyIdentity(material); err != nil {
@@ -735,10 +754,11 @@ func newMaterialGraph(genesis Material, configs []ControlConfig, materials []Mat
 }
 
 func (graph *materialGraph) verifyIdentity(material Material) error {
-	if material.Operation == "genesis" || material.NetworkID != graph.genesis.NetworkID || material.ControlConfigID != graph.configID {
+	table, found := graph.configs[material.ControlConfigID]
+	if !found || material.Operation == "genesis" || material.NetworkID != graph.genesis.NetworkID {
 		return errors.New("ordinary Material has no matching network or verified ControlConfig")
 	}
-	for _, member := range graph.config.Members {
+	for _, member := range table.Members {
 		keyID, _ := KeyID(member.PublicKey)
 		if member.ControlID != material.IssuerControlID || keyID != material.IssuerKeyID {
 			continue
@@ -803,14 +823,14 @@ func (graph *materialGraph) validate(id string) (err error) {
 		}
 	}
 	sort.Strings(history)
-	view := graph.projectValues(history, nil)
+	view := graph.projectInConfig(history, nil, graph.configs[material.ControlConfigID])
 	return graph.validateOperation(material, view, history)
 }
 
 // ValidateAdmission uses only the signed fact's causal past. Unrelated facts
 // cannot invalidate reception merely because they arrived in another order.
 // The two sentinel errors occur only after identity and signature verification.
-func ValidateAdmission(material Material, genesis Material, configs []ControlConfig, known []Material) error {
+func ValidateAdmission(material Material, genesis Material, configs []ControlCertificate, known []Material) error {
 	values := append(append([]Material{}, known...), material)
 	graph, err := newMaterialGraph(genesis, configs, values)
 	if err != nil {
@@ -823,7 +843,7 @@ func ValidateAdmission(material Material, genesis Material, configs []ControlCon
 	return graph.validate(id)
 }
 
-func Project(genesis Material, configs []ControlConfig, materials []Material) (Projection, error) {
+func Project(genesis Material, configs []ControlCertificate, materials []Material) (Projection, error) {
 	graph, err := newMaterialGraph(genesis, configs, materials)
 	if err != nil {
 		return Projection{}, err
@@ -846,13 +866,22 @@ func Project(genesis Material, configs []ControlConfig, materials []Material) (P
 			invalid = append(invalid, MaterialRejection{MaterialID: id, Reason: err.Error()})
 		}
 	}
-	projection := graph.projectValues(valid, suspended)
+	projection := graph.projectInConfig(valid, suspended, graph.config)
 	projection.PendingMaterialIDs, projection.InvalidMaterials = pending, invalid
-	for _, member := range graph.config.Members {
-		keyID, _ := KeyID(member.PublicKey)
+	keys := map[string]bool{}
+	for _, table := range graph.chain {
+		for _, member := range table.Members {
+			key, _ := KeyID(member.PublicKey)
+			keys[key] = true
+		}
+	}
+	for keyID := range keys {
 		prefix := FactFrontier{KeyID: keyID, Sequence: 0, TipMaterialID: EmptyMaterialChainID()}
 		for _, id := range valid {
 			material := graph.facts[id]
+			if seal, found := graph.seals[keyID]; found && material.Sequence > seal.Sequence {
+				continue
+			}
 			if material.IssuerKeyID == keyID && material.Sequence > prefix.Sequence {
 				prefix.Sequence, prefix.TipMaterialID = material.Sequence, id
 			}
@@ -869,9 +898,10 @@ type targetFact struct {
 	operation string
 }
 
-func (graph *materialGraph) projectValues(ids []string, suspended map[string][]string) Projection {
+func (graph *materialGraph) projectValues(ids []string, suspended map[string][]string, config ControlConfig) Projection {
+	configID, _ := ConfigID(config)
 	genesis := graph.genesis.Payload.(Genesis)
-	projection := Projection{Schema: 3, NetworkID: graph.genesis.NetworkID, Config: graph.config, ControlConfigID: graph.configID, NetworkIntent: EmptyNetworkIntent(),
+	projection := Projection{Schema: 3, NetworkID: graph.genesis.NetworkID, Config: config, ControlConfigID: configID, NetworkIntent: EmptyNetworkIntent(),
 		AdminCertificates: []AdminCertificate{}, Targets: []TargetState{}, Frontier: []FactFrontier{}, PendingMaterialIDs: []string{}, InvalidMaterials: []MaterialRejection{},
 		DeviceAuthorizations: []DeviceAuthorization{}, Invites: []Invite{}, Bindings: []EnrollmentBind{}, EndpointGenerations: []EndpointGeneration{}}
 	grouped := map[string][]targetFact{}
@@ -899,6 +929,9 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 	}
 	for _, id := range ids {
 		material := graph.facts[id]
+		if !graph.memberAuthorizationEffective(id, configID) {
+			continue
+		}
 		add(material.TargetKind, material.TargetID, id, material.Operation, material.Payload)
 		switch value := material.Payload.(type) {
 		case Invite:
@@ -991,7 +1024,6 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 		return expectedComponentLess(projection.NetworkIntent.ExpectedComponents[i], projection.NetworkIntent.ExpectedComponents[j])
 	})
 	graph.projectEndpointGenerations(&projection, ids)
-	closeEnrollmentConflicts(&projection)
 	sort.Slice(projection.Invites, func(i, j int) bool { return projection.Invites[i].ID < projection.Invites[j].ID })
 	sort.Slice(projection.Bindings, func(i, j int) bool {
 		return projection.Bindings[i].TransactionID < projection.Bindings[j].TransactionID
@@ -1010,6 +1042,11 @@ func isWithdrawal(operation string) bool {
 func requireTargetDependency(material Material, view Projection, kind, id string, active bool) error {
 	target, found := view.CurrentTarget(kind, id)
 	if !found {
+		if kind == "device" {
+			if join, ok := memberBindingFor(view, id); ok && contains(material.Dependencies, join.BindingMaterialID) {
+				return nil
+			}
+		}
 		return fmt.Errorf("%s reference does not exist", kind)
 	}
 	if active && (target.Deleted || target.Conflicted) {
@@ -1037,7 +1074,11 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		if target.Conflicted && !isWithdrawal(material.Operation) {
 			return errors.New("conflicted target requires an explicit conflict resolution")
 		}
-	} else if isWithdrawal(material.Operation) || material.Operation == "device.put" || material.Operation == "invite.bind" {
+	} else if material.Operation == "device.put" {
+		if err := requireTargetDependency(material, view, "device", material.TargetID, true); err != nil {
+			return err
+		}
+	} else if isWithdrawal(material.Operation) || material.Operation == "invite.bind" {
 		return errors.New("operation requires an existing target")
 	}
 	switch value := material.Payload.(type) {
@@ -1195,6 +1236,9 @@ func (graph *materialGraph) validateInvite(material Material, view Projection, h
 	if invite.GenesisDigest != graph.genesisID || invite.IssuerControlID != material.IssuerControlID {
 		return errors.New("Invite is not bound to this genesis and issuer")
 	}
+	if target, exists := view.CurrentTarget("device", invite.DeviceID); exists && target.Deleted {
+		return errors.New("deleted node identity cannot be invited again")
+	}
 	if _, found := view.CurrentTarget("invite", invite.ID); found {
 		return errors.New("Invite transaction ID is immutable and cannot be reissued")
 	}
@@ -1204,7 +1248,6 @@ func (graph *materialGraph) validateInvite(material Material, view Projection, h
 			return errors.New("device identity has already been bound or deleted")
 		}
 	}
-	existingMember := false
 	for _, member := range view.Config.Members {
 		if member.NodeID != invite.DeviceID {
 			continue
@@ -1212,10 +1255,6 @@ func (graph *materialGraph) validateInvite(material Material, view Projection, h
 		if member.ControlID != material.IssuerControlID || !containsString(invite.Responsibilities, "control") {
 			return errors.New("existing control identity requires its own first-binding Invite")
 		}
-		existingMember = true
-	}
-	if containsString(invite.Responsibilities, "control") && !existingMember {
-		return ErrControlSuccessionUnsupported
 	}
 	for _, prior := range view.Invites {
 		if prior.DeviceID != invite.DeviceID {
@@ -1276,6 +1315,19 @@ func (graph *materialGraph) validateTermination(material Material, view Projecti
 	if !found || target.Deleted || target.Conflicted {
 		return errors.New("Invite is already terminated or conflicted")
 	}
+	if containsString(invite.Responsibilities, "control") {
+		initial := false
+		for _, member := range graph.configs[graph.facts[termination.InviteMaterialID].ControlConfigID].Members {
+			initial = initial || member.NodeID == invite.DeviceID
+		}
+		if !initial {
+			for _, binding := range view.Bindings {
+				if binding.TransactionID == invite.ID {
+					return errors.New("bound control enrollment requires majority termination")
+				}
+			}
+		}
+	}
 	if termination.ExpiredAt != nil && *termination.ExpiredAt < invite.ExpiresAt {
 		return errors.New("Invite expiration precedes its signed expiry")
 	}
@@ -1288,6 +1340,9 @@ func (graph *materialGraph) validateTermination(material Material, view Projecti
 }
 
 func (graph *materialGraph) validateDevice(material Material, view Projection, history []string, device DeviceAuthorization) error {
+	if graph.memberDeletedNode(view.ControlConfigID, device.ID) {
+		return errors.New("deleted node identity cannot be authorized again")
+	}
 	var previous *DeviceAuthorization
 	for _, id := range history {
 		prior := graph.facts[id]
@@ -1295,6 +1350,9 @@ func (graph *materialGraph) validateDevice(material Material, view Projection, h
 			return errors.New("deleted device identity cannot be resurrected")
 		}
 		if value, ok := prior.Payload.(DeviceAuthorization); ok && value.ID == device.ID {
+			if !graph.memberAuthorizationEffective(id, view.ControlConfigID) {
+				continue
+			}
 			if previous != nil && (previous.DevicePublicKey != value.DevicePublicKey || previous.RuntimeKey != value.RuntimeKey || previous.TransactionID != value.TransactionID || previous.InviteMaterialID != value.InviteMaterialID || previous.BindingMaterialID != value.BindingMaterialID || previous.Platform != value.Platform) {
 				return errors.New("device causal history has conflicting identity bindings")
 			}
@@ -1304,7 +1362,12 @@ func (graph *materialGraph) validateDevice(material Material, view Projection, h
 	}
 	if material.Operation == "device.put" {
 		if previous == nil {
-			return errors.New("device update has no original authorization")
+			identity, found := controlOnlyIdentity(view, device.ID)
+			join, bound := memberBindingFor(view, device.ID)
+			if !found || !bound || len(device.Responsibilities) == 0 || join.AuthorizationMaterialID != "" || device.DevicePublicKey != identity.DevicePublicKey || device.Platform != identity.Platform || device.TransactionID != join.TransactionID || device.InviteMaterialID != join.InviteMaterialID || device.BindingMaterialID != join.BindingMaterialID || !contains(material.Dependencies, join.BindingMaterialID) {
+				return errors.New("first ordinary grant requires its completed control binding and an ordinary responsibility")
+			}
+			return validateAssignedPolicies(material, view, device.PolicyIDs)
 		}
 		if previous.DevicePublicKey != device.DevicePublicKey || previous.RuntimeKey != device.RuntimeKey || previous.TransactionID != device.TransactionID || previous.InviteMaterialID != device.InviteMaterialID || previous.BindingMaterialID != device.BindingMaterialID || previous.Platform != device.Platform {
 			return errors.New("device update changes immutable identity, key or enrollment binding")
@@ -1319,13 +1382,22 @@ func (graph *materialGraph) validateDevice(material Material, view Projection, h
 	}
 	bindingFact, found := graph.facts[device.BindingMaterialID]
 	binding, ok := bindingFact.Payload.(EnrollmentBind)
-	if !found || !ok || !contains(material.Dependencies, device.BindingMaterialID) || bindingFact.IssuerControlID != material.IssuerControlID || binding.TransactionID != device.TransactionID || binding.InviteMaterialID != device.InviteMaterialID || binding.DevicePublicKey != device.DevicePublicKey || binding.Platform != device.Platform {
+	if !found || !ok || !contains(material.Dependencies, device.BindingMaterialID) || binding.TransactionID != device.TransactionID || binding.InviteMaterialID != device.InviteMaterialID || binding.DevicePublicKey != device.DevicePublicKey || binding.Platform != device.Platform {
 		return errors.New("device.join has no matching issuer-owned binding dependency")
 	}
 	inviteFact, found := graph.facts[device.InviteMaterialID]
 	invite, ok := inviteFact.Payload.(Invite)
-	if !found || !ok || invite.IssuerControlID != material.IssuerControlID || invite.DeviceID != device.ID || invite.ID != device.TransactionID || invite.Name != device.Name {
+	if !found || !ok || invite.DeviceID != device.ID || invite.ID != device.TransactionID || invite.Name != device.Name {
 		return errors.New("device.join does not match its Invite")
+	}
+	conditional := containsString(invite.Responsibilities, "control")
+	for _, member := range graph.configs[inviteFact.ControlConfigID].Members {
+		if member.NodeID == device.ID {
+			conditional = false
+		}
+	}
+	if !conditional && (bindingFact.IssuerControlID != material.IssuerControlID || invite.IssuerControlID != material.IssuerControlID) {
+		return errors.New("ordinary device.join requires its original enrollment issuer")
 	}
 	target, found := view.CurrentTarget("invite", invite.ID)
 	if !found || target.Deleted || target.Conflicted || len(target.MaterialIDs) != 1 || target.MaterialIDs[0] != device.BindingMaterialID {
@@ -1451,7 +1523,11 @@ func closeEnrollmentConflicts(projection *Projection) {
 		for i := range projection.Targets {
 			if projection.Targets[i].TargetKind == kind && projection.Targets[i].TargetID == id {
 				projection.Targets[i].Conflicted = true
+				return
 			}
+		}
+		if kind == "device" {
+			projection.Targets = append(projection.Targets, TargetState{TargetKind: kind, TargetID: id, Conflicted: true, MaterialIDs: []string{}})
 		}
 	}
 	for deviceID, invites := range activeInvites {
@@ -1464,6 +1540,9 @@ func closeEnrollmentConflicts(projection *Projection) {
 	}
 	boundKeys := map[string][]string{}
 	for _, binding := range projection.Bindings {
+		if target, found := projection.CurrentTarget("invite", binding.TransactionID); !found || target.Deleted {
+			continue
+		}
 		boundKeys[binding.DevicePublicKey] = append(boundKeys[binding.DevicePublicKey], binding.TransactionID)
 	}
 	for _, transactions := range boundKeys {
@@ -1524,6 +1603,9 @@ func (graph *materialGraph) validateEndpoint(material Material, view Projection,
 				continue
 			}
 			completed := false
+			for _, join := range view.ControlJoins {
+				completed = completed || join.TransactionID == invite.ID
+			}
 			for _, id := range history {
 				if authorization, ok := graph.facts[id].Payload.(DeviceAuthorization); ok && authorization.TransactionID == invite.ID {
 					completed = true

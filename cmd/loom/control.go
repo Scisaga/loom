@@ -51,7 +51,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <init|serve|relay|edge|inspect|migrate-reports|endpoint-inputs|website|admin|write>")
+		return errors.New("用法: loom control <init|join|serve|relay|edge|inspect|migrate-reports|endpoint-inputs|website|admin|write|member|prepare-key>")
 	}
 	switch args[0] {
 	case "admin":
@@ -74,6 +74,12 @@ func cmdControl(args []string) error {
 		return cmdControlWebsite(args[1:])
 	case "write":
 		return cmdControlWrite(args[1:])
+	case "member":
+		return cmdControlAdminRequest(args[1:], true)
+	case "prepare-key":
+		return cmdControlPrepareKey(args[1:])
+	case "join":
+		return cmdControlJoin(args[1:])
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
@@ -97,6 +103,30 @@ func cmdControlMigrateReports(args []string) error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func cmdControlPrepareKey(args []string) error {
+	fs := flag.NewFlagSet("control prepare-key", flag.ContinueOnError)
+	root := fs.String("state-dir", "/var/lib/loom-control", "现行控制目录")
+	path := fs.String("node-config", "", "含下一签发键和成员 TLS 引用的受保护 NodeConfig")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *path == "" {
+		return errors.New("prepare-key 需要下一份 node-config")
+	}
+	var next control.NodeConfig
+	if err := readCanonicalControlInput(*path, &next); err != nil {
+		return err
+	}
+	if err := control.PrepareControlKey(context.Background(), *root, next); err != nil {
+		return err
+	}
+	member, err := next.Member()
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "node_id": member.NodeID, "public_key": member.PublicKey, "prepared": true})
 }
 func readCanonicalControlInput(path string, value any) error {
 	info, err := os.Lstat(path)
@@ -182,6 +212,9 @@ func cmdControlServe(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
+	}
+	if err := control.ActivatePreparedControlKey(context.Background(), *root); err != nil {
+		return err
 	}
 	node, err := control.LoadNodeConfig(*root)
 	if err != nil {
@@ -307,7 +340,14 @@ func cmdControlInspect(args []string) error {
 }
 
 func cmdControlWrite(args []string) error {
-	fs := flag.NewFlagSet("control write", flag.ContinueOnError)
+	return cmdControlAdminRequest(args, false)
+}
+func cmdControlAdminRequest(args []string, member bool) error {
+	name, path := "write", "/api/control/operations"
+	if member {
+		name, path = "member", "/api/control/members"
+	}
+	fs := flag.NewFlagSet("control "+name, flag.ContinueOnError)
 	endpoint := fs.String("url", "", "私有 control HTTPS origin")
 	socket := fs.String("socket", "", "本机管理员 Unix socket")
 	certPath := fs.String("cert", "", "管理员客户端证书")
@@ -329,7 +369,12 @@ func cmdControlWrite(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := control.DecodeOperation(body); err != nil {
+	if member {
+		var request control.ControlChangeRequest
+		if err := control.DecodeCanonical(body, &request, control.ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 32, MaxItems: 1 << 16}); err != nil {
+			return fmt.Errorf("invalid canonical member request: %w", err)
+		}
+	} else if _, err := control.DecodeOperation(body); err != nil {
 		return fmt.Errorf("invalid canonical operation: %w", err)
 	}
 	var client *http.Client
@@ -355,7 +400,7 @@ func cmdControlWrite(args []string) error {
 		client = &http.Client{Timeout: 45 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, RootCAs: pool}}}
 	}
-	request, err := http.NewRequest(http.MethodPost, origin+"/api/control/operations", bytes.NewReader(body))
+	request, err := http.NewRequest(http.MethodPost, origin+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
