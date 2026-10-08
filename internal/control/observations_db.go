@@ -130,6 +130,13 @@ func withReportDatabase(ctx context.Context, path string, writable bool, fn func
 		if !errors.Is(err, bolt.ErrTimeout) {
 			break
 		}
+		// bbolt may return immediately when its timeout is no greater than
+		// its own retry interval. Do not turn contention into an open loop.
+		select {
+		case <-lockContext.Done():
+			return lockContext.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 	if err != nil {
 		return err

@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -344,6 +345,11 @@ func (a *Authority) reloadLocked() (retErr error) {
 	certificates, err := a.readControlCertificates(genesis)
 	if err != nil {
 		return err
+	}
+	// All protected originals were read and canonically checked above. Reuse
+	// only the existing pure projection of exactly these verified inputs.
+	if a.blocked == nil && reflect.DeepEqual(genesis, a.genesis) && reflect.DeepEqual(materials, a.materials) && reflect.DeepEqual(certificates, a.certificates) {
+		return syncControlDirectory(filepath.Join(a.root, "materials"))
 	}
 	projection, err := Project(genesis, certificates, materials)
 	if err != nil {

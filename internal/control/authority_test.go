@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func authorityFixture(t *testing.T) (string, NodeConfig, Material) {
@@ -120,6 +121,68 @@ func TestAuthorityOrdinaryOperationsSurviveRestart(t *testing.T) {
 	frontier := runtime.Authority.Frontier()
 	if len(frontier) != 1 || frontier[0].Sequence != 2 {
 		t.Fatalf("retry changed signing frontier: %#v", frontier)
+	}
+}
+
+func TestAuthorityRepeatedReloadReadsNewAndChangedOriginals(t *testing.T) {
+	root, config, genesis := authorityFixture(t)
+	reader, err := InitializeAuthority(root, config, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := OpenRuntime(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	reload := func() error {
+		_, err := reader.pendingControlChange(context.Background(), config, time.UnixMilli(1))
+		return err
+	}
+	first := submitAuthority(t, writer, authorityService("demo-first", "demo-first-create"))
+	for range 3 {
+		if err := reload(); err != nil || len(reader.Snapshot().NetworkIntent.Services) != 1 {
+			t.Fatal("unchanged reload lost the verified service", err)
+		}
+	}
+	submitAuthority(t, writer, authorityService("demo-second", "demo-second-create"))
+	if err := reload(); err != nil || len(reader.Snapshot().NetworkIntent.Services) != 2 {
+		t.Fatal("existing reader missed another writer's signed fact", err)
+	}
+	path, err := reader.materialPath(first.MaterialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := bytes.Replace(original, []byte("Demo service"), []byte("Fake service"), 1)
+	if len(changed) != len(original) || bytes.Equal(changed, original) {
+		t.Fatal("fixture did not change one same-length original")
+	}
+	if err := os.WriteFile(path, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := reload(); err == nil || reader.blocked == nil {
+		t.Fatal("projection reuse hid changed original bytes")
+	}
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := reload(); err != nil || reader.blocked != nil || len(reader.Snapshot().NetworkIntent.Services) != 2 {
+		t.Fatal("restored originals did not rebuild the verified projection", err)
+	}
+	restarted, err := OpenAuthority(root)
+	if err != nil || len(restarted.Snapshot().NetworkIntent.Services) != 2 {
+		t.Fatal("restarted authority did not rebuild from original facts", err)
 	}
 }
 

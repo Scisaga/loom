@@ -10,9 +10,47 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
+
+func TestObservationDatabaseLockWaitCancelsWithoutChangingDatabase(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "observations.db")
+	if err := initializeObservationDB(path); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	called := false
+	err = withReportDatabase(ctx, path, true, func(*bolt.Tx) error { called = true; return nil })
+	if !errors.Is(err, context.DeadlineExceeded) || called {
+		t.Fatal("contended write did not stop before entering its transaction", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(original, after) {
+		t.Fatal("canceled lock acquisition changed the database", err)
+	}
+	if err := held.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := withReportDatabase(context.Background(), path, true, func(*bolt.Tx) error { called = true; return nil }); err != nil || !called {
+		t.Fatal("released lock did not permit the next transaction", err)
+	}
+}
 
 func TestObservationTransactionsExceedFormerAggregateCapacity(t *testing.T) {
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize))
