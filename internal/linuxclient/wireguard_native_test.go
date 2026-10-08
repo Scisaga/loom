@@ -130,9 +130,15 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 		}
 	}
 	p, keys, input, at := nativeProjectionFixture(t)
+	cacheRoot := t.TempDir()
+	logs := map[string]string{}
 	start := func(name, config string) (*exec.Cmd, chan error, func()) {
 		t.Helper()
 		dir := t.TempDir()
+		config, err = withPersistentDNSCache(config, filepath.Join(cacheRoot, name+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		path := filepath.Join(dir, "config.json")
 		if err := writeConfig(path, config); err != nil {
 			t.Fatal(err)
@@ -144,6 +150,7 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		logs[name] = filepath.Join(dir, "runtime.log")
 		command := exec.Command(executable, "run", "-c", path)
 		command.Dir = dir
 		command.Stdout, command.Stderr = log, log
@@ -244,7 +251,7 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 	_, entryConfig, _ := render("demo-entry", false)
 	_, _, stopEntry := start("entry", entryConfig)
 	client, clientConfig, _ := render("demo-access", false)
-	_, _, _ = start("access", clientConfig)
+	_, _, stopAccess := start("access", clientConfig)
 	listener, err := net.Listen("tcp", "0.0.0.0:18080")
 	if err != nil {
 		t.Fatal(err)
@@ -263,13 +270,16 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL), DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	httpClient := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+	lastRequestError := ""
 	request := func(host string) bool {
 		response, err := httpClient.Get("http://" + host + ":18080/demo")
 		if err != nil {
+			lastRequestError = err.Error()
 			return false
 		}
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
+		lastRequestError = fmt.Sprintf("status=%d read=%v body=%q", response.StatusCode, err, body)
 		return err == nil && string(body) == "demo-business"
 	}
 	if len(client.Routes) != 2 {
@@ -333,9 +343,37 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	stopEntry()
+	if info, err := os.Stat(filepath.Join(cacheRoot, "entry.json."+clientadapter.TUNDNSCache)); err != nil || info.Size() == 0 {
+		t.Fatal("native names were not persisted outside process configuration", err)
+	}
+	_, _, stopEntry = start("entry", entryConfig)
+	stopAccess()
+	start("access", clientConfig)
+	if err := waitSelector(ctx, selector, []string{"service:demo-service"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := selector.Set(ctx, client.Routes[0].Scope, client.Routes[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	recovered := false
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+		if request("demo-service.loom") {
+			recovered = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !recovered {
+		for _, name := range []string{"entry", "access", "exit"} {
+			body, _ := os.ReadFile(logs[name])
+			t.Log(name, string(body))
+		}
+		t.Fatal("native domain business did not recover with its persistent names", lastRequestError)
+	}
+	stopEntry()
 	p.DeviceAuthorizations[0].PolicyIDs = []string{}
 	_, revoked, _ := render("demo-entry", false)
-	start("entry-revoked", revoked)
+	start("entry", revoked)
 	for _, candidate := range client.Routes {
 		if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
 			t.Fatal(err)

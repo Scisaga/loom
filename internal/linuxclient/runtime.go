@@ -530,6 +530,16 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
+	config, err = withPersistentDNSCache(config, options.DeviceState)
+	if err != nil {
+		return err
+	}
+	if serverConfig != "" {
+		serverConfig, err = withPersistentDNSCache(serverConfig, options.DeviceState)
+		if err != nil {
+			return err
+		}
+	}
 	if err := preflightRuntimeConfig(options.SingBox, config); err != nil && hasRuntime {
 		return err
 	}
