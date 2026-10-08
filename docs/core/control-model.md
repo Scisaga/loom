@@ -388,6 +388,11 @@ genesis 中已有的初始成员取得同 NodeID 的首次设备身份时，也�
 
 ## 7. NetworkIntent、传输资源和显式中继
 
+当前硬约束：WG 独立承载业务，禁止把 Hy2 套进 WG 或让 WG 首跳、中继依赖 Hy2。
+本节原先关于同机 Hy2、逐跳 Hy2 outbound 和 WG 上 Hy2 探测的实现描述已被用户否决，
+不得据此新增部署或扩大权限。完整替换尚未完成，已有认证字节须保全并前向迁移，见
+[传输实现纠偏](../progress.md#传输实现纠偏)。业务授权须从同一 Service/Policy 分别投影到独立传输。
+
 节点公开分发地址 distribution_urls 保存在同一 DeviceAuthorization，经现有 device.put 修改，初次
 device.join 取空集合；纯 control 初始节点先按上文取得设备绑定，不需为此授予其他职责。
 NetworkIntent.nodes 与 PublisherInput 从有效设备事实单向投影该列表，空列表不阻止 Service/Policy
@@ -432,7 +437,7 @@ Hy2 的唯一规范认证形状为公开 CA DER 集合和 server_name，见[现�
 对端的精确地址路由，不获得默认路由、LAN 或宿主 DNS 权限。现有本机 WG 私钥继续由文件引用提供。
 
 Hy2 的 `link_only=true` 表示该 listener 只能经显式 Link 使用，不能被投影为普通公开首跳。
-普通 WG 首跳按用户已确认的边界依赖同节点 Hy2；通过资源的显式引用启用，设备 peer 与精确
+已被否决的实现使普通 WG 首跳依赖同节点 Hy2；通过资源的显式引用启用，设备 peer 与精确
 地址从授权派生，接收端限制原始 WG 包只到该 Hy2，再由 Hy2 执行业务 ACL。
 完整字段、撤权、原字节保留和最小验证见[普通 WG 首跳的私有执行投影](current-contract.md#普通-wg-首跳的私有执行投影)。
 省略该字段维持现行公开首跳字节。Policy 可用正整数 `max_hops` 保留已有受管节点链长度限制；

@@ -9,7 +9,7 @@
 缓存文件仅拥有者可读写。没有新增 Service、授权、选路或签名状态。
 同时禁止该 DNS 缓存恢复或保存 selector 与 Clash mode；两者只能消费本次认证运行配置及 Loom 的实际选择。
 
-构建制品坐标为 `1.11.4-loom.6`，必须记录源码、补丁与制品摘要，不能冒充未修改的上游二进制。
+构建制品坐标为 `1.11.4-loom.7`，必须记录源码、补丁与制品摘要，不能冒充未修改的上游二进制。
 该坐标是数据面制品修订，控制协议与权威 schema 仍为 3。上游源码和二进制继续遵守其随附许可证；
 发布对应二进制时必须同时交付源码来源、该补丁及构建方法。
 
@@ -42,6 +42,39 @@ Linux TUN 不再执行自动 `resolvectl` 操作；业务 DNS 由 Loom 的显式
 `.6` 修复 Windows 用户态 WG 在启用网卡绑定时的 IPv6 UDP 监听。上游 WG 给双地址族均传入
 省略主机的 `:port`；IPv6 socket 因而被错误地施加 IPv4 网卡选项，启动返回参数无效并留在 Down。
 仅 Windows 的 `udp6` 空主机监听规范化为 `[::]:port`，仍绑定同一端口、网卡与通配范围；IPv4、
-其他平台、签名配置、候选和密钥不变。不增加宿主路由或传输 fallback。验证必须由同机 Windows
-TUN 的实际 WG→Hy2 HTTPS、撤权、重启、重新授权和正常清理，以及 Mixed 回归证明。
+其他平台、签名配置、候选和密钥不变。不增加宿主路由或传输 fallback。当时的同机 Windows
+WG→Hy2 记录只是历史证据；该嵌套已被明确否决，不能再作为现行验收目标。
 此前 `.5` 已签来源与二进制摘要保持原义；新制品使用新的发布坐标，业务协议仍为 schema 3。
+
+`.7` 为[分段传输](../../docs/core/current-contract.md#分段传输的替代执行模型)补齐原生 WG
+接收与拨号适配：在共享用户态会话中绑定精确来源地址，按资源的私有 `/96` 承载字面 IPv4，
+在接收端恢复 IP 后再检查权限；域名使用接收端执行 DNS 与既有持久 fake-IP 缓存。
+直接拨号的 `detour` 与 `inet6_bind_address` 组合仅可指向拥有该地址的原生 WG endpoint，
+拒绝混入宿主接口、路由 mark 或其他 socket 配置。没有建立下一段 Hy2、SOCKS 或 HTTP 会话。
+
+实际流关闭检查还发现并修复固定依赖的边界问题：gVisor 的 `CloseWrite` 错调了读方向关闭；
+Hy2 的 TCP 适配器缺少半关闭，导致发送结束时同时取消返回流；HTTP 代理在复制未知长度正文
+时，内层 pipe 的回调过早关闭 HTTP transport 所有的一端，且错误保留依赖 EOF 分帧的连接。
+现在由各自所有者关闭流，FIN 保留另一方向，未知长度 HTTP 响应保持正确的关闭分帧。
+`sing-tun`、`sing-quic` 和 `sing` 均使用原来固定的上游版本，源码准备核验各自 module sum 与
+commit 后应用同一补丁；不从构建目录或外部工作区读取另一份可写依赖。首次失败及修复后的
+HTTP/SOCKS EOF、TCP 半关闭对照都保留在受保护验证记录中。
+
+共享系统接收器复用原 WG 地址及精确管理路由。`host_sources` 是认证节点 peer 的精确来源列表，
+只有该来源发往本资源精确地址的包可交给主机；其他 peer 的业务交给公共路由器，不因目标等于
+接口地址获得主机权限。系统 endpoint 的地址与 peer AllowedIPs 均须为 `/32` 或 `/128`，
+Linux 不启用自动路由。补丁还修复上游混合批次把已交业务路由器的包重复写回主机的问题。
+这不授权替换生产接口；实际接线、所有权、失败清理和管理连接回读仍由 Loom 节点执行器负责。
+
+可重复底层验证入口为：
+
+```bash
+python3 scripts/test-segmented-transport.py \
+  --binary out/dataplane/sing-box-linux-amd64 \
+  --evidence deploy/evidence/demo-segmented-transport
+```
+
+脚本首先进入独立 network/mount namespace，再启动临时 HTTP/UDP 目标与显式 Mixed 入口。
+它覆盖原生 WG、Hy2 终止后的 WG 转发、同目标的不同路径、域名与两族 IP 的 TCP/UDP、来源冒用、
+撤权配置重启、精确管理地址保留和异常退出；全部使用临时密钥与示例材料。通过不代表 Loom 正式
+Service/Policy 投影、真实控制持久化、Windows/Android 原生运行或生产迁移已经验收。

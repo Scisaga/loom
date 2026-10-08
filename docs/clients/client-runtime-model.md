@@ -126,10 +126,10 @@ hybrid 节点开头，运行时跳过“拨回本机 inbound”，按 `LinkID` �
 
 ### 候选身份
 
-普通 WG 首跳允许依赖接收节点同机 Hy2，按[私有执行投影](../core/current-contract.md#普通-wg-首跳的私有执行投影)
-显式启用。每台 access 对每个 WG 资源仅有一个用户态会话，多个业务候选复用它；同机 Hy2
-执行各 Service/Policy 的权限。候选以 WG 为首跳资源，依赖摘要同时包含该 Hy2，受管节点只计
-一次；资源地址、peer、接收端过滤与旧路径撤除全部回读成功后，仍须用真实业务结果判断可用性。
+普通 WG 首跳必须独立认证和承载业务，不能通过 WG 内的 Hy2 会话复用权限。
+此前的[执行投影](../core/current-contract.md#普通-wg-首跳的私有执行投影)已被否决，替换未完成，
+见[传输实现纠偏](../progress.md#传输实现纠偏)。Service/Policy、候选身份、真实观测和撤权要求
+继续成立；不能把“资源类型标为 WG、实际业务仍依赖 Hy2”当成独立 WG 接入完成。
 
 Windows 的 WG underlay UDP socket 保留请求的地址族。省略 IPv6 监听主机时，在底层适配器内
 显式使用 IPv6 通配地址，避免向 IPv6-only socket 施加 IPv4 网卡绑定选项；端口、网卡及允许

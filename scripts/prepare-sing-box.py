@@ -18,6 +18,12 @@ SUM = "h1:Z3xLwVJlTJfJ1p8R9M05aNJLFKRAwGebA5M/DFmr8p8="
 TUN_VERSION = "v0.6.1"
 TUN_COMMIT = "c8c29842618b186b8eb802345504cc19d3d06872"
 TUN_SUM = "h1:4l0+gnEKcGjlWfUVTD+W0BRApqIny/lU2ZliurE+VMo="
+QUIC_VERSION = "v0.4.0"
+QUIC_COMMIT = "297f0b2a2bb5aa0ba1a20b269ad31b4fede53272"
+QUIC_SUM = "h1:E4geazHk/UrJTXMlT+CBCKmn8V86RhtNeczWtfeoEFc="
+SING_VERSION = "v0.6.1"
+SING_COMMIT = "9eafc7fc62b10528df821cdfbf4e4e8f122f4b7a"
+SING_SUM = "h1:mJ6e7Ir2wtCoGLbdnnXWBsNJu5YHtbXmv66inoE0zFA="
 MARKER = ".loom-generated-source"
 
 
@@ -37,37 +43,38 @@ def prepare(destination):
         ["go", "mod", "download", "-json", "github.com/sagernet/sing-tun@" + TUN_VERSION], env=env, cwd=REPO))
     if tun["Sum"] != TUN_SUM or tun["Origin"]["Hash"] != TUN_COMMIT:
         raise ValueError("TUN source does not match the reviewed module and commit")
+    quic = json.loads(subprocess.check_output(
+        ["go", "mod", "download", "-json", "github.com/sagernet/sing-quic@" + QUIC_VERSION], env=env, cwd=REPO))
+    if quic["Sum"] != QUIC_SUM or quic["Origin"]["Hash"] != QUIC_COMMIT:
+        raise ValueError("QUIC source does not match the reviewed module and commit")
+    sing = json.loads(subprocess.check_output(
+        ["go", "mod", "download", "-json", "github.com/sagernet/sing@" + SING_VERSION], env=env, cwd=REPO))
+    if sing["Sum"] != SING_SUM or sing["Origin"]["Hash"] != SING_COMMIT:
+        raise ValueError("stream source does not match the reviewed module and commit")
     patch = REPO / "third_party/sing-box/domain-cache.patch"
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".loom-source-", dir=destination.parent) as temporary:
         stage = Path(temporary) / "source"
         stage.mkdir()
-        prefix = "github.com/sagernet/sing-box@" + VERSION + "/"
-        with zipfile.ZipFile(module["Zip"]) as archive:
-            for member in archive.infolist():
-                if not member.filename.startswith(prefix):
-                    raise ValueError("unexpected upstream archive path")
-                relative = Path(member.filename[len(prefix):])
-                if relative.is_absolute() or ".." in relative.parts:
-                    raise ValueError("unsafe upstream archive path")
-                if member.is_dir():
-                    continue
-                target = stage / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(archive.read(member))
-        prefix = "github.com/sagernet/sing-tun@" + TUN_VERSION + "/"
-        with zipfile.ZipFile(tun["Zip"]) as archive:
-            for member in archive.infolist():
-                if not member.filename.startswith(prefix):
-                    raise ValueError("unexpected TUN source archive path")
-                relative = Path(member.filename[len(prefix):])
-                if relative.is_absolute() or ".." in relative.parts:
-                    raise ValueError("unsafe TUN source archive path")
-                if member.is_dir():
-                    continue
-                target = stage / ".loom-sing-tun" / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(archive.read(member))
+        for source, module_path, version, directory in (
+            (module, "github.com/sagernet/sing-box", VERSION, stage),
+            (tun, "github.com/sagernet/sing-tun", TUN_VERSION, stage / ".loom-sing-tun"),
+            (quic, "github.com/sagernet/sing-quic", QUIC_VERSION, stage / ".loom-sing-quic"),
+            (sing, "github.com/sagernet/sing", SING_VERSION, stage / ".loom-sing"),
+        ):
+            prefix = module_path + "@" + version + "/"
+            with zipfile.ZipFile(source["Zip"]) as archive:
+                for member in archive.infolist():
+                    if not member.filename.startswith(prefix):
+                        raise ValueError("unexpected upstream archive path")
+                    relative = Path(member.filename[len(prefix):])
+                    if relative.is_absolute() or ".." in relative.parts:
+                        raise ValueError("unsafe upstream archive path")
+                    if member.is_dir():
+                        continue
+                    target = directory / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(archive.read(member))
         # This disposable tree is not part of the enclosing Loom worktree.
         # Otherwise git-format hunks can be silently skipped as outside its
         # current directory, while traditional unified hunks still apply.
@@ -83,7 +90,7 @@ def prepare(destination):
         stage.rename(destination)
     return {"upstream_version": VERSION, "upstream_commit": COMMIT, "upstream_module_sum": SUM,
             "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
-            "artifact_version": "1.11.4-loom.6"}
+            "artifact_version": "1.11.4-loom.7"}
 
 
 if __name__ == "__main__":

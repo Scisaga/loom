@@ -304,12 +304,16 @@
  }
 --- a/go.mod
 +++ b/go.mod
-@@ -102,3 +102,5 @@
+@@ -102,3 +102,9 @@
  	gopkg.in/yaml.v3 v3.0.1 // indirect
  	lukechampine.com/blake3 v1.3.0 // indirect
  )
 +
 +replace github.com/sagernet/sing-tun => ./.loom-sing-tun
++
++replace github.com/sagernet/sing-quic => ./.loom-sing-quic
++
++replace github.com/sagernet/sing => ./.loom-sing
 diff --git a/option/outbound.go b/option/outbound.go
 --- a/option/outbound.go
 +++ b/option/outbound.go
@@ -740,4 +744,586 @@ diff --git a/.loom-sing-tun/tun_linux.go b/.loom-sing-tun/tun_linux.go
 +		}
 +	}
 +	return reply, nil
++}
+--- a/.loom-sing-quic/hysteria2/client.go
++++ b/.loom-sing-quic/hysteria2/client.go
+@@ -388,3 +388,13 @@
+ 	c.Stream.CancelRead(0)
+ 	return c.Stream.Close()
+ }
++
++// CloseWrite sends FIN without discarding the response direction.
++func (c *clientConn) CloseWrite() error {
++	if !c.requestWritten {
++		if _, err := c.Write(nil); err != nil {
++			return err
++		}
++	}
++	return c.Stream.Close()
++}
+--- a/.loom-sing-quic/hysteria2/service.go
++++ b/.loom-sing-quic/hysteria2/service.go
+@@ -349,3 +349,11 @@
+ 	c.Stream.CancelRead(0)
+ 	return c.Stream.Close()
+ }
++
++// CloseWrite sends FIN without discarding the response direction.
++func (c *serverConn) CloseWrite() error {
++	if err := c.HandshakeSuccess(); err != nil {
++		return err
++	}
++	return c.Stream.Close()
++}
+--- a/.loom-sing-tun/stack_gvisor_lazy.go
++++ b/.loom-sing-tun/stack_gvisor_lazy.go
+@@ -175,7 +175,7 @@
+ 	} else if c.handshakeErr != nil {
+ 		return nil
+ 	}
+-	return c.tcpConn.CloseRead()
++	return c.tcpConn.CloseWrite()
+ }
+ 
+ func (c *gLazyConn) ReaderReplaceable() bool {
+--- a/.loom-sing/protocol/http/handshake.go
++++ b/.loom-sing/protocol/http/handshake.go
+@@ -172,7 +172,8 @@
+ 				input, output := pipe.Pipe()
+ 				go handler.NewConnectionEx(ctx, output, source, M.ParseSocksaddr(address), func(it error) {
+ 					innerErr.Store(it)
+-					common.Close(input, output)
++					// The HTTP transport owns input; closing it here races its final body read.
++					common.Close(output)
+ 				})
+ 				return input, nil
+ 			},
+@@ -192,6 +193,11 @@
+ 
+ 	removeHopByHopHeaders(response.Header)
+ 
++	// An EOF-delimited response cannot retain its framing on a persistent
++	// proxy connection. Keep the closure that delimits the upstream body.
++	if response.ContentLength < 0 && len(response.TransferEncoding) == 0 {
++		keepAlive = false
++	}
+ 	if keepAlive {
+ 		response.Header.Set("Proxy-Connection", "keep-alive")
+ 		response.Header.Set("Connection", "keep-alive")
+--- a/common/dialer/dialer.go
++++ b/common/dialer/dialer.go
+@@ -52,7 +52,7 @@
+ 
+ func NewDirect(ctx context.Context, options option.DialerOptions) (ParallelInterfaceDialer, error) {
+ 	if options.Detour != "" {
+-		return nil, E.New("`detour` is not supported in direct context")
++		return newWireGuardSourceDialer(ctx, options)
+ 	}
+ 	if options.IsWireGuardListener {
+ 		return NewDefault(ctx, options)
+--- a/option/wireguard.go
++++ b/option/wireguard.go
+@@ -7,15 +7,17 @@
+ )
+ 
+ type WireGuardEndpointOptions struct {
+-	System     bool                             `json:"system,omitempty"`
+-	Name       string                           `json:"name,omitempty"`
+-	MTU        uint32                           `json:"mtu,omitempty"`
+-	Address    badoption.Listable[netip.Prefix] `json:"address"`
+-	PrivateKey string                           `json:"private_key"`
+-	ListenPort uint16                           `json:"listen_port,omitempty"`
+-	Peers      []WireGuardPeer                  `json:"peers,omitempty"`
+-	UDPTimeout badoption.Duration               `json:"udp_timeout,omitempty"`
+-	Workers    int                              `json:"workers,omitempty"`
++	HostSources       []netip.Prefix                   `json:"host_sources,omitempty"`
++	Inet4MappedPrefix *netip.Prefix                    `json:"inet4_mapped_prefix,omitempty"`
++	System            bool                             `json:"system,omitempty"`
++	Name              string                           `json:"name,omitempty"`
++	MTU               uint32                           `json:"mtu,omitempty"`
++	Address           badoption.Listable[netip.Prefix] `json:"address"`
++	PrivateKey        string                           `json:"private_key"`
++	ListenPort        uint16                           `json:"listen_port,omitempty"`
++	Peers             []WireGuardPeer                  `json:"peers,omitempty"`
++	UDPTimeout        badoption.Duration               `json:"udp_timeout,omitempty"`
++	Workers           int                              `json:"workers,omitempty"`
+ 	DialerOptions
+ }
+ 
+--- a/protocol/wireguard/endpoint.go
++++ b/protocol/wireguard/endpoint.go
+@@ -33,11 +33,13 @@
+ 
+ type Endpoint struct {
+ 	endpoint.Adapter
+-	ctx            context.Context
+-	router         adapter.Router
+-	logger         logger.ContextLogger
+-	localAddresses []netip.Prefix
+-	endpoint       *wireguard.Endpoint
++	ctx               context.Context
++	router            adapter.Router
++	logger            logger.ContextLogger
++	localAddresses    []netip.Prefix
++	inet4MappedPrefix netip.Prefix
++	system            bool
++	endpoint          *wireguard.Endpoint
+ }
+ 
+ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
+@@ -47,6 +49,47 @@
+ 		router:         router,
+ 		logger:         logger,
+ 		localAddresses: options.Address,
++		system:         options.System,
++	}
++	if options.Inet4MappedPrefix != nil {
++		prefix := *options.Inet4MappedPrefix
++		if !prefix.IsValid() || !prefix.Addr().Is6() || prefix.Addr().Is4In6() || prefix.Bits() != 96 || prefix != prefix.Masked() || prefix.Addr().As16()[0] != 0xfd {
++			return nil, E.New("WireGuard IPv4 mapping requires a private /96")
++		}
++		ep.inet4MappedPrefix = prefix
++	}
++	if len(options.HostSources) != 0 && !options.System {
++		return nil, E.New("WireGuard host sources require a system endpoint")
++	}
++	seen := map[netip.Prefix]bool{}
++	for _, source := range options.HostSources {
++		if !source.IsValid() || source.Bits() != source.Addr().BitLen() || source.Addr().Is4In6() || !source.Addr().IsGlobalUnicast() || seen[source] {
++			return nil, E.New("WireGuard host source must be a unique exact unicast address")
++		}
++		found := false
++		for _, peer := range options.Peers {
++			for _, allowed := range peer.AllowedIPs {
++				found = found || allowed == source
++			}
++		}
++		if !found {
++			return nil, E.New("WireGuard host source has no exact authenticated peer")
++		}
++		seen[source] = true
++	}
++	if options.System {
++		for _, address := range options.Address {
++			if address.Bits() != address.Addr().BitLen() {
++				return nil, E.New("WireGuard system addresses must be exact")
++			}
++		}
++		for _, peer := range options.Peers {
++			for _, allowed := range peer.AllowedIPs {
++				if allowed.Bits() != allowed.Addr().BitLen() {
++					return nil, E.New("WireGuard system peers require exact source addresses")
++				}
++			}
++		}
+ 	}
+ 	if options.Detour == "" {
+ 		options.IsWireGuardListener = true
+@@ -62,12 +105,13 @@
+ 		udpTimeout = C.UDPTimeout
+ 	}
+ 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
+-		Context:    ctx,
+-		Logger:     logger,
+-		System:     options.System,
+-		Handler:    ep,
+-		UDPTimeout: udpTimeout,
+-		Dialer:     outboundDialer,
++		Context:     ctx,
++		Logger:      logger,
++		System:      options.System,
++		HostSources: options.HostSources,
++		Handler:     ep,
++		UDPTimeout:  udpTimeout,
++		Dialer:      outboundDialer,
+ 		CreateDialer: func(interfaceName string) N.Dialer {
+ 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
+ 				BindInterface: interfaceName,
+@@ -124,6 +168,7 @@
+ }
+ 
+ func (w *Endpoint) PrepareConnection(network string, source M.Socksaddr, destination M.Socksaddr) error {
++	destination = w.restoreIPv4(destination)
+ 	return w.router.PreMatch(adapter.InboundContext{
+ 		Inbound:     w.Tag(),
+ 		InboundType: w.Type(),
+@@ -138,16 +183,8 @@
+ 	metadata.Inbound = w.Tag()
+ 	metadata.InboundType = w.Type()
+ 	metadata.Source = source
+-	for _, localPrefix := range w.localAddresses {
+-		if localPrefix.Contains(destination.Addr) {
+-			metadata.OriginDestination = destination
+-			if destination.Addr.Is4() {
+-				destination.Addr = netip.AddrFrom4([4]uint8{127, 0, 0, 1})
+-			} else {
+-				destination.Addr = netip.IPv6Loopback()
+-			}
+-			break
+-		}
++	if restored := w.restoreIPv4(destination); restored != destination {
++		metadata.OriginDestination, destination = destination, restored
+ 	}
+ 	metadata.Destination = destination
+ 	w.logger.InfoContext(ctx, "inbound connection from ", source)
+@@ -160,17 +197,10 @@
+ 	metadata.Inbound = w.Tag()
+ 	metadata.InboundType = w.Type()
+ 	metadata.Source = source
+-	metadata.Destination = destination
+-	for _, localPrefix := range w.localAddresses {
+-		if localPrefix.Contains(destination.Addr) {
+-			metadata.OriginDestination = destination
+-			if destination.Addr.Is4() {
+-				metadata.Destination.Addr = netip.AddrFrom4([4]uint8{127, 0, 0, 1})
+-			} else {
+-				metadata.Destination.Addr = netip.IPv6Loopback()
+-			}
+-			conn = bufio.NewNATPacketConn(bufio.NewNetPacketConn(conn), metadata.OriginDestination, metadata.Destination)
+-		}
++	metadata.Destination = w.restoreIPv4(destination)
++	if metadata.Destination != destination {
++		metadata.OriginDestination = destination
++		conn = bufio.NewNATPacketConn(bufio.NewNetPacketConn(conn), destination, metadata.Destination)
+ 	}
+ 	w.logger.InfoContext(ctx, "inbound packet connection from ", source)
+ 	w.logger.InfoContext(ctx, "inbound packet connection to ", destination)
+@@ -178,6 +208,9 @@
+ }
+ 
+ func (w *Endpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	if err := w.checkSource(adapter.WireGuardSource(ctx)); err != nil {
++		return nil, err
++	}
+ 	switch network {
+ 	case N.NetworkTCP:
+ 		w.logger.InfoContext(ctx, "outbound connection to ", destination)
+@@ -189,25 +222,77 @@
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		return N.DialSerial(ctx, w.endpoint, network, destination, destinationAddresses)
++		return N.DialSerial(ctx, w, network, destination, destinationAddresses)
+ 	} else if !destination.Addr.IsValid() {
+ 		return nil, E.New("invalid destination: ", destination)
+ 	}
+-	return w.endpoint.DialContext(ctx, network, destination)
++	return w.endpoint.DialContext(ctx, network, w.mapIPv4(destination))
+ }
+ 
+ func (w *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	if err := w.checkSource(adapter.WireGuardSource(ctx)); err != nil {
++		return nil, err
++	}
+ 	w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+ 	if destination.IsFqdn() {
+ 		destinationAddresses, err := w.router.LookupDefault(ctx, destination.Fqdn)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		packetConn, _, err := N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
++		packetConn, selected, err := N.ListenSerial(ctx, w, destination, destinationAddresses)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		return packetConn, err
+-	}
+-	return w.endpoint.ListenPacket(ctx, destination)
+-}
++		return bufio.NewUnidirectionalNATPacketConn(bufio.NewPacketConn(packetConn), M.SocksaddrFrom(selected, destination.Port), destination), nil
++	}
++	mapped := w.mapIPv4(destination)
++	conn, err := w.endpoint.ListenPacket(ctx, mapped)
++	if err != nil || mapped == destination {
++		return conn, err
++	}
++	return bufio.NewNATPacketConn(bufio.NewPacketConn(conn), mapped, destination), nil
++}
++
++func (w *Endpoint) BindWireGuardSource(ctx context.Context, source netip.Addr) (context.Context, error) {
++	if !source.IsValid() {
++		return nil, E.New("WireGuard binding requires an explicit source")
++	}
++	if err := w.checkSource(source); err != nil {
++		return nil, err
++	}
++	return adapter.WithWireGuardSource(ctx, source), nil
++}
++
++func (w *Endpoint) checkSource(source netip.Addr) error {
++	if !source.IsValid() {
++		return nil
++	}
++	if w.system || !source.Is6() || source.Is4In6() || source.Zone() != "" || !source.IsGlobalUnicast() {
++		return E.New("WireGuard source binding requires a user-space IPv6 address")
++	}
++	for _, prefix := range w.localAddresses {
++		if prefix.Bits() == 128 && prefix.Addr() == source {
++			return nil
++		}
++	}
++	return E.New("WireGuard source is not owned by this endpoint")
++}
++
++func (w *Endpoint) mapIPv4(destination M.Socksaddr) M.Socksaddr {
++	if !w.inet4MappedPrefix.IsValid() || !destination.Addr.Is4() {
++		return destination
++	}
++	address, v4 := w.inet4MappedPrefix.Addr().As16(), destination.Addr.As4()
++	copy(address[12:], v4[:])
++	destination.Addr = netip.AddrFrom16(address)
++	return destination
++}
++
++func (w *Endpoint) restoreIPv4(destination M.Socksaddr) M.Socksaddr {
++	if !w.inet4MappedPrefix.IsValid() || !w.inet4MappedPrefix.Contains(destination.Addr) {
++		return destination
++	}
++	address := destination.Addr.As16()
++	destination.Addr = netip.AddrFrom4([4]byte{address[12], address[13], address[14], address[15]})
++	return destination
++}
+--- a/transport/wireguard/device.go
++++ b/transport/wireguard/device.go
+@@ -20,6 +20,7 @@
+ }
+ 
+ type DeviceOptions struct {
++	HostSources    []netip.Prefix
+ 	Context        context.Context
+ 	Logger         logger.ContextLogger
+ 	System         bool
+--- a/transport/wireguard/device_stack.go
++++ b/transport/wireguard/device_stack.go
+@@ -16,6 +16,7 @@
+ 	"github.com/sagernet/gvisor/pkg/tcpip/stack"
+ 	"github.com/sagernet/gvisor/pkg/tcpip/transport/tcp"
+ 	"github.com/sagernet/gvisor/pkg/tcpip/transport/udp"
++	"github.com/sagernet/sing-box/adapter"
+ 	"github.com/sagernet/sing-tun"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	M "github.com/sagernet/sing/common/metadata"
+@@ -93,6 +94,12 @@
+ 		networkProtocol = header.IPv6ProtocolNumber
+ 		bind.Addr = w.addr6
+ 	}
++	if source := adapter.WireGuardSource(ctx); source.IsValid() {
++		if destination.IsIPv4() || !source.Is6() || source.Is4In6() {
++			return nil, E.New("WireGuard source and destination families differ")
++		}
++		bind.Addr = tun.AddressFromAddr(source)
++	}
+ 	switch N.NetworkName(network) {
+ 	case N.NetworkTCP:
+ 		tcpConn, err := DialTCPWithBind(ctx, w.stack, bind, addr, networkProtocol)
+@@ -123,6 +130,12 @@
+ 		networkProtocol = header.IPv6ProtocolNumber
+ 		bind.Addr = w.addr6
+ 	}
++	if source := adapter.WireGuardSource(ctx); source.IsValid() {
++		if destination.IsIPv4() || !source.Is6() || source.Is4In6() {
++			return nil, E.New("WireGuard source and destination families differ")
++		}
++		bind.Addr = tun.AddressFromAddr(source)
++	}
+ 	udpConn, err := gonet.DialUDP(w.stack, &bind, nil, networkProtocol)
+ 	if err != nil {
+ 		return nil, err
+--- a/transport/wireguard/device_system_stack.go
++++ b/transport/wireguard/device_system_stack.go
+@@ -60,7 +60,7 @@
+ 			}
+ 		}
+ 		if len(w.writeBufs) > 0 {
+-			return w.batchDevice.BatchWrite(bufs, offset)
++			return w.batchDevice.BatchWrite(w.writeBufs, offset)
+ 		}
+ 	} else {
+ 		for _, packet := range bufs {
+@@ -94,18 +94,40 @@
+ 	var (
+ 		networkProtocol tcpip.NetworkProtocolNumber
+ 		destination     netip.Addr
++		source          netip.Addr
+ 	)
++	if len(packet) == 0 {
++		return true
++	}
+ 	switch header.IPVersion(packet) {
+ 	case header.IPv4Version:
+ 		networkProtocol = header.IPv4ProtocolNumber
++		if len(packet) < header.IPv4MinimumSize {
++			return true
++		}
+ 		destination = netip.AddrFrom4(header.IPv4(packet).DestinationAddress().As4())
++		source = netip.AddrFrom4(header.IPv4(packet).SourceAddress().As4())
+ 	case header.IPv6Version:
+ 		networkProtocol = header.IPv6ProtocolNumber
++		if len(packet) < header.IPv6MinimumSize {
++			return true
++		}
+ 		destination = netip.AddrFrom16(header.IPv6(packet).DestinationAddress().As16())
+-	}
++		source = netip.AddrFrom16(header.IPv6(packet).SourceAddress().As16())
++	default:
++		return true
++	}
++	// Host delivery is explicit and checked after WireGuard authenticates the
++	// source. A business peer cannot reach host listeners merely by targeting
++	// an address configured on this resource.
+ 	for _, prefix := range w.options.Address {
+-		if prefix.Contains(destination) {
+-			return false
++		if prefix.Addr() != destination {
++			continue
++		}
++		for _, allowed := range w.options.HostSources {
++			if allowed.Addr() == source {
++				return false
++			}
+ 		}
+ 	}
+ 	packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{
+--- a/transport/wireguard/endpoint.go
++++ b/transport/wireguard/endpoint.go
+@@ -99,6 +99,7 @@
+ 		Context:        options.Context,
+ 		Logger:         options.Logger,
+ 		System:         options.System,
++		HostSources:    options.HostSources,
+ 		Handler:        options.Handler,
+ 		UDPTimeout:     options.UDPTimeout,
+ 		CreateDialer:   options.CreateDialer,
+@@ -184,7 +185,7 @@
+ 	}
+ 	err = wgDevice.IpcSet(ipcConf)
+ 	if err != nil {
+-		return E.Cause(err, "setup wireguard: \n", ipcConf)
++		return E.Cause(err, "setup wireguard")
+ 	}
+ 	e.device = wgDevice
+ 	e.pauseManager = service.FromContext[pause.Manager](e.options.Context)
+--- a/transport/wireguard/endpoint_options.go
++++ b/transport/wireguard/endpoint_options.go
+@@ -12,6 +12,7 @@
+ )
+ 
+ type EndpointOptions struct {
++	HostSources  []netip.Prefix
+ 	Context      context.Context
+ 	Logger       logger.ContextLogger
+ 	System       bool
+--- /dev/null
++++ b/adapter/wireguard_source.go
+@@ -0,0 +1,23 @@
++package adapter
++
++import (
++	"context"
++	"net/netip"
++)
++
++type wireGuardSourceKey struct{}
++
++// WireGuardSource is a per-dial address, never a host socket binding.
++func WireGuardSource(ctx context.Context) netip.Addr {
++	address, _ := ctx.Value(wireGuardSourceKey{}).(netip.Addr)
++	return address
++}
++
++func WithWireGuardSource(ctx context.Context, address netip.Addr) context.Context {
++	return context.WithValue(ctx, wireGuardSourceKey{}, address)
++}
++
++// The owning endpoint verifies the address before accepting a bound dial.
++type WireGuardSourceBinder interface {
++	BindWireGuardSource(context.Context, netip.Addr) (context.Context, error)
++}
+--- /dev/null
++++ b/common/dialer/wireguard_source.go
+@@ -0,0 +1,85 @@
++package dialer
++
++import (
++	"context"
++	"net"
++	"net/netip"
++	"reflect"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/option"
++	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
++)
++
++type wireGuardSourceDialer struct {
++	upstream *DetourDialer
++	source   netip.Addr
++}
++
++func newWireGuardSourceDialer(ctx context.Context, options option.DialerOptions) (ParallelInterfaceDialer, error) {
++	if options.Inet6BindAddress == nil {
++		return nil, E.New("direct WireGuard dial requires an explicit IPv6 source")
++	}
++	source := options.Inet6BindAddress.Build(netip.Addr{})
++	if !source.Is6() || source.Is4In6() || source.Zone() != "" || !source.IsGlobalUnicast() {
++		return nil, E.New("direct WireGuard source must be a unicast IPv6 address")
++	}
++	rest := options
++	rest.Detour, rest.Inet6BindAddress, rest.UDPFragmentDefault = "", nil, false
++	if !reflect.DeepEqual(rest, option.DialerOptions{}) {
++		return nil, E.New("direct WireGuard source cannot bind or reconfigure host sockets")
++	}
++	manager := service.FromContext[adapter.OutboundManager](ctx)
++	if manager == nil {
++		return nil, E.New("missing outbound manager")
++	}
++	return &wireGuardSourceDialer{upstream: &DetourDialer{outboundManager: manager, detour: options.Detour}, source: source}, nil
++}
++
++func (d *wireGuardSourceDialer) bound(ctx context.Context) (context.Context, N.Dialer, error) {
++	upstream, err := d.upstream.Dialer()
++	if err != nil {
++		return ctx, nil, err
++	}
++	binder, ok := upstream.(adapter.WireGuardSourceBinder)
++	if !ok {
++		return ctx, nil, E.New("direct bound dial requires a native WireGuard endpoint")
++	}
++	ctx, err = binder.BindWireGuardSource(ctx, d.source)
++	return ctx, upstream, err
++}
++
++func (d *wireGuardSourceDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	ctx, upstream, err := d.bound(ctx)
++	if err != nil {
++		return nil, err
++	}
++	return upstream.DialContext(ctx, network, destination)
++}
++
++func (d *wireGuardSourceDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	ctx, upstream, err := d.bound(ctx)
++	if err != nil {
++		return nil, err
++	}
++	return upstream.ListenPacket(ctx, destination)
++}
++
++func (d *wireGuardSourceDialer) DialParallelInterface(ctx context.Context, network string, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaces, fallback []C.InterfaceType, delay time.Duration) (net.Conn, error) {
++	if strategy != nil || len(interfaces) != 0 || len(fallback) != 0 {
++		return nil, E.New("WireGuard source cannot select a host interface")
++	}
++	return d.DialContext(ctx, network, destination)
++}
++
++func (d *wireGuardSourceDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaces, fallback []C.InterfaceType, delay time.Duration) (net.PacketConn, error) {
++	if strategy != nil || len(interfaces) != 0 || len(fallback) != 0 {
++		return nil, E.New("WireGuard source cannot select a host interface")
++	}
++	return d.ListenPacket(ctx, destination)
 +}

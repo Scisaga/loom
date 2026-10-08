@@ -71,6 +71,7 @@ APPROVED_DOMAIN_BASES = {
     "openai.com",
     "pkg.go.dev",  # Official Go package API documentation.
     "qq.com",  # Independent regional HTTPS endpoint used by Android TUN health checks.
+    "rfc-editor.org",  # Canonical RFC text used by the native IP transport model.
     "sagernet.org",
     "signpath.io",  # Official release signing service.
     "signpath.org",  # Open-source signing foundation.
@@ -208,7 +209,16 @@ def main() -> int:
             for match in SITE_LIKE_ID.finditer(line):
                 in_network = any(start <= match.start() and match.end() <= end
                                  for start, end in network_spans)
-                if match.group(0).lower() not in APPROVED_SITE_EXAMPLES and not in_network:
+                # netip's exact address conversion is code, not a node name.
+                # Keep the exception to this call syntax outside literals and comments.
+                source_call = (path.suffix in {".go", ".patch"}
+                               and match.group(0) == "As" + "16"
+                               and line[max(0, match.start() - 1):match.start()] == "."
+                               and line[match.end():match.end() + 2] == "()"
+                               and line[:match.start()].count('"') % 2 == 0
+                               and line[:match.start()].count("`") % 2 == 0
+                               and "//" not in line[:match.start()])
+                if match.group(0).lower() not in APPROVED_SITE_EXAMPLES and not in_network and not source_call:
                     failures.append((relative, line_no, "site-like device identifier"))
 
     if not failures:

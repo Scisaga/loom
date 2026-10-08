@@ -104,7 +104,7 @@ type Verified struct {
 	Files        map[string][]byte
 }
 
-const DataPlaneVersion = "1.11.4-loom.6"
+const DataPlaneVersion = "1.11.4-loom.7"
 const upstreamCommit = "eb07c7a79eeca943370eafea601e87da76c0e57e"
 const upstreamVersion = "v1.11.4"
 const upstreamURL = "https://proxy.golang.org/github.com/sagernet/sing-box/@v/v1.11.4.zip"

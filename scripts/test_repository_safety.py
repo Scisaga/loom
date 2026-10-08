@@ -105,6 +105,16 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(output.count("site-like device identifier"), 1)
 
+    def test_go_address_conversion_call_is_not_a_device_name(self):
+        method = "As" + "16"
+        for name in ("endpoint.go", "source.patch"):
+            result, _ = self.scan(name, f"+\taddress := value.{method}()\n")
+            self.assertEqual(result, 0)
+        for text in (method, f'node="{method}"', f'node="value.{method}()"',
+                     f"// value.{method}()", f"var raw = `value.{method}()`"):
+            result, _ = self.scan("source.patch", text)
+            self.assertEqual(result, 1)
+
     def test_tracked_files_includes_index_entries_before_commit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
