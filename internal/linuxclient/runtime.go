@@ -981,7 +981,10 @@ func Run(ctx context.Context, options Options) (retErr error) {
 		if errors.Is(err, errCertifiedPersistence) {
 			return err
 		}
-		if errors.Is(err, errRuntimeCleanup) || errors.Is(err, ErrWireGuardCleanup) || errors.Is(err, ErrWireGuardOwnership) {
+		// Cancellation can close the data plane's TUN while a refresh is reading
+		// its ownership. The exact cleanup above must still succeed before this
+		// becomes a normal stop; unknown replacements remain cleanup failures.
+		if errors.Is(err, errRuntimeCleanup) || errors.Is(err, ErrWireGuardCleanup) || errors.Is(err, ErrWireGuardOwnership) && ctx.Err() == nil {
 			_, statusErr := writeInactiveStatus(store, options, "error")
 			return errors.Join(err, statusErr)
 		}
