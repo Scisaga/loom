@@ -143,7 +143,7 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 	if err := preference.Validate(); err != nil || !validName(networkGeneration) {
 		return Selection{}, errors.New("selection input is invalid")
 	}
-	byID := map[string]Observation{}
+	latest := map[string]Observation{}
 	for _, observation := range observations {
 		if err := observation.Validate(); err != nil {
 			return Selection{}, err
@@ -151,13 +151,16 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		if observation.NetworkGeneration != networkGeneration {
 			continue
 		}
-		until, _ := time.Parse(time.RFC3339, observation.ValidUntil)
-		if !now.Before(until) {
-			continue
-		}
-		previous, found := byID[observation.CandidateID]
+		previous, found := latest[observation.CandidateID]
 		if !found || previous.ObservedAt < observation.ObservedAt {
-			byID[observation.CandidateID] = observation
+			latest[observation.CandidateID] = observation
+		}
+	}
+	byID := map[string]Observation{}
+	for id, observation := range latest {
+		until, _ := time.Parse(time.RFC3339, observation.ValidUntil)
+		if now.Before(until) {
+			byID[id] = observation
 		}
 	}
 	eligible := make([]RouteCandidate, 0, len(routes))
@@ -196,6 +199,22 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 			rightObservation.MetricMillis > 0
 		if comparable && leftObservation.MetricMillis != rightObservation.MetricMillis {
 			return leftObservation.MetricMillis < rightObservation.MetricMillis
+		}
+		if leftRank == 1 {
+			// Expiry removes health evidence, not the fact that this attempt
+			// failed. Prefer untried/previously successful unknown paths, then
+			// the oldest failed attempt, so a slow refresh cannot keep retrying
+			// only the first two IDs forever. No new retry state is needed.
+			leftFailure, rightFailure := "", ""
+			if observation := latest[left.ID]; observation.Result == "unavailable" {
+				leftFailure = observation.ObservedAt
+			}
+			if observation := latest[right.ID]; observation.Result == "unavailable" {
+				rightFailure = observation.ObservedAt
+			}
+			if leftFailure != rightFailure {
+				return leftFailure < rightFailure
+			}
 		}
 		if left.ID == current {
 			return true

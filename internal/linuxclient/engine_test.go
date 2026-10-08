@@ -73,6 +73,36 @@ func TestUnavailableServiceStaysBlockedUntilObservationExpires(t *testing.T) {
 	}
 }
 
+func TestSlowRefreshReachesUntriedPathAfterTwoFailures(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	scope := "service:demo-service"
+	routes := []clientmodel.RouteCandidate{
+		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: scope},
+		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: scope},
+		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: scope},
+	}
+	selector := &fakeSelector{current: map[string]string{scope: blockedSelection}}
+	attempts := []string{}
+	probe := func(context.Context) ProbeResult {
+		attempts = append(attempts, selector.current[scope])
+		return ProbeResult{Available: selector.current[scope] == "demo-c", Action: "https_request"}
+	}
+	first, err := Activate(context.Background(), selector, routes, defaultState("demo-network"), probe, func() time.Time { return now })
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || !reflect.DeepEqual(attempts, []string{"demo-a", "demo-b"}) {
+		t.Fatal("unexpected initial bounded attempts", attempts, err)
+	}
+	// Authentication, resource checks or a suspended client can outlast both
+	// negative observations. The next refresh must make forward progress.
+	now = now.Add(time.Minute)
+	recovered, err := Activate(context.Background(), selector, routes, first.State, probe, func() time.Time { return now })
+	if err != nil || !reflect.DeepEqual(attempts, []string{"demo-a", "demo-b", "demo-c"}) || len(recovered.Selections) != 1 || recovered.Selections[0].State != "available" {
+		t.Fatal("slow refresh repeated expired failures instead of reaching the working path", attempts, err)
+	}
+	if _, err := Activate(context.Background(), selector, routes, recovered.State, probe, func() time.Time { return now.Add(time.Second) }); err != nil || len(attempts) != 3 {
+		t.Fatal("successful choice was needlessly probed again", attempts, err)
+	}
+}
+
 func (selector *fakeSelector) Read(_ context.Context, scope string) (string, error) {
 	value, found := selector.current[scope]
 	if !found {
