@@ -2,8 +2,6 @@ package linuxclient
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +45,7 @@ var (
 )
 
 type wireGuardOwnedLink struct {
+	native       bool
 	link         wireGuardExecutionLink
 	peers        []wireGuardExecutionLink
 	alias        string
@@ -88,15 +87,6 @@ type ipRouteDocument struct {
 	Source      string            `json:"prefsrc"`
 	Metric      int               `json:"metric"`
 	Multipath   []json.RawMessage `json:"nexthops"`
-}
-
-type wireGuardActual struct {
-	Interface  string
-	PublicKey  string
-	Endpoint   string
-	AllowedIPs string
-	Keepalive  int
-	ListenPort int
 }
 
 func runHostCommand(name string, arguments ...string) ([]byte, error) {
@@ -255,6 +245,23 @@ func (transaction *wireGuardTransaction) Cleanup() error {
 				continue
 			}
 			owned.alias = ""
+			continue
+		}
+		if err == nil && owned.native {
+			if err = verifyNativeHost(transaction.options, *owned); err == nil {
+				_, err = runHostCommand(transaction.options.IP, "link", "delete", "dev", actual.Name)
+				if err == nil {
+					_, remains, e := inspectOwnedWireGuardInterface(transaction.options, *owned)
+					if e != nil || remains {
+						err = ErrWireGuardCleanup
+					}
+				}
+			}
+			if err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+			} else {
+				owned.alias = ""
+			}
 			continue
 		}
 		creation := actual.Name == owned.creationName && owned.creationName != "" && actual.Alias == "" && !owned.configured
@@ -453,114 +460,6 @@ func sameRoutePrefix(actual, expected string) bool {
 	return actualBits == expectedBits && actualOnes == expectedOnes && actualIP.Equal(expectedIP)
 }
 
-func configureWireGuardLink(options Options, owned *wireGuardOwnedLink) error {
-	link, localPublicKey := owned.link, owned.publicKey
-	arguments := []string{"set", link.Interface}
-	actualPublic, err := runHostCommand(options.WireGuard, "show", link.Interface, "public-key")
-	if err != nil {
-		return err
-	}
-	needsPrivateKey := strings.TrimSpace(string(actualPublic)) != localPublicKey
-	var privateKey *os.File
-	var privateKeyInfo os.FileInfo
-	if needsPrivateKey {
-		privateKey, err = openPrivateWireGuardKey(options.WireGuardPrivateKey)
-		if err != nil {
-			return err
-		}
-		defer privateKey.Close()
-		privateKeyInfo, err = privateKey.Stat()
-		if err != nil {
-			return errors.New("WireGuard private key cannot be inspected")
-		}
-		// Ubuntu's wg AppArmor profile deliberately permits only
-		// /etc/wireguard/** and denies /dev/stdin and arbitrary descriptors.
-		// The path is therefore part of the deployment boundary; verify it both
-		// before and after wg reopens it and remove this generation on change.
-		arguments = append(arguments, "private-key", options.WireGuardPrivateKey)
-	}
-	arguments = append(arguments, "listen-port", strconv.Itoa(owned.listenPort()))
-	for _, peer := range owned.peerLinks() {
-		arguments = append(arguments, "peer", peer.PeerPublicKey, "allowed-ips", peer.AllowedIP)
-		if peer.Mode == "initiator" {
-			arguments = append(arguments, "endpoint", peer.Endpoint, "persistent-keepalive", strconv.Itoa(peer.PersistentKeepalive))
-		}
-	}
-	command := exec.Command(options.WireGuard, arguments...)
-	if err := command.Run(); err != nil {
-		return errors.New("WireGuard configuration failed")
-	}
-	owned.configured = true
-	if needsPrivateKey {
-		after, err := os.Lstat(options.WireGuardPrivateKey)
-		if err != nil || !os.SameFile(privateKeyInfo, after) {
-			return errors.New("WireGuard private key changed during configuration")
-		}
-	}
-	for _, address := range owned.localAddresses() {
-		if _, err := runHostCommand(options.IP, "address", "add", address, "dev", link.Interface, "noprefixroute"); err != nil {
-			return err
-		}
-	}
-	if _, err = runHostCommand(options.IP, "link", "set", "dev", link.Interface, "up"); err != nil {
-		return err
-	}
-	for _, peer := range owned.peerLinks() {
-		if _, err = runHostCommand(options.IP, wireGuardRouteArguments("add", peer, link.Interface)...); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func parseWireGuardActual(body []byte) (map[string]wireGuardActual, error) {
-	if len(body) == 0 || len(body) > 8<<20 {
-		return nil, errors.New("WireGuard runtime dump is invalid")
-	}
-	listenPorts := map[string]int{}
-	result := map[string]wireGuardActual{}
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) == 5 {
-			port, err := strconv.Atoi(fields[3])
-			_, duplicate := listenPorts[fields[0]]
-			if err != nil || port < 0 || port > 65535 || fields[0] == "" || duplicate {
-				return nil, errors.New("WireGuard runtime dump is invalid")
-			}
-			listenPorts[fields[0]] = port
-			continue
-		}
-		if len(fields) != 9 {
-			return nil, fmt.Errorf("WireGuard runtime dump row has %d fields", len(fields))
-		}
-		keepalive := 0
-		var err error
-		if fields[8] != "off" {
-			keepalive, err = strconv.Atoi(fields[8])
-		}
-		if err != nil {
-			return nil, fmt.Errorf("WireGuard runtime keepalive %q is invalid", fields[8])
-		}
-		if fields[0] == "" || fields[1] == "" {
-			return nil, errors.New("WireGuard runtime dump identity is invalid")
-		}
-		if _, present := listenPorts[fields[0]]; !present {
-			return nil, errors.New("WireGuard peer has no interface header")
-		}
-		key := fields[0] + "\x00" + fields[1]
-		if _, duplicate := result[key]; duplicate {
-			return nil, errors.New("WireGuard peer appears more than once")
-		}
-		result[key] = wireGuardActual{Interface: fields[0], PublicKey: fields[1], Endpoint: fields[3],
-			AllowedIPs: fields[4], Keepalive: keepalive}
-	}
-	for key, value := range result {
-		value.ListenPort = listenPorts[value.Interface]
-		result[key] = value
-	}
-	return result, nil
-}
-
 func endpointMatches(expected, actual string) bool {
 	expectedHost, expectedPort, expectedErr := net.SplitHostPort(expected)
 	actualHost, actualPort, actualErr := net.SplitHostPort(actual)
@@ -569,183 +468,4 @@ func endpointMatches(expected, actual string) bool {
 	}
 	expectedIP, actualIP := net.ParseIP(expectedHost), net.ParseIP(actualHost)
 	return expectedIP != nil && actualIP != nil && expectedIP.Equal(actualIP)
-}
-
-func readbackWireGuard(profile wireGuardExecution, options Options) error {
-	if len(profile.WireGuard) == 0 {
-		return nil
-	}
-	body, err := runHostCommand(options.WireGuard, "show", "all", "dump")
-	if err != nil {
-		return err
-	}
-	actual, err := parseWireGuardActual(body)
-	if err != nil {
-		return err
-	}
-	groups, err := groupWireGuardLinks(profile.WireGuard)
-	if err != nil {
-		return err
-	}
-	for _, group := range groups {
-		count := 0
-		for _, value := range actual {
-			if value.Interface == group.link.Interface {
-				count++
-				if group.listenPort() != 0 && value.ListenPort != group.listenPort() {
-					return errors.New("WireGuard interface listener readback does not match the certified runtime")
-				}
-			}
-		}
-		if count != len(group.peerLinks()) {
-			return errors.New("WireGuard interface peer set does not match the certified runtime")
-		}
-		addresses, err := interfaceAddresses(options.IP, group.link.Interface)
-		if err != nil || strings.Join(addresses, "\x00") != strings.Join(group.localAddresses(), "\x00") {
-			return errors.New("WireGuard local address set differs from its certified runtime")
-		}
-	}
-	for _, link := range profile.WireGuard {
-		peer, ok := actual[link.Interface+"\x00"+link.PeerPublicKey]
-		if !ok || peer.Interface != link.Interface || peer.AllowedIPs != link.AllowedIP {
-			return errors.New("WireGuard peer readback does not match the certified runtime")
-		}
-		if peer.Keepalive != link.PersistentKeepalive || link.Mode == "acceptor" && peer.ListenPort != link.ListenPort ||
-			link.Mode == "initiator" && !endpointMatches(link.Endpoint, peer.Endpoint) {
-			return errors.New("WireGuard direction readback does not match the certified runtime")
-		}
-		addresses, err := interfaceAddresses(options.IP, link.Interface)
-		addressIndex := sort.SearchStrings(addresses, link.LocalAddress)
-		if err != nil || addressIndex == len(addresses) || addresses[addressIndex] != link.LocalAddress {
-			return errors.New("WireGuard address readback does not match the certified runtime")
-		}
-		route, err := wireGuardRouteState(options, link.AllowedIP, link.Interface)
-		if err != nil || !route {
-			return errors.New("WireGuard route readback does not match the certified runtime")
-		}
-	}
-	return nil
-}
-
-func applyWireGuard(profile, previous *wireGuardExecution, server *wireGuardIdentity, options Options) (*wireGuardTransaction, error) {
-	if profile == nil {
-		profile = &wireGuardExecution{}
-	}
-	if len(profile.WireGuard) == 0 && (previous == nil || len(previous.WireGuard) == 0) {
-		return &wireGuardTransaction{}, nil
-	}
-	if len(profile.WireGuard) != 0 && server == nil {
-		return nil, errors.New("WireGuard runtime has no certified server identity")
-	}
-	for _, link := range profile.WireGuard {
-		if link.Mode == "initiator" && !endpointMatches(link.Endpoint, link.Endpoint) {
-			return nil, errors.New("WireGuard runtime requires a resolved literal endpoint")
-		}
-	}
-	groups, err := groupWireGuardLinks(profile.WireGuard)
-	if err != nil {
-		return nil, err
-	}
-	// Previous authority cannot claim an interface. The caller first cleans
-	// any recorded generation using its independent kernel ownership token.
-	links, err := readWireGuardLinks(options)
-	if err != nil {
-		return nil, errors.Join(ErrWireGuardOwnership, err)
-	}
-	names := map[string]bool{}
-	for _, link := range profile.WireGuard {
-		names[link.Interface] = true
-	}
-	if previous != nil {
-		for _, link := range previous.WireGuard {
-			names[link.Interface] = true
-		}
-	}
-	for _, actual := range links {
-		if names[actual.Name] {
-			return nil, ErrWireGuardOwnership
-		}
-	}
-	if err := checkWireGuardAccessAddresses(options, groups); err != nil {
-		return nil, err
-	}
-	for _, link := range profile.WireGuard {
-		exists, err := wireGuardRouteState(options, link.AllowedIP, link.Interface)
-		if err != nil || exists {
-			return nil, errors.Join(ErrWireGuardOwnership, err)
-		}
-	}
-	localPublicKey := ""
-	if len(profile.WireGuard) != 0 {
-		publicKey, err := privateWireGuardPublicKey(options.WireGuard, options.WireGuardPrivateKey)
-		if err != nil || publicKey != server.WGPublicKey {
-			return nil, errors.New("WireGuard private key does not match the certified server identity")
-		}
-		localPublicKey = publicKey
-	}
-	transaction := &wireGuardTransaction{options: options}
-	fail := func(err error) (*wireGuardTransaction, error) {
-		return nil, errors.Join(err, transaction.Cleanup())
-	}
-	for _, desired := range groups {
-		link := desired.link
-		var token [16]byte
-		_, err := rand.Read(token[:])
-		if err != nil {
-			return fail(err)
-		}
-		owned := wireGuardOwnedLink{link: link, peers: desired.peers, alias: "loom-runtime:" + hex.EncodeToString(token[:]), creationName: "lm" + hex.EncodeToString(token[:])[:13], publicKey: localPublicKey}
-		// Create with a generation-unique name first. The WG kernel driver on
-		// some supported hosts resets ifalias in its newlink callback. A random
-		// creation name remains an atomic ownership marker through that window.
-		transaction.owned = append(transaction.owned, owned)
-		if err := transaction.saveOwnership(); err != nil {
-			return fail(err)
-		}
-		if _, err := runHostCommand(options.IP, "link", "add", "dev", owned.creationName, "alias", owned.alias, "type", "wireguard"); err != nil {
-			return fail(err)
-		}
-		current := &transaction.owned[len(transaction.owned)-1]
-		actual, exists, err := findWireGuardLink(options, owned.creationName)
-		if err != nil || !exists || actual.Alias != "" && actual.Alias != owned.alias || actual.Info.Kind != "wireguard" {
-			return fail(errors.Join(ErrWireGuardOwnership, err))
-		}
-		current.index = actual.Index
-		if err := transaction.saveOwnership(); err != nil {
-			return fail(err)
-		}
-		if _, err := runHostCommand(options.IP, "link", "set", "dev", owned.creationName, "alias", owned.alias); err != nil {
-			return fail(err)
-		}
-		actual, exists, err = findWireGuardLink(options, owned.creationName)
-		if err != nil || !exists || actual.Index != current.index || actual.Alias != owned.alias || actual.Info.Kind != "wireguard" {
-			return fail(ErrWireGuardOwnership)
-		}
-		if _, err := runHostCommand(options.IP, "link", "set", "dev", owned.creationName, "name", link.Interface); err != nil {
-			return fail(err)
-		}
-		actual, exists, err = findWireGuardLink(options, link.Interface)
-		if err != nil || !exists || actual.Index != current.index || actual.Alias != owned.alias || actual.Info.Kind != "wireguard" {
-			return fail(ErrWireGuardOwnership)
-		}
-		if err := installWireGuardFilter(options, *current); err != nil {
-			return fail(err)
-		}
-		if err := configureWireGuardLink(options, current); err != nil {
-			return fail(err)
-		}
-		if err := transaction.saveOwnership(); err != nil {
-			return fail(err)
-		}
-		if err := verifyOwnedWireGuardLink(options, *current); err != nil {
-			return fail(errors.Join(ErrWireGuardOwnership, err))
-		}
-	}
-	if err := readbackWireGuard(*profile, options); err != nil {
-		return fail(err)
-	}
-	if err := transaction.verifyFilters(); err != nil {
-		return fail(err)
-	}
-	return transaction, nil
 }

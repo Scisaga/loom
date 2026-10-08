@@ -127,6 +127,34 @@ func cmdClientSync(args []string) error {
 	return nil
 }
 
+func cmdClientMigrateTransport(args []string) error {
+	fs := flag.NewFlagSet("client migrate-transport", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	statePath := fs.String("state", defaultDeviceState, "existing device identity")
+	viewPath := fs.String("view", "", "new canonical certified View, owner-only")
+	evidence := fs.String("evidence", "", "protected original-state evidence file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *viewPath == "" || *evidence == "" {
+		return errors.New("client migrate-transport requires -view and -evidence")
+	}
+	body, err := readBoundedRegular(*viewPath, 5<<20, true)
+	if err != nil {
+		return err
+	}
+	defer clear(body)
+	var envelope control.DeviceViewEnvelope
+	if err := control.DecodeCanonical(body, &envelope, control.ContractDecodeLimits{MaxBytes: 5 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
+		return err
+	}
+	if err := deviceclient.MigrateTransportFile(*statePath, *evidence, envelope, nil); err != nil {
+		return err
+	}
+	fmt.Println("transport configuration advanced; identity, authenticated floors and original signed evidence preserved; runtime activation requires separate readback")
+	return nil
+}
+
 func cmdClientInspect(args []string) error {
 	fs := flag.NewFlagSet("client inspect", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

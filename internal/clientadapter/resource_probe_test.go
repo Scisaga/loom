@@ -147,12 +147,7 @@ func TestFirstHopSamplesDeduplicateParallelizeAndKeepOriginalWindows(t *testing.
 	if len(RetainResourceObservations(probes, first.values, "demo-other-network")) != 0 {
 		t.Fatal("old network cache survived")
 	}
-	view.Resources[0].DialPort++
-	view.Routes, view.RuntimeProfile, err = control.ProjectAccessRuntime(view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	probes, err = control.FirstHopProbes(view)
+	probes[0].SpecDigest = "sha256:" + strings.Repeat("2", 64)
 	unchanged := RetainResourceObservations(probes, first.values, "demo-underlay")
 	if err != nil || len(unchanged) != 1 || !reflect.DeepEqual(unchanged[0], first.values[1]) {
 		t.Fatal("one changed resource invalidated an unrelated sample or kept its old result", err)

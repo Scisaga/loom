@@ -23,52 +23,68 @@ func relayProjectionFixture(t *testing.T) Projection {
 		addresses := []string{[]string{"198.51.100.1/32", "198.51.100.2/32"}[i]}
 		p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, TransportResource{ID: id + "-wg", Kind: "wireguard", OwnerNodeID: id, ListenerID: id + "-wg", DialHost: []string{"192.0.2.11", "192.0.2.10"}[i], DialPort: 51820, Authentication: ResourceAuthentication{PublicKey: &key, LocalAddresses: &addresses}})
 	}
-	p.NetworkIntent.Links = []NetworkLink{{ID: "demo-link", FromNodeID: entry.ID, ToNodeID: "demo-exit", FromResourceID: "demo-entry-wg", ResourceID: "demo-exit-wg", InitiatorNodeID: "demo-exit", Purpose: "relay", ProbeTarget: LinkProbeTarget{ResourceID: "demo-hy2", Host: "198.51.100.2", Port: 443, Action: "hysteria2_tls"}}}
+	target, err := WireGuardAccessAddress(p.NetworkIntent.Resources[len(p.NetworkIntent.Resources)-1], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.NetworkIntent.Links = []NetworkLink{{ID: "demo-link", FromNodeID: entry.ID, ToNodeID: "demo-exit", FromResourceID: "demo-entry-wg", ResourceID: "demo-exit-wg", InitiatorNodeID: "demo-exit", Purpose: "relay", ProbeTarget: LinkProbeTarget{ResourceID: "demo-exit-wg", Host: target.String(), Port: 53, Action: "wireguard_dns"}}}
 	p.NetworkIntent.Policies[0].EntryScope = PolicyScope{Mode: "any", NodeIDs: []string{}}
 	p.NetworkIntent.Policies[0].MaxHops = 2
 	sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
 	return p
 }
 
-func TestRelaySharesFinalExitButSeparatesTransportCredentials(t *testing.T) {
+func TestRelayTerminatesHy2AndForwardsIndependentWireGuard(t *testing.T) {
 	p := relayProjectionFixture(t)
 	access, err := ProjectDeviceView(p, "demo-access")
 	if err != nil || len(access.Routes) != 2 {
-		t.Fatal("one-hop and same-exit relay must coexist", err, len(access.Routes))
+		t.Fatal("direct and same-exit relay must coexist", err, len(access.Routes))
 	}
 	entry, err := ProjectDeviceView(p, "demo-entry")
-	if err != nil || len(entry.InboundCredentials) != 1 || entry.InboundCredentials[0].RelayTarget == nil {
-		t.Fatal("relay receiver has no exact next-hop permission", err)
+	if err != nil || len(entry.InboundCredentials) != 1 || entry.InboundCredentials[0].Candidate.FinalExit != "demo-exit" {
+		t.Fatal("entry lost the full business path", err)
 	}
 	exit, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(exit.InboundCredentials) != 1 || exit.InboundCredentials[0].RelayTarget != nil {
-		t.Fatal("exit must share one Service credential across paths", err)
+	if err != nil || len(exit.InboundCredentials) != 2 {
+		t.Fatal("exit lost independent path permissions", err)
 	}
-	if entry.InboundCredentials[0].Credential == exit.InboundCredentials[0].Credential {
-		t.Fatal("relay and final Service credential were interchangeable")
+	native := 0
+	for _, permission := range exit.InboundCredentials {
+		if permission.ResourceID == "demo-exit-wg" {
+			native++
+			if permission.SenderID != "demo-entry" || permission.DeviceID != "demo-access" || permission.Credential != "" {
+				t.Fatal("forwarding confused sender and originating device")
+			}
+		}
 	}
-	host, port, err := RelayDialTarget(entry, *entry.InboundCredentials[0].RelayTarget, entry.DeviceID)
-	if err != nil || host != "198.51.100.2" || port != 443 {
-		t.Fatal("relay target widened beyond its exact peer", err)
+	if native != 1 {
+		t.Fatal("missing native WG receiver permission")
 	}
 	var document struct {
 		Outbounds []map[string]any `json:"outbounds"`
+		Endpoints []map[string]any `json:"endpoints"`
 	}
 	if err := json.Unmarshal([]byte(access.RuntimeProfile.Config), &document); err != nil {
 		t.Fatal(err)
 	}
-	chained := 0
 	for _, outbound := range document.Outbounds {
-		if _, ok := outbound["detour"]; ok {
-			chained++
-			if outbound["server"] != host || outbound["password"] != exit.InboundCredentials[0].Credential {
-				t.Fatal("relay lost the authenticated final transport")
-			}
+		if outbound["type"] == "hysteria2" && outbound["detour"] != nil {
+			t.Fatal("Hy2 first hop was nested into another transport")
 		}
 	}
-	if chained != 1 {
-		t.Fatal("relay runtime did not consume the explicit chain")
+	document.Outbounds, document.Endpoints = nil, nil
+	if err := json.Unmarshal([]byte(entry.RuntimeProfile.Config), &document); err != nil {
+		t.Fatal(err)
 	}
+	if len(document.Endpoints) != 1 || document.Endpoints[0]["type"] != "wireguard" {
+		t.Fatal("entry has no shared native WG sender")
+	}
+	for _, outbound := range document.Outbounds {
+		if outbound["type"] == "hysteria2" {
+			t.Fatal("entry established another Hy2 session")
+		}
+	}
+
 	for _, view := range []DeviceView{access, entry, exit} {
 		body, err := CanonicalEncode(view)
 		var decoded DeviceView
@@ -112,8 +128,8 @@ func TestHybridStartsAtItsLinkWithoutLoopbackCredential(t *testing.T) {
 	if err != nil || len(view.Routes) != 1 || len(view.InboundCredentials) != 0 {
 		t.Fatal("hybrid Link start failed or created loopback credentials", err)
 	}
-	if !reflect.DeepEqual(view.Routes[0].NodeChain, []string{"demo-entry", "demo-exit"}) || !strings.Contains(view.RuntimeProfile.Config, `"bind_interface":"demo-entry-wg"`) || strings.Contains(view.RuntimeProfile.Config, `"detour"`) {
-		t.Fatal("hybrid did not consume its real local WireGuard interface")
+	if !reflect.DeepEqual(view.Routes[0].NodeChain, []string{"demo-entry", "demo-exit"}) || !strings.Contains(view.RuntimeProfile.Config, `"type":"wireguard"`) || strings.Contains(view.RuntimeProfile.Config, `"type":"hysteria2"`) {
+		t.Fatal("hybrid did not originate a native WG business segment")
 	}
 	bad := p.NetworkIntent.Links[0]
 	bad.ProbeTarget.Host = "203.0.113.2"

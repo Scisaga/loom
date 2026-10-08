@@ -65,7 +65,11 @@ func observeAndroidFirstHops(ctx context.Context, state deviceclient.State, sele
 			return nil, err
 		}
 	}
-	values, err := clientadapter.ObserveFirstHops(ctx, state.LKG.View, selected, previous, generation, now)
+	diagnostic, err := clientadapter.NativeDiagnosticContext(ctx, androidLocalRuntimeSecret(state), nil)
+	if err != nil {
+		return nil, err
+	}
+	values, err := clientadapter.ObserveFirstHops(diagnostic, state.LKG.View, selected, previous, generation, now)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,13 @@ type ResourceProbe struct {
 	SpecDigest string
 }
 
+func (probe ResourceProbe) Action() string {
+	if probe.Resource.Kind == "wireguard" {
+		return "wireguard_dns"
+	}
+	return "hysteria2_tls"
+}
+
 func (probe ResourceProbe) Target() string {
 	return net.JoinHostPort(probe.Resource.DialHost, strconv.Itoa(probe.Resource.DialPort))
 }
@@ -38,18 +45,29 @@ func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
 	result := []ResourceProbe{}
 	for _, route := range view.Routes {
 		resource, found := resources[route.FirstResourceID]
-		if !found || resource.Kind != "hysteria2" || resource.OwnerNodeID == view.DeviceID || resource.LinkOnly || seen[resource.ID] {
+		if !found || (resource.Kind != "hysteria2" && resource.Kind != "wireguard") || resource.OwnerNodeID == view.DeviceID || resource.LinkOnly || seen[resource.ID] {
+			continue
+		}
+		if len(route.NodeChain) > 0 && route.NodeChain[0] == view.DeviceID {
 			continue
 		}
 		if len(route.NodeChain) == 0 || route.NodeChain[0] != resource.OwnerNodeID {
 			return nil, errors.New("public first hop does not match the certified path")
 		}
 		tag := route.ID
-		if len(route.LinkIDs) > 0 {
-			tag += ".hop.0"
+		if resource.Kind == "wireguard" {
+			if !resource.AccessEnabled {
+				continue
+			}
+			tag = WireGuardSenderTag(resource.ID)
 		}
 		credential := credentials[tag]
-		if ValidatePublicKey(credential) != nil {
+		valid := ValidatePublicKey(credential) == nil
+		if resource.Kind == "wireguard" {
+			_, err := wireGuardAccessPrivate(credential)
+			valid = err == nil
+		}
+		if !valid {
 			return nil, errors.New("public first hop has no authorized credential")
 		}
 		binding, err := digestContractValue("loom-resource-probe-credential-v3\x00", credential)
@@ -71,7 +89,7 @@ func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
 
 func verifyResourceObservation(value Observation, probes []ResourceProbe) error {
 	for _, probe := range probes {
-		if value.ResourceID == probe.Resource.ID && value.Target == probe.Target() && value.SpecDigest == probe.SpecDigest && value.Action == "hysteria2_tls" {
+		if value.ResourceID == probe.Resource.ID && value.Target == probe.Target() && value.SpecDigest == probe.SpecDigest && value.Action == probe.Action() {
 			return nil
 		}
 	}

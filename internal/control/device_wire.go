@@ -186,13 +186,15 @@ type ResourceReadback struct {
 	Listen            string `json:"listen"`
 	CertificateDigest string `json:"certificate_digest"`
 	ACLDigest         string `json:"acl_digest"`
+	PublicKey         string `json:"public_key,omitempty"`
 }
 
 func (value ResourceReadback) Validate() error {
 	host, port, err := net.SplitHostPort(value.Listen)
 	ip, ipErr := netip.ParseAddr(host)
 	number, numberErr := strconv.Atoi(port)
-	if ValidateID(value.ResourceID) != nil || ValidateID(value.ListenerID) != nil || ValidateDigest(value.CertificateDigest) != nil || ValidateDigest(value.ACLDigest) != nil ||
+	identityOK := value.PublicKey == "" && ValidateDigest(value.CertificateDigest) == nil || value.CertificateDigest == "" && ValidatePublicKey(value.PublicKey) == nil
+	if ValidateID(value.ResourceID) != nil || ValidateID(value.ListenerID) != nil || !identityOK || ValidateDigest(value.ACLDigest) != nil ||
 		err != nil || ipErr != nil || ip.Zone() != "" || ip.String() != host || numberErr != nil || number < 1 || number > 65535 || net.JoinHostPort(host, strconv.Itoa(number)) != value.Listen {
 		return errors.New("resource execution readback is invalid")
 	}
@@ -271,14 +273,17 @@ func (observation Observation) Validate() error {
 	case "link":
 		target, err := netip.ParseAddrPort(observation.Target)
 		if ValidateID(observation.LinkID) != nil || ValidateID(observation.ResourceID) != nil || observation.ServiceID != "" || observation.CandidateID != "" ||
-			observation.Action != "hysteria2_tls" || err != nil || target.Port() == 0 || target.String() != observation.Target || !target.Addr().IsGlobalUnicast() || target.Addr().Zone() != "" {
+			(observation.Action != "hysteria2_tls" && observation.Action != "wireguard_dns") || err != nil || target.Port() == 0 || target.String() != observation.Target || !target.Addr().IsGlobalUnicast() || target.Addr().Zone() != "" {
 			return errors.New("Link observation is invalid")
+		}
+		if observation.Action == "wireguard_dns" && (target.Port() != 53 || !target.Addr().Is6() || !target.Addr().IsPrivate()) {
+			return errors.New("native Link observation has no exact execution DNS target")
 		}
 	case "resource":
 		host, port, err := net.SplitHostPort(observation.Target)
 		number, portErr := strconv.Atoi(port)
 		if ValidateID(observation.ResourceID) != nil || observation.ServiceID != "" || observation.CandidateID != "" || observation.LinkID != "" ||
-			observation.Action != "hysteria2_tls" || err != nil || !contractHost(host) || portErr != nil || number < 1 || number > 65535 ||
+			(observation.Action != "hysteria2_tls" && observation.Action != "wireguard_dns") || err != nil || !contractHost(host) || portErr != nil || number < 1 || number > 65535 ||
 			net.JoinHostPort(host, strconv.Itoa(number)) != observation.Target {
 			return errors.New("resource observation is invalid")
 		}

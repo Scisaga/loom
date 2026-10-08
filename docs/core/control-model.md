@@ -416,7 +416,7 @@ NetworkIntent.nodes 与 PublisherInput 从有效设备事实单向投影该列�
 | 种类 | 稳定身份和必须公开的认证/拨号值 | 真正能证明的动作与 report 范围 | 留在节点本机的秘密 |
 |---|---|---|---|
 | `wireguard` | 资源 ID、承载 NodeID、interface 身份、承载端 UDP 拨号坐标、WG 公钥及资源自身的公开地址/路由参数；设备 peer/AllowedIPs 从该设备的授权和本机执行投影生成，不成为共享资源的参与者表。 | 先核对当前 peer/接口执行回读；显式中继 LinkID 的成功须通过隧道向该 Link 的精确探测目标发起并收到返回数据，普通首跳则按自身实际连接或业务结果报告。最近握手时间或计数器只能作为诊断，不能单独宣布 Service 业务成功。 | WG 私钥及本机 peer 安装材料 |
-| `hysteria2` | 资源 ID、承载 NodeID、listener 身份、UDP 拨号坐标、必须校验的服务端证书身份/公开信任材料及该用途的授权身份。拨号可使用认证的 IP 地址；不要求公网域名或 Gandi token。 | 验证服务端证书和 Hy2 身份；显式中继 LinkID 通过该资源向其精确目标完成有返回的传输动作，普通首跳按自身实际连接或业务结果报告。报告 Hy2 的认证、建连和真实返回结果，不填 WG 握手/peer 字段。完整 Service HTTPS 探测仍另按 Service 报告。 | 服务端证书私钥与设备/Service/Policy 派生的服务凭据 |
+| `hysteria2` | 资源 ID、承载 NodeID、listener 身份、UDP 拨号坐标、必须校验的服务端证书身份/公开信任材料及该用途的授权身份。拨号可使用认证的 IP 地址；不要求公网域名或 Gandi token。 | 验证服务端证书和 Hy2 身份；普通首跳按自身实际连接或业务结果报告，后续 WG Link 单独观测。报告 Hy2 的认证、建连和真实返回结果，不填 WG 握手/peer 字段。完整 Service HTTPS 探测仍另按 Service 报告。 | 服务端证书私钥与设备/Service/Policy 派生的服务凭据 |
 | `tls_tunnel` | 资源 ID、承载 NodeID、listener 身份、TCP 拨号坐标、固定服务端 SPKI、服务 ALPN，以及需要时附加的 TLS 名称和成员或设备端到端身份。 | 引导和设备私有隧道必须验 SPKI 与专用 ALPN，再完成对应私有服务的认证请求和响应；握手只证明该入口，不证明治理、设备授权或任何 Service 已可用。 | TLS 私钥、成员/设备私钥及本机 listener 输入 |
 
 没有域名或 `GANDI_PAT_TOKEN` 不得自动禁用 Hy2；但没有可验证的服务端身份、有效证书/信任材料或
@@ -436,37 +436,26 @@ Hy2 的唯一规范认证形状为公开 CA DER 集合和 server_name，见[现�
 表达，端点资源相同的反向 Link 复用同一接口和 peer。资源保存单个 /32 或 /128 地址；执行只安装
 对端的精确地址路由，不获得默认路由、LAN 或宿主 DNS 权限。现有本机 WG 私钥继续由文件引用提供。
 
-Hy2 的 `link_only=true` 表示该 listener 只能经显式 Link 使用，不能被投影为普通公开首跳。
-已被否决的实现使普通 WG 首跳依赖同节点 Hy2；通过资源的显式引用启用，设备 peer 与精确
-地址从授权派生，接收端限制原始 WG 包只到该 Hy2，再由 Hy2 执行业务 ACL。
-完整字段、撤权、原字节保留和最小验证见[普通 WG 首跳的私有执行投影](current-contract.md#普通-wg-首跳的私有执行投影)。
-省略该字段维持现行公开首跳字节。Policy 可用正整数 `max_hops` 保留已有受管节点链长度限制；
-省略表示不额外限制，但候选永不重复节点。新增字段均在 schema 3 内修订；已有未包含字段的规范字节不变。
+Hy2 的 `link_only=true` 不开放普通公开首跳。当前业务首跳为独立 Hy2 或启用了
+`access_enabled` 的 WG；后续显式中继使用原生 WG。用户选择入口、最终出口与完整候选，
+两种首跳共享 Service/Policy 的目标、排除范围和撤权规则，不能嵌套另一种远端代理。
+Policy 的 `max_hops` 只限制受管节点数量，省略不额外限制，始终拒绝重复节点。
+完整字段、来源绑定、域名保留和逐段权限见[分段传输](current-contract.md#分段传输的替代执行模型)。
 
-数据转发采用已有 Hy2 的认证 UDP 能力：access 为每条候选建立按 Link 顺序连接的 Hy2 outbound，
-前一跳只允许该 Link 对端 WG 地址上的后续 Hy2 UDP 端口，最后一跳才执行 Service 目标 ACL。
-中间接收凭据的 `relay_target` 固定 LinkID 与下一资源；KDF 的 `relay-auth` 用途另外绑定这两项，
-不能与最终出口的 `service-auth` 互换。中继收到的仅是本 listener 的入站凭据，不能得到根密钥或下一跳凭据。
-hybrid 从本机 Link 起步时不生成回环入站用户，并绑定该 WG 接口。一次普通 HTTPS 请求须经完整候选
-返回后才能报告 Service 成功；WG 接口、握手及 Hy2 TLS 回读均不代替业务结果。
+每个节点终止本段传输，以原 FQDN/IP 执行接收权限，再按认证 Candidate 转发下一段，
+或在获准出口访问业务目标。WG 按实际发送者公钥及精确来源地址绑定权限；Hy2 首跳
+按来源设备的用户凭据绑定权限。中继不取得来源设备根密钥，不向客户端交付后续节点私钥。
+与旧实现相比，无额外 Hy2 封装，代价是共享业务路由器必须消费 WG 原始 TCP/UDP 和原名称。
 
-Link 的精确动作 `hysteria2_tls` 检查对端 WG 地址上指定的 Hy2 listener，按对端资源的 CA 和名称完成
-真实 QUIC/TLS 与 Hy2 认证请求返回，仅证明该 Link 的传输可用。未执行保持 unknown，实际尝试失败
-记录该次 unavailable；HTTP 拒绝、握手和计数器都不算该动作成功。
-纯 forward 起点没有 Service/Policy 凭据，既有入站权限不能表达这项探测而不虚构业务授权。
-最小补充是从起点现有 RuntimeKey 派生仅供 Link 认证的私有执行值，只交付 From 和目标 listener
-所在节点。它没有独立身份、生命周期或 store；删除它只会失去该 Link 的主动认证观测，不影响
-Service 授权。接收端允许 Hy2 登录、拒绝该用户所有转发；不授予任何 Service、DNS 或管理访问。
-Link、端点资格或资源撤销后，该执行值退出 View，沿现有 generation 替换关闭旧会话。
-探测从 From 的已回读 WG 接口及地址发出，与 initiator 的 UDP 建连方向无关，不修改宿主路由。
-没有新增操作者配置；domain 的 Link 与资源单向投影私有 View 执行值，运行请求产生原 Observation，
-原签名 Report 持久化、重启恢复并供设备页面回读 LinkID、目标、结果和原采样时间。样本不能倒写
-Link 或制造 Service 成功，未确定全局时钟容忍前也不改变拓扑的当前 availability。
-最小验证覆盖无 Service 的起点、用途隔离、探测用户不能转发、两端撤权、摘要变化、严格报告拒绝、
-真实 WG 上的认证往返及控制面重启回读；不为这一条链扩展首跳聚合或选路算法。
-正常停止和更新先终止旧数据进程，再 compare-and-delete 本 generation 的 WG 对象；失败时不自动反复重施。
-最小验证覆盖双向 Link 共用接口、同出口一跳与中继并存、本机起点、端口 ACL、不同用途凭据隔离、
-资源或 Link 撤销、Service 分别探测、停止/异常退出后的所有权清理，以及正式服务重启恢复。
+Link 的 `wireguard_dns` 通过原生 WG 会话查询接收资源的精确执行 DNS；DNS-only 来源
+只能访问此地址的 53 端口，不能访问宿主或 Service。探测与业务复用唯一 WG 会话，
+不用另一个 Hy2 用户、独立探测授权库或第二数据进程。未执行为 unknown，实际失败为 unavailable；
+成功仅证明该 Link 的传输，完整 HTTPS 成功才证明对应 Service。
+
+正常停止和更新先终止旧数据进程，再 compare-and-delete 本 generation 的精确对象。
+未知残留或清理失败保持 failed/inactive，不自动重施。最小验证覆盖同出口一跳与中继并存、
+本机起点、来源和原目标 ACL、不同服务隔离、撤权与进程重启，以及管理路径和精确清理。
+已签历史材料只为验签与因果引用保留，已否决执行不会由启动或同步恢复。
 
 ```mermaid
 flowchart LR
@@ -482,7 +471,7 @@ flowchart LR
     L3 --> O3["L3 真实观测"]
 ```
 
-资源握手、首跳与中继连通仅证明被实测层级。链路观测绑定 现行契约定义的 `link_spec_digest`（Link、两端 WG 及目标 Hy2 的完整规范值）；资源或链路参数变化使旧观测回到 unknown。WG/hy2/TLS 分别用自身真实认证连接测试，不伪造 WG 地址或接口。新链路未验证成功前不能因声明存在而删除旧可信连接。即便 control 流经非 control 中继，也逐请求验证成员身份和签名；设备服务验证设备授权，数据面验证 ACL。中继不投票、不自动取得管理权。
+资源握手、首跳与中继连通仅证明被实测层级。链路观测绑定 现行契约定义的 `link_spec_digest`（Link 及两端 WG 的完整规范值）；资源或链路参数变化使旧观测回到 unknown。WG/hy2/TLS 分别用自身真实认证连接测试，不伪造 WG 地址或接口。新链路未验证成功前不能因声明存在而删除旧可信连接。即便 control 流经非 control 中继，也逐请求验证成员身份和签名；设备服务验证设备授权，数据面验证 ACL。中继不投票、不自动取得管理权。
 
 ## 8. Service、Policy、偏好与业务探测
 

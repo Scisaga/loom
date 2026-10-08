@@ -36,6 +36,9 @@ internal class ManagedProfileStore internal constructor(
     private val authenticatedView: (ByteArray) -> String,
     private val project: (ByteArray) -> ManagedProfile?,
     private val restorationRisk: (ByteArray) -> Boolean = { false },
+    private val replaceTransport: (ByteArray, ByteArray) -> ByteArray = { original, replacement ->
+        Loomcore.replaceAndroidTransport(original, replacement)
+    },
 ) {
     constructor(context: Context, profileId: String) : this(
         object : ProfileByteStore {
@@ -43,6 +46,7 @@ internal class ManagedProfileStore internal constructor(
             override fun get(key: String) = encrypted.get(key)
             override fun put(key: String, value: ByteArray) = encrypted.put(key, value)
             override fun remove(key: String) = encrypted.remove(key)
+            override fun preserve(source: String, target: String) = encrypted.preserve(source, target)
         },
         profileId,
         Loomcore::validateAndroidDeviceState,
@@ -63,6 +67,21 @@ internal class ManagedProfileStore internal constructor(
 
     private val stateKey = ProfileStorage.state(profileId)
     private val candidateKey = ProfileStorage.candidate(profileId)
+    private val transportEvidenceKey = ProfileStorage.transportEvidence(profileId)
+
+    // Only explicit certified-file import reaches this path. Ordinary state(),
+    // background sync and startup continue to reject the historical runtime.
+    fun replaceTransport(replacement: ByteArray): ManagedProfile = synchronized(stateLock) {
+        check(protected.get(candidateKey) == null) { "存在待核对的旧材料，不能替换认证配置" }
+        val original = checkNotNull(protected.get(stateKey)) { "设备身份不存在" }
+        val next = replaceTransport(original, replacement)
+        validate(next)
+        protected.preserve(stateKey, transportEvidenceKey)
+        check(protected.get(transportEvidenceKey)?.contentEquals(original) == true) { "原认证材料保全回读不一致" }
+        protected.put(stateKey, next)
+        check(protected.get(stateKey)?.contentEquals(next) == true) { "认证配置持久化回读不一致" }
+        checkNotNull(project(next)) { "认证配置已保存；没有可执行的 access 配置" }
+    }
 
     fun state(): ByteArray? = synchronized(stateLock) {
         // Preserve pre-change pending bytes as evidence. They cannot silently become a

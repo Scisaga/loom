@@ -101,107 +101,7 @@ func ProjectAccessRuntime(view DeviceView) ([]RouteCandidate, *RuntimeProfile, e
 }
 
 func projectAccessRuntime(view DeviceView, credentials map[string]string) ([]RouteCandidate, *RuntimeProfile, error) {
-	services, policies, err := servicePermissionValues(view)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !containsString(view.Responsibilities, "access") {
-		if len(view.PolicyIDs) != 0 {
-			return nil, nil, errors.New("non-access device has access policies")
-		}
-		return []RouteCandidate{}, nil, nil
-	}
-	if err := validateViewResources(view); err != nil {
-		return nil, nil, err
-	}
-	ids := make([]string, 0, len(policies))
-	for id := range policies {
-		if _, found := services[id]; found {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	routes := []RouteCandidate{}
-	outbounds := []any{map[string]any{"type": "block", "tag": "reject"}}
-	usedWireGuard := map[string]bool{}
-	rules := []any{}
-	// A request that simultaneously identifies two Services is ambiguous. Keep
-	// the rejection before every allow rule, including deny-assigned Services.
-	for left := range ids {
-		for right := left + 1; right < len(ids); right++ {
-			rules = append(rules, map[string]any{"type": "logical", "mode": "and", "rules": []any{serviceRule(services[ids[left]]), serviceRule(services[ids[right]])}, "outbound": "reject"})
-		}
-	}
-	for _, id := range ids {
-		policy := policies[id]
-		if policy.Action != "allow" {
-			continue
-		}
-		exits := []string{}
-		if policy.AllowDirect {
-			exits = append(exits, "direct")
-		}
-		// The local hybrid is a logical exit even without a network hop. It
-		// has no entry resource and must not inherit the ordinary Direct grant.
-		if containsString(view.Responsibilities, "internet_egress") && containsString(policy.LocalEgressDevices, view.DeviceID) && policy.ExitScope.Allows(view.DeviceID) {
-			exits = append(exits, view.DeviceID)
-		}
-		candidates := make([]RouteCandidate, 0, len(exits))
-		for _, exit := range exits {
-			candidate, err := localCandidate(services[id], policy, exit, view.DNSRecords...)
-			if err != nil {
-				return nil, nil, err
-			}
-			candidates = append(candidates, candidate)
-		}
-		paths, err := transportPaths(view.DeviceID, containsString(view.Responsibilities, "forward"), services[id], policy, view.Resources, view.Links, view.DNSRecords...)
-		if err != nil {
-			return nil, nil, err
-		}
-		byPath := map[string]transportPath{}
-		for _, path := range paths {
-			candidates = append(candidates, path.candidate)
-			byPath[path.candidate.ID] = path
-		}
-		if len(candidates) == 0 {
-			continue
-		}
-		sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
-		members := make([]string, 0, len(candidates))
-		for _, candidate := range candidates {
-			routes = append(routes, candidate)
-			members = append(members, candidate.ID)
-			if candidate.FirstResourceID == "" {
-				outbounds = append(outbounds, map[string]any{"type": "direct", "tag": candidate.ID})
-			} else {
-				path := byPath[candidate.ID]
-				if path.accessWG != nil && !usedWireGuard[path.accessWG.ID] {
-					outbound, err := wireGuardAccessOutbound(*path.accessWG, credentials[wireGuardAccessTag(path.accessWG.ID)])
-					if err != nil {
-						return nil, nil, err
-					}
-					outbounds = append(outbounds, outbound)
-					usedWireGuard[path.accessWG.ID] = true
-				}
-				values, err := renderTransportPath(path, view.Resources, credentials)
-				if err != nil {
-					return nil, nil, err
-				}
-				outbounds = append(outbounds, values...)
-			}
-		}
-		scope := candidates[0].Scope
-		outbounds = append(outbounds, map[string]any{"type": "selector", "tag": scope, "outbounds": members, "default": members[0]})
-		rule := serviceRule(services[id])
-		rule["outbound"] = scope
-		rules = append(rules, rule)
-	}
-	sort.Slice(routes, func(i, j int) bool { return routes[i].ID < routes[j].ID })
-	body, err := CanonicalEncode(map[string]any{"outbounds": outbounds, "route": map[string]any{"rules": rules, "final": "reject"}})
-	if err != nil {
-		return nil, nil, err
-	}
-	return routes, &RuntimeProfile{Kind: "sing_box", Config: string(body)}, nil
+	return renderSegmentedRuntime(view, credentials)
 }
 
 func targetMatchesService(target string, service Service) bool {
@@ -305,7 +205,7 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 	if !identityFound || found && authorization.Validate() != nil {
 		return DeviceView{}, errors.New("device identity or authorization is unavailable")
 	}
-	view := DeviceView{DNSRecords: projectDNSRecords(projection.NetworkIntent.DNSRecords), Schema: 3, DeviceID: identity.ID, Name: identity.Name, Platform: identity.Platform, DevicePublicKey: identity.DevicePublicKey,
+	view := DeviceView{NetworkID: projection.NetworkID, DNSRecords: projectDNSRecords(projection.NetworkIntent.DNSRecords), Schema: 3, DeviceID: identity.ID, Name: identity.Name, Platform: identity.Platform, DevicePublicKey: identity.DevicePublicKey,
 		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
 		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
 		DNSServers: append([]string{}, authorization.DNSServers...), BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}

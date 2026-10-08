@@ -49,6 +49,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "migrate-transport" {
+		if err := migrateWindowsTransport(os.Args[2:], edition); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if edition == editionInstalled {
 		isService, serviceErr := svc.IsWindowsService()
 		if serviceErr != nil {
@@ -584,7 +590,11 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			return activationErr
 		}
 	}
-	observeWindowsFirstHops(ctx, root, *lkg, &activation, initiallySelected)
+	diagnosticContext, err := clientadapter.WithNativeDiagnostic(ctx, string(config), nil)
+	if err != nil {
+		return err
+	}
+	observeWindowsFirstHops(diagnosticContext, root, *lkg, &activation, initiallySelected)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -656,7 +666,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			if !windowsActivationApplied(next, routes) {
 				return fmt.Errorf("Windows selector application failed: %w", nextErr)
 			}
-			observeWindowsFirstHops(ctx, root, *lkg, &next, nil)
+			observeWindowsFirstHops(diagnosticContext, root, *lkg, &next, nil)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}

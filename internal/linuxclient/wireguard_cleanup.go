@@ -13,6 +13,7 @@ import (
 // It contains public configuration and the random kernel ownership token, never
 // private keys or permission facts. It cannot restore a runtime or grant access.
 type wireGuardCleanupEntry struct {
+	Native       bool                     `json:"native,omitempty"`
 	Link         wireGuardExecutionLink   `json:"link"`
 	Peers        []wireGuardExecutionLink `json:"peers,omitempty"`
 	Alias        string                   `json:"alias"`
@@ -48,7 +49,7 @@ func (transaction *wireGuardTransaction) saveOwnership() error {
 	entries := []wireGuardCleanupEntry{}
 	for _, value := range transaction.owned {
 		if value.alias != "" {
-			entries = append(entries, wireGuardCleanupEntry{Link: value.link, Peers: value.peers, Alias: value.alias, CreationName: value.creationName, Index: value.index, PublicKey: value.publicKey, Configured: value.configured})
+			entries = append(entries, wireGuardCleanupEntry{Native: value.native, Link: value.link, Peers: value.peers, Alias: value.alias, CreationName: value.creationName, Index: value.index, PublicKey: value.publicKey, Configured: value.configured})
 		}
 	}
 	if len(entries) == 0 {
@@ -81,7 +82,10 @@ func cleanupRecordedWireGuard(options Options) error {
 		if err != nil || len(groups) != 1 || len(groups[0].peerLinks()) != 1+len(value.Peers) {
 			return errors.Join(ErrWireGuardCleanup, ErrWireGuardOwnership)
 		}
-		transaction.owned = append(transaction.owned, wireGuardOwnedLink{link: value.Link, peers: value.Peers, alias: value.Alias, creationName: value.CreationName, index: value.Index, publicKey: value.PublicKey, configured: value.Configured})
+		if value.Native && value.Link.AccessAddress != "" {
+			return ErrWireGuardCleanup
+		}
+		transaction.owned = append(transaction.owned, wireGuardOwnedLink{native: value.Native, link: value.Link, peers: value.Peers, alias: value.Alias, creationName: value.CreationName, index: value.Index, publicKey: value.PublicKey, configured: value.Configured})
 	}
 	return transaction.Cleanup()
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -184,32 +183,6 @@ func verifyWireGuardFilter(options Options, owned wireGuardOwnedLink) (uint64, e
 	return handle, nil
 }
 
-func installWireGuardFilter(options Options, owned wireGuardOwnedLink) error {
-	objects := wireGuardFilterObjects(owned)
-	if len(objects) == 0 {
-		return nil
-	}
-	_, handle, err := readWireGuardFilter(options, owned)
-	if err != nil || handle != 0 {
-		return errors.Join(ErrWireGuardOwnership, err)
-	}
-	commands := make([]any, 0, len(objects))
-	for _, object := range objects {
-		commands = append(commands, map[string]any{"add": object})
-	}
-	body, err := json.Marshal(map[string]any{"nftables": commands})
-	if err != nil {
-		return err
-	}
-	command := exec.Command(wireGuardNFT(options), "-j", "-f", "-")
-	command.Stdin = bytes.NewReader(body)
-	if err := command.Run(); err != nil {
-		return errors.New("WireGuard access filter installation failed")
-	}
-	_, err = verifyWireGuardFilter(options, owned)
-	return err
-}
-
 func cleanupWireGuardFilter(options Options, owned wireGuardOwnedLink) error {
 	if !owned.hasAccessPeers() {
 		return nil
@@ -230,20 +203,6 @@ func cleanupWireGuardFilter(options Options, owned wireGuardOwnedLink) error {
 	objects, remaining, err := readWireGuardFilter(options, owned)
 	if err != nil || remaining != 0 || len(objects) != 0 {
 		return errors.Join(ErrWireGuardOwnership, err)
-	}
-	return nil
-}
-
-func (transaction *wireGuardTransaction) verifyFilters() error {
-	if transaction == nil {
-		return nil
-	}
-	for _, owned := range transaction.owned {
-		if owned.alias != "" {
-			if _, err := verifyWireGuardFilter(transaction.options, owned); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
 }

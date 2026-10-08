@@ -85,11 +85,14 @@ TLS tunnel 的共享传输资源；显式 `NetworkLink` 只描述获授权的中
 本机仅保存资源执行所需的私钥、已有证书和启动成员验证所需的受保护定位输入。
 定位输入不授予成员资格或业务权限，必须在建立资源后同认证节点身份核对，也不能倒写 Projection。
 
-WG 资源由 HostAdapter 在节点本机事务安装 interface、peer、精确地址与路由；Linux 私钥固定为
-`/etc/wireguard/node.key`，权限 `0600`、root 持有。Ubuntu 的 `wg` AppArmor profile 只允许读取
-`/etc/wireguard/**`，因此短期 rollback config 只能在 `/etc/wireguard/.loom-rollback-*` 中以
-`0700/0600` 创建，事务提交或回滚后删除；不得移到 `/tmp`、`/run` 或 `/etc/loom/secrets`，
-也不得放宽 AppArmor。
+WG 接收资源由同一原生数据面进程执行，固定私钥仍来自 root 持有、0600 的
+`/etc/wireguard/node.key`，启动前核对资源公钥。普通接入 peer 和业务地址仅在用户态路由器中，
+不添加宿主路由或防火墙。已有 Link 管理流量使用原精确接口地址、peer 与返回路由；新执行器
+创建并回读本 generation 的 TUN 接口及精确管理路由，不使用 auto_route、默认路由或 policy rule。
+systemd 按已认证的本节点 Link 投影 `/dev/net/tun` 设备访问；这仅满足原生管理 endpoint 的
+执行要求，Mixed 不因此获得隔离 capture 的 `CAP_SYS_ADMIN` 或初始 netns 文件描述符。
+旧内核 WG 安装器删除，只有识别旧所有权记录的 compare-and-delete 清理用于一次切换。
+已有身份、公钥与管理地址不变；未知现存对象不能被接管，清理失败保持 failed/inactive。
 
 Hy2 资源由节点的受保护本机证书、私钥与连接凭据引用执行，与 Gandi provider token 无关；
 认证 `TransportResource` 只携带

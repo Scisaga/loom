@@ -2,12 +2,10 @@ package clientruntime
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/netip"
 	"reflect"
 	"strings"
 
@@ -30,6 +28,7 @@ const (
 )
 
 type singBoxConfig struct {
+	Endpoints    []singBoxEndpoint    `json:"endpoints,omitempty"`
 	Log          singBoxLog           `json:"log,omitempty"`
 	DNS          *singBoxDNS          `json:"dns,omitempty"`
 	Inbounds     []singBoxInbound     `json:"inbounds"`
@@ -53,6 +52,7 @@ type singBoxDNS struct {
 }
 
 type singBoxDNSRule struct {
+	Outbound     []string `json:"outbound,omitempty"`
 	Inbound      []string `json:"inbound,omitempty"`
 	QueryType    []string `json:"query_type,omitempty"`
 	Domain       []string `json:"domain,omitempty"`
@@ -67,6 +67,7 @@ type singBoxFakeIP struct {
 }
 
 type singBoxDNSServer struct {
+	Strategy      string              `json:"strategy,omitempty"`
 	StaticRecords map[string][]string `json:"static_records,omitempty"`
 	Tag           string              `json:"tag"`
 	Address       string              `json:"address"`
@@ -103,30 +104,20 @@ type singBoxTLS struct {
 }
 
 type singBoxOutbound struct {
-	SystemInterface *bool           `json:"system_interface,omitempty"`
-	LocalAddress    []string        `json:"local_address,omitempty"`
-	PrivateKey      string          `json:"private_key,omitempty"`
-	Peers           []singBoxWGPeer `json:"peers,omitempty"`
-	Type            string          `json:"type"`
-	Tag             string          `json:"tag"`
-	Server          string          `json:"server,omitempty"`
-	ServerPort      int             `json:"server_port,omitempty"`
-	Password        string          `json:"password,omitempty"`
-	Version         string          `json:"version,omitempty"`
-	TLS             *singBoxTLS     `json:"tls,omitempty"`
-	Detour          string          `json:"detour,omitempty"`
-	Outbounds       []string        `json:"outbounds,omitempty"`
-	Default         string          `json:"default,omitempty"`
-	BindInterface   string          `json:"bind_interface,omitempty"`
-	OverrideAddress string          `json:"override_address,omitempty"`
-	OverridePort    int             `json:"override_port,omitempty"`
-}
-
-type singBoxWGPeer struct {
-	Server     string   `json:"server"`
-	ServerPort int      `json:"server_port"`
-	PublicKey  string   `json:"public_key"`
-	AllowedIPs []string `json:"allowed_ips"`
+	Inet6BindAddress string      `json:"inet6_bind_address,omitempty"`
+	Type             string      `json:"type"`
+	Tag              string      `json:"tag"`
+	Server           string      `json:"server,omitempty"`
+	ServerPort       int         `json:"server_port,omitempty"`
+	Password         string      `json:"password,omitempty"`
+	Version          string      `json:"version,omitempty"`
+	TLS              *singBoxTLS `json:"tls,omitempty"`
+	Detour           string      `json:"detour,omitempty"`
+	Outbounds        []string    `json:"outbounds,omitempty"`
+	Default          string      `json:"default,omitempty"`
+	BindInterface    string      `json:"bind_interface,omitempty"`
+	OverrideAddress  string      `json:"override_address,omitempty"`
+	OverridePort     int         `json:"override_port,omitempty"`
 }
 
 type singBoxRoute struct {
@@ -175,7 +166,7 @@ func ValidateWindowsSingBox(body []byte) error {
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(c.Inbounds, []singBoxInbound{{Type: "tun", Tag: "tun-in", AutoRoute: true}}) || c.DNS != nil || c.Log.Level != "" || c.Route.AutoDetectInterface {
+	if !reflect.DeepEqual(c.Inbounds, []singBoxInbound{{Type: "tun", Tag: "tun-in", AutoRoute: true}}) || c.DNS != nil && len(c.Endpoints) == 0 || c.Log.Level != "" || c.Route.AutoDetectInterface {
 		return errors.New("Windows source contains platform capture facilities")
 	}
 	return validateWindowsAuthorization(c)
@@ -210,18 +201,10 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 		c.Route.AutoDetectInterface = true
 	}
 	prefix := []singBoxRule{}
-	if len(dnsServers) > 0 || len(records) > 0 || website.Port != 0 {
-		c.DNS = &singBoxDNS{Servers: []singBoxDNSServer{}}
-		for i, address := range dnsServers {
-			ip, err := netip.ParseAddr(address)
-			if err != nil || ip.String() != address {
-				return nil, errors.New("authenticated DNS must be a canonical IP")
-			}
-			c.DNS.Servers = append(c.DNS.Servers, singBoxDNSServer{Tag: fmt.Sprintf("dns-%d", i), Address: address, Detour: "dns-underlay"})
-		}
-		c.Outbounds = append(c.Outbounds, singBoxOutbound{Type: "direct", Tag: "dns-underlay"})
+	if c.DNS != nil || len(dnsServers) > 0 || len(records) > 0 || website.Port != 0 {
 		prefix = append(prefix, windowsDNSRule(tun))
 	}
+
 	if tun {
 		prefix = append(prefix, windowsSniffRule("tun-in"))
 	}
@@ -231,7 +214,11 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 	if err != nil {
 		return nil, err
 	}
-	derivedDNS, err := clientadapter.WithOverlayDNS(string(result), records, false, website.Addresses...)
+	managed, err := clientadapter.WithManagedDNS(string(result), dnsServers, false)
+	if err != nil {
+		return nil, err
+	}
+	derivedDNS, err := clientadapter.WithOverlayDNS(managed, records, false, website.Addresses...)
 	if err != nil {
 		return nil, err
 	}
@@ -241,13 +228,18 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 		return nil, err
 	}
 	result = []byte(websiteConfig)
-	if tun && c.DNS != nil {
+	if tun {
 		derived, err := clientadapter.WithTUNDomainDNS(string(result))
 		if err != nil {
 			return nil, err
 		}
 		result = []byte(derived)
 	}
+	diagnostic, err := clientadapter.WithNativeProbe(string(result), c.Experimental.ClashAPI.Secret)
+	if err != nil {
+		return nil, err
+	}
+	result = []byte(diagnostic)
 	if err = ValidateWindowsRuntimeConfig(result, profile); err != nil {
 		return nil, err
 	}
@@ -272,6 +264,16 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 	if tun {
 		expected = append(expected, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system", RouteExcludeAddress: exclusions})
 	}
+	if len(c.Endpoints) > 0 {
+		if c.Experimental == nil || c.Experimental.ClashAPI == nil {
+			return errors.New("native runtime has no authenticated local API")
+		}
+		users := []singBoxUser{}
+		for _, endpoint := range c.Endpoints {
+			users = append(users, singBoxUser{Username: strings.TrimPrefix(endpoint.Tag, "wg-send."), Password: c.Experimental.ClashAPI.Secret})
+		}
+		expected = append(expected, singBoxInbound{Type: "socks", Tag: control.LinkProbeInbound, Listen: "127.0.0.1", ListenPort: 61801, Users: users})
+	}
 	if !reflect.DeepEqual(c.Inbounds, expected) || c.Log.Level != "warn" || c.Route.AutoDetectInterface != tun {
 		return errors.New("Windows runtime capture does not match its profile")
 	}
@@ -279,77 +281,41 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 		c.Route.Rules = c.Route.Rules[1:]
 		c.Outbounds = c.Outbounds[:len(c.Outbounds)-1]
 	}
-	prefix := []singBoxRule{}
-	// Remove only the exact deterministic DNS projection before validating the
-	// original authorization. Cache paths, names and capture cannot be supplied
-	// independently of the Service rules.
-	if c.DNS != nil && tun {
-		if c.Experimental == nil {
-			return errors.New("invalid TUN domain DNS projection")
+	if c.DNS != nil && c.DNS.FakeIP != nil {
+		if !tun || c.Experimental == nil || c.Experimental.CacheFile == nil {
+			return errors.New("domain capture has no managed TUN cache")
 		}
 		original, _ := json.Marshal(c)
-		if c.DNS.FakeIP != nil {
-			if len(c.DNS.Servers) < 2 {
-				return errors.New("invalid TUN domain DNS servers")
+		servers := []singBoxDNSServer{}
+		for _, server := range c.DNS.Servers {
+			if server.Tag != "loom-tun-domain" {
+				servers = append(servers, server)
 			}
-			c.DNS.Servers = c.DNS.Servers[:len(c.DNS.Servers)-1]
 		}
-		c.DNS.FakeIP, c.DNS.IndependentCache = nil, false
-		if len(c.DNS.Rules) > 0 && c.DNS.Rules[len(c.DNS.Rules)-1].Server == "loom-overlay-dns" {
-			c.DNS.Rules = c.DNS.Rules[len(c.DNS.Rules)-1:]
-		} else {
-			c.DNS.Rules = nil
+		c.DNS.Servers = servers
+		rules := []singBoxDNSRule{}
+		for _, rule := range c.DNS.Rules {
+			if rule.Server != "loom-tun-domain" {
+				rules = append(rules, rule)
+			}
 		}
+		c.DNS.Rules = rules
+		c.DNS.FakeIP = nil
 		c.Experimental.CacheFile = nil
 		base, _ := json.Marshal(c)
 		derived, err := clientadapter.WithTUNDomainDNS(string(base))
 		if err != nil {
 			return err
 		}
-		var want, got any
-		_ = json.Unmarshal([]byte(derived), &want)
-		_ = json.Unmarshal(original, &got)
-		if !reflect.DeepEqual(want, got) {
+		var got, want any
+		json.Unmarshal(original, &got)
+		json.Unmarshal([]byte(derived), &want)
+		if !reflect.DeepEqual(got, want) {
 			return errors.New("TUN domain DNS differs from Service projection")
 		}
 	}
+	prefix := []singBoxRule{}
 	if c.DNS != nil {
-		overlay := false
-		if len(c.DNS.Servers) > 0 && c.DNS.Servers[len(c.DNS.Servers)-1].Tag == "loom-overlay-dns" {
-			server := c.DNS.Servers[len(c.DNS.Servers)-1]
-			if server.Detour != "" || server.Address != "loom-static" && server.Address != "rcode://name_error" || (server.Address == "loom-static") != (len(server.StaticRecords) > 0) {
-				return errors.New("invalid overlay DNS server")
-			}
-			for name, addresses := range server.StaticRecords {
-				if name == "control.loom" && website.Port != 0 {
-					continue
-				}
-				if (control.DNSRecord{ID: "demo-runtime-record", Name: name, Addresses: addresses}).Validate() != nil {
-					return errors.New("invalid overlay DNS record")
-				}
-			}
-			expectedRule := singBoxDNSRule{DomainSuffix: []string{"loom"}, Server: "loom-overlay-dns"}
-			if !reflect.DeepEqual(c.DNS.Rules, []singBoxDNSRule{expectedRule}) || c.DNS.Final != "" {
-				return errors.New("invalid overlay DNS rule")
-			}
-			overlay = len(server.StaticRecords) > 0
-			c.DNS.Rules = nil
-			c.DNS.Servers = c.DNS.Servers[:len(c.DNS.Servers)-1]
-		}
-		if len(c.DNS.Servers) == 0 && !overlay || c.DNS.ReverseMapping || c.DNS.Strategy != "" || c.DNS.FakeIP != nil || c.DNS.IndependentCache || len(c.DNS.Rules) != 0 {
-			return errors.New("invalid managed DNS")
-		}
-		for i, server := range c.DNS.Servers {
-			ip, err := netip.ParseAddr(server.Address)
-			if err != nil || ip.String() != server.Address || server.Tag != fmt.Sprintf("dns-%d", i) || server.Detour != "dns-underlay" || server.StaticRecords != nil {
-				return errors.New("invalid managed DNS server")
-			}
-		}
-		last := len(c.Outbounds) - 1
-		if last < 0 || !reflect.DeepEqual(c.Outbounds[last], singBoxOutbound{Type: "direct", Tag: "dns-underlay"}) {
-			return errors.New("missing managed DNS underlay")
-		}
-		c.Outbounds = c.Outbounds[:last]
 		prefix = append(prefix, windowsDNSRule(tun))
 	}
 	if tun {
@@ -362,6 +328,7 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 	c.Route.Rules = c.Route.Rules[len(prefix):]
 	return validateWindowsAuthorization(c)
 }
+
 func decodeWindowsConfig(body []byte) (singBoxConfig, error) {
 	var c singBoxConfig
 	if len(body) == 0 || len(body) > maxSingBoxBytes {
@@ -418,6 +385,11 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 				return errors.New("invalid block")
 			}
 		case "direct":
+			shape.Detour, shape.Inet6BindAddress = o.Detour, o.Inet6BindAddress
+			if (o.Detour == "") != (o.Inet6BindAddress == "") {
+				return errors.New("WG direct wrapper requires its exact source binding")
+			}
+
 			if o.Tag == "dns-underlay" || o.Tag == "website-underlay" {
 				return errors.New("DNS underlay cannot enter authorization")
 			}
@@ -432,32 +404,12 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 				o.TLS == nil || !o.TLS.Enabled || o.TLS.ServerName == "" || len(o.TLS.Certificate) == 0 {
 				return errors.New("incomplete authenticated Hy2 transport")
 			}
-			shape.Server, shape.ServerPort, shape.Password, shape.Detour = o.Server, o.ServerPort, o.Password, o.Detour
+			if o.Detour != "" {
+				return errors.New("Hy2 must terminate at its first receiving node")
+			}
+			shape.Server, shape.ServerPort, shape.Password = o.Server, o.ServerPort, o.Password
 			shape.TLS = &singBoxTLS{Enabled: true, ServerName: o.TLS.ServerName, Certificate: o.TLS.Certificate}
-		case "wireguard":
-			if o.SystemInterface == nil || *o.SystemInterface || len(o.LocalAddress) != 1 || len(o.Peers) != 1 {
-				return errors.New("WireGuard access must use one explicit user-space peer")
-			}
-			key, err := base64.StdEncoding.DecodeString(o.PrivateKey)
-			if err != nil || len(key) != 32 || base64.StdEncoding.EncodeToString(key) != o.PrivateKey || key[0]&7 != 0 || key[31]&192 != 64 {
-				return errors.New("WireGuard access private key is invalid")
-			}
-			clear(key)
-			peer := o.Peers[0]
-			public, err := base64.StdEncoding.DecodeString(peer.PublicKey)
-			if err != nil || len(public) != 32 || base64.StdEncoding.EncodeToString(public) != peer.PublicKey || peer.Server == "" || peer.ServerPort < 1 || peer.ServerPort > 65535 || len(peer.AllowedIPs) != 1 {
-				return errors.New("WireGuard access peer is invalid")
-			}
-			for _, text := range []string{o.LocalAddress[0], peer.AllowedIPs[0]} {
-				address, err := netip.ParsePrefix(text)
-				if err != nil || address.String() != text || !address.Addr().Is6() || !address.Addr().IsPrivate() || address.Bits() != 128 {
-					return errors.New("WireGuard access requires exact private IPv6 addresses")
-				}
-			}
-			if o.LocalAddress[0] == peer.AllowedIPs[0] {
-				return errors.New("WireGuard access peer address conflicts")
-			}
-			shape.SystemInterface, shape.LocalAddress, shape.PrivateKey, shape.Peers = o.SystemInterface, o.LocalAddress, o.PrivateKey, o.Peers
+
 		default:
 			return errors.New("unsupported authorization transport")
 		}
@@ -468,22 +420,29 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 	if tags["reject"] != "block" {
 		return errors.New("missing reject outbound")
 	}
+	if err := validateWindowsNativeEndpoints(c, tags); err != nil {
+		return err
+	}
 	for _, o := range c.Outbounds {
 		if o.Detour != "" {
-			seen := map[string]bool{o.Tag: true}
-			for next := o.Detour; next != ""; {
-				if seen[next] || tags[next] != "hysteria2" && tags[next] != "wireguard" {
-					return errors.New("invalid Hy2 relay detour")
-				}
-				seen[next] = true
-				for _, peer := range c.Outbounds {
-					if peer.Tag == next {
-						next = peer.Detour
-						break
+			if o.Type != "direct" || tags[o.Detour] != "wireguard" {
+				return errors.New("invalid native WG source wrapper")
+			}
+			found := false
+			for _, endpoint := range c.Endpoints {
+				if endpoint.Tag == o.Detour {
+					for _, address := range endpoint.Address {
+						if address == o.Inet6BindAddress+"/128" {
+							found = true
+						}
 					}
 				}
 			}
+			if !found {
+				return errors.New("WG source binding is outside its sender")
+			}
 		}
+
 		if o.Type == "selector" {
 			seen := map[string]bool{}
 			for _, member := range o.Outbounds {
@@ -497,7 +456,16 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 			}
 		}
 	}
+	if err := validateWindowsDNS(c, tags); err != nil {
+		return err
+	}
 	for _, r := range c.Route.Rules {
+		if len(r.Inbound) == 1 && r.Inbound[0] == control.LinkProbeInbound {
+			if err := validateNativeProbeRule(r, tags); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := validateServiceRule(r, tags, true); err != nil {
 			return err
 		}
@@ -548,6 +516,11 @@ func HasServerInbound(body []byte) (bool, error) {
 		return false, err
 	}
 	var config struct {
+		Endpoints []struct {
+			Type       string `json:"type"`
+			System     bool   `json:"system"`
+			ListenPort int    `json:"listen_port"`
+		} `json:"endpoints"`
 		Inbounds []struct {
 			Type string `json:"type"`
 		} `json:"inbounds"`
@@ -560,9 +533,14 @@ func HasServerInbound(body []byte) (bool, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return false, errors.New("sing-box config has trailing content")
 	}
+	for _, endpoint := range config.Endpoints {
+		if endpoint.System || endpoint.ListenPort != 0 {
+			return true, nil
+		}
+	}
 	for _, inbound := range config.Inbounds {
 		switch inbound.Type {
-		case "tun", "mixed":
+		case "tun", "mixed", "socks":
 		case "hysteria2", "trojan":
 			return true, nil
 		default:

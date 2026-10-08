@@ -69,6 +69,21 @@ class EnrollmentManager private constructor(context: Context) {
         advanceUntilReady(profileId, store, state)
     }
 
+    fun importFile(profileId: String, body: ByteArray) {
+        if (runCatching { JSONObject(body.decodeToString()).has("view") }.getOrDefault(false)) {
+            launch(profileId, "配置替换失败") { store ->
+                val profile = LoomVpnService.acceptConfiguration(profileId) {
+                    check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
+                    store.replaceTransport(body)
+                }
+                ready(profileId, profile, "认证配置已更新，原设备身份已保留")
+            }
+        } else {
+            require(body.size <= 16 * 1024) { "加入文件必须小于 16 KiB" }
+            importInvite(profileId, body.decodeToString())
+        }
+    }
+
     fun reportImportError(profileId: String, error: Throwable) =
         fail(profileId, store(profileId), "读取加入文件失败", error)
 

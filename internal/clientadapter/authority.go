@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"loom/internal/clientmodel"
@@ -18,7 +19,7 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 	if err := view.Validate(); err != nil {
 		return nil, clientmodel.RuntimeProfile{}, err
 	}
-	if view.RuntimeProfile == nil {
+	if view.RuntimeProfile == nil || !slices.Contains(view.Responsibilities, "access") {
 		return nil, clientmodel.RuntimeProfile{}, errors.New("view has no access runtime")
 	}
 	routes := make([]clientmodel.RouteCandidate, 0, len(view.Routes))
@@ -64,8 +65,17 @@ func AccessRuntimeSource(view control.DeviceView, secret string) (string, error)
 	if _, _, err := AccessProjection(view); err != nil {
 		return "", err
 	}
-	if secret == "" {
-		return "", errors.New("local runtime API secret is required")
+	return RuntimeSource(view, secret, true)
+}
+
+// RuntimeSource adds only local listeners and diagnostics to the one certified
+// profile. A profile's presence is never interpreted as the access role.
+func RuntimeSource(view control.DeviceView, secret string, access bool) (string, error) {
+	if err := view.Validate(); err != nil {
+		return "", err
+	}
+	if view.RuntimeProfile == nil || secret == "" || access && !slices.Contains(view.Responsibilities, "access") {
+		return "", errors.New("runtime profile, role or local API secret is missing")
 	}
 	if err := ValidateOverlayUnderlay(view); err != nil {
 		return "", err
@@ -83,16 +93,21 @@ func AccessRuntimeSource(view control.DeviceView, secret string) (string, error)
 	if err := json.Unmarshal([]byte(view.RuntimeProfile.Config), &document); err != nil {
 		return "", err
 	}
-	if len(document) != 2 || document["outbounds"] == nil || document["route"] == nil {
+	if document["outbounds"] == nil || document["route"] == nil {
 		return "", errors.New("unsupported authorization runtime facilities")
 	}
-	document["inbounds"] = json.RawMessage(`[{"type":"tun","tag":"tun-in","auto_route":true}]`)
+	for field := range document {
+		if field != "outbounds" && field != "route" && field != "endpoints" && field != "dns" {
+			return "", errors.New("unsupported authorization runtime facilities")
+		}
+	}
+	document["inbounds"] = json.RawMessage(`[]`)
+	if access {
+		document["inbounds"] = json.RawMessage(`[{"type":"tun","tag":"tun-in","auto_route":true}]`)
+	}
 	document["experimental"], _ = json.Marshal(map[string]any{"clash_api": map[string]any{"external_controller": "127.0.0.1:61800", "secret": secret}})
 	body, err := json.Marshal(document)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
+	return string(body), err
 }
 
 // A transport must be reachable before the overlay exists. This is an
@@ -117,17 +132,54 @@ func WithManagedDNS(config string, addresses []string, access bool) (string, err
 		return "", err
 	}
 	{
-		var outbounds []json.RawMessage
+		var outbounds []map[string]any
 		if err := json.Unmarshal(document["outbounds"], &outbounds); err != nil {
 			return "", err
 		}
-		outbounds = append(outbounds, json.RawMessage(`{"type":"direct","tag":"loom-underlay-dns"}`))
-		document["outbounds"], _ = json.Marshal(outbounds)
-		servers := make([]map[string]any, 0, len(addresses))
-		for i, address := range addresses {
-			servers = append(servers, map[string]any{"tag": fmt.Sprintf("loom-resolver-%d", i), "address": "udp://" + net.JoinHostPort(address, "53"), "detour": "loom-underlay-dns"})
+		found := false
+		for _, outbound := range outbounds {
+			if outbound["tag"] == "loom-underlay-dns" {
+				if found || outbound["type"] != "direct" || len(outbound) != 2 {
+					return "", errors.New("conflicting managed DNS outbound")
+				}
+				found = true
+			}
 		}
-		document["dns"], _ = json.Marshal(map[string]any{"servers": servers, "final": "loom-resolver-0", "strategy": "prefer_ipv4", "independent_cache": true})
+		if !found {
+			outbounds = append(outbounds, map[string]any{"type": "direct", "tag": "loom-underlay-dns"})
+		}
+		document["outbounds"], _ = json.Marshal(outbounds)
+		dns := map[string]any{}
+		if raw := document["dns"]; raw != nil {
+			if err := json.Unmarshal(raw, &dns); err != nil {
+				return "", err
+			}
+		}
+		servers, _ := dns["servers"].([]any)
+		for i, address := range addresses {
+			tag := fmt.Sprintf("loom-resolver-%d", i)
+			server := map[string]any{"tag": tag, "address": "udp://" + net.JoinHostPort(address, "53"), "detour": "loom-underlay-dns"}
+			seen := false
+			for _, raw := range servers {
+				value, ok := raw.(map[string]any)
+				if !ok {
+					return "", errors.New("invalid DNS server")
+				}
+				if value["tag"] == tag {
+					a, _ := json.Marshal(value)
+					b, _ := json.Marshal(server)
+					if seen || string(a) != string(b) {
+						return "", errors.New("managed DNS conflicts with certified resolver")
+					}
+					seen = true
+				}
+			}
+			if !seen {
+				servers = append(servers, server)
+			}
+		}
+		dns["servers"], dns["final"], dns["strategy"], dns["independent_cache"] = servers, "loom-resolver-0", "prefer_ipv4", true
+		document["dns"], _ = json.Marshal(dns)
 		var route map[string]json.RawMessage
 		if err := json.Unmarshal(document["route"], &route); err != nil {
 			return "", err

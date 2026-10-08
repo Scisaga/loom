@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"loom/internal/control"
+	"strings"
 )
 
 // WithOverlayDNS adds a process-local static transport. No host resolver,
@@ -39,8 +40,11 @@ func WithOverlayDNS(config string, records []control.DNSRecord, access bool, web
 	if created {
 		dns = map[string]json.RawMessage{"final": json.RawMessage(`"loom-overlay-dns"`)}
 	}
+	var existing []json.RawMessage
 	if dns["rules"] != nil {
-		return "", errors.New("overlay DNS must precede capture DNS projection")
+		if err := json.Unmarshal(dns["rules"], &existing); err != nil {
+			return "", err
+		}
 	}
 	var servers []json.RawMessage
 	if dns["servers"] != nil {
@@ -54,9 +58,35 @@ func WithOverlayDNS(config string, records []control.DNSRecord, access bool, web
 		server["static_records"] = values
 	}
 	encoded, _ := json.Marshal(server)
+	for _, raw := range servers {
+		var prior struct {
+			Tag string `json:"tag"`
+		}
+		if json.Unmarshal(raw, &prior) != nil || prior.Tag == "loom-overlay-dns" {
+			return "", errors.New("overlay DNS already exists")
+		}
+	}
 	servers = append(servers, encoded)
 	dns["servers"], _ = json.Marshal(servers)
-	dns["rules"] = json.RawMessage(`[{"domain_suffix":["loom"],"server":"loom-overlay-dns"}]`)
+	// Remote WG resolution stays first. Local outbound lookups of .loom use
+	// the certified static records; inbound WG DNS keeps its synthetic names.
+	rules := []json.RawMessage{}
+	for _, raw := range existing {
+		var rule struct {
+			Server   string   `json:"server"`
+			Outbound []string `json:"outbound"`
+		}
+		if err := json.Unmarshal(raw, &rule); err != nil {
+			return "", err
+		}
+		if len(rule.Outbound) > 0 && !strings.HasPrefix(rule.Server, "wg-dns.") {
+			overlay, _ := json.Marshal(map[string]any{"outbound": rule.Outbound, "domain_suffix": []string{"loom"}, "server": "loom-overlay-dns"})
+			rules = append(rules, overlay)
+		}
+		rules = append(rules, raw)
+	}
+	rules = append(rules, json.RawMessage(`{"domain_suffix":["loom"],"server":"loom-overlay-dns"}`))
+	dns["rules"], _ = json.Marshal(rules)
 	document["dns"], _ = json.Marshal(dns)
 	if created && access {
 		var route map[string]json.RawMessage

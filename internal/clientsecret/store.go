@@ -182,6 +182,10 @@ func ReadProtected(path, purpose string, protector Protector) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeProtected(body, purpose, protector)
+}
+
+func decodeProtected(body []byte, purpose string, protector Protector) ([]byte, error) {
 	var envelope sealedEnvelope
 	if err := decodeStrict(body, maxCiphertext*2, &envelope); err != nil {
 		return nil, fmt.Errorf("decode protected envelope: %w", err)

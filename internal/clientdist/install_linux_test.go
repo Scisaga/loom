@@ -139,7 +139,7 @@ func TestReplacedProgramsPreserveSignedEvidence(t *testing.T) {
 
 func TestServiceProjectionQuotesLiteralInputs(t *testing.T) {
 	state := `/var/lib/demo space %i $DEVICE/state.json`
-	body, err := ServiceUnit("/opt/demo-release", state, `/etc/demo %i $INPUT.json`, "mixed")
+	body, err := ServiceUnit("/opt/demo-release", state, `/etc/demo %i $INPUT.json`, "mixed", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,5 +147,12 @@ func TestServiceProjectionQuotesLiteralInputs(t *testing.T) {
 		if !bytes.Contains(body, []byte(required)) {
 			t.Fatalf("missing literal argument: %s", required)
 		}
+	}
+	if bytes.Contains(body, []byte("DeviceAllow=/dev/net/tun")) {
+		t.Fatal("ordinary Mixed access acquired a host device")
+	}
+	management, err := ServiceUnit("/opt/demo-release", state, "", "mixed", true)
+	if err != nil || !bytes.Contains(management, []byte("DeviceAllow=/dev/net/tun rw\n")) || bytes.Contains(management, []byte("CAP_SYS_ADMIN")) || bytes.Contains(management, []byte("OpenFile=/proc/1/ns/net")) {
+		t.Fatal("management endpoint device changed application capture privileges", err)
 	}
 }

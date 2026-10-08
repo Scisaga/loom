@@ -46,32 +46,6 @@ func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardId
 		}
 		result.WireGuard = append(result.WireGuard, value)
 	}
-	for _, peer := range view.WireGuardPeers {
-		resource := resources[peer.ResourceID]
-		target, err := control.WireGuardAccessTarget(resource, resources)
-		local, addressErr := control.WGResourceAddress(resource)
-		if err != nil || addressErr != nil || resource.OwnerNodeID != view.DeviceID || len(resource.ListenerID) > 15 || strings.ContainsAny(resource.ListenerID, "/: ") {
-			return result, nil, errors.New("WireGuard access receiver has no exact owned resource")
-		}
-		access, err := control.WireGuardAccessAddress(resource, "")
-		if err != nil {
-			return result, nil, err
-		}
-		remote, err := control.WireGuardAccessAddress(resource, peer.PublicKey)
-		if err != nil {
-			return result, nil, err
-		}
-		localKey, _ := base64.RawURLEncoding.DecodeString(*resource.Authentication.PublicKey)
-		publicKey := base64.StdEncoding.EncodeToString(localKey)
-		if identity.WGPublicKey != "" && identity.WGPublicKey != publicKey {
-			return result, nil, errors.New("WireGuard resources do not share this node's fixed key reference")
-		}
-		identity.WGPublicKey = publicKey
-		peerKey, _ := base64.RawURLEncoding.DecodeString(peer.PublicKey)
-		result.WireGuard = append(result.WireGuard, wireGuardExecutionLink{LinkID: resource.ID, Interface: resource.ListenerID,
-			LocalAddress: netip.PrefixFrom(local, local.BitLen()).String(), PeerID: peer.DeviceID, PeerPublicKey: base64.StdEncoding.EncodeToString(peerKey),
-			AllowedIP: remote.String() + "/128", Mode: "acceptor", ListenPort: resource.DialPort, AccessAddress: access.String() + "/128", AccessPort: target.DialPort})
-	}
 	groups, err := groupWireGuardLinks(result.WireGuard)
 	if err != nil {
 		return wireGuardExecution{}, nil, err

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"loom/internal/control"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,9 +27,7 @@ func TestWireGuardRecordedGenerationSurvivesCrashButCannotClaimReplacement(t *te
 	for _, replaced := range []bool{false, true} {
 		options, profile, identity, load, save := wireGuardFixture(t)
 		options.Config = filepath.Join(t.TempDir(), "config.json")
-		if _, err := applyWireGuard(profile, nil, identity, options); err != nil {
-			t.Fatal(err)
-		}
+		seedHistoricalWireGuard(t, options, profile, identity, load, save)
 		if replaced {
 			host := load()
 			host.Link.Index++
@@ -210,23 +209,20 @@ func wireGuardFixture(t *testing.T) (Options, *wireGuardExecution, *wireGuardIde
 }
 
 func TestWireGuardEmptyRuntimeDoesNotExecuteHostCommands(t *testing.T) {
-	transaction, err := applyWireGuard(nil, nil, nil, Options{})
-	if err != nil || transaction.Cleanup() != nil || readbackWireGuard(wireGuardExecution{}, Options{}) != nil {
-		t.Fatalf("empty runtime performed host work: %v", err)
+	transaction, err := prepareNativeWireGuard(control.DeviceView{}, wireGuardExecution{}, Options{})
+	if err != nil || transaction.Cleanup() != nil || transaction.readbackNative() != nil {
+		t.Fatal("empty runtime performed host work", err)
 	}
 }
 
 func TestWireGuardPreviousAuthorizationDoesNotOwnExistingInterface(t *testing.T) {
-	options, profile, server, load, save := wireGuardFixture(t)
+	options, profile, _, load, save := wireGuardFixture(t)
 	host := load()
 	host.Link = &ipLinkDocument{Index: 17, Name: "wg-demo", Alias: "another-runtime"}
 	host.Link.Info.Kind = "wireguard"
 	save(host)
-	for _, desired := range []*wireGuardExecution{profile, nil} {
-		_, err := applyWireGuard(desired, profile, server, options)
-		if !errors.Is(err, ErrWireGuardOwnership) {
-			t.Fatalf("existing interface ownership was accepted: %v", err)
-		}
+	if _, err := prepareNativeWireGuard(control.DeviceView{}, *profile, options); !errors.Is(err, ErrWireGuardOwnership) {
+		t.Fatal("unknown existing interface was accepted", err)
 	}
 	for _, call := range load().Calls {
 		if strings.Join(call, " ") != "ip -json -details link show" {
@@ -239,11 +235,8 @@ func TestWireGuardCommitRetainsIdempotentCleanup(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("private-key boundary requires a root-owned fixture")
 	}
-	options, profile, server, load, _ := wireGuardFixture(t)
-	transaction, err := applyWireGuard(profile, nil, server, options)
-	if err != nil {
-		t.Fatal(err)
-	}
+	options, profile, server, load, save := wireGuardFixture(t)
+	transaction := seedHistoricalWireGuard(t, options, profile, server, load, save)
 	transaction.Commit()
 	if err := transaction.Cleanup(); err != nil {
 		t.Fatal(err)
@@ -266,10 +259,8 @@ func TestWireGuardCleanupRefusesDriftAndReportsDeleteFailure(t *testing.T) {
 	for _, drift := range []string{"alias", "index", "rename", "peer", "address", "route", "delete", "delete-noop"} {
 		t.Run(drift, func(t *testing.T) {
 			options, profile, server, load, save := wireGuardFixture(t)
-			transaction, err := applyWireGuard(profile, nil, server, options)
-			if err != nil {
-				t.Fatal(err)
-			}
+			transaction := seedHistoricalWireGuard(t, options, profile, server, load, save)
+			var err error
 			host := load()
 			switch drift {
 			case "alias":
@@ -307,39 +298,24 @@ func TestWireGuardCleanupRefusesDriftAndReportsDeleteFailure(t *testing.T) {
 	}
 }
 
-func TestWireGuardApplyFailureRemovesOnlyNewGeneration(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("private-key boundary requires a root-owned fixture")
-	}
-	for _, failure := range []string{"add", "address"} {
-		t.Run(failure, func(t *testing.T) {
-			options, profile, server, load, save := wireGuardFixture(t)
-			host := load()
-			host.Fail = failure
-			save(host)
-			_, err := applyWireGuard(profile, nil, server, options)
-			if err == nil || errors.Is(err, ErrWireGuardCleanup) || load().Link != nil {
-				t.Fatalf("failed apply did not remove the newly created peer: %v", err)
-			}
-			for _, call := range load().Calls {
-				if strings.Contains(strings.Join(call, " "), "syncconf") {
-					t.Fatal("failed apply restored a revoked configuration")
-				}
-			}
-		})
-	}
-}
-
-func TestWireGuardApplyPreservesCleanupFailure(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("private-key boundary requires a root-owned fixture")
-	}
-	options, profile, server, load, save := wireGuardFixture(t)
+// Historical cleanup is tested by seeding public old execution evidence, not
+// by retaining an executable old installer in the product or the fixture.
+func seedHistoricalWireGuard(t *testing.T, options Options, profile *wireGuardExecution, identity *wireGuardIdentity, load func() fakeWireGuardHost, save func(fakeWireGuardHost)) *wireGuardTransaction {
+	t.Helper()
+	token := strings.Repeat("01", 16)
+	alias := "loom-runtime:" + token
+	link := profile.WireGuard[0]
 	host := load()
-	host.Fail = "address-delete"
+	host.Link = &ipLinkDocument{Index: 42, Name: link.Interface, Alias: alias}
+	host.Link.Info.Kind = "wireguard"
+	host.Addresses = []string{link.LocalAddress}
+	host.Routes = []ipRouteDocument{{Destination: link.AllowedIP, Device: link.Interface, Protocol: "static", Scope: "link"}}
+	host.Peer = true
+	host.AllowedIP = link.AllowedIP
 	save(host)
-	_, err := applyWireGuard(profile, nil, server, options)
-	if !errors.Is(err, ErrWireGuardCleanup) || load().Link == nil {
-		t.Fatalf("apply lost the cleanup failure needed to prevent restart: %v", err)
+	tx := &wireGuardTransaction{options: options, owned: []wireGuardOwnedLink{{link: link, alias: alias, creationName: "lm" + token[:13], index: 42, publicKey: identity.WGPublicKey, configured: true}}}
+	if err := tx.saveOwnership(); err != nil {
+		t.Fatal(err)
 	}
+	return tx
 }

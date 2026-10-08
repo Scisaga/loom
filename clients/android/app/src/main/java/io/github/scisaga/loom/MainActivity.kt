@@ -145,10 +145,10 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val body = contentResolver.openInputStream(uri)?.use { stream ->
-                    readBounded(stream, MAX_INVITE_BYTES)
+                    readBounded(stream, 8 * 1024 * 1024)
                 } ?: error("无法读取加入文件")
-                require(body.isNotEmpty() && body.size <= MAX_INVITE_BYTES) { "加入文件必须小于 16 KiB" }
-                enrollment.importInvite(profileId, body.decodeToString())
+                require(body.isNotEmpty() && body.size <= 8 * 1024 * 1024) { "配置文件大小无效" }
+                enrollment.importFile(profileId, body)
             }.onFailure { enrollment.reportImportError(profileId, it) }
         }
     }
@@ -1019,6 +1019,11 @@ internal fun EnrollmentCard(
                 EnrollmentPhase.READY -> OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) { Text("检查签名配置更新") }
                 else -> Unit
             }
+            if (status.phase == EnrollmentPhase.READY || (status.phase == EnrollmentPhase.ERROR && !status.canAbandonPending)) {
+                OutlinedButton(onClick = onImportFile, modifier = Modifier.fillMaxWidth().testTag("import-certified-config")) {
+                    Text("导入签名配置")
+                }
+            }
         }
     }
 }
@@ -1033,11 +1038,11 @@ internal fun readBounded(input: InputStream, maximum: Int): ByteArray {
         if (read == 0) {
             val one = input.read()
             if (one < 0) break
-            require(output.size() < maximum) { "加入文件必须小于 16 KiB" }
+            require(output.size() < maximum) { "文件超过允许大小" }
             output.write(one)
             continue
         }
-        require(output.size() + read <= maximum) { "加入文件必须小于 16 KiB" }
+        require(output.size() + read <= maximum) { "文件超过允许大小" }
         output.write(buffer, 0, read)
     }
     return output.toByteArray()

@@ -248,8 +248,7 @@ func (store *Store) validateState(state State) error {
 	}
 	return nil
 }
-func (store *Store) readUnlocked() (State, error) {
-	var state State
+func (store *Store) readBytesUnlocked() ([]byte, error) {
 	var body []byte
 	var err error
 	if store.protector != nil {
@@ -257,19 +256,19 @@ func (store *Store) readUnlocked() (State, error) {
 	} else {
 		before, statErr := os.Lstat(store.path)
 		if statErr != nil {
-			return state, statErr
+			return nil, statErr
 		}
 		if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || runtime.GOOS != "windows" && before.Mode().Perm()&0077 != 0 || before.Size() > maxStateBytes {
-			return state, errors.New("device state must be an owner-only bounded regular file")
+			return nil, errors.New("device state must be an owner-only bounded regular file")
 		}
 		file, openErr := os.Open(store.path)
 		if openErr != nil {
-			return state, openErr
+			return nil, openErr
 		}
 		defer file.Close()
 		after, statErr := file.Stat()
 		if statErr != nil || !os.SameFile(before, after) || after.Size() != before.Size() {
-			return state, errors.New("device state changed during open")
+			return nil, errors.New("device state changed during open")
 		}
 		body, err = io.ReadAll(io.LimitReader(file, maxStateBytes+1))
 		if err == nil && int64(len(body)) != after.Size() {
@@ -277,9 +276,17 @@ func (store *Store) readUnlocked() (State, error) {
 		}
 	}
 	if err != nil {
-		return state, err
+		return nil, err
+	}
+	return body, nil
+}
+func (store *Store) readUnlocked() (State, error) {
+	body, err := store.readBytesUnlocked()
+	if err != nil {
+		return State{}, err
 	}
 	defer clear(body)
+	var state State
 	if err := control.DecodeCanonical(body, &state, stateLimits); err != nil {
 		return State{}, err
 	}
@@ -388,6 +395,11 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 	if err := store.validateState(next); err != nil {
 		return err
 	}
+	return store.writeUnlocked(next, current)
+}
+
+// Caller holds the state file lock and has checked the forward transition.
+func (store *Store) writeUnlocked(next, current State) error {
 	review := ReviewMemberTransition(next, current)
 	body, err := control.CanonicalEncode(next)
 	if err != nil {

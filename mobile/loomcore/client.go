@@ -162,15 +162,19 @@ func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.We
 	}
 	// A local management secret is not a Service credential and never travels
 	// in DeviceView. It has a separate purpose and is bound to this device key.
-	key, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
-	sum := sha256.Sum256(append([]byte("loom-android-local-selector-v3\x00"), key...))
-	clear(key)
-	config, err := androidRuntimeConfig(view, base64.RawURLEncoding.EncodeToString(sum[:]), websites...)
+	config, err := androidRuntimeConfig(view, androidLocalRuntimeSecret(state), websites...)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(androidProfile{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...)})
 }
+func androidLocalRuntimeSecret(state deviceclient.State) string {
+	key, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
+	sum := sha256.Sum256(append([]byte("loom-android-local-selector-v3\x00"), key...))
+	clear(key)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 func androidRuntimeConfig(view control.DeviceView, secret string, websites ...clientadapter.WebsiteAccess) (string, error) {
 	raw, err := clientadapter.ManagedRuntimeConfig(view, secret, websites...)
 	if err != nil {
@@ -221,7 +225,11 @@ func androidRuntimeConfig(view control.DeviceView, secret string, websites ...cl
 	if err != nil {
 		return "", err
 	}
-	return clientadapter.WithTUNDomainDNS(string(body))
+	captured, err := clientadapter.WithTUNDomainDNS(string(body))
+	if err != nil {
+		return "", err
+	}
+	return clientadapter.WithNativeProbe(captured, secret)
 }
 
 // The temporary adapter has no storage and performs no execution. Kotlin owns

@@ -35,7 +35,7 @@ func TestAndroidWGAccessPreservesSharedPrivateRuntime(t *testing.T) {
 		p.NetworkIntent.Policies[0].AllowDirect = false
 		p.NetworkIntent.Resources = []control.TransportResource{
 			{ID: "demo-hy2", Kind: "hysteria2", OwnerNodeID: owner.ID, ListenerID: "demo-hy2", DialHost: "192.0.2.10", DialPort: 443, Authentication: control.ResourceAuthentication{ServerName: &name, CACertificates: &trust}},
-			{ID: "demo-wg", Kind: "wireguard", OwnerNodeID: owner.ID, ListenerID: "demo-wg", DialHost: "192.0.2.10", DialPort: 51820, Authentication: control.ResourceAuthentication{PublicKey: &public, LocalAddresses: &addresses}, AccessHY2ResourceID: "demo-hy2"},
+			{ID: "demo-wg", Kind: "wireguard", OwnerNodeID: owner.ID, ListenerID: "demo-wg", DialHost: "192.0.2.10", DialPort: 51820, Authentication: control.ResourceAuthentication{PublicKey: &public, LocalAddresses: &addresses}, AccessEnabled: true},
 		}
 	})
 	profileBody, err := AndroidDeviceProfile(body)
@@ -60,10 +60,10 @@ func TestAndroidWGAccessPreservesSharedPrivateRuntime(t *testing.T) {
 	}
 	var outbounds []struct {
 		Type            string `json:"type"`
-		SystemInterface bool   `json:"system_interface"`
+		SystemInterface bool   `json:"system"`
 		PrivateKey      string `json:"private_key"`
 	}
-	_ = json.Unmarshal(actual["outbounds"], &outbounds)
+	_ = json.Unmarshal(actual["endpoints"], &outbounds)
 	count := 0
 	for _, outbound := range outbounds {
 		if outbound.Type == "wireguard" {

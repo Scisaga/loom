@@ -41,6 +41,7 @@ type TransportResource struct {
 	DialPort            int                    `json:"dial_port"`
 	Authentication      ResourceAuthentication `json:"authentication"`
 	LinkOnly            bool                   `json:"link_only,omitempty"`
+	AccessEnabled       bool                   `json:"access_enabled,omitempty"`
 	AccessHY2ResourceID string                 `json:"access_hy2_resource_id,omitempty"`
 }
 
@@ -85,6 +86,9 @@ func (resource TransportResource) Validate() error {
 	if resource.LinkOnly && resource.Kind != "hysteria2" {
 		return errors.New("link_only is only defined for Hy2 listeners")
 	}
+	if resource.AccessEnabled && (resource.Kind != "wireguard" || resource.AccessHY2ResourceID != "") {
+		return errors.New("native access is only defined for an independent WireGuard resource")
+	}
 	if resource.AccessHY2ResourceID != "" && (resource.Kind != "wireguard" || ValidateID(resource.AccessHY2ResourceID) != nil || resource.AccessHY2ResourceID == resource.ID) {
 		return errors.New("ordinary WireGuard access requires a distinct Hy2 resource")
 	}
@@ -102,7 +106,7 @@ func (resource TransportResource) Validate() error {
 			}
 			previous = prefix
 		}
-		if resource.AccessHY2ResourceID != "" && (len(*auth.LocalAddresses) != 1 || previous.Bits() != previous.Addr().BitLen() || !previous.Addr().IsGlobalUnicast() || validateWireGuardPublicKey(*auth.PublicKey) != nil) {
+		if (resource.AccessEnabled || resource.AccessHY2ResourceID != "") && (len(*auth.LocalAddresses) != 1 || previous.Bits() != previous.Addr().BitLen() || !previous.Addr().IsGlobalUnicast() || validateWireGuardPublicKey(*auth.PublicKey) != nil) {
 			return errors.New("WireGuard access requires a usable public key and exact interface address")
 		}
 	case "tls_tunnel":
@@ -141,8 +145,17 @@ func (link NetworkLink) Validate() error {
 		return errors.New("Link endpoints, initiator or purpose are invalid")
 	}
 	address, err := netip.ParseAddr(link.ProbeTarget.Host)
-	if err != nil || address.Zone() != "" || address.String() != link.ProbeTarget.Host || ValidateID(link.ProbeTarget.ResourceID) != nil || link.ProbeTarget.Port < 1 || link.ProbeTarget.Port > 65535 || link.ProbeTarget.Action != "hysteria2_tls" {
-		return errors.New("Link requires an exact authenticated Hy2 TLS probe through its WireGuard peer")
+	if err != nil || address.Zone() != "" || address.String() != link.ProbeTarget.Host || ValidateID(link.ProbeTarget.ResourceID) != nil || link.ProbeTarget.Port < 1 || link.ProbeTarget.Port > 65535 {
+		return errors.New("Link probe target is invalid")
+	}
+	switch link.ProbeTarget.Action {
+	case "wireguard_dns":
+		if link.ProbeTarget.ResourceID != link.ResourceID || link.ProbeTarget.Port != 53 || !address.Is6() || address.Is4In6() || !address.IsPrivate() {
+			return errors.New("native Link probe must use its receiver's exact execution DNS")
+		}
+	case "hysteria2_tls": // Original signed facts remain verifiable; new writes reject this action.
+	default:
+		return errors.New("Link probe action is unsupported")
 	}
 	return nil
 }

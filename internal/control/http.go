@@ -186,6 +186,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/path-history", server.pathHistory)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
+	mux.HandleFunc("GET /api/control/devices/{device}/view", server.exportDeviceView)
 	mux.HandleFunc("POST /api/control/members", server.controlChange)
 	mux.HandleFunc("GET /api/control/ui/enrollment-options", server.enrollmentOptions)
 	mux.HandleFunc("POST /api/control/ui/ssh/check", server.sshPreflight)

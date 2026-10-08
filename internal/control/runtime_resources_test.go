@@ -73,7 +73,7 @@ func TestHy2OneHopSharesCredentialsWithoutSharingAccessAssignment(t *testing.T) 
 		t.Fatal("one-hop candidate lost resource or exit identity")
 	}
 	receiver, err := ProjectDeviceView(projection, "demo-exit")
-	if err != nil || len(receiver.InboundCredentials) != 1 || len(receiver.PolicyIDs) != 0 || receiver.RuntimeProfile != nil || len(receiver.Policies) != 1 {
+	if err != nil || len(receiver.InboundCredentials) != 1 || len(receiver.PolicyIDs) != 0 || receiver.RuntimeProfile == nil || len(receiver.Policies) != 1 {
 		t.Fatal("receiver borrowed the source access assignment", err)
 	}
 	passwords, err := profileCredentials(access)

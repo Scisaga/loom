@@ -45,6 +45,8 @@ object ProfileStorage {
 
     fun candidate(profileId: String): String = key(profileId, "device-candidate-v2")
 
+    fun transportEvidence(profileId: String): String = key(profileId, "transport-evidence")
+
     fun routePreference(profileId: String): String = key(profileId, "route-preference-v2")
 
     fun observations(profileId: String): String = key(profileId, "route-observations-v2")
@@ -171,6 +173,11 @@ internal interface ProfileByteStore {
     fun get(key: String): ByteArray?
     fun put(key: String, value: ByteArray)
     fun remove(key: String)
+    fun preserve(source: String, target: String) {
+        val original = checkNotNull(get(source))
+        if (get(target) == null) put(target, original)
+        check(get(target)?.contentEquals(original) == true)
+    }
 }
 
 private class EncryptedProfileByteStore(private val delegate: EncryptedStore) : ProfileByteStore {

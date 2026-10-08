@@ -66,6 +66,8 @@ func cmdControl(args []string) error {
 		return cmdControlEdge(args[1:])
 	case "inspect":
 		return cmdControlInspect(args[1:])
+	case "export-device-view":
+		return cmdControlExportDeviceView(args[1:])
 	case "migrate-reports":
 		return cmdControlMigrateReports(args[1:])
 	case "endpoint-inputs":

@@ -464,6 +464,10 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if lkg == nil {
 		return errors.New("enrollment has not completed; activation withheld")
 	}
+	unit, err = ServiceUnit(release, options.State, options.ResourceInputs, options.Capture, needsManagementTUN(lkg.View))
+	if err != nil {
+		return err
+	}
 	args := []string{"client", "preflight", "-state", options.State, "-sing-box", filepath.Join(release, "sing-box"), "-capture", options.Capture}
 	if options.ResourceInputs != "" {
 		args = append(args, "-resource-inputs", options.ResourceInputs)
@@ -592,8 +596,10 @@ func checkManagedUnit(ctx context.Context, body, candidate []byte, currentPath s
 	}
 	matched := false
 	for _, capture := range []string{"mixed", "tun"} {
-		expected, projectionErr := serviceUnit(string(template), currentPath, options.State, options.ResourceInputs, capture)
-		matched = matched || projectionErr == nil && len(template) != 0 && bytes.Equal(body, expected)
+		for _, management := range []bool{false, true} {
+			expected, projectionErr := serviceUnit(string(template), currentPath, options.State, options.ResourceInputs, capture, management)
+			matched = matched || projectionErr == nil && len(template) != 0 && bytes.Equal(body, expected)
+		}
 	}
 	if !matched {
 		return errors.New("existing runtime unit differs from the requested managed installation")
@@ -680,7 +686,13 @@ func installationInputs(ctx context.Context, options InstallOptions, release, cu
 			return nil, nil, errors.New("prior runtime entry remains; verified cutover must remove it")
 		}
 	}
-	unit, err := ServiceUnit(release, options.State, options.ResourceInputs, options.Capture)
+	management := false
+	if store, err := deviceclient.Load(options.State); err == nil && store.LKG() != nil {
+		management = needsManagementTUN(store.LKG().View)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	unit, err := ServiceUnit(release, options.State, options.ResourceInputs, options.Capture, management)
 	if err != nil {
 		return nil, nil, err
 	}

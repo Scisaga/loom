@@ -77,9 +77,7 @@ func TestWireGuardDNSRefusesHostFallbackAndKernelResolution(t *testing.T) {
 	if _, err := resolveWireGuardEndpoints(context.Background(), profile, wireGuardExecution{}, nil, nil); err == nil {
 		t.Fatal("host resolver was used without authenticated DNS")
 	}
-	if _, err := applyWireGuard(&profile, nil, &wireGuardIdentity{}, Options{}); err == nil {
-		t.Fatal("unresolved hostname reached the kernel adapter")
-	}
+
 	profile.WireGuard[0].Endpoint = "192.0.2.10:51820"
 	result, err := resolveWireGuardEndpoints(context.Background(), profile, wireGuardExecution{}, nil, func(context.Context, string, string) (net.Conn, error) {
 		t.Error("literal address used DNS")

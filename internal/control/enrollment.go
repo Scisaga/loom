@@ -375,36 +375,21 @@ type InboundCredential struct {
 	PolicyID        string           `json:"policy_id"`
 	ResourceID      string           `json:"resource_id"`
 	ReceiverNodeID  string           `json:"receiver_node_id"`
-	Credential      string           `json:"credential"`
+	SenderID        string           `json:"sender_id"`
+	Candidate       RouteCandidate   `json:"candidate"`
+	Credential      string           `json:"credential,omitempty"`
 	AllowedTargets  []ServiceMatcher `json:"allowed_targets"`
 	ExcludedTargets []ServiceMatcher `json:"excluded_targets"`
-	RelayTarget     *RelayTarget     `json:"relay_target,omitempty"`
-}
-
-// RelayTarget narrows this credential to an authenticated next transport hop.
-// The final Service credential travels end to end inside that transport.
-type RelayTarget struct {
-	LinkID     string `json:"link_id"`
-	ResourceID string `json:"resource_id"`
-}
-
-func (target RelayTarget) Validate() error {
-	if ValidateID(target.LinkID) != nil || ValidateID(target.ResourceID) != nil {
-		return errors.New("relay target references are invalid")
-	}
-	return nil
 }
 
 func (value InboundCredential) Validate() error {
-	if value.RelayTarget != nil && value.RelayTarget.Validate() != nil {
-		return errors.New("inbound relay target is invalid")
-	}
-	for _, id := range []string{value.DeviceID, value.ServiceID, value.PolicyID, value.ResourceID, value.ReceiverNodeID} {
+	for _, id := range []string{value.DeviceID, value.ServiceID, value.PolicyID, value.ResourceID, value.ReceiverNodeID, value.SenderID} {
 		if ValidateID(id) != nil || id == "direct" {
 			return errors.New("inbound credential binding is invalid")
 		}
 	}
-	if value.DeviceID == value.ReceiverNodeID || ValidatePublicKey(value.Credential) != nil || len(value.AllowedTargets) == 0 || value.ExcludedTargets == nil {
+	if value.DeviceID == value.ReceiverNodeID || value.SenderID == value.ReceiverNodeID || value.Candidate.Validate() != nil || value.Candidate.ServiceID != value.ServiceID || value.Candidate.FirstResourceID == "" ||
+		value.Credential != "" && ValidatePublicKey(value.Credential) != nil || len(value.AllowedTargets) == 0 || value.ExcludedTargets == nil {
 		return errors.New("inbound credential has no distinct source, secret or target boundary")
 	}
 	for _, matchers := range [][]ServiceMatcher{value.AllowedTargets, value.ExcludedTargets} {
@@ -418,8 +403,8 @@ func (value InboundCredential) Validate() error {
 }
 
 type DeviceView struct {
+	NetworkID            string                `json:"network_id"`
 	WireGuardPeers       []WireGuardAccessPeer `json:"wireguard_peers,omitempty"`
-	LinkProbeCredentials []LinkProbeCredential `json:"link_probe_credentials,omitempty"`
 	WebEndpoints         []EndpointGeneration  `json:"web_endpoints,omitempty"`
 	PublicTrust          []PublicTrust         `json:"public_trust,omitempty"`
 	DNSRecords           []DNSRecord           `json:"dns_records,omitempty"`
@@ -444,7 +429,7 @@ type DeviceView struct {
 }
 
 func (view DeviceView) Validate() error {
-	if view.Schema != 3 || ValidateID(view.DeviceID) != nil || view.DeviceID == "direct" || ValidateText(view.Name) != nil || !validatePlatform(view.Platform) || ValidatePublicKey(view.DevicePublicKey) != nil || validateResponsibilities(view.Responsibilities, true) != nil ||
+	if view.Schema != 3 || ValidateID(view.NetworkID) != nil || ValidateID(view.DeviceID) != nil || view.DeviceID == "direct" || ValidateText(view.Name) != nil || !validatePlatform(view.Platform) || ValidatePublicKey(view.DevicePublicKey) != nil || validateResponsibilities(view.Responsibilities, true) != nil ||
 		validateIDSet(view.PolicyIDs) != nil || view.Services == nil || view.Policies == nil || view.Resources == nil || view.Links == nil || view.Endpoints == nil || view.DNSServers == nil || view.BusinessProbeTargets == nil || view.Routes == nil || view.InboundCredentials == nil || view.ExpectedComponents == nil {
 		return errors.New("device view fields are invalid or incomplete")
 	}
@@ -464,7 +449,7 @@ func (view DeviceView) Validate() error {
 		return err
 	}
 	access := containsString(view.Responsibilities, "access")
-	if access != (view.RuntimeProfile != nil) || !access && (len(view.PolicyIDs) != 0 || len(view.Routes) != 0) {
+	if access && view.RuntimeProfile == nil || !access && (len(view.PolicyIDs) != 0 || len(view.Routes) != 0) {
 		return errors.New("device view access projection does not match its responsibilities")
 	}
 	if view.RuntimeProfile != nil && view.RuntimeProfile.Validate() != nil {
@@ -518,7 +503,7 @@ func validateFactFrontier(frontier []FactFrontier) error {
 }
 
 func (envelope DeviceViewEnvelope) Validate() error {
-	if envelope.Schema != 3 || ValidateID(envelope.IssuerControlID) != nil || ValidateDigest(envelope.IssuerKeyID) != nil || validateFactFrontier(envelope.FactFrontier) != nil || envelope.View.Validate() != nil {
+	if envelope.Schema != 3 || envelope.View.NetworkID != envelope.NetworkID || ValidateID(envelope.IssuerControlID) != nil || ValidateDigest(envelope.IssuerKeyID) != nil || validateFactFrontier(envelope.FactFrontier) != nil || envelope.View.Validate() != nil {
 		return errors.New("device view envelope is invalid")
 	}
 	config, err := VerifyControlProof(envelope.ControlProof, envelope.NetworkID, envelope.GenesisDigest)

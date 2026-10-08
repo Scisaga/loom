@@ -3,6 +3,7 @@ package linuxclient
 import (
 	"encoding/json"
 	"errors"
+	"loom/internal/clientadapter"
 )
 
 func validateCapture(capture string) error {
@@ -23,7 +24,7 @@ func deriveLinuxMixedRuntime(config string) (string, error) {
 	}
 	for field := range document {
 		switch field {
-		case "log", "dns", "inbounds", "outbounds", "route", "experimental":
+		case "log", "dns", "inbounds", "outbounds", "endpoints", "route", "experimental":
 		default:
 			return "", errors.New("explicit Mixed source contains an unsupported runtime facility")
 		}
@@ -61,13 +62,13 @@ func deriveLinuxMixedRuntime(config string) (string, error) {
 		types[outbound.Tag] = outbound.Type
 		switch outbound.Type {
 		case "direct", "block", "dns", "selector", "hysteria2", "trojan":
-		case "wireguard":
-			if outbound.SystemInterface == nil || *outbound.SystemInterface || outbound.InterfaceName != "" {
-				return "", errors.New("Mixed WireGuard must use an explicit user-space interface")
-			}
+
 		default:
 			return "", errors.New("explicit Mixed source contains an unsupported outbound")
 		}
+	}
+	if err := clientadapter.ValidateNativeSenders(document["endpoints"]); err != nil {
+		return "", err
 	}
 	var route map[string]json.RawMessage
 	if err := json.Unmarshal(document["route"], &route); err != nil || route == nil {

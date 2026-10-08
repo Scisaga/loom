@@ -797,7 +797,7 @@ SYSTEM/Administrators DACL；Portable TUN 与 Portable Mixed 使用 current-user
 
 Windows HostAdapter 从 LKG 每次纯派生 `RouteCandidate` 与 `RuntimeCandidate`，启动签名包中的正式 sing-box，
 先由共用适配器校验 View 并保留完整授权 outbounds/route，再添加本机 API 输入；Windows capture 派生只添加一次
-认证 DNS、Mixed/TUN 和 sniff 规则。Hy2 的地址、凭据、CA、TLS 名称及中继 detour 必须原样保留；不能用仅接受
+认证 DNS、Mixed/TUN 和 sniff 规则。独立 Hy2 首跳的地址、凭据、CA 与 TLS 名称必须原样保留；WG endpoint、精确来源绑定及执行 DNS 由同一认证投影提供，禁止 Hy2 detour；不能用仅接受
 Direct 的平台校验器拒绝已经支持的认证候选，也不能重复添加 DNS 绕过该校验。平台结构校验不产生新授权，
 未知字段、不安全 TLS、失效或循环 detour 与扩宽的 capture 仍须拒绝。派生值只随受监督子进程存在，停止后删除，
 重启从原 LKG 重建；UI 与签名报告继续回读真实 selector，不从配置文件推定连接成功。

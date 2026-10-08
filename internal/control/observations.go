@@ -256,7 +256,7 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 	}
 	owned := map[string]TransportResource{}
 	for _, resource := range view.Resources {
-		if resource.OwnerNodeID == view.DeviceID && resource.Kind == "hysteria2" {
+		if resource.OwnerNodeID == view.DeviceID && (resource.Kind == "hysteria2" || resource.Kind == "wireguard") {
 			owned[resource.ID] = resource
 		}
 	}
@@ -269,6 +269,9 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 			digest, err := InboundACLDigest(view, value.ResourceID)
 			if !exists || resource.ListenerID != value.ListenerID || err != nil || value.ACLDigest != digest {
 				return errors.New("resource readback does not match its current listener and ACL")
+			}
+			if resource.Kind == "wireguard" && (value.PublicKey != *resource.Authentication.PublicKey || value.CertificateDigest != "") || resource.Kind == "hysteria2" && (value.PublicKey != "" || ValidateDigest(value.CertificateDigest) != nil) {
+				return errors.New("resource readback identity does not match its transport")
 			}
 		}
 	} else if len(owned) != 0 && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {

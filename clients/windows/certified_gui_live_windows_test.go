@@ -165,6 +165,9 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 	readback := func(authorized bool) windowsRuntimeStatus {
 		var status windowsRuntimeStatus
 		wait("certified runtime and report", func() bool {
+			if current := app.snapshot(); current.state == guiError {
+				t.Fatalf("certified runtime failed: %s", current.detail)
+			}
 			current, err := readWindowsRuntimeStatus(profileRoot)
 			if err != nil || !current.Reported || current.RuntimeState != "running" || app.snapshot().state != guiConnected {
 				return false
@@ -213,7 +216,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 				t.Log("last actual business error:", lastBusinessError)
 			}
 		})
-		wait("Hy2 HTTPS business", func() bool { lastBusinessError = business(); return lastBusinessError == nil })
+		wait("certified HTTPS business", func() bool { lastBusinessError = business(); return lastBusinessError == nil })
 		captureProfileGUITestWindow(t, app, filepath.Join(evidence, "allowed.png"))
 		mark("allowed", status)
 		signal("withdrawn")
@@ -231,7 +234,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		mark("restarted", status)
 		signal("regranted")
 		status = readback(true)
-		wait("reauthorized Hy2 HTTPS", func() bool { return business() == nil })
+		wait("reauthorized HTTPS business", func() bool { return business() == nil })
 		captureProfileGUITestWindow(t, app, filepath.Join(evidence, "regranted.png"))
 		mark("regranted", status)
 	}

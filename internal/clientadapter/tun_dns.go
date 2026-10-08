@@ -54,11 +54,17 @@ func WithTUNDomainDNS(config string) (string, error) {
 	if json.Unmarshal(document["dns"], &dns) != nil || dns == nil {
 		return "", errors.New("TUN domain services require authenticated DNS")
 	}
-	for _, field := range []string{"fakeip"} {
-		if _, found := dns[field]; found {
-			return "", errors.New("TUN DNS source already owns domain capture")
+	if raw := dns["fakeip"]; raw != nil {
+		var pool struct {
+			Enabled bool   `json:"enabled"`
+			V4      string `json:"inet4_range"`
+			V6      string `json:"inet6_range"`
+		}
+		if json.Unmarshal(raw, &pool) != nil || !pool.Enabled || pool.V4 != "198.18.0.0/15" || pool.V6 != "2001:db8:8000::/49" {
+			return "", errors.New("incompatible domain DNS pool")
 		}
 	}
+
 	var servers []json.RawMessage
 	if json.Unmarshal(dns["servers"], &servers) != nil || len(servers) == 0 {
 		return "", errors.New("TUN domain services require authenticated DNS")
@@ -92,18 +98,11 @@ func WithTUNDomainDNS(config string) (string, error) {
 	}
 	var existing []json.RawMessage
 	if dns["rules"] != nil {
-		if json.Unmarshal(dns["rules"], &existing) != nil || len(existing) != 1 {
-			return "", errors.New("unexpected DNS rules before TUN capture")
-		}
-		var rule map[string]any
-		if json.Unmarshal(existing[0], &rule) != nil || len(rule) != 2 || rule["server"] != "loom-overlay-dns" {
-			return "", errors.New("unexpected DNS rule before TUN capture")
-		}
-		suffix, _ := json.Marshal(rule["domain_suffix"])
-		if string(suffix) != `["loom"]` {
-			return "", errors.New("invalid overlay DNS boundary")
+		if err := json.Unmarshal(dns["rules"], &existing); err != nil {
+			return "", err
 		}
 	}
+
 	servers = append(servers, json.RawMessage(`{"tag":"loom-tun-domain","address":"fakeip"}`))
 	dns["servers"], _ = json.Marshal(servers)
 	dns["independent_cache"] = json.RawMessage(`true`)
@@ -116,7 +115,20 @@ func WithTUNDomainDNS(config string) (string, error) {
 		matcher["domain_suffix"] = sortedDNSNames(suffixes)
 	}
 	rule, _ := json.Marshal(matcher)
-	dns["rules"], _ = json.Marshal(append([]json.RawMessage{rule}, existing...))
+	// Outbound-specific segment DNS must run before local capture DNS.
+	before, after := []json.RawMessage{}, []json.RawMessage{}
+	for _, raw := range existing {
+		var value map[string]json.RawMessage
+		if json.Unmarshal(raw, &value) != nil {
+			return "", errors.New("invalid existing DNS rule")
+		}
+		if value["outbound"] != nil {
+			before = append(before, raw)
+		} else {
+			after = append(after, raw)
+		}
+	}
+	dns["rules"], _ = json.Marshal(append(append(before, rule), after...))
 	dns["fakeip"] = json.RawMessage(`{"enabled":true,"inet4_range":"198.18.0.0/15","inet6_range":"2001:db8:8000::/49"}`)
 	document["dns"], _ = json.Marshal(dns)
 	var experimental map[string]json.RawMessage

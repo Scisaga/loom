@@ -112,13 +112,13 @@ class CertifiedRuntimeInstrumentedTest {
         fun connect() {
             compose.onNodeWithTag("tab-connection").performClick()
             val phase = VpnRuntime.status.value.phase
-            if (phase == ConnectionPhase.DISCONNECTED || phase == ConnectionPhase.ERROR) {
+            if (phase == ConnectionPhase.DISCONNECTED || phase == ConnectionPhase.ERROR || VpnRuntime.status.value.activeProfileId != profileID) {
                 click("connection-toggle")
                 // Consent is exercised on this disposable emulator's system UI.
                 device.wait(Until.findObject(By.res("android:id/button1")), 3_000)?.click()
             }
-            // A previous interrupted test can retain the real reconnect intent.
-            // Read its restored runtime instead of blindly toggling it off.
+            // The same profile can retain reconnect intent after an interrupted
+            // test; a different active profile must use the normal switch button.
             awaitConnected()
         }
         val ca = CertificateFactory.getInstance("X.509").generateCertificate(File(directory, "demo-ca.pem").inputStream())
@@ -171,6 +171,10 @@ class CertifiedRuntimeInstrumentedTest {
 
         if (!resume && args.getString("demoJoined") != "true") {
             compose.onNodeWithTag("tab-configuration").performClick()
+            await("new profile must finish loading before file import", 15) {
+                enrollment.status(profileID).value.phase == EnrollmentPhase.NOT_JOINED
+            }
+            compose.waitForIdle()
             click("import-invite")
             clickSystem(By.desc("Show roots"), "normal document picker did not open")
             assertTrue("document picker drawer did not open", device.wait(Until.hasObject(By.text("Open from")), 10_000))

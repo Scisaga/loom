@@ -84,6 +84,7 @@ func windowsProtectedFixture(t *testing.T) (control.BootstrapInvite, func(string
 func revokeView(view *control.DeviceView) {
 	view.Policies[0].Action = "deny"
 	view.BusinessProbeTargets = []control.ServiceProbeTargets{}
+	view.Routes = []control.RouteCandidate{}
 }
 
 func TestAcceptedLKGSurvivesRestartAndRejectsOldOrConflictingProgress(t *testing.T) {

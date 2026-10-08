@@ -168,7 +168,7 @@ decoder 需要输入大小、集合和嵌套的资源保护，但不能未经完
 | 成员表内容 ID | `loom-control-config-id-v3\0`；完整成员表业务载荷，不含外部证书的轮次、凑票签名集合或自身 ID；初始载荷的精确形状见下节 |
 | Service/Policy/资源当前值摘要 | `loom-network-value-v3\0`；`{"kind":"service"或"policy"或"resource","value":完整值}` |
 | 资源认证摘要 | `loom-resource-auth-v3\0`；资源的完整 authentication 值 |
-| 接收端传输用户名 | `loom-inbound-user-v3\0`；`{"device_id":ID,"service_id":ID,"policy_id":ID,"resource_id":ID,"receiver_node_id":ID}`；只作当前进程的 auth_user 投影，不新增身份 |
+| 接收端传输用户名 | `loom-inbound-user-v3\0`；`{"device_id":ID,"service_id":ID,"policy_id":ID,"resource_id":ID,"receiver_node_id":ID,"candidate_id":Digest,"sender_id":ID}`；只作当前进程的 auth_user 投影，不新增身份 |
 | 接收端 ACL 摘要 | `loom-inbound-acl-v3\0`；当前资源的完整 InboundCredential 有序数组，包括允许和排除范围；空授权为 `[]` |
 | Link 规范摘要 | `loom-link-spec-v3\0`；`{"link":完整Link,"resource":完整TransportResource}` |
 | 候选身份 | `loom-candidate-id-v3\0`；下述候选身份字段，不含其 ID 和规范摘要 |
@@ -587,11 +587,9 @@ PublisherInput、部署计划与 UI 是单向投影，不新增节点属性 stor
 
 TransportResource 字段为 `id,kind,owner_node_id,listener_id,dial_host,dial_port,authentication`，
 Hy2 可另外保存 `link_only:true`，表示仅经显式 Link 使用；false 的唯一编码是省略该字段。
-WG 可另外保存非空 `access_hy2_resource_id:ID`，明确选择同节点的 Hy2 作为普通首跳的
-业务执行入口；省略时保持原来的中继语义与规范字节，不从现有 WG 资源推测开放普通接入。
-引用必须指向同承载节点、非 link_only 的有效 Hy2，WG 承载者仍须有 forward 职责。
-目标缺失、撤销或不再满足关系时不投影这项接入；既有显式 Link 仍按自身引用判断。
-该字段不能用于其他资源类型，不能引用自身，也不改变 Link 的身份或给设备创建 Link。
+WG 以可选 `access_enabled:true` 明确开放普通首跳；省略表示不开放，规范输入拒绝显式 false。
+承载者可为 forward 或 internet_egress，后者可直接作为最终出口。已签历史字段
+`access_hy2_resource_id` 仅在历史验签中识别，现行写入和运行 View 一律拒绝。
 listener_id 是稳定本机资源身份，不是私钥文件路径。dial_host 是规范 IP 或上述规范 DNS 名，
 dial_port 是 Port。kind 仅 `wireguard/hysteria2/tls_tunnel`，authentication 按种类精确匹配：
 
@@ -609,10 +607,33 @@ dial_port 是 Port。kind 仅 `wireguard/hysteria2/tls_tunnel`，authentication 
 
 ##### 分段传输的替代执行模型
 
+Linux 同时承担 access 与服务端职责并使用隔离 TUN 时，已有两个进程不能分别持有同一发送端 WG 会话，否则会发生 peer endpoint 漫游竞争。最小变化是只让服务端进程持有实际传输；隔离 capture 通过固定回环、临时密码保护的 SOCKS 入口提交原始目标和已签名 Candidate。服务端按原 Service 边界与 Candidate 校验后发送下一段，拒绝其他用户、目标与入口流量。此本机连接不进入 WG，也不新增远端代理层、持久身份或第二份授权；增加的运行成本仅为本机一次转发及两个可删除 DNS 缓存。Mixed 与纯 access 仍只需一个进程。
+
 本段定义替代实现；其后的旧 Hy2 耦合描述只用于识别待移除字节，不能生成新的接入。
 正常业务是 access 选择同一 Service 的 RouteCandidate，经首跳到入口，再逐段经 Link 到最终
 出口。每段只传业务 IP；Hy2 首跳在入口终止，不建立下一段 Hy2 会话。WG 接收器将解密后的
 TCP/UDP 交给公共路由器，权限来自同一 Service/Policy，不从传输类型推测。
+
+本次修订的规范值明确如下，仍使用 schema 3：WG 资源以 `access_enabled:true` 显式开放
+普通接入，false 只编码为省略。没有该字段的旧资源仍不自动开放普通接入；
+`access_hy2_resource_id` 只在已签历史材料中识别，当前写入及 DeviceView 拒绝。
+新 Link 的 `probe_target` 引用自己的接收 WG 资源，action 为 `wireguard_dns`，host 为该
+资源的执行 DNS 地址，port 为 53。它验证该段 WG 内的 DNS 往返，不建立 Hy2 会话，也不
+替代业务测试。已签 `hysteria2_tls` Link 只验证原历史关系，不进入当前候选或执行投影。
+
+DeviceView 显式绑定 `network_id`，须与 envelope 相同。`inbound_credentials` 每项保存
+`device_id,service_id,policy_id,candidate,sender_id,resource_id,receiver_node_id,allowed_targets,
+excluded_targets`；`candidate` 为完整原 RouteCandidate。Hy2 项另有非空 `credential`，WG
+项省略该字段；旧 `relay_target` 删除。Hy2 凭据的 HKDF 绑定额外包含候选 ID 和发送者 ID，
+不把业务权限收缩成下一层代理的端口权限。`wireguard_peers` 仍按资源与实际发送设备保存
+公钥，既覆盖普通设备，也覆盖转发节点；不传出其他设备的 RuntimeKey。
+
+RuntimeProfile 表达本节点全部业务执行投影，服务节点也可持有它；是否启动 access capture
+只由 `responsibilities` 中的 access 决定。profile 的 `endpoints` 只保存本节点发起的用户态
+WG 会话与派生私钥，`outbounds/route/dns` 同时表达本机接入、接收授权和下一段业务转发。
+固定接收私钥与 listener 仍由 HostAdapter 的本机输入补齐。control 使用完整节点职责过滤
+最终出口，View 的 Routes 是签名确定的候选集合；消费端核对其中每项与 Service/Policy、
+资源及 Link 一致，但不得从部分资源集合重新补出未经签发的候选。
 
 仍只有设备、Service、Policy、TransportResource、Link 和 RouteCandidate。一次接收权限是
 这些值到某个接收节点的私有执行投影，不可独立写入或持久成第二授权表。它必须绑定来源设备、
@@ -688,7 +709,8 @@ DeviceView 之外的授权库。隔离测试证明底层接收和清理能力，
 
 ##### 前向替换的认证材料冲突
 
-此处是待操作者决定的迁移边界，不是已经获准的例外，也不授权生产写入。
+操作者已在本轮明确确认以下限定历史验证与前向替换。确认不等于迁移已实现或生产验收通过；
+实际执行仍须遵守原身份、认证进度、精确所有权和宿主管理连接保全边界。
 
 现存 schema 3 `link.put` 原件把 `probe_target` 绑定到 Hy2；控制事实按原签名和因果依赖
 持久化并在重启时重新验证。设备 LKG 同时包含这些 Link、接收凭据和嵌套运行配置。
@@ -697,7 +719,7 @@ DeviceView 之外的授权库。隔离测试证明底层接收和清理能力，
 清空 LKG 也不是前向迁移：设备状态明确拒绝“已有 high_water / report_sequence 却无 LKG”，
 清空这两个值则违反不可回退边界。
 
-建议的最小处理需要操作者明确决定其是否属于允许范围：
+已确认的最小处理范围：
 
 1. 当前 schema 3 的已签原事实继续保留原字节，只为历史验签、原身份与因果依赖验证读取；
    它们不能生成新业务配置。现行写入与运行只有分段传输这一种语义，不保留旧 transport fallback。
@@ -712,148 +734,58 @@ DeviceView 之外的授权库。隔离测试证明底层接收和清理能力，
    成功后删除旧生成器、RelayTarget 的 Hy2 端口授权、AccessHY2ResourceID 耦合、探测执行器
    和相应旧运行入口。历史签名材料的验证不调用这些执行代码。
 
-决定之前可完成不涉及签名材料的传输适配与隔离实验；不得先改现网认证字节、清空 LKG，
-或先部署会使现有状态无法加载的控制/设备程序。历史验证及一次性前向替换尚未实现和验收，
-不能把本文当作可执行的迁移工具或生产切换回执。
+不得改现网认证原字节、清空 LKG，或先部署会使现有状态无法加载的控制/设备程序。
+显式 `loom client migrate-transport` 实现历史验证、原件保全及 LKG 原子替换，启动和普通同步不调用历史 reader。
+生产切换结果须独立读回，源码及隔离测试不作为生产回执。
+
+具体交付使用原控制机的 owner-only 管理 socket：
+`loom control export-device-view -device demo-device -out /var/lib/loom/demo-view.json`。
+文件是已签名的私有执行投影，包含该设备的运行凭据；只交付给对应设备，不进入公开制品目录。
+停止该设备旧运行后，Linux 使用
+`loom client migrate-transport -state /var/lib/loom/demo-state.json -view /var/lib/loom/demo-view.json -evidence /var/lib/loom/demo-original.json`。
+Windows 对应制品使用 `migrate-transport -state … -view … -evidence …`，保留原 DPAPI 保护范围。
+Android 从既有配置页文件导入入口选择同一签名文件，在运行互斥下保全原 Keystore 密文并替换该配置。
+各端先验证新签名、原身份与认证进度，再保存原始文件的精确字节，最后原子替换唯一状态；
+证据保存或验证失败时不写新状态。重启只能消费当前配置；重新导入旧 View 不能降低认证进度。
 
 ##### 已否决实现的字节识别
 
-操作者要求普通设备通过已有共享 WG 首跳访问获授权业务。此前把“允许依赖同机 Hy2”解释成
-以下协议嵌套的实现已经被明确否决；本小节暂用于识别待删除路径及其已认证字节，不授权继续启用。
-现有执行只能为显式 Link 安装节点 peer，缺少普通设备 peer、地址及接收边界。最小变化是在原资源
-上明确引用一个同机 Hy2，按现有设备授权派生 peer；不增加参与者权威、地址分配库或每设备接口。
-新增操作成本是为要开放接入的 WG 资源选择 Hy2，并让该 Hy2 的受保护本机 listener 接受下面的
-IPv6 地址及认证资源端口。不能仅凭现有 IPv4 listener 假定这一步成立。
-
-首跳候选的 first_resource_id 是 WG，节点链只计接收节点一次；规范摘要同时包含 WG 与被引用
-Hy2 的完整值。后续显式 Link、最终出口、Policy 路径限制及 Service ACL 保持同一算法。
-同节点的公开 Hy2 候选可以并存，各自观测；普通 WG 首跳不增加中继 LinkID。
-access 在每个 WG 资源上共用一个用户态 WG outbound，第一段 Hy2 经它访问同机 listener；
-不能为每条 Service 候选创建相同密钥的多个 WG 会话，避免对端 endpoint 来回漂移。
-
-WG 私钥使用本节定义的 HKDF 算法、salt 与 32 字节输出，info 精确为
-`network_id,device_id,resource_id,resource_auth_digest,receiver_node_id,purpose`，purpose 固定
-`wireguard-access`。resource_auth_digest 绑定 WG authentication。输出按 X25519 clamp
-（首字节清低三位，末字节清最高位并置次高位）后作为私钥；公钥由 X25519 basepoint 导出。
-私钥仅进入来源设备的认证 RuntimeProfile，以标准带填充 base64 表示；接收节点仅取得公钥。
-根 RuntimeKey 不交付。Service/Policy 不在此 KDF 中：WG 只允许到固定 Hy2，实际业务仍由原来
-按设备、Service、Policy 和用途派生的 Hy2 凭据与 ACL 决定。另加 Service 不改变已有 WG 身份。
-
-只在接收节点的私有 DeviceView 增加可选非空
-`wireguard_peers:[{resource_id,device_id,public_key}]`，按 resource_id、device_id 排序、无重复；
-public_key 是无填充 base64url 的 32 字节 X25519 公钥。每一项必须有允许以该节点为入口的
-现行 Policy 和对应 Hy2 入站权限；自身、无权限、重复公钥、缺失引用、空数组和 null 均拒绝。
-来源设备及其他节点不得取得别人的 peer 清单。该清单是授权到执行的一次性投影，随唯一 LKG
-保存和重建，不独立写入、不形成第二 store，也不能倒写共享资源的参与者列表。
-
-IPv6 地址不由设备申报或依赖加入顺序分配。令 B 为 C 编码的
-`{resource_id,receiver_node_id,receiver_public_key,peer_public_key}`，两个公钥均为规范无填充
-base64url；接收地址的 peer_public_key 固定空字符串，客户端地址则取上述派生公钥。
-取 `SHA256("loom-wg-access-address-v3\0" || B)` 的前 16 字节并把首字节置为 `fd`，得到唯一
-规范 IPv6 /128。接收端在原 WG 地址之外增加该接收地址；客户端只使用自己的 /128，WG
-AllowedIPs 只允许对端精确 /128。不同 peer、接收地址或已有资源地址的碰撞必须拒绝，不能
-重排、自动换号或扩成网段。运行前还须核对宿主已分配的本机地址，不能用新接收地址或 peer
-精确路由覆盖另一个接口上的地址。密钥变化引起对应地址变化；无关设备加入不改变任何已有地址。
-
-接收端必须先安装并回读本运行代精确拥有的包过滤边界，再启用普通 peer：只允许该 peer 源
-/128 到本资源接收 /128、指定 Hy2 UDP 端口及相反方向返回。其他本机目标、LAN、转发、DNS、
-管理入口及 peer 之间访问均拒绝；WG 握手与 AllowedIPs 本身不能代替这一边界。已有 Link peer
-继续只使用其原执行地址与权限，普通 peer 不得冒用它们。Linux 使用独立、带所有权标记的
-过滤对象，不改共享链或 flush；更新先停止旧业务，撤去旧 peer，最后 compare-and-delete
-本代过滤对象。过滤安装、精确回读或清理失败时保持 failed/inactive，不自动重施。
-宿主部署仍受宿主网络门禁约束；该模型不授予修改宿主防火墙的额外权限。
-
-过滤表按共享资源与既有 Link peer 投影：明确的 Link 源/目的地址只在各自方向保留原有通行，
-其余该接口流量只允许上述 Hy2 往返。forward 的入、出方向分别检查，指向一个 Link peer
-不能绕过普通来源的拒绝。普通来源身份和精确源地址仍由 WG 公钥及 AllowedIPs 约束，因此
-增删普通 peer 不必重写过滤表；不能把任何客户端自报地址当成 Link 例外。
-
-正式撤权验证已暴露整体重建接口会丢失其他设备的接收会话。资源、公钥、接口代、地址、监听、
-Link peer 和完整过滤规则都未变时，执行器在同一已核对的所有权句柄内只增删普通 peer 与其
-精确路由。先保存旧、新 peer 并集作为原清理记录，再删除撤权 peer、添加新 peer、更新精确路由，
-完整回读后把记录收敛为当前集合；未变 peer 保留内核会话。并集只允许崩溃后的清理，不可用于
-启动或恢复授权。部分失败清理本代，不能复活已撤权 peer；任一共享输入变化仍按原规则重建。
-没有新增操作者步骤或独立持久实体；最小验证必须含在线新增、单 peer 撤销、另一 peer 的新建
-HTTPS、精确剩余 peer/路由、路由更新失败、peer 已改而路由未改时的进程崩溃，以及重启清理和
-原清理记录收敛。保留 WG 会话不保证 Hy2 授权更新期间业务无中断，仍须单独记录真实重连结果。
-
-resource.put → 签名事实持久化 → 两端 DeviceView → 用户态 WG / 接收端共享接口与 Hy2 ACL →
-正常代理入口的真实 HTTPS → 原签名 Service 报告与节点页面，是正常业务链。删除策略、deny、
-资源撤销或设备撤权移除对应 Hy2 权限；最后一项允许接入的业务消失时 peer 一并退出。执行失败
-不得恢复旧 LKG 或旧会话；重启从唯一认证 LKG 重建，残留对象只按原所有权清理。
-单个 Service 撤权而另一个仍有效是必要反例：peer 可以保留，但被撤业务必须实际拒绝。
-
-domain 的原资源与授权、规范事实及持久字节保持可逆；peer、地址、RuntimeProfile、内核对象和
-UI 是单向投影。原缺席新字段的事实、View 和候选必须逐字保留；只有显式新 resource.put 才
-开放接入。最小验证覆盖规范往返/拒绝、旧字节、两设备共享资源且互不换钥、同出口候选并存、
-单服务及整设备撤权、原始 WG 包不能越过 Hy2、重启与异常清理，以及三端正式运行入口。
-真实内核实验位于独立 network/mount namespace；实体机终验仍由操作者完成。
+历史材料仅保留原 `access_hy2_resource_id`、Link 的 `hysteria2_tls` 探测描述与完整原签名。
+旧 View 中的 `link_probe_credentials` 和嵌套运行配置只作为原签名字节验证，不解码成可执行配置。
+当前生成器、接收权限和探测执行器没有这些入口；不得恢复 Hy2 detour 或旧凭据作为 fallback。
 
 #### 显式中继与服务凭据
 
-NetworkLink 字段为 `id,from_node_id,to_node_id,from_resource_id,resource_id,initiator_node_id,purpose,probe_target`。
-当前 WG 中继中，from_resource_id 与 resource_id 分别固定引用 From、To 的 WG 资源；两端不同且都有 forward
-职责，initiator_node_id 为其中一端，purpose 固定 `relay`。资源各提供一个 /32 或 /128 接口地址；只投影对端精确
-peer 和路由。相反业务方向使用另一 LinkID，复用这两个资源及同一物理建连方向。删除资源使依赖 Link 失效。
-probe_target 恰为 `resource_id,host,port,action`；resource_id 引用 To 节点的 Hy2 listener，host 是 To 的 WG 地址，
-port 与该 listener 的拨号端口一致，action 固定 `hysteria2_tls`。该动作只证明 WG 上的认证传输，不证明 Service 业务。
-From/To、两端 WG 资源、发起端及 purpose 是 Link 的不可变身份关系；修改须使用新 LinkID。
+NetworkLink 固定为 `id,from_node_id,to_node_id,from_resource_id,resource_id,initiator_node_id,purpose,probe_target`。
+两端引用各自 WG 资源，From 必须 forward，To 可以 forward 或 internet_egress；继续转发的节点仍须 forward。
+发起方向与既有精确管理地址不变，purpose 为 `relay`。probe_target 引用 To 的同一 WG 资源，host 为确定性
+执行 DNS 地址，port 为 53，action 为 `wireguard_dns`；无 Hy2 引用。真实 DNS 交换仅证明 WG 传输可用，
+不能制造 Service 成功。From/To、两端资源、发起端及 purpose 是不可变身份关系，改变须使用新 LinkID；
+本次批准的前向写入保留这些身份，仅用新的规范事实替换探测及业务执行语义。
 
-Policy 可另外保存正整数 `max_hops`，限制受管节点链的节点数量；省略表示没有额外跳数限制，候选仍拒绝重复节点。
-这保留已有部署的路径限制，UI 修改其他 Policy 字段时也必须保留它。公开首跳和本机 hybrid Link 起点应用同一限制。
+Policy 的可选正整数 `max_hops` 限制受管节点数量；省略无额外限制，始终拒绝重复节点。
+公开首跳和本机 hybrid Link 起点使用同一候选模型。每一跳检查原 Service 目标及排除范围，
+当前节点按完整 Candidate 选择下一 WG 接收资源；终点仅在 internet_egress 时访问外部目标。
 
-数据面凭据固定采用 RFC 5869 HKDF-SHA256：IKM 为解码后的 32 字节 RuntimeKey；salt 为原始
-`loom-runtime-key-v3\0`；输出 L=32 字节后作无填充 base64url。本链的 info 为下列最小绑定对象的 C 编码：
+Hy2 只在独立首跳派生 `service-auth` 凭据。RFC 5869 HKDF-SHA256 的 IKM 为原始 32 字节 RuntimeKey，
+salt 为 `loom-runtime-key-v3\0`，info 恰为 C 编码的
+`{network_id,device_id,service_id,policy_id,resource_id,resource_auth_digest,receiver_node_id,purpose,candidate_id,sender_id}`，
+其中 sender_id 等于来源 device_id，输出 32 字节后无填充 base64url。candidate_id 固定完整授权路径；
+resource_auth_digest 仅绑定资源 authentication，显示名称及无关 Service 不导致凭据轮换。
+撤权、deny、收窄范围或路径后，新 View 不再投影原权限；先保存认证进度，再替换执行，失败不能恢复已撤销权限。
+不存在 `relay-auth`、`relay_target` 或 `link-probe-auth` 的当前执行用途。
 
-```text
-network_id, device_id, service_id, policy_id,
-resource_id, resource_auth_digest, receiver_node_id, purpose
-```
+WG 发送密钥同样使用上述 HKDF/salt，IKM 取实际发送节点 RuntimeKey，info 为
+`{network_id,device_id,resource_id,resource_auth_digest,receiver_node_id,purpose}`，purpose 固定 `wireguard-access`。
+输出按 X25519 clamp 后得到私钥，仅交付给实际发送者；接收者仅取得其公钥。一个发送者对同一接收资源
+只有一个会话，Service/Candidate 对应精确源地址与权限，不重复创建相同密钥会话。
+`wireguard_peers` 按 resource_id、device_id 排序；来源设备、转发节点和 DNS-only Link 探测使用同一模型。
+基础源地址只允许执行 DNS；每项业务源地址由本节已定义的绑定导出，每跳都按原始目标执行权限。
 
-所有 ID 与当前有效授权、固定所属 Service、共享资源和接收节点精确一致。最终出口的 purpose 为 `service-auth`，
-不携带 relay_target。中继接收用途为 `relay-auth`，info 另外包含 `relay_target:{link_id,resource_id}`，固定下一段 Link
-和它的目标 Hy2 资源。两种用途不能互换；中继 ACL 只允许该 Link 对端 WG 地址上的目标 UDP 端口，不能访问 Service
-或其他宿主目标。设备持有完整 Hy2 outbound 链的逐跳凭据，中间节点只持有本 listener 的入站凭据；末跳再执行 Service ACL。
-resource_auth_digest 只绑定资源 authentication，用于落实资源认证身份变化后旧凭据退出的既有要求；
-不绑定整个资源的显示/拨号值。设备或策略改名、给同一设备增加另一 Service 的授权，不是此服务
-换钥的理由，不能把整份 authorization_material_id 或完整 Policy 摘要塞入 KDF 而制造这种扰动。
-撤权、deny 或移除该策略时，不存在此服务的凭据投影；相同 Policy 的规则收缩必须由真实入站 ACL
-收口并拒绝超范围目标，不能只凭 KDF 输入变化声称撤权完成。下列反例约束最终字段选择：
-
-| 变化 | 必须结果 |
-|---|---|
-| 仅修改设备或 Policy 的显示名称 | 已有该服务凭据及实际访问权限不因改名改变 |
-| 保留 Service A 授权，另给该设备分配 Service B | A 的派生输入和凭据保持不变；B 单独投影 |
-| 撤销 Service A，或将其策略改为 deny | A 的出站凭据、接收端入站凭据/ACL 退出；应用失败也不得恢复，B 不因 A 撤权取得或失去权限 |
-
-此最小绑定落实当前有效授权及撤权期间拒绝旧值的要求，不承诺“撤销后显式重新授予同一 Policy”仍
-永久禁用历史派生值。如果另有这种增强需求，须先明确它与重新授予的关系，再决定是否需要仅与该授权
-范围相关的输入；不能自行新增授权代号、权威记录或用整份设备事实摘要代替论证。资源 authentication
-的精确规范值和实际入站替换未验证前，不把 KDF 单测通过当生产撤权完成；这不阻止本节最小绑定的纯函数实现。
-客户端与接收节点得到匹配派生值，其他节点既不得取得 RuntimeKey，也不得取得本节点之外的入站值。
-本机 selector API 属于 HostAdapter 的本机受保护执行输入，不用虚构的 Service/Policy ID 派生业务权限。
-
-Link 探测复用相同 HKDF 算法与 salt，IKM 取有效 From 节点的 RuntimeKey。其 info 恰为
-`network_id,device_id,link_id,resource_id,resource_auth_digest,receiver_node_id,purpose`，device_id
-为 From，resource_id 为 probe_target 的 Hy2 资源，receiver_node_id 为 To，purpose 固定
-`link-probe-auth`，resource_auth_digest 使用同一资源 authentication 摘要。没有 Service/Policy
-字段，不能把它用于普通转发。仅 From 与 To 的私有 DeviceView 出现可选非空
-`link_probe_credentials:[{link_id,credential}]`，按 LinkID 排序且唯一；其余引用从同份 View 的 Link
-和三个资源检查，资源或节点失效便不投影，第三方 access 即使持有该 Link 的候选也不能取得它。
-空数组、null、重复、缺失引用及非两端收件人均拒绝。已有缺席字段的原 View 字节保持可验证；
-缺席只表示没有这项执行权限，不能从旧配置、Service 凭据或本机参数补造。
-部署时保全原 LKG 和高水位；已有设备只有在获认证事实前沿真实前移后才能接受新增执行值。
-同一前沿的不同 View 继续拒绝，不能为升级放宽此门禁。发布中正常提交的精确组件期望可提供
-这次普通事实进展；切换须先使 control 使用新投影并同步这些事实，再启动已升级的 Link 承载客户端，
-逐节点检查新 LKG 的前沿前移、原身份不变。未获得进展时保持原认证状态，不能重置 LKG 或补造序列。
-接收端用户名为 `loom-link-probe-user-v3\0` 加 `C({link_id})` 的摘要；凭据只能完成认证，
-全部转发落在原 listener 的默认拒绝规则。入站 acl_digest 的规范数组在原 Service 凭据之后
-追加本 listener 的 Link 探测凭据（按 LinkID 排序）；没有探测项时数组及原摘要逐字节不变。
-
-新认证 View 与 floor 先原子保存；再替换相关入站凭据、ACL、出站与实际进程。应用失败只保留新认证状态，
-运行状态为 error/未应用，旧的已撤销权限必须停止，不能从旧配置或 rollback snapshot 恢复。
-创建对象的所有权只能由实际创建与精确回读证明；遇到未知现存对象不得把“曾在旧 View 中出现”当所有权。
-清理失败保持失败并报告，不自动重复应用。跨节点传播期间未获撤权者的旧状态不等于已全网撤权。
+ACL 摘要使用 `loom-inbound-acl-v3\0` 和 C 编码数组；先按规范顺序收集本资源 InboundCredential，
+再追加该资源 WireGuardPeer。无需独立 Link 探测口令或另一个授权 store。
+新 View 必须保持身份、成员证明、latch 和 floor，且认证事实前沿实际前移；同一前沿不同 View 仍拒绝。
+未知现存宿主对象不因它曾出现在 View 中而取得所有权，清理失败保持 failed/inactive。
 
 ### Invite、claim、resume 与配置交付
 
@@ -1006,8 +938,10 @@ Preference 的只读投影（未设置时使用现行默认 Auto），签名覆�
 runtime 为 `state,applied_view_digest,error_code`；state 仅 `running/error/stopped/unknown`，
 无故障时 error_code 为空字符串，不能承载含秘密的错误正文。运行摘要必须来自实际加载结果，失败时不能将
 当前获认证 View 摘要冒充已应用摘要；尚未加载任何 View 时 applied_view_digest 为空字符串。
-承载 Hy2 的运行报告另有非空可选 `resources`，按 resource_id 排序；纯 access 不写空的替代集合。
-每项为 `resource_id,listener_id,listen,certificate_digest,acl_digest`，其中 listen 为本机实际监听的
+承载 Hy2/WG 的运行报告另有非空可选 `resources`，按 resource_id 排序；纯 access 不写空的替代集合。
+每项为 `resource_id,listener_id,listen,certificate_digest,acl_digest`，WG 另含 `public_key`，其中 Hy2 certificate_digest 为证书摘要，WG 固定为空且 public_key 必须匹配资源认证公钥。
+旧 Hy2 回读缺席 public_key，保持原签名字节；两种身份不可同时提供。
+WG 回读核对已启动精确进程及其 UDP socket，只证明执行，不能代替 WG DNS 或业务探测。listen 为本机实际监听的
 规范 IP:Port，certificate_digest 是对该 listener 完成真实 QUIC/TLS 验证所见叶证书 DER 的摘要；
 有获授权用户时还须用实际派生凭据完成 Hy2 认证。acl_digest 覆盖本 generation 已交给精确执行制品的
 该资源完整规范入站凭据集合，接收 control 重算比较；不把它当单个业务请求成功或全网撤权证据。
@@ -1063,7 +997,7 @@ resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，se
 按 `(network_generation,level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest)` 排序且无重复。
 目标为确切 HTTPS URL 或相应传输动作的确切坐标，不能用一个聚合颜色替代。
 
-Resource 层当前 action 仅 `hysteria2_tls`，仅报告本设备获授权的普通公开 Hy2 首跳；
+Resource 层 action 为 `hysteria2_tls` 或 `wireguard_dns`，只报告本设备获授权的相应公开首跳；
 target 为该资源的规范 dial_host:port，名称不替换成某次 DNS 答案。每个资源取当前获授权候选中
 ID 最小者的首跳凭据（中继候选取首个 hop，不取最终出口的凭据），因此多个 Service 或路径共用
 资源时只需一次认证。该成功仅证明这个凭据完成了资源认证，不证明其他 Service 的凭据或目标可用。

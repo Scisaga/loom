@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"syscall"
 	"time"
@@ -206,33 +208,42 @@ func withIsolatedWebsiteProxy(config string) (string, error) {
 }
 
 func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, websites ...clientadapter.WebsiteAccess) (string, error) {
+	if capture == "tun" && len(executions) != 0 {
+		return "", errors.New("server listeners require the separate host projection")
+	}
+	return projectNodeRuntime(view, secret, exclusions, capture, executions, slices.Contains(view.Responsibilities, "access"), websites...)
+}
+func projectNodeRuntime(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, access bool, websites ...clientadapter.WebsiteAccess) (string, error) {
 	if err := clientadapter.ValidateOverlayUnderlay(view); err != nil {
 		return "", err
 	}
 	config := `{"inbounds":[],"outbounds":[{"tag":"reject","type":"block"}],"route":{"final":"reject","rules":[]}}`
-	if capture == "tun" && (view.RuntimeProfile == nil || len(executions) != 0) {
-		return "", errors.New("server listeners cannot share the access TUN process")
-	}
-	if view.RuntimeProfile != nil {
-		var err error
+	var err error
+	if access {
 		config, err = accessRuntimeConfigForCapture(view, secret, exclusions, capture, websites...)
-		if err != nil {
-			return "", err
+	} else if view.RuntimeProfile != nil {
+		config, err = clientadapter.RuntimeSource(view, secret, false)
+		if err == nil {
+			config, err = clientadapter.WithManagedDNS(config, view.DNSServers, false)
+		}
+		if err == nil {
+			config, err = clientadapter.WithOverlayDNS(config, view.DNSRecords, false)
 		}
 	}
-	if view.RuntimeProfile == nil {
-		var err error
-		config, err = clientadapter.WithManagedDNS(config, view.DNSServers, false)
-		if err != nil {
-			return "", err
-		}
-		config, err = clientadapter.WithOverlayDNS(config, view.DNSRecords, false)
-		if err != nil {
-			return "", err
-		}
+	if err != nil {
+		return "", err
 	}
-	return appendHY2Runtime(config, view, executions)
+	config, err = appendHY2Runtime(config, view, executions)
+	if err != nil {
+		return "", err
+	}
+	config, err = clientadapter.WithRuntimeDNSCache(config)
+	if err != nil {
+		return "", err
+	}
+	return clientadapter.WithNativeProbe(config, secret)
 }
+
 func runtimeSecret() (string, error) {
 	var value [32]byte
 	if _, err := rand.Read(value[:]); err != nil {
@@ -278,6 +289,18 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	if err != nil {
 		return err
 	}
+	profile, _, err := projectWireGuard(view.View)
+	if err != nil {
+		return err
+	}
+	if serverConfig != "" {
+		serverConfig, err = appendNativeReceivers(serverConfig, view.View, profile, nil, "/etc/wireguard/node.key")
+	} else {
+		config, err = appendNativeReceivers(config, view.View, profile, nil, "/etc/wireguard/node.key")
+	}
+	if err != nil {
+		return err
+	}
 	if serverConfig != "" {
 		if err := preflightRuntimeConfig(executable, serverConfig); err != nil {
 			return err
@@ -305,7 +328,7 @@ func generationConfigs(view control.DeviceView, secret string, exclusions []stri
 		}
 		sort.Strings(exclusions)
 	}
-	if view.RuntimeProfile == nil {
+	if !slices.Contains(view.Responsibilities, "access") {
 		capture = "mixed" // No access role means no capture process at all.
 	}
 	if capture != "tun" {
@@ -316,14 +339,22 @@ func generationConfigs(view control.DeviceView, secret string, exclusions []stri
 	if err != nil {
 		return "", "", err
 	}
-	config, err = withTUNUnderlay(config)
-	if err != nil || len(executions) == 0 {
-		return config, "", err
+	server := ""
+	ownsResources := false
+	for _, resource := range view.Resources {
+		ownsResources = ownsResources || resource.OwnerNodeID == view.DeviceID
 	}
-	// Both processes consume this one accepted View. Removing the access profile
-	// here selects the local server projection, never a second authenticated View.
-	view.RuntimeProfile = nil
-	server, err := nodeRuntimeConfig(view, "", nil, "mixed", executions)
+	if ownsResources {
+		server, err = projectNodeRuntime(view, secret, nil, "mixed", executions, false)
+		if err != nil {
+			return "", "", err
+		}
+		config, server, err = bridgeHybridCapture(config, server, view, secret)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	config, err = withTUNUnderlay(config)
 	return config, server, err
 }
 func acceptCertifiedView(store deviceclient.IdentityStore, envelope control.DeviceViewEnvelope) (bool, error) {
@@ -421,7 +452,8 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	hasAccess := lkg.View.RuntimeProfile != nil
+	hasAccess := slices.Contains(lkg.View.Responsibilities, "access")
+	hasRuntime := lkg.View.RuntimeProfile != nil
 	if !hasAccess {
 		options.Capture = "mixed"
 	}
@@ -468,7 +500,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	desiredWG, identity, err := projectWireGuard(lkg.View)
+	desiredWG, _, err := projectWireGuard(lkg.View)
 	if err != nil {
 		return err
 	}
@@ -482,7 +514,23 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	if err := preflightRuntimeConfig(options.SingBox, config); err != nil && (hasAccess || len(executions) != 0) {
+	if err := (*transaction).Cleanup(); err != nil {
+		return err
+	}
+	*transaction = nil
+	prepared, err := prepareNativeWireGuard(lkg.View, wg, options)
+	if err != nil {
+		return err
+	}
+	if serverConfig != "" {
+		serverConfig, err = appendNativeReceivers(serverConfig, lkg.View, wg, prepared, options.WireGuardPrivateKey)
+	} else {
+		config, err = appendNativeReceivers(config, lkg.View, wg, prepared, options.WireGuardPrivateKey)
+	}
+	if err != nil {
+		return err
+	}
+	if err := preflightRuntimeConfig(options.SingBox, config); err != nil && hasRuntime {
 		return err
 	}
 	if serverConfig != "" {
@@ -490,9 +538,11 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 	}
-	if err := replaceWireGuard(transaction, wg, identity, options); err != nil {
+	if err := prepared.saveOwnership(); err != nil {
 		return err
 	}
+	*transaction = prepared
+
 	generation, err := options.Generation()
 	if err != nil {
 		return err
@@ -520,7 +570,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	var selector Selector
 	pid := 0
 	resourcePID := 0
-	if hasAccess || len(executions) != 0 {
+	if hasRuntime {
 		if err := writeConfig(options.Config, config); err != nil {
 			return err
 		}
@@ -544,6 +594,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 				}
 			}()
 			server := exec.Command(options.SingBox, "run", "-c", serverPath)
+			server.Dir = filepath.Dir(options.Config)
 			server.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 			server.Stdout, server.Stderr = options.Log, options.Log
 			if err := server.Start(); err != nil {
@@ -553,11 +604,15 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			serverDone = make(chan error, 1)
 			go func() { serverDone <- server.Wait(); close(serverDone) }()
 			defer func() { retErr = errors.Join(retErr, stopProcess(server, serverDone)) }()
-			if err := waitHY2Resources(ctx, executions, resourcePID, options.Now, serverDone); err != nil {
+			if err := (*transaction).activateNative(ctx, resourcePID, serverDone); err != nil {
+				return err
+			}
+			if err := waitTransportResources(ctx, lkg.View, executions, resourcePID, options.Now, serverDone); err != nil {
 				return err
 			}
 		}
 		command := exec.Command(options.SingBox, "run", "-c", options.Config)
+		command.Dir = filepath.Dir(options.Config)
 		command.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 		if options.Capture == "tun" {
 			command, err = tunCommand(options, false)
@@ -602,9 +657,26 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		if serverConfig == "" {
 			resourcePID = pid
-			if err := waitHY2Resources(ctx, executions, pid, options.Now, done); err != nil {
+			if err := (*transaction).activateNative(ctx, pid, done); err != nil {
 				return err
 			}
+			if err := waitTransportResources(ctx, lkg.View, executions, pid, options.Now, done); err != nil {
+				return err
+			}
+		}
+	}
+	diagnosticContext := ctx
+	if hasRuntime {
+		diagnosticConfig := config
+		var diagnosticDial func(context.Context, string, string) (net.Conn, error)
+		if serverConfig != "" {
+			diagnosticConfig = serverConfig
+		} else if options.captureNamespace != nil {
+			diagnosticDial = namespaceDialer(options.captureNamespace)
+		}
+		diagnosticContext, err = clientadapter.WithNativeDiagnostic(ctx, diagnosticConfig, diagnosticDial)
+		if err != nil {
+			return err
 		}
 	}
 	components, componentErr := linuxComponentReadbacks(ctx, pid)
@@ -629,10 +701,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 		activation := Activation{State: local, Selections: []SelectionStatus{}}
-		if err := readbackWireGuard(wg, options); err != nil {
-			return err
-		}
-		if err := (*transaction).verifyFilters(); err != nil {
+		if err := (*transaction).readbackNative(); err != nil {
 			return err
 		}
 		readback := control.RuntimeReadback{State: "stopped"}
@@ -646,7 +715,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 					return err
 				}
 			}
-			resources, err := readHY2Resources(ctx, executions, resourcePID, options.Now())
+			resources, err := readTransportResources(ctx, lkg.View, executions, resourcePID, options.Now())
 			if err != nil {
 				return err
 			}
@@ -674,7 +743,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		for _, selection := range activation.Selections {
 			selected = append(selected, selection.CandidateID)
 		}
-		resourceObservations, err := clientadapter.ObserveFirstHops(ctx, lkg.View, selected, activation.State.ResourceObservations, generation, options.Now)
+		resourceObservations, err := clientadapter.ObserveFirstHops(diagnosticContext, lkg.View, selected, activation.State.ResourceObservations, generation, options.Now)
 		if err != nil {
 			return err
 		}
@@ -684,7 +753,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return saveErr
 		}
 		activation.State = saved
-		linkObservations, err := observeLinks(ctx, lkg.View, wg, generation, options.RefreshPoll, options.Now)
+		linkObservations, err := observeLinks(diagnosticContext, lkg.View, wg, generation, options.RefreshPoll, options.Now)
 		if err != nil {
 			return err
 		}

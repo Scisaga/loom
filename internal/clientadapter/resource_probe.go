@@ -75,6 +75,9 @@ func (packet connectedProbePacket) WriteTo(body []byte, peer net.Addr) (int, err
 }
 
 func probeFirstHop(ctx context.Context, probe control.ResourceProbe, dns []string, at time.Time) error {
+	if probe.Resource.Kind == "wireguard" {
+		return ProbeWireGuard(ctx, probe.Resource)
+	}
 	dial := control.EndpointDialer(ctx)
 	addresses, err := netx.ResolveCertifiedIPs(ctx, probe.Resource.DialHost, dns, dial)
 	if err != nil {
@@ -172,7 +175,7 @@ func observeFirstHops(ctx context.Context, view control.DeviceView, selected []s
 			if probeErr != nil {
 				result, lifetime = "unavailable", 30*time.Second
 			}
-			value := control.Observation{Level: "resource", ResourceID: execution.Resource.ID, Target: execution.Target(), Action: "hysteria2_tls",
+			value := control.Observation{Level: "resource", ResourceID: execution.Resource.ID, Target: execution.Target(), Action: execution.Action(),
 				SpecDigest: execution.SpecDigest, NetworkGeneration: generation, Result: result, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(lifetime).UnixMilli(), DurationMS: &duration}
 			lock.Lock()
 			cached[execution.Resource.ID] = value

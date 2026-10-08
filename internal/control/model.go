@@ -381,6 +381,9 @@ func (operation Operation) Validate() error {
 	if operation.Schema != 3 || ValidateID(operation.RequestID) != nil || validateDigests(operation.Dependencies) != nil {
 		return errors.New("management operation coordinates are invalid")
 	}
+	if err := validateCurrentTransportPayload(operation.Payload); err != nil {
+		return err
+	}
 	if operation.Operation == "device.put" {
 		value, ok := operation.Payload.(DevicePut)
 		if !ok || operation.TargetKind != "device" || operation.TargetID != value.ID {
@@ -437,6 +440,9 @@ func ConfigID(config ControlConfig) (string, error) {
 
 func SignMaterial(material Material, key ed25519.PrivateKey) (Material, error) {
 	material.Signature = ""
+	if err := validateCurrentTransportPayload(material.Payload); err != nil {
+		return Material{}, err
+	}
 	if len(key) != ed25519.PrivateKeySize {
 		return Material{}, errors.New("Material signing key is invalid")
 	}
@@ -1150,7 +1156,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 			if !containsString(owner.Responsibilities, "forward") {
 				return errors.New("WireGuard access owner has no forwarding responsibility")
 			}
-			if _, err := WireGuardAccessTarget(value, resources); err != nil {
+			if err := historicalAccessTarget(value, resources); err != nil {
 				return err
 			}
 			if err := requireTargetDependency(material, view, "resource", value.AccessHY2ResourceID, true); err != nil {
@@ -1163,7 +1169,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		for _, resource := range view.NetworkIntent.Resources {
 			resources[resource.ID] = resource
 		}
-		if _, _, _, err := linkResources(value, resources); err != nil {
+		if err := historicalLinkResources(value, resources); err != nil {
 			return err
 		}
 		for _, id := range []string{value.FromResourceID, value.ResourceID, value.ProbeTarget.ResourceID} {
@@ -1174,7 +1180,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		for _, id := range []string{value.FromNodeID, value.ToNodeID} {
 			found := false
 			for _, device := range view.DeviceAuthorizations {
-				if device.ID == id && containsString(device.Responsibilities, "forward") {
+				if device.ID == id && (containsString(device.Responsibilities, "forward") || value.ProbeTarget.Action == "wireguard_dns" && id == value.ToNodeID && containsString(device.Responsibilities, "internet_egress")) {
 					found = true
 				}
 			}

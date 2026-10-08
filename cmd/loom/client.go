@@ -54,6 +54,8 @@ func cmdClient(args []string) error {
 		return cmdClientEnrollMinimal(args[1:])
 	case "sync":
 		return cmdClientSync(args[1:])
+	case "migrate-transport":
+		return cmdClientMigrateTransport(args[1:])
 	case "inspect":
 		return cmdClientInspect(args[1:])
 	case "website-root":

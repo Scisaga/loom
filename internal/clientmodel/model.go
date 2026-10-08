@@ -216,9 +216,14 @@ type runtimeDocument struct {
 	} `json:"inbounds"`
 	Outbounds []struct {
 		Type      string   `json:"type"`
+		Detour    string   `json:"detour"`
 		Tag       string   `json:"tag"`
 		Outbounds []string `json:"outbounds,omitempty"`
 	} `json:"outbounds"`
+	Endpoints []struct {
+		Type string `json:"type"`
+		Tag  string `json:"tag"`
+	} `json:"endpoints"`
 	Experimental struct {
 		ClashAPI struct {
 			ExternalController string `json:"external_controller"`
@@ -306,6 +311,13 @@ func ProjectRuntimeCandidates(routes []RouteCandidate, profile RuntimeProfile) (
 	transport := make(map[string]string, len(document.Outbounds))
 	for _, outbound := range document.Outbounds {
 		transport[outbound.Tag] = outbound.Type
+	}
+	for _, endpoint := range document.Endpoints {
+		for _, outbound := range document.Outbounds {
+			if outbound.Type == "direct" && outbound.Detour == endpoint.Tag && endpoint.Type == "wireguard" {
+				transport[outbound.Tag] = "wireguard"
+			}
+		}
 	}
 	result := make([]RuntimeCandidate, 0, len(routes))
 	for _, route := range routes {

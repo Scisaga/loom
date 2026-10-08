@@ -2,8 +2,11 @@ package clientruntime
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -37,7 +40,7 @@ func TestWindowsCapturePreservesAuthorizationAndDoesNotInventDNS(t *testing.T) {
 	}
 }
 
-func TestWindowsCapturePreservesHy2TrustAndRelay(t *testing.T) {
+func TestWindowsCapturePreservesIndependentHy2FirstHop(t *testing.T) {
 	base, _ := pathPlanFixture(t)
 	c, _ := decodeWindowsConfig(base)
 	// Capture consumes already authenticated authorization. The native live
@@ -46,7 +49,7 @@ func TestWindowsCapturePreservesHy2TrustAndRelay(t *testing.T) {
 	entry := singBoxOutbound{Type: "hysteria2", Tag: "demo-entry", Server: "demo-entry.example", ServerPort: 443,
 		Password: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("a", 32))), TLS: tls}
 	exit := entry
-	exit.Tag, exit.Server, exit.Detour = "demo-candidate", "192.0.2.10", entry.Tag
+	exit.Tag, exit.Server = "demo-candidate", "192.0.2.10"
 	c.Outbounds = append(c.Outbounds[:1], entry, exit, c.Outbounds[2])
 	source, _ := json.Marshal(c)
 	for _, profile := range []WindowsRuntimeProfile{WindowsPortableMixedProfile, WindowsInstalledProfile, WindowsPortableTUNProfile} {
@@ -60,7 +63,7 @@ func TestWindowsCapturePreservesHy2TrustAndRelay(t *testing.T) {
 			servers++
 		}
 		if err != nil || !reflect.DeepEqual(derived.Outbounds[:len(c.Outbounds)], c.Outbounds) ||
-			len(derived.DNS.Servers) != servers || derived.DNS.Servers[0].Address != "192.0.2.53" {
+			len(derived.DNS.Servers) != servers || derived.DNS.Servers[0].Address != "udp://192.0.2.53:53" {
 			t.Fatal("Windows capture changed Hy2 credentials, trust, chain or certified DNS", err)
 		}
 	}
@@ -104,41 +107,44 @@ func TestWindowsRejectsOldRuntimeFacilities(t *testing.T) {
 	}
 }
 
-func TestWindowsWGAccessPreservesUserSpaceTransportAcrossDeliveries(t *testing.T) {
+func TestWindowsWGAccessPreservesNativeUserSpaceTransportAcrossDeliveries(t *testing.T) {
 	source, _ := pathPlanFixture(t)
 	c, _ := decodeWindowsConfig(source)
-	userspace := false
 	key := bytes.Repeat([]byte{8}, 32)
 	key[31] = 64
-	wg := singBoxOutbound{Type: "wireguard", Tag: "wg-access.demo-resource", SystemInterface: &userspace,
-		LocalAddress: []string{"fdab::2/128"}, PrivateKey: base64.StdEncoding.EncodeToString(key),
-		Peers: []singBoxWGPeer{{Server: "192.0.2.10", ServerPort: 51820, PublicKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)), AllowedIPs: []string{"fdab::1/128"}}}}
-	hy2 := singBoxOutbound{Type: "hysteria2", Tag: "demo-candidate", Server: "fdab::1", ServerPort: 443, Detour: wg.Tag,
-		Password: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), TLS: &singBoxTLS{Enabled: true, ServerName: "demo.example", Certificate: []string{"demo CA PEM"}}}
-	c.Outbounds = append(c.Outbounds[:1], wg, hy2, c.Outbounds[2])
+	endpoint := singBoxEndpoint{Type: "wireguard", Tag: "wg-send.demo-resource", System: false, Address: []string{"fdab::2/128"}, PrivateKey: base64.StdEncoding.EncodeToString(key), Inet4MappedPrefix: "fdab:1::/96", Peers: []singBoxEndpointPeer{{Address: "192.0.2.10", Port: 51820, PublicKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)), AllowedIPs: []string{"::/0"}}}}
+	c.Endpoints = []singBoxEndpoint{endpoint}
+	c.Outbounds[1] = singBoxOutbound{Type: "direct", Tag: "demo-candidate", Detour: endpoint.Tag, Inet6BindAddress: "fdab::2"}
 	source, _ = json.Marshal(c)
 	for _, profile := range []WindowsRuntimeProfile{WindowsPortableMixedProfile, WindowsInstalledProfile, WindowsPortableTUNProfile} {
-		body, err := DeriveWindowsRuntimeConfig(source, profile, nil, nil)
+		body, err := DeriveWindowsRuntimeConfig(source, profile, []string{"192.0.2.53"}, nil)
 		if err != nil {
 			t.Fatal(profile, err)
 		}
 		got, err := decodeWindowsConfig(body)
-		if err != nil || !reflect.DeepEqual(got.Outbounds, c.Outbounds) {
-			t.Fatal("Windows capture changed WG private identity or same-node Hy2", err)
+		if err != nil || len(got.Outbounds) < len(c.Outbounds) || !reflect.DeepEqual(got.Outbounds[:len(c.Outbounds)], c.Outbounds) || !reflect.DeepEqual(got.Endpoints, c.Endpoints) {
+			t.Fatal("Windows capture changed the independent WG sender", err)
+		}
+		if executable := os.Getenv("LOOM_SING_BOX_EXECUTABLE"); executable != "" {
+			if err := PreflightWindowsRuntime(context.Background(), executable, body, filepath.Join(t.TempDir(), "runtime"), profile); err != nil {
+				t.Fatal(profile, err)
+			}
 		}
 	}
 	for _, change := range []func(*singBoxConfig){
-		func(c *singBoxConfig) { v := true; c.Outbounds[1].SystemInterface = &v },
-		func(c *singBoxConfig) { c.Outbounds[1].Peers[0].AllowedIPs = []string{"::/0"} },
-		func(c *singBoxConfig) { c.Outbounds[1].LocalAddress = []string{"fdab::2/64"} },
+		func(c *singBoxConfig) { c.Endpoints[0].System = true },
+		func(c *singBoxConfig) { c.Endpoints[0].Peers[0].AllowedIPs = []string{"0.0.0.0/0"} },
+		func(c *singBoxConfig) { c.Endpoints[0].Address = []string{"fdab::2/64"} },
 		func(c *singBoxConfig) { c.Outbounds[1].Detour = "demo-candidate" },
-		func(c *singBoxConfig) { c.Outbounds[1].PrivateKey = "demo-invalid" },
+		func(c *singBoxConfig) { c.Outbounds[1].Inet6BindAddress = "fdab::3" },
+		func(c *singBoxConfig) { c.Endpoints[0].PrivateKey = "demo-invalid" },
+		func(c *singBoxConfig) { c.Outbounds[1].Type = "hysteria2" },
 	} {
 		bad, _ := decodeWindowsConfig(source)
 		change(&bad)
 		body, _ := json.Marshal(bad)
 		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, nil, nil); err == nil {
-			t.Fatal("accepted a broader or host WG execution")
+			t.Fatal("accepted a host interface, invalid source or nested Hy2")
 		}
 	}
 }

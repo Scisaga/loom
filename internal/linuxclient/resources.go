@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -98,19 +99,7 @@ func prepareHY2Executions(view control.DeviceView, inputPath string, now time.Ti
 			return nil, errors.New("resource execution input is missing or a listener is duplicated")
 		}
 		listeners[input.Listen] = true
-		for _, peer := range view.WireGuardPeers {
-			for _, wg := range view.Resources {
-				if wg.ID != peer.ResourceID || wg.AccessHY2ResourceID != resource.ID {
-					continue
-				}
-				address, err := control.WireGuardAccessAddress(wg, "")
-				host, port, _ := net.SplitHostPort(input.Listen)
-				listen, _ := netip.ParseAddr(host)
-				if err != nil || port != strconv.Itoa(resource.DialPort) || !listen.Is6() || !listen.IsUnspecified() && listen != address {
-					return nil, errors.New("WireGuard access requires its Hy2 listener on the exact IPv6 target and resource port")
-				}
-			}
-		}
+
 		pair, err := control.LoadTLSCertificate(input.CertificateFile, input.KeyFile)
 		if err != nil {
 			return nil, err
@@ -150,16 +139,7 @@ func prepareHY2Executions(view control.DeviceView, inputPath string, now time.Ti
 				break
 			}
 		}
-		if password == "" {
-			for _, credential := range view.LinkProbeCredentials {
-				for _, link := range view.Links {
-					if link.ID == credential.LinkID && link.ToNodeID == view.DeviceID && link.ProbeTarget.ResourceID == resource.ID {
-						password = credential.Credential
-						break
-					}
-				}
-			}
-		}
+
 		result = append(result, hy2Execution{resource: resource, input: input, roots: roots, password: password, acl: acl})
 	}
 	return result, nil
@@ -186,19 +166,8 @@ func appendHY2Runtime(config string, view control.DeviceView, executions []hy2Ex
 	if err := json.Unmarshal([]byte(config), &document); err != nil {
 		return "", err
 	}
-	route, ok := document["route"].(map[string]any)
-	if !ok {
-		return "", errors.New("resource runtime has no route policy")
-	}
-	previousRules, ok := route["rules"].([]any)
-	if !ok {
-		return "", errors.New("resource runtime rules are invalid")
-	}
 	inbounds, _ := document["inbounds"].([]any)
-	outbounds, _ := document["outbounds"].([]any)
-	outbounds = append(outbounds, map[string]any{"type": "direct", "tag": "resource-egress"})
-	rules := []any{}
-	relayOutbounds := map[string]bool{}
+
 	for _, execution := range executions {
 		resource, input := execution.resource, execution.input
 		host, port, _ := net.SplitHostPort(input.Listen)
@@ -214,68 +183,12 @@ func appendHY2Runtime(config string, view control.DeviceView, executions []hy2Ex
 				return "", err
 			}
 			users = append(users, map[string]any{"name": user, "password": permission.Credential})
-			if permission.RelayTarget != nil {
-				host, port, err := control.RelayDialTarget(view, *permission.RelayTarget, view.DeviceID)
-				if err != nil {
-					return "", err
-				}
-				address, err := netip.ParseAddr(host)
-				if err != nil {
-					return "", err
-				}
-				outboundTag, iface := "relay:"+permission.RelayTarget.LinkID, ""
-				for _, link := range view.Links {
-					if link.ID != permission.RelayTarget.LinkID {
-						continue
-					}
-					for _, local := range view.Resources {
-						if local.ID == link.FromResourceID {
-							iface = local.ListenerID
-						}
-					}
-				}
-				if iface == "" {
-					return "", errors.New("relay has no owned WireGuard interface")
-				}
-				if !relayOutbounds[outboundTag] {
-					outbounds = append(outbounds, map[string]any{"type": "direct", "tag": outboundTag, "bind_interface": iface})
-					relayOutbounds[outboundTag] = true
-				}
-				rules = append(rules, map[string]any{"inbound": []string{tag}, "auth_user": []string{user}, "network": "udp", "ip_cidr": []string{netip.PrefixFrom(address, address.BitLen()).String()}, "port": []int{port}, "outbound": outboundTag})
-				continue
-			}
-			for _, set := range []struct {
-				matchers []control.ServiceMatcher
-				outbound string
-			}{{permission.ExcludedTargets, "reject"}, {permission.AllowedTargets, "resource-egress"}} {
-				for _, matcher := range set.matchers {
-					rule := resourceMatcher(matcher)
-					rule["inbound"], rule["auth_user"], rule["outbound"] = []string{tag}, []string{user}, set.outbound
-					rules = append(rules, rule)
-				}
-			}
 		}
-		// Reject before reaching access rules. The receiver never sniffs SNI to
-		// reinterpret an arbitrary IP target as a permitted domain request.
-		for _, permission := range view.LinkProbeCredentials {
-			for _, link := range view.Links {
-				if link.ID != permission.LinkID || link.ToNodeID != view.DeviceID || link.ProbeTarget.ResourceID != resource.ID {
-					continue
-				}
-				user, err := control.LinkProbeUser(permission)
-				if err != nil {
-					return "", err
-				}
-				// Authentication only: no matching forwarding rule is added.
-				users = append(users, map[string]any{"name": user, "password": permission.Credential})
-			}
-		}
-		rules = append(rules, map[string]any{"inbound": []string{tag}, "outbound": "reject"})
+
 		inbounds = append(inbounds, map[string]any{"type": "hysteria2", "tag": tag, "listen": host, "listen_port": number, "users": users,
 			"tls": map[string]any{"enabled": true, "certificate_path": input.CertificateFile, "key_path": input.KeyFile}})
 	}
-	route["rules"] = append(rules, previousRules...)
-	document["outbounds"], document["inbounds"] = outbounds, inbounds
+	document["inbounds"] = inbounds
 	body, err := json.Marshal(document)
 	return string(body), err
 }
@@ -381,16 +294,13 @@ func readHY2Resources(ctx context.Context, executions []hy2Execution, pid int, n
 	return values, nil
 }
 
-func waitHY2Resources(ctx context.Context, executions []hy2Execution, pid int, now func() time.Time, done <-chan error) error {
-	if len(executions) == 0 {
-		return nil
-	}
+func waitTransportResources(ctx context.Context, view control.DeviceView, executions []hy2Execution, pid int, now func() time.Time, done <-chan error) error {
 	pending, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		_, err := readHY2Resources(pending, executions, pid, now())
+		_, err := readTransportResources(pending, view, executions, pid, now())
 		if err == nil {
 			return nil
 		}
@@ -402,4 +312,33 @@ func waitHY2Resources(ctx context.Context, executions []hy2Execution, pid int, n
 		case <-ticker.C:
 		}
 	}
+}
+
+// WG listener readback proves local execution ownership, not path health. The
+// receiver key was matched before starting this exact process. Only native DNS
+// and business observations assert remote transport or Service availability.
+func readTransportResources(ctx context.Context, view control.DeviceView, executions []hy2Execution, pid int, now time.Time) ([]control.ResourceReadback, error) {
+	values, err := readHY2Resources(ctx, executions, pid, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, resource := range view.Resources {
+		if resource.OwnerNodeID != view.DeviceID || resource.Kind != "wireguard" {
+			continue
+		}
+		listen := net.JoinHostPort("::", strconv.Itoa(resource.DialPort))
+		if !processOwnsUDP(pid, listen) {
+			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(resource.DialPort))
+			if !processOwnsUDP(pid, listen) {
+				return nil, errors.New("native WG listener is not owned by this execution process")
+			}
+		}
+		acl, err := control.InboundACLDigest(view, resource.ID)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, control.ResourceReadback{ResourceID: resource.ID, ListenerID: resource.ListenerID, Listen: listen, PublicKey: *resource.Authentication.PublicKey, ACLDigest: acl})
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].ResourceID < values[j].ResourceID })
+	return values, nil
 }

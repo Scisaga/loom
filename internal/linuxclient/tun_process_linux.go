@@ -36,14 +36,8 @@ func withTUNUnderlay(config string) (string, error) {
 			return "", errors.New("TUN runtime contains an untrusted namespace reference")
 		}
 		switch outbound["type"] {
-		case "wireguard":
-			if outbound["system_interface"] != false || outbound["interface_name"] != nil {
-				return "", errors.New("TUN WireGuard must remain a user-space transport")
-			}
-			if outbound["detour"] == nil {
-				outbound["netns"] = tunUnderlayReference
-			}
-		case "direct", "hysteria2", "trojan":
+
+		case "direct", "hysteria2", "trojan", "socks":
 			// Detoured connections are created by the referenced outbound.
 			if outbound["detour"] == nil {
 				outbound["netns"] = tunUnderlayReference
@@ -51,6 +45,15 @@ func withTUNUnderlay(config string) (string, error) {
 		case "block", "dns", "selector":
 		default:
 			return "", errors.New("TUN underlay transport has no reviewed socket projection")
+		}
+	}
+	if endpoints, ok := document["endpoints"].([]any); ok {
+		for _, raw := range endpoints {
+			endpoint, ok := raw.(map[string]any)
+			if !ok || endpoint["type"] != "wireguard" || endpoint["system"] != false || endpoint["name"] != nil || endpoint["netns"] != nil {
+				return "", errors.New("isolated capture endpoint is not a native userspace sender")
+			}
+			endpoint["netns"] = tunUnderlayReference
 		}
 	}
 	route, ok := document["route"].(map[string]any)

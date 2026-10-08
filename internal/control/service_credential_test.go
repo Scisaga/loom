@@ -9,7 +9,7 @@ import (
 func demoServiceCredentialBinding() ServiceCredentialBinding {
 	return ServiceCredentialBinding{NetworkID: "demo-network", DeviceID: "demo-device",
 		ServiceID: "demo-service", PolicyID: "demo-policy", ResourceID: "demo-resource",
-		ResourceAuthDigest: "sha256:" + strings.Repeat("ab", 32), ReceiverNodeID: "demo-receiver", Purpose: "service-auth"}
+		ResourceAuthDigest: "sha256:" + strings.Repeat("ab", 32), ReceiverNodeID: "demo-receiver", Purpose: "service-auth", CandidateID: "sha256:" + strings.Repeat("ef", 32), SenderID: "demo-device"}
 }
 
 func TestServiceCredentialCanonicalVectorAndIsolation(t *testing.T) {
@@ -22,20 +22,21 @@ func TestServiceCredentialCanonicalVectorAndIsolation(t *testing.T) {
 	savedRoot := bytes.Clone(root)
 	binding := demoServiceCredentialBinding()
 	info, err := CanonicalEncode(binding)
-	const expectedInfo = `{"device_id":"demo-device","network_id":"demo-network","policy_id":"demo-policy","purpose":"service-auth","receiver_node_id":"demo-receiver","resource_auth_digest":"sha256:abababababababababababababababababababababababababababababababab","resource_id":"demo-resource","service_id":"demo-service"}`
+	const expectedInfo = `{"candidate_id":"sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef","device_id":"demo-device","network_id":"demo-network","policy_id":"demo-policy","purpose":"service-auth","receiver_node_id":"demo-receiver","resource_auth_digest":"sha256:abababababababababababababababababababababababababababababababab","resource_id":"demo-resource","sender_id":"demo-device","service_id":"demo-service"}`
 	if err != nil || string(info) != expectedInfo {
 		t.Fatalf("credential context bytes differ from the contract: %v", err)
 	}
 	value, err := DeriveServiceCredential(root, binding)
-	if err != nil || value != "-2GNLGfc6NOn2Y1bNFtB18lVz-mALsus_OAHKYJZaAI" {
+	if err != nil || value != "PLO_8ZqgOBnD1gf3-KFvaFyp2xFoWIzytbYXJqf0wfs" {
 		t.Fatalf("credential does not match independent public demo vector: %v", err)
 	}
 	if !bytes.Equal(root, savedRoot) {
 		t.Fatal("derivation mutated its caller's root key")
 	}
 	for name, change := range map[string]func(*ServiceCredentialBinding){
+		"candidate":      func(b *ServiceCredentialBinding) { b.CandidateID = "sha256:" + strings.Repeat("cd", 32) },
 		"network":        func(b *ServiceCredentialBinding) { b.NetworkID = "demo-other-network" },
-		"device":         func(b *ServiceCredentialBinding) { b.DeviceID = "demo-other-device" },
+		"device":         func(b *ServiceCredentialBinding) { b.DeviceID, b.SenderID = "demo-other-device", "demo-other-device" },
 		"service":        func(b *ServiceCredentialBinding) { b.ServiceID = "demo-other-service" },
 		"policy":         func(b *ServiceCredentialBinding) { b.PolicyID = "demo-other-policy" },
 		"resource":       func(b *ServiceCredentialBinding) { b.ResourceID = "demo-other-resource" },
@@ -65,6 +66,7 @@ func TestServiceCredentialRejectsMissingOrInventedBinding(t *testing.T) {
 		}
 	}
 	for name, change := range map[string]func(*ServiceCredentialBinding){
+		"wrong sender":    func(b *ServiceCredentialBinding) { b.SenderID = "demo-other-device" },
 		"no service":      func(b *ServiceCredentialBinding) { b.ServiceID = "" },
 		"no policy":       func(b *ServiceCredentialBinding) { b.PolicyID = "" },
 		"no recipient":    func(b *ServiceCredentialBinding) { b.ReceiverNodeID = "" },

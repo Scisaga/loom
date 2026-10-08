@@ -71,6 +71,23 @@ class EncryptedStore(context: Context) {
         decrypt(file.readBytes())
     }
 
+    fun preserve(source: String, target: String) = synchronized(storageLock) {
+        validateName(source)
+        validateName(target)
+        require(source != target)
+        val original = directory.resolve(source).readBytes()
+        decrypt(original).fill(0)
+        val evidence = directory.resolve(target)
+        if (!evidence.exists()) {
+            val temporary = File(directory, ".$target.tmp")
+            writeSynced(temporary, original)
+            check(temporary.readBytes().contentEquals(original)) { "原始密文保全失败" }
+            java.nio.file.Files.move(temporary.toPath(), evidence.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            syncDirectory()
+        }
+        check(evidence.readBytes().contentEquals(original)) { "保全位置已有不同原始密文" }
+    }
+
     private fun decrypt(encoded: ByteArray): ByteArray {
         require(encoded.size >= 2 + 12 + 16 && encoded[0] == FORMAT_VERSION) { "受保护数据格式无效" }
         val ivSize = encoded[1].toInt() and 0xff

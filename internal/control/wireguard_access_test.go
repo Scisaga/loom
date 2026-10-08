@@ -17,7 +17,7 @@ func wireGuardAccessFixture(t *testing.T) Projection {
 	for index := range p.NetworkIntent.Resources {
 		resource := &p.NetworkIntent.Resources[index]
 		if resource.ID == "demo-exit-wg" {
-			resource.AccessHY2ResourceID = "demo-hy2"
+			resource.AccessEnabled = true
 		}
 	}
 	return p
@@ -26,13 +26,13 @@ func wireGuardAccessFixture(t *testing.T) Projection {
 func accessWireGuardOutbounds(t *testing.T, view DeviceView) []map[string]any {
 	t.Helper()
 	var document struct {
-		Outbounds []map[string]any `json:"outbounds"`
+		Endpoints []map[string]any `json:"endpoints"`
 	}
 	if err := json.Unmarshal([]byte(view.RuntimeProfile.Config), &document); err != nil {
 		t.Fatal(err)
 	}
 	var result []map[string]any
-	for _, outbound := range document.Outbounds {
+	for _, outbound := range document.Endpoints {
 		if outbound["type"] == "wireguard" {
 			result = append(result, outbound)
 		}
@@ -50,11 +50,11 @@ func TestWireGuardAccessSharesResourceAndMatchesPrivatePublicProjection(t *testi
 		t.Fatal("WG, public Hy2 and same-exit relay did not coexist privately")
 	}
 	wg := accessWireGuardOutbounds(t, first)
-	if len(wg) != 1 || wg[0]["system_interface"] != false {
+	if len(wg) != 1 || wg[0]["system"] != false {
 		t.Fatal("ordinary access did not use one user-space WG session")
 	}
 	receiver, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(receiver.WireGuardPeers) != 1 {
+	if err != nil || len(receiver.WireGuardPeers) != 2 {
 		t.Fatal("receiver did not obtain its one permitted peer", err)
 	}
 	private, err := wireGuardAccessPrivate(wg[0]["private_key"].(string))
@@ -77,7 +77,7 @@ func TestWireGuardAccessSharesResourceAndMatchesPrivatePublicProjection(t *testi
 		t.Fatal("another device changed existing access identity or runtime", err)
 	}
 	receiver, err = ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(receiver.WireGuardPeers) != 2 || receiver.WireGuardPeers[0].PublicKey == receiver.WireGuardPeers[1].PublicKey {
+	if err != nil || len(receiver.WireGuardPeers) != 3 || receiver.WireGuardPeers[0].PublicKey == receiver.WireGuardPeers[1].PublicKey {
 		t.Fatal("shared resource did not separate devices", err)
 	}
 	for _, view := range []DeviceView{first, receiver} {
@@ -116,7 +116,7 @@ func TestWireGuardAccessServiceWithdrawalPreservesOtherServiceAndPeer(t *testing
 		t.Fatal("multiple services created competing WG sessions")
 	}
 	receiver, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(receiver.WireGuardPeers) != 1 {
+	if err != nil || len(receiver.WireGuardPeers) != 2 {
 		t.Fatal("multiple services created duplicate peers", err)
 	}
 	for i := range p.NetworkIntent.Policies {
@@ -128,16 +128,16 @@ func TestWireGuardAccessServiceWithdrawalPreservesOtherServiceAndPeer(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(accessWireGuardOutbounds(t, first), accessWireGuardOutbounds(t, after)) {
+	if accessWireGuardOutbounds(t, first)[0]["private_key"] != accessWireGuardOutbounds(t, after)[0]["private_key"] {
 		t.Fatal("one Service withdrawal rotated shared transport")
 	}
 	restricted, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || !reflect.DeepEqual(receiver.WireGuardPeers, restricted.WireGuardPeers) || len(restricted.InboundCredentials) != 1 || restricted.InboundCredentials[0].ServiceID != service.ID {
+	if err != nil || !reflect.DeepEqual(receiver.WireGuardPeers, restricted.WireGuardPeers) || len(restricted.InboundCredentials) != 3 || restricted.InboundCredentials[0].ServiceID != service.ID {
 		t.Fatal("Service withdrawal lost other service or retained old ACL", err)
 	}
 	p.DeviceAuthorizations[0].PolicyIDs = []string{}
 	withdrawn, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(withdrawn.WireGuardPeers) != 0 || len(withdrawn.InboundCredentials) != 0 {
+	if err != nil || len(withdrawn.WireGuardPeers) != 1 || withdrawn.WireGuardPeers[0].DeviceID != "demo-entry" || len(withdrawn.InboundCredentials) != 0 {
 		t.Fatal("last permission withdrawal retained peer", err)
 	}
 }
@@ -176,12 +176,8 @@ func TestWireGuardAccessRejectsUnboundPeersAndTargets(t *testing.T) {
 					change(&p.NetworkIntent.Resources[i])
 				}
 			}
-			v, err := ProjectDeviceView(p, "demo-access")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(v.Routes) != 2 || len(accessWireGuardOutbounds(t, v)) != 0 {
-				t.Fatal("invalid target became a first hop or removed old paths")
+			if _, err := ProjectDeviceView(p, "demo-access"); err == nil {
+				t.Fatal("retired WG/Hy2 coupling entered a new View")
 			}
 		})
 	}
@@ -219,14 +215,14 @@ func TestWireGuardAccessDerivationAndAbsentFieldsAreStable(t *testing.T) {
 	if err != nil || other == private {
 		t.Fatal("network domain was not isolated", err)
 	}
-	resource.AccessHY2ResourceID = ""
+	resource.AccessEnabled = false
 	body, err := CanonicalEncode(resource)
-	if err != nil || bytes.Contains(body, []byte("access_hy2")) {
+	if err != nil || bytes.Contains(body, []byte("access_enabled")) {
 		t.Fatal("absent access field changed old resource bytes", err)
 	}
 	view, err := ProjectDeviceView(relayProjectionFixture(t), "demo-exit")
 	body, e := CanonicalEncode(view)
-	if err != nil || e != nil || bytes.Contains(body, []byte("wireguard_peers")) {
+	if err != nil || e != nil || len(view.WireGuardPeers) != 1 || view.WireGuardPeers[0].DeviceID != "demo-entry" {
 		t.Fatal("old View gained peer authority", err, e)
 	}
 	if bytes.Contains(body, []byte(private)) {

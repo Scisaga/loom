@@ -13,6 +13,27 @@ class ManagedProfileStoreTest {
     private val stateKey = ProfileStorage.state(profileId)
 
     @Test
+    fun explicitTransportImportPreservesEvidenceBeforeReplacingSingleAuthority() {
+        val storage = MemoryStorage()
+        val original = "demo-signed-historical-state".encodeToByteArray()
+        val replacement = "demo-forward-certified-state".encodeToByteArray()
+        storage.put(stateKey, original)
+        val handle = store(storage, validate = { check(!it.contentEquals(original)) }, replaceTransport = { before, next ->
+            check(before.contentEquals(original))
+            check(next.contentEquals(replacement))
+            next
+        })
+        assertThrows(IllegalStateException::class.java) { handle.state() }
+        storage.dropWrite = true
+        assertThrows(IllegalStateException::class.java) { handle.replaceTransport(replacement) }
+        assertArrayEquals(original, storage.get(stateKey))
+        storage.dropWrite = false
+        handle.replaceTransport(replacement)
+        assertArrayEquals(original, storage.get(ProfileStorage.transportEvidence(profileId)))
+        assertArrayEquals(replacement, store(storage).state())
+    }
+
+    @Test
     fun acceptedAuthorityPersistsWithoutNativeRuntimeAndRestartsFromSameBytes() {
         val storage = MemoryStorage()
         val bytes = "demo-authenticated-state-with-new-floor".encodeToByteArray()
@@ -105,13 +126,14 @@ class ManagedProfileStoreTest {
         storage: ProfileByteStore,
         validate: (ByteArray) -> Unit = {},
         checkAdvance: (ByteArray, ByteArray) -> Unit = { _, _ -> },
+        replaceTransport: (ByteArray, ByteArray) -> ByteArray = { _, _ -> error("not an explicit migration") },
     ) =
         ManagedProfileStore(storage, profileId, validate, checkAdvance, { "demo-digest" }, project = { bytes ->
             ManagedProfile(
                 "demo-device", "Demo", "demo-digest", "[]",
                 "native-runtime-not-started", "[]", bytes.decodeToString(),
             )
-        })
+        }, replaceTransport = replaceTransport)
 
     private class MemoryStorage : ProfileByteStore {
         private val records = mutableMapOf<String, ByteArray>()

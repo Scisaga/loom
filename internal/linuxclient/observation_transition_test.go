@@ -140,8 +140,8 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 	}
 }
 
-func TestObservationExecutionIncludesEveryDetourCredential(t *testing.T) {
-	before := observationOutbounds(&control.RuntimeProfile{Kind: "sing_box", Config: `{"outbounds":[{"detour":"demo-hop","password":"demo-final-secret","tag":"demo-route","type":"hysteria2"},{"password":"demo-hop-secret","tag":"demo-hop","type":"hysteria2"}]}`})
+func TestObservationExecutionIncludesNativeSenderIdentity(t *testing.T) {
+	before := observationOutbounds(&control.RuntimeProfile{Kind: "sing_box", Config: `{"outbounds":[{"detour":"demo-hop","inet6_bind_address":"fdab::2","tag":"demo-route","type":"direct"}],"endpoints":[{"private_key":"demo-hop-secret","tag":"demo-hop","type":"wireguard"}]}`})
 	if !sameObservationOutbound(before, before, "demo-route") {
 		t.Fatal("unchanged private execution was discarded")
 	}
@@ -150,7 +150,7 @@ func TestObservationExecutionIncludesEveryDetourCredential(t *testing.T) {
 		for key, value := range before {
 			after[key] = value
 		}
-		after[tag] = json.RawMessage(strings.ReplaceAll(string(after[tag]), "-secret", "-changed"))
+		after[tag] = json.RawMessage(strings.ReplaceAll(strings.ReplaceAll(string(after[tag]), "-secret", "-changed"), "fdab::2", "fdab::3"))
 		if sameObservationOutbound(before, after, "demo-route") {
 			t.Fatal("a changed outbound credential reused an old business result")
 		}

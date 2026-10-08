@@ -86,12 +86,13 @@ func observationOutbounds(profile *control.RuntimeProfile) map[string]json.RawMe
 	}
 	var document struct {
 		Outbounds []json.RawMessage `json:"outbounds"`
+		Endpoints []json.RawMessage `json:"endpoints"`
 	}
 	if json.Unmarshal([]byte(profile.Config), &document) != nil {
 		return nil
 	}
 	result := map[string]json.RawMessage{}
-	for _, body := range document.Outbounds {
+	for _, body := range append(document.Outbounds, document.Endpoints...) {
 		var outbound struct {
 			Tag string `json:"tag"`
 		}
