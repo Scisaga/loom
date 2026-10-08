@@ -138,17 +138,59 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 }
 
 func candidateTransportPath(view DeviceView, origin string, service Service, policy NetworkPolicy, candidate RouteCandidate) (transportPath, error) {
-	local := len(candidate.NodeChain) > 0 && candidate.NodeChain[0] == origin
-	paths, err := transportPaths(origin, local, service, policy, view.Resources, view.Links, view.DNSRecords...)
-	if err != nil {
-		return transportPath{}, err
+	reject := errors.New("candidate does not match its authorized transport path")
+	chain := candidate.NodeChain
+	if candidate.Validate() != nil || len(chain) == 0 || !policy.EntryScope.Allows(chain[0]) || !policy.ExitScope.Allows(candidate.FinalExit) || policy.MaxHops > 0 && len(chain) > policy.MaxHops {
+		return transportPath{}, reject
 	}
-	for _, path := range paths {
-		if path.candidate.ID == candidate.ID && sameContractValue(path.candidate, candidate) {
-			return path, nil
+	resources := map[string]TransportResource{}
+	for _, resource := range view.Resources {
+		resources[resource.ID] = resource
+	}
+	links := map[string]NetworkLink{}
+	for _, link := range view.Links {
+		links[link.ID] = link
+	}
+	path := transportPath{local: chain[0] == origin, hops: []TransportResource{}, links: []NetworkLink{}}
+	if !path.local {
+		first, found := resources[candidate.FirstResourceID]
+		if !found || first.OwnerNodeID != chain[0] || first.Validate() != nil || first.AccessHY2ResourceID != "" {
+			return transportPath{}, reject
 		}
+		if first.Kind == "wireguard" {
+			if !first.AccessEnabled {
+				return transportPath{}, reject
+			}
+		} else if first.Kind != "hysteria2" || first.LinkOnly {
+			return transportPath{}, reject
+		}
+		path.hops = append(path.hops, first)
 	}
-	return transportPath{}, errors.New("candidate does not match its authorized transport path")
+	// The supplied candidate already names its entire path. Verify those exact
+	// edges, then recompute its complete identity/spec. Enumerating every other
+	// path for each permission turns ordinary View validation into a graph scan
+	// repeated once per candidate and does not strengthen authorization.
+	for i, id := range candidate.LinkIDs {
+		link, found := links[id]
+		if !found || link.FromNodeID != chain[i] || link.ToNodeID != chain[i+1] || chain[i+1] == origin || i > 0 && !policy.RelayScope.Allows(chain[i]) {
+			return transportPath{}, reject
+		}
+		_, _, target, err := linkResources(link, resources)
+		if err != nil {
+			return transportPath{}, err
+		}
+		path.hops = append(path.hops, target)
+		path.links = append(path.links, link)
+	}
+	if len(path.hops) == 0 {
+		return transportPath{}, reject
+	}
+	want, err := pathCandidate(service, policy, chain, path.hops, path.links, path.local, resources, view.DNSRecords)
+	if err != nil || !sameContractValue(want, candidate) {
+		return transportPath{}, reject
+	}
+	path.candidate = want
+	return path, nil
 }
 
 func pathPermission(path transportPath, index int, origin string, policy NetworkPolicy, service Service, excluded []ServiceMatcher) InboundCredential {
