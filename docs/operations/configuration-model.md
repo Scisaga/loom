@@ -89,6 +89,8 @@ WG 接收资源由同一原生数据面进程执行，固定私钥仍来自 root
 `/etc/wireguard/node.key`，启动前核对资源公钥。普通接入 peer 和业务地址仅在用户态路由器中，
 不添加宿主路由或防火墙。已有 Link 管理流量使用原精确接口地址、peer 与返回路由；新执行器
 创建并回读本 generation 的 TUN 接口及精确管理路由，不使用 auto_route、默认路由或 policy rule。
+为兼容拒绝在线改名的内核，完成进程所有权核对后，只将新建的临时接口置为 down、改为认证名称并
+重新置为 up，然后才添加管理返回路由；这不操作既有接口，也不改宿主网络服务。
 systemd 按已认证的本节点 Link 投影 `/dev/net/tun` 设备访问；这仅满足原生管理 endpoint 的
 执行要求，Mixed 不因此获得隔离 capture 的 `CAP_SYS_ADMIN` 或初始 netns 文件描述符。
 旧内核 WG 安装器删除，只有识别旧所有权记录的 compare-and-delete 清理用于一次切换。

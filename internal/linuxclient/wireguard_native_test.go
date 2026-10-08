@@ -130,6 +130,17 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 		}
 	}
 	p, keys, input, at := nativeProjectionFixture(t)
+	// Exercise the older-kernel rule even when this test host supports live
+	// TUN renames. All actual interface operations remain in this test netns.
+	ip, err := exec.LookPath("ip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	strictIP := filepath.Join(t.TempDir(), "ip")
+	wrapper := fmt.Sprintf("#!/usr/bin/python3\nimport json,os,subprocess,sys\nip=%q\na=sys.argv[1:]\nif len(a)==6 and a[:3]==['link','set','dev'] and a[4]=='name':\n v=json.loads(subprocess.check_output([ip,'-json','link','show','dev',a[3]]))[0]\n if 'UP' in v['flags']:sys.exit(2)\nos.execv(ip,[ip]+a)\n", ip)
+	if err := os.WriteFile(strictIP, []byte(wrapper), 0700); err != nil {
+		t.Fatal(err)
+	}
 	cacheRoot := t.TempDir()
 	logs := map[string]string{}
 	start := func(name, config string) (*exec.Cmd, chan error, func()) {
@@ -191,7 +202,7 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			options := Options{Config: filepath.Join(t.TempDir(), "runtime.json")}
+			options := Options{Config: filepath.Join(t.TempDir(), "runtime.json"), IP: strictIP}
 			options.defaults()
 			tx, err = prepareNativeWireGuard(view, wg, options)
 			if err != nil {

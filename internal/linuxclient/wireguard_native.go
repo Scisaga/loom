@@ -250,7 +250,16 @@ func (transaction *wireGuardTransaction) activateNative(ctx context.Context, pid
 		if _, err := runHostCommand(transaction.options.IP, "link", "set", "dev", actual.Name, "alias", owned.alias); err != nil {
 			return err
 		}
+		// Older kernels reject renaming an UP TUN. This interface is still the
+		// new process-owned temporary device: bring it down for the rename, then
+		// activate its final name before installing any management return route.
+		if _, err := runHostCommand(transaction.options.IP, "link", "set", "dev", actual.Name, "down"); err != nil {
+			return err
+		}
 		if _, err := runHostCommand(transaction.options.IP, "link", "set", "dev", actual.Name, "name", owned.link.Interface); err != nil {
+			return err
+		}
+		if _, err := runHostCommand(transaction.options.IP, "link", "set", "dev", owned.link.Interface, "up"); err != nil {
 			return err
 		}
 		for _, peer := range owned.peerLinks() {
