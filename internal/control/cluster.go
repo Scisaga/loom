@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -138,7 +139,9 @@ func (runtime *Runtime) reconcilePeers() {
 		// Each private request already has a 15-second bound; a shorter shared
 		// deadline can repeatedly cancel the first batch before any progress.
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		_ = runtime.reconcilePeer(ctx, member)
+		if err := runtime.reconcilePeer(ctx, member); err != nil {
+			log.Printf("private control synchronization unavailable for member %s: %v", member.ControlID, err)
+		}
 		cancel()
 	}
 }

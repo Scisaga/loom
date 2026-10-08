@@ -474,7 +474,8 @@ DNS resolver 运行地址与 overlay DNS 记录不同，
 字段完整性到此分为两层：本节规定已列出的 genesis、初始成员表及 NetworkIntent 初始字段的编码规则，
 初始节点的首次设备绑定与认证分发地址也使用上文的同一事实链。互联网 Service/Policy 和共享 HTTPS 目标已有完整
 非空值规范；Hy2 authentication 的字段固定于下文，公开网站根使用上述完整 PublicTrust。
-Link 探测动作、LAN 等未定非空值仍有明确缺口。这些输入必须指明缺项并拒绝，不能先落盘后补规范。
+Link 探测动作使用下述原生 WG DNS 契约，LAN 使用 Service 的局域网映射契约。
+任何未定义的非空值仍须指明缺项并拒绝，不能先落盘后补规范。
 空集合是合法新网络的无配置初态，不是允许忽略其非空内容的测试协议；正式入口与测试使用同一个 decoder，
 对已规定元素执行同一检查，对未规定元素同样拒绝。补齐元素时修订同一 schema 3；既有 genesis 原始
 字节和锚不变，新增普通事实逐对象生效，不把空集合事后解释为隐含默认对象。
@@ -580,10 +581,10 @@ PublisherInput、部署计划与 UI 是单向投影，不新增节点属性 stor
 
 ### 资源与用途隔离凭据
 
-修订边界：用户已明确禁止 Hy2 套在 WG 内及 WG 对 Hy2 的执行依赖。下述
-`access_hy2_resource_id`、普通 WG 到 Hy2 的投影和 WG 上逐跳 Hy2 描述是待替换的实现耦合，
-不再构成目标行为或新增启用依据。已有签名资源、Link 与 LKG 的原字节不得静默重解释；
-同一 schema 3 的前向替换仍须完成，实际状态见[传输实现纠偏](../progress.md#传输实现纠偏)。
+修订边界：用户已明确禁止 Hy2 套在 WG 内及 WG 对 Hy2 的执行依赖。
+`access_hy2_resource_id`、普通 WG 到 Hy2 的投影和 WG 上逐跳 Hy2 均不是现行执行契约。
+已有签名资源、Link 与 LKG 的原字节不得静默重解释；限定历史验签与同一 schema 3 的
+前向替换见下文，实际部署结果见[传输实现纠偏](../progress.md#传输实现纠偏)。
 
 TransportResource 字段为 `id,kind,owner_node_id,listener_id,dial_host,dial_port,authentication`，
 Hy2 可另外保存 `link_only:true`，表示仅经显式 Link 使用；false 的唯一编码是省略该字段。
@@ -618,7 +619,7 @@ domain、wire、persistent、runtime 配置与 UI 表达均不变；缓存只属
 
 Linux 同时承担 access 与服务端职责并使用隔离 TUN 时，已有两个进程不能分别持有同一发送端 WG 会话，否则会发生 peer endpoint 漫游竞争。最小变化是只让服务端进程持有实际传输；隔离 capture 通过固定回环、临时密码保护的 SOCKS 入口提交原始目标和已签名 Candidate。服务端按原 Service 边界与 Candidate 校验后发送下一段，拒绝其他用户、目标与入口流量。此本机连接不进入 WG，也不新增远端代理层、持久身份或第二份授权；增加的运行成本仅为本机一次转发及两个可删除 DNS 缓存。Mixed 与纯 access 仍只需一个进程。
 
-本段定义替代实现；其后的旧 Hy2 耦合描述只用于识别待移除字节，不能生成新的接入。
+本段定义唯一现行执行；旧耦合字段仅在下文的历史字节识别边界内验证，不能生成新的接入。
 正常业务是 access 选择同一 Service 的 RouteCandidate，经首跳到入口，再逐段经 Link 到最终
 出口。每段只传业务 IP；Hy2 首跳在入口终止，不建立下一段 Hy2 会话。WG 接收器将解密后的
 TCP/UDP 交给公共路由器，权限来自同一 Service/Policy，不从传输类型推测。
@@ -869,16 +870,17 @@ Invite Material 的 control_config_id 必须等于其证明终表内容 ID。隔
 control_proof、Invite 和 View 均不得因此泄漏设备授权的 RuntimeKey 或其他设备的派生凭据。
 后继验证实现后沿同一 envelope 交付，不加 runtime_contract 或第二份 View。
 
-本链 DeviceView 的字段为 `schema=3,device_id,name,platform,device_public_key,responsibilities,policy_ids,`
-`services,policies,resources,links,endpoints,dns_servers,business_probe_targets,routes,runtime_profile,`
+本链 DeviceView 的字段为 `schema=3,network_id,device_id,name,platform,device_public_key,responsibilities,policy_ids,`
+`services,policies,resources,links,endpoints,dns_servers,business_probe_targets,routes,`
 `inbound_credentials,expected_components`。所有集合显式出现；没有相应授权时为空集合。
-另有上述私有 `link_probe_credentials`，以及可选非空 `dns_records`、`public_trust` 和 `web_endpoints`，分别按上文的 DNSRecord、PublicTrust
+另有可选 `runtime_profile`，以及可选非空 `wireguard_peers`、`dns_records`、`public_trust` 和 `web_endpoints`，分别按上文的 peer、DNSRecord、PublicTrust
 和 EndpointGeneration 规范投影；web_endpoints 仅含当前成员、有效根授权下相同客户端端口的
 serving `control.loom` web 代，按 ID/generation 排序，原设备认证 endpoints 不因此加入 web-only 值。
 无配置时字段缺席，显式空数组、null、未知用途或不规范证书均拒绝；已有缺席字段的签名字节保持。
 View 职责包含普通设备授权与成员表的有效投影；其中 control 只能来自已经验证的成员表。
-runtime_profile 仅 access 出现，包含 `kind="sing_box",config`，config 是 C 编码的 JSON 字符串，
-包含候选 outbound、Service selector 与权限规则；平台本机 capture/listener 和本机 API secret 由
+runtime_profile 在 access 或持有传输资源的服务节点出现，无 access 且无资源时省略。
+它包含 `kind="sing_box",config`，config 是 C 编码的 JSON 字符串，包含候选 outbound、
+原生 WG endpoint、Service selector 与接收权限规则；平台本机 capture/listener 和本机 API secret 由
 HostAdapter 投影，不可扩大签名 selector 的成员。无业务权限的 access 仍须能表示拒绝业务的合法运行配置，
 不能因 routes 为空而拒绝认证配置。forward/出网的入站值由当前权限单向投影，不接受本机自填 ACL。
 Linux 的本机 selector 另可选择既有 `reject` block，以表达该 Service 没有可用候选，并在启动时默认拒绝。
@@ -900,14 +902,15 @@ TLS 校验名始终是原 URL 的主机名，HTTP authority 保留非默认端�
 候选身份字段为 `service_id,first_resource_id,node_chain,link_ids,final_exit`；Direct 与本机出口的
 first_resource_id 为空且两条链为空，final_exit 分别为 `direct` 和设备 NodeID。一跳有首跳资源而无 LinkID。
 RouteCandidate 在这些字段外还有 `id,spec_digest,scope`；id 和 spec_digest 按本节摘要规则计算，
-scope 固定为 `service:` 加 Service ID。入站凭据项为
-`device_id,service_id,policy_id,resource_id,receiver_node_id,credential,allowed_targets,excluded_targets`；credential 为
-前述 KDF 输出，互联网 allowed_targets 是规范排序 Matcher 集合，只能来自该 Service 及当前策略的
+scope 固定为 `service:` 加 Service ID。入站权限项为
+`device_id,service_id,policy_id,candidate,resource_id,receiver_node_id,sender_id,allowed_targets,excluded_targets`；
+Hy2 另含前述 KDF 输出 `credential`，WG 省略该字段。互联网 allowed_targets 是规范排序 Matcher 集合，只能来自该 Service 及当前策略的
 获授权投影，不能由 credential 持有者扩张。excluded_targets 为该来源设备其他当前所选 Service 的
 matcher 去重并集（包括 deny），同样显式、规范排序。先拒绝 excluded，再允许 allowed，默认拒绝；
 这保持 Service 后继修改造成交集时的拒绝语义，不把凭据本身当成目标授权。每项按
-`device_id,service_id,policy_id,resource_id,receiver_node_id` 排序且唯一；凭据用户名由这组规范字段的
-摘要派生，不通过有歧义的字符串拼接。它只表示发往 receiver 的现行一跳权限，不是中继下一跳 ACL。
+`device_id,service_id,policy_id,candidate.id,resource_id,receiver_node_id,sender_id` 排序且唯一；Hy2
+凭据用户名由这些绑定字段的规范摘要派生，不通过有歧义的字符串拼接。权限绑定完整候选、
+实际前驱和本段接收器，下一段或最终出网从接收器在该候选中的位置推导。
 
 一跳 Hy2 的第一资源 owner 必须同时符合 Policy 入口和出口范围并有 internet_egress；节点链恰好
 为 `[owner]`，LinkIDs 为空。签发端按完整 Projection 检查 owner 资格，只向 access 交付实际可消费的
@@ -916,11 +919,13 @@ matcher 去重并集（包括 deny），同样显式、规范排序。先拒绝 
 同一认证 runtime_profile 对应 Hy2 outbound 中；检查该配置时只将密码当私有投影输入，其他拨号、
 信任、候选和授权规则均须由 View 重建并比较，不从配置反写领域事实或增加 fallback。
 
-接收端按 Hy2 请求实际携带的 FQDN/IP 执行目标规则；不得用 sniff SNI 为任意 IP 请求扩大权限。
+接收端按 Hy2 请求实际携带的 FQDN/IP 或 WG 执行 DNS 恢复的原名称/字面 IP 执行目标规则；
+不得用 sniff SNI 为任意 IP 请求扩大权限。
 本机 TLS 引用及监听坐标仅定位执行输入。撤权先耐久接受新 View，再关闭旧进程和存量 QUIC 会话，
 然后建立新 generation；仅热换 user 表不能撤销已认证会话。失败保持新 LKG 并报告 error，重启不复权。
 共享 listener 的合法会话因此可能短暂中断；不为避免中断保留旧 ACL、凭据或第二状态源。
-完整中继与 WG 参与地址的执行字段仍单独待补，不能从一跳成功推定它们已实现。
+完整中继与 WG 参与地址使用上文的逐段权限、peer 和来源投影；实际业务结果仍须分别验收，
+不能从一跳成功推定其他路径可用。
 
 验收顺序固定为：严格规范解码 → 固定网络锚 → 连续成员证明与签发资格 → 完整 envelope 签名 →
 View 摘要 → 设备 ID/公钥/平台 → 内部引用及授权/运行映射 → 已见前沿。任何一步失败都不覆盖原 LKG。
@@ -1020,20 +1025,22 @@ spec_digest 为 `loom-resource-probe-spec-v3\0` 加
 
 Resource 执行只在本轮实际应用并回读的选择需要该资源时触发，包含必要 fallback 前的真实选择，
 按资源去重并行；Direct、本机出网及以 WG Link
-起步的 hybrid 没有此项公开首跳采样。沿平台 underlay socket 和认证 DNS 完成真实 QUIC/TLS/Hy2
-认证，只有校验成功并收到 233 才为 available；超时、拒绝和 TLS 失败为该资源样本的 unavailable，
+起步的 hybrid 没有此项公开首跳采样。Hy2 沿平台 underlay socket 和认证 DNS 完成真实 QUIC/TLS
+认证，只有校验成功并收到 233 才为 available；WG 复用实际运行的原生会话，完成接收端执行 DNS
+请求与响应的核对才为 available。超时、拒绝和认证失败为该资源样本的 unavailable，
 取消不产生样本。完整耗时含本次必要解析及认证，不是 RTT 或完整 Service 请求耗时。
 新样本成功保存十分钟、失败三十秒，复用时原时间不变；这是客户端必要重测窗口，不是 control
 全局新鲜性规则。缓存只保留同网络代、同规范执行摘要且仍授权的原样本，可删除重建；撤权、
 凭据/资源/DNS 变化、到期或换网后不能复用。资源结果不修改现有 Service 选择算法或整体健康。
 
-Link 层当前 action 仅 `hysteria2_tls`，resource_id 为 Link 的接收端 WG resource_id，target 为
+Link 层当前 action 仅 `wireguard_dns`，resource_id 为 Link 的接收端 WG resource_id，target 为
 probe_target 的规范 IP:Port（IPv6 使用方括号）。spec_digest 为 `loom-link-spec-v3\0` 加
 `C({link:NetworkLink,resources:[TransportResource]})` 的 SHA-256 摘要；resources 恰含两端 WG
-及目标 Hy2 三项，按 ID 排序。仅 From 节点可报告，View 必须含对应探测凭据；报告接收方重算
-所有引用、目标与摘要。实际执行绑定已回读的 From WG 接口与源地址，验证 Hy2 CA、名称、有效期，
-经真实 HTTP/3 POST `/auth` 得到认证成功 233 才记 available。404、TLS 失败和超时均不可充数。
-duration_ms 是本次完整认证往返的单调时钟耗时，不是 WG RTT 或 Service HTTPS 延迟。
+两项，按 ID 排序。仅 From 节点可报告；报告接收方重算所有引用、目标与摘要。实际执行复用
+本 generation 的原生发送会话及其只允许执行 DNS 的来源地址，经受限本机入口发起 DNS 请求；
+响应须匹配问题、事务号、成功码及执行地址池。没有运行会话、返回不匹配或超时均不能记 available。
+没有独立 Hy2 探测凭据或远端代理会话。duration_ms 是本次 DNS 完整往返的单调时钟耗时，
+不是 WG 握手 RTT 或 Service HTTPS 延迟。
 每轮按现有运行刷新周期重新采样，valid_until 为该次 observed_at 加调用方的刷新周期；这只是
 设备声明的该轮样本边界，不新增 control 的全局最大寿命或时钟容忍。取消或未执行不生成成功样本，
 失败只影响该次 Link 观测，不停止其他 Service；UI 显示原时间和样本结果，拓扑当前可用性仍 unknown。
@@ -1128,7 +1135,7 @@ writer、批次中途失败的原子性、非法键值与签名拒绝、迁移�
 | 正式内部入口 | 规范请求与响应 |
 |---|---|
 | `GET /internal/report-ranges` | 无查询参数；响应 `{schema:3,network_id,ranges:[{device_id,first_sequence,digest}]}`，按设备及 first_sequence 排序且唯一 |
-| `POST /internal/report-ids` | 请求 `{schema:3,ranges:[Scope]}`，非空、规范排序且最多 8 项；响应 `{schema:3,network_id,ranges:[{device_id,first_sequence,report_ids:[Digest]}]}`，恰好对应请求范围，ID 排序且唯一 |
+| `POST /internal/report-ids` | 请求 `{schema:3,ranges:[Scope]}`，非空、规范排序且最多 8 项；响应 `{schema:3,network_id,ranges:[{device_id,first_sequence,report_ids:[Digest]}]}`，恰好对应请求范围；report_ids 是无重复的传输优先列表，发送端按原件序列降序、同序列按内容 ID 升序生成 |
 | `POST /internal/reports` | 请求 `{schema:3,report_ids:[Digest]}`，非空、规范排序且最多 1024 项；响应 `{schema:3,reports:[DeviceReport]}`，为请求 ID 顺序的非空前缀，可以包含多个设备 |
 
 first_sequence 使用规范 U64 且必须是上述范围起点；未知字段、查询参数、非规范字节、错误网络或范围
@@ -1137,8 +1144,16 @@ first_sequence 使用规范 U64 且必须是上述范围起点；未知字段、
 的设备；取原报告时再次核对网络、当前设备公钥与签名。请求 ID 不能绕过这些检查。
 
 接收算法先沿原路径补控制事实，再比较当前授权范围的摘要。每台设备最高的有差异范围先于旧范围，
-避免大批旧历史挡住最新报告；其余范围按设备及起点排序。每次选择至多 8 个范围，核对返回范围与请求
-逐项相同，只收集本机缺失 ID，合并去重至多 1024 项后规范排序，请求原件。返回值必须是请求 ID 的非空
+其余范围按设备及起点排序。仅优先最高范围仍不够：同一范围内可以积压许多旧报告，按摘要排序取满
+一个设备还会阻塞其他设备。每次选择至多 8 个范围，核对返回范围与请求逐项相同，逐个范围交替取
+下一份本机缺失 ID，至多收集 64 项后按 ID 规范排序，请求原件。这个较小的实际请求量不改变协议
+允许的 1024 项上限或 16 MiB 单次输入边界，也不增加超时、游标或操作者配置。
+
+ID 优先列表是对端的传输提示，不是签名事实或最高序列声明；接收端只按列表尝试取数，不从其顺序
+制造高水位、当前报告、健康或传播完成。列表的 domain/wire 是保留顺序的唯一规范数组，非法摘要、
+重复 ID、错误范围和未知字段仍拒绝；范围集合摘要继续使用按 ID 排序的集合，与传输提示顺序无关。
+实际报告顺序和同序列分叉只从验签后的原件重建。提示不同最多改变取数顺序，不能改变最终合并结果。
+返回值必须是请求 ID 的非空
 前缀；每份原件须同时符合此前 ID 索引声明的设备/范围、本网络、当前设备公钥、规范值和签名。
 索引仅减少传输，不能代替原件验证；未知或错误范围不能借有效签名进入另一个范围。
 
@@ -1158,7 +1173,7 @@ first_sequence 使用规范 U64 且必须是上述范围起点；未知字段、
 domain / wire / persistent 仍为同一 DeviceReport 与规范签名原件；runtime 的索引及缺集只单向派生；
 UI 从同一集合按当前授权、View、候选规范与原采样时间投影。旧 View 或迟到报告只作历史，不冒充当前结果，
 也不为本项定义新鲜性数字。正常链为设备私有上传 → 原集合持久化 → 成员私有差量 → 同一集合持久化与重启
-→ 管理员从另一 control 的原页面回读。最小验证覆盖等高缺口和分叉、中断不重传、跨设备原子合并、索引
+→ 管理员从另一 control 的原页面回读。最小验证覆盖同范围历史积压时各设备最新报告先落盘、等高缺口和分叉、中断不重传、跨设备原子合并、索引
 可重建及非法文件拒绝、错误签名/范围/网络与容量失败保全、较慢但正常的私有请求在实际 daemon 轮次中
 提交报告、真实成员 TLS、正式上传、UI 回读和生产重启。
 

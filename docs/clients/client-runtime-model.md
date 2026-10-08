@@ -124,16 +124,16 @@ domain、wire、持久值、运行配置或 UI 的映射，也不增加缓存权
 
 Linux hybrid 节点同时承担当前 `access` 和 `forward` 职责，且它与最终出口之间存在可用方向的认证
 `NetworkLink` 时，可以直接使用该链路，不要求自己或出口另有公网数据入口。该候选的规范受管节点链以本机
-hybrid 节点开头，运行时跳过“拨回本机 inbound”，按 `LinkID` 引用的资源连接下一台受管节点：WG
-必须使用对应 interface 和精确内核路由，hy2 或私有 TLS tunnel 则使用各自认证的拨号与 TLS 身份，
-不能借用 WG 接口或路由。数据面投影也不得为这个本机起点生成回环 user/ACL。Web 拓扑展示时省略链首
+hybrid 节点开头，运行时跳过“拨回本机 inbound”，按 `LinkID` 引用的资源连接下一台受管节点。
+当前 WG 业务中继使用用户态原生会话及精确来源投影，不依赖宿主管理接口路由，也不在 WG
+内建立 Hy2 或私有 TLS 代理会话。数据面投影不得为这个本机起点生成回环 user/ACL。Web 拓扑展示时省略链首
 重复的本机节点，但 candidate ID 与签名报告仍保留完整规范链及链路 ID。
 
 ### 候选身份
 
 普通 WG 首跳必须独立认证和承载业务，不能通过 WG 内的 Hy2 会话复用权限。
-此前的[执行投影](../core/current-contract.md#普通-wg-首跳的私有执行投影)已被否决，替换未完成，
-见[传输实现纠偏](../progress.md#传输实现纠偏)。Service/Policy、候选身份、真实观测和撤权要求
+现行[执行投影](../core/current-contract.md#分段传输的替代执行模型)使用原生 WG 接收与逐段业务转发，
+实际部署见[传输实现纠偏](../progress.md#传输实现纠偏)。Service/Policy、候选身份、真实观测和撤权要求
 继续成立；不能把“资源类型标为 WG、实际业务仍依赖 Hy2”当成独立 WG 接入完成。
 
 Windows 的 WG underlay UDP socket 保留请求的地址族。省略 IPv6 监听主机时，在底层适配器内

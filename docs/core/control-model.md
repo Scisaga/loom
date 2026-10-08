@@ -390,7 +390,7 @@ genesis 中已有的初始成员取得同 NodeID 的首次设备身份时，也�
 
 当前硬约束：WG 独立承载业务，禁止把 Hy2 套进 WG 或让 WG 首跳、中继依赖 Hy2。
 本节原先关于同机 Hy2、逐跳 Hy2 outbound 和 WG 上 Hy2 探测的实现描述已被用户否决，
-不得据此新增部署或扩大权限。完整替换尚未完成，已有认证字节须保全并前向迁移，见
+不得据此新增部署或扩大权限。已有认证字节须保全并前向迁移，实际执行与剩余限制见
 [传输实现纠偏](../progress.md#传输实现纠偏)。业务授权须从同一 Service/Policy 分别投影到独立传输。
 
 节点公开分发地址 distribution_urls 保存在同一 DeviceAuthorization，经现有 device.put 修改，初次

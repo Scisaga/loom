@@ -14,6 +14,10 @@ const reportBatchBytes = 16 << 20
 const reportBatchCount = 1024
 const reportScopeCount = 8
 
+// A transport work bound, below the unchanged wire input limit. Keep room in
+// one reconciliation round for verification and the durable report transaction.
+const reportTransferCount = 64
+
 type reportScope struct {
 	DeviceID      string `json:"device_id"`
 	FirstSequence U64    `json:"first_sequence"`
@@ -109,7 +113,17 @@ func (v reportRangeIDs) Validate() error {
 	if v.scope().Validate() != nil {
 		return errors.New("invalid report ID scope")
 	}
-	return validateReportIDs(v.ReportIDs)
+	if v.ReportIDs == nil {
+		return errors.New("missing report IDs")
+	}
+	seen := map[string]bool{}
+	for _, id := range v.ReportIDs {
+		if ValidateDigest(id) != nil || seen[id] {
+			return errors.New("report priority IDs are invalid or repeated")
+		}
+		seen[id] = true
+	}
+	return nil
 }
 
 type reportIDs struct {
@@ -261,6 +275,13 @@ func (index *reportIndex) ids(projection Projection, scope reportScope) ([]strin
 	if ids == nil {
 		ids = []string{}
 	}
+	// The range digest still uses the ID-sorted set. This separate transfer
+	// order cannot authorize a report or assert a remote high-water mark.
+	ids = append([]string{}, ids...)
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := index.reports[ids[i]], index.reports[ids[j]]
+		return a.ReportSequence > b.ReportSequence || a.ReportSequence == b.ReportSequence && ids[i] < ids[j]
+	})
 	return ids, nil
 }
 func sortedReportIDs[T any](values map[string]T) []string {
@@ -341,8 +362,15 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 			byScope[value.scope()] = value.ReportIDs
 		}
 		wanted := map[string]reportScope{}
-		for _, scope := range selected {
-			for _, id := range byScope[scope] {
+		for position := 0; len(wanted) < reportTransferCount; position++ {
+			remaining := false
+			for _, scope := range selected {
+				values := byScope[scope]
+				if position >= len(values) {
+					continue
+				}
+				remaining = true
+				id := values[position]
 				if report, known := index.reports[id]; known {
 					if report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
 						return errors.New("known report differs from peer ID scope")
@@ -352,10 +380,13 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 				if prior, duplicate := wanted[id]; duplicate && prior != scope {
 					return errors.New("peer assigned one report ID to different scopes")
 				}
-				if len(wanted) == reportBatchCount {
+				wanted[id] = scope
+				if len(wanted) == reportTransferCount {
 					break
 				}
-				wanted[id] = scope
+			}
+			if !remaining {
+				break
 			}
 		}
 		if len(wanted) == 0 {

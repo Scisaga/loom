@@ -239,7 +239,9 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if err := peers[0].server.Runtime.Reports.mergeReportHistory(context.Background(), history, peers[0].server.Runtime.Authority.Snapshot()); err != nil {
 		t.Fatal(err)
 	}
-	latest := reportFor(2049, "running")
+	// The latest observation shares a range with historical reports. Prioritizing
+	// only the newest range must not leave it behind a content-ID-sorted backlog.
+	latest := reportFor(1250, "running")
 	post(0, latest, http.StatusOK)
 	otherView, err := joining.deviceEnvelope(otherInvite.DeviceID)
 	if err != nil {
@@ -260,7 +262,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	capture.mu.Lock()
 	capture.delay = 0
 	capture.mu.Unlock()
-	if got := peers[1].server.Runtime.Reports.History(); len(got) != reportBatchCount {
+	if got := peers[1].server.Runtime.Reports.History(); len(got) != reportTransferCount {
 		t.Fatal("complete prefix was not durable before interruption", len(got))
 	}
 	if got := peers[1].server.Runtime.Reports.All(); len(got) != 2 || got[0].ReportSequence != latest.ReportSequence || got[1].DeviceID != otherInvite.DeviceID {
@@ -322,11 +324,11 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if !bytes.Equal(readHistory(0), readHistory(1)) || len(peers[0].server.Runtime.Reports.All()) != 2 {
 		t.Fatal("old fork replaced latest or original histories diverged")
 	}
-	post(1, reportFor(2049, "stopped"), http.StatusConflict)
+	post(1, reportFor(latest.ReportSequence, "stopped"), http.StatusConflict)
 	if err := syncPeer(0, 1); err != nil || len(peers[0].server.Runtime.Reports.All()) != 1 || peers[0].server.Runtime.Reports.All()[0].DeviceID != otherInvite.DeviceID {
 		t.Fatal("equal-height signed fork acquired a current winner", err)
 	}
-	post(0, reportFor(1500, "running"), http.StatusConflict)
+	post(0, reportFor(1201, "running"), http.StatusConflict)
 	for _, path := range []string{
 		"/internal/report-ranges?extra=1",
 		"/internal/report-ids?device_id=" + url.QueryEscape(invite.DeviceID) + "&first_sequence=01",
@@ -430,6 +432,32 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 		if DecodeCanonical(invalid, &decoded, ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 16, MaxItems: 128}) == nil {
 			t.Fatal("noncanonical or unknown report request was accepted")
 		}
+	}
+	priority := reportRangeIDs{invite.DeviceID, 1, []string{"sha256:" + strings.Repeat("f", 64), "sha256:" + strings.Repeat("0", 64)}}
+	body, err = CanonicalEncode(priority)
+	var restored reportRangeIDs
+	if err != nil || DecodeCanonical(body, &restored, ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 16, MaxItems: 128}) != nil || !reflect.DeepEqual(priority, restored) {
+		t.Fatal("transfer priority order did not round-trip")
+	}
+	if (reportBatchRequest{3, priority.ReportIDs}).Validate() == nil {
+		t.Fatal("transfer priority relaxed the canonical original-body request order")
+	}
+	for _, ids := range [][]string{nil, {priority.ReportIDs[0], priority.ReportIDs[0]}, {"invalid"}} {
+		if (reportRangeIDs{invite.DeviceID, 1, ids}).Validate() == nil {
+			t.Fatal("invalid or duplicated transfer priority IDs were accepted")
+		}
+	}
+	index, err := server.Runtime.Reports.reportIndexSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := reportScope{invite.DeviceID, 1}
+	group := storedReportRange{projection.NetworkID, scope}
+	beforeIDs := append([]string{}, index.groups[group]...)
+	beforeDigest := index.digests[group]
+	ids, err := index.ids(projection, scope)
+	if err != nil || len(ids) != 2 || index.reports[ids[0]].ReportSequence != base.ReportSequence || !reflect.DeepEqual(beforeIDs, index.groups[group]) || index.digests[group] != beforeDigest {
+		t.Fatal("latest-first transfer changed the immutable range set or digest")
 	}
 }
 
