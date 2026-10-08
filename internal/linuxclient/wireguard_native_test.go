@@ -242,6 +242,15 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
+	exitExecutions, err := prepareHY2Executions(exitView, input, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A TUN fd appears before the child has finished configuring its original
+	// name. Its owned WG listener is the existing post-initialization readback.
+	if err := waitTransportResources(ctx, exitView, exitExecutions, exitProcess.Process.Pid, func() time.Time { return at }, exitDone); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.activateNative(ctx, exitProcess.Process.Pid, exitDone); err != nil {
 		for _, owned := range tx.owned {
 			addresses, _ := interfaceAddresses(tx.options.IP, owned.link.Interface)

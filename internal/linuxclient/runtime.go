@@ -614,10 +614,10 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			serverDone = make(chan error, 1)
 			go func() { serverDone <- server.Wait(); close(serverDone) }()
 			defer func() { retErr = errors.Join(retErr, stopProcess(server, serverDone)) }()
-			if err := (*transaction).activateNative(ctx, resourcePID, serverDone); err != nil {
+			if err := waitTransportResources(ctx, lkg.View, executions, resourcePID, options.Now, serverDone); err != nil {
 				return err
 			}
-			if err := waitTransportResources(ctx, lkg.View, executions, resourcePID, options.Now, serverDone); err != nil {
+			if err := (*transaction).activateNative(ctx, resourcePID, serverDone); err != nil {
 				return err
 			}
 		}
@@ -667,10 +667,10 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		if serverConfig == "" {
 			resourcePID = pid
-			if err := (*transaction).activateNative(ctx, pid, done); err != nil {
+			if err := waitTransportResources(ctx, lkg.View, executions, pid, options.Now, done); err != nil {
 				return err
 			}
-			if err := waitTransportResources(ctx, lkg.View, executions, pid, options.Now, done); err != nil {
+			if err := (*transaction).activateNative(ctx, pid, done); err != nil {
 				return err
 			}
 		}
