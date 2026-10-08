@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/netip"
 	"sort"
+	"sync"
 )
 
 // WireGuardAccessPeer identifies the actual sending device, including a
@@ -29,9 +30,22 @@ func wireGuardPeerOrder(peer WireGuardAccessPeer) string {
 	return peer.ResourceID + "\x00" + peer.DeviceID
 }
 
+// Only the immutable mathematical property of an exact canonical public key is
+// reusable. This bounded, disposable set never stores identity or authorization.
+var validWireGuardKeys = struct {
+	sync.Mutex
+	keys map[string]struct{}
+}{keys: make(map[string]struct{})}
+
 func validateWireGuardPublicKey(encoded string) error {
 	if ValidatePublicKey(encoded) != nil {
 		return errors.New("WireGuard public key is not canonical")
+	}
+	validWireGuardKeys.Lock()
+	_, known := validWireGuardKeys.keys[encoded]
+	validWireGuardKeys.Unlock()
+	if known {
+		return nil
 	}
 	value, _ := base64.RawURLEncoding.DecodeString(encoded)
 	public, err := ecdh.X25519().NewPublicKey(value)
@@ -43,6 +57,12 @@ func validateWireGuardPublicKey(encoded string) error {
 	if _, err := private.ECDH(public); err != nil {
 		return errors.New("WireGuard public key cannot establish a session")
 	}
+	validWireGuardKeys.Lock()
+	if len(validWireGuardKeys.keys) == 256 {
+		clear(validWireGuardKeys.keys)
+	}
+	validWireGuardKeys.keys[encoded] = struct{}{}
+	validWireGuardKeys.Unlock()
 	return nil
 }
 
