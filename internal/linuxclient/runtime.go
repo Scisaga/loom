@@ -166,7 +166,7 @@ func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpo
 	if err != nil {
 		return "", err
 	}
-	config, err = withBlockedSelectors(config)
+	config, err = clientadapter.WithBlockedSelectors(config)
 	if err != nil {
 		return "", err
 	}
@@ -860,44 +860,6 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	}
 }
 
-// This runtime-only block never becomes an authorized candidate or Selection.
-// The original signed profile and its candidate order remain unchanged.
-func withBlockedSelectors(config string) (string, error) {
-	var document map[string]any
-	if err := json.Unmarshal([]byte(config), &document); err != nil {
-		return "", err
-	}
-	outbounds, ok := document["outbounds"].([]any)
-	if !ok {
-		return "", errors.New("runtime outbounds are invalid")
-	}
-	block := false
-	for _, raw := range outbounds {
-		value, ok := raw.(map[string]any)
-		if !ok {
-			return "", errors.New("runtime outbound is invalid")
-		}
-		if value["tag"] == blockedSelection {
-			if value["type"] != "block" {
-				return "", errors.New("runtime rejection outbound is invalid")
-			}
-			block = true
-		}
-		if value["type"] == "selector" {
-			members, ok := value["outbounds"].([]any)
-			if !ok {
-				return "", errors.New("runtime selector is invalid")
-			}
-			value["outbounds"] = append(members, blockedSelection)
-			value["default"] = blockedSelection
-		}
-	}
-	if !block {
-		return "", errors.New("runtime rejection outbound is missing")
-	}
-	body, err := json.Marshal(document)
-	return string(body), err
-}
 func writeInactiveStatus(store *deviceclient.Store, options Options, state string) (Status, error) {
 	lkg := store.LKG()
 	if lkg == nil {

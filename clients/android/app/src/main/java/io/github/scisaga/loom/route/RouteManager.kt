@@ -58,7 +58,12 @@ internal data class AppliedRoute(
     val directAvailable: Boolean,
     val exits: List<String>,
     val selectors: List<AppliedSelector>,
-)
+    val blockedScopes: List<String> = emptyList(),
+) {
+    fun execution(): List<AppliedSelector> = selectors + blockedScopes.map {
+        AppliedSelector(it, "reject", emptyList(), "", "unavailable")
+    }
+}
 
 internal data class AppliedSelector(
     val selector: String,
@@ -83,17 +88,20 @@ internal data class RuntimeReportData(
     val networkGeneration: String,
 )
 
-internal fun singleBusinessProbeInput(
+internal fun serviceBusinessProbeInputs(
     profile: ManagedProfile,
     application: AppliedRoute?,
     networkGeneration: String,
-): BusinessProbeInput? {
-    val selected = application?.selectors?.singleOrNull() ?: return null
-    val group = profile.businessProbeTargets.singleOrNull() ?: return null
-    if (selected.selector != "service:${group.serviceID}" && selected.selector != "local_network:${group.serviceID}") return null
-    val target = group.targets.singleOrNull() ?: return null
-    val dns = profile.dns.firstOrNull() ?: return null
-    return BusinessProbeInput(selected, networkGeneration, dns, target)
+): List<BusinessProbeInput> {
+    val dns = profile.dns.firstOrNull() ?: return emptyList()
+    val groups = profile.businessProbeTargets.associateBy { it.serviceID }
+    return application?.selectors.orEmpty().sortedBy { it.selector }.mapNotNull { selected ->
+        val group = groups.values.singleOrNull {
+            selected.selector == "service:${it.serviceID}" || selected.selector == "local_network:${it.serviceID}"
+        } ?: return@mapNotNull null
+        val target = group.targets.singleOrNull() ?: return@mapNotNull null
+        BusinessProbeInput(selected, networkGeneration, dns, target)
+    }
 }
 
 /** Applies the shared pure selection and only publishes selector readback. */
@@ -156,11 +164,11 @@ class RouteManager private constructor(context: Context) {
         runtime.mutableStatus.value = runtime.mutableStatus.value.copy(busy = true, detail = "正在应用候选并读回 selector…")
         val initial = evaluate(profileId, runtime, profile, runtime.actual)
         val client = SelectorClient(profile.config)
-        val current = client.readCurrent(initial.selectors)
+        val current = client.readCurrent(initial.execution())
         val desired = evaluate(profileId, runtime, profile, current)
-        client.apply(desired.selectors)
-        val readback = client.readCurrent(desired.selectors)
-        check(desired.selectors.all { readback[it.selector] == it.candidate }) { "selector 回读与选择不一致" }
+        client.apply(desired.execution())
+        val readback = client.readCurrent(desired.execution())
+        check(desired.execution().all { readback[it.selector] == it.candidate }) { "selector 回读与选择不一致" }
         runtime.actual = LinkedHashMap(readback)
         runtime.application = desired
         runtime.runningProfile = profile
@@ -178,8 +186,8 @@ class RouteManager private constructor(context: Context) {
                 val available = runtime.runningProfile ?: runtime.availableProfile ?: return@withLock
                 if (runtime.runningProfile != null) {
                     val desired = evaluate(profileId, runtime, available, runtime.actual)
-                    SelectorClient(available.config).apply(desired.selectors)
-                    runtime.actual = LinkedHashMap(SelectorClient(available.config).readCurrent(desired.selectors))
+                    SelectorClient(available.config).apply(desired.execution())
+                    runtime.actual = LinkedHashMap(SelectorClient(available.config).readCurrent(desired.execution()))
                     runtime.application = desired
                     publish(runtime, desired, running = true)
                 } else {
@@ -189,20 +197,26 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    internal suspend fun businessProbeInput(profileId: String, profile: ManagedProfile): BusinessProbeInput? = operation.withLock {
+    internal suspend fun businessProbeInputs(profileId: String, profile: ManagedProfile): List<BusinessProbeInput> = operation.withLock {
         val runtime = runtime(profileId)
-        if (runtime.runningProfile?.recordID != profile.recordID) return@withLock null
-        val input = singleBusinessProbeInput(profile, runtime.application, runtime.generation) ?: return@withLock null
+        if (runtime.runningProfile?.recordID != profile.recordID) return@withLock emptyList()
+        // Expired failures permit a new attempt; no sample is deleted to force it.
+        val desired = evaluate(profileId, runtime, profile, runtime.actual)
+        val selector = SelectorClient(profile.config)
+        selector.apply(desired.execution())
+        runtime.actual = LinkedHashMap(selector.readCurrent(desired.execution()))
+        runtime.application = desired
+        publish(runtime, desired, running = true)
         val now = Instant.now()
-        if (observations(profileId).objects().any {
-            it.getString("candidate_id") == input.selector.candidate &&
-                it.getString("network_generation") == input.networkGeneration &&
-                runCatching { Instant.parse(it.getString("valid_until")).isAfter(now) }.getOrDefault(false)
-        }) return@withLock null
-        val unknown = runtime.application!!.copy(selectors = listOf(input.selector.copy(state = "unknown")))
-        runtime.application = unknown
-        publish(runtime, unknown, running = true, observation = "${input.target} · 尚无有效观测")
-        input
+        serviceBusinessProbeInputs(profile, desired, runtime.generation).filter { input ->
+            observations(profileId).objects().none {
+                it.getString("candidate_id") == input.selector.candidate &&
+                    it.getString("scope") == input.selector.selector &&
+                    it.getString("target") == input.target &&
+                    it.getString("network_generation") == input.networkGeneration &&
+                    runCatching { Instant.parse(it.getString("valid_until")).isAfter(now) }.getOrDefault(false)
+            }
+        }
     }
 
     internal suspend fun recordBusinessOutcome(
@@ -216,7 +230,7 @@ class RouteManager private constructor(context: Context) {
         val runtime = runtime(profileId)
         val current = runtime.application ?: return@withLock null
         if (runtime.runningProfile?.recordID != profile.recordID || runtime.generation != input.networkGeneration ||
-            current.selectors.singleOrNull()?.candidate != input.selector.candidate || result.target != input.target
+            current.selectors.singleOrNull { it.selector == input.selector.selector }?.candidate != input.selector.candidate || result.target != input.target
         ) return@withLock null
         val now = Instant.now().truncatedTo(ChronoUnit.SECONDS)
         val observation = JSONObject()
@@ -227,29 +241,40 @@ class RouteManager private constructor(context: Context) {
             .put("action", "https_request")
             .put("target", input.target)
             .put("observed_at", now.toString())
-            .put("valid_until", now.plus(10, ChronoUnit.MINUTES).toString())
+            .put("valid_until", now.plusSeconds(if (result.healthy) 600 else 30).toString())
         if (result.healthy) observation.put("metric_millis", result.metricMillis)
         val retained = observations(profileId).objects().filter {
             it.getString("candidate_id") != input.selector.candidate &&
                 it.getString("network_generation") == runtime.generation
         } + observation
         protected.put(ProfileStorage.observations(profileId), JSONArray(retained.sortedBy { it.getString("candidate_id") }).toString().encodeToByteArray())
-        val observed = current.copy(selectors = listOf(input.selector.copy(state = if (result.healthy) "available" else "unavailable")))
+        val observed = current.copy(selectors = current.selectors.map {
+            if (it.selector == input.selector.selector) it.copy(state = if (result.healthy) "available" else "unavailable") else it
+        })
         runtime.application = observed
         val detail = "${input.selector.selector} · ${input.target} · ${if (result.healthy) "该目标成功" else "该目标失败"} · $now"
         publish(runtime, observed, running = true, observation = detail)
         onRecorded()
-        if (result.healthy || !allowFallback) return@withLock null
-        val next = runCatching { evaluate(profileId, runtime, profile, runtime.actual) }.getOrNull() ?: return@withLock null
-        if (next.selectors.singleOrNull()?.candidate == input.selector.candidate) return@withLock null
+        if (result.healthy) return@withLock null
+        val evaluated = evaluate(profileId, runtime, profile, runtime.actual)
+        val nextForScope = evaluated.selectors.singleOrNull { it.selector == input.selector.selector }
+        // Only this Service may change during its fallback. After the second
+        // failure its selector is rejected until the next normal refresh.
+        val next = observed.copy(
+            selectors = observed.selectors.filter { it.selector != input.selector.selector } +
+                if (allowFallback && nextForScope != null) listOf(nextForScope) else emptyList(),
+            blockedScopes = observed.blockedScopes.filter { it != input.selector.selector } +
+                if (!allowFallback || nextForScope == null) listOf(input.selector.selector) else emptyList(),
+        )
         val selector = SelectorClient(profile.config)
-        selector.apply(next.selectors)
-        val actual = selector.readCurrent(next.selectors)
-        check(next.selectors.all { actual[it.selector] == it.candidate }) { "fallback selector 回读不一致" }
+        selector.apply(next.execution())
+        val actual = selector.readCurrent(next.execution())
+        check(next.execution().all { actual[it.selector] == it.candidate }) { "fallback selector 回读不一致" }
         runtime.actual = LinkedHashMap(actual)
         runtime.application = next
         publish(runtime, next, running = true, observation = detail)
-        singleBusinessProbeInput(profile, next, runtime.generation)
+        if (!allowFallback || nextForScope == null || nextForScope.candidate == input.selector.candidate) return@withLock null
+        serviceBusinessProbeInputs(profile, next, runtime.generation).singleOrNull { it.selector.selector == input.selector.selector }
     }
 
     internal suspend fun reportData(profileId: String, state: ByteArray, acceptedView: String, appliedView: String): RuntimeReportData = operation.withLock {
@@ -280,7 +305,6 @@ class RouteManager private constructor(context: Context) {
         val now = Instant.now()
         val values = if (running) observations(profileId).objects().filter { observation ->
             observation.getString("network_generation") == runtime.generation &&
-                selected.any { it.selector == observation.getString("scope") && it.candidate == observation.getString("candidate_id") } &&
                 runCatching { Instant.parse(observation.getString("valid_until")).isAfter(now) }.getOrDefault(false)
         }.sortedBy { it.getString("candidate_id") } else emptyList()
         RuntimeReportData(
@@ -335,6 +359,7 @@ class RouteManager private constructor(context: Context) {
             exit = root.optString("exit"),
             directAvailable = root.getBoolean("direct_available"),
             exits = root.getJSONArray("exits").strings(),
+            blockedScopes = root.getJSONArray("blocked_scopes").strings(),
             selectors = root.getJSONArray("selections").objects().map {
                 AppliedSelector(
                     it.getString("selector"),
@@ -378,7 +403,8 @@ class RouteManager private constructor(context: Context) {
             exit = route.exit,
             exits = route.exits,
             directAvailable = route.directAvailable,
-            detail = if (running) "$label 已应用并读回" else "$label · 等待连接",
+            detail = (if (running) "$label 已应用并读回" else "$label · 等待连接") +
+                if (route.blockedScopes.isEmpty()) "" else "；暂无可用路径：${route.blockedScopes.joinToString()}",
             observationDetail = observation,
             currentPaths = route.selectors.map { selected ->
                 RoutePathStatus(

@@ -3,6 +3,7 @@ package clientadapter
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func (selector *fakeSelector) Set(_ context.Context, scope, candidate string) er
 	return nil
 }
 
-func (*fakeSelector) CloseConnections(context.Context) error { return nil }
+func (*fakeSelector) CloseConnections(context.Context, []string) error { return nil }
 
 func TestActivateUsesReadbackAndOneSameExitFallback(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -76,9 +77,45 @@ func TestActivateWithoutProbeKeepsActualSelectionUnknown(t *testing.T) {
 	}
 	failed, err := Activate(context.Background(), selector, routes, activation.State,
 		func(context.Context) ProbeResult { return ProbeResult{Description: "demo business failed"} }, func() time.Time { return now })
-	if err == nil || len(failed.Selections) != 1 || failed.Selections[0].CandidateID != "demo-direct" ||
-		failed.Selections[0].State != "unavailable" || failed.State.NetworkGeneration == "" {
-		t.Fatalf("business failure erased the actual runtime selection: %+v, %v", failed, err)
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(failed.Selections) != 0 ||
+		!reflect.DeepEqual(failed.BlockedScopes, []string{"demo-service"}) || selector.current["demo-service"] != BlockedSelection ||
+		failed.State.NetworkGeneration == "" || len(failed.State.Observations) != 1 || failed.State.Observations[0].Result != "unavailable" {
+		t.Fatalf("business failure did not retain evidence and read back its Service rejection: %+v, %v", failed, err)
+	}
+}
+
+func TestServicesProbeIndependentlyAndRecoverWithoutClearingEvidence(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	routes := []clientmodel.RouteCandidate{
+		{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-a"},
+		{ID: "demo-b", FinalExit: "direct", Scope: "service:demo-b"},
+	}
+	selector := &fakeSelector{current: map[string]string{routes[0].Scope: BlockedSelection, routes[1].Scope: BlockedSelection}}
+	calls := map[string]int{}
+	recovered := false
+	probe := func(scope string) Probe {
+		return func(context.Context) ProbeResult {
+			calls[scope]++
+			return ProbeResult{Available: scope == routes[0].Scope || recovered, Action: "https_request"}
+		}
+	}
+	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-network"}
+	first, err := ActivateServices(context.Background(), selector, routes, state, probe, func() time.Time { return now })
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-a" ||
+		!reflect.DeepEqual(first.BlockedScopes, []string{routes[1].Scope}) || len(first.State.Observations) != 2 || calls[routes[0].Scope] != 1 || calls[routes[1].Scope] != 1 {
+		t.Fatal("Service outcomes were shared or one failure stopped the other Service", first, calls, err)
+	}
+	recovered = true
+	again, err := ActivateServices(context.Background(), selector, routes, first.State, probe, func() time.Time { return now.Add(29 * time.Second) })
+	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || !reflect.DeepEqual(first.State, again.State) || calls[routes[1].Scope] != 1 {
+		t.Fatal("a still-valid failure was discarded or retried", err)
+	}
+	last, err := ActivateServices(context.Background(), selector, routes, again.State, probe, func() time.Time { return now.Add(30 * time.Second) })
+	if err != nil || len(last.Selections) != 2 || len(last.BlockedScopes) != 0 || calls[routes[0].Scope] != 1 || calls[routes[1].Scope] != 2 {
+		t.Fatal("failure expiry did not restore only its Service", last, calls, err)
+	}
+	if _, err := Activate(context.Background(), selector, routes, state, probe(routes[0].Scope), func() time.Time { return now }); err == nil {
+		t.Fatal("one target measurement was accepted for two Services")
 	}
 }
 

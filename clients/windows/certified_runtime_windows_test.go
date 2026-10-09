@@ -63,10 +63,10 @@ func TestWindowsRuntimeReadyRequiresSelectorStatusWithoutBusinessSuccess(t *test
 func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
 	view := control.DeviceView{Routes: []control.RouteCandidate{{ID: "demo-route", FinalExit: "direct", Scope: "service:demo-service", ServiceID: "demo-service"}},
 		DNSServers: []string{"192.0.2.53"}, BusinessProbeTargets: []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo.example/demo-probe"}}}}
-	if probe, err := windowsBusinessProbe(view); err != nil || probe == nil {
-		t.Fatalf("single authorized target unavailable: %v", err)
+	if probe := windowsBusinessProbe(view, "service:demo-service"); probe == nil {
+		t.Fatal("single authorized target unavailable")
 	}
-	for _, missing := range []string{"dns", "target", "multiple-targets", "multiple-scopes"} {
+	for _, missing := range []string{"dns", "target", "multiple-targets"} {
 		t.Run(missing, func(t *testing.T) {
 			input := view
 			switch missing {
@@ -76,14 +76,27 @@ func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
 				input.BusinessProbeTargets = nil
 			case "multiple-targets":
 				input.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo.example/demo-probe", "https://demo.example/demo-other"}}}
-			case "multiple-scopes":
-				input.Routes = append(append([]control.RouteCandidate(nil), input.Routes...),
-					control.RouteCandidate{ID: "demo-other", FinalExit: "direct", Scope: "service:demo-other-service", ServiceID: "demo-other-service"})
+
 			}
-			if probe, err := windowsBusinessProbe(input); err != nil || probe != nil {
-				t.Fatalf("business scope without an unambiguous authorized target did not stay unknown: %v", err)
+			if probe := windowsBusinessProbe(input, "service:demo-service"); probe != nil {
+				t.Fatal("business scope without an unambiguous authorized target did not stay unknown")
 			}
 		})
+	}
+}
+
+func TestWindowsIndependentServiceTargets(t *testing.T) {
+	view := control.DeviceView{DNSServers: []string{"192.0.2.53"}, BusinessProbeTargets: []control.ServiceProbeTargets{
+		{ServiceID: "demo-a", Targets: []string{"https://demo-a.example/"}},
+		{ServiceID: "demo-b", Targets: []string{"https://demo-b.example/"}},
+	}}
+	for _, scope := range []string{"service:demo-a", "service:demo-b"} {
+		if windowsBusinessProbe(view, scope) == nil {
+			t.Fatal("another Service prevented this probe", scope)
+		}
+	}
+	if windowsBusinessProbe(view, "service:demo-missing") != nil {
+		t.Fatal("probe escaped its Service")
 	}
 }
 

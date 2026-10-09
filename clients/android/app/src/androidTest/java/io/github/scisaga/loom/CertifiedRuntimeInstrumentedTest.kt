@@ -32,6 +32,7 @@ import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManagerFactory
 import org.json.JSONObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -41,6 +42,13 @@ import org.junit.Test
 
 /** Opt-in real daemon fixture; no fabricated View, identity, runtime or health. */
 class CertifiedRuntimeInstrumentedTest {
+    private var originalTLS: SSLContext? = null
+
+    @After
+    fun restoreFixtureTrust() {
+        originalTLS?.let(SSLContext::setDefault)
+    }
+
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 
@@ -55,6 +63,8 @@ class CertifiedRuntimeInstrumentedTest {
         val directory = checkNotNull(context.getExternalFilesDir(null))
         val fixture = JSONObject(File(directory, "demo-runtime.json").readText())
         val resume = args.getString("demoResume") == "true"
+        val independentServices = args.getString("demoServices") == "true"
+        val serviceCount = if (independentServices) 2 else 1
         args.getString("demoNewProfile")?.let { name ->
             check(!resume)
             compose.onNodeWithTag("tab-configuration").performClick()
@@ -169,6 +179,12 @@ class CertifiedRuntimeInstrumentedTest {
             }
         }
 
+        // The demo CA is trusted only in this instrumented process. Production
+        // trust settings, certificate verification and hostname checks stay intact.
+        if (independentServices) {
+            originalTLS = SSLContext.getDefault()
+            SSLContext.setDefault(tls)
+        }
         if (!resume && args.getString("demoJoined") != "true") {
             compose.onNodeWithTag("tab-configuration").performClick()
             await("new profile must finish loading before file import", 15) {
@@ -188,7 +204,7 @@ class CertifiedRuntimeInstrumentedTest {
         args.getString("demoResourceStep")?.let { step ->
             require(step in setOf("refresh", "restart", "recovery"))
             await("resource sample must follow the actual authorized selector") {
-                routing.status(profileID).value.currentPaths.size == 1
+                routing.status(profileID).value.currentPaths.size == serviceCount
             }
             if (step == "recovery") {
                 assertFalse("stopped first hop unexpectedly carried business", business())
@@ -210,7 +226,7 @@ class CertifiedRuntimeInstrumentedTest {
                     click("refresh-config")
                     await("unrelated View must be accepted and applied") {
                         enrollment.status(profileID).value.viewDigest != previous &&
-                            routing.status(profileID).value.currentPaths.size == 1
+                            routing.status(profileID).value.currentPaths.size == serviceCount
                     }
                     compose.onNodeWithTag("tab-connection").performClick()
                     awaitConnected()
@@ -231,13 +247,26 @@ class CertifiedRuntimeInstrumentedTest {
             return
         }
         if (!resume) {
-            await("authorized path must be consumed after protected restart") {
-                routing.status(profileID).value.currentPaths.size == 1
+            if (independentServices) {
+                await("only the failing Service must be rejected", 120) {
+                    val paths = routing.status(profileID).value.currentPaths
+                    paths.size == 1 && paths.single().service == "service:demo-service" && paths.single().state == "available"
+                }
+                assertTrue("other Service must still carry actual HTTPS", business())
+                mark("demo-partial.json")
+                await("controller must verify the independent signed outcomes") { File(directory, "demo-restored").isFile }
+                await("failed Service must recover after observation expiry", 120) {
+                    val paths = routing.status(profileID).value.currentPaths
+                    paths.size == 2 && paths.all { it.state == "available" }
+                }
             }
-            val path = routing.status(profileID).value.currentPaths.single()
+            await("authorized path must be consumed after protected restart") {
+                routing.status(profileID).value.currentPaths.size == serviceCount
+            }
+            val path = routing.status(profileID).value.currentPaths.first()
             assertEquals("demo-exit", path.finalExit)
             assertEquals(listOf("demo-exit"), path.serverChain)
-            assertEquals("unknown", path.state)
+            if (!independentServices) assertEquals("unknown", path.state)
             // Runtime/selector readiness precedes a real business result. Wait
             // for that result within the fixture deadline; never synthesize it.
             await("real application TLS must traverse the VPN") { business() }
@@ -266,11 +295,11 @@ class CertifiedRuntimeInstrumentedTest {
             await("new permission must replace the withdrawn LKG") {
                 enrollment.status(profileID).value.phase == EnrollmentPhase.READY &&
                     enrollment.status(profileID).value.viewDigest != previous &&
-                    routing.status(profileID).value.currentPaths.size == 1
+                    routing.status(profileID).value.currentPaths.size == serviceCount
             }
             compose.onNodeWithTag("tab-connection").performClick()
             awaitConnected()
-            assertEquals("demo-exit", routing.status(profileID).value.currentPaths.single().finalExit)
+            assertEquals("demo-exit", routing.status(profileID).value.currentPaths.first().finalExit)
             await("reauthorization did not restore real VPN business") { business() }
             mark("demo-regranted.json")
         }

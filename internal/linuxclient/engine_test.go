@@ -119,7 +119,7 @@ func (selector *fakeSelector) Set(_ context.Context, scope, candidate string) er
 	return nil
 }
 
-func (selector *fakeSelector) CloseConnections(context.Context) error {
+func (selector *fakeSelector) CloseConnections(context.Context, []string) error {
 	selector.closed++
 	return nil
 }

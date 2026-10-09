@@ -363,20 +363,23 @@ class LoomVpnService : VpnService(), PlatformInterface {
         probeJob = scope.launch {
             try {
                 val routing = RouteManager.get(this@LoomVpnService)
-                var input = routing.businessProbeInput(profileId, profile) ?: return@launch
-                repeat(2) { attempt ->
-                    val result = NetworkProbe.run(input.dns, input.target, probeSession)
-                    val next = lifecycle.withLock {
-                        if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||
-                            !connectionWanted(profileId)
-                        ) return@launch
-                        routing.recordBusinessOutcome(profileId, profile, input, result, allowFallback = attempt == 0) {
-                            VpnRuntime.transform {
-                                it.copy(dnsProbe = "${input.target} · ${result.dns}", httpsProbe = "${input.target} · ${result.https}")
+                val inputs = routing.businessProbeInputs(profileId, profile)
+                for (firstInput in inputs) {
+                    var input = firstInput
+                    for (attempt in 0..1) {
+                        val result = NetworkProbe.run(input.dns, input.target, probeSession)
+                        val next = lifecycle.withLock {
+                            if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||
+                                !connectionWanted(profileId)
+                            ) return@launch
+                            routing.recordBusinessOutcome(profileId, profile, input, result, allowFallback = attempt == 0) {
+                                VpnRuntime.transform {
+                                    it.copy(dnsProbe = "${input.target} · ${result.dns}", httpsProbe = "${input.target} · ${result.https}")
+                                }
                             }
-                        }
-                    } ?: return@launch
-                    input = next
+                        } ?: break
+                        input = next
+                    }
                 }
             } catch (_: CancellationException) {
                 // A changed View/network invalidates this observation, not the accepted LKG.

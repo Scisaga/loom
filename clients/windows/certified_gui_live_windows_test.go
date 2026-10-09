@@ -32,10 +32,11 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		t.Skip("requires an isolated live fixture and an interactive Windows desktop")
 	}
 	var fixture struct {
-		Root    string `json:"root"`
-		Target  string `json:"target"`
-		Resume  bool   `json:"resume"`
-		Capture string `json:"capture,omitempty"`
+		Root     string `json:"root"`
+		Target   string `json:"target"`
+		Resume   bool   `json:"resume"`
+		Capture  string `json:"capture,omitempty"`
+		Services bool   `json:"services,omitempty"`
 	}
 	body, err := os.ReadFile(input)
 	if err != nil || json.Unmarshal(body, &fixture) != nil || !filepath.IsAbs(fixture.Root) {
@@ -176,6 +177,9 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 			count := 0
 			if authorized {
 				count = 1
+				if fixture.Services {
+					count = 2
+				}
 			}
 			if current.ViewDigest != s.LKG().ViewDigest || len(current.Selections) != count || len(s.LKG().View.PolicyIDs) != count || len(app.snapshot().paths) != count {
 				return false
@@ -209,6 +213,41 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		return nil
 	}
 	if !fixture.Resume {
+		if fixture.Services {
+			var partial windowsRuntimeStatus
+			wait("independent Service failure and UI readback", func() bool {
+				if current := app.snapshot(); current.state == guiError {
+					t.Fatalf("certified runtime failed: %s", current.detail)
+				}
+				current, err := readWindowsRuntimeStatus(profileRoot)
+				if err != nil || !current.Reported || current.RuntimeState != "running" || app.snapshot().state != guiConnected {
+					return false
+				}
+				if len(current.Selections) != 1 || len(current.BlockedScopes) != 1 || len(app.snapshot().paths) != 2 || len(load().LKG().View.PolicyIDs) != 2 {
+					return false
+				}
+				if current.Selections[0].Scope != "service:demo-service" || current.Selections[0].State != "available" || current.BlockedScopes[0] != "service:demo-service-b" {
+					return false
+				}
+				partial = current
+				return business() == nil
+			})
+			captureProfileGUITestWindow(t, app, filepath.Join(evidence, "partial.png"))
+			mark("partial", partial)
+			signal("restored")
+			wait("failed Service recovers after sample expiry", func() bool {
+				current, err := readWindowsRuntimeStatus(profileRoot)
+				if err != nil || len(current.Selections) != 2 || len(current.BlockedScopes) != 0 {
+					return false
+				}
+				for _, selection := range current.Selections {
+					if selection.State != "available" {
+						return false
+					}
+				}
+				return true
+			})
+		}
 		status := readback(true)
 		var lastBusinessError error
 		t.Cleanup(func() {

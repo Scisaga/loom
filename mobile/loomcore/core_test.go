@@ -19,8 +19,8 @@ func TestAndroidLocalExitKeepsItsIdentityAndDoesNotOfferDirect(t *testing.T) {
 		}
 		body, err := EvaluateAndroidRoutes(routes, nil, preference, nil, "demo-generation", "2030-01-01T00:00:00Z")
 		if mode == "direct" {
-			if err == nil {
-				t.Fatal("Direct selected a local exit")
+			if err != nil || !bytes.Contains(body, []byte(`"selections":[]`)) || !bytes.Contains(body, []byte(`"blocked_scopes":["service:demo-service"]`)) {
+				t.Fatal("Direct escaped its scope instead of rejecting that Service", string(body), err)
 			}
 			continue
 		}
@@ -62,6 +62,30 @@ func TestAndroidDenyOnlySelectionAndCanonicalPreference(t *testing.T) {
 	for _, bad := range [][]byte{[]byte(`{"mode":"auto","schema":1}`), []byte(`{"schema":3,"mode":"auto"}`)} {
 		if _, err := EvaluateAndroidRoutes([]byte("[]"), []byte("[]"), bad, nil, "demo-network-generation", "2030-01-01T00:00:00Z"); err == nil {
 			t.Fatal("old or noncanonical preference accepted")
+		}
+	}
+}
+
+func TestAndroidServiceFailureRejectsOnlyItsScopeAndExpires(t *testing.T) {
+	routes := []byte(`[{"id":"demo-a","final_exit":"direct","chain":[],"scope":"service:demo-a"},{"id":"demo-b","final_exit":"direct","chain":[],"scope":"service:demo-b"}]`)
+	samples := []byte(`[{"candidate_id":"demo-a","network_generation":"demo-network","scope":"service:demo-a","result":"available","action":"https_request","target":"https://demo-a.example/","observed_at":"2030-01-01T00:00:00Z","valid_until":"2030-01-01T00:10:00Z"},{"candidate_id":"demo-b","network_generation":"demo-network","scope":"service:demo-b","result":"unavailable","action":"https_request","target":"https://demo-b.example/","observed_at":"2030-01-01T00:00:00Z","valid_until":"2030-01-01T00:00:30Z"}]`)
+	preference, _ := NewAndroidPreference("auto", "")
+	for _, test := range []struct {
+		at      string
+		blocked bool
+	}{{"2030-01-01T00:00:29Z", true}, {"2030-01-01T00:00:30Z", false}} {
+		body, err := EvaluateAndroidRoutes(routes, samples, preference, nil, "demo-network", test.at)
+		if err != nil {
+			t.Fatal("one Service failure stopped another", err)
+		}
+		if !bytes.Contains(body, []byte(`"candidate":"demo-a"`)) {
+			t.Fatal("working Service disappeared", string(body))
+		}
+		if bytes.Contains(body, []byte(`"blocked_scopes":["service:demo-b"]`)) != test.blocked {
+			t.Fatal("Service rejection ignored original expiry", string(body))
+		}
+		if bytes.Contains(body, []byte(`"candidate":"reject"`)) {
+			t.Fatal("runtime reject was declared an authorized selection")
 		}
 	}
 }

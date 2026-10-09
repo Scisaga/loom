@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"sort"
 	"time"
+
+	"loom/internal/clientadapter"
 )
 
 type profileControl struct {
@@ -26,7 +28,7 @@ type profileControl struct {
 type Selector interface {
 	Read(context.Context, string) (string, error)
 	Set(context.Context, string, string) error
-	CloseConnections(context.Context) error
+	CloseConnections(context.Context, []string) error
 }
 
 type HTTPSelector struct {
@@ -71,11 +73,15 @@ func (selector *HTTPSelector) request(ctx context.Context, method, path string, 
 		return nil, err
 	}
 	defer response.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 4<<10+1))
+	maximum := int64(4 << 10)
+	if path == "/connections/" {
+		maximum = 8 << 20
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximum+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(responseBody) > 4<<10 || response.StatusCode < 200 || response.StatusCode > 299 {
+	if int64(len(responseBody)) > maximum || response.StatusCode < 200 || response.StatusCode > 299 {
 		return nil, fmt.Errorf("selector API returned HTTP %d", response.StatusCode)
 	}
 	return responseBody, nil
@@ -104,9 +110,21 @@ func (selector *HTTPSelector) Set(ctx context.Context, scope, candidate string) 
 	return err
 }
 
-func (selector *HTTPSelector) CloseConnections(ctx context.Context) error {
-	_, err := selector.request(ctx, http.MethodDelete, "/connections/", nil)
-	return err
+func (selector *HTTPSelector) CloseConnections(ctx context.Context, scopes []string) error {
+	body, err := selector.request(ctx, http.MethodGet, "/connections/", nil)
+	if err != nil {
+		return err
+	}
+	ids, err := clientadapter.ServiceConnectionIDs(body, scopes)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := selector.request(ctx, http.MethodDelete, "/connections/"+id, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func waitSelector(ctx context.Context, selector Selector, scopes []string) error {
@@ -168,7 +186,7 @@ func applySelections(ctx context.Context, selector Selector, desired map[string]
 			}
 		}
 		if len(changed) > 0 {
-			if err := selector.CloseConnections(ctx); err != nil {
+			if err := selector.CloseConnections(ctx, changed); err != nil {
 				failures = append(failures, err)
 			}
 		}
@@ -184,7 +202,7 @@ func applySelections(ctx context.Context, selector Selector, desired map[string]
 		changed = append(changed, scope)
 	}
 	if len(changed) > 0 {
-		if err := selector.CloseConnections(ctx); err != nil {
+		if err := selector.CloseConnections(ctx, changed); err != nil {
 			return nil, rollback(err)
 		}
 	}

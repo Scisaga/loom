@@ -1,7 +1,6 @@
 package loomcore
 
 import (
-	"bytes"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -50,14 +49,11 @@ func TestAndroidWGAccessPreservesSharedPrivateRuntime(t *testing.T) {
 	if json.Unmarshal([]byte(state.LKG.View.RuntimeProfile.Config), &certified) != nil || json.Unmarshal([]byte(profile.Config), &actual) != nil {
 		t.Fatal("runtime projection is invalid")
 	}
-	var before, after any
-	_ = json.Unmarshal(certified["outbounds"], &before)
-	_ = json.Unmarshal(actual["outbounds"], &after)
-	a, _ := json.Marshal(before)
-	b, _ := json.Marshal(after)
-	if !bytes.Equal(a, b) || len(profile.Routes) != 2 || len(state.LKG.View.WireGuardPeers) != 0 {
-		t.Fatal("Android changed WG identity, Hy2 transport or peer privacy")
+	assertRuntimeSelectorRejectionOnly(t, certified["outbounds"], actual["outbounds"])
+	if len(profile.Routes) != 2 || len(state.LKG.View.WireGuardPeers) != 0 {
+		t.Fatal("Android changed WG identity or peer privacy")
 	}
+
 	var outbounds []struct {
 		Type            string `json:"type"`
 		SystemInterface bool   `json:"system"`

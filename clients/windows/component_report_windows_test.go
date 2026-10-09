@@ -123,7 +123,7 @@ func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *tes
 	lkg.View.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo.example/"}}}
 	route := lkg.View.Routes[0]
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	activation := clientadapter.Activation{State: clientadapter.State{NetworkGeneration: "demo-network", Observations: []clientmodel.Observation{{CandidateID: route.ID, Scope: route.Scope, NetworkGeneration: "demo-network", Action: "business", Result: "unavailable", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}}, Selections: []clientadapter.SelectionStatus{{Scope: route.Scope, CandidateID: route.ID}}}
+	activation := clientadapter.Activation{State: clientadapter.State{NetworkGeneration: "demo-network", Observations: []clientmodel.Observation{{CandidateID: route.ID, Scope: route.Scope, NetworkGeneration: "demo-network", Action: "https_request", Result: "unavailable", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}}, Selections: []clientadapter.SelectionStatus{{Scope: route.Scope, CandidateID: route.ID}}}
 	activation.State.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}
 	report, err := windowsDeviceReport(&lkg, activation, nil, now)
 	if err != nil {

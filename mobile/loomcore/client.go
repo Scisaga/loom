@@ -193,6 +193,10 @@ func androidRuntimeConfig(view control.DeviceView, secret string, websites ...cl
 	if err != nil {
 		return "", err
 	}
+	raw, err = clientadapter.WithBlockedSelectors(raw)
+	if err != nil {
+		return "", err
+	}
 	var document map[string]any
 	if err := json.Unmarshal([]byte(raw), &document); err != nil {
 		return "", err

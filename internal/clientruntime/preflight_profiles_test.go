@@ -10,7 +10,37 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"loom/internal/clientadapter"
 )
+
+func TestWindowsCaptureAcceptsOnlyTheExistingLocalRejection(t *testing.T) {
+	source, _ := pathPlanFixture(t)
+	blocked, err := clientadapter.WithBlockedSelectors(string(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile} {
+		body, err := DeriveWindowsRuntimeConfig([]byte(blocked), profile, nil, nil)
+		if err != nil {
+			t.Fatal(profile, err)
+		}
+		config, err := decodeWindowsConfig(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, outbound := range config.Outbounds {
+			if outbound.Type == "selector" && outbound.Default != clientadapter.BlockedSelection {
+				t.Fatal("capture derivation lost fail-closed startup")
+			}
+		}
+		// A different unrecognized position cannot borrow the rejection exception.
+		invalid := bytes.ReplaceAll(body, []byte(`"reject"`), []byte(`"demo-unknown-block"`))
+		if ValidateWindowsRuntimeConfig(invalid, profile) == nil {
+			t.Fatal("unknown selector block was accepted")
+		}
+	}
+}
 
 func TestWindowsCapturePreservesAuthorizationAndDoesNotInventDNS(t *testing.T) {
 	source, _ := pathPlanFixture(t)

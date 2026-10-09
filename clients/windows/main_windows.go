@@ -248,6 +248,7 @@ type windowsRuntimeStatus struct {
 	RuntimeState         string                          `json:"runtime_state"`
 	Preference           clientmodel.Preference          `json:"preference"`
 	Selections           []clientadapter.SelectionStatus `json:"selections"`
+	BlockedScopes        []string                        `json:"blocked_scopes,omitempty"`
 	Observations         []clientmodel.Observation       `json:"observations"`
 	ResourceObservations []control.Observation           `json:"resource_observations,omitempty"`
 	Reported             bool                            `json:"reported"`
@@ -259,7 +260,7 @@ func windowsRuntimeStatusPath(root string) string {
 
 func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, activation clientadapter.Activation, reported bool) error {
 	status := windowsRuntimeStatus{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, RuntimeState: "running",
-		Preference: activation.State.Preference, Selections: activation.Selections,
+		Preference: activation.State.Preference, Selections: activation.Selections, BlockedScopes: activation.BlockedScopes,
 		Observations: activation.State.Observations, ResourceObservations: activation.State.ResourceObservations, Reported: reported}
 	body, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
@@ -268,27 +269,37 @@ func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, act
 	return writeWindowsRuntimeStatusFile(windowsRuntimeStatusPath(root), append(body, '\n'))
 }
 
-func windowsProbeTarget(view control.DeviceView) (string, string) {
-	if len(view.BusinessProbeTargets) != 1 || len(view.BusinessProbeTargets[0].Targets) != 1 || len(view.DNSServers) == 0 {
-		return "", ""
-	}
-	group := view.BusinessProbeTargets[0]
-	for _, route := range view.Routes {
-		if route.ServiceID != group.ServiceID {
-			return "", ""
+func windowsProbeTarget(view control.DeviceView, scope string) (string, string) {
+	for _, group := range view.BusinessProbeTargets {
+		if (scope == "service:"+group.ServiceID || scope == "local_network:"+group.ServiceID) && len(group.Targets) == 1 {
+			return group.ServiceID, group.Targets[0]
 		}
 	}
-	if len(view.Routes) == 0 {
-		return "", ""
-	}
-	return group.ServiceID, group.Targets[0]
+	return "", ""
 }
-func windowsBusinessProbe(view control.DeviceView) (clientadapter.Probe, error) {
-	_, target := windowsProbeTarget(view)
-	if target == "" {
-		return nil, nil
+func windowsBusinessProbe(view control.DeviceView, scope string) clientadapter.Probe {
+	_, target := windowsProbeTarget(view, scope)
+	if target == "" || len(view.DNSServers) == 0 {
+		return nil
 	}
-	return clientadapter.BusinessProbe("127.0.0.1:1080", view.DNSServers[0], target)
+	probe, err := clientadapter.BusinessProbe("127.0.0.1:1080", view.DNSServers[0], target)
+	if err != nil {
+		return nil
+	}
+	return func(ctx context.Context) clientadapter.ProbeResult {
+		value := probe(ctx)
+		value.Action = "https_request"
+		return value
+	}
+}
+
+func activateWindowsServices(ctx context.Context, selector clientadapter.Selector, view control.DeviceView,
+	routes []clientmodel.RouteCandidate, state clientadapter.State, probe bool) (clientadapter.Activation, error) {
+	var factory func(string) clientadapter.Probe
+	if probe {
+		factory = func(scope string) clientadapter.Probe { return windowsBusinessProbe(view, scope) }
+	}
+	return clientadapter.ActivateServices(ctx, selector, routes, state, factory, time.Now)
 }
 
 func windowsNetworkGeneration() (string, error) {
@@ -342,10 +353,10 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 		}
 		report.Observations = append(report.Observations, observation)
 	}
-	service, target := windowsProbeTarget(lkg.View)
 	for _, observation := range activation.State.Observations {
+		service, target := windowsProbeTarget(lkg.View, observation.Scope)
 		route, ok := routes[observation.CandidateID]
-		if target == "" || !ok || route.ServiceID != service || route.Scope != observation.Scope || observation.NetworkGeneration != report.NetworkGeneration {
+		if target == "" || observation.Action != "https_request" || !ok || route.ServiceID != service || route.Scope != observation.Scope || observation.NetworkGeneration != report.NetworkGeneration {
 			continue
 		}
 		observed, err := time.Parse(time.RFC3339, observation.ObservedAt)
@@ -368,10 +379,16 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 
 func windowsActivationApplied(activation clientadapter.Activation, routes []clientmodel.RouteCandidate) bool {
 	scopes, byScope, err := clientadapter.Scopes(routes)
-	if err != nil || activation.State.NetworkGeneration == "" || len(activation.Selections) != len(scopes) {
+	if err != nil || activation.State.NetworkGeneration == "" || len(activation.Selections)+len(activation.BlockedScopes) != len(scopes) {
 		return false
 	}
 	seen := map[string]bool{}
+	for _, scope := range activation.BlockedScopes {
+		if seen[scope] || len(byScope[scope]) == 0 {
+			return false
+		}
+		seen[scope] = true
+	}
 	for _, selection := range activation.Selections {
 		if seen[selection.Scope] {
 			return false
@@ -392,10 +409,11 @@ func windowsRuntimeFactsDigest(activation clientadapter.Activation, components [
 	body, _ := json.Marshal(struct {
 		Preference           clientmodel.Preference          `json:"preference"`
 		Selections           []clientadapter.SelectionStatus `json:"selections"`
+		BlockedScopes        []string                        `json:"blocked_scopes,omitempty"`
 		Observations         []clientmodel.Observation       `json:"observations"`
 		ResourceObservations []control.Observation           `json:"resource_observations,omitempty"`
 		Components           []control.ComponentReadback     `json:"components"`
-	}{Preference: activation.State.Preference, Selections: activation.Selections, Observations: activation.State.Observations,
+	}{Preference: activation.State.Preference, Selections: activation.Selections, BlockedScopes: activation.BlockedScopes, Observations: activation.State.Observations,
 		ResourceObservations: activation.State.ResourceObservations, Components: components})
 	digest := sha256.Sum256(body)
 	return hex.EncodeToString(digest[:])
@@ -479,6 +497,10 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	}
 	source, err := clientadapter.AccessRuntimeSource(lkg.View, hex.EncodeToString(localSecret))
 	clear(localSecret)
+	if err != nil {
+		return err
+	}
+	source, err = clientadapter.WithBlockedSelectors(source)
 	if err != nil {
 		return err
 	}
@@ -572,8 +594,8 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	// observation baseline here; comparing it to pre-capture interfaces would
 	// mistake our own successful startup for an underlay change forever.
 	// The resolved website input was checked immediately before capture.
-	activation, activationErr := clientadapter.Activate(ctx, selector, routes, clientadapter.State{
-		Preference: store.Preference(), NetworkGeneration: generation}, nil, time.Now)
+	activation, activationErr := activateWindowsServices(ctx, selector, lkg.View, routes, clientadapter.State{
+		Preference: store.Preference(), NetworkGeneration: generation}, false)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -584,19 +606,14 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		return err
 	}
 	initiallySelected := windowsSelectedCandidates(activation)
-	probe, probeErr := windowsBusinessProbe(lkg.View)
-	if probeErr != nil {
-		log.Printf("certified Windows business probe unavailable; keeping unknown: %v", probeErr)
+	activation, activationErr = activateWindowsServices(ctx, selector, lkg.View, routes, activation.State, true)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	if probe != nil {
-		activation, activationErr = clientadapter.Activate(ctx, selector, routes, activation.State, probe, time.Now)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if !windowsActivationApplied(activation, routes) {
-			return activationErr
-		}
+	if !windowsActivationApplied(activation, routes) {
+		return activationErr
 	}
+
 	diagnosticContext, err := clientadapter.WithNativeDiagnostic(ctx, string(config), nil)
 	if err != nil {
 		return err
@@ -665,8 +682,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 				nextState.Observations = nil
 				nextState.ResourceObservations = nil
 			}
-			next, nextErr := clientadapter.Activate(ctx, selector, routes, nextState,
-				probe, time.Now)
+			next, nextErr := activateWindowsServices(ctx, selector, lkg.View, routes, nextState, true)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}

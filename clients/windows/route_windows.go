@@ -211,6 +211,10 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 						break
 					}
 					choice, chooseErr := clientmodel.Select(byScope[scope], nil, preference, current, "windows-live", time.Now())
+					if errors.Is(chooseErr, clientmodel.ErrNoUsableCandidate) {
+						desired[scope] = clientadapter.BlockedSelection
+						continue
+					}
 					if chooseErr != nil {
 						selectErr = chooseErr
 						break

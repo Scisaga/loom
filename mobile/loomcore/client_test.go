@@ -102,7 +102,8 @@ func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
 	var original, derived map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(state.LKG.View.RuntimeProfile.Config), &original)
 	_ = json.Unmarshal([]byte(profile.Config), &derived)
-	if !bytes.Equal(original["outbounds"], derived["outbounds"]) || len(derived["inbounds"]) == 0 || len(derived["experimental"]) == 0 || derived["dns"] != nil {
+	assertRuntimeSelectorRejectionOnly(t, original["outbounds"], derived["outbounds"])
+	if len(derived["inbounds"]) == 0 || len(derived["experimental"]) == 0 || derived["dns"] != nil {
 		t.Fatal("Android host adapter changed authorization or invented DNS")
 	}
 	var capture struct {
@@ -278,5 +279,44 @@ func TestAndroidRejectsHistoricalStateAndUsesSingleCompressedInviteCodec(t *test
 	}
 	if strings.Contains(string(body), `"capability"`) {
 		t.Fatal("old capability persisted")
+	}
+}
+
+// Only the runtime rejection position and initial selector default may differ.
+// Every actual transport/candidate and authorized member order must stay intact.
+func assertRuntimeSelectorRejectionOnly(t *testing.T, original, derived []byte) {
+	t.Helper()
+	var before, after []map[string]json.RawMessage
+	if json.Unmarshal(original, &before) != nil || json.Unmarshal(derived, &after) != nil || len(before) != len(after) {
+		t.Fatal("runtime changed its outbound set")
+	}
+	for i := range before {
+		if string(before[i]["type"]) == `"selector"` {
+			var members, actual []string
+			if json.Unmarshal(before[i]["outbounds"], &members) != nil || json.Unmarshal(after[i]["outbounds"], &actual) != nil || len(actual) != len(members)+1 || actual[len(actual)-1] != "reject" || string(after[i]["default"]) != `"reject"` {
+				t.Fatal("selector has no exact local rejection position")
+			}
+			for j := range members {
+				if members[j] != actual[j] {
+					t.Fatal("authorized selector membership changed")
+				}
+			}
+			after[i]["outbounds"] = before[i]["outbounds"]
+			if value, exists := before[i]["default"]; exists {
+				after[i]["default"] = value
+			} else {
+				delete(after[i], "default")
+			}
+		}
+		a, _ := json.Marshal(before[i])
+		b, _ := json.Marshal(after[i])
+		var av, bv any
+		_ = json.Unmarshal(a, &av)
+		_ = json.Unmarshal(b, &bv)
+		a, _ = json.Marshal(av)
+		b, _ = json.Marshal(bv)
+		if !bytes.Equal(a, b) {
+			t.Fatal("runtime changed an authorized transport or selector field")
+		}
 	}
 }

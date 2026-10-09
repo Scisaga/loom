@@ -478,7 +478,7 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 		if o.Type == "selector" {
 			seen := map[string]bool{}
 			for _, member := range o.Outbounds {
-				if seen[member] || (tags[member] != "direct" && tags[member] != "hysteria2") {
+				if seen[member] || (member != clientadapter.BlockedSelection && tags[member] != "direct" && tags[member] != "hysteria2") {
 					return errors.New("invalid selector member")
 				}
 				seen[member] = true

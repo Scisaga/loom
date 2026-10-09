@@ -17,6 +17,7 @@ type runtimeApplication struct {
 	DirectAvailable bool               `json:"direct_available"`
 	Exits           []string           `json:"exits"`
 	Selections      []runtimeSelection `json:"selections"`
+	BlockedScopes   []string           `json:"blocked_scopes"`
 }
 
 type runtimeSelection struct {
@@ -85,13 +86,17 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 	}
 	sort.Strings(scopes)
 	application := runtimeApplication{Schema: 3, Mode: string(preference.Mode), Exit: preference.Exit,
-		DirectAvailable: direct, Exits: make([]string, 0, len(exits)), Selections: []runtimeSelection{}}
+		DirectAvailable: direct, Exits: make([]string, 0, len(exits)), Selections: []runtimeSelection{}, BlockedScopes: []string{}}
 	for exit := range exits {
 		application.Exits = append(application.Exits, exit)
 	}
 	sort.Strings(application.Exits)
 	for _, scope := range scopes {
 		selection, err := clientmodel.Select(byScope[scope], observations, preference, current[scope], generation, now.UTC())
+		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+			application.BlockedScopes = append(application.BlockedScopes, scope)
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

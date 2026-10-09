@@ -35,7 +35,7 @@ internal class SelectorClient(config: String) {
                 request("PUT", target.selector, target.candidate)
                 changed += target.selector
             }
-            if (changed.isNotEmpty()) requestRaw("DELETE", "/connections/", null)
+            if (changed.isNotEmpty()) closeServiceConnections(changed)
             ordered.forEach { target ->
                 check(request("GET", target.selector) == target.candidate) {
                     "selector ${target.selector} 未读回目标候选"
@@ -45,6 +45,7 @@ internal class SelectorClient(config: String) {
             changed.asReversed().forEach { selector ->
                 runCatching { request("PUT", selector, current.getValue(selector)) }
             }
+            if (changed.isNotEmpty()) runCatching { closeServiceConnections(changed) }
             throw error
         }
     }
@@ -69,6 +70,25 @@ internal class SelectorClient(config: String) {
                 put(target.selector, readCurrentWithStartupRetry(target.selector))
             }
         }
+    }
+
+    private fun closeServiceConnections(scopes: List<String>) {
+        val root = JSONObject(requestRaw("GET", "/connections/", null).decodeToString())
+        check(root.has("connections")) { "服务连接快照缺失" }
+        if (root.isNull("connections")) return
+        val connections = root.getJSONArray("connections")
+        val wanted = scopes.toSet()
+        val ids = (0 until connections.length()).mapNotNull { index ->
+            val item = connections.getJSONObject(index)
+            if (item.isNull("chains")) return@mapNotNull null
+            val chain = item.getJSONArray("chains")
+            if ((0 until chain.length()).none { chain.getString(it) in wanted }) return@mapNotNull null
+            item.getString("id").also { id ->
+                check(id == java.util.UUID.fromString(id).toString()) { "服务连接标识不规范" }
+            }
+        }.sorted()
+        check(ids.distinct().size == ids.size) { "服务连接标识重复" }
+        ids.forEach { requestRaw("DELETE", "/connections/$it", null) }
     }
 
     private fun checkHealth() {
@@ -111,7 +131,7 @@ internal class SelectorClient(config: String) {
             method = method,
             path = path,
             body = body,
-            maximum = MAX_RESPONSE,
+            maximum = if (path == "/connections/") 8 * 1024 * 1024 else MAX_RESPONSE,
         )
         check(response.status in 200..299) { "本地 selector API 返回 HTTP ${response.status}" }
         return response.body
@@ -149,7 +169,7 @@ internal fun loopbackHttpRequest(
     require(secret.isNotBlank() && secret.length <= 4 * 1024 && secret.all { it.code in 0x21..0x7e }) {
         "selector API 口令无效"
     }
-    require(maximum in 1..64 * 1024) { "selector API 响应边界无效" }
+    require(maximum in 1..8 * 1024 * 1024) { "selector API 响应边界无效" }
     require(body == null || body.size <= maximum) { "selector API 请求过大" }
 
     Socket().use { socket ->

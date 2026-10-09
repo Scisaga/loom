@@ -145,6 +145,10 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 					Chain: byID[selection.CandidateID], Health: health, MeasurementSummary: summary, SelectedQuality: selected,
 					BestQuality: "当前 selector 候选", Reason: "selector 回读为当前候选", UpdatedAt: updated[selection.CandidateID]})
 			}
+			for _, scope := range status.BlockedScopes {
+				rows = append(rows, windowsPathDisplay{Service: scope, Chain: "暂无可用路径", Health: "不可用", MeasurementSummary: "当前偏好下没有可用候选", Reason: "该服务 selector 已拒绝；其他服务继续运行"})
+			}
+
 		}
 		app.mu.Lock()
 		if ctx.Err() != nil || sequence != app.runSequence || app.runCancel == nil {
