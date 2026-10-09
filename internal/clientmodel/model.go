@@ -193,23 +193,26 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		if leftRank != rightRank {
 			return leftRank < rightRank
 		}
-		// Metrics are comparable only for the same single target. Multi-target
-		// selection has no invented average or successful-target score.
-		if len(targets) == 1 && leftRank == 0 && metrics[left.ID] > 0 && metrics[right.ID] > 0 && metrics[left.ID] != metrics[right.ID] {
-			return metrics[left.ID] < metrics[right.ID]
-		}
 		if leftRank == 1 && failures[left.ID] != failures[right.ID] {
 			return failures[left.ID] < failures[right.ID]
 		}
-		if left.ID == current {
-			return true
-		}
-		if right.ID == current {
-			return false
+		if (left.ID == current) != (right.ID == current) {
+			return left.ID == current
 		}
 		return left.ID < right.ID
 	})
-	return Selection{CandidateID: eligible[0].ID, Scope: eligible[0].Scope}, nil
+	selected := eligible[0]
+	// Mixing pairwise metric comparisons with current/ID tie breakers creates
+	// comparison cycles when a metric is missing. Establish the stable baseline
+	// first, then replace it only with a strictly better comparable measurement.
+	if len(targets) == 1 && rank(selected) == 0 && metrics[selected.ID] > 0 {
+		for _, candidate := range eligible[1:] {
+			if rank(candidate) == 0 && metrics[candidate.ID] > 0 && metrics[candidate.ID] < metrics[selected.ID] {
+				selected = candidate
+			}
+		}
+	}
+	return Selection{CandidateID: selected.ID, Scope: selected.Scope}, nil
 }
 
 type runtimeDocument struct {
