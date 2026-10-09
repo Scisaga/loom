@@ -112,6 +112,26 @@ func TestWireGuardAccessServiceWithdrawalPreservesOtherServiceAndPeer(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	bindings, err := CandidateFirstHopProbes(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sharedSpec string
+	count := 0
+	for _, route := range first.Routes {
+		if route.FirstResourceID != "demo-exit-wg" {
+			continue
+		}
+		probe, found := bindings[route.ID]
+		if !found || sharedSpec != "" && probe.SpecDigest != sharedSpec {
+			t.Fatal("shared device WG identity did not bind both authorized Service paths")
+		}
+		sharedSpec = probe.SpecDigest
+		count++
+	}
+	if count != 2 {
+		t.Fatal("fixture did not cover shared WG credentials")
+	}
 	if len(accessWireGuardOutbounds(t, first)) != 1 {
 		t.Fatal("multiple services created competing WG sessions")
 	}

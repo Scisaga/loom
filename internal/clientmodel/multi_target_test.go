@@ -20,19 +20,19 @@ func TestTargetSetSelectionDoesNotVoteOrBorrowAnotherScope(t *testing.T) {
 		}
 	}
 	pref := Preference{Schema: 3, Mode: ModeAuto}
-	selected, err := Select(routes, samples, pref, "demo-a", "demo-network", now, targets...)
+	selected, err := Select(routes, samples, nil, pref, "demo-a", "demo-network", now, targets...)
 	if err != nil || selected.CandidateID != "demo-a" {
 		t.Fatal("partial results were ranked by successful target count", selected, err)
 	}
 	samples[len(samples)-1].Result = "available"
-	selected, err = Select(routes, samples, pref, "demo-a", "demo-network", now, targets...)
+	selected, err = Select(routes, samples, nil, pref, "demo-a", "demo-network", now, targets...)
 	if err != nil || selected.CandidateID != "demo-b" {
 		t.Fatal("complete same-Service evidence did not improve an incomplete path", selected, err)
 	}
 	for i := range samples {
 		samples[i].Scope = "service:demo-other"
 	}
-	selected, err = Select(routes, samples, pref, "demo-a", "demo-network", now, targets...)
+	selected, err = Select(routes, samples, nil, pref, "demo-a", "demo-network", now, targets...)
 	if err != nil || selected.CandidateID != "demo-a" {
 		t.Fatal("another Service supplied health", selected, err)
 	}

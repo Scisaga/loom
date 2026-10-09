@@ -22,9 +22,17 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 	if view.RuntimeProfile == nil || !slices.Contains(view.Responsibilities, "access") {
 		return nil, clientmodel.RuntimeProfile{}, errors.New("view has no access runtime")
 	}
+	probes, err := control.CandidateFirstHopProbes(view)
+	if err != nil {
+		return nil, clientmodel.RuntimeProfile{}, err
+	}
 	routes := make([]clientmodel.RouteCandidate, 0, len(view.Routes))
 	for _, route := range view.Routes {
-		routes = append(routes, clientmodel.RouteCandidate{ID: route.ID, FinalExit: route.FinalExit, Chain: append([]string{}, route.NodeChain...), Scope: route.Scope})
+		candidate := clientmodel.RouteCandidate{ID: route.ID, FinalExit: route.FinalExit, Chain: append([]string{}, route.NodeChain...), Scope: route.Scope}
+		if probe, found := probes[route.ID]; found {
+			candidate.FirstHop = &clientmodel.ResourceSampleRef{ResourceID: probe.Resource.ID, SpecDigest: probe.SpecDigest, Target: probe.Target(), Action: probe.Action()}
+		}
+		routes = append(routes, candidate)
 	}
 	profile := clientmodel.RuntimeProfile{Kind: view.RuntimeProfile.Kind, Config: view.RuntimeProfile.Config}
 	return routes, profile, profile.Validate(routes)

@@ -112,6 +112,36 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 	if err != nil || decodeErr != nil || len(failedSamples) != 1 || failedSamples[0].Result != "unavailable" || requests.Load() != 1 {
 		t.Fatal("network change reused health or bypassed failed socket protection", err, decodeErr)
 	}
+	profileBody, err := androidDeviceProfile(state)
+	var profile androidProfile
+	if err != nil || json.Unmarshal(profileBody, &profile) != nil {
+		t.Fatal("accepted Android profile did not project first-hop references", err)
+	}
+	resources, err := AndroidCachedResourceObservations(failed, profile.ResourceCacheIdentity, "demo-other-underlay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routesBody, _ := json.Marshal(profile.Routes)
+	targetsBody, _ := json.Marshal(profile.BusinessProbeTargets)
+	preference, _ := NewAndroidPreference("fixed_exit", route.FinalExit)
+	current, _ := json.Marshal(map[string]string{route.Scope: route.ID})
+	evaluate := func(at time.Time, raw []byte) runtimeApplication {
+		t.Helper()
+		body, err := EvaluateAndroidRoutes(routesBody, nil, preference, current, "demo-other-underlay", at.UTC().Format(time.RFC3339), targetsBody, raw)
+		var result runtimeApplication
+		if err != nil || json.Unmarshal(body, &result) != nil {
+			t.Fatal("Android pure bridge could not consume its existing cache", err)
+		}
+		return result
+	}
+	blocked := evaluate(time.UnixMilli(failedSamples[0].ObservedAt), resources)
+	if len(blocked.Selections) != 0 || len(blocked.BlockedScopes) != 1 || blocked.BlockedScopes[0] != route.Scope {
+		t.Fatal("Android ignored the real failed protected first-hop authentication")
+	}
+	expired := evaluate(time.UnixMilli(failedSamples[0].ValidUntil), resources)
+	if len(expired.Selections) != 1 || expired.Selections[0].Candidate != route.ID || expired.Selections[0].State != "unknown" {
+		t.Fatal("expired authentication failure prevented a new necessary attempt or invented Service health")
+	}
 	calls := protector.calls
 	unchanged, err = ObserveAndroidFirstHops(body, selections, failed, "demo-other-underlay")
 	if err != nil || !bytes.Equal(failed, unchanged) || protector.calls != calls {

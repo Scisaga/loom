@@ -143,6 +143,10 @@ func TestFirstHopSamplesDeduplicateParallelizeAndKeepOriginalWindows(t *testing.
 	if values, err := observeFirstHops(ctx, view, selected, nil, "demo-underlay", func() time.Time { return at }, noProbe); err == nil || len(values) != 0 {
 		t.Fatal("cancelled operation manufactured samples")
 	}
+	expired, err := observeFirstHops(context.Background(), view, direct, first.values, "demo-underlay", func() time.Time { return at.Add(time.Hour) }, noProbe)
+	if err != nil || !reflect.DeepEqual(expired, first.values) {
+		t.Fatal("expiry deleted the last actual attempt needed for fair retries", err)
+	}
 	probes, _ := control.FirstHopProbes(view)
 	if len(RetainResourceObservations(probes, first.values, "demo-other-network")) != 0 {
 		t.Fatal("old network cache survived")

@@ -24,10 +24,20 @@ const (
 type Mode string
 
 type RouteCandidate struct {
-	ID        string   `json:"id"`
-	FinalExit string   `json:"final_exit"`
-	Chain     []string `json:"chain"`
-	Scope     string   `json:"scope"`
+	ID        string             `json:"id"`
+	FinalExit string             `json:"final_exit"`
+	Chain     []string           `json:"chain"`
+	Scope     string             `json:"scope"`
+	FirstHop  *ResourceSampleRef `json:"first_hop,omitempty"`
+}
+
+// ResourceSampleRef is a public execution projection from the accepted View.
+// It has no authority or storage of its own and never contains a credential.
+type ResourceSampleRef struct {
+	ResourceID string `json:"resource_id"`
+	SpecDigest string `json:"spec_digest"`
+	Target     string `json:"target"`
+	Action     string `json:"action"`
 }
 
 type RuntimeProfile struct {
@@ -90,6 +100,10 @@ func (candidate RouteCandidate) Validate() error {
 	if strings.HasPrefix(candidate.Scope, "local_network:") && (candidate.Scope == "local_network:" || candidate.FinalExit == "direct") {
 		return errors.New("local network candidate requires its fixed gateway")
 	}
+	if ref := candidate.FirstHop; ref != nil && (len(candidate.Chain) == 0 || control.ValidateID(ref.ResourceID) != nil ||
+		control.ValidateDigest(ref.SpecDigest) != nil || !validName(ref.Target) || ref.Action != "hysteria2_tls" && ref.Action != "wireguard_dns") {
+		return errors.New("candidate first-hop evidence reference is invalid")
+	}
 
 	return nil
 }
@@ -143,7 +157,7 @@ var ErrNoUsableCandidate = errors.New("no authorized route candidate is usable")
 // other-generation observations remain unknown. Known unavailable candidates
 // are excluded; a current candidate is retained when evidence does not prove a
 // strictly better comparable result.
-func Select(routes []RouteCandidate, observations []Observation, preference Preference, current,
+func Select(routes []RouteCandidate, observations []Observation, resources []control.Observation, preference Preference, current,
 	networkGeneration string, now time.Time, targets ...string) (Selection, error) {
 	if err := preference.Validate(); err != nil || !validName(networkGeneration) {
 		return Selection{}, errors.New("selection input is invalid")
@@ -153,15 +167,46 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 			return Selection{}, err
 		}
 	}
+	resourceByID := map[string]control.Observation{}
+	for _, sample := range resources {
+		if err := sample.Validate(); err != nil || sample.Level != "resource" {
+			return Selection{}, errors.New("first-hop sample is invalid")
+		}
+		if _, exists := resourceByID[sample.ResourceID]; exists {
+			return Selection{}, errors.New("first-hop samples are duplicated")
+		}
+		resourceByID[sample.ResourceID] = sample
+	}
 	byID := map[string]string{}
 	failures := map[string]string{}
 	metrics := map[string]int64{}
+	hopAvailable := map[string]bool{}
+	hopFailed := map[string]bool{}
 	for _, candidate := range routes {
 		state, failure, metric, err := candidateEvidence(observations, candidate.ID, candidate.Scope, networkGeneration, targets, now)
 		if err != nil {
 			return Selection{}, err
 		}
 		byID[candidate.ID], failures[candidate.ID], metrics[candidate.ID] = state, failure, metric
+		if candidate.FirstHop == nil {
+			continue
+		}
+		hop, found := resourceByID[candidate.FirstHop.ResourceID]
+		if !found || !matchesFirstHop(candidate.FirstHop, hop, networkGeneration) || hop.ObservedAt > now.UnixMilli() {
+			continue
+		}
+		recovered, err := businessSucceededAfter(observations, candidate, networkGeneration, targets, hop.ObservedAt, now)
+		if err != nil {
+			return Selection{}, err
+		}
+		if hop.Result == "unavailable" && !recovered {
+			hopFailed[candidate.ID] = now.UnixMilli() < hop.ValidUntil
+			at := time.UnixMilli(hop.ObservedAt).UTC().Truncate(time.Second).Format(time.RFC3339)
+			if at > failures[candidate.ID] {
+				failures[candidate.ID] = at
+			}
+		}
+		hopAvailable[candidate.ID] = hop.Result == "available" && now.UnixMilli() < hop.ValidUntil
 	}
 	eligible := make([]RouteCandidate, 0, len(routes))
 	seen := map[string]bool{}
@@ -173,7 +218,7 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		allowed := strings.HasPrefix(candidate.Scope, "local_network:") || preference.Mode == ModeAuto ||
 			preference.Mode == ModeDirect && candidate.FinalExit == "direct" ||
 			preference.Mode == ModeFixed && candidate.FinalExit == preference.Exit
-		if !allowed || byID[candidate.ID] == "unavailable" {
+		if !allowed || byID[candidate.ID] == "unavailable" || hopFailed[candidate.ID] {
 			continue
 		}
 		eligible = append(eligible, candidate)
@@ -198,6 +243,9 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		}
 		if (left.ID == current) != (right.ID == current) {
 			return left.ID == current
+		}
+		if leftRank == 1 && hopAvailable[left.ID] != hopAvailable[right.ID] {
+			return hopAvailable[left.ID]
 		}
 		return left.ID < right.ID
 	})

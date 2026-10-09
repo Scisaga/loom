@@ -213,7 +213,7 @@ class RouteManager private constructor(context: Context) {
                     it.getString("scope") == input.selector.selector &&
                     it.getString("target") == input.target && it.getString("action") == "https_request" &&
                     it.getString("network_generation") == input.networkGeneration &&
-                    runCatching { Instant.parse(it.getString("valid_until")).isAfter(now) }.getOrDefault(false)
+                    it.currentAt(now)
             }
         }
     }
@@ -280,7 +280,7 @@ class RouteManager private constructor(context: Context) {
             observations(profileId).objects().none { it.optString("candidate_id") == candidate.selector.candidate &&
                 it.optString("scope") == candidate.selector.selector && it.optString("target") == candidate.target &&
                 it.optString("network_generation") == runtime.generation && it.optString("action") == "https_request" &&
-                Instant.parse(it.getString("valid_until")).isAfter(Instant.now())
+                it.currentAt(Instant.now())
             }
         }
     }
@@ -313,7 +313,7 @@ class RouteManager private constructor(context: Context) {
         val now = Instant.now()
         val values = if (running) observations(profileId).objects().filter { observation ->
             observation.getString("network_generation") == runtime.generation &&
-                runCatching { Instant.parse(observation.getString("valid_until")).isAfter(now) }.getOrDefault(false)
+                observation.currentAt(now)
         }.sortedBy { it.getString("candidate_id") } else emptyList()
         RuntimeReportData(
             protected.get(ProfileStorage.routePreference(profileId)) ?: ByteArray(0),
@@ -353,6 +353,16 @@ class RouteManager private constructor(context: Context) {
         current: Map<String, String>,
     ): AppliedRoute {
         val currentBody = JSONObject(current).toString().encodeToByteArray()
+        val resources = runCatching {
+            Loomcore.androidCachedResourceObservations(
+                runtime.resourceObservations ?: protected.get(ProfileStorage.resourceObservations(profileId)) ?: ByteArray(0),
+                profile.resourceCacheIdentity,
+                runtime.generation.ifBlank { "startup" },
+            )
+        }.getOrElse {
+            Log.w("Loom", "首跳样本缓存不可用；继续必要业务尝试")
+            "[]".encodeToByteArray()
+        }
         val body = Loomcore.evaluateAndroidRoutes(
             profile.routes.encodeToByteArray(),
             observations(profileId).toString().encodeToByteArray(),
@@ -363,6 +373,7 @@ class RouteManager private constructor(context: Context) {
             JSONArray(profile.businessProbeTargets.map { group -> JSONObject()
                 .put("service_id", group.serviceID).put("targets", JSONArray(group.targets))
             }).toString().encodeToByteArray(),
+            resources,
         )
         val root = JSONObject(body.decodeToString())
         return AppliedRoute(
@@ -395,7 +406,7 @@ class RouteManager private constructor(context: Context) {
             val sample = samples.singleOrNull { it.optString("candidate_id") == input.selector.candidate &&
                 it.optString("scope") == input.selector.selector && it.optString("target") == input.target &&
                 it.optString("action") == "https_request" && it.optString("network_generation") == runtime.generation }
-            val valid = sample != null && runCatching { Instant.parse(sample.getString("valid_until")).isAfter(now) }.getOrDefault(false)
+            val valid = sample != null && sample.currentAt(now)
             val outcome = if (!valid) "尚无有效结果" else when (sample?.optString("result")) {
                 "available" -> "成功"
                 "unavailable" -> "失败"
@@ -476,3 +487,7 @@ class RouteManager private constructor(context: Context) {
 
 private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map(::getJSONObject)
 private fun JSONArray.strings(): List<String> = (0 until length()).map(::getString)
+
+private fun JSONObject.currentAt(now: Instant): Boolean = runCatching {
+    !Instant.parse(getString("observed_at")).isAfter(now) && Instant.parse(getString("valid_until")).isAfter(now)
+}.getOrDefault(false)

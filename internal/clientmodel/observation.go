@@ -4,7 +4,40 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"loom/internal/control"
 )
+
+// CurrentAt uses this device's own sample window, without changing its bytes or
+// imposing a global report clock tolerance or maximum lifetime.
+func (o Observation) CurrentAt(now time.Time) bool {
+	observed, observedErr := time.Parse(time.RFC3339, o.ObservedAt)
+	until, untilErr := time.Parse(time.RFC3339, o.ValidUntil)
+	return observedErr == nil && untilErr == nil && !now.Before(observed) && now.Before(until)
+}
+
+func matchesFirstHop(ref *ResourceSampleRef, sample control.Observation, generation string) bool {
+	return ref != nil && sample.Level == "resource" && sample.NetworkGeneration == generation &&
+		ref.ResourceID == sample.ResourceID && ref.SpecDigest == sample.SpecDigest &&
+		ref.Target == sample.Target && ref.Action == sample.Action
+}
+
+func businessSucceededAfter(values []Observation, route RouteCandidate, generation string, targets []string, at int64, now time.Time) (bool, error) {
+	// Business samples have second precision. An authentication sample's
+	// fractional second cannot prove that a same-second success came earlier.
+	threshold := time.UnixMilli(at).UTC().Truncate(time.Second)
+	for _, target := range targets {
+		sample, found, err := LatestObservation(values, route.ID, route.Scope, generation, target)
+		if err != nil {
+			return false, err
+		}
+		observed, _ := time.Parse(time.RFC3339, sample.ObservedAt)
+		if found && sample.Result == "available" && !observed.Before(threshold) && !observed.After(now) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // Key identifies a disposable sample, not another authority or lifecycle.
 func (o Observation) Key() string {
@@ -56,8 +89,9 @@ func candidateEvidence(values []Observation, candidate, scope, generation string
 		if sampleErr != nil {
 			return "", "", 0, sampleErr
 		}
-		until, _ := time.Parse(time.RFC3339, sample.ValidUntil)
-		valid := found && now.Before(until)
+		observed, _ := time.Parse(time.RFC3339, sample.ObservedAt)
+		found = found && !observed.After(now)
+		valid := found && sample.CurrentAt(now)
 		allSuccess = allSuccess && valid && sample.Result == "available"
 		allFailure = allFailure && valid && sample.Result == "unavailable"
 		latestAllFailed = latestAllFailed && found && sample.Result == "unavailable"

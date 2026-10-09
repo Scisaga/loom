@@ -17,13 +17,13 @@ func TestLocalNetworkSelectionIgnoresInternetPreference(t *testing.T) {
 	}
 	failed := Observation{CandidateID: routes[0].ID, NetworkGeneration: "demo-network-generation", Scope: "local_network:demo-lan", Result: "unavailable", Action: "https_request", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}
 	for _, preference := range []Preference{{Schema: 3, Mode: ModeDirect}, {Schema: 3, Mode: ModeAuto}, {Schema: 3, Mode: ModeFixed, Exit: "demo-internet-exit"}} {
-		selection, err := Select(routes, []Observation{failed}, preference, routes[0].ID, failed.NetworkGeneration, now, "")
+		selection, err := Select(routes, []Observation{failed}, nil, preference, routes[0].ID, failed.NetworkGeneration, now, "")
 		if err != nil || selection.CandidateID != "demo-relay" || selection.Scope != "local_network:demo-lan" {
 			t.Fatal("internet preference pruned an authorized fixed-gateway LAN path", preference.Mode, err)
 		}
 	}
 	routes[0].FinalExit, routes[0].Chain = "direct", nil
-	if _, err := Select(routes, nil, Preference{Schema: 3, Mode: ModeAuto}, "", failed.NetworkGeneration, now, ""); err == nil {
+	if _, err := Select(routes, nil, nil, Preference{Schema: 3, Mode: ModeAuto}, "", failed.NetworkGeneration, now, ""); err == nil {
 		t.Fatal("LAN candidate escaped through Direct")
 	}
 }
@@ -41,12 +41,12 @@ func TestSelectAvailabilityGenerationAndSameExitFallback(t *testing.T) {
 		{CandidateID: "relay", NetworkGeneration: "old-network", Scope: "service", Result: "unavailable", Action: "https",
 			ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)},
 	}
-	selected, err := Select(routes, observations, Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"},
+	selected, err := Select(routes, observations, nil, Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"},
 		"one-hop", "network-a", now, "")
 	if err != nil || selected.CandidateID != "relay" {
 		t.Fatalf("same-exit fallback = %+v, %v", selected, err)
 	}
-	selected, err = Select(routes, observations, Preference{Schema: 3, Mode: ModeDirect}, "", "network-a", now, "")
+	selected, err = Select(routes, observations, nil, Preference{Schema: 3, Mode: ModeDirect}, "", "network-a", now, "")
 	if err != nil || selected.CandidateID != "direct" {
 		t.Fatalf("direct = %+v, %v", selected, err)
 	}
@@ -68,7 +68,7 @@ func TestExpiredFailuresDoNotStarveOtherAuthorizedPaths(t *testing.T) {
 	preference := Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"}
 	selectID := func(current, generation string) string {
 		t.Helper()
-		selection, err := Select(routes, observations, preference, current, generation, now, "")
+		selection, err := Select(routes, observations, nil, preference, current, generation, now, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,12 +104,12 @@ func TestLocalExitIsNotDirectAndKeepsItsRuntimeIdentity(t *testing.T) {
 		preference Preference
 		wanted     string
 	}{{Preference{Schema: 3, Mode: ModeDirect}, "demo-direct"}, {Preference{Schema: 3, Mode: ModeFixed, Exit: local.FinalExit}, local.ID}, {Preference{Schema: 3, Mode: ModeAuto}, local.ID}} {
-		selected, err := Select(routes, nil, item.preference, local.ID, "demo-generation", now, "")
+		selected, err := Select(routes, nil, nil, item.preference, local.ID, "demo-generation", now, "")
 		if err != nil || selected.CandidateID != item.wanted {
 			t.Fatalf("%s lost final exit identity: %+v, %v", item.preference.Mode, selected, err)
 		}
 	}
-	if _, err := Select([]RouteCandidate{local}, nil, Preference{Schema: 3, Mode: ModeDirect}, local.ID, "demo-generation", now, ""); err == nil {
+	if _, err := Select([]RouteCandidate{local}, nil, nil, Preference{Schema: 3, Mode: ModeDirect}, local.ID, "demo-generation", now, ""); err == nil {
 		t.Fatal("Direct preference selected an empty chain belonging to the local exit")
 	}
 	config, err := canonicalRuntimeFixture([]byte(`{"outbounds":[{"type":"direct","tag":"demo-local"},{"type":"selector","tag":"service:demo-service","outbounds":["demo-local"]}]}`))

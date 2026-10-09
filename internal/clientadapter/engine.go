@@ -64,7 +64,7 @@ func Scopes(routes []clientmodel.RouteCandidate) ([]string, map[string][]clientm
 	return scopes, byScope, nil
 }
 
-func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.Observation,
+func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.Observation, resources []control.Observation,
 	preference clientmodel.Preference, current map[string]string, generation string, now time.Time, targets ...string) (map[string]string, error) {
 	scopes, byScope, err := Scopes(routes)
 	if err != nil {
@@ -72,7 +72,7 @@ func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.O
 	}
 	desired := make(map[string]string, len(scopes))
 	for _, scope := range scopes {
-		selection, err := clientmodel.Select(byScope[scope], observations, preference, current[scope], generation, now, targets...)
+		selection, err := clientmodel.Select(byScope[scope], observations, resources, preference, current[scope], generation, now, targets...)
 		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 			desired[scope] = BlockedSelection
 			continue
@@ -181,8 +181,8 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 	if err != nil {
 		return Activation{}, err
 	}
-	at := now().UTC().Truncate(time.Second)
-	desired, err := selectAll(routes, state.Observations, state.Preference, current, state.NetworkGeneration, at, targets...)
+	at := now().UTC()
+	desired, err := selectAll(routes, state.Observations, state.ResourceObservations, state.Preference, current, state.NetworkGeneration, at, targets...)
 	if err != nil {
 		return Activation{}, err
 	}
@@ -210,8 +210,7 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 			if err != nil {
 				return result(), err
 			}
-			until, _ := time.Parse(time.RFC3339, sample.ValidUntil)
-			if found && now().Before(until) {
+			if found && sample.CurrentAt(now()) {
 				continue
 			}
 			outcome := probes[target](ctx)
@@ -230,7 +229,7 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 			outcome.Target = target
 			state = recordOutcome(state, readback, outcome, now().UTC().Truncate(time.Second))
 		}
-		at = now().UTC().Truncate(time.Second)
+		at = now().UTC()
 		status, err := clientmodel.ObservationState(state.Observations, candidate, scope, state.NetworkGeneration, targets, at)
 		if err != nil {
 			return result(), err
@@ -240,7 +239,7 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 		}
 		fallback := map[string]string{scope: BlockedSelection}
 		if attempt == 0 {
-			fallback, err = selectAll(routes, state.Observations, state.Preference, readback, state.NetworkGeneration, at, targets...)
+			fallback, err = selectAll(routes, state.Observations, state.ResourceObservations, state.Preference, readback, state.NetworkGeneration, at, targets...)
 			if err != nil {
 				return result(), err
 			}

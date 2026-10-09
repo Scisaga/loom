@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
 	"loom/internal/control"
 )
@@ -30,7 +31,13 @@ type runtimeSelection struct {
 
 // EvaluateAndroidRoutes applies one Preference to every authorized scope. It performs no I/O.
 func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, currentBody []byte,
-	generation, nowRFC3339 string, targetsBody []byte) ([]byte, error) {
+	generation, nowRFC3339 string, targetsBody, resourcesBody []byte) ([]byte, error) {
+	var resources []control.Observation
+	if len(resourcesBody) > 0 {
+		if err := decodeStrictJSON(resourcesBody, clientadapter.ResourceObservationCacheLimit, &resources); err != nil {
+			return nil, err
+		}
+	}
 	var groups []control.ServiceProbeTargets
 	if len(targetsBody) > 0 {
 		if err := decodeStrictJSON(targetsBody, 1<<20, &groups); err != nil {
@@ -113,7 +120,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 	}
 	sort.Strings(application.Exits)
 	for _, scope := range scopes {
-		selection, err := clientmodel.Select(byScope[scope], observations, preference, current[scope], generation, now.UTC(), targetsByScope[scope]...)
+		selection, err := clientmodel.Select(byScope[scope], observations, resources, preference, current[scope], generation, now.UTC(), targetsByScope[scope]...)
 		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 			application.BlockedScopes = append(application.BlockedScopes, scope)
 			continue
@@ -139,6 +146,20 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 			Candidate: selection.CandidateID, FinalExit: finalExit, Chain: chain, State: state})
 	}
 	return json.Marshal(application)
+}
+
+// AndroidCachedResourceObservations decodes a disposable cache using the owner
+// binding in the accepted profile projection. Selection still matches each
+// sample to the current candidate's exact first-hop execution reference.
+func AndroidCachedResourceObservations(body []byte, identity, generation string) ([]byte, error) {
+	if len(body) == 0 {
+		return []byte("[]"), nil
+	}
+	values, err := clientadapter.ReadResourceObservationCache(body, identity, generation)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(values)
 }
 
 // NewAndroidPreference emits the single canonical local preference value.

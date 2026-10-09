@@ -29,6 +29,33 @@ func TestFirstHopProbeUsesAuthorizedFirstCredentialAndPreservesView(t *testing.T
 	if err != nil || len(probes) != 2 || len(view.Routes) != 4 {
 		t.Fatal("shared resources did not deduplicate", err)
 	}
+	byCandidate, err := CandidateFirstHopProbes(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, _ := profileCredentials(view)
+	matchedRoutes, differentCredentials := 0, 0
+	for _, route := range view.Routes {
+		var sampled ResourceProbe
+		for _, probe := range probes {
+			if probe.Resource.ID == route.FirstResourceID {
+				sampled = probe
+			}
+		}
+		bound, found := byCandidate[route.ID]
+		want := credentials[route.ID] == sampled.Credential
+		if found != want || found && (bound.SpecDigest != sampled.SpecDigest || bound.Credential != credentials[route.ID]) {
+			t.Fatal("one Service borrowed another credential's authentication result")
+		}
+		if found {
+			matchedRoutes++
+		} else {
+			differentCredentials++
+		}
+	}
+	if matchedRoutes != 2 || differentCredentials != 2 {
+		t.Fatal("fixture did not exercise different Service credentials on shared resources")
+	}
 	entry, _ := ProjectDeviceView(p, "demo-entry")
 	exit, _ := ProjectDeviceView(p, "demo-exit")
 	for _, probe := range probes {

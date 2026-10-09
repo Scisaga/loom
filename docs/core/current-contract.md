@@ -1084,7 +1084,9 @@ Resource 执行只在本轮实际应用并回读的选择需要该资源时触�
 取消不产生样本。完整耗时含本次必要解析及认证，不是 RTT 或完整 Service 请求耗时。
 新样本成功保存十分钟、失败三十秒，复用时原时间不变；这是客户端必要重测窗口，不是 control
 全局新鲜性规则。缓存只保留同网络代、同规范执行摘要且仍授权的原样本，可删除重建；撤权、
-凭据/资源/DNS 变化、到期或换网后不能复用。资源结果不修改现有 Service 选择算法或整体健康。
+凭据/资源/DNS 变化、到期或换网后不能复用。资源结果不能变成 Service 的整体健康；客户端按
+[首跳样本参与必要尝试](../clients/client-runtime-model.md#首跳样本参与必要尝试)核对候选实际凭据的
+精确对应，只将匹配的原样本用于必要尝试顺序和失败排除，签名格式及已有样本原文不变。
 
 Link 层当前 action 仅 `wireguard_dns`，resource_id 为 Link 的接收端 WG resource_id，target 为
 probe_target 的规范 IP:Port（IPv6 使用方括号）。spec_digest 为 `loom-link-spec-v3\0` 加

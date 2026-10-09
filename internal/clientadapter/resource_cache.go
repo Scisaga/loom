@@ -33,7 +33,8 @@ func (cache resourceObservationCache) Validate() error {
 	return nil
 }
 
-func resourceCacheIdentity(lkg control.DeviceViewEnvelope) (string, error) {
+// ResourceCacheIdentity is the existing cache owner binding, projected from LKG.
+func ResourceCacheIdentity(lkg control.DeviceViewEnvelope) (string, error) {
 	if control.ValidateID(lkg.NetworkID) != nil || control.ValidateDigest(lkg.GenesisDigest) != nil ||
 		control.ValidateID(lkg.View.DeviceID) != nil || control.ValidatePublicKey(lkg.View.DevicePublicKey) != nil {
 		return "", errors.New("resource cache has no accepted identity binding")
@@ -52,7 +53,7 @@ func resourceCacheIdentity(lkg control.DeviceViewEnvelope) (string, error) {
 // EncodeResourceObservations only saves samples authorized by the current View.
 // It retains their original times; serialization is not another observation.
 func EncodeResourceObservations(lkg control.DeviceViewEnvelope, observations []control.Observation) ([]byte, error) {
-	identity, err := resourceCacheIdentity(lkg)
+	identity, err := ResourceCacheIdentity(lkg)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +78,26 @@ func EncodeResourceObservations(lkg control.DeviceViewEnvelope, observations []c
 // DecodeResourceObservations restores only exact current execution inputs.
 // It does not accept a View, select a route, or extend any validity window.
 func DecodeResourceObservations(body []byte, lkg control.DeviceViewEnvelope, generation string) ([]control.Observation, error) {
-	identity, err := resourceCacheIdentity(lkg)
+	identity, err := ResourceCacheIdentity(lkg)
+	if err != nil {
+		return nil, err
+	}
+	values, err := ReadResourceObservationCache(body, identity, generation)
+	if err != nil {
+		return nil, err
+	}
+	probes, err := control.FirstHopProbes(lkg.View)
+	if err != nil {
+		return nil, err
+	}
+	return RetainResourceObservations(probes, values, generation), nil
+}
+
+// ReadResourceObservationCache uses the same canonical decoder with a public
+// owner binding. Callers must also match samples to current execution refs.
+// This allows Android's pure selection bridge to avoid receiving private keys.
+func ReadResourceObservationCache(body []byte, identity, generation string) ([]control.Observation, error) {
+	err := control.ValidateDigest(identity)
 	if err != nil || control.ValidateID(generation) != nil {
 		return nil, errors.New("resource cache recovery inputs are invalid")
 	}
@@ -91,9 +111,11 @@ func DecodeResourceObservations(body []byte, lkg control.DeviceViewEnvelope, gen
 	if cache.IdentityDigest != identity {
 		return []control.Observation{}, nil
 	}
-	probes, err := control.FirstHopProbes(lkg.View)
-	if err != nil {
-		return nil, err
+	values := []control.Observation{}
+	for _, value := range cache.Observations {
+		if value.NetworkGeneration == generation {
+			values = append(values, value)
+		}
 	}
-	return RetainResourceObservations(probes, cache.Observations, generation), nil
+	return values, nil
 }

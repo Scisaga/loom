@@ -107,7 +107,7 @@ func RetainResourceObservations(probes []control.ResourceProbe, previous []contr
 	for _, probe := range probes {
 		for _, value := range previous {
 			if value.Validate() == nil && value.Level == "resource" && value.NetworkGeneration == generation &&
-				value.ResourceID == probe.Resource.ID && value.SpecDigest == probe.SpecDigest && value.Target == probe.Target() {
+				value.ResourceID == probe.Resource.ID && value.SpecDigest == probe.SpecDigest && value.Target == probe.Target() && value.Action == probe.Action() {
 				result = append(result, value)
 				break
 			}
@@ -118,7 +118,8 @@ func RetainResourceObservations(probes []control.ResourceProbe, previous []contr
 
 // ObserveFirstHops runs after selections have been applied and read back. Only
 // resources needed by those selections are sampled, independently and once per
-// original validity window. Its results never enter Service selection state.
+// original validity window. A later selection may use matching first-hop
+// evidence; resource results never become Service observations.
 func ObserveFirstHops(ctx context.Context, view control.DeviceView, selected []string, previous []control.Observation, generation string, now func() time.Time) ([]control.Observation, error) {
 	return observeFirstHops(ctx, view, selected, previous, generation, now, probeFirstHop)
 }
@@ -144,17 +145,17 @@ func observeFirstHops(ctx context.Context, view control.DeviceView, selected []s
 	at := now()
 	cached := map[string]control.Observation{}
 	for _, value := range RetainResourceObservations(probes, previous, generation) {
-		if value.ObservedAt <= at.UnixMilli() && at.UnixMilli() < value.ValidUntil {
-			cached[value.ResourceID] = value
-		}
+		// Expiry changes health, not the last actual attempt. Retain its original
+		// time for fair retries while replacing it only after a new real sample.
+		cached[value.ResourceID] = value
 	}
 	var lock sync.Mutex
 	var pending sync.WaitGroup
 	for _, execution := range probes {
 		lock.Lock()
-		_, found := cached[execution.Resource.ID]
+		value, found := cached[execution.Resource.ID]
 		lock.Unlock()
-		if found || !needed[execution.Resource.ID] {
+		if found && value.ObservedAt <= at.UnixMilli() && at.UnixMilli() < value.ValidUntil || !needed[execution.Resource.ID] {
 			continue
 		}
 		pending.Add(1)

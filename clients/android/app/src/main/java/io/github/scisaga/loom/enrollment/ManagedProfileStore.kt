@@ -24,6 +24,7 @@ data class ManagedProfile(
     val businessProbeTargets: List<ServiceProbeTargets> = emptyList(),
     internal val hasWebsite: Boolean = false,
     val possiblePermissionRestoration: Boolean = false,
+    val resourceCacheIdentity: String = "",
 ) {
     internal val hasLocalNetwork: Boolean
         get() = JSONArray(routes).let { values ->
@@ -176,6 +177,7 @@ private fun decodeAndroidProfile(body: ByteArray): ManagedProfile {
         hasWebsite = root.getBoolean("has_website"),
         possiblePermissionRestoration = root.getBoolean("possible_permission_restoration"),
         routes = root.getJSONArray("routes").toString(),
+        resourceCacheIdentity = root.getString("resource_cache_identity"),
         recordID = root.getString("record_id"),
         dns = root.optJSONArray("dns")?.let { values -> (0 until values.length()).map(values::getString) }.orEmpty(),
         businessProbeTargets = root.optJSONArray("business_probe_targets")

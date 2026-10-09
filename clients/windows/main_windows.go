@@ -606,8 +606,12 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	// observation baseline here; comparing it to pre-capture interfaces would
 	// mistake our own successful startup for an underlay change forever.
 	// The resolved website input was checked immediately before capture.
+	resourceSamples, cacheErr := readWindowsResourceCache(root, *lkg, generation)
+	if cacheErr != nil {
+		log.Printf("first-hop observation cache unavailable; resource samples remain unknown: %v", cacheErr)
+	}
 	activation, activationErr := activateWindowsServices(ctx, selector, lkg.View, routes, clientadapter.State{
-		Preference: store.Preference(), NetworkGeneration: generation}, false)
+		Preference: store.Preference(), NetworkGeneration: generation, ResourceObservations: resourceSamples}, false)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

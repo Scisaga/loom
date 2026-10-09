@@ -36,6 +36,7 @@ type androidProfile struct {
 	RecordID                      string                        `json:"record_id"`
 	DNS                           []string                      `json:"dns"`
 	BusinessProbeTargets          []control.ServiceProbeTargets `json:"business_probe_targets"`
+	ResourceCacheIdentity         string                        `json:"resource_cache_identity"`
 }
 
 func decodeState(body []byte) (deviceclient.State, error) {
@@ -179,7 +180,11 @@ func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.We
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(androidProfile{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...)})
+	identity, err := clientadapter.ResourceCacheIdentity(*state.LKG)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(androidProfile{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...), ResourceCacheIdentity: identity})
 }
 func androidLocalRuntimeSecret(state deviceclient.State) string {
 	key, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)

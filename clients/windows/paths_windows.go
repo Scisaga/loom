@@ -140,8 +140,7 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 				for _, target := range targets {
 					sample, found, sampleErr := clientmodel.LatestObservation(status.Observations, selection.CandidateID, selection.Scope, status.NetworkGeneration, target)
 					targetState := "unknown"
-					until, _ := time.Parse(time.RFC3339, sample.ValidUntil)
-					if found && sampleErr == nil && time.Now().Before(until) {
+					if found && sampleErr == nil && sample.CurrentAt(time.Now()) {
 						targetState = sample.Result
 					}
 					label, _, _ := windowsObservationDisplay(targetState)

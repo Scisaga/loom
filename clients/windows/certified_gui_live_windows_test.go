@@ -38,6 +38,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		Resume   bool   `json:"resume"`
 		Capture  string `json:"capture,omitempty"`
 		Services bool   `json:"services,omitempty"`
+		FirstHop bool   `json:"first_hop,omitempty"`
 	}
 	body, err := os.ReadFile(input)
 	if err != nil || json.Unmarshal(body, &fixture) != nil || !filepath.IsAbs(fixture.Root) {
@@ -157,7 +158,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 	store := load()
 	publicHash := sha256.Sum256([]byte(store.PublicKey()))
 	identity := hex.EncodeToString(publicHash[:])
-	if fixture.Resume && len(store.LKG().View.PolicyIDs) != 0 {
+	if fixture.Resume && !fixture.FirstHop && len(store.LKG().View.PolicyIDs) != 0 {
 		t.Fatal("restart restored the withdrawn authorization")
 	}
 	mark("joined", map[string]any{"device_id": store.LKG().View.DeviceID, "public_key_hash": identity, "resume": fixture.Resume})
@@ -171,8 +172,20 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		if len(rows) != len(current.Selections)+len(current.BlockedScopes) {
 			return false
 		}
+		state, health := "available", "可用"
+		if fixture.FirstHop {
+			state, health = "unknown", "未知"
+			for _, group := range load().LKG().View.BusinessProbeTargets {
+				if len(group.Targets) != 0 {
+					t.Fatal("first-hop fixture must not include Service probe targets")
+				}
+			}
+			if len(current.Observations) != 0 {
+				t.Fatal("first-hop fixture must not manufacture Service observations")
+			}
+		}
 		for _, selection := range current.Selections {
-			if selection.State != "available" {
+			if selection.State != state {
 				return false
 			}
 			var row *windowsPathDisplay
@@ -181,7 +194,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 					row = &rows[i]
 				}
 			}
-			if row == nil || row.Health != "可用" {
+			if row == nil || row.Health != health {
 				return false
 			}
 			for _, group := range load().LKG().View.BusinessProbeTargets {
@@ -263,7 +276,20 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		}
 		return nil
 	}
-	if !fixture.Resume {
+	if fixture.FirstHop {
+		wait("first-hop fallback delivers real HTTPS", func() bool { return business() == nil })
+		status := readback(true)
+		if err := business(); err != nil {
+			t.Fatal("selected first hop lost real business", err)
+		}
+		captureProfileGUITestWindow(t, app, filepath.Join(evidence, "first-hop.png"))
+		mark("first-hop-paths", app.skin.lastPaths)
+		label := "allowed"
+		if fixture.Resume {
+			label = "restarted"
+		}
+		mark(label, status)
+	} else if !fixture.Resume {
 		if fixture.Services {
 			var partial windowsRuntimeStatus
 			wait("independent Service failure and UI readback", func() bool {

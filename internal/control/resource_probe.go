@@ -32,6 +32,29 @@ func (probe ResourceProbe) Target() string {
 // Stable candidate order makes the choice identical on client and receiver.
 // Local hybrid Link execution is deliberately excluded from this projection.
 func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
+	byCandidate, err := CandidateFirstHopProbes(view)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	result := []ResourceProbe{}
+	for _, route := range view.Routes {
+		probe, found := byCandidate[route.ID]
+		if !found || seen[probe.Resource.ID] {
+			continue
+		}
+		seen[probe.Resource.ID] = true
+		result = append(result, probe)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Resource.ID < result[j].Resource.ID })
+	return result, nil
+}
+
+// CandidateFirstHopProbes binds paths using the currently sampled first login.
+// These are private execution projections, not additional sampling requests.
+// In particular, a resource sample made with another path's Hy2 credential
+// cannot be used as evidence about this path's authentication: it has no entry.
+func CandidateFirstHopProbes(view DeviceView) (map[string]ResourceProbe, error) {
 	if err := view.Validate(); err != nil {
 		return nil, err
 	}
@@ -43,11 +66,12 @@ func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
 	for _, resource := range view.Resources {
 		resources[resource.ID] = resource
 	}
-	seen := map[string]bool{}
-	result := []ResourceProbe{}
+	result := map[string]ResourceProbe{}
+	executions := map[string]ResourceProbe{}
+	var wireGuardPublic string
 	for _, route := range view.Routes {
 		resource, found := resources[route.FirstResourceID]
-		if !found || (resource.Kind != "hysteria2" && resource.Kind != "wireguard") || resource.OwnerNodeID == view.DeviceID || resource.LinkOnly || seen[resource.ID] {
+		if !found || (resource.Kind != "hysteria2" && resource.Kind != "wireguard") || resource.OwnerNodeID == view.DeviceID || resource.LinkOnly {
 			continue
 		}
 		if len(route.NodeChain) > 0 && route.NodeChain[0] == view.DeviceID {
@@ -62,12 +86,23 @@ func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
 			if !resource.AccessEnabled {
 				continue
 			}
-			_, public, err := sharedWireGuardIdentity(view, credentials)
-			credential = public
-			valid = err == nil && validateWireGuardPublicKey(public) == nil
+			if wireGuardPublic == "" {
+				_, wireGuardPublic, err = sharedWireGuardIdentity(view, credentials)
+				if err != nil {
+					return nil, err
+				}
+			}
+			credential = wireGuardPublic
+			valid = validateWireGuardPublicKey(credential) == nil
 		}
 		if !valid {
 			return nil, errors.New("public first hop has no authorized credential")
+		}
+		if probe, found := executions[resource.ID]; found {
+			if probe.Credential == credential {
+				result[route.ID] = probe
+			}
+			continue
 		}
 		binding, err := digestContractValue("loom-resource-probe-credential-v3\x00", credential)
 		if err != nil {
@@ -81,10 +116,9 @@ func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
 		if err != nil {
 			return nil, err
 		}
-		seen[resource.ID] = true
-		result = append(result, ResourceProbe{NetworkID: view.NetworkID, Resource: resource, Credential: credential, SpecDigest: digest})
+		probe := ResourceProbe{NetworkID: view.NetworkID, Resource: resource, Credential: credential, SpecDigest: digest}
+		executions[resource.ID], result[route.ID] = probe, probe
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Resource.ID < result[j].Resource.ID })
 	return result, nil
 }
 

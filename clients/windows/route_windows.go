@@ -198,33 +198,46 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 		lkg := store.LKG()
 		selector, selectErr := windowsRuntimeSelector(app.root, lkg.ViewDigest)
 		if selectErr == nil {
-			routes, _, scopeErr := clientadapter.AccessProjection(lkg.View)
-			scopes, byScope, scopeErr := clientadapter.Scopes(routes)
-			if scopeErr != nil {
-				selectErr = scopeErr
-			} else {
+			selectErr = func() error {
+				routes, _, err := clientadapter.AccessProjection(lkg.View)
+				if err != nil {
+					return err
+				}
+				scopes, byScope, err := clientadapter.Scopes(routes)
+				if err != nil {
+					return err
+				}
+				status, err := readWindowsRuntimeStatus(app.root)
+				if err != nil || status.ViewDigest != lkg.ViewDigest || status.DeviceID != lkg.View.DeviceID || status.RuntimeState != "running" {
+					return errors.New("runtime evidence does not match the accepted profile")
+				}
+				generation, err := windowsNetworkGeneration()
+				if err != nil {
+					return err
+				}
+				if status.NetworkGeneration != generation {
+					status.Observations, status.ResourceObservations = nil, nil
+				}
 				desired := map[string]string{}
 				for _, scope := range scopes {
 					current, readErr := selector.Read(app.ctx, scope)
 					if readErr != nil {
-						selectErr = readErr
-						break
+						return readErr
 					}
-					choice, chooseErr := clientmodel.Select(byScope[scope], nil, preference, current, "windows-live", time.Now())
+					_, targets := windowsProbeTargets(lkg.View, scope)
+					choice, chooseErr := clientmodel.Select(byScope[scope], status.Observations, status.ResourceObservations, preference, current, generation, time.Now(), targets...)
 					if errors.Is(chooseErr, clientmodel.ErrNoUsableCandidate) {
 						desired[scope] = clientadapter.BlockedSelection
 						continue
 					}
 					if chooseErr != nil {
-						selectErr = chooseErr
-						break
+						return chooseErr
 					}
 					desired[scope] = choice.CandidateID
 				}
-				if selectErr == nil {
-					_, selectErr = clientadapter.ApplySelections(app.ctx, selector, desired)
-				}
-			}
+				_, err = clientadapter.ApplySelections(app.ctx, selector, desired)
+				return err
+			}()
 		}
 		if selectErr != nil {
 			_ = store.SetPreference(previous)
