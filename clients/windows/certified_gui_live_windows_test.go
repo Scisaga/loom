@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -163,6 +164,56 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 	if state := app.snapshot().state; state == guiStopped || state == guiError {
 		procSendMessage.Call(app.controls.primaryButton, 0x00F5, 0, 0)
 	}
+	// The runtime file can advance before the broker and window repaint. Read
+	// the rows consumed by the visible panel before accepting a screenshot.
+	pathsReported := func(current windowsRuntimeStatus) bool {
+		rows := app.skin.lastPaths
+		if len(rows) != len(current.Selections)+len(current.BlockedScopes) {
+			return false
+		}
+		for _, selection := range current.Selections {
+			if selection.State != "available" {
+				return false
+			}
+			var row *windowsPathDisplay
+			for i := range rows {
+				if rows[i].Service == selection.Scope && rows[i].Candidate == selection.CandidateID {
+					row = &rows[i]
+				}
+			}
+			if row == nil || row.Health != "可用" {
+				return false
+			}
+			for _, group := range load().LKG().View.BusinessProbeTargets {
+				if "service:"+group.ServiceID != selection.Scope {
+					continue
+				}
+				for _, target := range group.Targets {
+					found := false
+					for _, sample := range current.Observations {
+						if sample.CandidateID == selection.CandidateID && sample.Target == target && sample.Result == "available" && sample.ObservedAt != "" {
+							found = strings.Contains(row.MeasurementSummary, target+" · 可用 · "+sample.ObservedAt)
+						}
+					}
+					if !found {
+						return false
+					}
+				}
+			}
+		}
+		for _, scope := range current.BlockedScopes {
+			found := false
+			for _, row := range rows {
+				if row.Service == scope && row.Health == "不可用" && row.Candidate == "" {
+					found = true
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
 	readback := func(authorized bool) windowsRuntimeStatus {
 		var status windowsRuntimeStatus
 		wait("certified runtime and report", func() bool {
@@ -181,7 +232,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 					count = 2
 				}
 			}
-			if current.ViewDigest != s.LKG().ViewDigest || len(current.Selections) != count || len(s.LKG().View.PolicyIDs) != count || len(app.snapshot().paths) != count {
+			if current.ViewDigest != s.LKG().ViewDigest || len(current.Selections) != count || len(s.LKG().View.PolicyIDs) != count || !pathsReported(current) {
 				return false
 			}
 			if authorized && current.Selections[0].FinalExit != "demo-exit" {
@@ -229,10 +280,14 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 				if current.Selections[0].Scope != "service:demo-service" || current.Selections[0].State != "available" || current.BlockedScopes[0] != "service:demo-service-b" {
 					return false
 				}
+				if !pathsReported(current) {
+					return false
+				}
 				partial = current
 				return business() == nil
 			})
 			captureProfileGUITestWindow(t, app, filepath.Join(evidence, "partial.png"))
+			mark("partial-paths", app.skin.lastPaths)
 			mark("partial", partial)
 			signal("restored")
 			wait("failed Service recovers after sample expiry", func() bool {
