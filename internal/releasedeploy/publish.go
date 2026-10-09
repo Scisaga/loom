@@ -43,6 +43,8 @@ type Result struct {
 	Target            int             `json:"target,omitempty"`
 	Node              int             `json:"node,omitempty"`
 	DistributionRoot  int             `json:"distribution_root,omitempty"`
+	Artifact          int             `json:"artifact,omitempty"`
+	ReadBytes         int64           `json:"read_bytes,omitempty"`
 	Operation         string          `json:"operation"`
 	Verified          bool            `json:"verified,omitempty"`
 	CoordinatesDiffer bool            `json:"ssh_coordinates_differ,omitempty"`
@@ -364,6 +366,7 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 		base := bases[i]
 		observe(Result{DistributionRoot: i + 1, Operation: "https"})
 		for j, entry := range entries {
+			observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: "https_artifact"})
 			url, err := control.DistributionURL(base, entry.Artifact.Digest)
 			if err != nil {
 				return err
@@ -379,9 +382,13 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 			hash := sha256.New()
 			size, readErr := io.Copy(hash, io.LimitReader(response.Body, int64(entry.Artifact.Size)+1))
 			closeErr := response.Body.Close()
+			if readErr != nil {
+				return fmt.Errorf("HTTPS root %d artifact %d body interrupted after %d of %d bytes: %w; pointers were not advanced by this invocation", i+1, j+1, size, entry.Artifact.Size, readErr)
+			}
 			if response.StatusCode != http.StatusOK || response.Uncompressed || readErr != nil || closeErr != nil || size != int64(entry.Artifact.Size) || "sha256:"+hex.EncodeToString(hash.Sum(nil)) != entry.Artifact.Digest {
 				return fmt.Errorf("HTTPS root %d artifact %d exact bytes unconfirmed; pointers were not advanced by this invocation", i+1, j+1)
 			}
+			observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: "https_artifact", ReadBytes: size, Verified: true})
 		}
 		observe(Result{DistributionRoot: i + 1, Operation: "https", Verified: true})
 		return nil

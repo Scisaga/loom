@@ -129,13 +129,43 @@ func cmdReleasePublish(args []string) error {
 		err = json.Unmarshal(body, &value)
 		return value, err
 	}
-	publicTransport := &http.Transport{Proxy: nil, DisableCompression: true, DialContext: (&net.Dialer{Timeout: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
-	defer publicTransport.CloseIdleConnections()
+	publicClient := releasePublicHTTPClient(4 * time.Minute)
+	defer publicClient.CloseIdleConnections()
 	encoder := json.NewEncoder(os.Stdout)
 	options := releasedeploy.Options{Config: config, ReloadConfig: func() (localconfig.Config, error) { return localconfig.Load(*env) }, Inputs: read, Transport: executor,
-		Source: sourcePath, Catalog: *catalog, PublicKey: key, HTTP: &http.Client{Transport: publicTransport, Timeout: 4 * time.Minute}, Observe: func(value releasedeploy.Result) { encoder.Encode(value) }}
+		Source: sourcePath, Catalog: *catalog, PublicKey: key, HTTP: publicClient, Observe: func(value releasedeploy.Result) { encoder.Encode(value) }}
 	if err = releasedeploy.Publish(ctx, options); err != nil {
 		return fmt.Errorf("publication incomplete: %w", err)
 	}
 	return nil
+}
+
+// Large signed artifacts may take longer than the network inactivity limit.
+// Bound each blocked read while allowing a progressing response to finish;
+// request cancellation still closes the transport and stops verification.
+func releasePublicHTTPClient(idle time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	return &http.Client{Transport: &http.Transport{
+		Proxy: nil, DisableCompression: true,
+		TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: 60 * time.Second,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := dialer.DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			return &releaseDownloadConn{Conn: conn, idle: idle}, nil
+		},
+	}}
+}
+
+type releaseDownloadConn struct {
+	net.Conn
+	idle time.Duration
+}
+
+func (c *releaseDownloadConn) Read(p []byte) (int, error) {
+	if err := c.Conn.SetReadDeadline(time.Now().Add(c.idle)); err != nil {
+		return 0, err
+	}
+	return c.Conn.Read(p)
 }
