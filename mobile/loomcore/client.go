@@ -130,7 +130,7 @@ func AndroidDeviceProfile(body []byte) ([]byte, error) {
 // PrepareAndroidDeviceProfile is the operational entry before VPN capture.
 // UI reads use AndroidDeviceProfile and remain pure; only this entry resolves
 // certified website underlay names through the protected Android sockets.
-func PrepareAndroidDeviceProfile(body []byte) ([]byte, error) {
+func PrepareAndroidDeviceProfile(body, interfaceAddresses []byte) ([]byte, error) {
 	state, err := decodeState(body)
 	if err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func PrepareAndroidDeviceProfile(body []byte) ([]byte, error) {
 	if err := json.Unmarshal(body, &profile); err != nil {
 		return nil, err
 	}
-	connected, _ := clientadapter.ConnectedIPv4Prefixes(state.LKG.View.Resources...)
+	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses, state.LKG.View.Resources...)
 	profile.Config, err = clientadapter.WithLocalNetworkBoundary(profile.Config, connected)
 	if err != nil {
 		return nil, err
@@ -423,7 +423,7 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 }
 
 // Kotlin commits ReserveAndroidReportSequence before invoking this function.
-func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, networkGeneration, reportedAt string) error {
+func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, interfaceAddresses []byte, networkGeneration, reportedAt string) error {
 	state, err := decodeState(stateBody)
 	if err != nil {
 		return err
@@ -432,7 +432,7 @@ func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observatio
 	if err != nil {
 		return err
 	}
-	connected, _ := clientadapter.ConnectedIPv4Prefixes(state.LKG.View.Resources...)
+	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses, state.LKG.View.Resources...)
 	report.LocalNetworks = clientadapter.UnderlayNetworkReport(connected)
 	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
 	defer cancel()

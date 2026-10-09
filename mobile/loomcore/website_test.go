@@ -28,7 +28,7 @@ func TestAndroidWebsitePreparationPreservesIdentityAndExcludesUnderlay(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := PrepareAndroidDeviceProfile(body)
+	runtime, err := PrepareAndroidDeviceProfile(body, []byte("null"))
 	if err != nil {
 		t.Fatal(err)
 	}

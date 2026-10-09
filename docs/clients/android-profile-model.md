@@ -71,6 +71,14 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 
 ## 恢复与失败语义
 
+LAN 冲突检查的本机接口地址由 Android Java `NetworkInterface` 只读枚举，作为准备运行和
+签名报告调用的显式输入交给共享 Go 核心；不让 Go 自行依赖 Android 上不可用的接口枚举路径。
+只采集 UP、非 loopback 的 IPv4 地址与前缀长度，不扫描主机，不保存另一份网段状态。
+核心排除 Loom 自有地址并规范化连接前缀；其他隧道仍参与冲突检查，不能据此授予 LAN 共享。
+读取失败用未知表达，阻止该 LAN 的捕获与业务；成功读回空集合与失败不同。
+底层网络切换或已有网络的地址变化时，沿原 VPN 生命周期重新准备捕获边界；相同地址的重复回调不重启。
+这些是原 `local_networks` 报告值的来源，不改变认证 View、profile 身份或网关授权。
+
 全新安装没有旧单槽时，按创建规则建立不含身份和 LKG 的首个 `primary / Loom A`，等待正常 Enrollment；
 不把“无旧槽”当作升级失败。首次升级时，只有旧单槽已包含**完整且可按现行 schema 3 严格验证**的身份、信任绑定、floor、
 不可回退 latch 与认证 LKG，才能单向迁移为 `primary / Loom A`：先验证，再将这些原始认证字节

@@ -2,13 +2,23 @@ package loomcore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"sync"
 	"syscall"
 
+	"loom/internal/clientadapter"
 	"loom/internal/control"
 )
+
+func androidConnectedIPv4Prefixes(body []byte, resources ...control.TransportResource) (*[]string, error) {
+	var addresses []string
+	if len(body) > 1<<20 || json.Unmarshal(body, &addresses) != nil {
+		return nil, errors.New("Android interface readback is invalid")
+	}
+	return clientadapter.InterfaceIPv4Prefixes(addresses, resources...)
+}
 
 // AndroidSocketProtector is the platform VpnService boundary, not identity or
 // saved runtime state. It is installed before capture and removed after close.

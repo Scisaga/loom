@@ -6,6 +6,7 @@ import io.github.scisaga.loom.profiles.ProfileByteStore
 import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loomcore.Loomcore
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -23,7 +24,13 @@ data class ManagedProfile(
     val businessProbeTargets: List<ServiceProbeTargets> = emptyList(),
     internal val hasWebsite: Boolean = false,
     val possiblePermissionRestoration: Boolean = false,
-)
+) {
+    internal val hasLocalNetwork: Boolean
+        get() = JSONArray(routes).let { values ->
+            (0 until values.length()).any { values.getJSONObject(it).getString("scope").startsWith("local_network:") }
+        }
+    internal val requiresUnderlayReadback: Boolean get() = hasWebsite || hasLocalNetwork
+}
 
 data class ServiceProbeTargets(val serviceID: String, val targets: List<String>)
 
@@ -110,9 +117,9 @@ internal class ManagedProfileStore internal constructor(
 
     // Caller holds the VPN lifecycle lock; network I/O must not run while
     // holding the encrypted identity store lock or during a UI projection.
-    fun prepareRuntime(): ManagedProfile {
+    fun prepareRuntime(interfaceAddresses: ByteArray): ManagedProfile {
         val body = checkNotNull(state()) { "设备身份不存在" }
-        val profile = decodeAndroidProfile(Loomcore.prepareAndroidDeviceProfile(body))
+        val profile = decodeAndroidProfile(Loomcore.prepareAndroidDeviceProfile(body, interfaceAddresses))
         check(acceptedViewDigest() == profile.viewDigest) { "准备运行时认证配置已变化" }
         return profile
     }

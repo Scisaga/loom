@@ -708,6 +708,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         seeded: List<SeededUnderlying>? = null,
     ) = synchronized(monitor) {
         if (monitor.session != sessionID || monitors[listener] !== monitor) return@synchronized
+        val priorAddresses = monitor.snapshots.mapValues { (_, snapshot) -> snapshot.linkProperties?.linkAddresses?.toSet() }
         lost?.let {
             monitor.snapshots.remove(it)
             monitor.lostNetworks.add(it)
@@ -733,6 +734,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             .asSequence()
             .mapNotNull { (candidateNetwork, snapshot) -> underlyingCandidate(candidateNetwork, snapshot) }
             .toList()
+        val localAddressesChanged = priorAddresses != monitor.snapshots.mapValues { (_, snapshot) -> snapshot.linkProperties?.linkAddresses?.toSet() }
         val selectedNetwork = selectStableUnderlying(
             candidates.map { RankedUnderlying(it.network, it.rank, it.network.toString()) },
             monitor.selected,
@@ -746,7 +748,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
         val selectionChanged = !monitor.notified || monitor.lastSelection != selected
         monitor.notified = true
         monitor.lastSelection = selected
-        if (!selectionChanged) return@synchronized
+        val refreshLocalNetwork = localAddressesChanged && activeManagedProfile?.hasLocalNetwork == true
+        if (!selectionChanged && !refreshLocalNetwork) return@synchronized
         if (selected != null) {
             activeManagedProfile?.let { profile ->
                 val profileID = runtimeProfileId
@@ -763,14 +766,14 @@ class LoomVpnService : VpnService(), PlatformInterface {
                                 !connectionWanted(profileID)
                             ) return@withLock
                             val routing = RouteManager.get(this@LoomVpnService)
-                            if (routing.beginNetworkGeneration(profileID, networkGenerationIdentity(selected.network))) {
-                                if (profile.hasWebsite) {
-                                    // Website DNS and exact VPN exclusions belong
-                                    // to this underlay generation; resolve again
-                                    // before a replacement capture starts.
-                                    startTunnelLocked(profileID)
-                                    return@withLock
-                                }
+                            val generationChanged = routing.beginNetworkGeneration(profileID, networkGenerationIdentity(selected.network))
+                            if (refreshLocalNetwork || generationChanged && profile.requiresUnderlayReadback) {
+                                // Refresh website exclusions and LAN conflict boundaries
+                                // before replacing capture on this physical network.
+                                startTunnelLocked(profileID)
+                                return@withLock
+                            }
+                            if (generationChanged) {
                                 routing.applyToRunning(profileID, profile)
                                 VpnRuntime.transform { it.copy(dnsProbe = "未知：网络已变化", httpsProbe = "未知：网络已变化") }
                                 startBusinessProbe(profileID, profile, restart = true)

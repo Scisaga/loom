@@ -16,6 +16,32 @@ import (
 // deliberate for conflict detection: their addresses must not enter Loom.
 // The platform's own fixed capture subnet is reserved by the allocator.
 func ConnectedIPv4Prefixes(resources ...control.TransportResource) (*[]string, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	addresses := []string{}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		local, err := iface.Addrs()
+		if err != nil {
+			return nil, err
+		}
+		for _, address := range local {
+			addresses = append(addresses, address.String())
+		}
+	}
+	return InterfaceIPv4Prefixes(addresses, resources...)
+}
+
+// InterfaceIPv4Prefixes consumes a platform's UP, non-loopback interface
+// addresses. A nil slice means unavailable readback; an empty slice is known.
+func InterfaceIPv4Prefixes(addresses []string, resources ...control.TransportResource) (*[]string, error) {
+	if addresses == nil {
+		return nil, nil
+	}
 	ignored := map[netip.Addr]bool{netip.MustParseAddr("172.19.0.1"): true, netip.MustParseAddr("192.0.2.1"): true}
 	for _, resource := range resources {
 		if resource.Authentication.LocalAddresses != nil {
@@ -27,24 +53,14 @@ func ConnectedIPv4Prefixes(resources ...control.TransportResource) (*[]string, e
 		}
 	}
 
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil, err
-	}
 	values := map[string]bool{}
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addresses, err := iface.Addrs()
+	for _, address := range addresses {
+		prefix, err := netip.ParsePrefix(address)
 		if err != nil {
-			return nil, err
+			return nil, errors.New("invalid platform interface address")
 		}
-		for _, address := range addresses {
-			prefix, err := netip.ParsePrefix(address.String())
-			if err == nil && !ignored[prefix.Addr()] && prefix.Addr().Is4() && prefix.Addr().IsGlobalUnicast() && prefix.Bits() >= 8 {
-				values[prefix.Masked().String()] = true
-			}
+		if !ignored[prefix.Addr()] && prefix.Addr().Is4() && prefix.Addr().IsGlobalUnicast() && prefix.Bits() >= 8 {
+			values[prefix.Masked().String()] = true
 		}
 	}
 	result := make([]string, 0, len(values))

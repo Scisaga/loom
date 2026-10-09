@@ -144,7 +144,8 @@ class EnrollmentManager private constructor(context: Context) {
 
     fun currentProfile(profileId: String): ManagedProfile? = store(profileId).loadCurrent()
 
-    internal fun prepareRuntimeProfile(profileId: String): ManagedProfile = store(profileId).prepareRuntime()
+    internal fun prepareRuntimeProfile(profileId: String): ManagedProfile =
+        store(profileId).prepareRuntime(readLocalInterfaceAddresses())
 
     internal suspend fun postReport(profileId: String) = operation.withLock {
         check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
@@ -160,6 +161,7 @@ class EnrollmentManager private constructor(context: Context) {
             Loomcore.postAndroidDeviceReport(
                 reserved, routing.preference, routing.resourceObservations, routing.observations, routing.selections, runtime.toString().encodeToByteArray(),
                 Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version()),
+                readLocalInterfaceAddresses(),
                 routing.networkGeneration, Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
             )
         }
