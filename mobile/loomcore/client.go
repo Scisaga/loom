@@ -327,7 +327,7 @@ type androidSelection struct {
 	CandidateID string `json:"candidate_id"`
 }
 
-func androidReport(state deviceclient.State, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody []byte, generation, reportedAt string) (control.DeviceReport, error) {
+func androidReport(state deviceclient.State, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, interfaceAddresses []byte, generation, reportedAt string) (control.DeviceReport, error) {
 	if state.LKG == nil || state.ReportSequence == 0 {
 		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
 	}
@@ -419,6 +419,8 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if runtime.State == "running" && runtime.AppliedViewDigest != state.LKG.ViewDigest {
 		return control.DeviceReport{}, errors.New("running report is not the actual accepted configuration")
 	}
+	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses, state.LKG.View.Resources...)
+	report.LocalNetworks = clientadapter.UnderlayNetworkReport(connected)
 	return control.SignDeviceReport(report, (&androidIdentity{state: state}).PrivateKey())
 }
 
@@ -428,12 +430,10 @@ func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observatio
 	if err != nil {
 		return err
 	}
-	report, err := androidReport(state, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, networkGeneration, reportedAt)
+	report, err := androidReport(state, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, interfaceAddresses, networkGeneration, reportedAt)
 	if err != nil {
 		return err
 	}
-	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses, state.LKG.View.Resources...)
-	report.LocalNetworks = clientadapter.UnderlayNetworkReport(connected)
 	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
 	defer cancel()
 	return deviceclient.PostSignedReport(ctx, &androidIdentity{state: state}, report)

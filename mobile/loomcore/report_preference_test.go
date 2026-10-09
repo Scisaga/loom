@@ -34,7 +34,7 @@ func TestAndroidReportsTheSavedPreferenceIndependentlyOfRuntime(t *testing.T) {
 			runtime.ErrorCode = "demo-runtime-failed"
 		}
 		encoded, _ := json.Marshal(runtime)
-		report, err := androidReport(state, preference, nil, []byte("[]"), selections, encoded, []byte("[]"), "demo-underlay", "2030-01-01T00:00:00Z")
+		report, err := androidReport(state, preference, nil, []byte("[]"), selections, encoded, []byte("[]"), nil, "demo-underlay", "2030-01-01T00:00:00Z")
 		if err != nil || report.Preference == nil || report.Preference.Mode != mode || report.Preference.Exit != exit || report.Verify(state.PublicKey) != nil {
 			t.Fatal("report lost the existing setting or its signature", mode, status, err)
 		}
@@ -43,7 +43,7 @@ func TestAndroidReportsTheSavedPreferenceIndependentlyOfRuntime(t *testing.T) {
 		}
 	}
 	for _, invalid := range [][]byte{[]byte("null"), []byte(`{"mode":"auto","schema":4}`), []byte(`{"mode":"fixed_exit","schema":3}`)} {
-		if _, err := androidReport(state, invalid, nil, []byte("[]"), []byte("[]"), []byte(`{"state":"stopped","applied_view_digest":"","error_code":""}`), []byte("[]"), "demo-underlay", "2030-01-01T00:00:00Z"); err == nil {
+		if _, err := androidReport(state, invalid, nil, []byte("[]"), []byte("[]"), []byte(`{"state":"stopped","applied_view_digest":"","error_code":""}`), []byte("[]"), nil, "demo-underlay", "2030-01-01T00:00:00Z"); err == nil {
 			t.Fatal("invalid saved preference was replaced with Auto")
 		}
 	}

@@ -100,7 +100,7 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 		Result: "unavailable", Action: "https_request", Target: "https://demo.example:8443/health", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}})
 	runtime, _ := json.Marshal(control.RuntimeReadback{State: "running", AppliedViewDigest: state.LKG.ViewDigest})
 	state.ReportSequence = 1
-	report, err := androidReport(state, nil, cache, service, selections, runtime, []byte("[]"), "demo-underlay", now.Format(time.RFC3339))
+	report, err := androidReport(state, nil, cache, service, selections, runtime, []byte("[]"), nil, "demo-underlay", now.Format(time.RFC3339))
 	if err != nil || report.Verify(state.PublicKey) != nil || len(report.Observations) != 2 ||
 		report.Observations[0].Level != "resource" || report.Observations[0].Result != "available" ||
 		report.Observations[0].ObservedAt != samples[0].ObservedAt || report.Observations[1].Result != "unavailable" {
