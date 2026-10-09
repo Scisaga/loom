@@ -28,6 +28,23 @@ type reviewedArtifact struct {
 }
 
 var reviewedArtifacts = map[string]reviewedArtifact{
+	"1.11.4-loom.10": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "d74919957875137c1ed840ce1f83aeee63c4dcdf770ca3c1ff089a1f50482d56",
+			"domain-cache.patch":     "af5cc2a4bb5cb41dad8e1bd7a118d6e40021424c5465e817753aa6c037a7a6d5",
+			"prepare-sing-box.py":    "e12b21106b70217783c279a33b728f358408b6e7e43827fa573a099eba320a12",
+			"build-dataplane.sh":     "1c4486186a803b921ff1c587facb17c5b3c3c5a103089dab3e9b89799bcdefd8",
+		},
+		windows: map[string]string{
+			"amd64": "7bcea4ab94a12caed496b7a201c853069fa171e0b25e707b92e66ecccd6df229",
+			"arm64": "d540c4c3428912b2a8d6e2411a7f1f8db334fb96763a2e7798407cdf68456b90",
+		},
+		linux: map[string]string{
+			"amd64": "46d8b115b500a13490688d517017d31a8b7371582ccf51a211706591f0f15941",
+			"arm64": "9bc2b2064dcb114c373abaaf68abc1aa3ff19a543cbea396a5660a296b3db517",
+		},
+	},
 	"1.11.4-loom.9": {
 		sources: map[string]string{
 			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",

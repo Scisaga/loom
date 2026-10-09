@@ -1561,15 +1561,16 @@
  	"github.com/sagernet/wireguard-go/device"
  )
  
-@@ -23,6 +28,7 @@
+@@ -22,7 +27,7 @@
+ 	*systemDevice
  	stack     *stack.Stack
  	endpoint  *deviceEndpoint
- 	writeBufs [][]byte
+-	writeBufs [][]byte
 +	userspace *stackDevice
  }
  
  func newSystemStackDevice(options DeviceOptions) (*systemStackDevice, error) {
-@@ -38,13 +44,34 @@
+@@ -38,29 +43,52 @@
  	if err != nil {
  		return nil, err
  	}
@@ -1594,26 +1595,41 @@
  		stack:        ipStack,
  		endpoint:     endpoint,
  	}, nil
-+}
-+
+ }
+ 
 +func (w *systemStackDevice) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 +	return w.userspace.DialContext(ctx, network, destination)
 +}
 +func (w *systemStackDevice) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 +	return w.userspace.ListenPacket(ctx, destination)
++}
++
+ func (w *systemStackDevice) SetDevice(device *device.Device) {
+ 	w.endpoint.device = device
  }
  
- func (w *systemStackDevice) SetDevice(device *device.Device) {
-@@ -60,7 +87,7 @@
- 			}
- 		}
- 		if len(w.writeBufs) > 0 {
+ func (w *systemStackDevice) Write(bufs [][]byte, offset int) (count int, err error) {
+ 	if w.batchDevice != nil {
+-		w.writeBufs = w.writeBufs[:0]
++		// Peer receive goroutines run concurrently. BatchWrite mutates slice
++		// descriptors while coalescing, so each call owns its host batch.
++		var hostBufs [][]byte
+ 		for _, packet := range bufs {
+ 			if !w.writeStack(packet[offset:]) {
+-				w.writeBufs = append(w.writeBufs, packet)
+-			}
+-		}
+-		if len(w.writeBufs) > 0 {
 -			return w.batchDevice.BatchWrite(bufs, offset)
-+			return w.batchDevice.BatchWrite(w.writeBufs, offset)
++				hostBufs = append(hostBufs, packet)
++			}
++		}
++		if len(hostBufs) > 0 {
++			return w.batchDevice.BatchWrite(hostBufs, offset)
  		}
  	} else {
  		for _, packet := range bufs {
-@@ -94,18 +121,40 @@
+@@ -94,18 +122,40 @@
  	var (
  		networkProtocol tcpip.NetworkProtocolNumber
  		destination     netip.Addr
@@ -1998,6 +2014,74 @@
 +		_, address, err := conn.ReadFrom(body)
 +		if err != nil || M.SocksaddrFromNet(address) != virtual || len(underlay.packets.replies) != 0 {
 +			t.Fatal("UDP reply was injected or exposed the physical address", err)
++		}
++	}
++}
+
+--- /dev/null
++++ b/transport/wireguard/system_stack_batch_test.go
+@@ -0,0 +1,64 @@
++//go:build with_gvisor
++
++package wireguard
++
++import (
++	"bytes"
++	"fmt"
++	"net/netip"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-tun"
++)
++
++type checkedHostBatch struct {
++	tun.LinuxTUN
++	entered chan struct{}
++	release chan struct{}
++}
++
++func (b *checkedHostBatch) BatchWrite(packets [][]byte, offset int) (int, error) {
++	original := bytes.Clone(packets[0])
++	b.entered <- struct{}{}
++	<-b.release
++	if !bytes.Equal(original, packets[0]) {
++		return 0, fmt.Errorf("another WG peer changed this host packet batch")
++	}
++	return len(packets), nil
++}
++
++func TestConcurrentPeersKeepTheirOwnHostBatch(t *testing.T) {
++	batch := &checkedHostBatch{entered: make(chan struct{}, 2), release: make(chan struct{})}
++	device := &systemStackDevice{systemDevice: &systemDevice{
++		batchDevice: batch,
++		options: DeviceOptions{Address: []netip.Prefix{netip.MustParsePrefix("192.0.2.20/32")},
++			HostSources: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32")}},
++	}}
++	done := make(chan error, 2)
++	packet := func(size int) []byte {
++		p := make([]byte, 16+20+size)
++		p[16] = 0x45
++		copy(p[28:32], []byte{192, 0, 2, 10})
++		copy(p[32:36], []byte{192, 0, 2, 20})
++		for i := 36; i < len(p); i++ {
++			p[i] = byte(size)
++		}
++		return p
++	}
++	for _, size := range []int{32, 128} {
++		go func(data []byte) { _, err := device.Write([][]byte{data}, 16); done <- err }(packet(size))
++		select {
++		case <-batch.entered:
++		case <-time.After(3 * time.Second):
++			close(batch.release)
++			t.Fatal("peer did not reach host delivery")
++		}
++	}
++	close(batch.release)
++	for i := 0; i < 2; i++ {
++		if err := <-done; err != nil {
++			t.Error(err)
 +		}
 +	}
 +}

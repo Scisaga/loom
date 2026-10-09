@@ -139,7 +139,7 @@ bash ./scripts/build-windows-clients.sh
 Build the reviewed data plane with `scripts/build-dataplane.sh`, then use
 `loom client package-windows -arch <arch> -generation <generation>
 -dataplane-dir out/dataplane -wintun-archive <pinned-archive>` for each architecture.
-The current package is `loom-windows-dataplane-1.11.4-loom.9-<arch>.zip`.
+The current package is `loom-windows-dataplane-1.11.4-loom.10-<arch>.zip`.
 Its schema 3 manifest binds the exact source build, patch, payloads and release
 generation. The client rejects older generations, same-generation conflicting
 content, and legacy component state. An explicit replacement must preserve old
