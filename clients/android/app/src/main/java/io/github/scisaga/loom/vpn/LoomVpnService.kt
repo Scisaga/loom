@@ -364,21 +364,26 @@ class LoomVpnService : VpnService(), PlatformInterface {
             try {
                 val routing = RouteManager.get(this@LoomVpnService)
                 val inputs = routing.businessProbeInputs(profileId, profile)
-                for (firstInput in inputs) {
-                    var input = firstInput
+                for (serviceInputs in inputs.groupBy { it.selector.selector }.values) {
+                    var batch = serviceInputs
                     for (attempt in 0..1) {
-                        val result = NetworkProbe.run(input.dns, input.target, probeSession)
-                        val next = lifecycle.withLock {
-                            if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||
-                                !connectionWanted(profileId)
-                            ) return@launch
-                            routing.recordBusinessOutcome(profileId, profile, input, result, allowFallback = attempt == 0) {
-                                VpnRuntime.transform {
-                                    it.copy(dnsProbe = "${input.target} · ${result.dns}", httpsProbe = "${input.target} · ${result.https}")
+                        var nextBatch = emptyList<io.github.scisaga.loom.route.BusinessProbeInput>()
+                        for ((index, input) in batch.withIndex()) {
+                            val result = NetworkProbe.run(input.dns, input.target, probeSession)
+                            nextBatch = lifecycle.withLock {
+                                if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||
+                                    !connectionWanted(profileId)
+                                ) return@launch
+                                routing.recordBusinessOutcome(profileId, profile, input, result,
+                                    allowFallback = attempt == 0, finishBatch = index == batch.lastIndex) {
+                                    VpnRuntime.transform {
+                                        it.copy(dnsProbe = "${input.target} · ${result.dns}", httpsProbe = "${input.target} · ${result.https}")
+                                    }
                                 }
                             }
-                        } ?: break
-                        input = next
+                        }
+                        if (nextBatch.isEmpty()) break
+                        batch = nextBatch
                     }
                 }
             } catch (_: CancellationException) {

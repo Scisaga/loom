@@ -405,7 +405,7 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := Activate(ctx, actualSelector, routes, local, func(context.Context) ProbeResult { return ProbeResult{Action: "https_request"} }, options.Now)
+	failed, err := Activate(ctx, actualSelector, routes, local, Probes{"": func(context.Context) ProbeResult { return ProbeResult{Action: "https_request"} }}, options.Now)
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(failed.Selections) != 0 {
 		t.Fatal("failed Service remained selected", err)
 	}

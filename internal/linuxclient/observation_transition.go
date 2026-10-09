@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"slices"
 
 	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
@@ -59,8 +60,8 @@ func unchangedObservations(state LocalState, previous, current *control.DeviceVi
 			// TUN endpoint exclusions are execution inputs of this action.
 			continue
 		}
-		target := observationTarget(before, old.ServiceID)
-		if target == "" || target != observationTarget(after, next.ServiceID) ||
+		target := observation.Target
+		if target == "" || !observationTarget(before, old.ServiceID, target) || !observationTarget(after, next.ServiceID, target) ||
 			!sameObservationOutbound(oldOutbounds, newOutbounds, observation.CandidateID) {
 			continue
 		}
@@ -71,13 +72,13 @@ func unchangedObservations(state LocalState, previous, current *control.DeviceVi
 	return result
 }
 
-func observationTarget(view control.DeviceView, serviceID string) string {
+func observationTarget(view control.DeviceView, serviceID, target string) bool {
 	for _, group := range view.BusinessProbeTargets {
-		if group.ServiceID == serviceID && len(group.Targets) == 1 {
-			return group.Targets[0]
+		if group.ServiceID == serviceID {
+			return slices.Contains(group.Targets, target)
 		}
 	}
-	return ""
+	return false
 }
 
 func observationOutbounds(profile *control.RuntimeProfile) map[string]json.RawMessage {

@@ -48,6 +48,7 @@ type RuntimeCandidate struct {
 
 type Observation struct {
 	CandidateID       string `json:"candidate_id"`
+	Target            string `json:"target,omitempty"`
 	NetworkGeneration string `json:"network_generation"`
 	Scope             string `json:"scope"`
 	Result            string `json:"result"`
@@ -95,7 +96,8 @@ func (candidate RouteCandidate) Validate() error {
 
 func (observation Observation) Validate() error {
 	if !validName(observation.CandidateID) || !validName(observation.NetworkGeneration) ||
-		!validName(observation.Scope) || !validName(observation.Action) || observation.MetricMillis < 0 {
+		!validName(observation.Scope) || !validName(observation.Action) || observation.MetricMillis < 0 ||
+		observation.Target != "" && control.ValidateHTTPSURL(observation.Target) != nil {
 		return errors.New("observation is incomplete")
 	}
 	switch observation.Result {
@@ -142,29 +144,24 @@ var ErrNoUsableCandidate = errors.New("no authorized route candidate is usable")
 // are excluded; a current candidate is retained when evidence does not prove a
 // strictly better comparable result.
 func Select(routes []RouteCandidate, observations []Observation, preference Preference, current,
-	networkGeneration string, now time.Time) (Selection, error) {
+	networkGeneration string, now time.Time, targets ...string) (Selection, error) {
 	if err := preference.Validate(); err != nil || !validName(networkGeneration) {
 		return Selection{}, errors.New("selection input is invalid")
 	}
-	latest := map[string]Observation{}
 	for _, observation := range observations {
 		if err := observation.Validate(); err != nil {
 			return Selection{}, err
 		}
-		if observation.NetworkGeneration != networkGeneration {
-			continue
-		}
-		previous, found := latest[observation.CandidateID]
-		if !found || previous.ObservedAt < observation.ObservedAt {
-			latest[observation.CandidateID] = observation
-		}
 	}
-	byID := map[string]Observation{}
-	for id, observation := range latest {
-		until, _ := time.Parse(time.RFC3339, observation.ValidUntil)
-		if now.Before(until) {
-			byID[id] = observation
+	byID := map[string]string{}
+	failures := map[string]string{}
+	metrics := map[string]int64{}
+	for _, candidate := range routes {
+		state, failure, metric, err := candidateEvidence(observations, candidate.ID, candidate.Scope, networkGeneration, targets, now)
+		if err != nil {
+			return Selection{}, err
 		}
+		byID[candidate.ID], failures[candidate.ID], metrics[candidate.ID] = state, failure, metric
 	}
 	eligible := make([]RouteCandidate, 0, len(routes))
 	seen := map[string]bool{}
@@ -176,7 +173,7 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		allowed := strings.HasPrefix(candidate.Scope, "local_network:") || preference.Mode == ModeAuto ||
 			preference.Mode == ModeDirect && candidate.FinalExit == "direct" ||
 			preference.Mode == ModeFixed && candidate.FinalExit == preference.Exit
-		if !allowed || byID[candidate.ID].Result == "unavailable" {
+		if !allowed || byID[candidate.ID] == "unavailable" {
 			continue
 		}
 		eligible = append(eligible, candidate)
@@ -185,7 +182,7 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		return Selection{}, ErrNoUsableCandidate
 	}
 	rank := func(candidate RouteCandidate) int {
-		if byID[candidate.ID].Result == "available" {
+		if byID[candidate.ID] == "available" {
 			return 0
 		}
 		return 1
@@ -196,28 +193,13 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 		if leftRank != rightRank {
 			return leftRank < rightRank
 		}
-		leftObservation, rightObservation := byID[left.ID], byID[right.ID]
-		comparable := leftRank == 0 && leftObservation.Scope == rightObservation.Scope &&
-			leftObservation.Action == rightObservation.Action && leftObservation.MetricMillis > 0 &&
-			rightObservation.MetricMillis > 0
-		if comparable && leftObservation.MetricMillis != rightObservation.MetricMillis {
-			return leftObservation.MetricMillis < rightObservation.MetricMillis
+		// Metrics are comparable only for the same single target. Multi-target
+		// selection has no invented average or successful-target score.
+		if len(targets) == 1 && leftRank == 0 && metrics[left.ID] > 0 && metrics[right.ID] > 0 && metrics[left.ID] != metrics[right.ID] {
+			return metrics[left.ID] < metrics[right.ID]
 		}
-		if leftRank == 1 {
-			// Expiry removes health evidence, not the fact that this attempt
-			// failed. Prefer untried/previously successful unknown paths, then
-			// the oldest failed attempt, so a slow refresh cannot keep retrying
-			// only the first two IDs forever. No new retry state is needed.
-			leftFailure, rightFailure := "", ""
-			if observation := latest[left.ID]; observation.Result == "unavailable" {
-				leftFailure = observation.ObservedAt
-			}
-			if observation := latest[right.ID]; observation.Result == "unavailable" {
-				rightFailure = observation.ObservedAt
-			}
-			if leftFailure != rightFailure {
-				return leftFailure < rightFailure
-			}
+		if leftRank == 1 && failures[left.ID] != failures[right.ID] {
+			return failures[left.ID] < failures[right.ID]
 		}
 		if left.ID == current {
 			return true

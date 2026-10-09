@@ -95,12 +95,11 @@ internal fun serviceBusinessProbeInputs(
 ): List<BusinessProbeInput> {
     val dns = profile.dns.firstOrNull() ?: return emptyList()
     val groups = profile.businessProbeTargets.associateBy { it.serviceID }
-    return application?.selectors.orEmpty().sortedBy { it.selector }.mapNotNull { selected ->
+    return application?.selectors.orEmpty().sortedBy { it.selector }.flatMap { selected ->
         val group = groups.values.singleOrNull {
             selected.selector == "service:${it.serviceID}" || selected.selector == "local_network:${it.serviceID}"
-        } ?: return@mapNotNull null
-        val target = group.targets.singleOrNull() ?: return@mapNotNull null
-        BusinessProbeInput(selected, networkGeneration, dns, target)
+        } ?: return@flatMap emptyList()
+        group.targets.map { target -> BusinessProbeInput(selected, networkGeneration, dns, target) }
     }
 }
 
@@ -189,7 +188,7 @@ class RouteManager private constructor(context: Context) {
                     SelectorClient(available.config).apply(desired.execution())
                     runtime.actual = LinkedHashMap(SelectorClient(available.config).readCurrent(desired.execution()))
                     runtime.application = desired
-                    publish(runtime, desired, running = true)
+                    publish(runtime, desired, running = true, observation = businessObservationDetail(profileId, runtime))
                 } else {
                     publish(runtime, evaluate(profileId, runtime, available, emptyMap()), running = false)
                 }
@@ -206,13 +205,13 @@ class RouteManager private constructor(context: Context) {
         selector.apply(desired.execution())
         runtime.actual = LinkedHashMap(selector.readCurrent(desired.execution()))
         runtime.application = desired
-        publish(runtime, desired, running = true)
+        publish(runtime, desired, running = true, observation = businessObservationDetail(profileId, runtime))
         val now = Instant.now()
         serviceBusinessProbeInputs(profile, desired, runtime.generation).filter { input ->
             observations(profileId).objects().none {
                 it.getString("candidate_id") == input.selector.candidate &&
                     it.getString("scope") == input.selector.selector &&
-                    it.getString("target") == input.target &&
+                    it.getString("target") == input.target && it.getString("action") == "https_request" &&
                     it.getString("network_generation") == input.networkGeneration &&
                     runCatching { Instant.parse(it.getString("valid_until")).isAfter(now) }.getOrDefault(false)
             }
@@ -225,13 +224,14 @@ class RouteManager private constructor(context: Context) {
         input: BusinessProbeInput,
         result: ProbeResult,
         allowFallback: Boolean,
+        finishBatch: Boolean,
         onRecorded: () -> Unit,
-    ): BusinessProbeInput? = operation.withLock {
+    ): List<BusinessProbeInput> = operation.withLock {
         val runtime = runtime(profileId)
-        val current = runtime.application ?: return@withLock null
+        val current = runtime.application ?: return@withLock emptyList()
         if (runtime.runningProfile?.recordID != profile.recordID || runtime.generation != input.networkGeneration ||
             current.selectors.singleOrNull { it.selector == input.selector.selector }?.candidate != input.selector.candidate || result.target != input.target
-        ) return@withLock null
+        ) return@withLock emptyList()
         val now = Instant.now().truncatedTo(ChronoUnit.SECONDS)
         val observation = JSONObject()
             .put("candidate_id", input.selector.candidate)
@@ -244,20 +244,22 @@ class RouteManager private constructor(context: Context) {
             .put("valid_until", now.plusSeconds(if (result.healthy) 600 else 30).toString())
         if (result.healthy) observation.put("metric_millis", result.metricMillis)
         val retained = observations(profileId).objects().filter {
-            it.getString("candidate_id") != input.selector.candidate &&
-                it.getString("network_generation") == runtime.generation
+            (it.getString("candidate_id") != input.selector.candidate ||
+                it.getString("scope") != input.selector.selector || it.getString("target") != input.target ||
+                it.getString("action") != "https_request") && it.getString("network_generation") == runtime.generation
         } + observation
-        protected.put(ProfileStorage.observations(profileId), JSONArray(retained.sortedBy { it.getString("candidate_id") }).toString().encodeToByteArray())
-        val observed = current.copy(selectors = current.selectors.map {
-            if (it.selector == input.selector.selector) it.copy(state = if (result.healthy) "available" else "unavailable") else it
-        })
-        runtime.application = observed
-        val detail = "${input.selector.selector} · ${input.target} · ${if (result.healthy) "该目标成功" else "该目标失败"} · $now"
-        publish(runtime, observed, running = true, observation = detail)
-        onRecorded()
-        if (result.healthy) return@withLock null
+        protected.put(ProfileStorage.observations(profileId), JSONArray(retained.sortedWith(compareBy({ it.getString("candidate_id") }, { it.getString("scope") }, { it.getString("target") }, { it.getString("action") }))).toString().encodeToByteArray())
         val evaluated = evaluate(profileId, runtime, profile, runtime.actual)
         val nextForScope = evaluated.selectors.singleOrNull { it.selector == input.selector.selector }
+        val observed = current.copy(selectors = current.selectors.map {
+            if (it.selector == input.selector.selector) it.copy(state =
+                if (nextForScope?.candidate == it.candidate) nextForScope.state else "unknown") else it
+        })
+        runtime.application = observed
+        val detail = businessObservationDetail(profileId, runtime)
+        publish(runtime, observed, running = true, observation = detail)
+        onRecorded()
+        if (!finishBatch || nextForScope?.candidate == input.selector.candidate) return@withLock emptyList()
         // Only this Service may change during its fallback. After the second
         // failure its selector is rejected until the next normal refresh.
         val next = observed.copy(
@@ -272,9 +274,15 @@ class RouteManager private constructor(context: Context) {
         check(next.execution().all { actual[it.selector] == it.candidate }) { "fallback selector 回读不一致" }
         runtime.actual = LinkedHashMap(actual)
         runtime.application = next
-        publish(runtime, next, running = true, observation = detail)
-        if (!allowFallback || nextForScope == null || nextForScope.candidate == input.selector.candidate) return@withLock null
-        serviceBusinessProbeInputs(profile, next, runtime.generation).singleOrNull { it.selector.selector == input.selector.selector }
+        publish(runtime, next, running = true, observation = businessObservationDetail(profileId, runtime))
+        if (!allowFallback || nextForScope == null || nextForScope.candidate == input.selector.candidate) return@withLock emptyList()
+        serviceBusinessProbeInputs(profile, next, runtime.generation).filter { it.selector.selector == input.selector.selector }.filter { candidate ->
+            observations(profileId).objects().none { it.optString("candidate_id") == candidate.selector.candidate &&
+                it.optString("scope") == candidate.selector.selector && it.optString("target") == candidate.target &&
+                it.optString("network_generation") == runtime.generation && it.optString("action") == "https_request" &&
+                Instant.parse(it.getString("valid_until")).isAfter(Instant.now())
+            }
+        }
     }
 
     internal suspend fun reportData(profileId: String, state: ByteArray, acceptedView: String, appliedView: String): RuntimeReportData = operation.withLock {
@@ -352,6 +360,9 @@ class RouteManager private constructor(context: Context) {
             currentBody,
             runtime.generation.ifBlank { "startup" },
             Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
+            JSONArray(profile.businessProbeTargets.map { group -> JSONObject()
+                .put("service_id", group.serviceID).put("targets", JSONArray(group.targets))
+            }).toString().encodeToByteArray(),
         )
         val root = JSONObject(body.decodeToString())
         return AppliedRoute(
@@ -375,6 +386,24 @@ class RouteManager private constructor(context: Context) {
     private fun observations(profileId: String): JSONArray = protected.get(ProfileStorage.observations(profileId))?.let {
         runCatching { JSONArray(it.decodeToString()) }.getOrNull()
     } ?: JSONArray()
+
+    private fun businessObservationDetail(profileId: String, runtime: ProfileRuntime): String {
+        val profile = runtime.runningProfile ?: return "业务结果尚未产生"
+        val samples = observations(profileId).objects()
+        val now = Instant.now()
+        return serviceBusinessProbeInputs(profile, runtime.application, runtime.generation).joinToString("\n") { input ->
+            val sample = samples.singleOrNull { it.optString("candidate_id") == input.selector.candidate &&
+                it.optString("scope") == input.selector.selector && it.optString("target") == input.target &&
+                it.optString("action") == "https_request" && it.optString("network_generation") == runtime.generation }
+            val valid = sample != null && runCatching { Instant.parse(sample.getString("valid_until")).isAfter(now) }.getOrDefault(false)
+            val outcome = if (!valid) "尚无有效结果" else when (sample?.optString("result")) {
+                "available" -> "成功"
+                "unavailable" -> "失败"
+                else -> "尚无有效结果"
+            }
+            "${input.selector.selector} · ${input.target} · $outcome · ${sample?.optString("observed_at").orEmpty()}"
+        }.ifBlank { "业务结果尚未产生" }
+    }
 
     private fun ensureNetworkGeneration(profileId: String, runtime: ProfileRuntime) {
         if (runtime.generation.isNotBlank()) return

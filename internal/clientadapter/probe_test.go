@@ -182,7 +182,7 @@ func TestBusinessProbeRejectsWrongResolverAndHasNoDirectFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := probe(context.Background())
-	if result.Available || !strings.Contains(result.Description, "differs from the certified resolver") {
+	if result.Available || result.Action != "https_request" || !strings.Contains(result.Description, "differs from the certified resolver") {
 		t.Fatalf("wrong-resolver outcome = %+v", result)
 	}
 	credentialed := (&url.URL{Scheme: "https", Host: "example.com", User: url.UserPassword("demo-user", "demo-password")}).String()

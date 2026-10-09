@@ -84,40 +84,43 @@ func (options *Options) defaults() {
 		options.WireGuardPrivateKey = "/etc/wireguard/node.key"
 	}
 }
-func (options Options) probeForService(view control.DeviceView, scope string) Probe {
+func (options Options) probeForService(view control.DeviceView, scope string) Probes {
 	if !options.defaultProbe {
-		return options.Probe
-	}
-	for _, group := range view.BusinessProbeTargets {
-		if (scope != "service:"+group.ServiceID && scope != "local_network:"+group.ServiceID) || len(group.Targets) != 1 {
-			continue
-		}
-		if options.Capture == "mixed" {
-			probe, err := clientadapter.HTTPSBusinessProbe("127.0.0.1:1080", group.Targets[0])
-			if err != nil {
-				return nil
-			}
-			return func(ctx context.Context) ProbeResult {
-				value := probe(ctx)
-				return ProbeResult{Available: value.Available, Metric: value.Metric, Description: value.Description, Action: "https_request"}
-			}
-		}
-		if len(view.DNSServers) == 0 {
+		if options.Probe == nil {
 			return nil
 		}
-		if options.captureNamespace != nil {
-			return func(ctx context.Context) ProbeResult {
-				return namespaceBusinessProbe(ctx, options.captureNamespace, group.Targets[0])
+		return Probes{"": options.Probe}
+	}
+	probes := Probes{}
+	for _, group := range view.BusinessProbeTargets {
+		if scope != "service:"+group.ServiceID && scope != "local_network:"+group.ServiceID {
+			continue
+		}
+		for _, target := range group.Targets {
+			if options.Capture == "mixed" {
+				probe, err := clientadapter.HTTPSBusinessProbe("127.0.0.1:1080", target)
+				if err != nil {
+					return nil
+				}
+				probes[target] = probe
+			} else if len(view.DNSServers) > 0 {
+				probes[target] = func(ctx context.Context) ProbeResult {
+					if options.captureNamespace != nil {
+						return namespaceBusinessProbe(ctx, options.captureNamespace, target)
+					}
+					value := businessProbe(ctx, view.DNSServers[0], target)
+					value.Action = "https_request"
+					return value
+				}
 			}
 		}
-		return func(ctx context.Context) ProbeResult { return businessProbe(ctx, view.DNSServers[0], group.Targets[0]) }
 	}
-	return nil
+	return probes
 }
 
 // Each Service owns its probe and fallback. Testing one destination cannot
 // colour another Service's selection or consume another Service's permission.
-func activateServices(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState) (Activation, error) {
+func activateServices(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, probe bool) (Activation, error) {
 	scopes, byScope, err := scopesFor(routes)
 	if err != nil {
 		return Activation{}, err
@@ -125,7 +128,13 @@ func activateServices(ctx context.Context, options Options, view control.DeviceV
 	result := Activation{State: state, Selections: []SelectionStatus{}}
 	var failures []error
 	for _, scope := range scopes {
-		value, err := Activate(ctx, selector, byScope[scope], result.State, options.probeForService(view, scope), options.Now)
+		probes := options.probeForService(view, scope)
+		if !probe {
+			for target := range probes {
+				probes[target] = nil
+			}
+		}
+		value, err := Activate(ctx, selector, byScope[scope], result.State, probes, options.Now)
 		if value.State.Schema == 0 {
 			return Activation{}, err
 		}
@@ -414,15 +423,15 @@ func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg 
 		}
 	}
 	sort.Slice(selections, func(i, j int) bool { return selections[i].ServiceID < selections[j].ServiceID })
-	// Only a real probe with a unique declared target can become a wire business
-	// observation. Selector readback and custom local diagnostics grant no health.
+	// Only an actual authenticated target sample becomes a wire observation.
+	// Targetless old caches and custom diagnostics grant no business health.
 	for _, group := range lkg.View.BusinessProbeTargets {
-		if len(group.Targets) != 1 {
-			continue
-		}
 		for _, value := range activation.State.Observations {
+			if !slices.Contains(group.Targets, value.Target) || value.NetworkGeneration != activation.State.NetworkGeneration {
+				continue
+			}
 			for _, route := range lkg.View.Routes {
-				if route.ID != value.CandidateID || route.ServiceID != group.ServiceID || value.Action != "https_request" {
+				if route.ID != value.CandidateID || route.ServiceID != group.ServiceID || route.Scope != value.Scope || value.Action != "https_request" {
 					continue
 				}
 				observed, e1 := time.Parse(time.RFC3339, value.ObservedAt)
@@ -431,7 +440,7 @@ func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg 
 					continue
 				}
 				duration := value.MetricMillis
-				observations = append(observations, control.Observation{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: group.Targets[0], Action: "https_request", SpecDigest: route.SpecDigest, NetworkGeneration: activation.State.NetworkGeneration, Result: value.Result, ObservedAt: observed.UnixMilli(), ValidUntil: until.UnixMilli(), DurationMS: &duration})
+				observations = append(observations, control.Observation{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: value.Target, Action: "https_request", SpecDigest: route.SpecDigest, NetworkGeneration: activation.State.NetworkGeneration, Result: value.Result, ObservedAt: observed.UnixMilli(), ValidUntil: until.UnixMilli(), DurationMS: &duration})
 			}
 		}
 	}
@@ -742,7 +751,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		if pid != 0 {
 			if hasAccess {
-				activation, err = Activate(ctx, selector, routes, local, nil, options.Now)
+				activation, err = activateServices(ctx, options, lkg.View, selector, routes, local, false)
 				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 					return err
 				}
@@ -767,7 +776,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			selected = append(selected, selection.CandidateID)
 		}
 		if len(routes) > 0 {
-			activation, err = activateServices(ctx, options, lkg.View, selector, routes, local)
+			activation, err = activateServices(ctx, options, lkg.View, selector, routes, local, true)
 			if activation.State.Schema == 0 {
 				return err
 			}

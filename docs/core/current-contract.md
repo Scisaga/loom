@@ -89,8 +89,9 @@ envelope、Invite 与 claim/resume、设备 report——统一使用 schema **3*
 资源身份与 KDF 的语义依据是[控制模型的凭据派生](control-model.md#21-material规范签名事实)和
 [传输资源边界](control-model.md#7-networkintent传输资源和显式中继)；report 寿命与拒绝规则对应
 [Enrollment 的 Observation](enrollment-endpoint-model.md#observation)。表中的缺项是这些既有值的规范边界，
-不新增权威对象，不撤销已确定语义，也不构成另一份实施计划。选路中的多目标结果归约、指标优先级及
-稳定平局另由[Preference 与 Selection](../clients/client-runtime-model.md#preference-与-selection)列出；
+不新增权威对象，不撤销已确定语义，也不构成另一份实施计划。多目标结果按客户端模型的
+[同一服务的多个测试目标](../clients/client-runtime-model.md#同一服务的多个测试目标)处理；指标优先级及
+稳定选择由[Preference 与 Selection](../clients/client-runtime-model.md#preference-与-selection)列出；
 完成编码格式本身不能替代这些算法决定。
 
 任何对象的内层值、可选性或签名输入仍不明确时，生产 writer/decoder 不得自行发明格式。
@@ -1163,7 +1164,7 @@ writer、批次中途失败的原子性、非法键值与签名拒绝、迁移�
 不能省去这些结果后宣称 schema 3 服务节点运行状态已可验证。
 
 本链可用单目标、单候选验证真实运行、改权和撤权；这不规定多目标结果归约。
-同 Service 多目标混合成功/失败、多个可比指标的优先级仍按客户端模型的待决点另行明确，
+同 Service 多目标混合结果按客户端模型保留为 unknown；多个可比指标的优先级仍按其待决点另行明确，
 不得把首个目标、最新样本或传输成功当作整个 Service 的业务状态。
 
 #### control 成员之间的报告差量

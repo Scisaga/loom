@@ -39,12 +39,12 @@ func BusinessProbe(proxyAddress, dnsAddress, target string) (Probe, error) {
 		defer cancel()
 		addresses, err := probeDNS(probeContext, proxyAddress, dnsAddress, parsed.Hostname())
 		if err != nil {
-			return ProbeResult{Metric: time.Since(started), Description: "UDP/DNS: " + err.Error()}
+			return ProbeResult{Action: "https_request", Metric: time.Since(started), Description: "UDP/DNS: " + err.Error()}
 		}
 		if err := probeHTTPS(probeContext, proxyAddress, parsed.String(), addresses, &tls.Config{MinVersion: tls.VersionTLS12}); err != nil {
-			return ProbeResult{Metric: time.Since(started), Description: "TCP/TLS: " + err.Error()}
+			return ProbeResult{Action: "https_request", Metric: time.Since(started), Description: "TCP/TLS: " + err.Error()}
 		}
-		return ProbeResult{Available: true, Metric: time.Since(started), Description: "TCP/TLS and UDP/DNS succeeded"}
+		return ProbeResult{Action: "https_request", Available: true, Metric: time.Since(started), Description: "TCP/TLS and UDP/DNS succeeded"}
 	}, nil
 }
 
@@ -71,15 +71,15 @@ func HTTPSBusinessProbe(proxyAddress, target string) (Probe, error) {
 		client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		request, err := http.NewRequestWithContext(pending, http.MethodGet, target, nil)
 		if err != nil {
-			return ProbeResult{Description: "HTTPS request invalid"}
+			return ProbeResult{Action: "https_request", Description: "HTTPS request invalid"}
 		}
 		response, err := client.Do(request)
 		if err != nil {
-			return ProbeResult{Metric: time.Since(started), Description: "HTTPS request failed"}
+			return ProbeResult{Action: "https_request", Metric: time.Since(started), Description: "HTTPS request failed"}
 		}
 		defer response.Body.Close()
 		_, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return ProbeResult{Available: readErr == nil && response.StatusCode >= 200 && response.StatusCode < 400,
+		return ProbeResult{Action: "https_request", Available: readErr == nil && response.StatusCode >= 200 && response.StatusCode < 400,
 			Metric: time.Since(started), Description: "HTTPS response received"}
 	}, nil
 }

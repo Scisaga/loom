@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -242,6 +243,7 @@ func waitForJoinedClient(root string, protector clientsecret.Protector, edition 
 }
 
 type windowsRuntimeStatus struct {
+	NetworkGeneration    string                          `json:"network_generation"`
 	Schema               int                             `json:"schema"`
 	DeviceID             string                          `json:"device_id"`
 	ViewDigest           string                          `json:"view_digest"`
@@ -259,7 +261,7 @@ func windowsRuntimeStatusPath(root string) string {
 }
 
 func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, activation clientadapter.Activation, reported bool) error {
-	status := windowsRuntimeStatus{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, RuntimeState: "running",
+	status := windowsRuntimeStatus{Schema: 3, NetworkGeneration: activation.State.NetworkGeneration, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, RuntimeState: "running",
 		Preference: activation.State.Preference, Selections: activation.Selections, BlockedScopes: activation.BlockedScopes,
 		Observations: activation.State.Observations, ResourceObservations: activation.State.ResourceObservations, Reported: reported}
 	body, err := json.MarshalIndent(status, "", "  ")
@@ -269,35 +271,44 @@ func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, act
 	return writeWindowsRuntimeStatusFile(windowsRuntimeStatusPath(root), append(body, '\n'))
 }
 
-func windowsProbeTarget(view control.DeviceView, scope string) (string, string) {
+func windowsProbeTargets(view control.DeviceView, scope string) (string, []string) {
 	for _, group := range view.BusinessProbeTargets {
-		if (scope == "service:"+group.ServiceID || scope == "local_network:"+group.ServiceID) && len(group.Targets) == 1 {
-			return group.ServiceID, group.Targets[0]
+		if scope == "service:"+group.ServiceID || scope == "local_network:"+group.ServiceID {
+			return group.ServiceID, group.Targets
 		}
 	}
-	return "", ""
+	return "", nil
 }
-func windowsBusinessProbe(view control.DeviceView, scope string) clientadapter.Probe {
-	_, target := windowsProbeTarget(view, scope)
-	if target == "" || len(view.DNSServers) == 0 {
+func windowsBusinessProbe(view control.DeviceView, scope string) clientadapter.Probes {
+	_, targets := windowsProbeTargets(view, scope)
+	if len(targets) == 0 || len(view.DNSServers) == 0 {
 		return nil
 	}
-	probe, err := clientadapter.BusinessProbe("127.0.0.1:1080", view.DNSServers[0], target)
-	if err != nil {
-		return nil
+	probes := clientadapter.Probes{}
+	for _, target := range targets {
+		probe, err := clientadapter.BusinessProbe("127.0.0.1:1080", view.DNSServers[0], target)
+		if err != nil {
+			return nil
+		}
+		probes[target] = func(ctx context.Context) clientadapter.ProbeResult {
+			value := probe(ctx)
+			value.Action = "https_request"
+			return value
+		}
 	}
-	return func(ctx context.Context) clientadapter.ProbeResult {
-		value := probe(ctx)
-		value.Action = "https_request"
-		return value
-	}
+	return probes
 }
 
 func activateWindowsServices(ctx context.Context, selector clientadapter.Selector, view control.DeviceView,
 	routes []clientmodel.RouteCandidate, state clientadapter.State, probe bool) (clientadapter.Activation, error) {
-	var factory func(string) clientadapter.Probe
-	if probe {
-		factory = func(scope string) clientadapter.Probe { return windowsBusinessProbe(view, scope) }
+	factory := func(scope string) clientadapter.Probes {
+		probes := windowsBusinessProbe(view, scope)
+		if !probe {
+			for target := range probes {
+				probes[target] = nil
+			}
+		}
+		return probes
 	}
 	return clientadapter.ActivateServices(ctx, selector, routes, state, factory, time.Now)
 }
@@ -354,9 +365,10 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 		report.Observations = append(report.Observations, observation)
 	}
 	for _, observation := range activation.State.Observations {
-		service, target := windowsProbeTarget(lkg.View, observation.Scope)
+		service, targets := windowsProbeTargets(lkg.View, observation.Scope)
+		target := observation.Target
 		route, ok := routes[observation.CandidateID]
-		if target == "" || observation.Action != "https_request" || !ok || route.ServiceID != service || route.Scope != observation.Scope || observation.NetworkGeneration != report.NetworkGeneration {
+		if target == "" || !slices.Contains(targets, target) || observation.Action != "https_request" || !ok || route.ServiceID != service || route.Scope != observation.Scope || observation.NetworkGeneration != report.NetworkGeneration {
 			continue
 		}
 		observed, err := time.Parse(time.RFC3339, observation.ObservedAt)

@@ -66,7 +66,7 @@ func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
 	if probe := windowsBusinessProbe(view, "service:demo-service"); probe == nil {
 		t.Fatal("single authorized target unavailable")
 	}
-	for _, missing := range []string{"dns", "target", "multiple-targets"} {
+	for _, missing := range []string{"dns", "target"} {
 		t.Run(missing, func(t *testing.T) {
 			input := view
 			switch missing {
@@ -74,8 +74,6 @@ func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
 				input.DNSServers = nil
 			case "target":
 				input.BusinessProbeTargets = nil
-			case "multiple-targets":
-				input.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo.example/demo-probe", "https://demo.example/demo-other"}}}
 
 			}
 			if probe := windowsBusinessProbe(input, "service:demo-service"); probe != nil {
@@ -83,6 +81,11 @@ func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
 			}
 		})
 	}
+	view.BusinessProbeTargets[0].Targets = append(view.BusinessProbeTargets[0].Targets, "https://demo.example/other")
+	if len(windowsBusinessProbe(view, "service:demo-service")) != 2 {
+		t.Fatal("multiple authenticated targets were lost")
+	}
+
 }
 
 func TestWindowsIndependentServiceTargets(t *testing.T) {

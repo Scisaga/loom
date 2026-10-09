@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
 	"loom/internal/control"
 )
@@ -33,13 +34,7 @@ type LocalState struct {
 	ResourceObservations  []control.Observation     `json:"resource_observations,omitempty"`
 }
 
-type SelectionStatus struct {
-	Scope       string   `json:"scope"`
-	CandidateID string   `json:"candidate_id"`
-	FinalExit   string   `json:"final_exit"`
-	Chain       []string `json:"chain,omitempty"`
-	State       string   `json:"state"`
-}
+type SelectionStatus = clientadapter.SelectionStatus
 
 // Status is a deletable readback projection. It is written under /run by the
 // service and never used as authority on the next start.
@@ -78,7 +73,7 @@ func (state LocalState) validate() error {
 	}
 	for index, observation := range state.Observations {
 		if observation.Validate() != nil || observation.NetworkGeneration != state.NetworkGeneration ||
-			index > 0 && state.Observations[index-1].CandidateID >= observation.CandidateID {
+			index > 0 && state.Observations[index-1].Key() >= observation.Key() {
 			return errors.New("Linux client observations are not current and uniquely sorted")
 		}
 	}

@@ -18,7 +18,7 @@ class BusinessProbeScopeTest {
         assertEquals("192.0.2.53", input.dns)
         assertEquals("https://web.example/health", input.target)
         assertTrue(serviceBusinessProbeInputs(profile.copy(businessProbeTargets = emptyList()), application, "demo-network").isEmpty())
-        assertTrue(serviceBusinessProbeInputs(profile.copy(businessProbeTargets = listOf(ServiceProbeTargets("demo-service", listOf("https://web.example/", "https://api.example/")))), application, "demo-network").isEmpty())
+        assertEquals(listOf("https://web.example/", "https://api.example/"), serviceBusinessProbeInputs(profile.copy(businessProbeTargets = listOf(ServiceProbeTargets("demo-service", listOf("https://web.example/", "https://api.example/")))), application, "demo-network").map { it.target })
         assertTrue(serviceBusinessProbeInputs(profile.copy(businessProbeTargets = listOf(ServiceProbeTargets("demo-other", listOf("https://web.example/health")))), application, "demo-network").isEmpty())
         val other = selected.copy(selector = "service:demo-other", candidate = "demo-other-candidate")
         val two = application.copy(selectors = listOf(other, selected))

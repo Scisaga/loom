@@ -43,11 +43,11 @@ func TestActivateUsesReadbackAndOneSameExitFallback(t *testing.T) {
 	results := []ProbeResult{{Available: false, Metric: time.Second}, {Available: true, Metric: 2 * time.Second}}
 	activation, err := Activate(context.Background(), selector, routes, State{
 		Preference:        clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"},
-		NetworkGeneration: "demo-network"}, func(context.Context) ProbeResult {
+		NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
 		result := results[0]
 		results = results[1:]
 		return result
-	}, func() time.Time { return now })
+	}}, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,7 @@ func TestActivateWithoutProbeKeepsActualSelectionUnknown(t *testing.T) {
 		activation.Selections[0].State != "unknown" || len(activation.State.Observations) != 0 {
 		t.Fatalf("runtime readback did not remain independent of business evidence: %+v, %v", activation, err)
 	}
-	failed, err := Activate(context.Background(), selector, routes, activation.State,
-		func(context.Context) ProbeResult { return ProbeResult{Description: "demo business failed"} }, func() time.Time { return now })
+	failed, err := Activate(context.Background(), selector, routes, activation.State, Probes{"": func(context.Context) ProbeResult { return ProbeResult{Description: "demo business failed"} }}, func() time.Time { return now })
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(failed.Selections) != 0 ||
 		!reflect.DeepEqual(failed.BlockedScopes, []string{"demo-service"}) || selector.current["demo-service"] != BlockedSelection ||
 		failed.State.NetworkGeneration == "" || len(failed.State.Observations) != 1 || failed.State.Observations[0].Result != "unavailable" {
@@ -93,11 +92,11 @@ func TestServicesProbeIndependentlyAndRecoverWithoutClearingEvidence(t *testing.
 	selector := &fakeSelector{current: map[string]string{routes[0].Scope: BlockedSelection, routes[1].Scope: BlockedSelection}}
 	calls := map[string]int{}
 	recovered := false
-	probe := func(scope string) Probe {
-		return func(context.Context) ProbeResult {
+	probe := func(scope string) Probes {
+		return Probes{"": func(context.Context) ProbeResult {
 			calls[scope]++
 			return ProbeResult{Available: scope == routes[0].Scope || recovered, Action: "https_request"}
-		}
+		}}
 	}
 	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-network"}
 	first, err := ActivateServices(context.Background(), selector, routes, state, probe, func() time.Time { return now })
@@ -147,13 +146,13 @@ func TestCancellationDoesNotBecomeBusinessFailure(t *testing.T) {
 			defer cancel()
 			selector := &fakeSelector{current: map[string]string{"demo-service": "one-hop"}}
 			calls := 0
-			activation, err := Activate(ctx, selector, routes, State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-network"}, func(context.Context) ProbeResult {
+			activation, err := Activate(ctx, selector, routes, State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
 				calls++
 				if !cancelOnFallback || calls == 2 {
 					cancel()
 				}
 				return ProbeResult{Description: "demo probe interrupted"}
-			}, func() time.Time { return now })
+			}}, func() time.Time { return now })
 			expectedCalls := 1
 			expectedCandidate := "one-hop"
 			if cancelOnFallback {

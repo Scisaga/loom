@@ -17,7 +17,7 @@ func TestAndroidLocalExitKeepsItsIdentityAndDoesNotOfferDirect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body, err := EvaluateAndroidRoutes(routes, nil, preference, nil, "demo-generation", "2030-01-01T00:00:00Z")
+		body, err := EvaluateAndroidRoutes(routes, nil, preference, nil, "demo-generation", "2030-01-01T00:00:00Z", nil)
 		if mode == "direct" {
 			if err != nil || !bytes.Contains(body, []byte(`"selections":[]`)) || !bytes.Contains(body, []byte(`"blocked_scopes":["service:demo-service"]`)) {
 				t.Fatal("Direct escaped its scope instead of rejecting that Service", string(body), err)
@@ -32,13 +32,13 @@ func TestAndroidLocalExitKeepsItsIdentityAndDoesNotOfferDirect(t *testing.T) {
 }
 
 func TestEvaluateAndroidRoutesUsesOneSharedModel(t *testing.T) {
-	routes := []byte(`[{"id":"direct","final_exit":"direct","chain":[],"scope":"default"},{"id":"exit-a-direct","final_exit":"exit-a","chain":["exit-a"],"scope":"default"},{"id":"exit-a-relay","final_exit":"exit-a","chain":["relay-a","exit-a"],"scope":"default"}]`)
+	routes := []byte(`[{"id":"direct","final_exit":"direct","chain":[],"scope":"service:demo-service"},{"id":"exit-a-direct","final_exit":"exit-a","chain":["exit-a"],"scope":"service:demo-service"},{"id":"exit-a-relay","final_exit":"exit-a","chain":["relay-a","exit-a"],"scope":"service:demo-service"}]`)
 	preference, err := NewAndroidPreference("fixed_exit", "exit-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	observations := []byte(`[{"candidate_id":"exit-a-direct","network_generation":"net-a","scope":"default","result":"unavailable","action":"dns_https","observed_at":"2030-01-01T00:00:00Z","valid_until":"2030-01-01T00:10:00Z"},{"candidate_id":"exit-a-relay","network_generation":"net-a","scope":"default","result":"available","action":"dns_https","observed_at":"2030-01-01T00:00:00Z","valid_until":"2030-01-01T00:10:00Z","metric_millis":5}]`)
-	result, err := EvaluateAndroidRoutes(routes, observations, preference, nil, "net-a", "2030-01-01T00:01:00Z")
+	observations := []byte(`[{"candidate_id":"exit-a-direct","network_generation":"net-a","scope":"service:demo-service","result":"unavailable","action":"https_request","target":"https://demo.example/","observed_at":"2030-01-01T00:00:00Z","valid_until":"2030-01-01T00:10:00Z"},{"candidate_id":"exit-a-relay","network_generation":"net-a","scope":"service:demo-service","result":"available","action":"https_request","target":"https://demo.example/","observed_at":"2030-01-01T00:00:00Z","valid_until":"2030-01-01T00:10:00Z","metric_millis":5}]`)
+	result, err := EvaluateAndroidRoutes(routes, observations, preference, nil, "net-a", "2030-01-01T00:01:00Z", []byte(`[{"service_id":"demo-service","targets":["https://demo.example/"]}]`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestAndroidDenyOnlySelectionAndCanonicalPreference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := EvaluateAndroidRoutes([]byte("[]"), []byte("[]"), preference, nil, "demo-network-generation", "2030-01-01T00:00:00Z")
+	result, err := EvaluateAndroidRoutes([]byte("[]"), []byte("[]"), preference, nil, "demo-network-generation", "2030-01-01T00:00:00Z", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestAndroidDenyOnlySelectionAndCanonicalPreference(t *testing.T) {
 		t.Fatal("deny-only configuration did not return an empty actual selection set")
 	}
 	for _, bad := range [][]byte{[]byte(`{"mode":"auto","schema":1}`), []byte(`{"schema":3,"mode":"auto"}`)} {
-		if _, err := EvaluateAndroidRoutes([]byte("[]"), []byte("[]"), bad, nil, "demo-network-generation", "2030-01-01T00:00:00Z"); err == nil {
+		if _, err := EvaluateAndroidRoutes([]byte("[]"), []byte("[]"), bad, nil, "demo-network-generation", "2030-01-01T00:00:00Z", nil); err == nil {
 			t.Fatal("old or noncanonical preference accepted")
 		}
 	}
@@ -74,7 +74,7 @@ func TestAndroidServiceFailureRejectsOnlyItsScopeAndExpires(t *testing.T) {
 		at      string
 		blocked bool
 	}{{"2030-01-01T00:00:29Z", true}, {"2030-01-01T00:00:30Z", false}} {
-		body, err := EvaluateAndroidRoutes(routes, samples, preference, nil, "demo-network", test.at)
+		body, err := EvaluateAndroidRoutes(routes, samples, preference, nil, "demo-network", test.at, []byte(`[{"service_id":"demo-a","targets":["https://demo-a.example/"]},{"service_id":"demo-b","targets":["https://demo-b.example/"]}]`))
 		if err != nil {
 			t.Fatal("one Service failure stopped another", err)
 		}

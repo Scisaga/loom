@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+	"loom/internal/clientmodel"
 	"loom/internal/deviceclient"
 )
 
@@ -116,16 +117,6 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 		var rows []windowsPathDisplay
 		if err == nil {
 			byID := map[string]string{}
-			observed := map[string]string{}
-			updated := map[string]string{}
-			for _, observation := range status.Observations {
-				until, parseErr := time.Parse(time.RFC3339, observation.ValidUntil)
-				if parseErr != nil || !time.Now().Before(until) {
-					continue
-				}
-				observed[observation.CandidateID] = observation.Result
-				updated[observation.CandidateID] = observation.ObservedAt
-			}
 			if loadErr == nil && store.LKG() != nil {
 				for _, route := range store.LKG().View.Routes {
 					chain := "本机 → 目标（直连）"
@@ -138,12 +129,33 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 				}
 			}
 			for _, selection := range status.Selections {
-				result := observed[selection.CandidateID]
-
+				_, targets := windowsProbeTargets(store.LKG().View, selection.Scope)
+				result, stateErr := clientmodel.ObservationState(status.Observations, selection.CandidateID, selection.Scope, status.NetworkGeneration, targets, time.Now())
+				if stateErr != nil {
+					result = "unknown"
+				}
 				health, summary, selected := windowsObservationDisplay(result)
+				details := []string{}
+				updated := ""
+				for _, target := range targets {
+					sample, found, sampleErr := clientmodel.LatestObservation(status.Observations, selection.CandidateID, selection.Scope, status.NetworkGeneration, target)
+					targetState := "unknown"
+					until, _ := time.Parse(time.RFC3339, sample.ValidUntil)
+					if found && sampleErr == nil && time.Now().Before(until) {
+						targetState = sample.Result
+					}
+					label, _, _ := windowsObservationDisplay(targetState)
+					details = append(details, target+" · "+label+" · "+sample.ObservedAt)
+					if sample.ObservedAt > updated {
+						updated = sample.ObservedAt
+					}
+				}
+				if len(details) > 0 {
+					summary = strings.Join(details, "\n")
+				}
 				rows = append(rows, windowsPathDisplay{Service: selection.Scope, Candidate: selection.CandidateID,
 					Chain: byID[selection.CandidateID], Health: health, MeasurementSummary: summary, SelectedQuality: selected,
-					BestQuality: "当前 selector 候选", Reason: "selector 回读为当前候选", UpdatedAt: updated[selection.CandidateID]})
+					BestQuality: "当前 selector 候选", Reason: "selector 回读为当前候选", UpdatedAt: updated})
 			}
 			for _, scope := range status.BlockedScopes {
 				rows = append(rows, windowsPathDisplay{Service: scope, Chain: "暂无可用路径", Health: "不可用", MeasurementSummary: "当前偏好下没有可用候选", Reason: "该服务 selector 已拒绝；其他服务继续运行"})

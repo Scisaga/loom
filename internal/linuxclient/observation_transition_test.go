@@ -32,8 +32,13 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 		}, wantB: true},
 		{name: "multiple targets", change: func(v *control.DeviceView) {
 			v.BusinessProbeTargets[0].Targets = append(v.BusinessProbeTargets[0].Targets, "https://demo-a.example/other")
-		}, wantB: true},
+		}, wantA: true, wantB: true},
 		{name: "restart without prior view", lostPrior: true},
+		{name: "old targetless cache", cache: func(s *LocalState) {
+			for i := range s.Observations {
+				s.Observations[i].Target = ""
+			}
+		}},
 		{name: "cache from a different view", cache: func(s *LocalState) { s.ObservationViewDigest = "sha256:" + strings.Repeat("f", 64) }},
 		{name: "underlay changed", newNetwork: true},
 		{name: "unproven diagnostic action", cache: func(s *LocalState) {
@@ -87,7 +92,7 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 				if route.ServiceID == "demo-b" {
 					outcome = "unavailable"
 				}
-				state.Observations = append(state.Observations, clientmodel.Observation{CandidateID: route.ID, NetworkGeneration: state.NetworkGeneration, Scope: route.Scope, Action: "https_request", Result: outcome, ObservedAt: at.Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339), MetricMillis: 17})
+				state.Observations = append(state.Observations, clientmodel.Observation{CandidateID: route.ID, Target: "https://" + route.ServiceID + ".example/", NetworkGeneration: state.NetworkGeneration, Scope: route.Scope, Action: "https_request", Result: outcome, ObservedAt: at.Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339), MetricMillis: 17})
 			}
 			if test.cache != nil {
 				test.cache(&state)

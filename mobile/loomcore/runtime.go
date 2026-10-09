@@ -30,7 +30,28 @@ type runtimeSelection struct {
 
 // EvaluateAndroidRoutes applies one Preference to every authorized scope. It performs no I/O.
 func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, currentBody []byte,
-	generation, nowRFC3339 string) ([]byte, error) {
+	generation, nowRFC3339 string, targetsBody []byte) ([]byte, error) {
+	var groups []control.ServiceProbeTargets
+	if len(targetsBody) > 0 {
+		if err := decodeStrictJSON(targetsBody, 1<<20, &groups); err != nil {
+			return nil, err
+		}
+	}
+	targetsByScope := map[string][]string{}
+	for _, group := range groups {
+		if control.ValidateID(group.ServiceID) != nil {
+			return nil, errors.New("invalid Service probe group")
+		}
+		if _, exists := targetsByScope["service:"+group.ServiceID]; exists {
+			return nil, errors.New("duplicate Service probe group")
+		}
+		for _, target := range group.Targets {
+			if control.ValidateHTTPSURL(target) != nil {
+				return nil, errors.New("invalid Service probe target")
+			}
+		}
+		targetsByScope["service:"+group.ServiceID], targetsByScope["local_network:"+group.ServiceID] = group.Targets, group.Targets
+	}
 	var routes []clientmodel.RouteCandidate
 	var measured []androidObservation
 	var observations []clientmodel.Observation
@@ -50,7 +71,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 		if item.MetricMillis != nil {
 			metric = *item.MetricMillis
 		}
-		observations = append(observations, clientmodel.Observation{CandidateID: item.CandidateID, NetworkGeneration: item.NetworkGeneration, Scope: item.Scope, Result: item.Result, Action: item.Action, ObservedAt: item.ObservedAt, ValidUntil: item.ValidUntil, MetricMillis: metric})
+		observations = append(observations, clientmodel.Observation{CandidateID: item.CandidateID, Target: item.Target, NetworkGeneration: item.NetworkGeneration, Scope: item.Scope, Result: item.Result, Action: item.Action, ObservedAt: item.ObservedAt, ValidUntil: item.ValidUntil, MetricMillis: metric})
 	}
 	if len(preferenceBody) == 0 {
 		preferenceBody, _ = NewAndroidPreference("auto", "")
@@ -92,7 +113,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 	}
 	sort.Strings(application.Exits)
 	for _, scope := range scopes {
-		selection, err := clientmodel.Select(byScope[scope], observations, preference, current[scope], generation, now.UTC())
+		selection, err := clientmodel.Select(byScope[scope], observations, preference, current[scope], generation, now.UTC(), targetsByScope[scope]...)
 		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 			application.BlockedScopes = append(application.BlockedScopes, scope)
 			continue
@@ -110,13 +131,9 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 				break
 			}
 		}
-		for _, observation := range observations {
-			if observation.CandidateID == selection.CandidateID && observation.NetworkGeneration == generation {
-				until, _ := time.Parse(time.RFC3339, observation.ValidUntil)
-				if now.Before(until) {
-					state = observation.Result
-				}
-			}
+		state, err = clientmodel.ObservationState(observations, selection.CandidateID, scope, generation, targetsByScope[scope], now)
+		if err != nil {
+			return nil, err
 		}
 		application.Selections = append(application.Selections, runtimeSelection{Selector: scope,
 			Candidate: selection.CandidateID, FinalExit: finalExit, Chain: chain, State: state})
