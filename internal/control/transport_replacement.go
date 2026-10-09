@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -38,6 +39,7 @@ func CheckTransportReplacement(previousBytes []byte, next DeviceViewEnvelope, tr
 	for i := range viewType.NumField() {
 		name, option, _ := strings.Cut(viewType.Field(i).Tag.Get("json"), ",")
 		if name == "network_id" {
+			known[name] = true
 			continue
 		}
 		known[name] = true
@@ -48,6 +50,36 @@ func CheckTransportReplacement(previousBytes []byte, next DeviceViewEnvelope, tr
 	for name := range view {
 		if !known[name] {
 			return errors.New("unknown historical View field or already current View")
+		}
+	}
+	if network, present := view["network_id"]; present {
+		if network != trusted.NetworkID {
+			return errors.New("historical View network differs")
+		}
+		// Recognize only the retired independent-session projection. Its JSON is
+		// inspected as opaque evidence and is never returned to a runtime decoder.
+		profile, ok := view["runtime_profile"].(map[string]any)
+		config, _ := profile["config"].(string)
+		var retired struct {
+			Endpoints []struct {
+				Type string `json:"type"`
+				Tag  string `json:"tag"`
+			} `json:"endpoints"`
+			DNS struct {
+				FakeIP struct {
+					Range string `json:"inet6_range"`
+				} `json:"fakeip"`
+			} `json:"dns"`
+		}
+		recognized := false
+		if ok && json.Unmarshal([]byte(config), &retired) == nil {
+			recognized = retired.DNS.FakeIP.Range == "2001:db8:8000::/49"
+			for _, endpoint := range retired.Endpoints {
+				recognized = recognized || endpoint.Type == "wireguard" && strings.HasPrefix(endpoint.Tag, "wg-send.") && ValidateID(strings.TrimPrefix(endpoint.Tag, "wg-send.")) == nil
+			}
+		}
+		if !recognized {
+			return errors.New("historical View is not a retired WG projection")
 		}
 	}
 	viewBody := appendContractJSON(nil, view)

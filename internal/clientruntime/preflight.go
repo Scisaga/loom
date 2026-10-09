@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
 
 	"loom/internal/clientadapter"
@@ -269,10 +270,15 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 			return errors.New("native runtime has no authenticated local API")
 		}
 		users := []singBoxUser{}
-		for _, endpoint := range c.Endpoints {
-			users = append(users, singBoxUser{Username: strings.TrimPrefix(endpoint.Tag, "wg-send."), Password: c.Experimental.ClashAPI.Secret})
+		for _, outbound := range c.Outbounds {
+			if strings.HasPrefix(outbound.Tag, "wg-base.") {
+				users = append(users, singBoxUser{Username: strings.TrimPrefix(outbound.Tag, "wg-base."), Password: c.Experimental.ClashAPI.Secret})
+			}
 		}
-		expected = append(expected, singBoxInbound{Type: "socks", Tag: control.LinkProbeInbound, Listen: "127.0.0.1", ListenPort: 61801, Users: users})
+		sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
+		if len(users) > 0 {
+			expected = append(expected, singBoxInbound{Type: "socks", Tag: control.LinkProbeInbound, Listen: "127.0.0.1", ListenPort: 61801, Users: users})
+		}
 	}
 	if !reflect.DeepEqual(c.Inbounds, expected) || c.Log.Level != "warn" || c.Route.AutoDetectInterface != tun {
 		return errors.New("Windows runtime capture does not match its profile")
@@ -431,8 +437,8 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 			found := false
 			for _, endpoint := range c.Endpoints {
 				if endpoint.Tag == o.Detour {
-					for _, address := range endpoint.Address {
-						if address == o.Inet6BindAddress+"/128" {
+					for _, route := range endpoint.SourceRoutes {
+						if route.Source == o.Inet6BindAddress {
 							found = true
 						}
 					}

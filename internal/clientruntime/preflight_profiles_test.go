@@ -112,7 +112,12 @@ func TestWindowsWGAccessPreservesNativeUserSpaceTransportAcrossDeliveries(t *tes
 	c, _ := decodeWindowsConfig(source)
 	key := bytes.Repeat([]byte{8}, 32)
 	key[31] = 64
-	endpoint := singBoxEndpoint{Type: "wireguard", Tag: "wg-send.demo-resource", System: false, Address: []string{"fdab::2/128"}, PrivateKey: base64.StdEncoding.EncodeToString(key), Inet4MappedPrefix: "fdab:1::/96", Peers: []singBoxEndpointPeer{{Address: "192.0.2.10", Port: 51820, PublicKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)), AllowedIPs: []string{"::/0"}}}}
+	endpoint := singBoxEndpoint{Type: "wireguard", Tag: "wg-shared", System: false,
+		Address: []string{"fdab::2/128"}, PrivateKey: base64.StdEncoding.EncodeToString(key),
+		SourceRoutes: []singBoxSourceRoute{{Source: "fdab::2", Destination: "fdab:1::/64"}},
+		Peers: []singBoxEndpointPeer{{Address: "192.0.2.10", Port: 51820,
+			PublicKey:  base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)),
+			AllowedIPs: []string{"fdab:1::/64", "fdab:2::1/128"}}}}
 	c.Endpoints = []singBoxEndpoint{endpoint}
 	c.Outbounds[1] = singBoxOutbound{Type: "direct", Tag: "demo-candidate", Detour: endpoint.Tag, Inet6BindAddress: "fdab::2"}
 	source, _ = json.Marshal(c)

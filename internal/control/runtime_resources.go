@@ -84,10 +84,31 @@ func profileCredentials(view DeviceView) (map[string]string, error) {
 		if _, duplicate := result[endpoint.Tag]; duplicate {
 			return nil, errors.New("runtime sender keys are duplicated")
 		}
-		if _, err := wireGuardAccessPrivate(endpoint.PrivateKey); err != nil {
+
+		owned, hasOwned, err := ownedWireGuard(view.Resources, view.DeviceID)
+		if err != nil {
 			return nil, err
 		}
-		result[endpoint.Tag] = endpoint.PrivateKey
+		expectedTag := wireGuardSharedCredential
+		if hasOwned {
+			expectedTag = ResourceInboundTag(owned.ID)
+		}
+		if endpoint.Tag != expectedTag {
+			return nil, errors.New("runtime WG endpoint is not shared")
+		}
+		if _, duplicate := result[wireGuardSharedCredential]; duplicate {
+			return nil, errors.New("duplicate shared WG identity")
+		}
+		if hasOwned {
+			if endpoint.PrivateKey != "" {
+				return nil, errors.New("fixed WG private key must remain local")
+			}
+		} else {
+			if _, err := wireGuardAccessPrivate(endpoint.PrivateKey); err != nil {
+				return nil, err
+			}
+		}
+		result[wireGuardSharedCredential] = endpoint.PrivateKey
 	}
 	return result, nil
 }
@@ -136,12 +157,19 @@ func permissionPath(view DeviceView, permission InboundCredential) (transportPat
 
 func validateViewResources(view DeviceView) error {
 	resources := map[string]TransportResource{}
+	wgOwners := map[string]bool{}
 	for i, resource := range view.Resources {
 		if resource.Validate() != nil || validateCurrentTransportPayload(resource) != nil || (resource.Kind != "wireguard" && resource.Kind != "hysteria2") || i > 0 && view.Resources[i-1].ID >= resource.ID {
 			return errors.New("view resources are invalid or not uniquely sorted")
 		}
 		if resource.OwnerNodeID == view.DeviceID && !containsString(view.Responsibilities, "internet_egress") && !containsString(view.Responsibilities, "forward") {
 			return errors.New("owned resource has no serving responsibility")
+		}
+		if resource.Kind == "wireguard" {
+			if wgOwners[resource.OwnerNodeID] {
+				return errors.New("node has multiple WG resources; explicit consolidation required")
+			}
+			wgOwners[resource.OwnerNodeID] = true
 		}
 		resources[resource.ID] = resource
 	}
@@ -258,12 +286,21 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 		if view.DeviceID != sender && view.DeviceID != resource.OwnerNodeID {
 			return nil
 		}
-		private, peer, err := deriveWireGuardAccess(projection.NetworkID, devices[sender], resource)
+		private, peer, err := deriveWireGuardAccess(projection.NetworkID, devices[sender], resource, allResources...)
 		if err != nil {
 			return err
 		}
+
+		if fixed, found, err := ownedWireGuard(allResources, sender); err != nil {
+			return err
+		} else if found {
+			visibleResources[fixed.ID] = fixed
+		}
 		if view.DeviceID == sender {
-			credentials[WireGuardSenderTag(resource.ID)] = private
+			if prior, found := credentials[wireGuardSharedCredential]; found && prior != private {
+				return errors.New("WG sender identity is ambiguous")
+			}
+			credentials[wireGuardSharedCredential] = private
 		}
 		if view.DeviceID == resource.OwnerNodeID {
 			peers[wireGuardPeerOrder(peer)] = peer

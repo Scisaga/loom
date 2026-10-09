@@ -8,8 +8,10 @@ import (
 )
 
 // ResourceProbe is a disposable private execution projection, not another
-// identity or wire object. Never log it: Credential is an existing permission.
+// identity or wire object. Never log it: Hy2 Credential grants permission.
+// For WG, Credential contains only the running shared identity public key.
 type ResourceProbe struct {
+	NetworkID  string
 	Resource   TransportResource
 	Credential string
 	SpecDigest string
@@ -54,18 +56,15 @@ func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
 		if len(route.NodeChain) == 0 || route.NodeChain[0] != resource.OwnerNodeID {
 			return nil, errors.New("public first hop does not match the certified path")
 		}
-		tag := route.ID
+		credential := credentials[route.ID]
+		valid := ValidatePublicKey(credential) == nil
 		if resource.Kind == "wireguard" {
 			if !resource.AccessEnabled {
 				continue
 			}
-			tag = WireGuardSenderTag(resource.ID)
-		}
-		credential := credentials[tag]
-		valid := ValidatePublicKey(credential) == nil
-		if resource.Kind == "wireguard" {
-			_, err := wireGuardAccessPrivate(credential)
-			valid = err == nil
+			_, public, err := sharedWireGuardIdentity(view, credentials)
+			credential = public
+			valid = err == nil && validateWireGuardPublicKey(public) == nil
 		}
 		if !valid {
 			return nil, errors.New("public first hop has no authorized credential")
@@ -74,14 +73,16 @@ func FirstHopProbes(view DeviceView) ([]ResourceProbe, error) {
 		if err != nil {
 			return nil, err
 		}
-		digest, err := digestContractValue("loom-resource-probe-spec-v3\x00", map[string]any{
-			"device_id": view.DeviceID, "resource": resource, "dns_servers": append([]string{}, view.DNSServers...), "credential_digest": binding,
-		})
+		spec := map[string]any{"device_id": view.DeviceID, "resource": resource, "dns_servers": append([]string{}, view.DNSServers...), "credential_digest": binding}
+		if resource.Kind == "wireguard" {
+			spec["network_id"] = view.NetworkID
+		}
+		digest, err := digestContractValue("loom-resource-probe-spec-v3\x00", spec)
 		if err != nil {
 			return nil, err
 		}
 		seen[resource.ID] = true
-		result = append(result, ResourceProbe{Resource: resource, Credential: credential, SpecDigest: digest})
+		result = append(result, ResourceProbe{NetworkID: view.NetworkID, Resource: resource, Credential: credential, SpecDigest: digest})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Resource.ID < result[j].Resource.ID })
 	return result, nil

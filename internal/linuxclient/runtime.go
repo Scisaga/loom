@@ -187,7 +187,7 @@ func accessRuntimeConfigForCapture(view control.DeviceView, secret string, endpo
 			return "", err
 		}
 	}
-	return clientadapter.WithTUNDomainDNS(config)
+	return config, nil
 }
 
 // The workload namespace has no physical NIC. Its private website addresses
@@ -353,6 +353,10 @@ func generationConfigs(view control.DeviceView, secret string, exclusions []stri
 		if err != nil {
 			return "", "", err
 		}
+	}
+	config, err = clientadapter.WithTUNDomainDNS(config)
+	if err != nil {
+		return "", "", err
 	}
 	config, err = withTUNUnderlay(config)
 	return config, server, err

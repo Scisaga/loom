@@ -31,7 +31,7 @@ func observeLinks(ctx context.Context, view control.DeviceView, _ wireGuardExecu
 		at := now()
 		pending, cancel := context.WithTimeout(ctx, 3*time.Second)
 		started := time.Now()
-		probeErr := clientadapter.ProbeWireGuard(pending, resources[link.ResourceID])
+		probeErr := clientadapter.ProbeWireGuard(pending, view.NetworkID, resources[link.ResourceID])
 		duration := time.Since(started).Milliseconds()
 		cancel()
 		if ctx.Err() != nil {

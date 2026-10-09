@@ -50,7 +50,7 @@ func TestTransportReplacementPreservesProtectedBytesAndFailureLeavesAuthority(t 
 	}
 }
 
-func historicalTransportState(t *testing.T, state State) []byte {
+func historicalTransportState(t *testing.T, state State, independentWG ...bool) []byte {
 	t.Helper()
 	current, err := EncodeIdentityState(state)
 	if err != nil {
@@ -60,7 +60,11 @@ func historicalTransportState(t *testing.T, state State) []byte {
 	json.Unmarshal(current, &identity)
 	json.Unmarshal(identity["certified_lkg"], &envelope)
 	json.Unmarshal(envelope["view"], &view)
-	delete(view, "network_id")
+	if len(independentWG) == 0 {
+		delete(view, "network_id")
+	} else {
+		view["runtime_profile"], _ = json.Marshal(map[string]any{"config": `{"endpoints":[{"type":"wireguard","tag":"wg-send.demo-receiver"}]}`})
+	}
 	envelope["view"], _ = json.Marshal(view)
 	sum := sha256.Sum256(append([]byte("loom-device-view-digest-v3\x00"), envelope["view"]...))
 	envelope["view_digest"], _ = json.Marshal("sha256:" + hex.EncodeToString(sum[:]))
@@ -147,4 +151,44 @@ func mustStateBytes(t *testing.T, state State) []byte {
 		t.Fatal(err)
 	}
 	return body
+}
+
+func TestSharedWGReplacementPreservesCurrentProductionIdentity(t *testing.T) {
+	invite, envelope := schema3Fixture(t, "linux")
+	path := filepath.Join(t.TempDir(), "identity")
+	store, err := OpenForPlatform(path, invite, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLKG(envelope(store.PublicKey(), 7)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReserveReportSequence(); err != nil {
+		t.Fatal(err)
+	}
+	original := historicalTransportState(t, store.state, true)
+	if _, err := DecodeIdentityState(original); err == nil {
+		t.Fatal("retired WG entered ordinary runtime decoder")
+	}
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(t.TempDir(), "original")
+	for _, sameOrOlder := range []control.DeviceViewEnvelope{envelope(store.PublicKey(), 6), envelope(store.PublicKey(), 7)} {
+		if MigrateTransportFile(path, evidence, sameOrOlder, nil) == nil {
+			t.Fatal("WG replacement lowered or reused the frontier")
+		}
+	}
+	next := envelope(store.PublicKey(), 8, revokeView)
+	if err := MigrateTransportFile(path, evidence, next, nil); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := os.ReadFile(evidence)
+	loaded, err := Load(path)
+	if err != nil || !bytes.Equal(saved, original) || !fixedIdentityEqual(loaded.state, store.state) || loaded.state.ReportSequence != 1 || loaded.state.HighWater[0].Sequence != 8 || len(loaded.LKG().View.Routes) != 0 {
+		t.Fatal("shared WG migration lost original evidence, identity, progress or revocation", err)
+	}
+	if _, err := ReplaceTransportLKG(bytes.Replace(original, []byte("wg-send.demo-receiver"), []byte("wg-send.demo-tampered"), 1), next); err == nil {
+		t.Fatal("historical WG signature ignored")
+	}
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/netip"
-	"sort"
 	"sync"
 )
 
@@ -86,21 +85,6 @@ func WireGuardAccessAddress(resource TransportResource, peerKey string) (netip.A
 	return netip.AddrFrom16(address), nil
 }
 
-func WireGuardIPv4Prefix(network string, resource TransportResource) (netip.Prefix, error) {
-	if ValidateID(network) != nil || resource.Kind != "wireguard" || resource.Validate() != nil || resource.AccessHY2ResourceID != "" {
-		return netip.Prefix{}, errors.New("invalid WireGuard mapping binding")
-	}
-	body, err := CanonicalEncode(map[string]any{"network_id": network, "resource_id": resource.ID, "receiver_public_key": *resource.Authentication.PublicKey})
-	if err != nil {
-		return netip.Prefix{}, err
-	}
-	digest := sha256.Sum256(append([]byte("loom-wg-ipv4-prefix-v3\x00"), body...))
-	var address [16]byte
-	copy(address[:12], digest[:12])
-	address[0] = 0xfd
-	return netip.PrefixFrom(netip.AddrFrom16(address), 96), nil
-}
-
 func WireGuardPacketSource(network string, permission InboundCredential, publicKey string) (netip.Addr, error) {
 	if ValidateID(network) != nil || permission.Validate() != nil || validateWireGuardPublicKey(publicKey) != nil {
 		return netip.Addr{}, errors.New("invalid WireGuard business source binding")
@@ -116,18 +100,18 @@ func WireGuardPacketSource(network string, permission InboundCredential, publicK
 	return netip.AddrFrom16(address), nil
 }
 
-func WireGuardSenderTag(resourceID string) string { return "wg-send." + resourceID }
-func wireGuardAccessTag(resourceID string) string { return WireGuardSenderTag(resourceID) }
-
-func deriveWireGuardAccess(network string, source DeviceAuthorization, resource TransportResource) (string, WireGuardAccessPeer, error) {
+func deriveWireGuardAccess(network string, source DeviceAuthorization, resource TransportResource, fixedResources ...TransportResource) (string, WireGuardAccessPeer, error) {
 	if ValidateID(network) != nil || source.Validate() != nil || resource.Kind != "wireguard" || resource.Validate() != nil || resource.AccessHY2ResourceID != "" {
 		return "", WireGuardAccessPeer{}, errors.New("WireGuard derivation has invalid input")
 	}
-	digest, err := digestContractValue("loom-resource-auth-v3\x00", resource.Authentication)
+	fixed, found, err := ownedWireGuard(fixedResources, source.ID)
 	if err != nil {
 		return "", WireGuardAccessPeer{}, err
 	}
-	info, err := CanonicalEncode(map[string]any{"network_id": network, "device_id": source.ID, "resource_id": resource.ID, "resource_auth_digest": digest, "receiver_node_id": resource.OwnerNodeID, "purpose": "wireguard-access"})
+	if found {
+		return "", WireGuardAccessPeer{ResourceID: resource.ID, DeviceID: source.ID, PublicKey: *fixed.Authentication.PublicKey}, nil
+	}
+	info, err := CanonicalEncode(map[string]any{"network_id": network, "device_id": source.ID, "purpose": "wireguard-access"})
 	if err != nil {
 		return "", WireGuardAccessPeer{}, err
 	}
@@ -160,32 +144,6 @@ func wireGuardAccessPrivate(encoded string) (*ecdh.PrivateKey, error) {
 	return ecdh.X25519().NewPrivateKey(key)
 }
 
-func wireGuardSenderEndpoint(network string, resource TransportResource, credential string, addresses []string) (map[string]any, error) {
-	private, err := wireGuardAccessPrivate(credential)
-	if err != nil {
-		return nil, err
-	}
-	base, err := WireGuardAccessAddress(resource, base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()))
-	if err != nil {
-		return nil, err
-	}
-	prefix, err := WireGuardIPv4Prefix(network, resource)
-	if err != nil {
-		return nil, err
-	}
-	addresses = append(append([]string{}, addresses...), base.String()+"/128")
-	sort.Strings(addresses)
-	for i, address := range addresses {
-		if i > 0 && addresses[i-1] == address {
-			return nil, errors.New("WireGuard source addresses conflict")
-		}
-	}
-	public, _ := base64.RawURLEncoding.DecodeString(*resource.Authentication.PublicKey)
-	return map[string]any{"type": "wireguard", "tag": WireGuardSenderTag(resource.ID), "system": false,
-		"private_key": credential, "address": addresses, "inet4_mapped_prefix": prefix.String(),
-		"peers": []any{map[string]any{"address": resource.DialHost, "port": resource.DialPort, "public_key": base64.StdEncoding.EncodeToString(public), "allowed_ips": []string{"::/0"}}}}, nil
-}
-
 func validateWireGuardAccessPeers(view DeviceView, resources map[string]TransportResource, policies map[string]NetworkPolicy) error {
 	if view.WireGuardPeers != nil && len(view.WireGuardPeers) == 0 {
 		return errors.New("empty WireGuard peers must be omitted")
@@ -209,6 +167,10 @@ func validateWireGuardAccessPeers(view DeviceView, resources map[string]Transpor
 		if peer.Validate() != nil || !wanted[order] || resource.Kind != "wireguard" || resource.OwnerNodeID != view.DeviceID || peer.DeviceID == view.DeviceID ||
 			index > 0 && wireGuardPeerOrder(view.WireGuardPeers[index-1]) >= order || keys[peer.PublicKey] || peer.PublicKey == *resource.Authentication.PublicKey {
 			return errors.New("WireGuard peer has no unique current receiving permission")
+		}
+		fixed, found, err := ownedWireGuard(view.Resources, peer.DeviceID)
+		if err != nil || found && peer.PublicKey != *fixed.Authentication.PublicKey {
+			return errors.New("WG peer differs from its fixed node identity")
 		}
 		base, err := WireGuardAccessAddress(resource, peer.PublicKey)
 		if err != nil || addresses[base] {

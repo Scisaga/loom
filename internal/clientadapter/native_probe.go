@@ -63,7 +63,7 @@ func (d diagnosticDialer) DialContext(ctx context.Context, network, address stri
 
 // ProbeWireGuard proves an authenticated DNS request and response through the
 // running native WG sender. It is neither a Service success nor an ICMP probe.
-func ProbeWireGuard(ctx context.Context, resource control.TransportResource) error {
+func ProbeWireGuard(ctx context.Context, network string, resource control.TransportResource) error {
 	diagnostic, ok := ctx.Value(nativeDiagnosticKey{}).(nativeDiagnostic)
 	if !ok {
 		return errors.New("no running native diagnostic entry")
@@ -119,7 +119,10 @@ func ProbeWireGuard(ctx context.Context, resource control.TransportResource) err
 	if decoded.Unpack(response) != nil || !decoded.Header.Response || decoded.Header.ID != message.Header.ID || decoded.Header.RCode != dnsmessage.RCodeSuccess || len(decoded.Questions) != 1 || decoded.Questions[0] != question {
 		return errors.New("native DNS response does not match the request")
 	}
-	pool := netip.MustParsePrefix(control.ExecutionDNSIPv6Range)
+	pool, err := control.WireGuardTargetPrefix(network, resource)
+	if err != nil {
+		return err
+	}
 	for _, answer := range decoded.Answers {
 		if value, ok := answer.Body.(*dnsmessage.AAAAResource); ok && answer.Header.Name == question.Name && pool.Contains(netip.AddrFrom16(value.AAAA)) {
 			return nil

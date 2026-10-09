@@ -113,6 +113,11 @@ func TestNativeProjectionKeepsOneSessionAndSeparatesIsolatedCapture(t *testing.T
 }
 
 func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
+	testRealNativeShared(t, false)
+}
+func TestRealNativeSharedResourcePeers(t *testing.T) { testRealNativeShared(t, true) }
+func testRealNativeShared(t *testing.T, multi bool) {
+	shared := []bool{multi}
 	executable := os.Getenv("LOOM_LINUX_MIXED_EXECUTABLE")
 	if executable == "" {
 		t.Skip("set LOOM_LINUX_MIXED_EXECUTABLE in a fresh network namespace")
@@ -130,6 +135,41 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 		}
 	}
 	p, keys, input, at := nativeProjectionFixture(t)
+	managementPeers := []string{"demo-entry"}
+	if len(shared) > 0 && shared[0] {
+		var receiver control.TransportResource
+		for _, r := range p.NetworkIntent.Resources {
+			if r.ID == "demo-exit-wg" {
+				receiver = r
+			}
+		}
+		dns, _ := control.WireGuardAccessAddress(receiver, "")
+		for index, id := range []string{"demo-other-a", "demo-other-b"} {
+			seed := sha256.Sum256([]byte(id))
+			key, _ := ecdh.X25519().NewPrivateKey(seed[:])
+			public := base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
+			device := p.DeviceAuthorizations[1]
+			device.ID = id
+			device.Name = id
+			device.DevicePublicKey = public
+			device.RuntimeKey = public
+			p.DeviceAuthorizations = append(p.DeviceAuthorizations, device)
+			local := []string{fmt.Sprintf("192.0.2.%d/32", 53+index)}
+			resource := control.TransportResource{ID: id + "-wg", Kind: "wireguard", OwnerNodeID: id, ListenerID: id + "-wg", DialHost: fmt.Sprintf("192.0.2.%d", 13+index), DialPort: 51823 + index, Authentication: control.ResourceAuthentication{PublicKey: &public, LocalAddresses: &local}}
+			p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, resource)
+			p.NetworkIntent.Links = append(p.NetworkIntent.Links, control.NetworkLink{ID: id + "-link", FromNodeID: id, ToNodeID: "demo-exit", FromResourceID: resource.ID, ResourceID: receiver.ID, InitiatorNodeID: id, Purpose: "relay", ProbeTarget: control.LinkProbeTarget{ResourceID: receiver.ID, Host: dns.String(), Port: 53, Action: "wireguard_dns"}})
+			path := filepath.Join(t.TempDir(), "node.key")
+			if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(seed[:])), 0600); err != nil {
+				t.Fatal(err)
+			}
+			keys[id] = path
+			managementPeers = append(managementPeers, id)
+		}
+		sort.Slice(p.DeviceAuthorizations, func(i, j int) bool { return p.DeviceAuthorizations[i].ID < p.DeviceAuthorizations[j].ID })
+		sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
+		sort.Slice(p.NetworkIntent.Links, func(i, j int) bool { return p.NetworkIntent.Links[i].ID < p.NetworkIntent.Links[j].ID })
+	}
+
 	// Exercise the older-kernel rule even when this test host supports live
 	// TUN renames. All actual interface operations remain in this test netns.
 	ip, err := exec.LookPath("ip")
@@ -233,6 +273,9 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 		return view, config, tx
 	}
 	exitView, exitConfig, tx := render("demo-exit", true)
+	if multi && (len(tx.owned) != 1 || len(tx.owned[0].peerLinks()) != 3) {
+		t.Fatal("three neighbors did not share exactly one native interface")
+	}
 	exitProcess, exitDone, stopExit := start("exit", exitConfig)
 	defer func() {
 		stopExit()
@@ -324,41 +367,28 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 	}
 	for _, r := range client.Resources {
 		if r.ID == "demo-entry-wg" {
-			if err := clientadapter.ProbeWireGuard(diagnostic, r); err != nil {
+			if err := clientadapter.ProbeWireGuard(diagnostic, client.NetworkID, r); err != nil {
 				t.Fatal("native first hop diagnostic", err)
 			}
 		}
 	}
-	// Fixed node management identity has its exact pre-existing return route.
-	private, _, _ := nativePrivateKey(keys["demo-entry"])
-	var target control.TransportResource
-	for _, r := range p.NetworkIntent.Resources {
-		if r.ID == "demo-exit-wg" {
-			target = r
+	// Stop the entry before testing its fixed key with an independent standard
+	// kernel peer. Two simultaneous owners would cause WG endpoint roaming.
+	stopEntry()
+	for peerIndex, peerID := range managementPeers {
+		private, _, _ := nativePrivateKey(keys[peerID])
+		var peerResource, target control.TransportResource
+		for _, r := range p.NetworkIntent.Resources {
+			if r.ID == peerID+"-wg" {
+				peerResource = r
+			}
+			if r.ID == "demo-exit-wg" {
+				target = r
+			}
 		}
+		nativeManagementPeer(t, peerIndex, private, peerResource, target)
 	}
-	public, _ := base64.RawURLEncoding.DecodeString(*target.Authentication.PublicKey)
-	management := map[string]any{"endpoints": []any{map[string]any{"type": "wireguard", "tag": "demo-management", "system": false, "address": []string{"192.0.2.51/32"}, "private_key": private, "peers": []any{map[string]any{"address": target.DialHost, "port": target.DialPort, "public_key": base64.StdEncoding.EncodeToString(public), "allowed_ips": []string{"0.0.0.0/0"}}}}}, "inbounds": []any{map[string]any{"type": "mixed", "listen": "127.0.0.1", "listen_port": 1081}}, "route": map[string]any{"final": "demo-management"}}
-	body, _ := json.Marshal(management)
-	start("management", string(body))
-	mgmtURL, _ := url.Parse("http://127.0.0.1:1081")
-	mgmtTransport := &http.Transport{Proxy: http.ProxyURL(mgmtURL), DisableKeepAlives: true}
-	defer mgmtTransport.CloseIdleConnections()
-	mgmtClient := http.Client{Transport: mgmtTransport, Timeout: 2 * time.Second}
-	var managementErr error
-	for i := 0; i < 10; i++ {
-		response, err := mgmtClient.Get("http://192.0.2.52:18080/demo")
-		managementErr = err
-		if err == nil {
-			io.Copy(io.Discard, response.Body)
-			response.Body.Close()
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if managementErr != nil {
-		t.Fatal("original management identity lost its return path", managementErr)
-	}
+
 	if err := tx.readbackNative(); err != nil {
 		t.Fatal(err)
 	}
@@ -403,4 +433,53 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 		}
 	}
 	fmt.Fprintln(io.Discard, "native segmented transport verified")
+}
+
+// The kernel WG socket stays in this test's underlay namespace while its
+// interface moves into a child namespace. A host-local route cannot fake the
+// management round trip, and no extra Loom sender instance is constructed.
+func nativeManagementPeer(t *testing.T, index int, private string, peer, target control.TransportResource) {
+	t.Helper()
+	child := exec.Command("unshare", "--net", "--", "sleep", "120")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { child.Process.Kill(); child.Wait() }()
+	pid := fmt.Sprint(child.Process.Pid)
+	for deadline := time.Now().Add(time.Second); ; {
+		mine, _ := os.Readlink("/proc/self/ns/net")
+		other, _ := os.Readlink("/proc/" + pid + "/ns/net")
+		if other != "" && mine != other {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("management peer namespace not ready")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	name := fmt.Sprintf("demo-mgmt%d", index)
+	run := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("isolated management setup: %v %s", err, out)
+		}
+	}
+	run("ip", "link", "add", name, "type", "wireguard")
+	defer exec.Command("ip", "link", "delete", name).Run()
+	public, _ := base64.RawURLEncoding.DecodeString(*target.Authentication.PublicKey)
+	command := exec.Command("wg", "set", name, "private-key", "/dev/stdin", "peer", base64.StdEncoding.EncodeToString(public), "endpoint", net.JoinHostPort(target.DialHost, fmt.Sprint(target.DialPort)), "allowed-ips", (*target.Authentication.LocalAddresses)[0])
+	command.Stdin = strings.NewReader(private + "\n")
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("isolated WG peer: %v %s", err, out)
+	}
+	run("ip", "link", "set", name, "netns", pid)
+	run("nsenter", "-t", pid, "-n", "ip", "link", "set", "lo", "up")
+	run("nsenter", "-t", pid, "-n", "ip", "address", "add", (*peer.Authentication.LocalAddresses)[0], "dev", name)
+	run("nsenter", "-t", pid, "-n", "ip", "link", "set", name, "up")
+	run("nsenter", "-t", pid, "-n", "ip", "route", "add", (*target.Authentication.LocalAddresses)[0], "dev", name)
+	address := strings.Split((*target.Authentication.LocalAddresses)[0], "/")[0]
+	out, err := exec.Command("nsenter", "-t", pid, "-n", "curl", "--noproxy", "*", "--fail", "--silent", "--max-time", "3", "http://"+address+":18080/demo").CombinedOutput()
+	if err != nil || string(out) != "demo-business" {
+		t.Fatal("original management identity lost its WG return path", err)
+	}
 }

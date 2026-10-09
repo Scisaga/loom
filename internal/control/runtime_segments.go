@@ -1,7 +1,6 @@
 package control
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -10,7 +9,6 @@ import (
 )
 
 const LinkProbeInbound = "loom-link-probe"
-const ExecutionDNSIPv6Range = "2001:db8:8000::/49"
 
 func ResourceInboundTag(resourceID string) string { return "resource:" + resourceID }
 func WireGuardBaseTag(resourceID string) string   { return "wg-base." + resourceID }
@@ -46,7 +44,7 @@ func (r *segmentedRuntime) useSender(resourceID string) error {
 	if resource.Kind != "wireguard" || resource.OwnerNodeID == r.view.DeviceID {
 		return errors.New("WG sender has no distinct receiving resource")
 	}
-	if _, err := wireGuardAccessPrivate(r.credentials[WireGuardSenderTag(resourceID)]); err != nil {
+	if _, _, err := sharedWireGuardIdentity(r.view, r.credentials); err != nil {
 		return err
 	}
 	r.sources[resourceID] = map[string]bool{}
@@ -60,13 +58,16 @@ func (r *segmentedRuntime) addWG(permission InboundCredential, tag string) error
 	if err := r.useSender(permission.ResourceID); err != nil {
 		return err
 	}
-	private, _ := wireGuardAccessPrivate(r.credentials[WireGuardSenderTag(permission.ResourceID)])
-	address, err := WireGuardPacketSource(r.view.NetworkID, permission, base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()))
+	tagEndpoint, public, err := sharedWireGuardIdentity(r.view, r.credentials)
+	if err != nil {
+		return err
+	}
+	address, err := WireGuardPacketSource(r.view.NetworkID, permission, public)
 	if err != nil {
 		return err
 	}
 	r.sources[permission.ResourceID][address.String()+"/128"] = true
-	if err := r.addOutbound(map[string]any{"type": "direct", "tag": tag, "detour": WireGuardSenderTag(permission.ResourceID), "inet6_bind_address": address.String()}); err != nil {
+	if err := r.addOutbound(map[string]any{"type": "direct", "tag": tag, "detour": tagEndpoint, "inet6_bind_address": address.String()}); err != nil {
 		return err
 	}
 	r.dnsRules = append(r.dnsRules, map[string]any{"outbound": []string{tag}, "server": "wg-dns." + permission.ResourceID})
@@ -282,24 +283,30 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 	}
 	sort.Strings(ids)
 	endpoints := []any{}
+	_, hasOwned, err := ownedWireGuard(r.view.Resources, r.view.DeviceID)
+	if err != nil {
+		return nil, err
+	}
+	var endpointTag, senderPublic string
+	if len(ids) > 0 || hasOwned {
+		shared, err := sharedWireGuardEndpoint(r.view, r.credentials, r.sources)
+		if err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, shared)
+		endpointTag, senderPublic, err = sharedWireGuardIdentity(r.view, r.credentials)
+		if err != nil {
+			return nil, err
+		}
+	}
 	probeRules := []any{}
 	for _, id := range ids {
-		addresses := []string{}
-		for source := range r.sources[id] {
-			addresses = append(addresses, source)
-		}
 		resource := r.resources[id]
-		endpoint, err := wireGuardSenderEndpoint(r.view.NetworkID, resource, r.credentials[WireGuardSenderTag(id)], addresses)
+		base, err := WireGuardAccessAddress(resource, senderPublic)
 		if err != nil {
 			return nil, err
 		}
-		endpoints = append(endpoints, endpoint)
-		private, _ := wireGuardAccessPrivate(r.credentials[WireGuardSenderTag(id)])
-		base, err := WireGuardAccessAddress(resource, base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()))
-		if err != nil {
-			return nil, err
-		}
-		if err := r.addOutbound(map[string]any{"type": "direct", "tag": WireGuardBaseTag(id), "detour": WireGuardSenderTag(id), "inet6_bind_address": base.String()}); err != nil {
+		if err := r.addOutbound(map[string]any{"type": "direct", "tag": WireGuardBaseTag(id), "detour": endpointTag, "inet6_bind_address": base.String()}); err != nil {
 			return nil, err
 		}
 		dns, err := WireGuardAccessAddress(resource, "")
@@ -315,8 +322,15 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 	if len(incomingDNS) > 0 {
 		servers = append(servers, map[string]any{"tag": "wg-execution-dns", "address": "fakeip"})
 		dns["servers"] = servers
-		dns["fakeip"] = map[string]any{"enabled": true, "inet4_range": "198.18.0.0/15", "inet6_range": ExecutionDNSIPv6Range}
-		pool := netip.MustParsePrefix(ExecutionDNSIPv6Range)
+		resource, found, err := ownedWireGuard(r.view.Resources, r.view.DeviceID)
+		if err != nil || !found {
+			return nil, errors.New("execution DNS has no shared receiving resource")
+		}
+		pool, err := WireGuardTargetPrefix(r.view.NetworkID, resource)
+		if err != nil {
+			return nil, err
+		}
+		dns["fakeip"] = map[string]any{"enabled": true, "inet6_range": pool.String()}
 		for _, service := range r.view.Services {
 			for _, matcher := range service.Matchers {
 				if matcher.Kind == "ip_prefix" {

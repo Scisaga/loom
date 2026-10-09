@@ -115,6 +115,12 @@ func bridgeHybridCapture(capture, server string, view control.DeviceView, secret
 			}
 		}
 		dns["rules"] = rules
+		delete(dns, "fakeip")
+	}
+	// The capture no longer owns WG target addresses. Its TUN domain pool is
+	// added after the separation, while the server retains its execution pool.
+	if exp, ok := local["experimental"].(map[string]any); ok {
+		delete(exp, "cache_file")
 	}
 	// These are two deletable execution caches, never two accepted Views.
 	if exp, ok := host["experimental"].(map[string]any); ok {

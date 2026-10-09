@@ -9,10 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/netip"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -116,17 +114,21 @@ func appendNativeReceivers(config string, view control.DeviceView, profile wireG
 		if *resource.Authentication.PublicKey != public {
 			return "", errors.New("fixed WG key differs from receiving resource")
 		}
-		dns, err := control.WireGuardAccessAddress(resource, "")
-		if err != nil {
-			return "", err
+		var endpoint map[string]any
+		for _, raw := range endpoints {
+			value, ok := raw.(map[string]any)
+			if ok && value["tag"] == control.ResourceInboundTag(resource.ID) {
+				if endpoint != nil {
+					return "", errors.New("duplicate native WG endpoint")
+				}
+				endpoint = value
+			}
 		}
-		prefix, err := control.WireGuardIPv4Prefix(view.NetworkID, resource)
-		if err != nil {
-			return "", err
+		if endpoint == nil || len(endpoints) != 1 {
+			return "", errors.New("shared native WG endpoint is missing")
 		}
-		endpoint := map[string]any{"type": "wireguard", "tag": control.ResourceInboundTag(resource.ID), "system": false, "private_key": private, "listen_port": resource.DialPort, "inet4_mapped_prefix": prefix.String()}
-		addresses := []string{dns.String() + "/128"}
-		peers := []any{}
+		endpoint["private_key"] = private
+		addresses := []string{}
 		hostSources := []string{}
 		for _, peer := range profile.WireGuard {
 			if peer.LinkID != resource.ID {
@@ -136,16 +138,6 @@ func appendNativeReceivers(config string, view control.DeviceView, profile wireG
 				addresses = []string{peer.LocalAddress}
 			}
 			hostSources = append(hostSources, peer.AllowedIP)
-			value := map[string]any{"public_key": peer.PeerPublicKey, "allowed_ips": []string{peer.AllowedIP}}
-			if peer.Mode == "initiator" {
-				host, port, err := net.SplitHostPort(peer.Endpoint)
-				if err != nil {
-					return "", err
-				}
-				number, _ := strconv.Atoi(port)
-				value["address"], value["port"], value["persistent_keepalive_interval"] = host, number, 25
-			}
-			peers = append(peers, value)
 		}
 		if len(hostSources) > 0 {
 			name := resource.ListenerID
@@ -156,37 +148,11 @@ func appendNativeReceivers(config string, view control.DeviceView, profile wireG
 					}
 				}
 			}
+			endpoint["stack_address"] = endpoint["address"]
 			endpoint["system"], endpoint["name"], endpoint["host_sources"] = true, name, hostSources
+			endpoint["address"] = addresses
 		}
-		for _, peer := range view.WireGuardPeers {
-			if peer.ResourceID != resource.ID {
-				continue
-			}
-			base, err := control.WireGuardAccessAddress(resource, peer.PublicKey)
-			if err != nil {
-				return "", err
-			}
-			allowed := []string{base.String() + "/128"}
-			for _, permission := range view.InboundCredentials {
-				if permission.ResourceID == resource.ID && permission.SenderID == peer.DeviceID {
-					source, err := control.WireGuardPacketSource(view.NetworkID, permission, peer.PublicKey)
-					if err != nil {
-						return "", err
-					}
-					allowed = append(allowed, source.String()+"/128")
-				}
-			}
-			sort.Strings(allowed)
-			key, _ := base64.RawURLEncoding.DecodeString(peer.PublicKey)
-			peers = append(peers, map[string]any{"public_key": base64.StdEncoding.EncodeToString(key), "allowed_ips": allowed})
-		}
-		sort.Strings(addresses)
-		sort.Strings(hostSources)
-		sort.Slice(peers, func(i, j int) bool {
-			return peers[i].(map[string]any)["public_key"].(string) < peers[j].(map[string]any)["public_key"].(string)
-		})
-		endpoint["address"], endpoint["peers"] = addresses, peers
-		endpoints = append(endpoints, endpoint)
+
 	}
 	document["endpoints"] = endpoints
 	body, err := json.Marshal(document)

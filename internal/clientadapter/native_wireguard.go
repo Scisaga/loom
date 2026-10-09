@@ -3,6 +3,7 @@ package clientadapter
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 
 	"loom/internal/control"
@@ -18,9 +19,12 @@ func ValidateNativeSenders(raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &endpoints); err != nil {
 		return err
 	}
+	if len(endpoints) > 1 {
+		return errors.New("WG must share one native instance")
+	}
 	for _, endpoint := range endpoints {
 		tag, _ := endpoint["tag"].(string)
-		if endpoint["type"] != "wireguard" || endpoint["system"] != false || !strings.HasPrefix(tag, "wg-send.") || endpoint["name"] != nil || endpoint["host_sources"] != nil || endpoint["netns"] != nil {
+		if endpoint["type"] != "wireguard" || endpoint["system"] != false || (tag != "wg-shared" && (!strings.HasPrefix(tag, "resource:") || control.ValidateID(strings.TrimPrefix(tag, "resource:")) != nil)) || endpoint["name"] != nil || endpoint["host_sources"] != nil || endpoint["stack_address"] != nil || endpoint["netns"] != nil {
 			return errors.New("capture requires an explicit native userspace WG sender")
 		}
 	}
@@ -36,14 +40,25 @@ func WithNativeProbe(config, secret string) (string, error) {
 	if err := json.Unmarshal([]byte(config), &document); err != nil {
 		return "", err
 	}
-	endpoints, _ := document["endpoints"].([]any)
-	users := []any{}
-	for _, raw := range endpoints {
-		endpoint := raw.(map[string]any)
-		tag, _ := endpoint["tag"].(string)
-		if strings.HasPrefix(tag, "wg-send.") {
-			users = append(users, map[string]any{"username": strings.TrimPrefix(tag, "wg-send."), "password": secret})
+	outbounds, _ := document["outbounds"].([]any)
+	ids := []string{}
+	for _, raw := range outbounds {
+		outbound, ok := raw.(map[string]any)
+		if !ok {
+			return "", errors.New("invalid native outbound")
 		}
+		tag, _ := outbound["tag"].(string)
+		if strings.HasPrefix(tag, "wg-base.") && outbound["type"] == "direct" {
+			ids = append(ids, strings.TrimPrefix(tag, "wg-base."))
+		}
+	}
+	sort.Strings(ids)
+	users := []any{}
+	for i, id := range ids {
+		if control.ValidateID(id) != nil || i > 0 && id == ids[i-1] {
+			return "", errors.New("invalid native diagnostic resource")
+		}
+		users = append(users, map[string]any{"username": id, "password": secret})
 	}
 	if len(users) == 0 {
 		return config, nil

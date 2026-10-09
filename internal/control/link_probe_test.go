@@ -2,7 +2,6 @@ package control
 
 import (
 	"bytes"
-	"encoding/base64"
 	"net"
 	"reflect"
 	"testing"
@@ -23,18 +22,18 @@ func TestLinkProbeUsesNativeSenderWithoutServiceOrHy2Credential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	private, err := wireGuardAccessPrivate(keys[WireGuardSenderTag("demo-exit-wg")])
+	_, public, err := sharedWireGuardIdentity(from, keys)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(from.PolicyIDs) != 0 || len(from.InboundCredentials) != 0 || len(to.WireGuardPeers) != 1 || to.WireGuardPeers[0].DeviceID != "demo-entry" || to.WireGuardPeers[0].PublicKey != base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()) {
-		t.Fatal("native Link transport borrowed a Service or lost its sender")
+	if keys[wireGuardSharedCredential] != "" || len(from.PolicyIDs) != 0 || len(from.InboundCredentials) != 0 || len(to.WireGuardPeers) != 1 || to.WireGuardPeers[0].DeviceID != "demo-entry" || to.WireGuardPeers[0].PublicKey != public {
+		t.Fatal("native Link transport borrowed a Service or lost its fixed sender")
 	}
 	body, err := CanonicalEncode(to)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(body, []byte(keys[WireGuardSenderTag("demo-exit-wg")])) || bytes.Contains(body, []byte("link_probe_credentials")) {
+	if bytes.Contains(body, []byte("private_key")) || bytes.Contains(body, []byte("link_probe_credentials")) {
 		t.Fatal("native receiver obtained another sender's private key or proxy credential")
 	}
 	var decoded DeviceView
@@ -46,9 +45,8 @@ func TestLinkProbeUsesNativeSenderWithoutServiceOrHy2Credential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remaining, err := profileCredentials(removed)
-	if err != nil || remaining[WireGuardSenderTag("demo-exit-wg")] != "" {
-		t.Fatal("removed Link retained its sender", err)
+	if len(removed.WireGuardPeers) != 0 || bytes.Contains([]byte(removed.RuntimeProfile.Config), []byte(WireGuardBaseTag("demo-exit-wg"))) {
+		t.Fatal("removed Link retained its outgoing binding")
 	}
 }
 

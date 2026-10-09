@@ -13,13 +13,17 @@ import (
 )
 
 type singBoxEndpoint struct {
-	Type              string                `json:"type"`
-	Tag               string                `json:"tag"`
-	System            bool                  `json:"system"`
-	Address           []string              `json:"address"`
-	PrivateKey        string                `json:"private_key"`
-	Inet4MappedPrefix string                `json:"inet4_mapped_prefix"`
-	Peers             []singBoxEndpointPeer `json:"peers"`
+	Type         string                `json:"type"`
+	Tag          string                `json:"tag"`
+	System       bool                  `json:"system"`
+	Address      []string              `json:"address"`
+	PrivateKey   string                `json:"private_key"`
+	SourceRoutes []singBoxSourceRoute  `json:"source_routes"`
+	Peers        []singBoxEndpointPeer `json:"peers"`
+}
+type singBoxSourceRoute struct {
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
 }
 type singBoxEndpointPeer struct {
 	Address    string   `json:"address"`
@@ -29,8 +33,11 @@ type singBoxEndpointPeer struct {
 }
 
 func validateWindowsNativeEndpoints(c singBoxConfig, tags map[string]string) error {
+	if len(c.Endpoints) > 1 {
+		return errors.New("WG must share one native instance")
+	}
 	for _, endpoint := range c.Endpoints {
-		if endpoint.Type != "wireguard" || endpoint.System || !strings.HasPrefix(endpoint.Tag, "wg-send.") || control.ValidateID(strings.TrimPrefix(endpoint.Tag, "wg-send.")) != nil || tags[endpoint.Tag] != "" || len(endpoint.Address) == 0 || len(endpoint.Peers) != 1 {
+		if endpoint.Type != "wireguard" || endpoint.System || endpoint.Tag != "wg-shared" || tags[endpoint.Tag] != "" || len(endpoint.Address) == 0 || len(endpoint.Peers) == 0 {
 			return errors.New("invalid native userspace WG endpoint")
 		}
 		key, err := base64.StdEncoding.DecodeString(endpoint.PrivateKey)
@@ -38,20 +45,59 @@ func validateWindowsNativeEndpoints(c singBoxConfig, tags map[string]string) err
 			return errors.New("invalid native WG sender key")
 		}
 		clear(key)
-		prefix, err := netip.ParsePrefix(endpoint.Inet4MappedPrefix)
-		if err != nil || prefix.String() != endpoint.Inet4MappedPrefix || prefix != prefix.Masked() || !prefix.Addr().Is6() || !prefix.Addr().IsPrivate() || prefix.Bits() != 96 {
-			return errors.New("invalid resource IPv4 mapping")
-		}
+		local := map[string]bool{}
 		for i, text := range endpoint.Address {
 			address, err := netip.ParsePrefix(text)
 			if err != nil || address.String() != text || !address.Addr().Is6() || !address.Addr().IsPrivate() || address.Bits() != 128 || i > 0 && endpoint.Address[i-1] >= text {
 				return errors.New("invalid exact WG packet source")
 			}
+			local[address.Addr().String()] = true
 		}
-		peer := endpoint.Peers[0]
-		public, err := base64.StdEncoding.DecodeString(peer.PublicKey)
-		if err != nil || len(public) != 32 || base64.StdEncoding.EncodeToString(public) != peer.PublicKey || peer.Address == "" || peer.Port < 1 || peer.Port > 65535 || !reflect.DeepEqual(peer.AllowedIPs, []string{"::/0"}) {
-			return errors.New("invalid native WG receiver")
+		remote := map[netip.Prefix]int{}
+		previousKey := ""
+		for i, peer := range endpoint.Peers {
+			public, err := base64.StdEncoding.DecodeString(peer.PublicKey)
+			canonical := base64.RawURLEncoding.EncodeToString(public)
+			if err != nil || len(public) != 32 || base64.StdEncoding.EncodeToString(public) != peer.PublicKey || peer.Address == "" || peer.Port < 1 || peer.Port > 65535 || len(peer.AllowedIPs) != 2 || i > 0 && previousKey >= canonical {
+				return errors.New("invalid native WG receiver")
+			}
+			previousKey = canonical
+			pool, dns := false, false
+			for j, text := range peer.AllowedIPs {
+				prefix, err := netip.ParsePrefix(text)
+				if err != nil || prefix.String() != text || prefix != prefix.Masked() || !prefix.Addr().Is6() || !prefix.Addr().IsPrivate() || (prefix.Bits() != 64 && prefix.Bits() != 128) || j > 0 && peer.AllowedIPs[j-1] >= text {
+					return errors.New("invalid WG receiver address")
+				}
+				if prefix.Bits() == 64 {
+					pool = true
+				} else {
+					dns = true
+				}
+				for other := range remote {
+					if prefix.Overlaps(other) {
+						return errors.New("WG receiver addresses overlap")
+					}
+				}
+				for source := range local {
+					if prefix.Contains(netip.MustParseAddr(source)) {
+						return errors.New("WG receiver overlaps a local source")
+					}
+				}
+				remote[prefix] = i
+			}
+			if !pool || !dns {
+				return errors.New("WG receiver must bind its target pool and DNS")
+			}
+		}
+		if len(endpoint.SourceRoutes) != len(local) {
+			return errors.New("WG source route coverage differs")
+		}
+		for i, route := range endpoint.SourceRoutes {
+			prefix, err := netip.ParsePrefix(route.Destination)
+			_, found := remote[prefix]
+			if err != nil || prefix.String() != route.Destination || !found || !local[route.Source] || i > 0 && endpoint.SourceRoutes[i-1].Source >= route.Source {
+				return errors.New("invalid WG source destination binding")
+			}
 		}
 		tags[endpoint.Tag] = "wireguard"
 	}

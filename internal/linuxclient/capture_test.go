@@ -122,7 +122,7 @@ func TestMixedCaptureRejectsAdditionalFacilitiesAndImplicitRouting(t *testing.T)
 
 func TestNativeWGCaptureKeepsBusinessBindingAndUnderlaySeparate(t *testing.T) {
 	source := mixedSourceDocument()
-	wg := map[string]any{"type": "wireguard", "tag": "wg-send.demo-resource", "system": false, "address": []string{"fdab::2/128"}, "private_key": "demo-private-input", "inet4_mapped_prefix": "fdab:1::/96", "peers": []any{map[string]any{"address": "192.0.2.10", "port": 51820, "public_key": "demo-public-input", "allowed_ips": []string{"::/0"}}}}
+	wg := map[string]any{"type": "wireguard", "tag": "wg-shared", "system": false, "address": []string{"fdab::2/128"}, "private_key": "demo-private-input", "source_routes": []any{map[string]any{"source": "fdab::2", "destination": "fdab:1::/64"}}, "peers": []any{map[string]any{"address": "192.0.2.10", "port": 51820, "public_key": "demo-public-input", "allowed_ips": []string{"fdab:1::/64", "fdab:2::1/128"}}}}
 	business := source["outbounds"].([]any)[0].(map[string]any)
 	business["type"], business["detour"], business["inet6_bind_address"] = "direct", wg["tag"], "fdab::2"
 	source["endpoints"] = []any{wg}

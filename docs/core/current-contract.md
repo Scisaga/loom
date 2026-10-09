@@ -639,8 +639,8 @@ excluded_targets`；`candidate` 为完整原 RouteCandidate。Hy2 项另有非�
 公钥，既覆盖普通设备，也覆盖转发节点；不传出其他设备的 RuntimeKey。
 
 RuntimeProfile 表达本节点全部业务执行投影，服务节点也可持有它；是否启动 access capture
-只由 `responsibilities` 中的 access 决定。profile 的 `endpoints` 只保存本节点发起的用户态
-WG 会话与派生私钥，`outbounds/route/dns` 同时表达本机接入、接收授权和下一段业务转发。
+只由 `responsibilities` 中的 access 决定。profile 的 `endpoints` 至多保存一个本节点共享 WG 实例：拥有 WG 资源的节点使用资源固定公钥，
+私钥只由本机引用补齐；无自有资源的普通设备使用本设备唯一派生私钥。`outbounds/route/dns` 同时表达本机接入、接收授权和下一段业务转发。
 固定接收私钥与 listener 仍由 HostAdapter 的本机输入补齐。control 使用完整节点职责过滤
 最终出口，View 的 Routes 是签名确定的候选集合；消费端核对其中每项与 Service/Policy、
 资源及 Link 一致，但不得从部分资源集合重新补出未经签发的候选。
@@ -654,14 +654,15 @@ PolicyID、完整候选、接收资源和实际发送节点；下一 Link 或最
 | 层 | 唯一对应 |
 |---|---|
 | domain / signed persistent | 原设备授权、Service/Policy、资源与 Link；候选由这些事实确定 |
-| private wire / LKG | 接收权限、WG peer 公钥及当前发送者自己的派生传输私钥；不交付他人的 RuntimeKey |
+| private wire / LKG | 接收权限、WG peer 公钥及普通设备自己的唯一派生传输私钥；不交付他人的 RuntimeKey |
 | runtime | 首跳 Hy2 用户或 WG 精确来源地址 → 接收权限 → 目标检查 → 下一段或最终出网 |
 | UI / report | 原 Service、候选 ID、受管节点链、最终出口与真实业务结果；不展示运行地址作为新业务实体 |
 
-WG 接收端按资源共用监听；每个发送者到同一接收资源共用一个用户态 WG 会话。发送者包括普通
-access 和执行已授权中继的节点，其发送私钥分别从自己的 RuntimeKey 派生，不使用原始客户端
-私钥替别人发起连接。反向业务使用另一发送者的会话；不能把两方向的不同密钥或源地址混为
-同一个 peer。相同资源下的不同 Service、候选不重复创建握手会话或宿主接口。
+一个节点只有一个当前 WG 资源、固定密钥和 UDP listener；该实例同时发送、接收，所有邻居是
+同一 peer 集合。普通接入设备也只持有一个用户态实例和一个派生密钥。Service、候选和收发方向
+不产生新 WG 实例。节点使用原固定密钥，不向客户端交付它；普通设备的 RuntimeKey 根保持不变。
+不能给不同 peer 重复配置 `::/0`：标准 WG 按目的地址选 peer，重复默认网段不能表达同一目标的
+多个出口。旧多资源布局必须显式整合资源和 Link 后才能生成当前 View，不能任意保留第一个。
 
 仅凭发送者和目标 IP 不能表达同一服务的不同出口。因此每个接收权限派生一个精确 IPv6 来源
 地址，绑定 `network_id,device_id,policy_id,candidate_id,resource_id,sender_public_key`。
@@ -681,15 +682,27 @@ Service/Policy。查询或知道合成地址本身不授予访问权限。不同
 原名称在最终出口才用认证解析器解析为真实目标。中间节点向下一段再次投影该名称，不以入口
 解析出的公网地址替代出口解析。此处复用现有持久 fake-IP 缓存及其崩溃恢复规则，不新增权威。
 
-WG 业务包使用 IPv6，使来源身份不依赖碰撞概率较高的私有 IPv4 分配。字面 IPv4 目标按
-[RFC 6052 的网络专用 /96 布局](https://www.rfc-editor.org/rfc/rfc6052.html#section-2.2)
-映射承载。前缀由 `network_id,resource_id,receiver_public_key` 的规范值取
-`SHA256("loom-wg-ipv4-prefix-v3\0" || C(value))` 前 12 字节、首字节置 `fd`、末四字节清零
-得到，末四字节放原 IPv4。网络专用前缀也能明确承载获授权的私有 IPv4，不借公共转换前缀
-扩大权限。接收端先恢复原 IPv4，再检查 IP 权限；这只改变传输表示，不把它
-变成域名请求。字面 IPv6 保持 IPv6。合成地址池与 IPv4 映射前缀不得被当作真实 Service 目标，
-宽范围 IPv6 权限也不能借该前缀获得 IPv4 权限。来源地址绑定、DNS 和地址恢复都是传输适配，
-不增加代理握手、第二层加密或另外的业务授权协议。
+WG 业务包使用 IPv6。每个接收资源有独立的合成目标 /64，绑定
+`{network_id,resource_id,receiver_public_key}`，取
+`SHA256("loom-wg-target-prefix-v3\0" || C(binding))` 的前八字节、首字节置 `fd`、后八字节清零。
+域名及字面 IPv4/IPv6 都经接收方执行 DNS 映射到此池；发送端以当前业务来源选择唯一接收池，
+查询结果必须全部属于该池。每个 peer 的 AllowedIPs 只含它的目标池、DNS /128、已授权来源
+/128 和既有精确管理地址；跨 peer 重叠、重复公钥、来源多义或本地/远端地址碰撞均拒绝。
+因此同一原始目标经不同出口时在 WG 内具有不同目的地址，返回包也由同一 peer 的目标池验证。
+WG 协议与 cryptokey routing 不变，不增加远端代理、加密套娃或新的权威实体。
+
+字面地址使用执行 DNS 内部保留名称：规范四字节或十六字节地址的小写十六进制，分别加
+`.v4.loom-ip.invalid` 或 `.v6.loom-ip.invalid`。禁止 mapped IPv6、zone、大小写变体、非精确
+长度或畸形保留名称；普通域名请求不得使用该保留后缀。接收器从既有持久 fake-IP 缓存恢复
+原名；内部保留名称先还原为字面 IP，再执行 IP 权限，不能变成域名权限。域名保持原名称到
+最终出口。新目标每段增加一次内部 DNS 查询，缓存命中可复用；缓存缺失或恢复失败拒绝业务，
+不能猜测目标。接收池地址本身不能作为原始业务目标，缓存必须保留地址与目标的一一对应。
+
+runtime 的 `source_routes` 是来源地址到目标 /64 或 DNS /128 的唯一映射，只由认证权限投影；
+DNS 来源只能访问对应 /128 的 53 端口。`address` 是用户态精确来源；Linux 系统实例将它们
+移入 `stack_address`，`address` 仅保留原宿主管理地址。两者共用同一个 WG 实例与用户态栈。
+这些字段没有独立持久身份，UI 仍显示原服务、候选和实际节点，不显示合成地址为业务对象。
+
 接收器保留数据包实际目标，不把“目标等于本资源地址”隐式改写为宿主 loopback。执行 DNS
 只由本资源精确目标和端口的显式规则接收，不能使普通 WG 获得宿主管理端口访问。
 
@@ -699,7 +712,7 @@ WG 业务包使用 IPv6，使来源身份不依赖碰撞概率较高的私有 IP
 公网端口。运行时 `host_sources` 只列已认证管理节点 peer 的精确来源，且必须等于对应
 AllowedIPs；该来源发往本资源精确地址才交给主机，其余获认证的业务来源进入公共路由器。
 不能把本机地址的补集当成宿主流量 capture，不能增加默认路由或策略 rule。
-发送业务仍使用独立的用户态会话与其派生发送键，不能冒用节点管理来源。
+发送业务使用同一实例的用户态栈及固定节点键；业务源地址与宿主管理来源严格分开。
 
 新增操作成本是有独立管理通道时完成一次受保护的接口执行器替换，必须提前记录精确接口、
 地址、peer、路由与旧所有权，停止旧 owner 后才可创建同名新接口；失败保持服务停止，并按
@@ -748,6 +761,12 @@ DeviceView 之外的授权库。隔离测试证明底层接收和清理能力，
 显式 `loom client migrate-transport` 实现历史验证、原件保全及 LKG 原子替换，启动和普通同步不调用历史 reader。
 生产切换结果须独立读回，源码及隔离测试不作为生产回执。
 
+共享 WG 修订同样走这个显式入口：旧独立发送实例的签名配置仅作原件验证，不能用新渲染器
+假装它本来就是共享实例。原接收 DNS 缓存的地址池与新资源 /64 不同；停旧执行后先保全旧缓存
+精确字节，再生成新的派生缓存，不能让旧地址在新池内解释为另一个目标。旧缓存不进入当前
+运行，已建立会话在切换时终止，调用方重新解析和连接；身份、RuntimeKey、固定节点键与 floor
+不受影响。迁移失败不回退到旧运行，也不删除原件。
+
 具体交付使用原控制机的 owner-only 管理 socket：
 `loom control export-device-view -device demo-device -out /var/lib/loom/demo-view.json`。
 文件是已签名的私有执行投影，包含该设备的运行凭据；只交付给对应设备，不进入公开制品目录。
@@ -785,10 +804,11 @@ resource_auth_digest 仅绑定资源 authentication，显示名称及无关 Serv
 撤权、deny、收窄范围或路径后，新 View 不再投影原权限；先保存认证进度，再替换执行，失败不能恢复已撤销权限。
 不存在 `relay-auth`、`relay_target` 或 `link-probe-auth` 的当前执行用途。
 
-WG 发送密钥同样使用上述 HKDF/salt，IKM 取实际发送节点 RuntimeKey，info 为
-`{network_id,device_id,resource_id,resource_auth_digest,receiver_node_id,purpose}`，purpose 固定 `wireguard-access`。
-输出按 X25519 clamp 后得到私钥，仅交付给实际发送者；接收者仅取得其公钥。一个发送者对同一接收资源
-只有一个会话，Service/Candidate 对应精确源地址与权限，不重复创建相同密钥会话。
+无自有 WG 资源的普通设备使用上述 HKDF/salt，IKM 取本设备 RuntimeKey，info 为
+`{network_id,device_id,purpose}`，purpose 固定 `wireguard-access`。输出按 X25519 clamp，
+私钥只交付本设备，全部接收资源使用同一公钥。拥有 WG 资源的节点直接使用该资源固定密钥，
+不得再派生逐接收端密钥。RuntimeKey、设备身份键及固定节点键不变；旧派生传输凭据的替换属于
+明确的 LKG 前向迁移，不是原签名字节的静默重解释。Service/Candidate 只投影精确源地址与权限。
 `wireguard_peers` 按 resource_id、device_id 排序；来源设备、转发节点和 DNS-only Link 探测使用同一模型。
 基础源地址只允许执行 DNS；每项业务源地址由本节已定义的绑定导出，每跳都按原始目标执行权限。
 
