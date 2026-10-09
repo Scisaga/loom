@@ -188,6 +188,23 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 			if selection.State != state {
 				return false
 			}
+			if fixture.FirstHop {
+				resource := ""
+				for _, route := range load().LKG().View.Routes {
+					if route.ID == selection.CandidateID {
+						resource = route.FirstResourceID
+					}
+				}
+				observed := false
+				for _, sample := range current.ResourceObservations {
+					if sample.ResourceID == resource && sample.Result == "available" {
+						observed = true
+					}
+				}
+				if !observed {
+					return false
+				}
+			}
 			var row *windowsPathDisplay
 			for i := range rows {
 				if rows[i].Service == selection.Scope && rows[i].Candidate == selection.CandidateID {

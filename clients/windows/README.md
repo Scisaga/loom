@@ -189,6 +189,13 @@ evidence stay on the repository host. Run `windows-test-vm.sh verify` before
 acceptance. The VM can validate x64 GUI, DPAPI, SCM, MSI, TUN, route cleanup,
 reboot, upgrade/rollback, and uninstall through normal entry points.
 
+For a `go test -c` native executable, inject the public release trust anchor at
+`loom/clients/windows.buildPlatformPublicKey`; `main.buildPlatformPublicKey` is
+the application build symbol. Confirm the linked test value before starting the
+VM. A retry must keep the fixture's original control keys and protected device
+profile. GUI acceptance waits for the displayed selection and its matching
+resource observation, since runtime files can update before the visible row.
+
 An amd64 VM or cross-build cannot validate ARM64 execution, physical
 sleep/wake, a real network handoff, display hardware, multiple monitors/DPI, or
 long-running desktop behavior. GitHub-hosted runners and a successful process
