@@ -1,8 +1,11 @@
 package io.github.scisaga.loom
 
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.test.core.app.ActivityScenario
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -17,9 +20,12 @@ import androidx.test.uiautomator.Until
 import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.EnrollmentPhase
 import io.github.scisaga.loom.enrollment.ManagedProfileStore
+import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.vpn.ConnectionPhase
+import io.github.scisaga.loom.vpn.LoomVpnService
+import io.github.scisaga.loom.vpn.VpnConnectionPreference
 import io.github.scisaga.loom.vpn.VpnRuntime
 import java.io.File
 import java.net.InetSocketAddress
@@ -45,18 +51,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
 
 /** Opt-in real daemon fixture; no fabricated View, identity, runtime or health. */
 class CertifiedRuntimeInstrumentedTest {
     private var originalTLS: SSLContext? = null
+    private var activity: ActivityScenario<MainActivity>? = null
 
     @After
     fun restoreFixtureTrust() {
+        activity?.close()
         originalTLS?.let(SSLContext::setDefault)
     }
 
     @get:Rule
-    val compose = createAndroidComposeRule<MainActivity>()
+    val compose = createEmptyComposeRule()
 
     @Test
     fun formalJoinVpnAndWithdrawal() {
@@ -71,8 +80,28 @@ class CertifiedRuntimeInstrumentedTest {
         val resume = args.getString("demoResume") == "true"
         val independentServices = args.getString("demoServices") == "true"
         val serviceCount = if (independentServices) 2 else 1
+        val ca = CertificateFactory.getInstance("X.509").generateCertificate(File(directory, "demo-ca.pem").inputStream())
+        val trust = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("demo", ca) }
+        val managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(trust) }
+        val tls = SSLContext.getInstance("TLS").apply { init(null, managers.trustManagers, null) }
+        // Set fixture trust before activity launch can restore a prior VPN and
+        // initialize the process's default TLS factory. Production trust stays intact.
+        if (independentServices) {
+            originalTLS = SSLContext.getDefault()
+            SSLContext.setDefault(tls)
+        }
+        activity = ActivityScenario.launch(MainActivity::class.java)
         args.getString("demoNewProfile")?.let { name ->
             check(!resume)
+            // End a previous fixture through the service's ordinary stop
+            // command; retain every profile and its protected identity.
+            ContextCompat.startForegroundService(
+                context, Intent(context, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_DISCONNECT),
+            )
+            compose.waitUntil(45_000) {
+                !VpnConnectionPreference(context).desiredConnected() &&
+                    VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED
+            }
             compose.onNodeWithTag("tab-configuration").performClick()
             compose.onNodeWithTag("add-profile").performScrollTo().performClick()
             compose.onNodeWithTag("profile-name-input").performTextReplacement(name)
@@ -85,7 +114,11 @@ class CertifiedRuntimeInstrumentedTest {
         val profileID = ProfileCatalog.get(context).state.value.viewedProfileId
         val enrollment = EnrollmentManager.get(context)
         val routing = RouteManager.get(context)
-        fun click(tag: String) = compose.onNodeWithTag(tag).performScrollTo().performClick()
+        fun click(tag: String) {
+            android.util.Log.i("LoomCertifiedFixture", "UI action: $tag")
+            compose.onNodeWithTag(tag).performScrollTo().performClick()
+            android.util.Log.i("LoomCertifiedFixture", "UI action completed: $tag")
+        }
         fun await(label: String, seconds: Long = 60, condition: () -> Boolean) {
             val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds)
             var ready = condition()
@@ -137,10 +170,6 @@ class CertifiedRuntimeInstrumentedTest {
             // test; a different active profile must use the normal switch button.
             awaitConnected()
         }
-        val ca = CertificateFactory.getInstance("X.509").generateCertificate(File(directory, "demo-ca.pem").inputStream())
-        val trust = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("demo", ca) }
-        val managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(trust) }
-        val tls = SSLContext.getInstance("TLS").apply { init(null, managers.trustManagers, null) }
         fun business(): Boolean = runCatching {
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(fixture.getString("target_ip"), fixture.getInt("target_port")), 3_000)
@@ -185,12 +214,6 @@ class CertifiedRuntimeInstrumentedTest {
             }
         }
 
-        // The demo CA is trusted only in this instrumented process. Production
-        // trust settings, certificate verification and hostname checks stay intact.
-        if (independentServices) {
-            originalTLS = SSLContext.getDefault()
-            SSLContext.setDefault(tls)
-        }
         if (!resume && args.getString("demoJoined") != "true") {
             compose.onNodeWithTag("tab-configuration").performClick()
             await("new profile must finish loading before file import", 15) {
@@ -198,11 +221,14 @@ class CertifiedRuntimeInstrumentedTest {
             }
             compose.waitForIdle()
             click("import-invite")
-            clickSystem(By.desc("Show roots"), "normal document picker did not open")
-            assertTrue("document picker drawer did not open", device.wait(Until.hasObject(By.text("Open from")), 10_000))
-            clickSystem(By.res("android:id/title").text("Downloads"), "Downloads root is absent")
-            assertTrue("Downloads navigation did not finish", device.wait(Until.gone(By.text("Open from")), 10_000))
-            clickSystem(By.res("android:id/title").text("demo-android.loom-invite"), "normal document picker did not expose the demo invitation")
+            val invitation = By.res("android:id/title").text("demo-android.loom-invite")
+            if (!device.wait(Until.hasObject(invitation), 3_000)) {
+                clickSystem(By.desc("Show roots"), "normal document picker did not open")
+                assertTrue("document picker drawer did not open", device.wait(Until.hasObject(By.text("Open from")), 10_000))
+                clickSystem(By.res("android:id/title").text("Downloads"), "Downloads root is absent")
+                assertTrue("Downloads navigation did not finish", device.wait(Until.gone(By.text("Open from")), 10_000))
+            }
+            clickSystem(invitation, "normal document picker did not expose the demo invitation")
         }
         await("private join or protected restart must restore the certified profile") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
         connect()
@@ -284,8 +310,12 @@ class CertifiedRuntimeInstrumentedTest {
                     fun reportSequence() = JSONObject(checkNotNull(ManagedProfileStore(context, profileID).state()).decodeToString())
                         .getString("report_sequence").toLong()
                     val beforeReport = reportSequence()
-                    val sending = sender.launch { runCatching { enrollment.postReport(profileID) } }
+                    val reportFailure = AtomicReference<Throwable?>()
+                    val sending = sender.launch {
+                        runCatching { HealthReporter(context, profileID).send() }.onFailure(reportFailure::set)
+                    }
                     await("report sequence must be durably reserved before the network wait", 45) {
+                        reportFailure.get()?.let { throw AssertionError("report sender failed before the network wait", it) }
                         reportSequence() > beforeReport
                     }
                     Thread.sleep(1_000)
