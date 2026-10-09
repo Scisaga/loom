@@ -107,19 +107,30 @@ func cmdClientSync(args []string) error {
 	fs := flag.NewFlagSet("client sync", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	statePath := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
+	viewPath := fs.String("view", "", "explicit owner-only current signed DeviceView file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return errors.New("client sync does not accept positional arguments")
+	if fs.NArg() != 0 || *viewPath == "-" {
+		return errors.New("client sync accepts an optional private -view file, not positional arguments or stdin")
 	}
 	store, err := deviceclient.Load(*statePath)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	envelope, err := deviceclient.Sync(ctx, store)
+	var envelope control.DeviceViewEnvelope
+	if *viewPath == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		envelope, err = deviceclient.Sync(ctx, store)
+	} else {
+		body, readErr := readBoundedRegular(*viewPath, 5<<20, true)
+		if readErr != nil {
+			return readErr
+		}
+		defer clear(body)
+		envelope, err = deviceclient.ImportView(store, body)
+	}
 	if err != nil {
 		return err
 	}

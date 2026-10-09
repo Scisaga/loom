@@ -308,6 +308,20 @@ func Sync(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope,
 	}
 	return envelope, nil
 }
+
+// ImportView accepts the same current signed envelope as online synchronization.
+// The caller supplies an explicitly delivered private file, never a fallback state.
+func ImportView(store IdentityStore, body []byte) (control.DeviceViewEnvelope, error) {
+	var envelope control.DeviceViewEnvelope
+	if err := control.DecodeCanonical(body, &envelope, control.ContractDecodeLimits{MaxBytes: 5 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
+		return control.DeviceViewEnvelope{}, err
+	}
+	if err := store.SaveLKG(envelope); err != nil {
+		return control.DeviceViewEnvelope{}, err
+	}
+	return envelope, nil
+}
+
 func Report(ctx context.Context, store IdentityStore, report control.DeviceReport) error {
 	sequence, err := store.ReserveReportSequence()
 	if err != nil {

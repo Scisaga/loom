@@ -24,7 +24,8 @@ const clientUsage = `loom client —— 客户端交付
 用法:
 	loom client enroll {-invite-file <文件>|-stdin} [-state <文件>]
 	                                             经受限 tunnel claim/resume 并原子保存 LKG
-	loom client sync [-state <文件>]              经认证设备通道读取并保存最新 DeviceView
+	loom client sync [-state <文件>] [-view <文件>]
+	                                             同步设备通道或显式私有文件中的当前签名 DeviceView
 	loom client inspect [-state <文件>] [-identity]
 	                                             回读本机身份与认证 LKG；identity 只给公开身份坐标
 	loom client website-root [-state <文件>] [-id ID -o <文件>]
