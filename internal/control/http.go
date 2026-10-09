@@ -364,7 +364,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 				reports = append(reports, report)
 			}
 		}
-		projectWebObservations(&snapshot, reports)
+		projectWebObservations(&snapshot, reports, server.now())
 		snapshot.Events = snapshotEvents(projectReportHistory(reports))
 	}
 	if server.Releases != nil {

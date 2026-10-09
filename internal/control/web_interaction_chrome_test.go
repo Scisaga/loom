@@ -499,11 +499,11 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	waitChromeEvaluation(t, debug, `location.pathname==='/devices/demo-browser-device'&&document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='completed'&&!document.querySelector('#invite-uri')&&!document.querySelector('#device-enrollment img.qr')`)
-	chromeDo(t, debug, `(()=>{window.demoSnapshotRegressed=false;window.demoSnapshotObserver=new MutationObserver(()=>{if(!document.querySelector('#device-policy-form')||document.querySelector('#invite-uri'))demoSnapshotRegressed=true});demoSnapshotObserver.observe(document.querySelector('#app'),{childList:true,subtree:true});return true})()`)
+	chromeDo(t, debug, `(()=>{window.demoSnapshotRegressed=false;window.demoSnapshotStart={path:location.pathname,policyForm:!!document.querySelector('#device-policy-form')};window.demoSnapshotObserver=new MutationObserver(()=>{if(!document.querySelector('#device-policy-form')||document.querySelector('#invite-uri'))demoSnapshotRegressed=true});demoSnapshotObserver.observe(document.querySelector('#app'),{childList:true,subtree:true});return true})()`)
 	releaseDelayed()
 	waitChromeEvaluation(t, debug, `!document.querySelector('#notice').hidden&&document.querySelector('#notice').textContent.includes('Accepted locally')`)
 	if chromeDo(t, debug, `(()=>{demoSnapshotObserver.disconnect();return !demoSnapshotRegressed&&!!document.querySelector('#device-policy-form')&&!document.querySelector('#invite-uri')})()`) != true {
-		t.Fatal("late HTTP snapshot overwrote the accepted live completion or revived delivery")
+		t.Fatal("late HTTP snapshot overwrote the accepted live completion or revived delivery", chromeDo(t, debug, `({start:demoSnapshotStart,path:location.pathname,policyForm:!!document.querySelector('#device-policy-form'),invite:!!document.querySelector('#invite-uri'),regressed:demoSnapshotRegressed})`))
 	}
 	if chromeDo(t, debug, `!!document.querySelector('#device-enrollment a[download]')||document.body.innerText.includes('runtime_key')`) == true {
 		t.Fatal("completed device detail still delivered a capability or exposed private material")
@@ -573,6 +573,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("signed component reports did not survive observation store reopen", err)
 	}
 	assertChromeLivePaths(t, debug)
+	report = assertChromeEvidenceExpiry(t, debug, report, sendReport)
 	for _, sample := range []struct {
 		value *ReportPreference
 		label string
@@ -583,7 +584,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		chromeDo(t, debug, `(()=>{history.pushState({},'','/routing?service=demo-service&device=demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 		label, _ := json.Marshal(sample.label)
 		waitChromeEvaluation(t, debug, `document.querySelector('[data-routing-preference]')?.textContent.includes(`+string(label)+`)`)
-		if chromeDo(t, debug, `document.querySelector('.paths-current').textContent.includes('Current route unknown')&&[...document.querySelectorAll('tr[data-candidate]')].some(row=>row.cells[0].textContent.includes('Direct')&&row.cells[2].textContent.startsWith('Reported selection'))`) != true {
+		if chromeDo(t, debug, `document.querySelector('.paths-current').textContent.includes('Current selection confirmed')&&[...document.querySelectorAll('tr[data-candidate]')].some(row=>row.cells[0].textContent.includes('Direct')&&row.cells[2].textContent.includes('Current selection'))`) != true {
 			t.Fatal("reported preference rewrote the actual path or created health")
 		}
 	}

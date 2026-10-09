@@ -1,5 +1,33 @@
 export const list=value=>Array.isArray(value)?value:[];
 export const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+export const reportIsCurrent=(value,now)=>value?.freshness==='current'&&value.current_until>now;
+
+// Only reduce the received display projection. Original reported fields remain
+// intact, and a later local clock reading can never revive an excluded sample.
+export function expireEvidence(snapshot,now){
+  const devices=list(snapshot.devices).map(device=>{
+    const value=device.evidence;if(!value)return device;
+    const future=Date.parse(value.reported_at)>now+5000,current=reportIsCurrent(value,now)&&!future;
+    const evidence={...value,freshness:current?'current':value.freshness==='current'?(future?'clock_unknown':'stale'):value.freshness,current_until:current?value.current_until:0,
+      measurements:list(value.measurements).map(sample=>({...sample,current_until:current&&sample.current_until>now&&sample.observed_at<=now+5000?sample.current_until:0}))};
+    return {...device,evidence,runtime_state:current?device.runtime_state:'unknown'};
+  });
+  const byID=new Map(devices.map(device=>[device.id,device]));
+  const bounded=(value,owner,qualifies)=>reportIsCurrent(byID.get(owner)?.evidence,now)&&value.current_until>now&&qualifies(list(byID.get(owner)?.evidence?.measurements))?value:{...value,availability:'unknown',current_until:0};
+  const valid=sample=>sample.current_until>now;
+  return {...snapshot,devices,paths:list(snapshot.paths).map(value=>bounded(value,value.device,samples=>list(value.targets).every(target=>samples.some(sample=>valid(sample)&&sample.level==='service'&&sample.service_id===value.service_id&&sample.candidate_id===value.candidate_id&&sample.spec_digest===value.spec_digest&&sample.target===target&&sample.result===value.availability)))),links:list(snapshot.links).map(value=>bounded(value,value.from,samples=>samples.some(sample=>valid(sample)&&sample.level==='link'&&sample.link_id===value.id&&sample.result===value.availability)))};
+}
+
+export function nextEvidenceExpiry(snapshot,now){
+  const ends=[...list(snapshot.paths),...list(snapshot.links)].map(v=>v.current_until);
+  for(const device of list(snapshot.devices)){
+    ends.push(device.evidence?.current_until);
+    for(const sample of list(device.evidence?.measurements))ends.push(sample.current_until);
+  }
+  return ends.filter(value=>Number.isSafeInteger(value)&&value>now).reduce((left,right)=>left===0?right:Math.min(left,right),0);
+}
+
 // A report is an observation at its timestamp, not an installation receipt.
 export function componentComparisons(device,report){
   const key=value=>value.component_id+'\0'+value.platform,expected=new Map(list(device?.expected_components).map(v=>[key(v),v])),actual=new Map(list(report?.components).map(v=>[key(v),v]));

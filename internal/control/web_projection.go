@@ -179,7 +179,7 @@ func projectWebLinks(projection Projection) []Link {
 
 // The caller supplies reports already checked against the current signed view.
 // Receipt is not a liveness proof; per-service observations are shown separately.
-func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
+func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now time.Time) {
 	for index := range snapshot.Devices {
 		device := &snapshot.Devices[index]
 		for _, report := range reports {
@@ -190,9 +190,16 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
 			device.LastReportAt = at.UTC().Format(time.RFC3339Nano)
 			device.Presence = "unknown"
 			device.ViewDigest = report.ViewDigest
-			device.RuntimeState = report.Runtime.State
+			freshness, until := webReportTime(report, now)
+			device.RuntimeState = "unknown"
+			if freshness == "current" {
+				device.RuntimeState = report.Runtime.State
+			}
 			runtime := report.Runtime
-			device.Evidence = &DeviceEvidence{ReportedAt: device.LastReportAt, ViewDigest: report.ViewDigest, NetworkGeneration: report.NetworkGeneration, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...), Measurements: append([]Observation{}, report.Observations...)}
+			device.Evidence = &DeviceEvidence{Freshness: freshness, CurrentUntil: until, ReportedAt: device.LastReportAt, ViewDigest: report.ViewDigest, NetworkGeneration: report.NetworkGeneration, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...)}
+			for _, sample := range report.Observations {
+				device.Evidence.Measurements = append(device.Evidence.Measurements, WebObservation{Observation: sample, CurrentUntil: webObservationUntil(report, sample, until, now)})
+			}
 			if report.Preference != nil {
 				preference := *report.Preference
 				device.Evidence.Preference = &preference
@@ -212,9 +219,19 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
 						path.Selected = true
 					}
 				}
-				// The receiver's maximum lifetime and clock-skew rule are not
-				// defined. A device-supplied future expiry cannot prove freshness.
-				// Preserve reported samples and selection without asserting current health.
+				path.Availability, path.CurrentUntil = webPathAvailability(*path, device.Evidence.Measurements, now)
+			}
+			for linkIndex := range snapshot.Links {
+				link := &snapshot.Links[linkIndex]
+				if link.From != device.ID {
+					continue
+				}
+				for _, sample := range device.Evidence.Measurements {
+					if sample.Level == "link" && sample.LinkID == link.ID && sample.CurrentUntil > now.UnixMilli() &&
+						(sample.Result == "available" || sample.Result == "unavailable") {
+						link.Availability, link.CurrentUntil = sample.Result, sample.CurrentUntil
+					}
+				}
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReportedPreferenceKeepsOriginalBytesAndBindsNewSamples(t *testing.T) {
@@ -92,7 +93,7 @@ func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *tes
 			t.Fatal(err)
 		}
 		snapshot := WebSnapshot{Devices: []Device{{ID: view.DeviceID}}, Paths: projectWebPaths(projection)}
-		projectWebObservations(&snapshot, store.Verified(projection))
+		projectWebObservations(&snapshot, store.Verified(projection), time.UnixMilli(report.ReportedAt))
 		if snapshot.Devices[0].Evidence == nil || !reflect.DeepEqual(snapshot.Devices[0].Evidence.Preference, report.Preference) || !snapshot.Paths[0].Selected || snapshot.Paths[0].FinalExit != "direct" {
 			t.Fatal("readback replaced actual Direct or lost unavailable fixed intent")
 		}

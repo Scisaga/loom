@@ -37,6 +37,8 @@ type Device struct {
 }
 
 type DeviceEvidence struct {
+	Freshness         string                `json:"freshness"`
+	CurrentUntil      int64                 `json:"current_until,omitempty"`
 	LocalNetworks     *[]LocalNetworkPrefix `json:"local_networks,omitempty"`
 	Preference        *ReportPreference     `json:"preference,omitempty"`
 	ReportedAt        string                `json:"reported_at"`
@@ -45,7 +47,14 @@ type DeviceEvidence struct {
 	Selections        []ReportSelection     `json:"selections,omitempty"`
 	Runtime           *RuntimeReadback      `json:"runtime,omitempty"`
 	Components        []ComponentReadback   `json:"components,omitempty"`
-	Measurements      []Observation         `json:"measurements,omitempty"`
+	Measurements      []WebObservation      `json:"measurements,omitempty"`
+}
+
+// WebObservation preserves the reported sample and adds only its display bound.
+// It is never signed, persisted, or accepted as a device report.
+type WebObservation struct {
+	Observation
+	CurrentUntil int64 `json:"current_until,omitempty"`
 }
 
 type Link struct {
@@ -55,6 +64,7 @@ type Link struct {
 	Transport    string `json:"transport"`
 	Authorized   bool   `json:"authorized"`
 	Availability string `json:"availability"`
+	CurrentUntil int64  `json:"current_until,omitempty"`
 	LatencyMS    int64  `json:"latency_ms,omitempty"`
 }
 
@@ -81,6 +91,7 @@ type Path struct {
 	Chain           []string `json:"chain"`
 	Selected        bool     `json:"selected"`
 	Availability    string   `json:"availability"`
+	CurrentUntil    int64    `json:"current_until,omitempty"`
 }
 
 type Release struct {

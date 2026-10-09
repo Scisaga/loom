@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFirstHopProbeUsesAuthorizedFirstCredentialAndPreservesView(t *testing.T) {
@@ -156,9 +157,9 @@ func TestResourceReportBindsExecutionAndRestartsAsRawEvidence(t *testing.T) {
 		t.Fatal("resource report lost its original bytes or signature", err)
 	}
 	snapshot := buildWebSnapshot(p, true, true, true)
-	projectWebObservations(&snapshot, store.Verified(p))
+	projectWebObservations(&snapshot, store.Verified(p), time.UnixMilli(report.ReportedAt))
 	for _, device := range snapshot.Devices {
-		if device.ID == view.DeviceID && (device.Availability != "unknown" || device.Evidence == nil || !reflect.DeepEqual(device.Evidence.Measurements, []Observation{value})) {
+		if device.ID == view.DeviceID && (device.Availability != "unknown" || device.Evidence == nil || !reflect.DeepEqual(device.Evidence.Measurements, []WebObservation{{Observation: value}})) {
 			t.Fatal("raw authentication sample became overall health or disappeared")
 		}
 	}

@@ -1,17 +1,21 @@
 package control
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
 
 // Called after the ordinary browser invitation, private claim and signed report.
 func assertChromeLivePaths(t *testing.T, debug *chromeDevTools) {
 	t.Helper()
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/routing?service=demo-service');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-paths-device="demo-browser-device"]')&&document.querySelector('[data-service="demo-unrelated-service"]')`)
-	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-paths-device="demo-browser-device"]');return row.textContent.includes('Demo browser policy')&&row.textContent.includes('Reported: Direct')&&row.textContent.includes('Current result unknown')&&!document.body.innerText.includes('Fresh')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-paths-device="demo-browser-device"]');return row.textContent.includes('Demo browser policy')&&row.textContent.includes('Reported: Direct')&&row.textContent.includes('Current target success')&&!document.body.innerText.includes('Fresh')})()`) != true {
 		t.Fatal("Live paths lost the assigned Policy, manufactured current health or still uses legacy scopes")
 	}
 	chromeDo(t, debug, `(()=>{const form=document.querySelector('[name=q]').form;form.elements.q.value='demo-browser-device';form.requestSubmit();[...document.querySelectorAll('.paths-filters a')].find(a=>a.textContent==='Unconfirmed route / target').click();document.querySelector('[data-paths-device="demo-browser-device"] a').click();return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelector('.paths-detail')&&document.querySelector('.paths-current')?.textContent.includes('Current route unknown')`)
+	waitChromeEvaluation(t, debug, `document.querySelector('.paths-detail')&&document.querySelector('.paths-current')?.textContent.includes('Current selection confirmed')`)
 	if chromeDo(t, debug, `document.querySelector('[data-routing-preference]')?.textContent==='Mode: not reported'`) != true {
 		t.Fatal("a Direct selection was used to infer a routing preference")
 	}
@@ -52,4 +56,42 @@ func assertChromeWaitingForView(t *testing.T, debug *chromeDevTools) {
 		t.Fatal("old View report remained a current selection after the control accepted a new View")
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+}
+
+// The signed report fixtures verify display timing and draft preservation; they
+// are not evidence of a real request to any example target.
+func assertChromeEvidenceExpiry(t *testing.T, debug *chromeDevTools, report DeviceReport, send func(DeviceReport)) DeviceReport {
+	t.Helper()
+	if chromeDo(t, debug, `(async()=>{
+	 const {expireEvidence,nextEvidenceExpiry}=await import('/assets/model.js');
+	 const now=Date.now(),sample={level:'service',result:'available',observed_at:now,valid_until:now+600000,current_until:now+1000};
+	 const original={devices:[{id:'demo-time',runtime_state:'running',evidence:{freshness:'current',current_until:now+2000,reported_at:new Date(now).toISOString(),runtime:{state:'running'},measurements:[sample]}}],paths:[{device:'demo-time',selected:true,availability:'available',current_until:now+1000}],links:[]};
+	 const encoded=JSON.stringify(original),initial=expireEvidence(original,now),targetExpired=expireEvidence(initial,now+1000),expired=expireEvidence(targetExpired,now+2000),rewound=expireEvidence(expired,now-1000);
+	 const sampleFuture=expireEvidence({...original,devices:[{...original.devices[0],evidence:{...original.devices[0].evidence,measurements:[{...sample,observed_at:now+6000,service_id:'demo-service',candidate_id:'demo-path',spec_digest:'demo-spec',target:'https://demo.example/'}]}}],paths:[{...original.paths[0],service_id:'demo-service',candidate_id:'demo-path',spec_digest:'demo-spec',targets:['https://demo.example/']}]},now);
+	 const future=expireEvidence({...original,devices:[{...original.devices[0],evidence:{...original.devices[0].evidence,reported_at:new Date(now+6000).toISOString()}}]},now);
+	 return sampleFuture.paths[0].availability==='unknown'&&sampleFuture.devices[0].runtime_state==='running'&&JSON.stringify(original)===encoded&&nextEvidenceExpiry(initial,now)===now+1000&&targetExpired.paths[0].availability==='unknown'&&targetExpired.devices[0].runtime_state==='running'&&expired.devices[0].runtime_state==='unknown'&&expired.devices[0].evidence.runtime.state==='running'&&expired.paths[0].selected&&expired.devices[0].evidence.measurements[0].valid_until===sample.valid_until&&rewound.devices[0].evidence.current_until===0&&future.devices[0].evidence.freshness==='clock_unknown'&&expireEvidence(future,now+7000).devices[0].evidence.current_until===0&&nextEvidenceExpiry(expired,now)===0;
+	})()`) != true {
+		t.Fatal("browser expiry renewed a sample, mutated reported data, or revived excluded evidence")
+	}
+	previousAt := report.ReportedAt
+	until := time.Now().Add(8 * time.Second).UnixMilli()
+	report.ReportSequence++
+	report.ReportedAt = until - webReportLifetime.Milliseconds()
+	send(report)
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	encoded, _ := json.Marshal(time.UnixMilli(report.ReportedAt).UTC().Format(time.RFC3339Nano))
+	waitChromeEvaluation(t, debug, `(async()=>{const s=await(await fetch('/api/control/ui/snapshot')).json();return s.devices.find(v=>v.id==='demo-browser-device')?.evidence.reported_at===`+string(encoded)+`&&document.querySelector('[data-report-freshness]')?.textContent.startsWith('Current')})()`)
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/services?service=demo-service');dispatchEvent(new PopStateEvent('popstate'));window.demoTimeForm=document.querySelector('#service-form');window.demoTimeName=demoTimeForm.elements.name;demoTimeName.value='Unsaved time-bound draft';demoTimeName.focus();demoTimeName.setSelectionRange(2,5);return true})()`)
+	deadline, _ := json.Marshal(until + 250)
+	waitChromeEvaluation(t, debug, `Date.now()>=`+string(deadline))
+	if chromeDo(t, debug, `document.querySelector('#service-form')===demoTimeForm&&demoTimeName.value==='Unsaved time-bound draft'&&document.activeElement===demoTimeName&&demoTimeName.selectionStart===2&&demoTimeName.selectionEnd===5`) != true {
+		t.Fatal("report expiry replaced the active form or lost its text/focus/selection")
+	}
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-runtime-state]')?.textContent==='unknown'&&document.querySelector('[data-report-freshness]')?.textContent.startsWith('Historical')`)
+	report.ReportSequence++
+	report.ReportedAt = previousAt
+	send(report)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-runtime-state]')?.textContent==='running'&&document.querySelector('[data-report-freshness]')?.textContent.startsWith('Current')`)
+	return report
 }
