@@ -46,7 +46,7 @@ func resourceProbeFixture(t *testing.T) (control.DeviceView, tls.Certificate, ti
 	for _, id := range []string{"demo-a", "demo-b", "demo-c"} {
 		any := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
 		p.NetworkIntent.Services = append(p.NetworkIntent.Services, control.Service{ID: id, Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: id + ".example"}}})
-		p.NetworkIntent.Policies = append(p.NetworkIntent.Policies, control.NetworkPolicy{ID: id, ServiceID: id, Name: "Demo policy", Action: "allow", EntryScope: any, RelayScope: any, ExitScope: any, AllowDirect: true, LocalEgressDevices: []string{}})
+		p.NetworkIntent.Policies = append(p.NetworkIntent.Policies, control.NetworkPolicy{ID: id, ServiceID: id, Name: "Demo policy", Action: "allow", EntryScope: any, RelayScope: any, ExitScope: new(any), AllowDirect: new(true), LocalEgressDevices: new([]string{})})
 		authorization.PolicyIDs = append(authorization.PolicyIDs, id)
 	}
 	trust, name := []string{base64.RawURLEncoding.EncodeToString(der)}, "demo.example"

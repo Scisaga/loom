@@ -110,11 +110,11 @@ func TestLocalEgressRetainsNodeIdentityAndEveryPermissionCondition(t *testing.T)
 		_, _, projection := deviceContractFixture(t)
 		projection.DeviceAuthorizations[0].Responsibilities = []string{"access", "internet_egress"}
 		policy := &projection.NetworkIntent.Policies[0]
-		policy.AllowDirect = false
+		policy.AllowDirect = new(false)
 		policy.EntryScope = PolicyScope{Mode: "none", NodeIDs: []string{}}
 		policy.RelayScope = PolicyScope{Mode: "none", NodeIDs: []string{}}
-		policy.ExitScope = PolicyScope{Mode: "only", NodeIDs: []string{"demo-access"}}
-		policy.LocalEgressDevices = []string{"demo-access"}
+		policy.ExitScope = new(PolicyScope{Mode: "only", NodeIDs: []string{"demo-access"}})
+		policy.LocalEgressDevices = new([]string{"demo-access"})
 		return projection
 	}
 	projection := fixture()
@@ -131,7 +131,7 @@ func TestLocalEgressRetainsNodeIdentityAndEveryPermissionCondition(t *testing.T)
 	if err != nil || DecodeCanonical(body, &decoded, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 100000}) != nil || !reflect.DeepEqual(view, decoded) {
 		t.Fatalf("local exit View did not round trip: %v", err)
 	}
-	projection.NetworkIntent.Policies[0].AllowDirect = true
+	projection.NetworkIntent.Policies[0].AllowDirect = new(true)
 	both, err := ProjectDeviceView(projection, "demo-access")
 	if err != nil || len(both.Routes) != 2 || both.Routes[0].ID == both.Routes[1].ID {
 		t.Fatalf("Direct and local exit did not coexist: %v", err)
@@ -148,12 +148,12 @@ func TestLocalEgressRetainsNodeIdentityAndEveryPermissionCondition(t *testing.T)
 			p.DeviceAuthorizations[0].Responsibilities = []string{"internet_egress"}
 			p.DeviceAuthorizations[0].PolicyIDs = []string{}
 		},
-		"device not listed": func(p *Projection) { p.NetworkIntent.Policies[0].LocalEgressDevices = []string{"demo-other"} },
+		"device not listed": func(p *Projection) { p.NetworkIntent.Policies[0].LocalEgressDevices = new([]string{"demo-other"}) },
 		"exit excluded": func(p *Projection) {
-			p.NetworkIntent.Policies[0].ExitScope = PolicyScope{Mode: "only", NodeIDs: []string{"demo-other"}}
+			p.NetworkIntent.Policies[0].ExitScope = new(PolicyScope{Mode: "only", NodeIDs: []string{"demo-other"}})
 		},
 		"exit none": func(p *Projection) {
-			p.NetworkIntent.Policies[0].ExitScope = PolicyScope{Mode: "none", NodeIDs: []string{}}
+			p.NetworkIntent.Policies[0].ExitScope = new(PolicyScope{Mode: "none", NodeIDs: []string{}})
 		},
 		"deny":            func(p *Projection) { p.NetworkIntent.Policies[0].Action = "deny" },
 		"policy removed":  func(p *Projection) { p.NetworkIntent.Policies = []NetworkPolicy{} },

@@ -86,6 +86,9 @@ func (candidate RouteCandidate) Validate() error {
 	if len(candidate.Chain) > 0 && candidate.Chain[len(candidate.Chain)-1] != candidate.FinalExit {
 		return errors.New("route candidate final exit does not match its chain")
 	}
+	if strings.HasPrefix(candidate.Scope, "local_network:") && (candidate.Scope == "local_network:" || candidate.FinalExit == "direct") {
+		return errors.New("local network candidate requires its fixed gateway")
+	}
 
 	return nil
 }
@@ -170,7 +173,7 @@ func Select(routes []RouteCandidate, observations []Observation, preference Pref
 			return Selection{}, errors.New("route candidates are invalid or duplicated")
 		}
 		seen[candidate.ID] = true
-		allowed := preference.Mode == ModeAuto ||
+		allowed := strings.HasPrefix(candidate.Scope, "local_network:") || preference.Mode == ModeAuto ||
 			preference.Mode == ModeDirect && candidate.FinalExit == "direct" ||
 			preference.Mode == ModeFixed && candidate.FinalExit == preference.Exit
 		if !allowed || byID[candidate.ID].Result == "unavailable" {

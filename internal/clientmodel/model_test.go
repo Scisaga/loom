@@ -9,6 +9,25 @@ import (
 	"time"
 )
 
+func TestLocalNetworkSelectionIgnoresInternetPreference(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	routes := []RouteCandidate{
+		{ID: "demo-one-hop", FinalExit: "demo-gateway", Chain: []string{"demo-gateway"}, Scope: "local_network:demo-lan"},
+		{ID: "demo-relay", FinalExit: "demo-gateway", Chain: []string{"demo-entry", "demo-gateway"}, Scope: "local_network:demo-lan"},
+	}
+	failed := Observation{CandidateID: routes[0].ID, NetworkGeneration: "demo-network-generation", Scope: "local_network:demo-lan", Result: "unavailable", Action: "https_request", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}
+	for _, preference := range []Preference{{Schema: 3, Mode: ModeDirect}, {Schema: 3, Mode: ModeAuto}, {Schema: 3, Mode: ModeFixed, Exit: "demo-internet-exit"}} {
+		selection, err := Select(routes, []Observation{failed}, preference, routes[0].ID, failed.NetworkGeneration, now)
+		if err != nil || selection.CandidateID != "demo-relay" || selection.Scope != "local_network:demo-lan" {
+			t.Fatal("internet preference pruned an authorized fixed-gateway LAN path", preference.Mode, err)
+		}
+	}
+	routes[0].FinalExit, routes[0].Chain = "direct", nil
+	if _, err := Select(routes, nil, Preference{Schema: 3, Mode: ModeAuto}, "", failed.NetworkGeneration, now); err == nil {
+		t.Fatal("LAN candidate escaped through Direct")
+	}
+}
+
 func TestSelectAvailabilityGenerationAndSameExitFallback(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []RouteCandidate{

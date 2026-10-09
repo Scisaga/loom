@@ -12,10 +12,11 @@ import (
 )
 
 type Service struct {
-	ID       string           `json:"id"`
-	Name     string           `json:"name"`
-	Kind     string           `json:"kind"`
-	Matchers []ServiceMatcher `json:"matchers"`
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Kind         string           `json:"kind"`
+	Matchers     []ServiceMatcher `json:"matchers,omitempty"`
+	LocalNetwork *LocalNetwork    `json:"local_network,omitempty"`
 }
 
 // NetworkIntent is reconstructed from signed facts. Empty unsupported
@@ -181,16 +182,16 @@ func validateOptionalDNS(servers []string) error {
 }
 
 type NetworkPolicy struct {
-	ID                 string      `json:"id"`
-	Name               string      `json:"name"`
-	ServiceID          string      `json:"service_id"`
-	Action             string      `json:"action"`
-	EntryScope         PolicyScope `json:"entry_scope"`
-	RelayScope         PolicyScope `json:"relay_scope"`
-	ExitScope          PolicyScope `json:"exit_scope"`
-	AllowDirect        bool        `json:"allow_direct"`
-	LocalEgressDevices []string    `json:"local_egress_devices"`
-	MaxHops            int         `json:"max_hops,omitempty"`
+	ID                 string       `json:"id"`
+	Name               string       `json:"name"`
+	ServiceID          string       `json:"service_id"`
+	Action             string       `json:"action"`
+	EntryScope         PolicyScope  `json:"entry_scope"`
+	RelayScope         PolicyScope  `json:"relay_scope"`
+	ExitScope          *PolicyScope `json:"exit_scope,omitempty"`
+	AllowDirect        *bool        `json:"allow_direct,omitempty"`
+	LocalEgressDevices *[]string    `json:"local_egress_devices,omitempty"`
+	MaxHops            int          `json:"max_hops,omitempty"`
 }
 
 type BusinessProbeTarget struct {
@@ -199,8 +200,17 @@ type BusinessProbeTarget struct {
 }
 
 func (service Service) Validate() error {
-	if ValidateID(service.ID) != nil || ValidateText(service.Name) != nil || service.Kind != "internet" || len(service.Matchers) == 0 {
-		return errors.New("internet Service is incomplete; other kinds require their complete contract")
+	if ValidateID(service.ID) != nil || ValidateText(service.Name) != nil {
+		return errors.New("Service identity is invalid")
+	}
+	if service.Kind == "local_network" {
+		if service.LocalNetwork == nil || service.Matchers != nil {
+			return errors.New("local network Service requires only its complete mapping")
+		}
+		return service.LocalNetwork.Validate()
+	}
+	if service.Kind != "internet" || service.LocalNetwork != nil || len(service.Matchers) == 0 {
+		return errors.New("internet Service requires only nonempty matchers")
 	}
 	for index, matcher := range service.Matchers {
 		if matcher.Validate() != nil || index > 0 && !serviceMatcherLess(service.Matchers[index-1], matcher) {
@@ -217,10 +227,39 @@ func serviceMatcherLess(left, right ServiceMatcher) bool {
 func (policy NetworkPolicy) Validate() error {
 	if ValidateID(policy.ID) != nil || ValidateText(policy.Name) != nil || ValidateID(policy.ServiceID) != nil ||
 		policy.Action != "allow" && policy.Action != "deny" || policy.EntryScope.Validate() != nil ||
-		policy.RelayScope.Validate() != nil || policy.ExitScope.Validate() != nil || policy.MaxHops < 0 {
-		return errors.New("internet Policy is invalid")
+		policy.RelayScope.Validate() != nil || policy.MaxHops < 0 {
+		return errors.New("Policy is invalid")
 	}
-	return validateContractIDs(policy.LocalEgressDevices, true)
+	if policy.ExitScope == nil && policy.AllowDirect == nil && policy.LocalEgressDevices == nil {
+		return nil
+	}
+	if policy.ExitScope == nil || policy.AllowDirect == nil || policy.LocalEgressDevices == nil || policy.ExitScope.Validate() != nil {
+		return errors.New("internet Policy requires all three internet fields")
+	}
+	return validateContractIDs(*policy.LocalEgressDevices, true)
+}
+
+func (policy NetworkPolicy) ValidateForService(service Service) error {
+	if policy.Validate() != nil || service.Validate() != nil || service.ID != policy.ServiceID ||
+		(service.Kind == "local_network") != (policy.ExitScope == nil) {
+		return errors.New("Policy shape does not match its Service")
+	}
+	return nil
+}
+
+func (policy NetworkPolicy) permitsDirect() bool {
+	return policy.AllowDirect != nil && *policy.AllowDirect
+}
+
+func (policy NetworkPolicy) permitsLocalEgress(node string) bool {
+	return policy.LocalEgressDevices != nil && containsString(*policy.LocalEgressDevices, node) && policy.ExitScope != nil && policy.ExitScope.Allows(node)
+}
+
+func (policy NetworkPolicy) permitsEndpoint(service Service, node string) bool {
+	if service.Kind == "local_network" {
+		return service.LocalNetwork != nil && service.LocalNetwork.Enabled && service.LocalNetwork.GatewayNodeID == node
+	}
+	return policy.ExitScope != nil && policy.ExitScope.Allows(node)
 }
 
 func validateContractIDs(ids []string, nodes bool) error {
@@ -309,17 +348,17 @@ func (intent NetworkIntent) Validate() error {
 	}
 	services := map[string]Service{}
 	for index, service := range intent.Services {
-		if service.Validate() != nil || index > 0 && intent.Services[index-1].ID >= service.ID {
+		if service.Validate() != nil || service.Kind != "internet" || index > 0 && intent.Services[index-1].ID >= service.ID {
 			return errors.New("initial Services are invalid or not uniquely sorted")
 		}
 		services[service.ID] = service
 	}
 	for index, policy := range intent.Policies {
 		service, found := services[policy.ServiceID]
-		if policy.Validate() != nil || index > 0 && intent.Policies[index-1].ID >= policy.ID || !found || service.Kind != "internet" {
+		if !found || policy.ValidateForService(service) != nil || index > 0 && intent.Policies[index-1].ID >= policy.ID {
 			return errors.New("initial Policies are invalid, unsorted or have no Service")
 		}
-		if policy.EntryScope.Mode == "only" || policy.RelayScope.Mode == "only" || policy.ExitScope.Mode == "only" || len(policy.LocalEgressDevices) != 0 {
+		if policy.EntryScope.Mode == "only" || policy.RelayScope.Mode == "only" || policy.ExitScope.Mode == "only" || len(*policy.LocalEgressDevices) != 0 {
 			return errors.New("initial Policy references a node without ordinary responsibilities")
 		}
 	}

@@ -197,6 +197,9 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
 				preference := *report.Preference
 				device.Evidence.Preference = &preference
 			}
+			if report.LocalNetworks != nil {
+				device.Evidence.LocalNetworks = new(append([]LocalNetworkPrefix{}, (*report.LocalNetworks)...))
+			}
 			// A device may have different results for different services. Do not fold
 			// one success or failure into a global device business-health assertion.
 			for pathIndex := range snapshot.Paths {
@@ -205,7 +208,7 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport) {
 					continue
 				}
 				for _, selection := range report.Selections {
-					if path.Scope == "service:"+selection.ServiceID && path.CandidateID == selection.CandidateID && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
+					if (path.Scope == "service:"+selection.ServiceID || path.Scope == "local_network:"+selection.ServiceID) && path.CandidateID == selection.CandidateID && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
 						path.Selected = true
 					}
 				}

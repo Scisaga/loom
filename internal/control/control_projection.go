@@ -115,6 +115,8 @@ func (graph *materialGraph) effectiveReferences(material Material, view Projecti
 		return requireTargetDependency(material, view, kind, id, active) == nil
 	}
 	switch value := material.Payload.(type) {
+	case Service:
+		return validateServiceGateway(material, view, value) == nil
 	case NetworkPolicy:
 		return reference("service", value.ServiceID, true) && validatePolicyNodes(material, view, value) == nil
 	case DeviceAuthorization:

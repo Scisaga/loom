@@ -135,7 +135,12 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 			}
 		}
 	}
-	result, err := server.Runtime.Submit(ctx, body)
+	var result Submission
+	if service, ok := operation.Payload.(Service); ok && service.LocalNetwork != nil {
+		result, err = server.submitLocalNetworkOperation(ctx, operation, body)
+	} else {
+		result, err = server.Runtime.Submit(ctx, body)
+	}
 	if err != nil {
 		return Submission{}, nil, err
 	}

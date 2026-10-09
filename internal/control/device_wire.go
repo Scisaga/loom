@@ -298,25 +298,29 @@ func observationOrder(value Observation) string {
 }
 
 type DeviceReport struct {
-	Schema            int                 `json:"schema"`
-	NetworkID         string              `json:"network_id"`
-	DeviceID          string              `json:"device_id"`
-	ReportSequence    U64                 `json:"report_sequence"`
-	ViewDigest        string              `json:"view_digest"`
-	NetworkGeneration string              `json:"network_generation"`
-	ReportedAt        int64               `json:"reported_at"`
-	Selections        []ReportSelection   `json:"selections"`
-	Preference        *ReportPreference   `json:"preference,omitempty"`
-	Observations      []Observation       `json:"observations"`
-	Runtime           RuntimeReadback     `json:"runtime"`
-	Components        []ComponentReadback `json:"components"`
-	Signature         string              `json:"signature"`
+	Schema            int                   `json:"schema"`
+	NetworkID         string                `json:"network_id"`
+	DeviceID          string                `json:"device_id"`
+	ReportSequence    U64                   `json:"report_sequence"`
+	ViewDigest        string                `json:"view_digest"`
+	NetworkGeneration string                `json:"network_generation"`
+	ReportedAt        int64                 `json:"reported_at"`
+	Selections        []ReportSelection     `json:"selections"`
+	Preference        *ReportPreference     `json:"preference,omitempty"`
+	LocalNetworks     *[]LocalNetworkPrefix `json:"local_networks,omitempty"`
+	Observations      []Observation         `json:"observations"`
+	Runtime           RuntimeReadback       `json:"runtime"`
+	Components        []ComponentReadback   `json:"components"`
+	Signature         string                `json:"signature"`
 }
 
 func (report DeviceReport) unsigned() map[string]any {
 	value := map[string]any{"schema": report.Schema, "network_id": report.NetworkID, "device_id": report.DeviceID, "report_sequence": report.ReportSequence, "view_digest": report.ViewDigest, "network_generation": report.NetworkGeneration, "reported_at": report.ReportedAt, "selections": report.Selections, "observations": report.Observations, "runtime": report.Runtime, "components": report.Components}
 	if report.Preference != nil {
 		value["preference"] = *report.Preference
+	}
+	if report.LocalNetworks != nil {
+		value["local_networks"] = *report.LocalNetworks
 	}
 	return value
 }
@@ -327,6 +331,16 @@ func (report DeviceReport) validateFields() error {
 	}
 	if report.Preference != nil && report.Preference.Validate() != nil {
 		return errors.New("device report preference is invalid")
+	}
+	if report.LocalNetworks != nil {
+		if *report.LocalNetworks == nil {
+			return errors.New("local network report must be an explicit prefix collection")
+		}
+		for i, text := range *report.LocalNetworks {
+			if _, err := localNetworkPrefix(text.Prefix); err != nil || i > 0 && (*report.LocalNetworks)[i-1].Prefix >= text.Prefix {
+				return errors.New("local network report prefixes are invalid or not uniquely sorted")
+			}
+		}
 	}
 	for index, selection := range report.Selections {
 		if ValidateID(selection.ServiceID) != nil || ValidateDigest(selection.CandidateID) != nil || index > 0 && report.Selections[index-1].ServiceID >= selection.ServiceID {

@@ -55,7 +55,7 @@ func TestNamedPathVerificationMatchesAuthorizedEnumeration(t *testing.T) {
 				func(p *NetworkPolicy) { p.MaxHops = 2 },
 				func(p *NetworkPolicy) { p.EntryScope = PolicyScope{Mode: "none", NodeIDs: []string{}} },
 				func(p *NetworkPolicy) { p.RelayScope = PolicyScope{Mode: "none", NodeIDs: []string{}} },
-				func(p *NetworkPolicy) { p.ExitScope = PolicyScope{Mode: "none", NodeIDs: []string{}} },
+				func(p *NetworkPolicy) { p.ExitScope = new(PolicyScope{Mode: "none", NodeIDs: []string{}}) },
 			} {
 				restricted := policy
 				modify(&restricted)

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -80,7 +81,7 @@ func nativeProjectionFixture(t *testing.T) (control.Projection, map[string]strin
 	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo-service.loom"}, {Kind: "ip_prefix", Value: "192.0.2.80/32"}}}}
 	p.NetworkIntent.DNSRecords = []control.DNSRecord{{ID: "demo-record", Name: "demo-service.loom", Addresses: []string{"192.0.2.80"}}}
 	any := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
-	p.NetworkIntent.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: control.PolicyScope{Mode: "only", NodeIDs: []string{"demo-entry"}}, RelayScope: any, ExitScope: control.PolicyScope{Mode: "only", NodeIDs: []string{"demo-exit"}}, MaxHops: 2, LocalEgressDevices: []string{}}}
+	p.NetworkIntent.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: control.PolicyScope{Mode: "only", NodeIDs: []string{"demo-entry"}}, RelayScope: any, ExitScope: new(control.PolicyScope{Mode: "only", NodeIDs: []string{"demo-exit"}}), MaxHops: 2, LocalEgressDevices: new([]string{}), AllowDirect: new(false)}}
 	return p, keys, input, at
 }
 
@@ -113,11 +114,13 @@ func TestNativeProjectionKeepsOneSessionAndSeparatesIsolatedCapture(t *testing.T
 }
 
 func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
-	testRealNativeShared(t, false)
+	testRealNativeProjectedSegments(t, false)
 }
-func TestRealNativeSharedResourcePeers(t *testing.T) { testRealNativeShared(t, true) }
-func testRealNativeShared(t *testing.T, multi bool) {
-	shared := []bool{multi}
+func TestRealLocalNetworkProjectedSegmentsAndWithdrawal(t *testing.T) {
+	testRealNativeProjectedSegments(t, true)
+}
+func TestRealNativeSharedResourcePeers(t *testing.T) { testRealNativeProjectedSegments(t, false, true) }
+func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	executable := os.Getenv("LOOM_LINUX_MIXED_EXECUTABLE")
 	if executable == "" {
 		t.Skip("set LOOM_LINUX_MIXED_EXECUTABLE in a fresh network namespace")
@@ -135,6 +138,23 @@ func testRealNativeShared(t *testing.T, multi bool) {
 		}
 	}
 	p, keys, input, at := nativeProjectionFixture(t)
+	business := "192.0.2.80"
+	if lan {
+		virtual, err := control.AllocateLocalNetworkPrefix(p.NetworkID, "demo-service", 0, "192.0.2.0/24", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		host := virtual.Addr().As4()
+		host[3] = 80
+		business = netip.AddrFrom4(host).String()
+		p.NetworkIntent.Services[0] = control.Service{ID: "demo-service", Name: "Demo LAN", Kind: "local_network", LocalNetwork: &control.LocalNetwork{GatewayNodeID: "demo-exit", LocalPrefix: "192.0.2.0/24", VirtualPrefix: virtual.String(), Enabled: true}}
+		p.NetworkIntent.Policies[0].ExitScope = nil
+		p.NetworkIntent.Policies[0].AllowDirect = nil
+		p.NetworkIntent.Policies[0].LocalEgressDevices = nil
+		p.DeviceAuthorizations[2].Responsibilities = []string{"forward"}
+		p.NetworkIntent.DNSRecords[0].Addresses = []string{business}
+		p.NetworkIntent.DNSRecords[0].ServiceID = "demo-service"
+	}
 	managementPeers := []string{"demo-entry"}
 	if len(shared) > 0 && shared[0] {
 		var receiver control.TransportResource
@@ -169,6 +189,7 @@ func testRealNativeShared(t *testing.T, multi bool) {
 		sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
 		sort.Slice(p.NetworkIntent.Links, func(i, j int) bool { return p.NetworkIntent.Links[i].ID < p.NetworkIntent.Links[j].ID })
 	}
+	scope := p.NetworkIntent.Services[0].Scope()
 
 	// Exercise the older-kernel rule even when this test host supports live
 	// TUN renames. All actual interface operations remain in this test netns.
@@ -273,7 +294,7 @@ func testRealNativeShared(t *testing.T, multi bool) {
 		return view, config, tx
 	}
 	exitView, exitConfig, tx := render("demo-exit", true)
-	if multi && (len(tx.owned) != 1 || len(tx.owned[0].peerLinks()) != 3) {
+	if len(shared) > 0 && shared[0] && (len(tx.owned) != 1 || len(tx.owned[0].peerLinks()) != 3) {
 		t.Fatal("three neighbors did not share exactly one native interface")
 	}
 	exitProcess, exitDone, stopExit := start("exit", exitConfig)
@@ -326,7 +347,7 @@ func testRealNativeShared(t *testing.T, multi bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := waitSelector(ctx, selector, []string{"service:demo-service"}); err != nil {
+	if err := waitSelector(ctx, selector, []string{scope}); err != nil {
 		t.Fatal(err)
 	}
 	proxyURL, _ := url.Parse("http://127.0.0.1:1080")
@@ -352,7 +373,7 @@ func testRealNativeShared(t *testing.T, multi bool) {
 		if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
 			t.Fatal(err)
 		}
-		for _, host := range []string{"192.0.2.80", "demo-service.loom"} {
+		for _, host := range []string{business, "demo-service.loom"} {
 			if !request(host) {
 				t.Fatal("projected business path failed", candidate.FirstResourceID, host)
 			}
@@ -398,8 +419,8 @@ func testRealNativeShared(t *testing.T, multi bool) {
 	}
 	_, _, stopEntry = start("entry", entryConfig)
 	stopAccess()
-	start("access", clientConfig)
-	if err := waitSelector(ctx, selector, []string{"service:demo-service"}); err != nil {
+	_, _, stopAccess = start("access", clientConfig)
+	if err := waitSelector(ctx, selector, []string{scope}); err != nil {
 		t.Fatal(err)
 	}
 	if err := selector.Set(ctx, client.Routes[0].Scope, client.Routes[0].ID); err != nil {
@@ -420,6 +441,43 @@ func testRealNativeShared(t *testing.T, multi bool) {
 		}
 		t.Fatal("native domain business did not recover with its persistent names", lastRequestError)
 	}
+	if lan {
+		stopAccess()
+		conflict := []string{p.NetworkIntent.Services[0].LocalNetwork.VirtualPrefix}
+		bounded, err := clientadapter.WithLocalNetworkBoundary(clientConfig, &conflict)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, stopAccess = start("access", bounded)
+		if err := waitSelector(ctx, selector, []string{scope}); err != nil {
+			t.Fatal(err)
+		}
+		for _, candidate := range client.Routes {
+			if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
+				t.Fatal(err)
+			}
+			if request(business) || request("demo-service.loom") {
+				t.Fatal("underlay conflict still allowed an IP or named LAN request")
+			}
+		}
+		stopAccess()
+		_, _, stopAccess = start("access", clientConfig)
+		if err := waitSelector(ctx, selector, []string{scope}); err != nil {
+			t.Fatal(err)
+		}
+		// A new data plane defaults to reject until the client selects an
+		// authorized path. Exercise both independent first hops after recovery.
+		for _, candidate := range client.Routes {
+			if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
+				t.Fatal(err)
+			}
+			for _, host := range []string{business, "demo-service.loom"} {
+				if !request(host) {
+					t.Fatal("removing the local conflict did not restore the unchanged authorized Service", candidate.FirstResourceID, host, lastRequestError)
+				}
+			}
+		}
+	}
 	stopEntry()
 	p.DeviceAuthorizations[0].PolicyIDs = []string{}
 	_, revoked, _ := render("demo-entry", false)
@@ -428,7 +486,7 @@ func testRealNativeShared(t *testing.T, multi bool) {
 		if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
 			t.Fatal(err)
 		}
-		if request("192.0.2.80") {
+		if request(business) {
 			t.Fatal("revoked permission survived receiver replacement")
 		}
 	}

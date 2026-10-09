@@ -17,7 +17,7 @@ func oneHopCandidate(service Service, policy NetworkPolicy, resource TransportRe
 		return RouteCandidate{}, err
 	}
 	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{resource}, "links": []NetworkLink{}}, service, records))
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: "service:" + service.ID, ServiceID: service.ID, FirstResourceID: resource.ID, NodeChain: []string{resource.OwnerNodeID}, LinkIDs: []string{}, FinalExit: resource.OwnerNodeID}, err
+	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, FirstResourceID: resource.ID, NodeChain: []string{resource.OwnerNodeID}, LinkIDs: []string{}, FinalExit: resource.OwnerNodeID}, err
 }
 
 func inboundCredentialOrder(value InboundCredential) string {
@@ -135,7 +135,7 @@ func permissionPath(view DeviceView, permission InboundCredential) (transportPat
 			policy = value
 		}
 	}
-	if permission.Validate() != nil || policy.Action != "allow" || policy.ServiceID != service.ID || !sameContractValue(service.Matchers, permission.AllowedTargets) {
+	if permission.Validate() != nil || policy.Action != "allow" || policy.ValidateForService(service) != nil || !sameContractValue(service.TargetMatchers(view.DNSRecords...), permission.AllowedTargets) {
 		return transportPath{}, 0, errors.New("inbound permission has no matching Service or Policy")
 	}
 	path, err := candidateTransportPath(view, permission.DeviceID, service, policy, permission.Candidate)
@@ -146,7 +146,7 @@ func permissionPath(view DeviceView, permission InboundCredential) (transportPat
 		if resource.ID != permission.ResourceID {
 			continue
 		}
-		want := pathPermission(path, i, permission.DeviceID, policy, service, permission.ExcludedTargets)
+		want := pathPermission(path, i, permission.DeviceID, policy, service, permission.ExcludedTargets, view.DNSRecords...)
 		if want.SenderID != permission.SenderID || want.ReceiverNodeID != permission.ReceiverNodeID {
 			return transportPath{}, 0, errors.New("inbound permission skipped its exact predecessor")
 		}
@@ -196,8 +196,12 @@ func validateViewResources(view DeviceView) error {
 			return err
 		}
 		if index == len(path.hops)-1 {
-			if !containsString(view.Responsibilities, "internet_egress") {
-				return errors.New("final receiver has no internet egress responsibility")
+			role := "internet_egress"
+			if permission.Candidate.Scope == "local_network:"+permission.ServiceID {
+				role = "forward"
+			}
+			if !containsString(view.Responsibilities, role) {
+				return errors.New("final receiver lacks its Service endpoint responsibility")
 			}
 		} else if !containsString(view.Responsibilities, "forward") {
 			return errors.New("intermediate receiver has no forwarding responsibility")
@@ -219,12 +223,9 @@ func validateViewResources(view DeviceView) error {
 }
 
 func projectViewResources(projection Projection, view *DeviceView) (map[string]string, error) {
-	services := map[string]Service{}
+	services := executableServices(projection)
 	policies := map[string]NetworkPolicy{}
 	devices := map[string]DeviceAuthorization{}
-	for _, value := range projection.NetworkIntent.Services {
-		services[value.ID] = value
-	}
 	for _, value := range projection.NetworkIntent.Policies {
 		policies[value.ID] = value
 	}
@@ -327,15 +328,18 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 		for _, policyID := range source.PolicyIDs {
 			policy, assigned := policies[policyID]
 			service, present := services[policy.ServiceID]
-			if !assigned || !present || policy.Action != "allow" {
+			if !assigned || !present || policy.Action != "allow" || policy.ValidateForService(service) != nil {
 				continue
 			}
 			if source.ID == view.DeviceID {
 				exits := []string{}
-				if policy.AllowDirect {
+				if policy.permitsDirect() {
 					exits = append(exits, "direct")
 				}
-				if containsString(source.Responsibilities, "internet_egress") && containsString(policy.LocalEgressDevices, source.ID) && policy.ExitScope.Allows(source.ID) {
+				if containsString(source.Responsibilities, "internet_egress") && policy.permitsLocalEgress(source.ID) {
+					exits = append(exits, source.ID)
+				}
+				if service.LocalNetwork != nil && policy.permitsEndpoint(service, source.ID) && policy.EntryScope.Allows(source.ID) && containsString(source.Responsibilities, "forward") {
 					exits = append(exits, source.ID)
 				}
 				for _, exit := range exits {
@@ -355,7 +359,7 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 				otherPolicy, ok := policies[otherID]
 				otherService, exists := services[otherPolicy.ServiceID]
 				if ok && exists && otherService.ID != service.ID {
-					excluded = append(excluded, otherService.Matchers...)
+					excluded = append(excluded, otherService.TargetMatchers()...)
 				}
 			}
 			sort.Slice(excluded, func(i, j int) bool { return serviceMatcherLess(excluded[i], excluded[j]) })
@@ -366,7 +370,11 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 				}
 			}
 			for _, path := range paths {
-				if !containsString(devices[path.candidate.FinalExit].Responsibilities, "internet_egress") {
+				endpointRole := "internet_egress"
+				if service.Kind == "local_network" {
+					endpointRole = "forward"
+				}
+				if !containsString(devices[path.candidate.FinalExit].Responsibilities, endpointRole) {
 					continue
 				}
 				valid := true
@@ -393,7 +401,7 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 					addLink(link)
 				}
 				for index, resource := range path.hops {
-					permission := pathPermission(path, index, source.ID, policy, service, unique)
+					permission := pathPermission(path, index, source.ID, policy, service, unique, view.DNSRecords...)
 					if resource.Kind == "wireguard" {
 						if err := addSender(permission.SenderID, resource); err != nil {
 							return nil, err

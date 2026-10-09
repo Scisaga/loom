@@ -76,6 +76,7 @@ type singBoxDNSServer struct {
 }
 
 type singBoxInbound struct {
+	RouteAddress        []string      `json:"route_address,omitempty"`
 	RouteExcludeAddress []string      `json:"route_exclude_address,omitempty"`
 	Type                string        `json:"type"`
 	Tag                 string        `json:"tag"`
@@ -105,20 +106,26 @@ type singBoxTLS struct {
 }
 
 type singBoxOutbound struct {
-	Inet6BindAddress string      `json:"inet6_bind_address,omitempty"`
-	Type             string      `json:"type"`
-	Tag              string      `json:"tag"`
-	Server           string      `json:"server,omitempty"`
-	ServerPort       int         `json:"server_port,omitempty"`
-	Password         string      `json:"password,omitempty"`
-	Version          string      `json:"version,omitempty"`
-	TLS              *singBoxTLS `json:"tls,omitempty"`
-	Detour           string      `json:"detour,omitempty"`
-	Outbounds        []string    `json:"outbounds,omitempty"`
-	Default          string      `json:"default,omitempty"`
-	BindInterface    string      `json:"bind_interface,omitempty"`
-	OverrideAddress  string      `json:"override_address,omitempty"`
-	OverridePort     int         `json:"override_port,omitempty"`
+	PrefixMapping    *singBoxPrefixMapping `json:"prefix_mapping,omitempty"`
+	Inet6BindAddress string                `json:"inet6_bind_address,omitempty"`
+	Type             string                `json:"type"`
+	Tag              string                `json:"tag"`
+	Server           string                `json:"server,omitempty"`
+	ServerPort       int                   `json:"server_port,omitempty"`
+	Password         string                `json:"password,omitempty"`
+	Version          string                `json:"version,omitempty"`
+	TLS              *singBoxTLS           `json:"tls,omitempty"`
+	Detour           string                `json:"detour,omitempty"`
+	Outbounds        []string              `json:"outbounds,omitempty"`
+	Default          string                `json:"default,omitempty"`
+	BindInterface    string                `json:"bind_interface,omitempty"`
+	OverrideAddress  string                `json:"override_address,omitempty"`
+	OverridePort     int                   `json:"override_port,omitempty"`
+}
+
+type singBoxPrefixMapping struct {
+	VirtualPrefix string `json:"virtual_prefix"`
+	LocalPrefix   string `json:"local_prefix"`
 }
 
 type singBoxRoute struct {
@@ -241,6 +248,12 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, dnsS
 		return nil, err
 	}
 	result = []byte(diagnostic)
+	connected := []string{}
+	bounded, err := clientadapter.WithLocalNetworkBoundary(string(result), &connected)
+	if err != nil {
+		return nil, err
+	}
+	result = []byte(bounded)
 	if err = ValidateWindowsRuntimeConfig(result, profile); err != nil {
 		return nil, err
 	}
@@ -264,6 +277,13 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 	expected := []singBoxInbound{{Type: "mixed", Tag: "in-1080", Listen: "127.0.0.1", ListenPort: 1080}}
 	if tun {
 		expected = append(expected, singBoxInbound{Type: "tun", Tag: "tun-in", Address: []string{"172.19.0.1/30", "2001:db8::1/126"}, AutoRoute: true, Stack: "system", RouteExcludeAddress: exclusions})
+	}
+	if tun {
+		capture, restricted, err := clientadapter.LocalNetworkCapture(string(body), expected[1].Address, exclusions)
+		if err != nil {
+			return err
+		}
+		expected[1].RouteAddress, expected[1].RouteExcludeAddress = capture, restricted
 	}
 	if len(c.Endpoints) > 0 {
 		if c.Experimental == nil || c.Experimental.ClashAPI == nil {
@@ -394,6 +414,12 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 			shape.Detour, shape.Inet6BindAddress = o.Detour, o.Inet6BindAddress
 			if (o.Detour == "") != (o.Inet6BindAddress == "") {
 				return errors.New("WG direct wrapper requires its exact source binding")
+			}
+			if o.PrefixMapping != nil {
+				if control.ValidateLocalNetworkPrefixes(o.PrefixMapping.LocalPrefix, o.PrefixMapping.VirtualPrefix) != nil || o.Detour != "" {
+					return errors.New("invalid direct local network translation")
+				}
+				shape.PrefixMapping = o.PrefixMapping
 			}
 
 			if o.Tag == "dns-underlay" || o.Tag == "website-underlay" {

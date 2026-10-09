@@ -148,7 +148,20 @@ func PrepareAndroidDeviceProfile(body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return androidDeviceProfile(state, website)
+	body, err = androidDeviceProfile(state, website)
+	if err != nil {
+		return nil, err
+	}
+	var profile androidProfile
+	if err := json.Unmarshal(body, &profile); err != nil {
+		return nil, err
+	}
+	connected, _ := clientadapter.ConnectedIPv4Prefixes(state.LKG.View.Resources...)
+	profile.Config, err = clientadapter.WithLocalNetworkBoundary(profile.Config, connected)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(profile)
 }
 
 func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.WebsiteAccess) ([]byte, error) {
@@ -419,6 +432,8 @@ func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observatio
 	if err != nil {
 		return err
 	}
+	connected, _ := clientadapter.ConnectedIPv4Prefixes(state.LKG.View.Resources...)
+	report.LocalNetworks = clientadapter.UnderlayNetworkReport(connected)
 	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
 	defer cancel()
 	return deviceclient.PostSignedReport(ctx, &androidIdentity{state: state}, report)

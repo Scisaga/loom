@@ -10,31 +10,32 @@ import (
 // WebSnapshot is a redacted projection for the existing control UI. It is never
 // accepted as an operation or used to restore authority.
 type WebSnapshot struct {
-	Members             []WebControlMember           `json:"members"`
-	LocalNodeID         string                       `json:"local_node_id"`
-	WebsiteCertificates []WebsiteCertificateReadback `json:"website_certificates"`
-	WebEndpoints        []EndpointGeneration         `json:"web_endpoints"`
-	PublicTrust         []PublicTrust                `json:"public_trust"`
-	DNSRecords          []DNSRecord                  `json:"dns_records"`
-	Schema              int                          `json:"schema"`
-	NetworkID           string                       `json:"network_id"`
-	ControlConfigID     string                       `json:"control_config_id"`
-	FactFrontier        []FactFrontier               `json:"fact_frontier"`
-	Targets             []TargetState                `json:"targets"`
-	Capabilities        WebCapabilities              `json:"capabilities"`
-	UIState             WebUIState                   `json:"ui_state"`
-	Devices             []Device                     `json:"devices"`
-	Links               []Link                       `json:"links"`
-	Paths               []Path                       `json:"paths"`
-	Policies            []NetworkPolicy              `json:"policies"`
-	PolicyInvites       []WebPolicyInvite            `json:"policy_invites"`
-	Services            []Service                    `json:"services"`
-	Releases            []Release                    `json:"releases"`
-	Publisher           *PublisherStatus             `json:"publisher,omitempty"`
-	Deployments         []Deployment                 `json:"deployments"`
-	Events              []Event                      `json:"events"`
-	Traffic             []TrafficBucket              `json:"traffic"`
-	Administrators      []WebAdministrator           `json:"administrators"`
+	Members               []WebControlMember           `json:"members"`
+	LocalNodeID           string                       `json:"local_node_id"`
+	WebsiteCertificates   []WebsiteCertificateReadback `json:"website_certificates"`
+	WebEndpoints          []EndpointGeneration         `json:"web_endpoints"`
+	PublicTrust           []PublicTrust                `json:"public_trust"`
+	DNSRecords            []DNSRecord                  `json:"dns_records"`
+	Schema                int                          `json:"schema"`
+	NetworkID             string                       `json:"network_id"`
+	ControlConfigID       string                       `json:"control_config_id"`
+	FactFrontier          []FactFrontier               `json:"fact_frontier"`
+	Targets               []TargetState                `json:"targets"`
+	Capabilities          WebCapabilities              `json:"capabilities"`
+	UIState               WebUIState                   `json:"ui_state"`
+	Devices               []Device                     `json:"devices"`
+	Links                 []Link                       `json:"links"`
+	Paths                 []Path                       `json:"paths"`
+	Policies              []NetworkPolicy              `json:"policies"`
+	PolicyInvites         []WebPolicyInvite            `json:"policy_invites"`
+	Services              []Service                    `json:"services"`
+	LocalNetworkConflicts []string                     `json:"local_network_conflicts"`
+	Releases              []Release                    `json:"releases"`
+	Publisher             *PublisherStatus             `json:"publisher,omitempty"`
+	Deployments           []Deployment                 `json:"deployments"`
+	Events                []Event                      `json:"events"`
+	Traffic               []TrafficBucket              `json:"traffic"`
+	Administrators        []WebAdministrator           `json:"administrators"`
 }
 
 type WebControlMember struct {
@@ -154,6 +155,11 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 	for _, item := range projection.InvalidMaterials {
 		warnings = append(warnings, WebWarning{Code: "invalid_fact", Message: item.MaterialID + ": " + item.Reason})
 	}
+	lanConflicts := []string{}
+	for id := range LocalNetworkConflicts(projection.NetworkIntent) {
+		lanConflicts = append(lanConflicts, id)
+	}
+	sort.Strings(lanConflicts)
 	if len(projection.PendingMaterialIDs) > 0 {
 		warnings = append(warnings, WebWarning{Code: "missing_dependencies", Message: "Some authenticated facts await their dependencies; affected targets are unavailable."})
 	}
@@ -166,6 +172,6 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		DNSRecords:    append([]DNSRecord{}, projection.NetworkIntent.DNSRecords...),
 		PublicTrust:   append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),
 		WebEndpoints:  append([]EndpointGeneration{}, webEndpoints...),
-		Services:      append([]Service{}, projection.NetworkIntent.Services...), Releases: []Release{}, Deployments: []Deployment{},
+		Services:      append([]Service{}, projection.NetworkIntent.Services...), LocalNetworkConflicts: lanConflicts, Releases: []Release{}, Deployments: []Deployment{},
 		Events: []Event{}, Traffic: []TrafficBucket{}, Administrators: projectWebAdministrators(projection)}
 }

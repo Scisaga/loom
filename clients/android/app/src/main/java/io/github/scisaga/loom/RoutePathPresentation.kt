@@ -32,6 +32,8 @@ internal fun displayRouteChain(serverChain: List<String>, finalExit: String): St
 }
 
 internal fun displayRouteService(service: String): String = when {
+    service.startsWith("local_network:") -> "局域网 · ${service.removePrefix("local_network:")}"
+    service.startsWith("service:") -> service.removePrefix("service:")
     service.startsWith("decl:") -> service.removePrefix("decl:")
     service.startsWith("svc:") -> service.removePrefix("svc:")
     service.startsWith("route:") -> service.removePrefix("route:")

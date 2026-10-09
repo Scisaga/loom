@@ -1098,9 +1098,24 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 				return errors.New("DNS name is already assigned to another record")
 			}
 		}
-		return nil
+		return validateLocalNetworkDNS(material, view, value)
 	case Service:
-		return nil
+		for _, initial := range graph.genesis.Payload.(Genesis).NetworkIntent.Services {
+			if initial.ID == value.ID && initial.Kind != value.Kind {
+				return errors.New("Service ID cannot change its original kind")
+			}
+		}
+		for _, id := range history {
+			if prior, ok := graph.facts[id].Payload.(Service); ok && prior.ID == value.ID && prior.Kind != value.Kind {
+				return errors.New("Service ID cannot change its historical kind")
+			}
+		}
+		if value.LocalNetwork != nil {
+			if err := validateLocalNetworkTransition(view.NetworkIntent.Services, value); err != nil {
+				return err
+			}
+		}
+		return validateServiceGateway(material, view, value)
 	case NetworkPolicy:
 		if err := requireTargetDependency(material, view, "service", value.ServiceID, true); err != nil {
 			return err
@@ -1210,14 +1225,33 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 }
 
 func validatePolicyNodes(material Material, view Projection, policy NetworkPolicy) error {
+	matched := false
+	for _, service := range view.NetworkIntent.Services {
+		if service.ID == policy.ServiceID {
+			if err := policy.ValidateForService(service); err != nil {
+				return err
+			}
+			matched = true
+		}
+	}
+	if !matched {
+		return errors.New("Policy has no current Service")
+	}
 	devices := map[string]DeviceAuthorization{}
 	for _, device := range view.DeviceAuthorizations {
 		devices[device.ID] = device
 	}
-	for _, item := range []struct {
+	scopes := []struct {
 		scope PolicyScope
 		role  string
-	}{{policy.EntryScope, "entry"}, {policy.RelayScope, "forward"}, {policy.ExitScope, "internet_egress"}} {
+	}{{policy.EntryScope, "entry"}, {policy.RelayScope, "forward"}}
+	if policy.ExitScope != nil {
+		scopes = append(scopes, struct {
+			scope PolicyScope
+			role  string
+		}{*policy.ExitScope, "internet_egress"})
+	}
+	for _, item := range scopes {
 		for _, id := range item.scope.NodeIDs {
 			device, found := devices[id]
 			eligible := containsString(device.Responsibilities, item.role)
@@ -1232,7 +1266,10 @@ func validatePolicyNodes(material Material, view Projection, policy NetworkPolic
 			}
 		}
 	}
-	for _, id := range policy.LocalEgressDevices {
+	if policy.LocalEgressDevices == nil {
+		return nil
+	}
+	for _, id := range *policy.LocalEgressDevices {
 		device, found := devices[id]
 		if !found || !containsString(device.Responsibilities, "access") || !containsString(device.Responsibilities, "internet_egress") || !policy.ExitScope.Allows(id) {
 			return errors.New("Policy local egress node is not an eligible hybrid exit")
@@ -1490,8 +1527,8 @@ func validateAssignedPolicies(material Material, view Projection, ids []string) 
 }
 
 func serviceTargetsOverlap(left, right Service) bool {
-	for _, a := range left.Matchers {
-		for _, b := range right.Matchers {
+	for _, a := range left.TargetMatchers() {
+		for _, b := range right.TargetMatchers() {
 			if a.Kind == "ip_prefix" || b.Kind == "ip_prefix" {
 				if a.Kind != b.Kind {
 					continue

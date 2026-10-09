@@ -112,7 +112,7 @@ install_module_notices() {
 }
 
 for arch in amd64 arm64; do
-  component="$component_root/loom-windows-dataplane-1.11.4-loom.8-${arch}.zip"
+  component="$component_root/loom-windows-dataplane-1.11.4-loom.9-${arch}.zip"
   if [[ ! -f "$component" ]]; then
     echo "missing signed Windows data plane: $component" >&2
     exit 1

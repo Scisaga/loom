@@ -78,7 +78,7 @@ func TestAuthorityOrdinaryOperationsSurviveRestart(t *testing.T) {
 	op := authorityService("demo-service", "demo-service-create")
 	service := submitAuthority(t, runtime, op)
 	anyScope := PolicyScope{Mode: "any", NodeIDs: []string{}}
-	policy := Operation{Schema: 3, RequestID: "demo-policy-create", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: anyScope, AllowDirect: true, LocalEgressDevices: []string{}}}
+	policy := Operation{Schema: 3, RequestID: "demo-policy-create", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: new(anyScope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}}
 	saved := submitAuthority(t, runtime, policy)
 	raw, err := runtime.Authority.Material(saved.MaterialID)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestAuthorityOrdinaryOperationsSurviveRestart(t *testing.T) {
 		t.Fatal("readback aliases writable authority state")
 	}
 	changed := policy
-	changed.Payload = NetworkPolicy{ID: "demo-policy", Name: "Changed", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: anyScope, AllowDirect: true, LocalEgressDevices: []string{}}
+	changed.Payload = NetworkPolicy{ID: "demo-policy", Name: "Changed", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: new(anyScope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}
 	body, _ := EncodeOperation(changed)
 	if _, err := runtime.Submit(context.Background(), body); err == nil {
 		t.Fatal("same request ID accepted different content")

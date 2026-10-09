@@ -350,7 +350,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	}
 	service := submitAuthority(t, server.Runtime, authorityService("demo-service", "demo-browser-service"))
 	anyScope := PolicyScope{Mode: "any", NodeIDs: []string{}}
-	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-browser-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo browser policy", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: anyScope, AllowDirect: true, LocalEgressDevices: []string{}}})
+	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-browser-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo browser policy", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: new(anyScope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}})
 	for _, target := range []BusinessProbeTarget{{ID: "demo-no-duration", URL: "https://demo-service.example/no-duration"}, {ID: "demo-zero-duration", URL: "https://demo-service.example/zero-duration"}} {
 		submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-create-" + target.ID, Operation: "probe_target.put", TargetKind: "probe_target", TargetID: target.ID, Dependencies: []string{}, Payload: target})
 	}

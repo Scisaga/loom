@@ -65,7 +65,7 @@ func pathCandidate(service Service, policy NetworkPolicy, chain []string, hops [
 		return RouteCandidate{}, err
 	}
 	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": values, "links": links}, service, records))
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: "service:" + service.ID, ServiceID: service.ID, FirstResourceID: first, NodeChain: append([]string{}, chain...), LinkIDs: ids, FinalExit: chain[len(chain)-1]}, err
+	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, FirstResourceID: first, NodeChain: append([]string{}, chain...), LinkIDs: ids, FinalExit: chain[len(chain)-1]}, err
 }
 
 func transportPaths(source string, localForward bool, service Service, policy NetworkPolicy, values []TransportResource, links []NetworkLink, records ...DNSRecord) ([]transportPath, error) {
@@ -81,7 +81,7 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 	var walk func([]string, []TransportResource, []NetworkLink, bool) error
 	walk = func(chain []string, hops []TransportResource, pathLinks []NetworkLink, local bool) error {
 		last := chain[len(chain)-1]
-		if len(hops) > 0 && policy.ExitScope.Allows(last) {
+		if len(hops) > 0 && policy.permitsEndpoint(service, last) {
 			candidate, err := pathCandidate(service, policy, chain, hops, pathLinks, local, resources, records)
 			if err != nil {
 				return err
@@ -140,7 +140,7 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 func candidateTransportPath(view DeviceView, origin string, service Service, policy NetworkPolicy, candidate RouteCandidate) (transportPath, error) {
 	reject := errors.New("candidate does not match its authorized transport path")
 	chain := candidate.NodeChain
-	if candidate.Validate() != nil || len(chain) == 0 || !policy.EntryScope.Allows(chain[0]) || !policy.ExitScope.Allows(candidate.FinalExit) || policy.MaxHops > 0 && len(chain) > policy.MaxHops {
+	if candidate.Validate() != nil || len(chain) == 0 || !policy.EntryScope.Allows(chain[0]) || !policy.permitsEndpoint(service, candidate.FinalExit) || policy.MaxHops > 0 && len(chain) > policy.MaxHops {
 		return transportPath{}, reject
 	}
 	resources := map[string]TransportResource{}
@@ -193,7 +193,7 @@ func candidateTransportPath(view DeviceView, origin string, service Service, pol
 	return path, nil
 }
 
-func pathPermission(path transportPath, index int, origin string, policy NetworkPolicy, service Service, excluded []ServiceMatcher) InboundCredential {
+func pathPermission(path transportPath, index int, origin string, policy NetworkPolicy, service Service, excluded []ServiceMatcher, records ...DNSRecord) InboundCredential {
 	position := index
 	if path.local {
 		position++
@@ -204,5 +204,5 @@ func pathPermission(path transportPath, index int, origin string, policy Network
 	}
 	resource := path.hops[index]
 	return InboundCredential{DeviceID: origin, ServiceID: service.ID, PolicyID: policy.ID, Candidate: path.candidate, SenderID: sender,
-		ResourceID: resource.ID, ReceiverNodeID: resource.OwnerNodeID, AllowedTargets: append([]ServiceMatcher{}, service.Matchers...), ExcludedTargets: append([]ServiceMatcher{}, excluded...)}
+		ResourceID: resource.ID, ReceiverNodeID: resource.OwnerNodeID, AllowedTargets: append([]ServiceMatcher{}, service.TargetMatchers(records...)...), ExcludedTargets: append([]ServiceMatcher{}, excluded...)}
 }

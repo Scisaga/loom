@@ -37,7 +37,7 @@ func enrollmentFixtureWithRuntime(t *testing.T, runtime *Runtime, changes ...fun
 	server := &Server{Runtime: runtime, Config: config, Now: func() time.Time { return now }}
 	service := submitAuthority(t, runtime, authorityService("demo-service", "demo-create-service"))
 	scope := PolicyScope{Mode: "any", NodeIDs: []string{}}
-	policy := submitAuthority(t, runtime, Operation{Schema: 3, RequestID: "demo-create-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: scope, AllowDirect: true, LocalEgressDevices: []string{}}})
+	policy := submitAuthority(t, runtime, Operation{Schema: 3, RequestID: "demo-create-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}})
 	endpoint := EndpointGeneration{ID: "demo-entry", Generation: 1, OwnerControlID: config.ControlID, Host: "192.0.2.1", Port: 443, ServerName: "demo.example", SPKISHA256: "sha256:" + strings.Repeat("a", 64), CertificateDigest: "sha256:" + strings.Repeat("b", 64), Modes: []string{"bootstrap", "device"}, State: "prepared"}
 	prepared := submitAuthority(t, runtime, Operation{Schema: 3, RequestID: "demo-prepare-endpoint", Operation: "endpoint.put", TargetKind: "endpoint", TargetID: endpoint.ID, Dependencies: []string{}, Payload: endpoint})
 	endpoint.State = "serving"

@@ -66,7 +66,7 @@ func materialTestService(id string) Service {
 }
 func materialTestPolicy(id, service string) NetworkPolicy {
 	scope := PolicyScope{Mode: "any", NodeIDs: []string{}}
-	return NetworkPolicy{ID: id, Name: "Demo policy", ServiceID: service, Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: scope, AllowDirect: true, LocalEgressDevices: []string{}}
+	return NetworkPolicy{ID: id, Name: "Demo policy", ServiceID: service, Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}
 }
 
 func TestMaterialUniqueCodecAndSignedGenesis(t *testing.T) {

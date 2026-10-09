@@ -322,7 +322,7 @@ type RouteCandidate struct {
 }
 
 func (candidate RouteCandidate) Validate() error {
-	if ValidateDigest(candidate.ID) != nil || ValidateDigest(candidate.SpecDigest) != nil || ValidateID(candidate.ServiceID) != nil || candidate.Scope != "service:"+candidate.ServiceID || ValidateID(candidate.FinalExit) != nil || candidate.NodeChain == nil || candidate.LinkIDs == nil {
+	if ValidateDigest(candidate.ID) != nil || ValidateDigest(candidate.SpecDigest) != nil || ValidateID(candidate.ServiceID) != nil || (candidate.Scope != "service:"+candidate.ServiceID && candidate.Scope != "local_network:"+candidate.ServiceID) || ValidateID(candidate.FinalExit) != nil || candidate.NodeChain == nil || candidate.LinkIDs == nil {
 		return errors.New("route candidate is invalid")
 	}
 	if len(candidate.NodeChain) == 0 {

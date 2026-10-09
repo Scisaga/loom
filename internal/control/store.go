@@ -599,6 +599,10 @@ func emptyAuthorityChainID() string {
 	return "sha256:" + hex.EncodeToString(value[:])
 }
 func (a *Authority) Submit(ctx context.Context, op Operation, local NodeConfig) (Submission, error) {
+	return a.submitChecked(ctx, op, local, nil)
+}
+
+func (a *Authority) submitChecked(ctx context.Context, op Operation, local NodeConfig, check func(Projection) error) (Submission, error) {
 	if _, err := EncodeOperation(op); err != nil {
 		return Submission{}, err
 	}
@@ -612,12 +616,12 @@ func (a *Authority) Submit(ctx context.Context, op Operation, local NodeConfig) 
 	if err := a.reloadLocked(); err != nil {
 		return Submission{}, err
 	}
-	return a.submitOperationLocked(ctx, op, local)
+	return a.submitOperationLocked(ctx, op, local, check)
 }
 
 // The caller owns both the operating-system writer lock and a.mu. Enrollment
 // uses this same signer for its two individually durable facts.
-func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, local NodeConfig) (Submission, error) {
+func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, local NodeConfig, checks ...func(Projection) error) (Submission, error) {
 	requested, err := EncodeOperation(op)
 	if err != nil {
 		return Submission{}, err
@@ -663,6 +667,13 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 			index := sort.SearchStrings(op.Dependencies, id)
 			if index == len(op.Dependencies) || op.Dependencies[index] != id {
 				return Submission{}, errors.New("target dependencies are stale")
+			}
+		}
+	}
+	for _, check := range checks {
+		if check != nil {
+			if err := check(a.projection); err != nil {
+				return Submission{}, err
 			}
 		}
 	}

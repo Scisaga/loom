@@ -450,7 +450,7 @@ genesis.network_intent 的字段集固定为下表；schema 为整数 `3`，其�
 | resources | 本节 TransportResource；按 id 排序；owner_node_id 须具有该资源所需资格；公开认证值按资源种类严格校验 |
 | links | 本节 NetworkLink；按 id 排序；节点、方向、资源及 probe_target 同时合法；非空元素不能靠资源握手替代真实探测动作定义 |
 | business_probe_targets | `id:ID,url:HTTPS_URL`；按 id 排序；这是共享目标池，不自动分配 Service 权限 |
-| dns_records | `DNSRecord` 集合，按稳定 id 排序；每项恰好 `id,name,addresses`，规范及并发同名拒绝见下文 |
+| dns_records | `DNSRecord` 集合，按稳定 id 排序；每项为 `id,name,addresses`，LAN 记录另含 `service_id`，规范及并发同名拒绝见下文 |
 | public_trust | `PublicTrust{id,purpose,certificate_der}`，按 id 排序；当前 purpose 恰为 website，证书为受约束网站根 DER 的无填充 base64url，id 为 website- 加 DER 的 SHA-256 小写十六进制；规范与撤销规则见[公开网站信任根](control-model.md#公开网站信任根)。数据面认证仍由 TransportResource 的原公开值确定，不继承网站根 |
 | expected_components | 下述 ExpectedComponent；按 node_id、component_id、platform 排序；初始值没有普通设备授权，非空初始期望拒绝，后续通过普通事实逐项修改 |
 
@@ -482,7 +482,7 @@ Link 探测动作使用下述原生 WG DNS 契约，LAN 使用 Service 的局域
 
 ### 精确 overlay DNS 记录
 
-`DNSRecord` 恰好包含 `id:ID,name:DNS_NAME,addresses:list<IP>`。名称以 `.loom` 结尾且不等于
+`DNSRecord` 包含 `id:ID,name:DNS_NAME,addresses:list<IP>`；可选 `service_id:ID` 将名称绑定到一个 LAN Service，缺席保持原普通记录字节；空字符串和 null 均拒绝。绑定记录的每个地址必须属于该 Service 当前启用的虚拟 IPv4 前缀，写入引用该 Service 的当前事实。只有获得该 Service allow 权限的设备及实际执行其 ACL 的接收节点得到该记录；禁用、删除、撤权或前缀重分配后不再适用的记录退出运行投影，但原记录继续供管理员检查和更新。运行时可由记录派生精确名称匹配，最终网关仍对解析后的每个地址检查虚拟前缀。没有绑定的旧记录保持原含义，不自动变成 LAN 记录。名称以 `.loom` 结尾且不等于
 `control.loom`，地址非空、唯一、按规范字符串字节序排列，拒绝 unspecified、multicast、zone 和
 IPv4-mapped IPv6。`dns_record.put` 的 target_kind 固定 `dns_record`，target_id 等于 payload.id；
 `dns_record.delete` 使用既有 `DeleteTarget`。初始记录按 ID 排序且名称唯一；并发普通事实同名时
@@ -533,6 +533,14 @@ Matcher 是 `kind,value` 两字段：`dns_exact` 精确主机、`dns_suffix` 域
 精确 IP 以 /32 或 /128 表达，不另设歧义 matcher。Service 删除或目标修改后，同设备目标归属不唯一的
 请求拒绝，不按 Service 列表位置择宽规则。LAN Service 的网关/映射沿控制模型处理，不能编码成互联网 matcher 冒充。
 
+局域网 Service 恰为 `id,name,kind="local_network",local_network`；不能带 `matchers`。
+`local_network` 是同一 Service 的值，恰含 `gateway_node_id,local_prefix,virtual_prefix,allocation_attempt,enabled`。
+网关为非 `direct` 的 NodeID；两个前缀均为规范、已掩码的 IPv4 CIDR，长度相同且至少 /8，
+本地前缀须为单播网络，虚拟前缀完整位于 RFC 1918 空间且不与本地前缀重叠。
+`allocation_attempt` 是 0 至 3 的整数，0 表示首次分配，1 至 3 表示本轮重分配；`enabled` 是显式布尔值。
+禁用保留地址与授权引用供审阅，但不产生运行权限。服务种类不能在原 ID 上改变；互联网原件的四个字段
+及其签名字节不变。LAN 的地址、启用与尝试数在同一普通事实中原子改变，不增加映射实体或恢复日志。
+
 Policy 字段为 `id,name,service_id,action,entry_scope,relay_scope`；互联网 Policy 还必含
 `exit_scope,allow_direct,local_egress_devices`。action 仅 `allow/deny`；Scope 唯一形状为
 `{"mode":"any|only|none","node_ids":[]ID}`。any/none 必须为空，only 必须非空，ID 排序去重；
@@ -540,6 +548,15 @@ LAN Policy 出现三个互联网字段即拒绝。deny 仍完整保存规则和�
 id/service_id 为 ID、name 为 Text、allow_direct 为布尔值、local_egress_devices 为 ID 集合；
 每个节点引用须满足现有位置及职责规则。NodeID 不可为终点保留值 `direct`。
 这些资格检查用于新写入；已持久策略的节点后来失效时保留原 ID，相关候选退出，不能把 only 改为 any。
+三个互联网字段在类型中以“全部存在”或“全部省略”表达；显式 null、部分存在及与所属 Service 种类
+不符均拒绝。已有互联网 Policy 的 false 和空集合仍显式编码，不能因新增 LAN 分支改变旧签名字节。
+LAN Policy 不增加另一个网关字段；固定终点只来自 Service。`max_hops` 对两种 Policy 保持原有可选语义。
+
+LAN 首次分配及人工重试由 control 的只读分配入口返回完整 Service 和所审阅的依赖，随后沿原
+`service.put` 提交。预览不是预留，不能赋权；提交重新核对网关、最新且与当前 View 匹配的认证前缀报告、排除集合和精确
+分配结果，陈旧预览拒绝，操作者重新审阅。其事实的历史验证只依赖规范值及签名的设备依赖，
+不依赖可过期的报告或后来变化的地址池。普通 Service 改名、禁用保留原映射；改变映射或明确重新启用
+须再次走分配审阅。其他成员不从自己的报告集合重新计算已签虚拟地址。
 
 DeviceAuthorization 字段为 `id,name,platform,device_public_key,responsibilities,policy_ids,distribution_urls,runtime_key,`
 `transaction_id,invite_material_id,binding_material_id`。platform 固定为 `android/linux/windows`，
@@ -958,6 +975,14 @@ View 摘要 → 设备 ID/公钥/平台 → 内部引用及授权/运行映射 �
 DeviceReport 字段为 `schema=3,network_id,device_id,report_sequence:U64,view_digest,network_generation,reported_at,`
 `selections,observations,runtime,components,signature`，report_sequence 至少 1，签名域固定 `loom-report-v3\0`。
 设备在发送前将下一序列与本机身份状态持久保存，重试只重发同一原始报告；崩溃允许序列跳号，不允许复用。
+可选 `local_networks:[{prefix:IPv4Prefix,lan:bool}]` 保存本轮只读获得的 underlay 连接前缀，
+规范掩码、至少 /8，按 prefix 文本排序去重。`lan` 必填；只有物理接口与直接连接路由均读回
+才为 true，其他 TUN/WG 前缀为 false，仍参与地址冲突检测。Loom 自有执行地址不报告。
+空数组表示已读回但没有合格前缀，省略表示没有此读回，null 拒绝。
+签名覆盖该集合，省略时旧报告原字节不变。它不授予共享权限；只有当前 forward 的报告可用于
+创建 LAN Service，且只能选择其中 lan=true 的项；access 的集合仅用于地址冲突检测。
+读回失败不能用空集合冒充成功，不能由接口名称或设备职责推断 lan=true。
+同一原件、序列和数据库持久化/同步规则适用，不新增 LAN 报告文件或冲突 store。
 selections 每项为 `service_id,candidate_id`，按 Service ID 排序，表示实际 selector 回读；没有实际选择则为空。
 access 设备可另外报告 `preference:{mode,exit?}`，mode 仅 `direct/auto/fixed_exit`；只有 fixed_exit
 必须携带规范 NodeID 的 exit，且不得为 direct 或 auto，其余模式必须省略 exit。对象缺席表示未报告，

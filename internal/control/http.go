@@ -138,6 +138,11 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 					// still refuses new claims; logs contain no invitation input.
 					log.Print("control: could not persist expired invitation; will retry")
 				}
+				lanCheck, cancelLAN := context.WithTimeout(ctx, 5*time.Second)
+				if err := server.reconcileLocalNetworks(lanCheck); err != nil && ctx.Err() == nil {
+					log.Print("control: LAN allocation follow-up pending; original facts retained")
+				}
+				cancelLAN()
 			}
 			memberCheck, cancelMembers := context.WithTimeout(ctx, 5*time.Second)
 			if err := server.Runtime.ReconcileControlChanges(memberCheck, server.now()); err != nil && ctx.Err() == nil {
@@ -186,6 +191,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/path-history", server.pathHistory)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
+	mux.HandleFunc("POST /api/control/services/local-network-allocation", server.localNetworkAllocation)
 	mux.HandleFunc("GET /api/control/devices/{device}/view", server.exportDeviceView)
 	mux.HandleFunc("POST /api/control/members", server.controlChange)
 	mux.HandleFunc("GET /api/control/ui/enrollment-options", server.enrollmentOptions)

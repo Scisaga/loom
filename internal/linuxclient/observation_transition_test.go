@@ -59,7 +59,7 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 				v.Services, v.Policies = []control.Service{}, []control.NetworkPolicy{}
 				for _, id := range v.PolicyIDs {
 					v.Services = append(v.Services, control.Service{ID: id, Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: id + ".example"}}})
-					v.Policies = append(v.Policies, control.NetworkPolicy{ID: id, Name: "Demo policy", ServiceID: id, Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: scope, AllowDirect: true, LocalEgressDevices: []string{}})
+					v.Policies = append(v.Policies, control.NetworkPolicy{ID: id, Name: "Demo policy", ServiceID: id, Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})})
 				}
 				v.DNSServers = []string{"192.0.2.53"}
 				v.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-a", Targets: []string{"https://demo-a.example/"}}, {ServiceID: "demo-b", Targets: []string{"https://demo-b.example/"}}}

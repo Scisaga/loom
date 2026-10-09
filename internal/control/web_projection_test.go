@@ -37,8 +37,8 @@ func TestWebSnapshotRedactsSecretsAndPreservesPolicyReferences(t *testing.T) {
 func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 	_, _, projection := deviceContractFixture(t)
 	projection.DeviceAuthorizations[0].Responsibilities = []string{"access", "internet_egress"}
-	projection.NetworkIntent.Policies[0].AllowDirect = false
-	projection.NetworkIntent.Policies[0].LocalEgressDevices = []string{"demo-access"}
+	projection.NetworkIntent.Policies[0].AllowDirect = new(false)
+	projection.NetworkIntent.Policies[0].LocalEgressDevices = new([]string{"demo-access"})
 	snapshot := buildWebSnapshot(projection, true, true, true)
 	if len(snapshot.Paths) != 1 || snapshot.Paths[0].FinalExit != "demo-access" || len(snapshot.Paths[0].Chain) != 0 || snapshot.Paths[0].Selected || snapshot.Paths[0].Availability != "unknown" {
 		t.Fatal("unmeasured local candidate disappeared or acquired a selection/health assertion")

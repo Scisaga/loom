@@ -30,7 +30,7 @@ func TestIsolatedTUNNamedResourcePreservesAuthenticationAndResolver(t *testing.T
 	p.DeviceAuthorizations = []control.DeviceAuthorization{access, exit}
 	p.EndpointGenerations = base.Endpoints
 	p.NetworkIntent.Services, p.NetworkIntent.Policies = base.Services, base.Policies
-	p.NetworkIntent.Policies[0].AllowDirect = false
+	p.NetworkIntent.Policies[0].AllowDirect = new(false)
 	resourceView, _, _ := resourceExecutionFixture(t)
 	resourceView.Resources[0].DialHost = "demo-relay.example"
 	p.NetworkIntent.Resources = resourceView.Resources

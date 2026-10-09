@@ -37,14 +37,15 @@ type Device struct {
 }
 
 type DeviceEvidence struct {
-	Preference        *ReportPreference   `json:"preference,omitempty"`
-	ReportedAt        string              `json:"reported_at"`
-	ViewDigest        string              `json:"view_digest"`
-	NetworkGeneration string              `json:"network_generation"`
-	Selections        []ReportSelection   `json:"selections,omitempty"`
-	Runtime           *RuntimeReadback    `json:"runtime,omitempty"`
-	Components        []ComponentReadback `json:"components,omitempty"`
-	Measurements      []Observation       `json:"measurements,omitempty"`
+	LocalNetworks     *[]LocalNetworkPrefix `json:"local_networks,omitempty"`
+	Preference        *ReportPreference     `json:"preference,omitempty"`
+	ReportedAt        string                `json:"reported_at"`
+	ViewDigest        string                `json:"view_digest"`
+	NetworkGeneration string                `json:"network_generation"`
+	Selections        []ReportSelection     `json:"selections,omitempty"`
+	Runtime           *RuntimeReadback      `json:"runtime,omitempty"`
+	Components        []ComponentReadback   `json:"components,omitempty"`
+	Measurements      []Observation         `json:"measurements,omitempty"`
 }
 
 type Link struct {

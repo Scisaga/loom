@@ -70,7 +70,7 @@ func linuxAcceptanceFixture(t *testing.T, change ...func(uint64, *control.Device
 			scope := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
 			view.PolicyIDs = []string{"demo-policy"}
 			view.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo-service.example"}}}}
-			view.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: scope, AllowDirect: true, LocalEgressDevices: []string{}}}
+			view.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}}
 		}
 		for _, update := range change {
 			update(sequence, &view)

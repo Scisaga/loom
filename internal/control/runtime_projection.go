@@ -29,7 +29,7 @@ func localCandidate(service Service, policy NetworkPolicy, finalExit string, rec
 	if err != nil {
 		return RouteCandidate{}, err
 	}
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: "service:" + service.ID, ServiceID: service.ID,
+	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID,
 		FirstResourceID: "", NodeChain: []string{}, LinkIDs: []string{}, FinalExit: finalExit}, nil
 }
 
@@ -56,6 +56,9 @@ func servicePermissionValues(view DeviceView) (map[string]Service, map[string]Ne
 		if policy.Validate() != nil || index > 0 && view.Policies[index-1].ID >= policy.ID || !selected && !inboundPolicies[policy.ID] {
 			return nil, nil, errors.New("view Policies are invalid, unassigned or not uniquely sorted")
 		}
+		if service, found := services[policy.ServiceID]; found && policy.ValidateForService(service) != nil {
+			return nil, nil, errors.New("view Policy does not match its Service kind")
+		}
 		if !selected {
 			continue
 		}
@@ -80,9 +83,9 @@ func matcherRule(matcher ServiceMatcher) map[string]any {
 	}
 }
 
-func serviceRule(service Service) map[string]any {
-	rules := make([]any, 0, len(service.Matchers))
-	for _, matcher := range service.Matchers {
+func serviceRule(service Service, records ...DNSRecord) map[string]any {
+	rules := make([]any, 0, len(service.TargetMatchers(records...)))
+	for _, matcher := range service.TargetMatchers(records...) {
 		rules = append(rules, matcherRule(matcher))
 	}
 	return map[string]any{"type": "logical", "mode": "or", "rules": rules}
@@ -104,12 +107,12 @@ func projectAccessRuntime(view DeviceView, credentials map[string]string) ([]Rou
 	return renderSegmentedRuntime(view, credentials)
 }
 
-func targetMatchesService(target string, service Service) bool {
+func targetMatchesService(target string, service Service, records ...DNSRecord) bool {
 	if ValidateHTTPSURL(target) != nil {
 		return false
 	}
 	parsed, _ := url.Parse(target)
-	for _, matcher := range service.Matchers {
+	for _, matcher := range service.TargetMatchers(records...) {
 		if matcher.Matches(parsed.Hostname()) {
 			return true
 		}
@@ -140,12 +143,12 @@ func validateDeviceViewAuthorization(view DeviceView) error {
 			return errors.New("business probe group is unauthorized or not uniquely sorted")
 		}
 		for targetIndex, target := range group.Targets {
-			if !targetMatchesService(target, service) || targetIndex > 0 && group.Targets[targetIndex-1] >= target {
+			if !targetMatchesService(target, service, view.DNSRecords...) || targetIndex > 0 && group.Targets[targetIndex-1] >= target {
 				return errors.New("business probe target is unauthorized or not uniquely sorted")
 			}
 			for otherID, other := range services {
 				if otherID != service.ID {
-					if _, chosen := policies[otherID]; chosen && targetMatchesService(target, other) {
+					if _, chosen := policies[otherID]; chosen && targetMatchesService(target, other, view.DNSRecords...) {
 						return errors.New("business probe target belongs to multiple Services")
 					}
 				}
@@ -222,13 +225,14 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 		}
 	}
 	sort.Strings(view.Responsibilities)
+	usable := executableServices(projection)
 	serviceIDs := map[string]bool{}
 	for _, policy := range projection.NetworkIntent.Policies {
 		if !containsString(view.PolicyIDs, policy.ID) {
 			continue
 		}
 		for _, service := range projection.NetworkIntent.Services {
-			if service.ID == policy.ServiceID {
+			if _, active := usable[service.ID]; active && service.ID == policy.ServiceID && policy.ValidateForService(service) == nil {
 				view.Policies = append(view.Policies, policy)
 				serviceIDs[service.ID] = true
 				break
@@ -246,6 +250,7 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 	if err != nil {
 		return DeviceView{}, err
 	}
+	view.DNSRecords = projectViewDNS(view)
 	for _, endpoint := range projection.EndpointGenerations {
 		if endpoint.State != "serving" && endpoint.State != "draining" || !containsString(endpoint.Modes, "device") {
 			continue
@@ -279,12 +284,12 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 					continue
 				}
 				for _, otherService := range view.Services {
-					if otherService.ID == otherPolicy.ServiceID && targetMatchesService(target.URL, otherService) {
+					if otherService.ID == otherPolicy.ServiceID && targetMatchesService(target.URL, otherService, view.DNSRecords...) {
 						unique = false
 					}
 				}
 			}
-			if unique && targetMatchesService(target.URL, service) {
+			if unique && targetMatchesService(target.URL, service, view.DNSRecords...) {
 				group.Targets = append(group.Targets, target.URL)
 			}
 		}
@@ -311,8 +316,8 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 // ServicesOverlap proves overlaps available from the certified matcher values;
 // it never resolves DNS to invent a relation between a name and an IP prefix.
 func ServicesOverlap(left, right Service) bool {
-	for _, a := range left.Matchers {
-		for _, b := range right.Matchers {
+	for _, a := range left.TargetMatchers() {
+		for _, b := range right.TargetMatchers() {
 			if a.Kind == "ip_prefix" && b.Kind == "ip_prefix" {
 				pa, ea := netip.ParsePrefix(a.Value)
 				pb, eb := netip.ParsePrefix(b.Value)

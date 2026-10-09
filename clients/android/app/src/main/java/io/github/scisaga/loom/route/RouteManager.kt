@@ -90,7 +90,7 @@ internal fun singleBusinessProbeInput(
 ): BusinessProbeInput? {
     val selected = application?.selectors?.singleOrNull() ?: return null
     val group = profile.businessProbeTargets.singleOrNull() ?: return null
-    if (selected.selector != "service:${group.serviceID}") return null
+    if (selected.selector != "service:${group.serviceID}" && selected.selector != "local_network:${group.serviceID}") return null
     val target = group.targets.singleOrNull() ?: return null
     val dns = profile.dns.firstOrNull() ?: return null
     return BusinessProbeInput(selected, networkGeneration, dns, target)

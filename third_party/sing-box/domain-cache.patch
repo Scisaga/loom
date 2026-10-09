@@ -1688,3 +1688,316 @@
  	Context      context.Context
  	Logger       logger.ContextLogger
  	System       bool
+--- a/option/direct.go
++++ b/option/direct.go
+@@ -16,12 +16,18 @@
+ 
+ type _DirectOutboundOptions struct {
+ 	DialerOptions
++	PrefixMapping *DirectPrefixMapping `json:"prefix_mapping,omitempty"`
+ 	// Deprecated: Use Route Action instead
+ 	OverrideAddress string `json:"override_address,omitempty"`
+ 	// Deprecated: Use Route Action instead
+ 	OverridePort uint16 `json:"override_port,omitempty"`
+ 	// Deprecated: removed
+ 	ProxyProtocol uint8 `json:"proxy_protocol,omitempty"`
++}
++
++type DirectPrefixMapping struct {
++	VirtualPrefix string `json:"virtual_prefix"`
++	LocalPrefix   string `json:"local_prefix"`
+ }
+ 
+ type DirectOutboundOptions _DirectOutboundOptions
+--- a/protocol/direct/outbound.go
++++ b/protocol/direct/outbound.go
+@@ -43,7 +43,13 @@
+ 
+ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DirectOutboundOptions) (adapter.Outbound, error) {
+ 	options.UDPFragmentDefault = true
+-	outboundDialer, err := dialer.NewDirect(ctx, options.DialerOptions)
++	var outboundDialer dialer.ParallelInterfaceDialer
++	var err error
++	if options.PrefixMapping != nil {
++		outboundDialer, err = newPrefixMappingDialer(ctx, router, options)
++	} else {
++		outboundDialer, err = dialer.NewDirect(ctx, options.DialerOptions)
++	}
+ 	if err != nil {
+ 		return nil, err
+ 	}
+--- /dev/null
++++ b/protocol/direct/prefix_mapping.go
+@@ -0,0 +1,163 @@
++package direct
++
++import (
++	"context"
++	"encoding/binary"
++	"errors"
++	"net"
++	"net/netip"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/dialer"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing-dns"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++// Translation sits below resolution and above physical socket creation. Every
++// resolved address is checked again, including parallel and UDP dial paths.
++type prefixMappingDialer struct {
++	underlay dialer.ParallelInterfaceDialer
++	virtual  netip.Prefix
++	local    netip.Prefix
++}
++
++func newPrefixMappingDialer(ctx context.Context, router adapter.Router, options option.DirectOutboundOptions) (dialer.ParallelInterfaceDialer, error) {
++	virtual, ve := netip.ParsePrefix(options.PrefixMapping.VirtualPrefix)
++	local, le := netip.ParsePrefix(options.PrefixMapping.LocalPrefix)
++	if ve != nil || le != nil || !virtual.Addr().Is4() || !local.Addr().Is4() || virtual != virtual.Masked() || local != local.Masked() ||
++		virtual.String() != options.PrefixMapping.VirtualPrefix || local.String() != options.PrefixMapping.LocalPrefix ||
++		virtual.Bits() != local.Bits() || virtual.Bits() < 8 || !privateMappingPrefix(virtual) || !local.Addr().IsGlobalUnicast() || virtual.Overlaps(local) ||
++		options.Detour != "" || options.OverrideAddress != "" || options.OverridePort != 0 {
++		return nil, errors.New("invalid direct prefix mapping")
++	}
++	underlay, err := dialer.NewDefault(ctx, options.DialerOptions)
++	if err != nil {
++		return nil, err
++	}
++	mapped := &prefixMappingDialer{underlay: underlay, virtual: virtual, local: local}
++	return dialer.NewResolveParallelInterfaceDialer(router, mapped, true, dns.DomainStrategy(options.DomainStrategy), time.Duration(options.FallbackDelay)), nil
++}
++
++func privateMappingPrefix(prefix netip.Prefix) bool {
++	for _, value := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
++		pool := netip.MustParsePrefix(value)
++		if prefix.Bits() >= pool.Bits() && pool.Contains(prefix.Addr()) {
++			return true
++		}
++	}
++	return false
++}
++
++func (d *prefixMappingDialer) translate(destination M.Socksaddr) (M.Socksaddr, error) {
++	if destination.Fqdn != "" || !destination.Addr.Is4() || !d.virtual.Contains(destination.Addr) || destination.Port == 0 {
++		return M.Socksaddr{}, errors.New("destination is outside the authorized virtual prefix")
++	}
++	address, base, target := destination.Addr.As4(), d.virtual.Addr().As4(), d.local.Addr().As4()
++	host := binary.BigEndian.Uint32(address[:]) - binary.BigEndian.Uint32(base[:])
++	binary.BigEndian.PutUint32(target[:], binary.BigEndian.Uint32(target[:])+host)
++	return M.SocksaddrFrom(netip.AddrFrom4(target), destination.Port), nil
++}
++
++func (d *prefixMappingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	mapped, err := d.translate(destination)
++	if err != nil {
++		return nil, err
++	}
++	conn, err := d.underlay.DialContext(ctx, network, mapped)
++	if err != nil {
++		return nil, err
++	}
++	return mappedConnection(conn, network, destination), nil
++}
++
++func (d *prefixMappingDialer) DialParallelInterface(ctx context.Context, network string, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaces []C.InterfaceType, fallbackInterfaces []C.InterfaceType, delay time.Duration) (net.Conn, error) {
++	mapped, err := d.translate(destination)
++	if err != nil {
++		return nil, err
++	}
++	conn, err := d.underlay.DialParallelInterface(ctx, network, mapped, strategy, interfaces, fallbackInterfaces, delay)
++	if err != nil {
++		return nil, err
++	}
++	return mappedConnection(conn, network, destination), nil
++}
++
++func (d *prefixMappingDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	mapped, err := d.translate(destination)
++	if err != nil {
++		return nil, err
++	}
++	conn, err := d.underlay.ListenPacket(ctx, mapped)
++	if err != nil {
++		return nil, err
++	}
++	return &prefixPacketConn{PacketConn: conn, virtual: destination, local: mapped}, nil
++}
++
++func (d *prefixMappingDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaces []C.InterfaceType, fallbackInterfaces []C.InterfaceType, delay time.Duration) (net.PacketConn, error) {
++	mapped, err := d.translate(destination)
++	if err != nil {
++		return nil, err
++	}
++	conn, err := d.underlay.ListenSerialInterfacePacket(ctx, mapped, strategy, interfaces, fallbackInterfaces, delay)
++	if err != nil {
++		return nil, err
++	}
++	return &prefixPacketConn{PacketConn: conn, virtual: destination, local: mapped}, nil
++}
++
++type prefixConn struct {
++	net.Conn
++	remote net.Addr
++}
++
++func mappedConnection(conn net.Conn, network string, destination M.Socksaddr) net.Conn {
++	var address net.Addr = destination.TCPAddr()
++	if network == "udp" || network == "udp4" || network == "udp6" {
++		address = destination.UDPAddr()
++	}
++	return &prefixConn{Conn: conn, remote: address}
++}
++
++func (c *prefixConn) RemoteAddr() net.Addr { return c.remote }
++func (c *prefixConn) CloseRead() error {
++	if conn, ok := c.Conn.(interface{ CloseRead() error }); ok {
++		return conn.CloseRead()
++	}
++	return errors.New("mapped connection does not support closing its read direction")
++}
++func (c *prefixConn) CloseWrite() error {
++	if conn, ok := c.Conn.(interface{ CloseWrite() error }); ok {
++		return conn.CloseWrite()
++	}
++	return errors.New("mapped connection does not support closing its write direction")
++}
++
++// Do not expose an Upstream bypass: every datagram must retain its exact peer.
++type prefixPacketConn struct {
++	net.PacketConn
++	virtual M.Socksaddr
++	local   M.Socksaddr
++}
++
++func (c *prefixPacketConn) WriteTo(body []byte, address net.Addr) (int, error) {
++	if M.SocksaddrFromNet(address) != c.virtual {
++		return 0, errors.New("mapped UDP session cannot change its destination")
++	}
++	return c.PacketConn.WriteTo(body, c.local.UDPAddr())
++}
++
++func (c *prefixPacketConn) ReadFrom(body []byte) (int, net.Addr, error) {
++	for {
++		n, address, err := c.PacketConn.ReadFrom(body)
++		if err != nil {
++			return n, nil, err
++		}
++		if M.SocksaddrFromNet(address) == c.local {
++			return n, c.virtual.UDPAddr(), nil
++		}
++	}
++}
+--- /dev/null
++++ b/protocol/direct/prefix_mapping_test.go
+@@ -0,0 +1,106 @@
++package direct
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"net/netip"
++	"testing"
++	"time"
++
++	C "github.com/sagernet/sing-box/constant"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++type demoMappingUnderlay struct {
++	destination M.Socksaddr
++	packets     *demoMappingPackets
++}
++
++func (d *demoMappingUnderlay) DialContext(_ context.Context, _ string, destination M.Socksaddr) (net.Conn, error) {
++	d.destination = destination
++	return nil, errors.New("demo connection reached physical dialer")
++}
++func (d *demoMappingUnderlay) DialParallelInterface(ctx context.Context, network string, destination M.Socksaddr, _ *C.NetworkStrategy, _, _ []C.InterfaceType, _ time.Duration) (net.Conn, error) {
++	return d.DialContext(ctx, network, destination)
++}
++func (d *demoMappingUnderlay) ListenPacket(_ context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	d.destination = destination
++	return d.packets, nil
++}
++func (d *demoMappingUnderlay) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, _ *C.NetworkStrategy, _, _ []C.InterfaceType, _ time.Duration) (net.PacketConn, error) {
++	return d.ListenPacket(ctx, destination)
++}
++
++type demoMappingPackets struct {
++	net.PacketConn
++	replies []net.Addr
++	written net.Addr
++}
++
++func (d *demoMappingPackets) ReadFrom(body []byte) (int, net.Addr, error) {
++	if len(d.replies) == 0 {
++		return 0, nil, io.EOF
++	}
++	address := d.replies[0]
++	d.replies = d.replies[1:]
++	return copy(body, "demo reply"), address, nil
++}
++func (d *demoMappingPackets) WriteTo(body []byte, address net.Addr) (int, error) {
++	d.written = address
++	return len(body), nil
++}
++
++func TestPrefixMappingChecksAllPhysicalDialPathsAndUDPPeer(t *testing.T) {
++	underlay := &demoMappingUnderlay{packets: &demoMappingPackets{}}
++	d := &prefixMappingDialer{underlay: underlay, virtual: netip.MustParsePrefix("198.51.100.0/24"), local: netip.MustParsePrefix("192.0.2.0/24")}
++	virtual := M.ParseSocksaddr("198.51.100.17:443")
++	physical := M.ParseSocksaddr("192.0.2.17:443")
++	ctx := context.Background()
++	for _, parallel := range []bool{false, true} {
++		underlay.destination = M.Socksaddr{}
++		if parallel {
++			_, _ = d.DialParallelInterface(ctx, "tcp", virtual, nil, nil, nil, 0)
++		} else {
++			_, _ = d.DialContext(ctx, "tcp", virtual)
++		}
++		if underlay.destination != physical {
++			t.Fatal("TCP changed host bits or port")
++		}
++		for _, bad := range []string{"203.0.113.1:443", "[2001:db8::1]:443", "demo.example:443", "[::ffff:198.51.100.17]:443"} {
++			underlay.destination = M.Socksaddr{}
++			if parallel {
++				_, _ = d.DialParallelInterface(ctx, "tcp", M.ParseSocksaddr(bad), nil, nil, nil, 0)
++			} else {
++				_, _ = d.DialContext(ctx, "tcp", M.ParseSocksaddr(bad))
++			}
++			if underlay.destination.IsValid() {
++				t.Fatal("unmapped address reached physical TCP dialer")
++			}
++		}
++		var conn net.PacketConn
++		var err error
++		if parallel {
++			conn, err = d.ListenSerialInterfacePacket(ctx, virtual, nil, nil, nil, 0)
++		} else {
++			conn, err = d.ListenPacket(ctx, virtual)
++		}
++		if err != nil || underlay.destination != physical {
++			t.Fatal("UDP changed host bits or port", err)
++		}
++		underlay.packets.written = nil
++		if _, err = conn.WriteTo([]byte("demo request"), M.ParseSocksaddr("198.51.100.18:443").UDPAddr()); err == nil || underlay.packets.written != nil {
++			t.Fatal("UDP session changed its authorized destination")
++		}
++		if _, err = conn.WriteTo([]byte("demo request"), virtual.UDPAddr()); err != nil || M.SocksaddrFromNet(underlay.packets.written) != physical {
++			t.Fatal("UDP request was not translated", err)
++		}
++		underlay.packets.replies = []net.Addr{M.ParseSocksaddr("192.0.2.18:443").UDPAddr(), M.ParseSocksaddr("192.0.2.17:444").UDPAddr(), physical.UDPAddr()}
++		body := make([]byte, 64)
++		_, address, err := conn.ReadFrom(body)
++		if err != nil || M.SocksaddrFromNet(address) != virtual || len(underlay.packets.replies) != 0 {
++			t.Fatal("UDP reply was injected or exposed the physical address", err)
++		}
++	}
++}

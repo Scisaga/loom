@@ -320,7 +320,8 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 	if err != nil {
 		return control.DeviceReport{}, err
 	}
-	report := control.DeviceReport{ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, ReportedAt: reportedAt.UnixMilli(),
+	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
+	report := control.DeviceReport{LocalNetworks: clientadapter.UnderlayNetworkReport(connected), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, ReportedAt: reportedAt.UnixMilli(),
 		Preference: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: append([]control.ComponentReadback{}, components...),
 		Runtime: control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}}
 	routes := map[string]control.RouteCandidate{}
@@ -509,6 +510,12 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			return errWindowsRuntimeInputsChanged
 		}
 	}
+	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
+	bounded, err := clientadapter.WithLocalNetworkBoundary(string(config), connected)
+	if err != nil {
+		return err
+	}
+	config = []byte(bounded)
 	defer clear(config)
 	generationContext, stopGeneration := context.WithCancel(ctx)
 	defer stopGeneration()
@@ -651,7 +658,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			nextState := activation.State
 			nextState.Preference = store.Preference()
 			if nextGeneration != nextState.NetworkGeneration {
-				if website.Port != 0 {
+				if website.Port != 0 || windowsHasLocalNetwork(lkg.View) {
 					return errWindowsRuntimeInputsChanged
 				}
 				nextState.NetworkGeneration = nextGeneration
@@ -733,4 +740,13 @@ func portableStateDescription() string {
 		return "unavailable"
 	}
 	return root
+}
+
+func windowsHasLocalNetwork(view control.DeviceView) bool {
+	for _, service := range view.Services {
+		if service.LocalNetwork != nil {
+			return true
+		}
+	}
+	return false
 }

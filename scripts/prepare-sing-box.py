@@ -90,7 +90,7 @@ def prepare(destination):
         stage.rename(destination)
     return {"upstream_version": VERSION, "upstream_commit": COMMIT, "upstream_module_sum": SUM,
             "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
-            "artifact_version": "1.11.4-loom.8"}
+            "artifact_version": "1.11.4-loom.9"}
 
 
 if __name__ == "__main__":

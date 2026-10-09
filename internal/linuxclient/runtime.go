@@ -89,7 +89,7 @@ func (options Options) probeForService(view control.DeviceView, scope string) Pr
 		return options.Probe
 	}
 	for _, group := range view.BusinessProbeTargets {
-		if scope != "service:"+group.ServiceID || len(group.Targets) != 1 {
+		if (scope != "service:"+group.ServiceID && scope != "local_network:"+group.ServiceID) || len(group.Targets) != 1 {
 			continue
 		}
 		if options.Capture == "mixed" {
@@ -435,7 +435,8 @@ func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg 
 			}
 		}
 	}
-	return deviceclient.Report(ctx, store, control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Preference: preference, Selections: selections, Observations: observations, Components: components, Runtime: readback})
+	localNetworks, _ := collectLocalNetworks(ctx, lkg.View)
+	return deviceclient.Report(ctx, store, control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Preference: preference, LocalNetworks: localNetworks, Selections: selections, Observations: observations, Components: components, Runtime: readback})
 }
 func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool, readback control.RuntimeReadback) Status {
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration, Selections: activation.Selections, Observations: activation.State.Observations, Runtime: readback.State, Reported: reported}
@@ -503,6 +504,17 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	config, serverConfig, err := generationConfigs(lkg.View, secret, exclusions, options.Capture, executions, website)
 	if err != nil {
 		return err
+	}
+	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
+	config, err = clientadapter.WithLocalNetworkBoundary(config, connected)
+	if err != nil {
+		return err
+	}
+	if serverConfig != "" {
+		serverConfig, err = clientadapter.WithLocalNetworkBoundary(serverConfig, connected)
+		if err != nil {
+			return err
+		}
 	}
 	desiredWG, _, err := projectWireGuard(lkg.View)
 	if err != nil {
@@ -709,6 +721,12 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		if website.Port != 0 && generation != websiteGeneration {
 			return errRuntimeAddressChanged
+		}
+		if runtimeHasLocalNetwork(lkg.View) {
+			current, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
+			if !reflect.DeepEqual(current, connected) {
+				return errRuntimeAddressChanged
+			}
 		}
 		local, err := loadLocalState(options.LocalState, generation, lkg.ViewDigest)
 		if err != nil {

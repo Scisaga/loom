@@ -51,7 +51,7 @@ func bridgeHybridCapture(capture, server string, view control.DeviceView, secret
 	index := len(hostRules)
 	for i, raw := range hostRules {
 		outbound, _ := raw.(map[string]any)["outbound"].(string)
-		if strings.HasPrefix(outbound, "service:") {
+		if strings.HasPrefix(outbound, "service:") || strings.HasPrefix(outbound, "local_network:") {
 			index = i
 			break
 		}
@@ -72,7 +72,7 @@ func bridgeHybridCapture(capture, server string, view control.DeviceView, secret
 			outbounds = append(outbounds, map[string]any{"type": "socks", "tag": tag, "server": "127.0.0.1", "server_port": 61802, "version": "5", "username": tag, "password": secret})
 			continue
 		}
-		if tag == "resource-egress" || strings.HasPrefix(tag, "segment:") || strings.HasPrefix(tag, "wg-base.") {
+		if tag == "resource-egress" || strings.HasPrefix(tag, "local-network-egress:") || strings.HasPrefix(tag, "segment:") || strings.HasPrefix(tag, "wg-base.") {
 			continue
 		}
 		outbounds = append(outbounds, outbound)

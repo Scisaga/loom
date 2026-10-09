@@ -32,7 +32,7 @@ func TestAndroidWGAccessPreservesSharedPrivateRuntime(t *testing.T) {
 		owner := p.DeviceAuthorizations[0]
 		owner.ID, owner.Platform, owner.Responsibilities, owner.PolicyIDs = "demo-exit", "linux", []string{"forward", "internet_egress"}, []string{}
 		p.DeviceAuthorizations = append(p.DeviceAuthorizations, owner)
-		p.NetworkIntent.Policies[0].AllowDirect = false
+		p.NetworkIntent.Policies[0].AllowDirect = new(false)
 		p.NetworkIntent.Resources = []control.TransportResource{
 			{ID: "demo-hy2", Kind: "hysteria2", OwnerNodeID: owner.ID, ListenerID: "demo-hy2", DialHost: "192.0.2.10", DialPort: 443, Authentication: control.ResourceAuthentication{ServerName: &name, CACertificates: &trust}},
 			{ID: "demo-wg", Kind: "wireguard", OwnerNodeID: owner.ID, ListenerID: "demo-wg", DialHost: "192.0.2.10", DialPort: 51820, Authentication: control.ResourceAuthentication{PublicKey: &public, LocalAddresses: &addresses}, AccessEnabled: true},

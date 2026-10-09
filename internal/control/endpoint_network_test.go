@@ -151,7 +151,7 @@ func TestEndpointTLSClaimConfigurationReportAndRevocation(t *testing.T) {
 	}
 	service := submitAuthority(t, runtime, authorityService("demo-service", "demo-live-service"))
 	scope := PolicyScope{Mode: "any", NodeIDs: []string{}}
-	policy := submitAuthority(t, runtime, Operation{Schema: 3, RequestID: "demo-live-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: scope, AllowDirect: true, LocalEgressDevices: []string{}}})
+	policy := submitAuthority(t, runtime, Operation{Schema: 3, RequestID: "demo-live-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}})
 	invite := Invite{ID: "demo-live-transaction", GenesisDigest: config.GenesisID, IssuerControlID: config.ControlID, DeviceID: "demo-live-access", Name: "Demo live access", Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, Medium: "qr", Endpoint: endpoint, ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}
 	issued, extra, err := server.HandleOperation(context.Background(), Operation{Schema: 3, RequestID: "demo-live-invite", Operation: "invite.issue", TargetKind: "invite", TargetID: invite.ID, Dependencies: sortedUniqueDependencies([]string{serving.MaterialID, service.MaterialID, policy.MaterialID}), Payload: invite})
 	if err != nil {

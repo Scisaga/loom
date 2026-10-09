@@ -65,11 +65,15 @@ func (runtime *Runtime) Writable() bool {
 	return runtime.Authority != nil && runtime.Authority.signingReady(runtime.Config)
 }
 func (runtime *Runtime) Submit(ctx context.Context, body []byte) (Submission, error) {
+	return runtime.submitChecked(ctx, body, nil)
+}
+
+func (runtime *Runtime) submitChecked(ctx context.Context, body []byte, check func(Projection) error) (Submission, error) {
 	operation, err := DecodeOperation(body)
 	if err != nil {
 		return Submission{}, err
 	}
-	result, err := runtime.Authority.Submit(ctx, operation, runtime.Config)
+	result, err := runtime.Authority.submitChecked(ctx, operation, runtime.Config, check)
 	if err != nil {
 		return Submission{}, err
 	}

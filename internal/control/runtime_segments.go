@@ -36,6 +36,17 @@ func (r *segmentedRuntime) addOutbound(value map[string]any) error {
 	return nil
 }
 
+func (r *segmentedRuntime) addServiceEgress(service Service, tag string) error {
+	value := map[string]any{"type": "direct", "tag": tag}
+	if mapping := service.LocalNetwork; mapping != nil {
+		if !mapping.Enabled || mapping.GatewayNodeID != r.view.DeviceID {
+			return errors.New("local network translation requires its enabled fixed gateway")
+		}
+		value["prefix_mapping"] = map[string]any{"virtual_prefix": mapping.VirtualPrefix, "local_prefix": mapping.LocalPrefix}
+	}
+	return r.addOutbound(value)
+}
+
 func (r *segmentedRuntime) useSender(resourceID string) error {
 	if r.sources[resourceID] != nil {
 		return nil
@@ -153,9 +164,20 @@ func (r *segmentedRuntime) incoming() ([]any, error) {
 				if err := r.addWG(next, outbound); err != nil {
 					return nil, err
 				}
-			} else if !r.tags[outbound] {
-				if err := r.addOutbound(map[string]any{"type": "direct", "tag": outbound}); err != nil {
-					return nil, err
+			} else {
+				var service Service
+				for _, value := range r.view.Services {
+					if value.ID == permission.ServiceID {
+						service = value
+					}
+				}
+				if service.LocalNetwork != nil {
+					outbound = "local-network-egress:" + service.ID
+				}
+				if !r.tags[outbound] {
+					if err := r.addServiceEgress(service, outbound); err != nil {
+						return nil, err
+					}
 				}
 			}
 			for _, set := range []struct {
@@ -190,7 +212,7 @@ func (r *segmentedRuntime) access(services map[string]Service, policies map[stri
 	sort.Strings(ids)
 	for left := range ids {
 		for right := left + 1; right < len(ids); right++ {
-			r.rules = append(r.rules, map[string]any{"type": "logical", "mode": "and", "rules": []any{serviceRule(services[ids[left]]), serviceRule(services[ids[right]])}, "outbound": "reject"})
+			r.rules = append(r.rules, map[string]any{"type": "logical", "mode": "and", "rules": []any{serviceRule(services[ids[left]], r.view.DNSRecords...), serviceRule(services[ids[right]], r.view.DNSRecords...)}, "outbound": "reject"})
 		}
 	}
 	byService := map[string][]string{}
@@ -201,12 +223,15 @@ func (r *segmentedRuntime) access(services map[string]Service, policies map[stri
 			return errors.New("certified candidates are invalid, duplicated or unassigned")
 		}
 		if candidate.FirstResourceID == "" {
-			allowed := candidate.FinalExit == "direct" && policy.AllowDirect || candidate.FinalExit == r.view.DeviceID && containsString(r.view.Responsibilities, "internet_egress") && containsString(policy.LocalEgressDevices, r.view.DeviceID) && policy.ExitScope.Allows(r.view.DeviceID)
+			allowed := candidate.FinalExit == "direct" && policy.permitsDirect() || candidate.FinalExit == r.view.DeviceID && containsString(r.view.Responsibilities, "internet_egress") && policy.permitsLocalEgress(r.view.DeviceID)
+			if service.LocalNetwork != nil {
+				allowed = candidate.FinalExit == r.view.DeviceID && policy.permitsEndpoint(service, r.view.DeviceID) && policy.EntryScope.Allows(r.view.DeviceID) && containsString(r.view.Responsibilities, "forward")
+			}
 			want, err := localCandidate(service, policy, candidate.FinalExit, r.view.DNSRecords...)
 			if !allowed || err != nil || !sameContractValue(want, candidate) {
 				return errors.New("local candidate has no current permission")
 			}
-			if err := r.addOutbound(map[string]any{"type": "direct", "tag": candidate.ID}); err != nil {
+			if err := r.addServiceEgress(service, candidate.ID); err != nil {
 				return err
 			}
 		} else {
@@ -240,11 +265,11 @@ func (r *segmentedRuntime) access(services map[string]Service, policies map[stri
 		if len(members) == 0 {
 			continue
 		}
-		scope := "service:" + id
+		scope := services[id].Scope()
 		if err := r.addOutbound(map[string]any{"type": "selector", "tag": scope, "outbounds": members, "default": members[0]}); err != nil {
 			return err
 		}
-		rule := serviceRule(services[id])
+		rule := serviceRule(services[id], r.view.DNSRecords...)
 		rule["outbound"] = scope
 		r.rules = append(r.rules, rule)
 	}
@@ -332,7 +357,7 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 		}
 		dns["fakeip"] = map[string]any{"enabled": true, "inet6_range": pool.String()}
 		for _, service := range r.view.Services {
-			for _, matcher := range service.Matchers {
+			for _, matcher := range service.TargetMatchers() {
 				if matcher.Kind == "ip_prefix" {
 					prefix, _ := netip.ParsePrefix(matcher.Value)
 					if pool.Contains(prefix.Addr()) && prefix.Bits() >= pool.Bits() {

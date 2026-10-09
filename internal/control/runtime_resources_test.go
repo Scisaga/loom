@@ -24,9 +24,9 @@ func hy2ProjectionFixture(t *testing.T) Projection {
 	projection.NetworkIntent.Resources = []TransportResource{{ID: "demo-hy2", Kind: "hysteria2", OwnerNodeID: owner.ID, ListenerID: "demo-listener", DialHost: "192.0.2.10", DialPort: 443,
 		Authentication: ResourceAuthentication{ServerName: &name, CACertificates: &certificates}}}
 	policy := &projection.NetworkIntent.Policies[0]
-	policy.AllowDirect = false
+	policy.AllowDirect = new(false)
 	policy.EntryScope = PolicyScope{Mode: "only", NodeIDs: []string{owner.ID}}
-	policy.ExitScope = PolicyScope{Mode: "only", NodeIDs: []string{owner.ID}}
+	policy.ExitScope = new(PolicyScope{Mode: "only", NodeIDs: []string{owner.ID}})
 	return projection
 }
 

@@ -30,7 +30,7 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 			}
 			view := makeView(store.PublicKey(), 7, func(view *control.DeviceView) {
 				view.Responsibilities = []string{"access", "internet_egress"}
-				view.Policies[0].LocalEgressDevices = []string{view.DeviceID}
+				view.Policies[0].LocalEgressDevices = new([]string{view.DeviceID})
 			})
 			if err := store.SaveLKG(view); err != nil {
 				t.Fatal(err)
