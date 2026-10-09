@@ -180,3 +180,17 @@ prepared 与 serving。网站 EndpointGeneration 的 `website_trust_id` 必须�
 定位单张签回叶。网站根私钥不参与安装。正式输入安装会核对当前成员、原请求、公钥与完整根约束。
 同一 TCP 地址可按不同 SNI 分别提供原设备证书和 `control.loom` 网站证书；同名异证书的续签仍需
 另一个可验证的既有拨号地址，不能通过改写原代或关闭原设备通道强行预检。
+
+同一流程也可从承载 control 的 Settings → Website certificate operations 操作。已有入口行的
+Prepare renewal 生成紧邻下一代的绑定请求；新入口使用 New entry ID 从第一代开始。下载的是上述
+规范请求 JSON，离线核验和签发要求不变。页面刷新及服务重启从原受保护文件回读，不重新生成叶键。
+选择已独立核验并授权的网站根、公开签回叶（可附加该精确根）、已提供的拨号地址与本机监听地址后，
+Validate and prepare entry 校验证书、安装不可变本机执行输入，再提交普通 prepared 事实。它不配置
+路由器或防火墙。输入一旦安装不可覆盖；提交前须核对地址，提交失败用相同输入重试。
+
+Activate after TLS preflight 沿同一正式操作重新核对实际地址与 TLS 协议，成功后仍须点击
+Verify this entry in browser。目标页面显示真实认证连接的入口、代和证书摘要；DNS 落在其他 control、
+旧代连接复用或 SSH 调试入口均不能得到“新代已验证”。从新代实际连接可排空并退休旧代；零会话检查
+未通过时保留 draining，待会话结束再重试。验证失败时，可从仍有效的旧入口或受保护 CLI 显式停止
+失败的新代。下载叶、链和根只包含公开证书，不导出私钥、不安装浏览器信任。生产签回和激活的实际
+范围仍以[实施状态](../progress.md)为准。

@@ -54,6 +54,10 @@ func endpointInputPath(root, id string, generation U64) string {
 	return filepath.Join(root, "endpoint-inputs", hex.EncodeToString(digest[:])+".json")
 }
 func InstallEndpointInputs(root string, endpoint EndpointGeneration, inputs EndpointLocalInputs) error {
+	return installEndpointInputsAt(root, endpoint, inputs, time.Now())
+}
+
+func installEndpointInputsAt(root string, endpoint EndpointGeneration, inputs EndpointLocalInputs, now time.Time) error {
 	if endpoint.Validate() != nil || inputs.Validate() != nil {
 		return errors.New("invalid endpoint execution inputs")
 	}
@@ -68,11 +72,11 @@ func InstallEndpointInputs(root string, endpoint EndpointGeneration, inputs Endp
 	if err != nil {
 		return err
 	}
-	if _, err := loadAuthorizedEndpointCertificate(authority.Snapshot(), endpoint, inputs, time.Now()); err != nil {
+	if _, err := loadAuthorizedEndpointCertificate(authority.Snapshot(), endpoint, inputs, now); err != nil {
 		return err
 	}
 	if endpoint.WebsiteTrustID != "" {
-		if err := verifyLocalWebsiteRequest(root, authority.Snapshot(), endpoint, inputs, time.Now()); err != nil {
+		if err := verifyLocalWebsiteRequest(root, authority.Snapshot(), endpoint, inputs, now); err != nil {
 			return err
 		}
 	}

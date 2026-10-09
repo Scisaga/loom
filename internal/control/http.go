@@ -203,6 +203,11 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/releases/{catalog}/{artifact}/{file}", server.releaseDownload)
 	mux.HandleFunc("GET /api/control/releases/inputs", server.releaseDeploymentInputs)
 	mux.HandleFunc("GET /api/control/public-trust/{id}/certificate", server.websiteRootDownload)
+	mux.HandleFunc("GET /api/control/website/{id}/{generation}/request", server.websiteRequest)
+	mux.HandleFunc("POST /api/control/website/{id}/{generation}/request", server.websiteRequest)
+	mux.HandleFunc("POST /api/control/website/certificate", server.websiteInstall)
+	mux.HandleFunc("GET /api/control/website/{id}/{generation}/{kind}", server.websiteCertificateDownload)
+	mux.HandleFunc("POST /api/control/website/retire-previous", server.websiteRetirePrevious)
 	mux.HandleFunc("POST /internal/control-prepare", server.internalControlPrepare)
 	mux.HandleFunc("POST /internal/control-vote", server.internalControlVote)
 	mux.HandleFunc("GET /internal/control-proof", server.internalControlProof)
@@ -345,6 +350,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
 	server.memberSnapshot(&snapshot)
 	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
+	server.websiteSnapshot(&snapshot, r, projection)
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Runtime.Reports != nil {
 		latest, err := server.Runtime.Reports.Latest(r.Context())
@@ -449,6 +455,7 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 	snapshot := buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)
 	server.memberSnapshot(&snapshot)
 	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
+	server.websiteSnapshot(&snapshot, r, result.Projection)
 	snapshot.PolicyInvites = projectWebPolicyInvites(result.Projection, server.now())
 	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": snapshot}
 	if extra != nil && extra.Invite != "" {
