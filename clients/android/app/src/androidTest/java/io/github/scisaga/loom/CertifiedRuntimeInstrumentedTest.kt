@@ -16,6 +16,7 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.EnrollmentPhase
+import io.github.scisaga.loom.enrollment.ManagedProfileStore
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.vpn.ConnectionPhase
@@ -39,6 +40,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /** Opt-in real daemon fixture; no fabricated View, identity, runtime or health. */
 class CertifiedRuntimeInstrumentedTest {
@@ -270,6 +276,33 @@ class CertifiedRuntimeInstrumentedTest {
             // Runtime/selector readiness precedes a real business result. Wait
             // for that result within the fixture deadline; never synthesize it.
             await("real application TLS must traverse the VPN") { business() }
+            if (args.getString("demoBlockedReport") == "true") {
+                mark("demo-report-ready.json")
+                await("controller must pause the authenticated control") { File(directory, "demo-report-paused").isFile }
+                val sender = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                try {
+                    fun reportSequence() = JSONObject(checkNotNull(ManagedProfileStore(context, profileID).state()).decodeToString())
+                        .getString("report_sequence").toLong()
+                    val beforeReport = reportSequence()
+                    val sending = sender.launch { runCatching { enrollment.postReport(profileID) } }
+                    await("report sequence must be durably reserved before the network wait", 45) {
+                        reportSequence() > beforeReport
+                    }
+                    Thread.sleep(1_000)
+                    assertTrue("report must still be waiting on the stopped control", sending.isActive)
+                    click("connection-toggle")
+                    await("control network wait must not block normal disconnect", 10) {
+                        VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED
+                    }
+                    assertTrue("disconnect must finish before the blocked request", sending.isActive)
+                    File(directory, "demo-report-disconnected.json").writeText("true")
+                    await("controller must verify the stopped signed report after resuming") { File(directory, "demo-report-resumed").isFile }
+                } finally {
+                    sender.cancel()
+                }
+                connect()
+                await("reconnected Service must carry real HTTPS") { business() }
+            }
             val previous = enrollment.status(profileID).value.viewDigest
             mark("demo-allowed.json")
             await("formal control must publish withdrawal") { File(directory, "demo-withdrawn").isFile }

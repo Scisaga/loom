@@ -151,20 +151,28 @@ class EnrollmentManager private constructor(context: Context) {
         check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
         val store = store(profileId)
         val acceptedView = store.acceptedViewDigest().also { check(it.isNotEmpty()) { "设备尚未获得认证配置" } }
-        LoomVpnService.withRuntimeReport(profileId) { runtime ->
+        val send = LoomVpnService.withRuntimeReport(profileId) { runtime ->
             val routing = RouteManager.get(appContext).reportData(
                 profileId, checkNotNull(store.state()), acceptedView, runtime.optString("applied_view_digest"),
             )
             // The sequence and complete identity/LKG are one durable write. A
             // network failure burns this number; no stale handle can reuse it.
             val reserved = store.updateState(Loomcore::reserveAndroidReportSequence)
-            Loomcore.postAndroidDeviceReport(
-                reserved, routing.preference, routing.resourceObservations, routing.observations, routing.selections, runtime.toString().encodeToByteArray(),
-                Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version()),
-                readLocalInterfaceAddresses(),
-                routing.networkGeneration, Instant.now().truncatedTo(ChronoUnit.SECONDS).toString(),
-            )
+            val runtimeBytes = runtime.toString().encodeToByteArray()
+            val components = Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version())
+            val addresses = readLocalInterfaceAddresses()
+            val observedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS).toString()
+            val transmit: () -> Unit = {
+                Loomcore.postAndroidDeviceReport(
+                    reserved, routing.preference, routing.resourceObservations, routing.observations, routing.selections, runtimeBytes,
+                    components, addresses, routing.networkGeneration, observedAt,
+                )
+            }
+            transmit
         }
+        // Keep profile deletion serialized, but let VPN stop release resources
+        // while this immutable report waits for the authenticated control.
+        send()
     }
 
     internal fun reportRuntimeOutcome(profileId: String) {
