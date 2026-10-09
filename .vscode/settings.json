@@ -1,0 +1,17 @@
+{
+    "files.watcherExclude": {
+        "**/clients/android/.build/**": true,
+        "**/out/**": true,
+        "**/dist/**": true,
+        "**/deploy/evidence/**": true
+    },
+    "gopls": {
+        "build.directoryFilters": [
+            "-**/node_modules",
+            "-clients/android/.build",
+            "-out",
+            "-dist",
+            "-deploy/evidence"
+        ]
+    }
+}
