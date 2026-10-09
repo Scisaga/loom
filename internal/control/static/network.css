@@ -368,3 +368,14 @@ main {max-width:1586px;padding:28px 20px 44px}
 
 .paths-edge{min-width:45px;max-width:190px;text-align:center;color:var(--muted)}
 .paths-edge small{display:block;font-size:10px;overflow-wrap:anywhere;margin-top:5px}
+
+/* Each cell is one reported sample, never an hour of inferred uptime. */
+.runtime-hours{display:flex;gap:3px;min-width:180px;max-width:280px;margin:7px 0 4px}
+.runtime-hour{display:block;flex:1;min-width:4px;height:14px;border:1px solid var(--line,#33414b);border-radius:2px;background:transparent}
+.runtime-hour.running{background:var(--green,#55cfa5);border-color:var(--green,#55cfa5)}
+.runtime-hour.error{background:var(--red,#ed7373);border-color:var(--red,#ed7373)}
+.runtime-hour.stopped{background:var(--muted,#758397)}
+.runtime-hour.unknown{background:repeating-linear-gradient(135deg,transparent,transparent 2px,var(--muted,#758397) 2px,var(--muted,#758397) 3px)}
+.runtime-hour:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.runtime-history-detail{margin:14px 0}
+[data-runtime-history] button{padding:1px 5px;min-height:0;font-size:10px;margin-left:3px}

@@ -22,10 +22,11 @@ type reportReference struct {
 	NetworkID      string
 	DeviceID       string
 	ReportSequence U64
+	ReportedAt     int64 // Original signed timestamp; disposable query hint.
 }
 
 func referenceOf(report DeviceReport) reportReference {
-	return reportReference{report.NetworkID, report.DeviceID, report.ReportSequence}
+	return reportReference{report.NetworkID, report.DeviceID, report.ReportSequence, report.ReportedAt}
 }
 
 func (ref reportReference) key(id string) []byte {

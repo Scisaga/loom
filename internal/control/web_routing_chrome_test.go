@@ -93,5 +93,22 @@ func assertChromeEvidenceExpiry(t *testing.T, debug *chromeDevTools, report Devi
 	report.ReportedAt = previousAt
 	send(report)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-runtime-state]')?.textContent==='running'&&document.querySelector('[data-report-freshness]')?.textContent.startsWith('Current')`)
+	// Change this browser's wall clock only. A corrected local clock must allow
+	// a newly authenticated projection to recover without reloading the page;
+	// local expiry alone must still never revive an excluded sample.
+	chromeDo(t, debug, `(()=>{window.demoOriginalDateNow=Date.now;Date.now=()=>demoOriginalDateNow()+600000;return true})()`)
+	defer chromeDo(t, debug, `(()=>{Date.now=demoOriginalDateNow;delete window.demoOriginalDateNow;return true})()`)
+	report.ReportSequence++
+	report.ReportedAt++
+	send(report)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-runtime-state]')?.textContent==='unknown'&&document.querySelector('[data-report-freshness]')?.textContent.startsWith('Historical')`)
+	chromeDo(t, debug, `(()=>{Date.now=demoOriginalDateNow;return true})()`)
+	report.ReportSequence++
+	report.ReportedAt++
+	send(report)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-runtime-state]')?.textContent==='running'&&document.querySelector('[data-report-freshness]')?.textContent.startsWith('Current')`)
+	// Subsequent fixtures use the server's unchanged injected UTC. The temporary
+	// +1/+2 ms values above only made the two browser projections distinct.
+	report.ReportedAt = previousAt
 	return report
 }

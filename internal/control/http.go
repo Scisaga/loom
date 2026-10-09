@@ -189,6 +189,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) { serveEmbedded(w, r, "favicon.svg", "image/svg+xml") })
 	mux.HandleFunc("GET /api/control/ui/snapshot", server.snapshot)
 	mux.HandleFunc("GET /api/control/ui/path-history", server.pathHistory)
+	mux.HandleFunc("GET /api/control/ui/runtime-history", server.runtimeHistory)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
 	mux.HandleFunc("POST /api/control/services/local-network-allocation", server.localNetworkAllocation)

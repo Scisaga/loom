@@ -629,4 +629,5 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if chromeDo(t, debug, `[...document.querySelector('select[name=role]').options].map(v=>v.value).join('|')`) != "|access|control|forward|internet_egress" {
 		t.Fatal("node filter lost one of the four model responsibilities")
 	}
+	assertChromeRuntimeHistory(t, debug)
 }

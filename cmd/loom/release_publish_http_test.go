@@ -18,11 +18,15 @@ func TestReleaseDownloadProgressStallAndCancellation(t *testing.T) {
 	for _, mode := range []string{"progress", "stall", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			idle := 200 * time.Millisecond
+			finishHandler := make(chan struct{})
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				w.(http.Flusher).Flush()
 				if mode != "progress" {
 					<-r.Context().Done()
+					// Do not race the client's cancellation with a successfully
+					// completed empty chunked response from this fixture.
+					<-finishHandler
 					return
 				}
 				for range 12 {
@@ -38,6 +42,7 @@ func TestReleaseDownloadProgressStallAndCancellation(t *testing.T) {
 				}
 			}))
 			defer server.Close()
+			defer close(finishHandler)
 			client := releasePublicHTTPClient(idle)
 			defer client.CloseIdleConnections()
 			roots := x509.NewCertPool()
