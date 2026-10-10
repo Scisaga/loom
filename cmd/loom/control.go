@@ -210,10 +210,11 @@ func cmdControlServe(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		releases, err = clientrelease.New(*releaseRoot, key)
+		releaseStore, err := clientrelease.New(*releaseRoot, key)
 		if err != nil {
 			return err
 		}
+		releases = releaseStore.ProjectionSource()
 	}
 	if err := control.ActivatePreparedControlKey(context.Background(), *root); err != nil {
 		return err

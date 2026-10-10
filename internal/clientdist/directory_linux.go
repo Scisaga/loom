@@ -70,7 +70,7 @@ func VerifyDirectory(directory string, public ed25519.PublicKey) (VerifiedDirect
 	if err != nil {
 		return zero, err
 	}
-	manifest, err := verifyManifest(files["manifest.json"], files["manifest.sig"], public)
+	manifest, err := VerifyManifest(files["manifest.json"], files["manifest.sig"], public)
 	if err != nil {
 		return zero, err
 	}

@@ -23,6 +23,7 @@ const maxPackageBytes = 256 << 20
 
 // Store caches only authenticated package parsing. Every read rehashes the
 // actual file bytes before using that removable content-addressed cache.
+// ProjectionSource reads signed metadata without touching that cache or its lock.
 type Store struct {
 	root     string
 	key      ed25519.PublicKey
@@ -106,15 +107,11 @@ func (store *Store) Read() (control.ReleaseSet, error) {
 		return zero, err
 	}
 	defer root.Close()
-	pointer, err := readFile(root, "current.json", 4096)
+	id, err := currentCatalog(root)
 	if err != nil {
 		return zero, err
 	}
-	var current control.ReleaseCurrent
-	if err = control.DecodeCanonical(pointer, &current, control.ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 4, MaxItems: 16}); err != nil {
-		return zero, err
-	}
-	return store.readCatalog(root, current.CatalogDigest)
+	return store.readCatalog(root, id)
 }
 
 // ReadCatalog verifies an explicitly addressed immutable catalog. It does not
@@ -131,7 +128,7 @@ func (store *Store) ReadCatalog(id string) (control.ReleaseSet, error) {
 	return store.readCatalog(root, id)
 }
 
-func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, error) {
+func (store *Store) readSignedCatalog(root *os.Root, id string) (control.ReleaseSet, error) {
 	var zero control.ReleaseSet
 	if control.ValidateDigest(id) != nil {
 		return zero, errors.New("release catalog digest is invalid")
@@ -164,6 +161,28 @@ func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, e
 		if err != nil {
 			return zero, err
 		}
+		parsed, err := signedPackage(entry, manifest, signed, store.key)
+		if err != nil {
+			return zero, err
+		}
+		result.Packages = append(result.Packages, parsed)
+	}
+	if err := validateBootstrapBindings(result); err != nil {
+		return zero, err
+	}
+	return result, nil
+}
+
+// Full consumers additionally validate actual artifact bytes. The removable
+// package cache is touched only while the caller holds store.mu.
+func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, error) {
+	result, err := store.readSignedCatalog(root, id)
+	if err != nil {
+		return control.ReleaseSet{}, err
+	}
+	var zero control.ReleaseSet
+	for _, pkg := range result.Packages {
+		entry, manifest, signed := pkg.Entry, pkg.ManifestBody, pkg.Signature
 		parsed, ok := store.packages[packageCacheKey(entry)]
 		if !ok {
 			artifact, err := readFile(root, digestPath("bin", entry.Artifact.Digest, ""), int64(entry.Artifact.Size))
@@ -187,10 +206,6 @@ func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, e
 		if !bytes.Equal(manifest, parsed.ManifestBody) || !bytes.Equal(signed, parsed.Signature) {
 			return zero, errors.New("release manifest or signature differs from its original package bytes")
 		}
-		result.Packages = append(result.Packages, clonePackage(parsed))
-	}
-	if err := validateBootstrapBindings(result); err != nil {
-		return zero, err
 	}
 	return result, nil
 }

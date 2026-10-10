@@ -230,13 +230,22 @@ func Build(artifact, bundle []byte, edition, arch, version string, generation co
 	return m, body, signature, nil
 }
 
-func Verify(body, signature, artifact []byte, key ed25519.PublicKey) (Manifest, error) {
+// VerifyManifest authenticates canonical coordinates without reading artifact bytes.
+func VerifyManifest(body, signature []byte, key ed25519.PublicKey) (Manifest, error) {
 	var m Manifest
 	if err := control.DecodeCanonical(body, &m, control.ContractDecodeLimits{MaxBytes: 64 << 10, MaxDepth: 12, MaxItems: 1024}); err != nil {
 		return Manifest{}, err
 	}
 	if len(key) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(key, append([]byte(signatureDomain), body...), signature) {
 		return Manifest{}, errors.New("Windows application signature is invalid")
+	}
+	return m, nil
+}
+
+func Verify(body, signature, artifact []byte, key ed25519.PublicKey) (Manifest, error) {
+	m, err := VerifyManifest(body, signature, key)
+	if err != nil {
+		return Manifest{}, err
 	}
 	if len(artifact) == 0 || len(artifact) > maxArtifact || m.Artifact.Size != control.U64(len(artifact)) || m.Artifact.Digest != control.ReleaseDigest(artifact) {
 		return Manifest{}, errors.New("Windows delivery differs from its signed artifact")

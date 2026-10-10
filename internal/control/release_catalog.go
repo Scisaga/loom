@@ -39,8 +39,9 @@ type ReleaseCurrent struct {
 	CatalogDigest string `json:"catalog_digest"`
 }
 
-// These are disposable readbacks from one fully verified release store. They
-// are not wire values or a second persistent manifest representation.
+// These are disposable projections of authenticated catalog and manifest bytes.
+// They are not wire values or another persistent manifest. Reading coordinates
+// does not assert artifact availability; Open must verify actual package bytes.
 type ReleasePackage struct {
 	Entry                   ReleaseEntry
 	ManifestBody, Signature []byte

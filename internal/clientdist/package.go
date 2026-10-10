@@ -449,7 +449,7 @@ func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing fu
 	if signature == nil {
 		signature = files["manifest.sig"]
 	}
-	manifest, err := verifyManifest(files["manifest.json"], signature, pub)
+	manifest, err := VerifyManifest(files["manifest.json"], signature, pub)
 	if err != nil {
 		return zero, err
 	}
@@ -532,13 +532,17 @@ func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing fu
 	return manifest, nil
 }
 
-func verifyManifest(body, signature []byte, public ed25519.PublicKey) (Manifest, error) {
+// VerifyManifest authenticates canonical coordinates; it does not verify payload files.
+func VerifyManifest(body, signature []byte, public ed25519.PublicKey) (Manifest, error) {
 	var manifest Manifest
 	if err := control.DecodeCanonical(body, &manifest, control.ContractDecodeLimits{MaxBytes: 64 << 10, MaxDepth: 12, MaxItems: 2048}); err != nil {
 		return Manifest{}, fmt.Errorf("invalid canonical Linux manifest: %w", err)
 	}
 	if len(public) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(public, signatureMessage(body), signature) {
 		return Manifest{}, fmt.Errorf("Linux manifest signature is invalid")
+	}
+	if manifest.PlatformKeySHA256 != sha256Hex(public) {
+		return Manifest{}, fmt.Errorf("Linux manifest platform key differs from the trusted key")
 	}
 	return manifest, nil
 }

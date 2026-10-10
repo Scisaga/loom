@@ -280,7 +280,7 @@ func acceptedPackage(public ed25519.PublicKey) (string, *Manifest, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	manifest, err := verifyManifest(body, signature, public)
+	manifest, err := VerifyManifest(body, signature, public)
 	if err != nil {
 		return "", nil, err
 	}
@@ -658,7 +658,7 @@ func removeSupersededPrograms(public ed25519.PublicKey, current Manifest, releas
 		if err != nil {
 			continue
 		}
-		manifest, err := verifyManifest(body, signature, public)
+		manifest, err := VerifyManifest(body, signature, public)
 		if err != nil || manifest.Arch != current.Arch || manifest.Generation >= current.Generation {
 			continue
 		}

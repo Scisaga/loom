@@ -262,13 +262,22 @@ func archiveSourceVersion(files map[string]*zip.File) (string, error) {
 	return clientcomponent.ReviewedSourceVersion(body)
 }
 
-func Verify(manifest, signature, apk []byte, key ed25519.PublicKey) (Manifest, error) {
+// VerifyManifest authenticates canonical coordinates without reading artifact bytes.
+func VerifyManifest(manifest, signature []byte, key ed25519.PublicKey) (Manifest, error) {
 	var m Manifest
 	if err := control.DecodeCanonical(manifest, &m, control.ContractDecodeLimits{MaxBytes: 64 << 10, MaxDepth: 12, MaxItems: 1024}); err != nil {
 		return m, err
 	}
 	if len(key) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(key, append([]byte(signatureDomain), manifest...), signature) {
 		return Manifest{}, errors.New("Android application manifest signature is invalid")
+	}
+	return m, nil
+}
+
+func Verify(manifest, signature, apk []byte, key ed25519.PublicKey) (Manifest, error) {
+	m, err := VerifyManifest(manifest, signature, key)
+	if err != nil {
+		return Manifest{}, err
 	}
 	if err := VerifyAPK(m, apk); err != nil {
 		return Manifest{}, err

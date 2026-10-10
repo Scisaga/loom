@@ -251,17 +251,10 @@ func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
 	if !slices.Equal(names, wantNames) {
 		return nil, fmt.Errorf("Windows component package file set is %v, want %v", names, wantNames)
 	}
-	manifestBody := files["manifest.json"]
-	if len(manifestBody) == 0 || len(manifestBody) > maxManifestBytes {
-		return nil, errors.New("component manifest has invalid size")
-	}
-	var manifest Manifest
-	if err := control.DecodeCanonical(manifestBody, &manifest, control.ContractDecodeLimits{MaxBytes: maxManifestBytes, MaxDepth: 16, MaxItems: 4096}); err != nil {
-		return nil, fmt.Errorf("decode component manifest: %w", err)
-	}
-	signature := files["manifest.sig"]
-	if len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, signatureMessage(manifestBody), signature) {
-		return nil, errors.New("component manifest signature is missing, malformed, or invalid")
+	manifestBody, signature := files["manifest.json"], files["manifest.sig"]
+	manifest, err := VerifyManifest(manifestBody, signature, publicKey)
+	if err != nil {
+		return nil, err
 	}
 	for _, file := range manifest.Files {
 		body, ok := files[file.Path]
@@ -285,6 +278,18 @@ func verifyWithInspect(packageBody []byte, publicKey ed25519.PublicKey,
 	return &Verified{ID: sha256Hex(manifestBody), Manifest: manifest,
 		ManifestBody: append([]byte(nil), manifestBody...), Signature: append([]byte(nil), signature...),
 		Files: cloneFiles(files)}, nil
+}
+
+// VerifyManifest authenticates canonical coordinates without reading ZIP payloads.
+func VerifyManifest(body, signature []byte, key ed25519.PublicKey) (Manifest, error) {
+	var manifest Manifest
+	if err := control.DecodeCanonical(body, &manifest, control.ContractDecodeLimits{MaxBytes: maxManifestBytes, MaxDepth: 16, MaxItems: 4096}); err != nil {
+		return Manifest{}, fmt.Errorf("decode component manifest: %w", err)
+	}
+	if len(key) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize || !ed25519.Verify(key, signatureMessage(body), signature) {
+		return Manifest{}, errors.New("component manifest signature is missing, malformed, or invalid")
+	}
+	return manifest, nil
 }
 
 func (m Manifest) Validate() error {

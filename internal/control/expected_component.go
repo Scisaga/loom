@@ -114,7 +114,7 @@ func validateExpectedNode(value ExpectedComponent, projection Projection) error 
 	return nil
 }
 
-// Missing release files do not invalidate or erase a signed reference. Only its
+// Missing signed release metadata does not invalidate or erase a reference. Only its
 // affected executable projection fails; restored original files permit retry.
 func (server *Server) expectedReleaseSets(projection Projection, verified ...ReleaseSet) []ReleaseSet {
 	sets := []ReleaseSet{}
