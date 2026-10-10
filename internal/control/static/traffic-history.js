@@ -60,7 +60,7 @@ export function trafficRates(summary,now){
  return list(summary.data?.devices).map(device=>{
   const value=device.recent,valid=value&&value.covered_ms>0&&value.last_at+180000>now;
   const thousandths=valid?integer(value.tx_bytes)*8n/BigInt(value.covered_ms):null;
-  const rate=thousandths===null?'Unknown':`${thousandths/1000n}.${String(thousandths%1000n).padStart(3,'0')} Mbps`;
+  const rate=thousandths===null?'Unknown':thousandths===0n&&integer(value.tx_bytes)>0n?'<0.001 Mbps':`${thousandths/1000n}.${String(thousandths%1000n).padStart(3,'0')} Mbps`;
   return {id:device.device_id,text:device.device_id+' TX: '+rate,detail:'Shared peer TX; observed rate, not capacity'+(valid?' · '+value.covered_ms/1000+' seconds · through '+new Date(value.last_at).toISOString():'')};
  });
 }

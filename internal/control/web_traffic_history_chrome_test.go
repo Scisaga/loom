@@ -23,6 +23,8 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	key := testKey(t)
 	for i := range p.DeviceAuthorizations {
 		if p.DeviceAuthorizations[i].ID == "demo-entry" {
+			p.DeviceAuthorizations[i].Responsibilities = []string{"access", "forward"}
+			p.DeviceAuthorizations[i].PolicyIDs = []string{"demo-policy"}
 			p.DeviceAuthorizations[i].DevicePublicKey = base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
 		}
 	}
@@ -113,6 +115,9 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	}
 	chromeDo(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-retry]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]')!==null`)
+	if chromeDo(t, debug, `(async()=>{const {routingHTML}=await import('/assets/routing.js'),{trafficRates}=await import('/assets/traffic-history.js');const p=await(await fetch('/api/control/ui/snapshot')).json();const doc=new DOMParser().parseFromString(routingHTML(p,new URLSearchParams({service:'demo-service',device:'demo-entry',candidate:p.paths.find(v=>v.device==='demo-entry'&&v.link_ids.includes('demo-link')).candidate_id}),Date.now()),'text/html');const hops=[...doc.querySelectorAll('.paths-hop b')].map(v=>v.textContent),first=doc.querySelector('.paths-edge'),at=Date.now();const rate=bytes=>trafficRates({data:{devices:[{device_id:'demo-entry',recent:{tx_bytes:bytes,covered_ms:1000,last_at:at}}]}},at)[0].text;return hops.length===3&&hops[0]===p.devices.find(d=>d.id==='demo-entry').name&&hops[1]===p.devices.find(d=>d.id==='demo-exit').name&&first.querySelector('[data-traffic-scope="link:demo-link"]')!==null&&rate('1').includes('<0.001 Mbps')&&rate('0').includes('0.000 Mbps')})()`) != true {
+		t.Fatal("hybrid route duplicated its source, misplaced the shared Link, or rounded traffic into measured zero")
+	}
 	chromeDo(t, debug, `window.demoRealNow=Date.now;Date.now=()=>window.demoRealNow()+181000;document.querySelector('[data-traffic-retry="link:demo-link"]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="demo-link"] [data-traffic-rate="demo-entry"]')?.textContent.includes('Unknown')`)
 	if chromeDo(t, debug, `document.querySelector('[data-link-row="demo-link"] [data-traffic-value="1048576"]')!==null`) != true {

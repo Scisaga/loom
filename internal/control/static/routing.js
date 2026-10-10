@@ -72,14 +72,15 @@ function routeDiagram(row,path,projection,target,now,traffic){
  if(!path)return '<p class="empty">No authorized route preview.</p>';
  const current=path===row.current;
  const device=id=>list(projection.devices).find(d=>d.id===id)?.name||id;
+ const startsHere=path.chain[0]===row.device.id,chain=startsHere?path.chain.slice(1):path.chain;
  const nodes=[{name:row.device.name||row.device.id,role:'Source device'}];
- for(const id of path.chain)nodes.push({name:device(id),role:id===path.final_exit?(row.service.kind==='local_network'?'LAN gateway':'Final exit'):'Relay'});
- if(!path.chain.length&&path.final_exit!=='direct')nodes[0].role=row.service.kind==='local_network'?'Source · LAN gateway':'Source · local egress';
+ for(const id of chain)nodes.push({name:device(id),role:id===path.final_exit?(row.service.kind==='local_network'?'LAN gateway':'Final exit'):'Relay'});
+ if(!chain.length&&path.final_exit!=='direct')nodes[0].role=row.service.kind==='local_network'?'Source · LAN gateway':'Source · local egress';
  nodes.push({name:target||'Service target',role:row.service.kind==='internet'?'Business target':'LAN target'});
  const edge=index=>{
   if(!index)return '';
-  const linkID=index>1&&index<nodes.length-1?path.link_ids[index-2]:null;
-  const resource=index===1&&path.first_resource_id?path.first_transport+' · '+path.first_resource_id:'';
+  const linkIndex=index-(startsHere?1:2),linkID=linkIndex>=0&&index<nodes.length-1?path.link_ids[linkIndex]:null;
+  const resource=index===1&&!startsHere&&path.first_resource_id?path.first_transport+' · '+path.first_resource_id:'';
   const label=resource||(linkID?(list(projection.links).find(l=>l.id===linkID)?.transport||'Transport unknown')+' · '+linkID:path.final_exit==='direct'?'Direct':'');
   return `<span class="paths-edge"><span class="paths-arrow" aria-hidden="true">→</span>${label?`<small>${esc(label)}</small>`:''}${resource||linkID?'<small>RTT unknown</small>':''}${linkID?sharedRate(linkID,projection,traffic,now):''}</span>`;
  };

@@ -392,3 +392,5 @@ main {max-width:1586px;padding:28px 20px 44px}
 .wg-traffic.compact .wg-traffic-hours {height:26px}
 
 .wg-traffic-group{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;height:100%;align-items:end}.wg-traffic-group .wg-traffic-hour{width:100%;min-width:0}.wg-traffic-group .wg-traffic-hour:nth-child(2){background-color:#4f9e93}.wg-traffic-group .wg-traffic-hour.missing{background:transparent}.wg-endpoint-legend{display:flex;flex-wrap:wrap;gap:8px}.wg-endpoint-legend small::before{content:"";display:inline-block;width:7px;height:7px;background:#6e8bc0;margin-right:5px}.wg-endpoint-legend small:nth-child(2)::before{background:#4f9e93}.topology-metrics{fill:#344d75;font-size:11px;pointer-events:none}.topology-edge[role=button]{cursor:pointer}.topology-edge[role=button]:focus-visible{outline:none;stroke:#466fc2}.selected-link{background:#edf3fa}.topology-traffic-card .wg-traffic{min-width:0;width:100%}
+
+.topology-traffic-card > p.tiny{white-space:normal;overflow:visible;text-overflow:clip}
