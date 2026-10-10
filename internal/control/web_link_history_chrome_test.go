@@ -145,6 +145,11 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 			waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="demo-link"]')?.textContent.includes('40 ms')&&document.querySelector('[data-link-spread="demo-link"]')?.textContent.includes('40 ms')`)
 		}
 	}
+	// A response may already contain the new report even though its request
+	// began under the previous marker. Only its actual scope and report bind it.
+	if chromeDo(t, debug, `(async()=>{const m=await import('/assets/link-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),link=p.links.find(v=>v.id==='demo-link'),data=await(await fetch('/api/control/ui/link-history?link=demo-link')).json(),history={key:m.linkHistoryKey(p,link),version:'demo-older-request-marker',data};if(!m.linkRoundTripMetrics(p,link,history,Date.now())[1].text.includes('40 ms'))return false;data.round_trips.report_sequence='1';history.version=m.linkHistoryVersion(p,link);return m.linkRoundTripMetrics(p,link,history,Date.now())[1].text.includes('Unknown')})()`) != true {
+		t.Fatal("request bookkeeping replaced actual report binding")
+	}
 	componentID, _ := ExpectedComponentID("demo-entry", "agent", "linux-amd64")
 	a.mu.Lock()
 	a.projection.NetworkIntent.ExpectedComponents = []ExpectedComponent{{ID: componentID, NodeID: "demo-entry", ComponentID: "agent", Platform: "linux-amd64", CatalogDigest: "sha256:" + strings.Repeat("c", 64), ManifestDigest: "sha256:" + strings.Repeat("d", 64)}}

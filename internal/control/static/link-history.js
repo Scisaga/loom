@@ -13,7 +13,7 @@ export function linkRoundTripText(link,now){
 
 export function linkRoundTripMetrics(projection,link,history,now){
  const device=list(projection.devices).find(v=>v.id===link.from),value=history?.key===linkHistoryKey(projection,link)?history.data?.round_trips:null;
- const current=value&&history.version===linkHistoryVersion(projection,link)&&value.report_sequence===device?.evidence?.report_sequence&&value.network_generation===device?.evidence?.network_generation&&value.current_until>now&&link.current_until>now&&link.availability==='available';
+ const current=value&&value.report_sequence===device?.evidence?.report_sequence&&value.network_generation===device?.evidence?.network_generation&&value.current_until>now&&link.current_until>now&&link.availability==='available';
  const known=current&&value.samples>=2&&Number.isSafeInteger(value.spread_ms)&&value.spread_ms>=0;
  const details=current?`${value.samples} distinct successful samples · P50 ${value.p50_ms??'Unknown'} ms · P95 ${value.p95_ms??'Unknown'} ms · ${new Date(value.from).toISOString()} — ${new Date(value.until).toISOString()}`:'No current matching RTT distribution';
  return [{text:linkRoundTripText(link,now),title:'WG DNS request/response after connection establishment, including endpoint processing. Sender: '+link.from+' · sampled '+(link.observed_at?new Date(link.observed_at).toISOString():'Unknown')},{text:`15m Δ P95−P50: ${known?value.spread_ms+' ms':'Unknown'}`,title:details}];

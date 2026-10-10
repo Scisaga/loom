@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -62,6 +63,8 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 		return value
 	}
 	var trafficReads, completedLinkReads atomic.Int64
+	var queryMu sync.Mutex
+	var linkQueries []string
 	stop := make(chan struct{})
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -89,6 +92,9 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 				}
 			}
 		case "/api/control/ui/link-history":
+			queryMu.Lock()
+			linkQueries = append(linkQueries, r.URL.Query().Get("link"))
+			queryMu.Unlock()
 			select {
 			case <-r.Context().Done():
 				return
@@ -102,10 +108,16 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 	}))
 	defer httpServer.Close()
 	defer close(stop)
-	debug := openCommandChrome(t, httpServer.URL+"/topology?link=demo-link")
+	debug := openCommandChrome(t, httpServer.URL+"/topology?link=demo-link-reverse")
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.topology-traffic-card [data-traffic-endpoint]').length===48&&document.querySelectorAll('[data-link-history] .link-hour').length===48`)
 	if trafficReads.Load() == 0 || completedLinkReads.Load() < 2 {
 		t.Fatal("new reports starved other history scopes or repeatedly cancelled in-flight reads")
+	}
+	queryMu.Lock()
+	first := linkQueries[0]
+	queryMu.Unlock()
+	if first != "demo-link-reverse" {
+		t.Fatal("selected link RTT queued behind an unrelated link", first)
 	}
 	revoked.Store(true)
 	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card').textContent.includes('WG traffic unavailable for this authorization')&&document.querySelectorAll('[data-traffic-endpoint]').length===0&&document.querySelectorAll('[data-link-history] .link-hour').length===0`)

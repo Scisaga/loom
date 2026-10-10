@@ -260,7 +260,14 @@ LocalDeploymentConfig.deploy_hosts
 6. planner 产生一个可脱敏回读的 `DeployPlan`；只有获得本次发布授权后才执行。
 7. executor 发布同一制品并记录每个目标的真实结果；证据、LKG 和 UI 从结果投影，不回写 `.env`。
 
-当前 Linux client 与 control 共用同一程序路径，control unit 的启动前检查通过该路径读取 client 状态。
+Linux client 与 control 可复用同一已验证程序；control unit 的启动前检查通过 client 的已安装路径读取状态。
+只修改 control 页面且没有改变任何协议、持久或 client 临时格式时，可沿原服务入口将 control 的
+ExecStart 精确指向另一个已验签、验摘要的不可变程序，仅重启 control。client 的程序指针、实际
+进程、期望组件和公开客户端目录保持；不能把独立 control 部署伪报为客户端已更新。程序仍放在
+原内容地址发布目录，service 的原 ExecStart 就是执行引用，不增加配置键、发布权威或长期 fallback。
+切换前保留原 unit 与身份、认证进度和宿主基线，按独立成员并行、保留管理入口的顺序执行；
+切换后核对真实进程摘要、正常认证页面和原事实恢复。失败仅停止本次 control 服务，原身份与
+认证进度不回退；删除旧程序前仍须确认没有 client、配套进程或 unit 引用。
 若本次修订改变了 `/run` 下可删除状态投影的字段，须先沿正常 service 入口启动同制品 client，
 由它从原身份和 LKG 重建当前状态，再启动 control。不能让新检查器读取仍由旧进程写入的临时格式，
 也不能手改临时状态、放宽 decoder 或增加旧格式 fallback 使检查通过。此顺序不迁移认证原件、

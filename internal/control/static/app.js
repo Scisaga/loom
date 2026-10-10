@@ -148,9 +148,11 @@ function devicesPage(){
 function visibleHistories(){
  const wanted=new Map();
  const traffic=node=>{const scope=node.dataset.trafficScope,request=trafficHistoryRequest(projection,scope);if(request)wanted.set('traffic:'+scope,request)};
+ const link=id=>{const value=list(projection.links).find(v=>v.id===id);if(value?.authorized&&value.spec_digest)wanted.set('link:'+id,{key:linkHistoryKey(projection,value),version:linkHistoryVersion(projection,value),url:'/api/control/ui/link-history?'+new URLSearchParams({link:id})})};
  for(const node of app.querySelectorAll('[data-selected-link] [data-traffic-scope]'))traffic(node);
+ for(const node of app.querySelectorAll('[data-selected-link]'))link(node.dataset.selectedLink);
  for(const node of app.querySelectorAll('[data-runtime-history]')){const device=list(projection.devices).find(v=>v.id===node.dataset.runtimeHistory);if(device?.authorized)wanted.set('runtime:'+device.id,{key:runtimeHistoryKey(projection,device),version:runtimeHistoryVersion(device),url:'/api/control/ui/runtime-history?'+new URLSearchParams({device:device.id})})}
- for(const node of app.querySelectorAll('[data-link-history]')){const link=list(projection.links).find(v=>v.id===node.dataset.linkHistory);if(link?.authorized&&link.spec_digest)wanted.set('link:'+link.id,{key:linkHistoryKey(projection,link),version:linkHistoryVersion(projection,link),url:'/api/control/ui/link-history?'+new URLSearchParams({link:link.id})})}
+ for(const node of app.querySelectorAll('[data-link-history]'))link(node.dataset.linkHistory);
  for(const node of app.querySelectorAll('[data-traffic-scope]'))traffic(node);
  return wanted;
 }
@@ -163,8 +165,11 @@ function loadHistories(){
  const order=new Map([...histories.keys()].map((id,index)=>[id,index]));
  const pending=[...wanted].filter(([id,value])=>!historyLoads.has(id)&&(!histories.has(id)||histories.get(id).version!==value.version));
  pending.sort(([a],[b])=>(order.get(a)??-1)-(order.get(b)??-1));
- for(const [id,{key,version,url}]of pending){
-  if(historyLoads.size>=2)break;
+ const selected=new Set([...app.querySelectorAll('[data-selected-link]')].flatMap(node=>['link:'+node.dataset.selectedLink,'traffic:link:'+node.dataset.selectedLink]));
+ // Prefer the selected metrics in one slot; let the other continue the round.
+ while(historyLoads.size<2&&pending.length){
+  const index=[...historyLoads.keys()].some(id=>selected.has(id))?0:Math.max(0,pending.findIndex(([id])=>selected.has(id)));
+  const [id,{key,version,url}]=pending.splice(index,1)[0];
   const request={key,controller:new AbortController()};historyLoads.set(id,request);
   const current=()=>!request.controller.signal.aborted&&visibleHistories().get(id)?.key===key;
   const save=value=>{if(current()){histories.delete(id);histories.set(id,{key,version,...value})}};
