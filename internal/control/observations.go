@@ -124,6 +124,9 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 		high := map[reportOwner]U64{}
 		known := map[reportPosition]map[string]bool{}
 		for id, ref := range base.reports {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			owner := reportOwner{ref.NetworkID, ref.DeviceID}
 			key, concerned := keys[owner]
 			if !concerned {

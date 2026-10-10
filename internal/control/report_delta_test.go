@@ -252,16 +252,21 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	post(0, otherReport, http.StatusOK)
-	// Exercise the daemon's real round budget: healthy, slower private
-	// requests must commit a batch before the later interrupted transfer.
-	// A shared deadline shorter than the request chain would retry forever.
+	// One bounded batch must return successfully even with a historical
+	// backlog. A subsequent attempt must refresh the ranges for new reports.
 	capture.mu.Lock()
 	capture.delay = 3 * time.Second
 	capture.mu.Unlock()
-	_ = peers[1].server.Runtime.reconcilePeerAttempt(context.Background(), members[0])
+	if err := peers[1].server.Runtime.reconcilePeerAttempt(context.Background(), members[0]); err != nil {
+		t.Fatal("committed batch did not yield before another historical request", err)
+	}
 	capture.mu.Lock()
 	capture.delay = 0
+	callsAfterBatch := capture.calls
 	capture.mu.Unlock()
+	if callsAfterBatch != 1 {
+		t.Fatal("one attempt continued draining the old report directory", callsAfterBatch)
+	}
 	if got := peers[1].server.Runtime.Reports.History(); len(got) != reportTransferCount {
 		t.Fatal("complete prefix was not durable before interruption", len(got))
 	}
@@ -272,8 +277,24 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	// must still request only the missing historical IDs, including old slots.
 	peers[1].close()
 	peers[1] = start(1)
+	if err := syncPeer(1, 0); err == nil {
+		t.Fatal("interrupted batch was acknowledged")
+	}
+	if got := peers[1].server.Runtime.Reports.History(); len(got) != reportTransferCount {
+		t.Fatal("failed batch changed the durable prefix", len(got))
+	}
+	latest = reportFor(2050, "running")
+	post(0, latest, http.StatusOK)
 	if err := syncPeer(1, 0); err != nil {
-		t.Fatal("restart could not fill an equal-height historical gap", err)
+		t.Fatal("restart could not resume member exchange", err)
+	}
+	if got := peers[1].server.Runtime.Reports.All(); len(got) != 2 || got[0].ReportSequence != latest.ReportSequence {
+		t.Fatal("new highest range waited behind an older historical backlog")
+	}
+	for attempt := 0; attempt < 32 && len(peers[1].server.Runtime.Reports.History()) < len(history)+3; attempt++ {
+		if err := syncPeer(1, 0); err != nil {
+			t.Fatal("bounded retries could not fill historical gaps", err)
+		}
 	}
 	capture.mu.Lock()
 	for _, times := range capture.sent {
@@ -281,7 +302,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 			t.Error("already received original report was retransmitted")
 		}
 	}
-	if len(capture.sent) != 1202 {
+	if len(capture.sent) != len(history)+3 {
 		t.Error("some original reports never crossed the member channel", len(capture.sent))
 	}
 	calls := capture.calls

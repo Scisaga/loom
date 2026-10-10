@@ -415,10 +415,10 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 		if err := runtime.Reports.mergeReportHistory(ctx, batch.Reports, runtime.Authority.Snapshot()); err != nil && !errors.Is(err, ErrReportEquivocation) {
 			return errors.Join(failures, err)
 		}
-		index, err = runtime.Reports.reportIndexSnapshot(ctx)
-		if err != nil {
-			return errors.Join(failures, err)
-		}
+		// Yield after one durable batch. The next member attempt compares a
+		// fresh directory, so reports arriving during historical catch-up do
+		// not wait for this directory's remaining backlog or whole deadline.
+		return failures
 	}
 	return failures
 }

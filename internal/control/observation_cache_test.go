@@ -2,13 +2,80 @@ package control
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// Cancel at an actual verified-original boundary, without relying on machine
+// speed or racing a timer against cryptographic work.
+type cancelDuringHistoryVerification struct {
+	context.Context
+	cancel context.CancelFunc
+	store  *ObservationStore
+}
+
+func (ctx cancelDuringHistoryVerification) Err() error {
+	if len(ctx.store.verified) != 0 {
+		ctx.cancel()
+	}
+	return ctx.Context.Err()
+}
+
+func TestObservationHistoryVerificationCancellationPreservesOriginals(t *testing.T) {
+	key := testKey(t)
+	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenObservationStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := []DeviceReport{}
+	for sequence := U64(1); sequence <= 4; sequence++ {
+		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ReportSequence: sequence,
+			ViewDigest: "sha256:" + strings.Repeat("0", 64), NetworkGeneration: "demo-underlay", ReportedAt: 1,
+			Selections: []ReportSelection{}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "stopped"}, Components: []ComponentReadback{}}, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reports = append(reports, report)
+	}
+	testSetObservationReports(t, root, reports[:3])
+	store, err = OpenObservationStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := cancelDuringHistoryVerification{parent, cancel, store}
+	err = store.mergeReports(ctx, reports[3:], map[reportOwner]string{{"demo-network", "demo-device"}: public}, false)
+	if !errors.Is(err, context.Canceled) || len(store.verified) != 1 {
+		t.Fatal("cancellation did not stop between verified originals", err, len(store.verified))
+	}
+	after, err := os.ReadFile(store.path)
+	if err != nil || !bytes.Equal(original, after) {
+		t.Fatal("cancelled verification changed the database", err)
+	}
+	if err := store.Put(reports[3], public); err != nil {
+		t.Fatal("same original could not resume after cancellation", err)
+	}
+	want, _ := CanonicalEncode(observationState{Schema: 3, Reports: reports})
+	if !bytes.Equal(testObservationBytes(t, root), want) {
+		t.Fatal("retry changed the original signed history")
+	}
+}
 
 func TestObservationSignatureMemoRequiresExactOriginalAndPublicKey(t *testing.T) {
 	key, other := testKey(t), testKey(t)
