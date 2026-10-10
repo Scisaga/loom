@@ -13,12 +13,12 @@ export function trafficHistoryRequest(projection,scope){
  else if(kind==='device'){const value=list(projection.devices).find(v=>v.id===id&&v.authorized);if(!value)return null;devices=[value]}
  else if(kind==='link'){const link=list(projection.links).find(v=>v.id===id&&v.authorized&&v.spec_digest);if(!link)return null;devices=[link.from,link.to].map(id=>list(projection.devices).find(v=>v.id===id&&v.authorized));if(devices.some(v=>!v))return null;binding=[link.from,link.to,link.resource_id,link.spec_digest]}
  else return null;
- return {key:JSON.stringify([projection.network_id,projection.control_config_id,scope,binding,devices.map(v=>[v.id,v.authorized,list(v.dependencies),v.last_report_at])]),url:'/api/control/ui/traffic-history?'+new URLSearchParams({[kind]:id})};
+ return {key:JSON.stringify([projection.network_id,projection.control_config_id,scope,binding,devices.map(v=>[v.id,v.authorized,list(v.dependencies)])]),version:JSON.stringify(devices.map(v=>[v.id,v.last_report_at])),url:'/api/control/ui/traffic-history?'+new URLSearchParams({[kind]:id})};
 }
 export function trafficSummary(projection,scope,entry){
  const request=trafficHistoryRequest(projection,scope),record=request&&entry?.key===request.key?entry:null;
  const data=record?.data?.scope===scope?record.data:null;
- const result={scope:request?scope:null,rx:null,tx:null,forward:null,buckets:[],known:false,covered:0,data,error:record?.error};
+ const result={scope:request?scope:null,rx:null,tx:null,forward:null,buckets:[],known:false,covered:0,data,error:record?.error,current:!!record&&record.version===request.version};
  if(!data)return result;
  for(let i=0;i<24;i++){
   const hour=data.from+i*3600000,values=list(data.devices).flatMap(v=>list(v.buckets).filter(b=>b.hour===hour&&b.delta).map(b=>b.delta));
@@ -58,7 +58,7 @@ export function trafficHistoryHTML(summary,both=false,compact=false,endpoints=fa
 }
 export function trafficRates(summary,now){
  return list(summary.data?.devices).map(device=>{
-  const value=device.recent,valid=value&&value.covered_ms>0&&value.last_at+180000>now;
+  const value=device.recent,valid=summary.current!==false&&value&&value.covered_ms>0&&value.last_at+180000>now;
   const thousandths=valid?integer(value.tx_bytes)*8n/BigInt(value.covered_ms):null;
   const rate=thousandths===null?'Unknown':thousandths===0n&&integer(value.tx_bytes)>0n?'<0.001 Mbps':`${thousandths/1000n}.${String(thousandths%1000n).padStart(3,'0')} Mbps`;
   return {id:device.device_id,text:device.device_id+' TX: '+rate,detail:'Shared peer TX; observed rate, not capacity'+(valid?' · '+value.covered_ms/1000+' seconds · through '+new Date(value.last_at).toISOString():'')};

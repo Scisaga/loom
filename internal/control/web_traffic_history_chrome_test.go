@@ -38,6 +38,12 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Millisecond)
+	sampleEnd := now
+	if sampleEnd.Add(-time.Minute).Truncate(time.Hour) != sampleEnd.Truncate(time.Hour) {
+		// Hour boundaries deliberately have no interpolated counter delta.
+		// Keep this display fixture in one hour, still within current freshness.
+		sampleEnd = sampleEnd.Truncate(time.Hour).Add(-time.Millisecond)
+	}
 	resources := []ResourceReadback{}
 	for _, resource := range view.Resources {
 		if resource.OwnerNodeID != view.DeviceID {
@@ -57,7 +63,7 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	sort.Slice(resources, func(i, j int) bool { return resources[i].ResourceID < resources[j].ResourceID })
 	reports := []DeviceReport{}
 	for i := 0; i < 2; i++ {
-		at := now.Add(time.Duration(i-1) * time.Minute)
+		at := sampleEnd.Add(time.Duration(i-1) * time.Minute)
 		values := append([]WireGuardPeerCounter{}, peers...)
 		for j := range values {
 			values[j].TXBytes = U64(i) * 1048576
@@ -115,6 +121,9 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	}
 	chromeDo(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-retry]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]')!==null`)
+	if chromeDo(t, debug, `(async()=>{const {trafficHistoryRequest,trafficSummary,trafficRates}=await import('/assets/traffic-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),scope='link:demo-link',request=trafficHistoryRequest(p,scope),data=await(await fetch(request.url)).json(),entry={key:request.key,version:request.version,data},initial=trafficSummary(p,scope,entry),device=p.devices.find(d=>d.id==='demo-entry');device.last_report_at=new Date(Date.parse(device.last_report_at)+1).toISOString();const pending=trafficSummary(p,scope,entry);p.links.find(l=>l.id==='demo-link').spec_digest='sha256:'+ 'f'.repeat(64);return trafficRates(initial,Date.now()).some(v=>v.text.includes('0.139 Mbps'))&&pending.known&&trafficRates(pending,Date.now()).every(v=>v.text.includes('Unknown'))&&trafficSummary(p,scope,entry).data===null})()`) != true {
+		t.Fatal("refreshing a report must preserve scoped history without reusing a current rate or a replaced Link")
+	}
 	if chromeDo(t, debug, `(async()=>{const {routingHTML}=await import('/assets/routing.js'),{trafficRates}=await import('/assets/traffic-history.js');const p=await(await fetch('/api/control/ui/snapshot')).json();const doc=new DOMParser().parseFromString(routingHTML(p,new URLSearchParams({service:'demo-service',device:'demo-entry',candidate:p.paths.find(v=>v.device==='demo-entry'&&v.link_ids.includes('demo-link')).candidate_id}),Date.now()),'text/html');const hops=[...doc.querySelectorAll('.paths-hop b')].map(v=>v.textContent),first=doc.querySelector('.paths-edge'),at=Date.now();const rate=bytes=>trafficRates({data:{devices:[{device_id:'demo-entry',recent:{tx_bytes:bytes,covered_ms:1000,last_at:at}}]}},at)[0].text;return hops.length===3&&hops[0]===p.devices.find(d=>d.id==='demo-entry').name&&hops[1]===p.devices.find(d=>d.id==='demo-exit').name&&first.querySelector('[data-traffic-scope="link:demo-link"]')!==null&&rate('1').includes('<0.001 Mbps')&&rate('0').includes('0.000 Mbps')})()`) != true {
 		t.Fatal("hybrid route duplicated its source, misplaced the shared Link, or rounded traffic into measured zero")
 	}

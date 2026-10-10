@@ -2,8 +2,9 @@ import{esc,list}from'./model.js';
 
 export function linkHistoryKey(projection,link){
  const from=list(projection.devices).find(v=>v.id===link.from),to=list(projection.devices).find(v=>v.id===link.to);
- return JSON.stringify([projection.network_id,projection.control_config_id,link.id,link.from,link.to,link.transport,link.resource_id,link.spec_digest,from?.authorized,to?.authorized,list(from?.dependencies),list(to?.dependencies),from?.last_report_at]);
+ return JSON.stringify([projection.network_id,projection.control_config_id,link.id,link.from,link.to,link.transport,link.resource_id,link.spec_digest,from?.authorized,to?.authorized,list(from?.dependencies),list(to?.dependencies)]);
 }
+export const linkHistoryVersion=(projection,link)=>list(projection.devices).find(v=>v.id===link.from)?.last_report_at||'';
 
 export function linkHistoryHTML(projection,link,history){
  const item=history?.key===linkHistoryKey(projection,link)?history:null;

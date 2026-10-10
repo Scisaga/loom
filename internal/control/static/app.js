@@ -3,8 +3,8 @@ import{canonical,targetDependencies,parseMatchers,componentComparisons,expectedC
 import{icon}from'./icons.js';
 import{routingHTML,routingHistoryRequest}from'./routing.js';
 import{topologyHTML,bindTopology}from'./topology.js';
-import{runtimeHistoryKey,runtimeHistoryHTML}from'./runtime-history.js';
-import{linkHistoryKey,linkHistoryHTML}from'./link-history.js';
+import{runtimeHistoryKey,runtimeHistoryVersion,runtimeHistoryHTML}from'./runtime-history.js';
+import{linkHistoryKey,linkHistoryVersion,linkHistoryHTML}from'./link-history.js';
 import{websiteManagementHTML,submitWebsiteForm,clickWebsiteAction}from'./website.js';
 function draftAttributes(){return `data-request-id="${crypto.randomUUID()}" data-targets="${esc(JSON.stringify(list(projection.targets)))}" data-device-dependencies="${esc(JSON.stringify(list(projection.devices).map(d=>({id:d.id,dependencies:list(d.dependencies)}))))}" data-policies="${esc(JSON.stringify(list(projection.policies)))}"`}
 function policyChoices(selected=[],policies=list(projection.policies)){const rows=policies.map(p=>`<div class="actions"><label class="choice"><input type="checkbox" name="policy_id" value="${esc(p.id)}" ${selected.includes(p.id)?'checked':''}><span><b>${esc(p.name||p.id)}</b><small>${esc(p.service_id)} · ${esc(p.action)}</small></span></label>${canOperate('policy.put')?`<button type="button" data-copy-policy="${esc(p.id)}">Copy for this device</button>`:''}</div>`);for(const id of selected.filter(id=>!policies.some(p=>p.id===id)))rows.push(`<label class="choice"><input type="checkbox" name="policy_id" value="${esc(id)}" checked><span><b>${esc(id)}</b><small>Unavailable reference retained. Remove it explicitly to change the assignment.</small></span></label>`);return rows.join('')||'<p class="empty">No policies. Joining without business access is allowed.</p>'}
@@ -147,21 +147,28 @@ function devicesPage(){
 // bounded and cancelled when their identity/authorization or page is replaced.
 function visibleHistories(){
  const wanted=new Map();
- for(const node of app.querySelectorAll('[data-runtime-history]')){const device=list(projection.devices).find(v=>v.id===node.dataset.runtimeHistory);if(device?.authorized)wanted.set('runtime:'+device.id,{key:runtimeHistoryKey(projection,device),url:'/api/control/ui/runtime-history?'+new URLSearchParams({device:device.id})})}
- for(const node of app.querySelectorAll('[data-link-history]')){const link=list(projection.links).find(v=>v.id===node.dataset.linkHistory);if(link?.authorized&&link.spec_digest)wanted.set('link:'+link.id,{key:linkHistoryKey(projection,link),url:'/api/control/ui/link-history?'+new URLSearchParams({link:link.id})})}
- for(const node of app.querySelectorAll('[data-traffic-scope]')){const scope=node.dataset.trafficScope,request=trafficHistoryRequest(projection,scope);if(request)wanted.set('traffic:'+scope,request)}
+ const traffic=node=>{const scope=node.dataset.trafficScope,request=trafficHistoryRequest(projection,scope);if(request)wanted.set('traffic:'+scope,request)};
+ for(const node of app.querySelectorAll('[data-selected-link] [data-traffic-scope]'))traffic(node);
+ for(const node of app.querySelectorAll('[data-runtime-history]')){const device=list(projection.devices).find(v=>v.id===node.dataset.runtimeHistory);if(device?.authorized)wanted.set('runtime:'+device.id,{key:runtimeHistoryKey(projection,device),version:runtimeHistoryVersion(device),url:'/api/control/ui/runtime-history?'+new URLSearchParams({device:device.id})})}
+ for(const node of app.querySelectorAll('[data-link-history]')){const link=list(projection.links).find(v=>v.id===node.dataset.linkHistory);if(link?.authorized&&link.spec_digest)wanted.set('link:'+link.id,{key:linkHistoryKey(projection,link),version:linkHistoryVersion(projection,link),url:'/api/control/ui/link-history?'+new URLSearchParams({link:link.id})})}
+ for(const node of app.querySelectorAll('[data-traffic-scope]'))traffic(node);
  return wanted;
 }
 function loadHistories(){
  const wanted=visibleHistories();
  for(const [id,value]of histories)if(wanted.get(id)?.key!==value.key)histories.delete(id);
  for(const [id,value]of historyLoads)if(wanted.get(id)?.key!==value.key)value.controller.abort();
- for(const [id,{key,url}]of wanted){
+ // Missing scopes precede refreshes; completed reads move to the end. A new
+ // report requests another read without cancelling the same authorized query.
+ const order=new Map([...histories.keys()].map((id,index)=>[id,index]));
+ const pending=[...wanted].filter(([id,value])=>!historyLoads.has(id)&&(!histories.has(id)||histories.get(id).version!==value.version));
+ pending.sort(([a],[b])=>(order.get(a)??-1)-(order.get(b)??-1));
+ for(const [id,{key,version,url}]of pending){
   if(historyLoads.size>=2)break;
-  if(histories.has(id)||historyLoads.has(id))continue;
   const request={key,controller:new AbortController()};historyLoads.set(id,request);
   const current=()=>!request.controller.signal.aborted&&visibleHistories().get(id)?.key===key;
-  api(url,{signal:request.controller.signal}).then(data=>{if(current())histories.set(id,{key,data})}).catch(error=>{if(current())histories.set(id,{key,error:error.message})}).finally(()=>{if(historyLoads.get(id)===request)historyLoads.delete(id);if(current()){stableRender();scheduleEvidenceExpiry()}else queueMicrotask(loadHistories)});
+  const save=value=>{if(current()){histories.delete(id);histories.set(id,{key,version,...value})}};
+  api(url,{signal:request.controller.signal}).then(data=>save({data})).catch(error=>save({error:error.message})).finally(()=>{if(historyLoads.get(id)===request)historyLoads.delete(id);if(current()){stableRender();scheduleEvidenceExpiry()}else queueMicrotask(loadHistories)});
  }
 }
 async function loadEnrollmentOptions(){try{enrollmentOptions=await api('/api/control/ui/enrollment-options')}catch{enrollmentOptions=null}if(location.pathname==='/devices'&&new URLSearchParams(location.search).get('new')==='1')render()}
