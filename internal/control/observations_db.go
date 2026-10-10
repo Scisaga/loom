@@ -239,8 +239,32 @@ func initializeObservationDB(path string) error {
 }
 
 func scanObservationIndex(ctx context.Context, tx *bolt.Tx, cached *reportIndex) (*reportIndex, error) {
+	if cached != nil {
+		count, unchanged := 0, true
+		err := tx.Bucket(observationBucket).ForEach(func(key, raw []byte) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			id, ref, err := reportRecord(key, raw, cached)
+			if err != nil {
+				return err
+			}
+			count++
+			if prior, ok := cached.reports[id]; !ok || !prior.equal(ref) {
+				unchanged = false
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		if unchanged && count == len(cached.reports) {
+			return cached, nil
+		}
+	}
+	// Rebuild only after a content change, in the same committed snapshot.
+	// The checked fast path still hashes and checks every original and key.
 	result := emptyReportIndex()
-	unchanged := cached != nil
 	err := tx.Bucket(observationBucket).ForEach(func(key, raw []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -250,18 +274,10 @@ func scanObservationIndex(ctx context.Context, tx *bolt.Tx, cached *reportIndex)
 			return err
 		}
 		result.reports[id] = ref
-		if cached == nil {
-			unchanged = false
-		} else if prior, ok := cached.reports[id]; !ok || !prior.equal(ref) {
-			unchanged = false
-		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	if unchanged && len(result.reports) == len(cached.reports) {
-		return cached, nil
 	}
 	if err := result.rebuildGroups(); err != nil {
 		return nil, err

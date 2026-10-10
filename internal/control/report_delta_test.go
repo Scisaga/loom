@@ -679,6 +679,20 @@ func TestReportIndexSnapshotsRemainImmutableAndRejectChangedFiles(t *testing.T) 
 	if len(third.reports) != 3 || len(snapshot().reports) != 4 {
 		t.Fatal("concurrent commit changed an old snapshot or lost the new report")
 	}
+	// The same count is not the same input set. Replacing or removing
+	// originals must be visible even when the previous index is warm.
+	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(5)})
+	latest, err := store.Latest(context.Background())
+	if err != nil || len(latest) != 1 || latest[0].ReportSequence != 5 || len(snapshot().reports) != 4 {
+		t.Fatal("unchanged item count hid a changed original", err)
+	}
+	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2)})
+	latest, err = store.Latest(context.Background())
+	if err != nil || len(latest) != 1 || latest[0].ReportSequence != 2 || len(snapshot().reports) != 2 {
+		t.Fatal("warm index resurrected an absent original", err)
+	}
+	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(4)})
+	_ = snapshot()
 	testCorruptReport(t, store.path, func(raw []byte) []byte { return bytes.Replace(raw, []byte(`"schema":3`), []byte(`"schema":4`), 1) })
 	if _, err := store.reportIndexSnapshot(context.Background()); err == nil {
 		t.Fatal("same-length corruption bypassed original-byte verification")

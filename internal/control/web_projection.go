@@ -122,9 +122,15 @@ func projectWebDevices(projection Projection, releases ...ReleaseSet) []Device {
 }
 
 func projectWebPaths(projection Projection, releases ...ReleaseSet) []Path {
+	return projectWebPathsUsing(projection, func(id string) (DeviceView, error) {
+		return ProjectDeviceView(projection, id, releases...)
+	})
+}
+
+func projectWebPathsUsing(projection Projection, viewFor func(string) (DeviceView, error)) []Path {
 	paths := []Path{}
 	for _, device := range projection.DeviceAuthorizations {
-		view, err := ProjectDeviceView(projection, device.ID, releases...)
+		view, err := viewFor(device.ID)
 		if err != nil {
 			continue
 		}

@@ -123,6 +123,12 @@ func snapshotEvents(events []Event) []Event {
 }
 
 func buildWebSnapshot(projection Projection, admin, local, writable bool, releases ...ReleaseSet) WebSnapshot {
+	return buildWebSnapshotUsing(projection, admin, local, writable, func(id string) (DeviceView, error) {
+		return ProjectDeviceView(projection, id, releases...)
+	}, releases...)
+}
+
+func buildWebSnapshotUsing(projection Projection, admin, local, writable bool, viewFor func(string) (DeviceView, error), releases ...ReleaseSet) WebSnapshot {
 	members := []WebControlMember{}
 	for _, member := range projection.Config.Members {
 		key, _ := KeyID(member.PublicKey)
@@ -169,7 +175,7 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		WebsiteCertificates: []WebsiteCertificateReadback{},
 		FactFrontier:        append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},
-		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPaths(projection, releases...), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
+		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPathsUsing(projection, viewFor), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
 		PolicyInvites: []WebPolicyInvite{},
 		DNSRecords:    append([]DNSRecord{}, projection.NetworkIntent.DNSRecords...),
 		PublicTrust:   append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),

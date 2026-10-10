@@ -239,6 +239,12 @@ func (store *ObservationStore) Latest(ctx context.Context) ([]DeviceReport, erro
 	return result, err
 }
 func verifyCurrentReport(report DeviceReport, projection Projection, releases ...ReleaseSet) error {
+	return verifyCurrentReportUsing(report, projection, func(id string) (DeviceView, error) {
+		return ProjectDeviceView(projection, id, releases...)
+	})
+}
+
+func verifyCurrentReportUsing(report DeviceReport, projection Projection, viewFor func(string) (DeviceView, error)) error {
 	if report.NetworkID != projection.NetworkID {
 		return errors.New("device report belongs to another network")
 	}
@@ -246,7 +252,7 @@ func verifyCurrentReport(report DeviceReport, projection Projection, releases ..
 	if !found || report.Verify(authorization.DevicePublicKey) != nil {
 		return errors.New("device report signature or authorization rejected")
 	}
-	view, err := ProjectDeviceView(projection, report.DeviceID, releases...)
+	view, err := viewFor(report.DeviceID)
 	if err != nil {
 		return err
 	}

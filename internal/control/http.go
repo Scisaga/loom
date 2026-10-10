@@ -359,7 +359,21 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		}
 	}
 	releases := server.expectedReleaseSets(projection, verified...)
-	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
+	// Paths and reports use the same authoritative inputs in this one request.
+	// Keep only successful projections here; no View escapes into the Web value
+	// or survives a subsequent request's authorization and release reads.
+	views := map[string]DeviceView{}
+	viewFor := func(id string) (DeviceView, error) {
+		if view, ok := views[id]; ok {
+			return view, nil
+		}
+		view, err := ProjectDeviceView(projection, id, releases...)
+		if err == nil {
+			views[id] = view
+		}
+		return view, err
+	}
+	snapshot := buildWebSnapshotUsing(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), viewFor, releases...)
 	server.memberSnapshot(&snapshot)
 	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
 	server.websiteSnapshot(&snapshot, r, projection)
@@ -372,7 +386,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		projectWebLastReportTimes(&snapshot, latest, projection)
 		reports := []DeviceReport{}
 		for _, report := range latest {
-			if verifyCurrentReport(report, projection, releases...) == nil {
+			if verifyCurrentReportUsing(report, projection, viewFor) == nil {
 				reports = append(reports, report)
 			}
 		}
