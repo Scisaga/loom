@@ -298,6 +298,7 @@ func observationOrder(value Observation) string {
 }
 
 type DeviceReport struct {
+	WireGuardCounters *WireGuardCounters    `json:"wireguard_counters,omitempty"`
 	Schema            int                   `json:"schema"`
 	NetworkID         string                `json:"network_id"`
 	DeviceID          string                `json:"device_id"`
@@ -316,6 +317,9 @@ type DeviceReport struct {
 
 func (report DeviceReport) unsigned() map[string]any {
 	value := map[string]any{"schema": report.Schema, "network_id": report.NetworkID, "device_id": report.DeviceID, "report_sequence": report.ReportSequence, "view_digest": report.ViewDigest, "network_generation": report.NetworkGeneration, "reported_at": report.ReportedAt, "selections": report.Selections, "observations": report.Observations, "runtime": report.Runtime, "components": report.Components}
+	if report.WireGuardCounters != nil {
+		value["wireguard_counters"] = *report.WireGuardCounters
+	}
 	if report.Preference != nil {
 		value["preference"] = *report.Preference
 	}
@@ -328,6 +332,9 @@ func (report DeviceReport) unsigned() map[string]any {
 func (report DeviceReport) validateFields() error {
 	if report.Schema != 3 || ValidateID(report.NetworkID) != nil || ValidateID(report.DeviceID) != nil || report.DeviceID == "direct" || report.ReportSequence == 0 || ValidateDigest(report.ViewDigest) != nil || ValidateID(report.NetworkGeneration) != nil || !validateTime(report.ReportedAt) || report.Selections == nil || report.Observations == nil || report.Components == nil || report.Runtime.Validate() != nil {
 		return errors.New("device report is invalid")
+	}
+	if report.WireGuardCounters != nil && (report.WireGuardCounters.Validate() != nil || report.Runtime.State != "running" || report.Runtime.AppliedViewDigest != report.ViewDigest) {
+		return errors.New("WG counters require the actual applied running instance")
 	}
 	if report.Preference != nil && report.Preference.Validate() != nil {
 		return errors.New("device report preference is invalid")

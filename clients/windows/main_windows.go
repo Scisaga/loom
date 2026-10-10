@@ -647,6 +647,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		return err
 	}
 	reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
+	report.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(diagnosticContext, lkg.View, time.Now)
 	reportErr := deviceclient.Report(reportContext, store, report)
 	reportCancel()
 	lastReportAt := time.Time{}
@@ -717,6 +718,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 					return buildErr
 				}
 				reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
+				nextReport.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(diagnosticContext, lkg.View, time.Now)
 				reportErr := deviceclient.Report(reportContext, store, nextReport)
 				reportCancel()
 				if reportErr != nil {

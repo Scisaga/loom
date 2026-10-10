@@ -9,17 +9,26 @@ exec 9>"$repo_root/out/.dataplane-build.lock"
 flock -n 9 || { echo "another data-plane build is running" >&2; exit 1; }
 python3 "$repo_root/scripts/prepare-sing-box.py" "$source_dir"
 tags="with_gvisor,with_quic,with_wireguard,with_ech,with_utls,with_clash_api,http2legacy"
+build_pids=()
 for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+    (
     target_os=${target%/*}
     target_arch=${target#*/}
     extension=""
     if [[ "$target_os" == windows ]]; then extension=".exe"; fi
     env GOWORK=off GOTOOLCHAIN=go1.27.0 CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" \
         go -C "$source_dir" build -trimpath -buildvcs=false -tags "$tags" \
-        -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.11.4-loom.10 -s -w -buildid=' \
+        -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.11.4-loom.11 -s -w -buildid=' \
         -o "$output_dir/sing-box-$target_os-$target_arch$extension" ./cmd/sing-box
     echo "built data plane $target"
+    ) &
+    build_pids+=("$!")
 done
+build_failed=0
+for build_pid in "${build_pids[@]}"; do
+    if ! wait "$build_pid"; then build_failed=1; fi
+done
+if (( build_failed )); then exit 1; fi
 install -m 0644 "$source_dir/LICENSE" "$output_dir/LICENSE"
 install -m 0644 "$source_dir/.loom-source-provenance.json" "$output_dir/source-provenance.json"
 install -m 0644 "$repo_root/third_party/sing-box/domain-cache.patch" "$output_dir/domain-cache.patch"

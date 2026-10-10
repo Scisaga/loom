@@ -70,15 +70,6 @@ type Link struct {
 	LatencyMS    int64  `json:"latency_ms,omitempty"`
 }
 
-type TrafficBucket struct {
-	Device       string `json:"device"`
-	LinkID       string `json:"link_id"`
-	Hour         string `json:"hour"`
-	TXBytes      uint64 `json:"tx_bytes"`
-	RXBytes      uint64 `json:"rx_bytes"`
-	ForwardBytes uint64 `json:"forward_bytes"`
-}
-
 type Path struct {
 	CandidateID     string   `json:"candidate_id,omitempty"`
 	ServiceID       string   `json:"service_id"`

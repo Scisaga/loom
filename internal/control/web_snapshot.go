@@ -37,7 +37,6 @@ type WebSnapshot struct {
 	Publisher             *PublisherStatus             `json:"publisher,omitempty"`
 	Deployments           []Deployment                 `json:"deployments"`
 	Events                []Event                      `json:"events"`
-	Traffic               []TrafficBucket              `json:"traffic"`
 	Administrators        []WebAdministrator           `json:"administrators"`
 }
 
@@ -176,5 +175,5 @@ func buildWebSnapshot(projection Projection, admin, local, writable bool, releas
 		PublicTrust:   append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),
 		WebEndpoints:  append([]EndpointGeneration{}, webEndpoints...),
 		Services:      append([]Service{}, projection.NetworkIntent.Services...), LocalNetworkConflicts: lanConflicts, Releases: []Release{}, Deployments: []Deployment{},
-		Events: []Event{}, Traffic: []TrafficBucket{}, Administrators: projectWebAdministrators(projection)}
+		Events: []Event{}, Administrators: projectWebAdministrators(projection)}
 }

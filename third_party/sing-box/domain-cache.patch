@@ -640,7 +640,7 @@
  	})
 --- a/go.mod
 +++ b/go.mod
-@@ -102,3 +102,9 @@
+@@ -102,3 +102,11 @@
  	gopkg.in/yaml.v3 v3.0.1 // indirect
  	lukechampine.com/blake3 v1.3.0 // indirect
  )
@@ -650,6 +650,8 @@
 +replace github.com/sagernet/sing-quic => ./.loom-sing-quic
 +
 +replace github.com/sagernet/sing => ./.loom-sing
++
++replace github.com/sagernet/wireguard-go => ./.loom-wireguard
 --- a/option/dns.go
 +++ b/option/dns.go
 @@ -16,6 +16,7 @@
@@ -1675,7 +1677,32 @@
  	packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{
 --- a/transport/wireguard/endpoint.go
 +++ b/transport/wireguard/endpoint.go
-@@ -99,6 +99,8 @@
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"context"
++	"crypto/rand"
+ 	"encoding/base64"
+ 	"encoding/hex"
+ 	"fmt"
+@@ -9,6 +10,7 @@
+ 	"net/netip"
+ 	"os"
+ 	"strings"
++	"sync"
+ 
+ 	"github.com/sagernet/sing/common"
+ 	E "github.com/sagernet/sing/common/exceptions"
+@@ -24,6 +26,8 @@
+ )
+ 
+ type Endpoint struct {
++	counterMu      sync.RWMutex
++	counterEpoch   string
+ 	options        EndpointOptions
+ 	peers          []peerConfig
+ 	ipcConf        string
+@@ -99,6 +103,8 @@
  		Context:        options.Context,
  		Logger:         options.Logger,
  		System:         options.System,
@@ -1684,15 +1711,34 @@
  		Handler:        options.Handler,
  		UDPTimeout:     options.UDPTimeout,
  		CreateDialer:   options.CreateDialer,
-@@ -184,7 +186,7 @@
+@@ -184,9 +190,17 @@
  	}
  	err = wgDevice.IpcSet(ipcConf)
  	if err != nil {
 -		return E.Cause(err, "setup wireguard: \n", ipcConf)
 +		return E.Cause(err, "setup wireguard")
++	}
++	var epoch [16]byte
++	e.counterMu.Lock()
++	if _, err := rand.Read(epoch[:]); err == nil {
++		e.counterEpoch = hex.EncodeToString(epoch[:])
++	} else {
++		e.counterEpoch = ""
  	}
  	e.device = wgDevice
++	e.counterMu.Unlock()
  	e.pauseManager = service.FromContext[pause.Manager](e.options.Context)
+ 	if e.pauseManager != nil {
+ 		e.pauseCallback = e.pauseManager.RegisterCallback(e.onPauseUpdated)
+@@ -213,6 +227,8 @@
+ }
+ 
+ func (e *Endpoint) Close() error {
++	e.counterMu.Lock()
++	defer e.counterMu.Unlock()
+ 	if e.device != nil {
+ 		e.device.Close()
+ 	}
 --- a/transport/wireguard/endpoint_options.go
 +++ b/transport/wireguard/endpoint_options.go
 @@ -12,6 +12,8 @@
@@ -2084,4 +2130,167 @@
 +			t.Error(err)
 +		}
 +	}
++}
+--- /dev/null
++++ b/.loom-wireguard/device/counters.go
+@@ -0,0 +1,31 @@
++package device
++
++import (
++	"bytes"
++	"os"
++	"sort"
++)
++
++// PeerCounter reads authenticated WireGuard message bytes. It deliberately has
++// no configuration or private-key fields and never calls the UAPI exporter.
++type PeerCounter struct {
++	PublicKey        NoisePublicKey
++	RXBytes, TXBytes uint64
++}
++
++func (device *Device) PeerCounters() ([]PeerCounter, error) {
++	device.peers.RLock()
++	defer device.peers.RUnlock()
++	if device.isClosed() {
++		return nil, os.ErrClosed
++	}
++	result := make([]PeerCounter, 0, len(device.peers.keyMap))
++	for public, peer := range device.peers.keyMap {
++		result = append(result, PeerCounter{PublicKey: public, RXBytes: peer.rxBytes.Load(), TXBytes: peer.txBytes.Load()})
++	}
++	if device.isClosed() {
++		return nil, os.ErrClosed
++	}
++	sort.Slice(result, func(i, j int) bool { return bytes.Compare(result[i].PublicKey[:], result[j].PublicKey[:]) < 0 })
++	return result, nil
++}
+--- /dev/null
++++ b/adapter/wireguard_counters.go
+@@ -0,0 +1,18 @@
++package adapter
++
++// These values are process-local measurements, not a transport configuration.
++type WireGuardPeerCounter struct {
++	PublicKey string `json:"public_key"`
++	RXBytes   uint64 `json:"rx_bytes,string"`
++	TXBytes   uint64 `json:"tx_bytes,string"`
++}
++
++type WireGuardCounters struct {
++	Interface string                 `json:"interface"`
++	Epoch     string                 `json:"epoch"`
++	Peers     []WireGuardPeerCounter `json:"peers"`
++}
++
++type WireGuardCounterReader interface {
++	ReadWireGuardCounters() (WireGuardCounters, error)
++}
+--- a/experimental/clashapi/server.go
++++ b/experimental/clashapi/server.go
+@@ -111,6 +111,7 @@
+ 		r.Get("/", hello(options.ExternalUI != ""))
+ 		r.Get("/logs", getLogs(logFactory))
+ 		r.Get("/traffic", traffic(trafficManager))
++		r.Get("/loom/wireguard-counters", s.wireGuardCounters(options.Secret != ""))
+ 		r.Get("/version", version)
+ 		r.Mount("/configs", configRouter(s, logFactory))
+ 		r.Mount("/proxies", proxyRouter(s, s.router))
+--- /dev/null
++++ b/experimental/clashapi/wireguard_counters.go
+@@ -0,0 +1,50 @@
++package clashapi
++
++import (
++	"github.com/go-chi/render"
++	"github.com/sagernet/sing-box/adapter"
++	C "github.com/sagernet/sing-box/constant"
++	"net"
++	"net/http"
++	"sort"
++)
++
++func (s *Server) wireGuardCounters(authenticated bool) http.HandlerFunc {
++	return func(w http.ResponseWriter, r *http.Request) {
++		host, _, err := net.SplitHostPort(s.httpServer.Addr)
++		address := net.ParseIP(host)
++		if !authenticated || err != nil || address == nil || !address.IsLoopback() {
++			http.Error(w, "counter source requires the authenticated local listener", http.StatusForbidden)
++			return
++		}
++		if r.URL.RawQuery != "" {
++			http.Error(w, "unexpected counter query", http.StatusBadRequest)
++			return
++		}
++		if s.endpoint == nil {
++			http.Error(w, "counter source unavailable", http.StatusServiceUnavailable)
++			return
++		}
++		values := []adapter.WireGuardCounters{}
++		for _, endpoint := range s.endpoint.Endpoints() {
++			if endpoint.Type() != C.TypeWireGuard {
++				continue
++			}
++			source, ok := endpoint.(adapter.WireGuardCounterReader)
++			if !ok {
++				http.Error(w, "counter source unavailable", http.StatusServiceUnavailable)
++				return
++			}
++			value, err := source.ReadWireGuardCounters()
++			if err != nil {
++				http.Error(w, "counter source unavailable", http.StatusServiceUnavailable)
++				return
++			}
++			values = append(values, value)
++		}
++		sort.Slice(values, func(i, j int) bool { return values[i].Interface < values[j].Interface })
++		render.JSON(w, r, struct {
++			Endpoints []adapter.WireGuardCounters `json:"endpoints"`
++		}{values})
++	}
++}
+--- /dev/null
++++ b/protocol/wireguard/counters.go
+@@ -0,0 +1,20 @@
++package wireguard
++
++import (
++	"encoding/base64"
++	"github.com/sagernet/sing-box/adapter"
++	"sort"
++)
++
++func (w *Endpoint) ReadWireGuardCounters() (adapter.WireGuardCounters, error) {
++	epoch, peers, err := w.endpoint.PeerCounters()
++	if err != nil {
++		return adapter.WireGuardCounters{}, err
++	}
++	result := adapter.WireGuardCounters{Interface: w.Tag(), Epoch: epoch, Peers: []adapter.WireGuardPeerCounter{}}
++	for _, peer := range peers {
++		result.Peers = append(result.Peers, adapter.WireGuardPeerCounter{PublicKey: base64.RawURLEncoding.EncodeToString(peer.PublicKey[:]), RXBytes: peer.RXBytes, TXBytes: peer.TXBytes})
++	}
++	sort.Slice(result.Peers, func(i, j int) bool { return result.Peers[i].PublicKey < result.Peers[j].PublicKey })
++	return result, nil
++}
+--- /dev/null
++++ b/transport/wireguard/counters.go
+@@ -0,0 +1,19 @@
++package wireguard
++
++import (
++	"github.com/sagernet/wireguard-go/device"
++	"os"
++)
++
++func (e *Endpoint) PeerCounters() (string, []device.PeerCounter, error) {
++	e.counterMu.RLock()
++	defer e.counterMu.RUnlock()
++	if e.device == nil || e.counterEpoch == "" {
++		return "", nil, os.ErrNotExist
++	}
++	values, err := e.device.PeerCounters()
++	if err != nil {
++		return "", nil, err
++	}
++	return e.counterEpoch, values, nil
 +}

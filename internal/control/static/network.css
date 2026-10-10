@@ -382,3 +382,13 @@ main {max-width:1586px;padding:28px 20px 44px}
 
 .device-status .step .mono{overflow-wrap:anywhere}
 .topology-edge-card .mini-bars{max-width:280px}
+
+.wg-traffic {min-width:120px}
+.wg-traffic-hours {height:46px;display:grid;grid-template-columns:repeat(24,minmax(2px,1fr));align-items:end;gap:2px;margin:3px 0}
+.wg-traffic-hour {display:block;min-height:3px;background:var(--accent,#54b7bd);border-radius:1px}
+.wg-traffic-hour.missing {height:3px;background:transparent;border:1px solid var(--line,#526269)}
+.wg-traffic-hour.zero {height:3px;background:var(--dim,#85969f)}
+.wg-traffic-hour.bar-1 {height:10%}.wg-traffic-hour.bar-2 {height:20%}.wg-traffic-hour.bar-3 {height:30%}.wg-traffic-hour.bar-4 {height:40%}.wg-traffic-hour.bar-5 {height:50%}.wg-traffic-hour.bar-6 {height:60%}.wg-traffic-hour.bar-7 {height:70%}.wg-traffic-hour.bar-8 {height:80%}.wg-traffic-hour.bar-9 {height:90%}.wg-traffic-hour.bar-10 {height:100%}
+.wg-traffic.compact .wg-traffic-hours {height:26px}
+
+.wg-traffic-group{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;height:100%;align-items:end}.wg-traffic-group .wg-traffic-hour{width:100%;min-width:0}.wg-traffic-group .wg-traffic-hour:nth-child(2){background-color:#4f9e93}.wg-traffic-group .wg-traffic-hour.missing{background:transparent}.wg-endpoint-legend{display:flex;flex-wrap:wrap;gap:8px}.wg-endpoint-legend small::before{content:"";display:inline-block;width:7px;height:7px;background:#6e8bc0;margin-right:5px}.wg-endpoint-legend small:nth-child(2)::before{background:#4f9e93}.topology-metrics{fill:#344d75;font-size:11px;pointer-events:none}.topology-edge[role=button]{cursor:pointer}.topology-edge[role=button]:focus-visible{outline:none;stroke:#466fc2}.selected-link{background:#edf3fa}.topology-traffic-card .wg-traffic{min-width:0;width:100%}

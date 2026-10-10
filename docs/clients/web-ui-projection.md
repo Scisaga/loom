@@ -140,6 +140,12 @@ Overview、Devices、Device detail、Topology、Live paths、Services、Releases
 | `Release/Deployment` | 验签 catalog、`Projection` 期望摘要、publisher 与设备回读 | 精确制品、应用快照、真实一致性，不显示未回读的已应用版本 |
 | `Event` | 不可变签名 Material 与有效设备报告 | 普通事实、成员变更、冲突、撤权和运行变化，脱敏后显示、不含 `RuntimeKey` 等秘密，不另建事件权威 |
 
+WG 流量的原始字段与范围遵循[共享 WG 计数](../core/current-contract.md#共享-wg-的原始计数与流量派生)。
+页面明确标记 WG 报文字节，包含该 peer 共用的管理、接入与中继以及实现计入的握手/保活；不宣称
+已覆盖 Hy2、Direct 或唯一应用用量。同一 peer 对应正反两条 Link 时，两条显示同一共享范围，
+网络汇总按设备和 peer 只计一次 TX，不能把两条 Link 的图相加。当前速率只用最新运行实例，
+重启换 epoch 后旧区间保留为历史，不能填成新实例当前速率。
+
 传输柱状图保留最近 24 小时的有效计数器增量。设备页分列 RX 与 TX；链路及网络汇总按发送端 TX
 累计，对端 RX 不再重复计入。计数下降、epoch 变化及超过三分钟的相邻报告间隔不产生增量，
 旧范围报告不能填入已变更规范的新范围。没有有效增量的时段留位并表示 `unknown`，不能画成零值；

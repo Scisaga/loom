@@ -445,6 +445,16 @@ func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observatio
 	}
 	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
 	defer cancel()
+	if report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
+		diagnostic, diagnosticErr := clientadapter.NativeDiagnosticContext(ctx, androidLocalRuntimeSecret(state), nil)
+		if diagnosticErr == nil {
+			report.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(diagnostic, state.LKG.View, time.Now)
+		}
+		report, err = control.SignDeviceReport(report, (&androidIdentity{state: state}).PrivateKey())
+		if err != nil {
+			return err
+		}
+	}
 	return deviceclient.PostSignedReport(ctx, &androidIdentity{state: state}, report)
 }
 

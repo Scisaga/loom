@@ -24,6 +24,9 @@ QUIC_SUM = "h1:E4geazHk/UrJTXMlT+CBCKmn8V86RhtNeczWtfeoEFc="
 SING_VERSION = "v0.6.1"
 SING_COMMIT = "9eafc7fc62b10528df821cdfbf4e4e8f122f4b7a"
 SING_SUM = "h1:mJ6e7Ir2wtCoGLbdnnXWBsNJu5YHtbXmv66inoE0zFA="
+WG_VERSION = "v0.0.1-beta.5"
+WG_COMMIT = "c50b1357d92d406abb5da73f09c31154985b169a"
+WG_SUM = "h1:aBEsxJUMEONwOZqKPIkuAcv4zJV5p6XlzEN04CF0FXc="
 MARKER = ".loom-generated-source"
 
 
@@ -51,6 +54,10 @@ def prepare(destination):
         ["go", "mod", "download", "-json", "github.com/sagernet/sing@" + SING_VERSION], env=env, cwd=REPO))
     if sing["Sum"] != SING_SUM or sing["Origin"]["Hash"] != SING_COMMIT:
         raise ValueError("stream source does not match the reviewed module and commit")
+    wireguard = json.loads(subprocess.check_output(
+        ["go", "mod", "download", "-json", "github.com/sagernet/wireguard-go@" + WG_VERSION], env=env, cwd=REPO))
+    if wireguard["Sum"] != WG_SUM or wireguard["Origin"]["Hash"] != WG_COMMIT:
+        raise ValueError("WireGuard source does not match the reviewed module and commit")
     patch = REPO / "third_party/sing-box/domain-cache.patch"
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".loom-source-", dir=destination.parent) as temporary:
@@ -61,6 +68,7 @@ def prepare(destination):
             (tun, "github.com/sagernet/sing-tun", TUN_VERSION, stage / ".loom-sing-tun"),
             (quic, "github.com/sagernet/sing-quic", QUIC_VERSION, stage / ".loom-sing-quic"),
             (sing, "github.com/sagernet/sing", SING_VERSION, stage / ".loom-sing"),
+            (wireguard, "github.com/sagernet/wireguard-go", WG_VERSION, stage / ".loom-wireguard"),
         ):
             prefix = module_path + "@" + version + "/"
             with zipfile.ZipFile(source["Zip"]) as archive:
@@ -90,7 +98,8 @@ def prepare(destination):
         stage.rename(destination)
     return {"upstream_version": VERSION, "upstream_commit": COMMIT, "upstream_module_sum": SUM,
             "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
-            "artifact_version": "1.11.4-loom.10"}
+            "wireguard_commit": WG_COMMIT, "wireguard_module_sum": WG_SUM,
+            "artifact_version": "1.11.4-loom.11"}
 
 
 if __name__ == "__main__":

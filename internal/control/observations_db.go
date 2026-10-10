@@ -20,6 +20,7 @@ var observationBucket = []byte("reports")
 // A disposable location in the original report collection. No report body,
 // independent high-water mark, authority or lifecycle is stored here.
 type reportReference struct {
+	CounterAt      *int64 // Original sample time, only a deletable query hint.
 	NetworkID      string
 	DeviceID       string
 	ReportSequence U64
@@ -36,6 +37,10 @@ type linkSampleReference struct {
 
 func referenceOf(report DeviceReport) reportReference {
 	ref := reportReference{NetworkID: report.NetworkID, DeviceID: report.DeviceID, ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt}
+	if report.WireGuardCounters != nil {
+		at := report.WireGuardCounters.ObservedAt
+		ref.CounterAt = &at
+	}
 	for _, sample := range report.Observations {
 		if sample.Level == "link" {
 			ref.LinkSamples = append(ref.LinkSamples, linkSampleReference{sample.LinkID, sample.SpecDigest, sample.ObservedAt})
@@ -45,7 +50,7 @@ func referenceOf(report DeviceReport) reportReference {
 }
 
 func (ref reportReference) equal(other reportReference) bool {
-	return ref.NetworkID == other.NetworkID && ref.DeviceID == other.DeviceID && ref.ReportSequence == other.ReportSequence && ref.ReportedAt == other.ReportedAt && slices.Equal(ref.LinkSamples, other.LinkSamples)
+	return ((ref.CounterAt == nil && other.CounterAt == nil) || (ref.CounterAt != nil && other.CounterAt != nil && *ref.CounterAt == *other.CounterAt)) && ref.NetworkID == other.NetworkID && ref.DeviceID == other.DeviceID && ref.ReportSequence == other.ReportSequence && ref.ReportedAt == other.ReportedAt && slices.Equal(ref.LinkSamples, other.LinkSamples)
 }
 
 func (ref reportReference) key(id string) []byte {
