@@ -124,6 +124,9 @@ type Authority struct {
 	certificates []ControlCertificate
 	blocked      error
 	projection   Projection
+	// Decoded immutable originals, bounded by the last successful disk read.
+	// These values are private; every hit still hashes the actual file bytes.
+	decodedMaterials map[string]Material
 }
 
 func OpenAuthority(root string) (*Authority, error) {
@@ -334,11 +337,11 @@ func (a *Authority) reloadLocked() (retErr error) {
 	if err != nil {
 		return fmt.Errorf("read fixed genesis: %w", err)
 	}
-	genesis, id, err := EncodeMaterialFromBytes(body)
-	if err != nil || id != config.GenesisID || genesis.Operation != "genesis" || genesis.NetworkID != config.NetworkID {
+	genesis, err := a.decodeOriginalLocked(body, config.GenesisID)
+	if err != nil || genesis.Operation != "genesis" || genesis.NetworkID != config.NetworkID {
 		return errors.New("genesis anchor does not match original signed bytes")
 	}
-	materials, err := a.readMaterialsLocked(config.GenesisID)
+	materials, decoded, err := a.readMaterialsLocked(config.GenesisID)
 	if err != nil {
 		return err
 	}
@@ -349,7 +352,11 @@ func (a *Authority) reloadLocked() (retErr error) {
 	// All protected originals were read and canonically checked above. Reuse
 	// only the existing pure projection of exactly these verified inputs.
 	if a.blocked == nil && reflect.DeepEqual(genesis, a.genesis) && reflect.DeepEqual(materials, a.materials) && reflect.DeepEqual(certificates, a.certificates) {
-		return syncControlDirectory(filepath.Join(a.root, "materials"))
+		if err := syncControlDirectory(filepath.Join(a.root, "materials")); err != nil {
+			return err
+		}
+		a.decodedMaterials = decoded
+		return nil
 	}
 	projection, err := Project(genesis, certificates, materials)
 	if err != nil {
@@ -359,6 +366,7 @@ func (a *Authority) reloadLocked() (retErr error) {
 		return err
 	}
 	a.genesis, a.materials, a.projection, a.certificates = genesis, materials, projection, certificates
+	a.decodedMaterials = decoded
 	return nil
 }
 func (a *Authority) materialPath(id string) (string, error) {
@@ -367,43 +375,58 @@ func (a *Authority) materialPath(id string) (string, error) {
 	}
 	return filepath.Join(a.root, "materials", strings.TrimPrefix(id, "sha256:")+".json"), nil
 }
-func (a *Authority) readMaterialsLocked(genesisID string) ([]Material, error) {
+func (a *Authority) decodeOriginalLocked(body []byte, id string) (Material, error) {
+	sum := sha256.New()
+	_, _ = sum.Write([]byte(materialIDDomain))
+	_, _ = sum.Write(body)
+	if "sha256:"+hex.EncodeToString(sum.Sum(nil)) != id {
+		return Material{}, errors.New("material filename does not match its signed bytes")
+	}
+	if material, ok := a.decodedMaterials[id]; ok {
+		return material, nil
+	}
+	return DecodeMaterial(body)
+}
+
+func (a *Authority) readMaterialsLocked(genesisID string) ([]Material, map[string]Material, error) {
 	directory := filepath.Join(a.root, "materials")
 	info, err := os.Lstat(directory)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("material directory is missing or not protected")
+		return nil, nil, errors.New("material directory is missing or not protected")
 	}
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := []Material{}
+	decoded := make(map[string]Material, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			return nil, errors.New("unexpected object in material directory")
+			return nil, nil, errors.New("unexpected object in material directory")
 		}
 		id := "sha256:" + strings.TrimSuffix(entry.Name(), ".json")
 		path, err := a.materialPath(id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		body, err := readProtectedControlFile(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		material, actual, err := EncodeMaterialFromBytes(body)
-		if err != nil || actual != id {
-			return nil, errors.New("material filename does not match its signed bytes")
+		material, err := a.decodeOriginalLocked(body, id)
+		if err != nil {
+			return nil, nil, err
 		}
+		decoded[id] = material
 		if id == genesisID {
 			continue
 		}
 		if material.Operation == "genesis" {
-			return nil, errors.New("another genesis cannot enter the fixed network")
+			return nil, nil, errors.New("another genesis cannot enter the fixed network")
 		}
 		result = append(result, material)
 	}
-	return result, nil
+	return result, decoded, nil
 }
 
 func (a *Authority) Material(id string) ([]byte, error) {

@@ -93,7 +93,11 @@ func openReportDatabase(ctx context.Context, path string, readOnly bool) (*bolt.
 	if !controlPrivateRegular(entry) || entry.Size() == 0 {
 		return nil, nil, errors.New("observation database must be a nonempty protected regular file")
 	}
-	options := &bolt.Options{ReadOnly: readOnly, Timeout: 50 * time.Millisecond}
+	// bbolt subtracts its 50 ms retry interval before deciding to retry. A
+	// 50 ms timeout therefore fails on the first contention, including the
+	// kernel's deferred file release immediately after a killed owner exits.
+	// Allow bounded startup recovery while still refusing a second live owner.
+	options := &bolt.Options{ReadOnly: readOnly, Timeout: 250 * time.Millisecond}
 	options.OpenFile = func(name string, flags int, mode os.FileMode) (*os.File, error) {
 		f, err := os.OpenFile(name, flags&^os.O_CREATE, mode)
 		if err != nil {

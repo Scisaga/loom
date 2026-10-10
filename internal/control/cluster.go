@@ -118,19 +118,26 @@ func (runtime *Runtime) reconcileLoop() {
 	runtime.reconcilePeers(ticker.C)
 }
 
-// Only in-flight calls live here. Membership and missing originals are always
-// read again; completion is neither a health result nor a durable sync cursor.
+// Connections belong to current members; only calls have an in-flight lifetime.
+// Membership and missing originals are reread on every attempt.
 func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 	defer close(runtime.done)
 	ctx, cancel := context.WithCancel(context.Background())
 	var workers sync.WaitGroup
-	defer func() { cancel(); workers.Wait() }()
 	type call struct {
 		member Member
 		cancel context.CancelFunc
 		done   chan struct{}
+		http   memberHTTPAttempt
 	}
 	inflight := map[string]*call{}
+	defer func() {
+		cancel()
+		workers.Wait()
+		for _, active := range inflight {
+			active.http.close()
+		}
+	}()
 	for {
 		select {
 		case <-runtime.stop:
@@ -145,24 +152,40 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 			}
 		}
 		for id, active := range inflight {
-			if member, present := members[id]; !present || member != active.member {
-				active.cancel()
-			}
 			select {
 			case <-active.done:
-				delete(inflight, id)
+				active.done = nil
 			default:
+			}
+			if member, present := members[id]; !present || member != active.member {
+				if active.cancel != nil {
+					active.cancel()
+				}
+				if active.done == nil {
+					active.http.close()
+					delete(inflight, id)
+				}
 			}
 		}
 		// Use the canonical member order, with at most one call per control.
 		// A slow member must not gate the next attempt of an available member.
 		for _, member := range config.Members {
-			if _, eligible := members[member.ControlID]; !eligible || inflight[member.ControlID] != nil {
+			active := inflight[member.ControlID]
+			if _, eligible := members[member.ControlID]; !eligible || active != nil && active.done != nil {
 				continue
 			}
+			if active == nil {
+				clients, err := runtime.memberClients(member)
+				if err != nil {
+					log.Printf("private member transport unavailable: %v", err)
+					continue
+				}
+				active = &call{member: member, http: clients}
+				inflight[member.ControlID] = active
+			}
 			peerCtx, peerCancel := context.WithCancel(ctx)
-			active := &call{member: member, cancel: peerCancel, done: make(chan struct{})}
-			inflight[member.ControlID] = active
+			active.cancel, active.done = peerCancel, make(chan struct{})
+			peerCtx = context.WithValue(peerCtx, memberHTTPAttemptKey{}, active.http)
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
@@ -187,25 +210,46 @@ func (runtime *Runtime) reconcilePeerAttempt(ctx context.Context, member Member)
 	// Cancelling the runtime or replacing this member also ends the attempt.
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	if runtime.Channel == nil {
-		return errors.New("private member transport is unavailable")
+	if _, ok := ctx.Value(memberHTTPAttemptKey{}).(memberHTTPAttempt); !ok {
+		clients, err := runtime.memberClients(member)
+		if err != nil {
+			return err
+		}
+		defer clients.close()
+		ctx = context.WithValue(ctx, memberHTTPAttemptKey{}, clients)
 	}
-	client, err := runtime.Channel.peerClient(member.NodeID)
-	if err != nil {
-		return err
-	}
-	client.Transport.(*http.Transport).DisableKeepAlives = false
-	defer client.CloseIdleConnections()
-	ctx = context.WithValue(ctx, memberHTTPAttemptKey{}, memberHTTPAttempt{member, client})
 	return runtime.reconcilePeer(ctx, member)
 }
 
-// One call owns this connection; it is not a member cache or a sync cursor.
-// Proof-only recovery must never borrow its ordinary-request transport.
+// Current-member transport resources, never a sync cursor or authorization cache.
 type memberHTTPAttemptKey struct{}
 type memberHTTPAttempt struct {
 	member Member
 	client *http.Client
+	proof  *http.Client
+}
+
+func (clients memberHTTPAttempt) close() {
+	clients.client.CloseIdleConnections()
+	clients.proof.CloseIdleConnections()
+}
+
+func (runtime *Runtime) memberClients(member Member) (memberHTTPAttempt, error) {
+	if runtime.Channel == nil {
+		return memberHTTPAttempt{}, errors.New("private member transport is unavailable")
+	}
+	client, err := runtime.Channel.peerClient(member.NodeID)
+	if err != nil {
+		return memberHTTPAttempt{}, err
+	}
+	proof, err := runtime.Channel.peerClientFor(member.NodeID, true)
+	if err != nil {
+		client.CloseIdleConnections()
+		return memberHTTPAttempt{}, err
+	}
+	client.Transport.(*http.Transport).DisableKeepAlives = false
+	proof.Transport.(controlProofRoundTripper).transport.(*http.Transport).DisableKeepAlives = false
+	return memberHTTPAttempt{member: member, client: client, proof: proof}, nil
 }
 
 func frontierFor(values []FactFrontier, keyID string) FactFrontier {
@@ -387,11 +431,14 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 	}
 	proofOnly := method == http.MethodGet && path == "/internal/control-proof"
 	var client *http.Client
-	if attempt, ok := ctx.Value(memberHTTPAttemptKey{}).(memberHTTPAttempt); ok && !proofOnly {
+	if attempt, ok := ctx.Value(memberHTTPAttemptKey{}).(memberHTTPAttempt); ok {
 		if attempt.member != member {
 			return nil, errors.New("member request differs from its connection scope")
 		}
 		client = attempt.client
+		if proofOnly {
+			client = attempt.proof
+		}
 	}
 	reusedScope := client != nil
 	if client == nil {
@@ -418,9 +465,9 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 		if response.TLS == nil {
 			return nil, errors.New("member response has no TLS identity")
 		}
-		// A connection established earlier in this attempt cannot preserve an
+		// A connection established earlier cannot preserve an
 		// expired certificate or a peer key removed by a concurrent proof.
-		if err := runtime.Channel.relayTargetTLS(member.NodeID, controlALPN, false).VerifyConnection(*response.TLS); err != nil {
+		if err := runtime.Channel.relayTargetTLS(member.NodeID, controlALPN, proofOnly).VerifyConnection(*response.TLS); err != nil {
 			return nil, err
 		}
 	}

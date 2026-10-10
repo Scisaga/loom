@@ -9,10 +9,52 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"net/http"
+	"net/http/httptrace"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestMemberConnectionsReuseAcrossAttemptsAndClose(t *testing.T) {
+	f := newMaterialFixture(t)
+	peers := membershipTLSPeers(t, f)
+	runtime, member := peers[0].server.Runtime, f.members[1]
+	clients, err := runtime.memberClients(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clients.close()
+	ctx := context.WithValue(context.Background(), memberHTTPAttemptKey{}, clients)
+	var got []httptrace.GotConnInfo
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { got = append(got, info) }})
+	for round := range 2 {
+		got = nil
+		if err := runtime.reconcilePeerAttempt(ctx, member); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) < 2 || got[0].Reused != (round > 0) || got[1].Reused != (round > 0) || got[0].Conn == got[1].Conn {
+			t.Fatal("attempt did not retain separate proof and ordinary connections", round, got)
+		}
+		for _, info := range got[2:] {
+			if !info.Reused || info.Conn != got[1].Conn {
+				t.Fatal("ordinary requests did not share their own transport")
+			}
+		}
+	}
+	request, _ := http.NewRequest(http.MethodGet, "https://control.loom/internal/frontier", nil)
+	if _, err := clients.proof.Do(request); err == nil {
+		t.Fatal("retained proof transport admitted a privileged request")
+	}
+	retained := append([]httptrace.GotConnInfo(nil), got[:2]...)
+	clients.close()
+	for _, info := range retained {
+		_ = info.Conn.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := info.Conn.Read(make([]byte, 1)); err == nil || !strings.Contains(err.Error(), "closed") {
+			t.Fatal("connection remained open after owner closure", err)
+		}
+	}
+}
 
 func threeSchedulingMembers(t *testing.T) materialFixture {
 	t.Helper()

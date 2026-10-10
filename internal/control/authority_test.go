@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,6 +185,27 @@ func TestAuthorityRepeatedReloadReadsNewAndChangedOriginals(t *testing.T) {
 	if err != nil || len(restarted.Snapshot().NetworkIntent.Services) != 2 {
 		t.Fatal("restarted authority did not rebuild from original facts", err)
 	}
+	reader.decodedMaterials = nil
+	if err := reload(); err != nil || len(reader.Snapshot().NetworkIntent.Services) != 2 {
+		t.Fatal("discarding decoded originals changed authority", err)
+	}
+	// A correct content hash cannot make previously unseen noncanonical bytes
+	// admissible. This also exercises the domain-separated original digest.
+	changed = append(append([]byte(nil), original...), '\n')
+	sum := sha256.Sum256(append([]byte(materialIDDomain), changed...))
+	bad := filepath.Join(root, "materials", fmt.Sprintf("%x.json", sum))
+	if err := os.WriteFile(bad, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := reload(); err == nil {
+		t.Fatal("content hash bypassed strict decoding of a new original")
+	}
+	if err := os.Remove(bad); err != nil {
+		t.Fatal(err)
+	}
+	if err := reload(); err != nil || len(reader.decodedMaterials) != 3 {
+		t.Fatal("failed read polluted the decoded original set", err)
+	}
 }
 
 func TestAuthorityInitializationPreservesExistingEvidence(t *testing.T) {
@@ -217,13 +239,18 @@ func TestAuthorityProcessWriter(t *testing.T) {
 		if len(os.Args) != index+3 {
 			t.Fatal("invalid authority worker arguments")
 		}
-		runtime, err := OpenRuntime(os.Args[index+1], nil)
+		authority, err := OpenAuthority(os.Args[index+1])
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer runtime.Close()
+		config, err := LoadNodeConfig(os.Args[index+1])
+		if err != nil {
+			t.Fatal(err)
+		}
 		suffix := os.Args[index+2]
-		submitAuthority(t, runtime, authorityService("demo-service-"+suffix, "demo-request-"+suffix))
+		if _, err := authority.Submit(context.Background(), authorityService("demo-service-"+suffix, "demo-request-"+suffix), config); err != nil {
+			t.Fatal(err)
+		}
 		return
 	}
 }

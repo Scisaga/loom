@@ -344,6 +344,12 @@ func (channel *PrivateChannel) peerClient(node string) (*http.Client, error) {
 
 type controlProofRoundTripper struct{ transport http.RoundTripper }
 
+func (t controlProofRoundTripper) CloseIdleConnections() {
+	if closer, ok := t.transport.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
 func (t controlProofRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method != http.MethodGet || r.URL.Path != "/internal/control-proof" || r.URL.RawPath != "" || r.URL.RawQuery != "" {
 		return nil, errors.New("member proof transport cannot carry privileged requests")
@@ -355,7 +361,8 @@ func (channel *PrivateChannel) peerClientFor(node string, proofOnly bool) (*http
 	if _, ok := channel.memberForNode(node); !ok {
 		return nil, errors.New("control HTTP target is not a configured member")
 	}
-	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, DisableKeepAlives: true}
+	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, DisableKeepAlives: true,
+		MaxIdleConns: 1, MaxIdleConnsPerHost: 1, MaxConnsPerHost: 1, IdleConnTimeout: 30 * time.Second}
 	transport.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return channel.dialMemberTLSFor(ctx, node, controlALPN, controlRelayALPN, 15*time.Second, proofOnly)
 	}
