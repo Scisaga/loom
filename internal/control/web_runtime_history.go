@@ -63,7 +63,7 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 	for index := range result.Buckets {
 		result.Buckets[index].Hour = start.Add(time.Duration(index) * time.Hour).UnixMilli()
 	}
-	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		return walkDeviceReportHistory(ctx, tx, store.index.Load(), network, device, func(pendingID string, pending reportReference, pendingRaw []byte) error {
 			if pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
 				return nil

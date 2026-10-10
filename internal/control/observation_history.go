@@ -77,7 +77,7 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 	cached := store.index.Load()
 	var highest U64
 	var keys [][]byte
-	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		var err error
 		highest, err = highestDeviceReportSequence(tx, cached, network, device)
 		if err != nil {
@@ -102,7 +102,7 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 		// use its existing single-report limit. Never retain all report bodies.
 		var originals [][]byte
 		copied := 0
-		err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+		err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 			for offset < len(keys) && len(originals) < 64 {
 				if err := ctx.Err(); err != nil {
 					return err

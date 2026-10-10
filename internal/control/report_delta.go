@@ -246,7 +246,7 @@ func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*report
 	}
 	defer func() { <-store.indexRead }()
 	var index *reportIndex
-	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		var err error
 		index, err = scanObservationIndex(ctx, tx, store.index.Load())
 		return err

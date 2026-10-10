@@ -102,7 +102,7 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 	}
 	recent := map[int64]*Observation{}
 	recentBodies := map[int64]string{}
-	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		highest, err := highestDeviceReportSequence(tx, store.index.Load(), network, identity.ID)
 		if err != nil {
 			return err

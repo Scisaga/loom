@@ -88,7 +88,7 @@ func (store *ObservationStore) pathHistory(ctx context.Context, network string, 
 	}
 	latest := [24]int64{}
 	chosen := [24]string{}
-	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		index, err := scanObservationIndex(ctx, tx, store.index.Load())
 		if err != nil {
 			return err

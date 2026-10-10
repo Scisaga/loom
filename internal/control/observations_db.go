@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	"golang.org/x/sync/semaphore"
 )
 
 var observationBucket = []byte("reports")
@@ -122,7 +124,18 @@ func withObservationDB(ctx context.Context, path string, writable bool, fn func(
 	return withReportDatabase(ctx, path, writable, fn)
 }
 
+func (store *ObservationStore) withDatabase(ctx context.Context, writable bool, fn func(*bolt.Tx) error) error {
+	if err := rejectObservationJSON(filepath.Dir(store.path)); err != nil {
+		return err
+	}
+	return withReportDatabaseAccess(ctx, store.path, writable, store.databaseAccess, fn)
+}
+
 func withReportDatabase(ctx context.Context, path string, writable bool, fn func(*bolt.Tx) error) (retErr error) {
+	return withReportDatabaseAccess(ctx, path, writable, nil, fn)
+}
+
+func withReportDatabaseAccess(ctx context.Context, path string, writable bool, access *semaphore.Weighted, fn func(*bolt.Tx) error) (retErr error) {
 	entry, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -132,6 +145,18 @@ func withReportDatabase(ctx context.Context, path string, writable bool, fn func
 	}
 	lockContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	if access != nil {
+		weight := int64(1)
+		if writable {
+			weight = math.MaxInt64
+		}
+		// A queued writer prevents later readers from overtaking it. Admission
+		// and the file lock share the original timeout; neither extends it.
+		if err := access.Acquire(lockContext, weight); err != nil {
+			return err
+		}
+		defer access.Release(weight)
+	}
 	options := &bolt.Options{ReadOnly: !writable, Timeout: 50 * time.Millisecond}
 	options.OpenFile = func(name string, flags int, mode os.FileMode) (*os.File, error) {
 		file, err := os.OpenFile(name, flags&^os.O_CREATE, mode)
@@ -246,7 +271,7 @@ func scanObservationIndex(ctx context.Context, tx *bolt.Tx, cached *reportIndex)
 
 func (store *ObservationStore) readReports(ctx context.Context, ids []string) (map[string]DeviceReport, error) {
 	result := map[string]DeviceReport{}
-	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		index, err := scanObservationIndex(ctx, tx, store.index.Load())
 		if err != nil {
 			return err

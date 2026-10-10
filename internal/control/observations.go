@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 
 	bolt "go.etcd.io/bbolt"
+	"golang.org/x/sync/semaphore"
 )
 
 var ErrReportEquivocation = errors.New("device signed different reports at one sequence")
@@ -30,11 +32,12 @@ func reportBefore(left DeviceReport, leftBody []byte, right DeviceReport, rightB
 }
 
 type ObservationStore struct {
-	path      string
-	mu        sync.Mutex
-	verified  map[string]string // Exact content ID -> immutable verification key; disposable.
-	index     atomic.Pointer[reportIndex]
-	indexRead chan struct{}
+	path           string
+	mu             sync.Mutex
+	verified       map[string]string // Exact content ID -> immutable verification key; disposable.
+	index          atomic.Pointer[reportIndex]
+	indexRead      chan struct{}
+	databaseAccess *semaphore.Weighted // Per-operation admission; no database handle or durable state.
 }
 
 type reportOwner struct{ network, device string }
@@ -69,7 +72,7 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	store := &ObservationStore{path: path, indexRead: make(chan struct{}, 1), verified: map[string]string{}}
+	store := &ObservationStore{path: path, indexRead: make(chan struct{}, 1), verified: map[string]string{}, databaseAccess: semaphore.NewWeighted(math.MaxInt64)}
 	if _, err := store.reportIndexSnapshot(context.Background()); err != nil {
 		return nil, err
 	}
@@ -115,7 +118,7 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	defer store.mu.Unlock()
 	var committed *reportIndex
 	fork := false
-	err = withObservationDB(ctx, store.path, true, func(tx *bolt.Tx) error {
+	err = store.withDatabase(ctx, true, func(tx *bolt.Tx) error {
 		base, err := scanObservationIndex(ctx, tx, store.index.Load())
 		if err != nil {
 			return err
@@ -203,7 +206,7 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 // Read failures are explicit so the UI cannot silently serve a cached success.
 func (store *ObservationStore) Latest(ctx context.Context) ([]DeviceReport, error) {
 	result := []DeviceReport{}
-	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		index, err := scanObservationIndex(ctx, tx, store.index.Load())
 		if err != nil {
 			return err
