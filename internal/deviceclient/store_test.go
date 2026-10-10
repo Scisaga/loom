@@ -197,6 +197,10 @@ func TestReportSequenceIsDurablyReservedAcrossIndependentHandles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	newer := envelope(first.PublicKey(), 8)
+	if err := first.SaveLKG(newer); err != nil {
+		t.Fatal(err)
+	}
 	type reserved struct {
 		sequence control.U64
 		err      error
@@ -217,8 +221,26 @@ func TestReportSequenceIsDurablyReservedAcrossIndependentHandles(t *testing.T) {
 	if err != nil || loaded.state.ReportSequence != 2 {
 		t.Fatalf("report reservation was not durable: %v", err)
 	}
+	if loaded.state.LKG.ViewDigest != newer.ViewDigest || loaded.state.HighWater[0].Sequence != 8 {
+		t.Fatal("a stale reporting handle replaced the current durable authorization")
+	}
 	sequence, err := loaded.ReserveReportSequence()
 	if err != nil || sequence != 3 {
 		t.Fatalf("restart reused report sequence: %v", err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := append(append([]byte(nil), original...), '\n')
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loaded.ReserveReportSequence(); err == nil {
+		t.Fatal("report reservation trusted memory instead of the current original")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(after, corrupt) {
+		t.Fatal("failed reservation rewrote the original", err)
 	}
 }

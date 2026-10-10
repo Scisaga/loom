@@ -240,6 +240,9 @@ func (store *Store) validateState(state State) error {
 	if err := state.Validate(); err != nil {
 		return err
 	}
+	return store.validateProtection(state)
+}
+func (store *Store) validateProtection(state State) error {
 	if store.protector != nil && (state.Platform != "windows" || state.Preference == nil) {
 		return errors.New("protected device state is not a Windows profile")
 	}
@@ -290,7 +293,9 @@ func (store *Store) readUnlocked() (State, error) {
 	if err := control.DecodeCanonical(body, &state, stateLimits); err != nil {
 		return State{}, err
 	}
-	if err := store.validateState(state); err != nil {
+	// DecodeCanonical already validates the complete domain value. Only the
+	// local protection adapter constraint remains outside that contract.
+	if err := store.validateProtection(state); err != nil {
 		return State{}, err
 	}
 	return state, nil
@@ -353,8 +358,10 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 	if store.failed != nil {
 		return errors.New("device persistence previously failed; reopen the state before continuing")
 	}
-	if err := store.validateState(next); err != nil {
-		return err
+	if !reserveReport {
+		if err := store.validateState(next); err != nil {
+			return err
+		}
 	}
 	lock, err := lockStateFile(store.path)
 	if err != nil {
@@ -375,10 +382,12 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 				next.Preference = &copy
 			}
 			if reserveReport {
-				next, _, err = AdvanceReportSequence(current)
-				if err != nil {
-					return err
+				// current was just fully authenticated under the file lock;
+				// this change cannot alter its identity, LKG or floor.
+				if next.LKG == nil || next.ReportSequence == control.U64(math.MaxUint64) {
+					return errors.New("report sequence cannot advance")
 				}
+				next.ReportSequence++
 			}
 		} else {
 			next.Preference = current.Preference
@@ -392,8 +401,10 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 	} else if store.state.Schema != 0 {
 		return store.fail(errors.New("accepted identity file disappeared"))
 	}
-	if err := store.validateState(next); err != nil {
-		return err
+	if !reserveReport {
+		if err := store.validateState(next); err != nil {
+			return err
+		}
 	}
 	return store.writeUnlocked(next, current)
 }
@@ -442,31 +453,31 @@ func (store *Store) writeUnlocked(next, current State) error {
 		return store.fail(err)
 	}
 	staged := &Store{path: temporary, protector: store.protector}
-	readback, err := staged.readUnlocked()
+	readback, err := staged.readBytesUnlocked()
+	defer clear(readback)
 	if err != nil {
 		return store.fail(err)
 	}
-	got, err := control.CanonicalEncode(readback)
-	if err != nil || !bytes.Equal(body, got) {
+	if !bytes.Equal(body, readback) {
 		return store.fail(errors.New("staged device state readback mismatch"))
 	}
-	clear(got)
 	if err := replaceProtectedFile(temporary, store.path); err != nil {
 		return store.fail(err)
 	}
 	if err := syncProtectedDirectory(directory); err != nil {
 		return store.fail(err)
 	}
-	committed, err := store.readUnlocked()
+	committed, err := store.readBytesUnlocked()
+	defer clear(committed)
 	if err != nil {
 		return store.fail(err)
 	}
-	got, err = control.CanonicalEncode(committed)
-	if err != nil || !bytes.Equal(body, got) {
+	if !bytes.Equal(body, committed) {
 		return store.fail(errors.New("committed device state readback mismatch"))
 	}
-	clear(got)
-	store.state = committed
+	// next is privately owned by the locked caller. Exact readback proves the
+	// disk holds the same validated value; no external pointer is retained.
+	store.state = next
 	if review.PossiblePermissionRestoration {
 		body, _ := json.Marshal(review)
 		log.Printf("member certificate accepted; permission review is incomplete: %s", body)
