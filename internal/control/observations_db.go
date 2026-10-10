@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,10 +24,28 @@ type reportReference struct {
 	DeviceID       string
 	ReportSequence U64
 	ReportedAt     int64 // Original signed timestamp; disposable query hint.
+	LinkSamples    []linkSampleReference
+}
+
+// Only original scope and time, used to decide which bodies need decoding.
+type linkSampleReference struct {
+	LinkID     string
+	SpecDigest string
+	ObservedAt int64
 }
 
 func referenceOf(report DeviceReport) reportReference {
-	return reportReference{report.NetworkID, report.DeviceID, report.ReportSequence, report.ReportedAt}
+	ref := reportReference{NetworkID: report.NetworkID, DeviceID: report.DeviceID, ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt}
+	for _, sample := range report.Observations {
+		if sample.Level == "link" {
+			ref.LinkSamples = append(ref.LinkSamples, linkSampleReference{sample.LinkID, sample.SpecDigest, sample.ObservedAt})
+		}
+	}
+	return ref
+}
+
+func (ref reportReference) equal(other reportReference) bool {
+	return ref.NetworkID == other.NetworkID && ref.DeviceID == other.DeviceID && ref.ReportSequence == other.ReportSequence && ref.ReportedAt == other.ReportedAt && slices.Equal(ref.LinkSamples, other.LinkSamples)
 }
 
 func (ref reportReference) key(id string) []byte {
@@ -203,7 +222,7 @@ func scanObservationIndex(ctx context.Context, tx *bolt.Tx, cached *reportIndex)
 		result.reports[id] = ref
 		if cached == nil {
 			unchanged = false
-		} else if prior, ok := cached.reports[id]; !ok || prior != ref {
+		} else if prior, ok := cached.reports[id]; !ok || !prior.equal(ref) {
 			unchanged = false
 		}
 		return nil

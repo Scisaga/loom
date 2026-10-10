@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"net/url"
@@ -65,17 +64,8 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 		result.Buckets[index].Hour = start.Add(time.Duration(index) * time.Hour).UnixMilli()
 	}
 	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
-		// The canonical key orders this device's sequences and keeps each fork
-		// adjacent. Read only this prefix; do not load the fleet's report bodies.
-		cursor := tx.Bucket(observationBucket).Cursor()
-		prefix := []byte(network + "\x00" + device + "\x00")
-		cached := store.index.Load()
-		var pending reportReference
-		var pendingRaw []byte
-		var pendingID string
-		count := 0
-		consume := func() error {
-			if count != 1 || pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
+		return walkDeviceReportHistory(ctx, tx, store.index.Load(), network, device, func(pendingID string, pending reportReference, pendingRaw []byte) error {
+			if pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
 				return nil
 			}
 			bucket := &result.Buckets[(pending.ReportedAt-result.From)/time.Hour.Milliseconds()]
@@ -92,36 +82,7 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 			bucket.Sample = &WebRuntimeSample{ReportID: pendingID, ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt,
 				ViewDigest: report.ViewDigest, State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}
 			return nil
-		}
-		// Newer sequences usually supply the hourly winners first. Still inspect
-		// every scoped key: clocks can move backwards and forks can arrive later.
-		end := append([]byte{}, prefix...)
-		end[len(end)-1]++
-		key, raw := cursor.Seek(end)
-		if key == nil {
-			key, raw = cursor.Last()
-		} else {
-			key, raw = cursor.Prev()
-		}
-		for ; key != nil && bytes.HasPrefix(key, prefix); key, raw = cursor.Prev() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			id, ref, err := reportRecord(key, raw, cached)
-			if err != nil {
-				return err
-			}
-			if count > 0 && ref.ReportSequence == pending.ReportSequence {
-				count++
-				continue
-			}
-			if err := consume(); err != nil {
-				return err
-			}
-			// bbolt read-only values remain valid for this transaction.
-			pending, pendingRaw, pendingID, count = ref, raw, id, 1
-		}
-		return consume()
+		})
 	})
 	return result, err
 }

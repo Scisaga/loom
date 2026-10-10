@@ -59,6 +59,8 @@ type WebObservation struct {
 
 type Link struct {
 	ID           string `json:"id,omitempty"`
+	ResourceID   string `json:"resource_id"`
+	SpecDigest   string `json:"spec_digest"`
 	From         string `json:"from"`
 	To           string `json:"to"`
 	Transport    string `json:"transport"`

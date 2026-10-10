@@ -22,11 +22,15 @@ func LinkSpecDigest(view DeviceView, linkID string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		values := []TransportResource{from, to}
-		sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
-		return digestContractValue("loom-link-spec-v3\x00", map[string]any{"link": link, "resources": values})
+		return nativeLinkSpecDigest(link, from, to)
 	}
 	return "", errors.New("Link observation has no current Link")
+}
+
+func nativeLinkSpecDigest(link NetworkLink, from, to TransportResource) (string, error) {
+	values := []TransportResource{from, to}
+	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
+	return digestContractValue("loom-link-spec-v3\x00", map[string]any{"link": link, "resources": values})
 }
 
 func verifyLinkObservation(value Observation, view DeviceView) error {

@@ -168,10 +168,15 @@ func projectWebLinks(projection Projection) []Link {
 		if !eligible[link.FromNodeID] || !eligible[link.ToNodeID] {
 			continue
 		}
-		if _, _, _, err := linkResources(link, resources); err != nil {
+		from, to, _, err := linkResources(link, resources)
+		if err != nil {
 			continue
 		}
-		result = append(result, Link{ID: link.ID, From: link.FromNodeID, To: link.ToNodeID, Transport: "wireguard", Authorized: true, Availability: "unknown"})
+		spec, err := nativeLinkSpecDigest(link, from, to)
+		if err != nil {
+			continue
+		}
+		result = append(result, Link{ID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, From: link.FromNodeID, To: link.ToNodeID, Transport: "wireguard", Authorized: true, Availability: "unknown"})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result

@@ -190,6 +190,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/snapshot", server.snapshot)
 	mux.HandleFunc("GET /api/control/ui/path-history", server.pathHistory)
 	mux.HandleFunc("GET /api/control/ui/runtime-history", server.runtimeHistory)
+	mux.HandleFunc("GET /api/control/ui/link-history", server.linkHistory)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
 	mux.HandleFunc("POST /api/control/services/local-network-allocation", server.localNetworkAllocation)
