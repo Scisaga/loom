@@ -42,7 +42,7 @@ func TestTrafficHistoryProjectionDoesNotBlockReportCommit(t *testing.T) {
 	readCtx, readCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer readCancel()
 	go func() {
-		done <- store.walkDeviceHistorySnapshot(readCtx, "demo-network", "demo-device", func(reportReference) bool { return true }, func(highest U64, raw []byte) error {
+		done <- store.walkDeviceHistorySnapshot(readCtx, "demo-network", "demo-device", func(highest U64, _ reportReference, raw []byte) error {
 			if len(seen) == 0 {
 				close(entered)
 				<-release
@@ -120,7 +120,7 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			visited := 0
-			err = store.walkDeviceHistorySnapshot(ctx, "demo-network", "demo-device", func(reportReference) bool { return true }, func(_ U64, raw []byte) error {
+			err = store.walkDeviceHistorySnapshot(ctx, "demo-network", "demo-device", func(_ U64, _ reportReference, raw []byte) error {
 				if visited == 0 {
 					if action == "cancel" {
 						cancel()
@@ -154,5 +154,84 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 				t.Fatal("cancelled projection continued or changed originals", visited, err)
 			}
 		})
+	}
+}
+
+func TestHistorySnapshotExcludesForksAcrossBatchesAndAtHighestSequence(t *testing.T) {
+	key := testKey(t)
+	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	for _, forkSequence := range []U64{2, 65} {
+		t.Run(fmt.Sprint(forkSequence), func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Chmod(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			reports := make([]DeviceReport, 65)
+			for i := range reports {
+				value, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ReportSequence: U64(i + 1),
+					ViewDigest: "sha256:" + strings.Repeat("0", 64), NetworkGeneration: "demo-underlay", ReportedAt: 1,
+					Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "stopped"}}, key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reports[i] = value
+			}
+			fork := reports[int(forkSequence)-1]
+			fork.ReportedAt = 2
+			fork, err := SignDeviceReport(fork, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testSetObservationReports(t, root, append(reports, fork))
+			store, err := OpenObservationStore(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := testObservationBytes(t, root)
+			seen := map[U64]bool{}
+			err = store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(highest U64, ref reportReference, raw []byte) error {
+				if highest != 65 || ref.ReportSequence == forkSequence || seen[ref.ReportSequence] {
+					return fmt.Errorf("fork became a winner, highest changed, or original repeated")
+				}
+				var report DeviceReport
+				if err := decodeStoredReport(raw, &report); err != nil {
+					return err
+				}
+				if report.ReportSequence != ref.ReportSequence {
+					return fmt.Errorf("reference differs from original")
+				}
+				seen[ref.ReportSequence] = true
+				return report.Verify(public)
+			})
+			if err != nil || len(seen) != 64 || !bytes.Equal(original, testObservationBytes(t, root)) {
+				t.Fatal("fork exclusion changed valid history or original bytes", len(seen), err)
+			}
+		})
+	}
+}
+
+func TestHistorySnapshotRejectsMalformedPhysicalKey(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	testSetObservationReports(t, root, nil)
+	store, err := OpenObservationStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		return tx.Bucket(observationBucket).Put([]byte("demo-network\x00demo-device\x00invalid"), []byte("{}"))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	visited := false
+	err = store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(U64, reportReference, []byte) error {
+		visited = true
+		return nil
+	})
+	if err == nil || visited {
+		t.Fatal("malformed physical key reached history projection", err)
 	}
 }

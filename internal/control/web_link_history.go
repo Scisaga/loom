@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"sort"
 	"time"
-
-	bolt "go.etcd.io/bbolt"
 )
 
 // A direction and current specification projected from original Link samples.
@@ -102,73 +100,67 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 	}
 	recent := map[int64]*Observation{}
 	recentBodies := map[int64]string{}
-	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		highest, err := highestDeviceReportSequence(tx, store.index.Load(), network, identity.ID)
-		if err != nil {
+	err := store.walkDeviceHistorySnapshot(ctx, network, identity.ID, func(highest U64, ref reportReference, raw []byte) error {
+		candidate := ref.ReportSequence == highest
+		for _, sample := range ref.LinkSamples {
+			if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
+				candidate = true
+				break
+			}
+		}
+		if !candidate {
+			return nil
+		}
+		var report DeviceReport
+		if err := decodeStoredReport(raw, &report); err != nil {
 			return err
 		}
-		return walkDeviceReportHistory(ctx, tx, store.index.Load(), network, identity.ID, func(_ string, ref reportReference, raw []byte) error {
-			candidate := ref.ReportSequence == highest
-			for _, sample := range ref.LinkSamples {
-				if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
-					candidate = true
-					break
+		if report.Verify(identity.DevicePublicKey) != nil {
+			return nil
+		}
+		if ref.ReportSequence == highest {
+			_, until := webReportTime(report, now)
+			for _, sample := range report.Observations {
+				currentUntil := webObservationUntil(report, sample, until, now)
+				if sample.Level == "link" && matchesNativeLinkObservation(sample, link, spec) && sample.Result == "available" && sample.RoundTripMS != nil && currentUntil > result.Until {
+					result.RoundTrips = &WebLinkRoundTrips{From: recentFrom, Until: result.Until, NetworkGeneration: report.NetworkGeneration, ReportSequence: highest, CurrentUntil: currentUntil}
 				}
 			}
-			if !candidate {
-				return nil
+		}
+		for _, sample := range report.Observations {
+			if sample.Level != "link" || sample.NetworkGeneration != report.NetworkGeneration || !matchesNativeLinkObservation(sample, link, spec) {
+				continue
 			}
-			var report DeviceReport
-			if err := decodeStoredReport(raw, &report); err != nil {
+			body, err := CanonicalEncode(sample)
+			if err != nil {
 				return err
 			}
-			if report.Verify(identity.DevicePublicKey) != nil {
-				return nil
-			}
-			if ref.ReportSequence == highest {
-				_, until := webReportTime(report, now)
-				for _, sample := range report.Observations {
-					currentUntil := webObservationUntil(report, sample, until, now)
-					if sample.Level == "link" && matchesNativeLinkObservation(sample, link, spec) && sample.Result == "available" && sample.RoundTripMS != nil && currentUntil > result.Until {
-						result.RoundTrips = &WebLinkRoundTrips{From: recentFrom, Until: result.Until, NetworkGeneration: report.NetworkGeneration, ReportSequence: highest, CurrentUntil: currentUntil}
-					}
-				}
-			}
-			for _, sample := range report.Observations {
-				if sample.Level != "link" || sample.NetworkGeneration != report.NetworkGeneration || !matchesNativeLinkObservation(sample, link, spec) {
-					continue
-				}
-				body, err := CanonicalEncode(sample)
-				if err != nil {
-					return err
-				}
-				if scope := result.RoundTrips; scope != nil && sample.NetworkGeneration == scope.NetworkGeneration && recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) &&
-					report.ReportedAt <= result.Until+webClockTolerance.Milliseconds() && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest &&
-					sample.ObservedAt <= report.ReportedAt+webClockTolerance.Milliseconds() && sample.ValidUntil-sample.ObservedAt <= (30*time.Second).Milliseconds() {
-					// Keep failed and missing-RTT contents in conflict detection, too.
-					// No equal-time contradictory sample can win by report order.
-					if old, found := recentBodies[sample.ObservedAt]; !found {
-						recentBodies[sample.ObservedAt] = string(body)
-						value := sample
-						recent[sample.ObservedAt] = &value
-					} else if old != string(body) {
-						recent[sample.ObservedAt] = nil
-					}
-				}
-				if !possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
-					continue
-				}
-				hour := (sample.ObservedAt - result.From) / time.Hour.Milliseconds()
-				if latest[hour] == 0 || sample.ObservedAt > latest[hour] {
-					latest[hour], chosen[hour] = sample.ObservedAt, string(body)
+			if scope := result.RoundTrips; scope != nil && sample.NetworkGeneration == scope.NetworkGeneration && recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) &&
+				report.ReportedAt <= result.Until+webClockTolerance.Milliseconds() && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest &&
+				sample.ObservedAt <= report.ReportedAt+webClockTolerance.Milliseconds() && sample.ValidUntil-sample.ObservedAt <= (30*time.Second).Milliseconds() {
+				// Keep failed and missing-RTT contents in conflict detection, too.
+				// No equal-time contradictory sample can win by report order.
+				if old, found := recentBodies[sample.ObservedAt]; !found {
+					recentBodies[sample.ObservedAt] = string(body)
 					value := sample
-					result.Buckets[hour].Observation, result.Buckets[hour].Ambiguous = &value, false
-				} else if string(body) != chosen[hour] {
-					result.Buckets[hour].Observation, result.Buckets[hour].Ambiguous = nil, true
+					recent[sample.ObservedAt] = &value
+				} else if old != string(body) {
+					recent[sample.ObservedAt] = nil
 				}
 			}
-			return nil
-		})
+			if !possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
+				continue
+			}
+			hour := (sample.ObservedAt - result.From) / time.Hour.Milliseconds()
+			if latest[hour] == 0 || sample.ObservedAt > latest[hour] {
+				latest[hour], chosen[hour] = sample.ObservedAt, string(body)
+				value := sample
+				result.Buckets[hour].Observation, result.Buckets[hour].Ambiguous = &value, false
+			} else if string(body) != chosen[hour] {
+				result.Buckets[hour].Observation, result.Buckets[hour].Ambiguous = nil, true
+			}
+		}
+		return nil
 	})
 	if scope := result.RoundTrips; scope != nil {
 		values := []int64{}

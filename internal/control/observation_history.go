@@ -3,103 +3,53 @@ package control
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 
 	bolt "go.etcd.io/bbolt"
 )
 
-// Read inside the caller's original-report snapshot. A fork at this position
-// cannot be replaced with an older report by the history walker.
-func highestDeviceReportSequence(tx *bolt.Tx, cached *reportIndex, network, device string) (U64, error) {
-	cursor := tx.Bucket(observationBucket).Cursor()
-	prefix := []byte(network + "\x00" + device + "\x00")
-	end := append([]byte{}, prefix...)
-	end[len(end)-1]++
-	key, raw := cursor.Seek(end)
-	if key == nil {
-		key, raw = cursor.Last()
-	} else {
-		key, raw = cursor.Prev()
+// Pin only locations while holding the read handle. Keys do not authenticate
+// their values: every pinned original is copied and checked before projection,
+// including forks and originals the caller excludes from its time window.
+func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, visit func(U64, reportReference, []byte) error) error {
+	if ValidateID(network) != nil || ValidateID(device) != nil {
+		return errors.New("invalid report history scope")
 	}
-	if !bytes.HasPrefix(key, prefix) {
-		return 0, nil
-	}
-	_, ref, err := reportRecord(key, raw, cached)
-	return ref.ReportSequence, err
-}
-
-// Walk the original device range newest sequence first, excluding every fork.
-// Read-only bbolt values stay valid until the caller's transaction ends.
-func walkDeviceReportHistory(ctx context.Context, tx *bolt.Tx, cached *reportIndex, network, device string, visit func(string, reportReference, []byte) error) error {
-	cursor := tx.Bucket(observationBucket).Cursor()
-	prefix := []byte(network + "\x00" + device + "\x00")
-	var pending reportReference
-	var pendingRaw []byte
-	var pendingID string
-	count := 0
-	consume := func() error {
-		if count == 1 {
-			return visit(pendingID, pending, pendingRaw)
-		}
-		return nil
-	}
-	end := append([]byte{}, prefix...)
-	end[len(end)-1]++
-	key, raw := cursor.Seek(end)
-	if key == nil {
-		key, raw = cursor.Last()
-	} else {
-		key, raw = cursor.Prev()
-	}
-	for ; key != nil && bytes.HasPrefix(key, prefix); key, raw = cursor.Prev() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		id, ref, err := reportRecord(key, raw, cached)
-		if err != nil {
-			return err
-		}
-		if count > 0 && ref.ReportSequence == pending.ReportSequence {
-			count++
-			continue
-		}
-		if err := consume(); err != nil {
-			return err
-		}
-		pending, pendingRaw, pendingID, count = ref, raw, id, 1
-	}
-	return consume()
-}
-
-func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, keep func(reportReference) bool, visit func(U64, []byte) error) error {
-	// Pin the original input set, not a long-lived DB transaction. A nil key
-	// retains an excluded sample's adjacency break. Forks remain excluded by
-	// the same range walker, including a fork at the highest sequence.
 	cached := store.index.Load()
-	var highest U64
+	prefix := []byte(network + "\x00" + device + "\x00")
+	end := bytes.Clone(prefix)
+	end[len(end)-1]++
 	var keys [][]byte
 	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		var err error
-		highest, err = highestDeviceReportSequence(tx, cached, network, device)
-		if err != nil {
-			return err
+		cursor := tx.Bucket(observationBucket).Cursor()
+		key, _ := cursor.Seek(end)
+		if key == nil {
+			key, _ = cursor.Last()
+		} else {
+			key, _ = cursor.Prev()
 		}
-		return walkDeviceReportHistory(ctx, tx, cached, network, device, func(id string, ref reportReference, _ []byte) error {
-			if !keep(ref) {
-				if len(keys) == 0 || keys[len(keys)-1] != nil {
-					keys = append(keys, nil)
-				}
-			} else {
-				keys = append(keys, ref.key(id))
+		for ; key != nil && bytes.HasPrefix(key, prefix); key, _ = cursor.Prev() {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			return nil
-		})
+			if len(key) != len(prefix)+8+32 {
+				return errors.New("report history key has invalid shape")
+			}
+			keys = append(keys, bytes.Clone(key))
+		}
+		return nil
 	})
 	if err != nil {
 		return err
 	}
+	sequence := func(key []byte) U64 { return U64(binary.BigEndian.Uint64(key[len(prefix) : len(prefix)+8])) }
+	var highest U64
+	if len(keys) != 0 {
+		highest = sequence(keys[0])
+	}
 	for offset := 0; offset < len(keys); {
-		// At most 64 entries and 1 MiB per batch, except that one original may
-		// use its existing single-report limit. Never retain all report bodies.
+		first := offset
 		var originals [][]byte
 		copied := 0
 		err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
@@ -107,16 +57,11 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				key := keys[offset]
-				if key == nil {
-					originals = append(originals, nil)
-					offset++
-					continue
+				raw := tx.Bucket(observationBucket).Get(keys[offset])
+				if len(raw) == 0 || len(raw) > controlHTTPBodyLimit {
+					return errors.New("pinned report is missing or exceeds its input boundary")
 				}
-				raw := tx.Bucket(observationBucket).Get(key)
-				if _, _, err := reportRecord(key, raw, cached); err != nil {
-					return err
-				}
+				// At most 1 MiB, except one original may use its existing input limit.
 				if copied > 0 && copied+len(raw) > 1<<20 {
 					break
 				}
@@ -129,13 +74,20 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 		if err != nil {
 			return err
 		}
-		for _, raw := range originals {
+		for i, raw := range originals {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			// Decoding, signature verification and aggregation run only after
-			// the read handle closes, so a pending report writer can proceed.
-			if err := visit(highest, raw); err != nil {
+			position := first + i
+			_, ref, err := reportRecord(keys[position], raw, cached)
+			if err != nil {
+				return err
+			}
+			// Look across batch boundaries. No original at a fork becomes a winner.
+			if position > 0 && sequence(keys[position-1]) == ref.ReportSequence || position+1 < len(keys) && sequence(keys[position+1]) == ref.ReportSequence {
+				continue
+			}
+			if err := visit(highest, ref, raw); err != nil {
 				return err
 			}
 		}

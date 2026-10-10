@@ -98,8 +98,11 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	}
 	bodies := make([][]byte, len(reports))
 	positions := map[reportPosition]bool{}
+	owners := []reportOwner{}
+	seenOwners := map[reportOwner]bool{}
 	for i, report := range reports {
-		if err := report.Verify(keys[reportOwner{report.NetworkID, report.DeviceID}]); err != nil {
+		owner := reportOwner{report.NetworkID, report.DeviceID}
+		if err := report.Verify(keys[owner]); err != nil {
 			return err
 		}
 		body, err := CanonicalEncode(report)
@@ -107,8 +110,15 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 			return errors.New("report exceeds its input boundary")
 		}
 		bodies[i] = body
-		positions[reportPosition{reportOwner{report.NetworkID, report.DeviceID}, report.ReportSequence}] = true
+		positions[reportPosition{owner, report.ReportSequence}] = true
+		if !seenOwners[owner] {
+			owners = append(owners, owner)
+			seenOwners[owner] = true
+		}
 	}
+	sort.Slice(owners, func(i, j int) bool {
+		return owners[i].network < owners[j].network || owners[i].network == owners[j].network && owners[i].device < owners[j].device
+	})
 	lock, err := lockProtectedControlPath(ctx, filepath.Join(filepath.Dir(store.path), ".observations.lock"))
 	if err != nil {
 		return err
@@ -119,41 +129,44 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	var committed *reportIndex
 	fork := false
 	err = store.withDatabase(ctx, true, func(tx *bolt.Tx) error {
-		base, err := scanObservationIndex(ctx, tx, store.index.Load())
-		if err != nil {
-			return err
-		}
+		cached := store.index.Load()
 		bucket := tx.Bucket(observationBucket)
 		high := map[reportOwner]U64{}
 		known := map[reportPosition]map[string]bool{}
-		for id, ref := range base.reports {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			owner := reportOwner{ref.NetworkID, ref.DeviceID}
-			key, concerned := keys[owner]
-			if !concerned {
-				continue
-			}
-			if store.verified[id] != key {
-				var prior DeviceReport
-				if err := decodeStoredReport(bucket.Get(ref.key(id)), &prior); err != nil {
+		// Replay and fork decisions depend on the full history of each input
+		// owner, never on another device or a cached high-water mark.
+		for _, owner := range owners {
+			prefix := []byte(owner.network + "\x00" + owner.device + "\x00")
+			cursor := bucket.Cursor()
+			for physical, raw := cursor.Seek(prefix); bytes.HasPrefix(physical, prefix); physical, raw = cursor.Next() {
+				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if err := prior.Verify(key); err != nil {
-					return errors.New("stored observation does not verify against the current immutable device key")
+				id, ref, err := reportRecord(physical, raw, cached)
+				if err != nil {
+					return err
 				}
-				store.verified[id] = key
-			}
-			if ref.ReportSequence > high[owner] {
-				high[owner] = ref.ReportSequence
-			}
-			position := reportPosition{owner, ref.ReportSequence}
-			if positions[position] {
-				if known[position] == nil {
-					known[position] = map[string]bool{}
+				key := keys[owner]
+				if store.verified[id] != key {
+					var prior DeviceReport
+					if err := decodeStoredReport(raw, &prior); err != nil {
+						return err
+					}
+					if err := prior.Verify(key); err != nil {
+						return errors.New("stored observation does not verify against the current immutable device key")
+					}
+					store.verified[id] = key
 				}
-				known[position][id] = true
+				if ref.ReportSequence > high[owner] {
+					high[owner] = ref.ReportSequence
+				}
+				position := reportPosition{owner, ref.ReportSequence}
+				if positions[position] {
+					if known[position] == nil {
+						known[position] = map[string]bool{}
+					}
+					known[position][id] = true
+				}
 			}
 		}
 		additions := []DeviceReport{}
@@ -183,7 +196,12 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 			}
 			additions = append(additions, report)
 		}
-		committed, err = base.withReports(additions)
+		// This is only a decoding hint. Every reader validates the original
+		// records in its own scope; another process may have changed the rest.
+		if cached == nil {
+			cached = emptyReportIndex()
+		}
+		committed, err = cached.withReports(additions)
 		if err != nil {
 			return err
 		}

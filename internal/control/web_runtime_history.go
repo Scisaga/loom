@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-
-	bolt "go.etcd.io/bbolt"
 )
 
 // An hourly readback of original reports, never another persisted runtime state.
@@ -63,26 +61,24 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 	for index := range result.Buckets {
 		result.Buckets[index].Hour = start.Add(time.Duration(index) * time.Hour).UnixMilli()
 	}
-	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		return walkDeviceReportHistory(ctx, tx, store.index.Load(), network, device, func(pendingID string, pending reportReference, pendingRaw []byte) error {
-			if pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
-				return nil
-			}
-			bucket := &result.Buckets[(pending.ReportedAt-result.From)/time.Hour.Milliseconds()]
-			if prior := bucket.Sample; prior != nil && (prior.ReportedAt > pending.ReportedAt || prior.ReportedAt == pending.ReportedAt && prior.ReportSequence > pending.ReportSequence) {
-				return nil
-			}
-			var report DeviceReport
-			if err := decodeStoredReport(pendingRaw, &report); err != nil {
-				return err
-			}
-			if report.Verify(publicKey) != nil {
-				return nil
-			}
-			bucket.Sample = &WebRuntimeSample{ReportID: pendingID, ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt,
-				ViewDigest: report.ViewDigest, State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}
+	err := store.walkDeviceHistorySnapshot(ctx, network, device, func(_ U64, pending reportReference, pendingRaw []byte) error {
+		if pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
 			return nil
-		})
+		}
+		bucket := &result.Buckets[(pending.ReportedAt-result.From)/time.Hour.Milliseconds()]
+		if prior := bucket.Sample; prior != nil && (prior.ReportedAt > pending.ReportedAt || prior.ReportedAt == pending.ReportedAt && prior.ReportSequence > pending.ReportSequence) {
+			return nil
+		}
+		var report DeviceReport
+		if err := decodeStoredReport(pendingRaw, &report); err != nil {
+			return err
+		}
+		if report.Verify(publicKey) != nil {
+			return nil
+		}
+		bucket.Sample = &WebRuntimeSample{ReportID: ReleaseDigest(pendingRaw), ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt,
+			ViewDigest: report.ViewDigest, State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}
+		return nil
 	})
 	return result, err
 }
