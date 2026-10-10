@@ -69,3 +69,76 @@ func walkDeviceReportHistory(ctx context.Context, tx *bolt.Tx, cached *reportInd
 	}
 	return consume()
 }
+
+func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, keep func(reportReference) bool, visit func(U64, []byte) error) error {
+	// Pin the original input set, not a long-lived DB transaction. A nil key
+	// retains an excluded sample's adjacency break. Forks remain excluded by
+	// the same range walker, including a fork at the highest sequence.
+	cached := store.index.Load()
+	var highest U64
+	var keys [][]byte
+	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+		var err error
+		highest, err = highestDeviceReportSequence(tx, cached, network, device)
+		if err != nil {
+			return err
+		}
+		return walkDeviceReportHistory(ctx, tx, cached, network, device, func(id string, ref reportReference, _ []byte) error {
+			if !keep(ref) {
+				if len(keys) == 0 || keys[len(keys)-1] != nil {
+					keys = append(keys, nil)
+				}
+			} else {
+				keys = append(keys, ref.key(id))
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return err
+	}
+	for offset := 0; offset < len(keys); {
+		// At most 64 entries and 1 MiB per batch, except that one original may
+		// use its existing single-report limit. Never retain all report bodies.
+		var originals [][]byte
+		copied := 0
+		err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+			for offset < len(keys) && len(originals) < 64 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				key := keys[offset]
+				if key == nil {
+					originals = append(originals, nil)
+					offset++
+					continue
+				}
+				raw := tx.Bucket(observationBucket).Get(key)
+				if _, _, err := reportRecord(key, raw, cached); err != nil {
+					return err
+				}
+				if copied > 0 && copied+len(raw) > 1<<20 {
+					break
+				}
+				originals = append(originals, bytes.Clone(raw))
+				copied += len(raw)
+				offset++
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for _, raw := range originals {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			// Decoding, signature verification and aggregation run only after
+			// the read handle closes, so a pending report writer can proceed.
+			if err := visit(highest, raw); err != nil {
+				return err
+			}
+		}
+	}
+	return ctx.Err()
+}

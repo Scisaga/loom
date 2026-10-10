@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"errors"
-	bolt "go.etcd.io/bbolt"
 	"math"
 	"net/http"
 	"net/url"
@@ -98,65 +97,59 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 	// Sequence order is authoritative for adjacency, not for wall-clock time.
 	// A backwards clock cannot make an older interval overlap a counted one.
 	ceiling := until
-	err := withObservationDB(ctx, store.path, false, func(db *bolt.Tx) error {
-		// Locate this device's highest sequence inside this same DB snapshot. A
-		// highest-sequence fork is skipped by the walker and has no current rate.
-		highest, err := highestDeviceReportSequence(db, store.index.Load(), network, identity.ID)
-		if err != nil {
+	err := store.walkDeviceHistorySnapshot(ctx, network, identity.ID, func(ref reportReference) bool {
+		return ref.CounterAt != nil && *ref.CounterAt >= start && *ref.CounterAt <= until
+	}, func(highest U64, raw []byte) error {
+		if raw == nil {
+			newer = nil
+			return nil
+		}
+		var report DeviceReport
+		if err := decodeStoredReport(raw, &report); err != nil {
 			return err
 		}
-		return walkDeviceReportHistory(ctx, db, store.index.Load(), network, identity.ID, func(_ string, ref reportReference, raw []byte) error {
-			if ref.CounterAt == nil || *ref.CounterAt < start || *ref.CounterAt > until {
-				newer = nil
-				return nil
-			}
-			var report DeviceReport
-			if err := decodeStoredReport(raw, &report); err != nil {
-				return err
-			}
-			if report.Verify(identity.DevicePublicKey) != nil || report.WireGuardCounters == nil || report.ReportedAt > until {
-				newer = nil
-				return nil
-			}
-			at := report.WireGuardCounters.ObservedAt
-			if report.ReportSequence == highest && report.ReportedAt <= until && report.ReportedAt >= until-3*time.Minute.Milliseconds() && at >= until-3*time.Minute.Milliseconds() && at <= report.ReportedAt+5*time.Second.Milliseconds() {
-				current = &report
-			}
-			if at > ceiling {
-				newer = nil
-				return nil
-			}
-			if newer != nil {
-				if at == newer.WireGuardCounters.ObservedAt {
-					// Repeated identical samples are one measurement; contradictions have
-					// no winner and cannot serve as the endpoint of an earlier interval.
-					if report.NetworkGeneration == newer.NetworkGeneration && reflect.DeepEqual(report.WireGuardCounters, newer.WireGuardCounters) {
-						newer = &report
-					} else {
-						newer = nil
-					}
-					return nil
-				}
-				rx, tx, valid := counterDifference(report, *newer, scope)
-				if valid {
-					end := newer.WireGuardCounters.ObservedAt
-					index := (end - 1 - start) / time.Hour.Milliseconds()
-					if index >= 0 && index < 24 && at >= result.Buckets[index].Hour {
-						if err := addTrafficDelta(&result.Buckets[index].Delta, rx, tx, at, end); err != nil {
-							return err
-						}
-					}
-					if current != nil && newer.NetworkGeneration == current.NetworkGeneration && newer.WireGuardCounters.Interface == current.WireGuardCounters.Interface && newer.WireGuardCounters.Epoch == current.WireGuardCounters.Epoch && end <= current.WireGuardCounters.ObservedAt && at >= until-5*time.Minute.Milliseconds() {
-						if err := addTrafficDelta(&result.Recent, rx, tx, at, end); err != nil {
-							return err
-						}
-					}
-					ceiling = at
-				}
-			}
-			newer = &report
+		if report.Verify(identity.DevicePublicKey) != nil || report.WireGuardCounters == nil || report.ReportedAt > until {
+			newer = nil
 			return nil
-		})
+		}
+		at := report.WireGuardCounters.ObservedAt
+		if report.ReportSequence == highest && report.ReportedAt <= until && report.ReportedAt >= until-3*time.Minute.Milliseconds() && at >= until-3*time.Minute.Milliseconds() && at <= report.ReportedAt+5*time.Second.Milliseconds() {
+			current = &report
+		}
+		if at > ceiling {
+			newer = nil
+			return nil
+		}
+		if newer != nil {
+			if at == newer.WireGuardCounters.ObservedAt {
+				// Repeated identical samples are one measurement; contradictions have
+				// no winner and cannot serve as the endpoint of an earlier interval.
+				if report.NetworkGeneration == newer.NetworkGeneration && reflect.DeepEqual(report.WireGuardCounters, newer.WireGuardCounters) {
+					newer = &report
+				} else {
+					newer = nil
+				}
+				return nil
+			}
+			rx, tx, valid := counterDifference(report, *newer, scope)
+			if valid {
+				end := newer.WireGuardCounters.ObservedAt
+				index := (end - 1 - start) / time.Hour.Milliseconds()
+				if index >= 0 && index < 24 && at >= result.Buckets[index].Hour {
+					if err := addTrafficDelta(&result.Buckets[index].Delta, rx, tx, at, end); err != nil {
+						return err
+					}
+				}
+				if current != nil && newer.NetworkGeneration == current.NetworkGeneration && newer.WireGuardCounters.Interface == current.WireGuardCounters.Interface && newer.WireGuardCounters.Epoch == current.WireGuardCounters.Epoch && end <= current.WireGuardCounters.ObservedAt && at >= until-5*time.Minute.Milliseconds() {
+					if err := addTrafficDelta(&result.Recent, rx, tx, at, end); err != nil {
+						return err
+					}
+				}
+				ceiling = at
+			}
+		}
+		newer = &report
+		return nil
 	})
 	if result.Recent != nil && result.Recent.LastAt < until-3*time.Minute.Milliseconds() {
 		result.Recent = nil
