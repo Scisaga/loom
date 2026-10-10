@@ -134,6 +134,25 @@ func appendNativeReceivers(config string, view control.DeviceView, profile wireG
 			if peer.LinkID != resource.ID {
 				continue
 			}
+			if peer.Mode == "initiator" {
+				address, err := netip.ParseAddrPort(peer.Endpoint)
+				if err != nil || address.Port() == 0 {
+					return "", errors.New("native WG management peer requires its resolved execution address")
+				}
+				matched := false
+				peers, _ := endpoint["peers"].([]any)
+				for _, raw := range peers {
+					value, ok := raw.(map[string]any)
+					if ok && value["public_key"] == peer.PeerPublicKey {
+						value["address"], value["port"] = address.Addr().String(), address.Port()
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return "", errors.New("resolved WG management peer is absent from the native endpoint")
+				}
+			}
 			if len(hostSources) == 0 {
 				addresses = []string{peer.LocalAddress}
 			}

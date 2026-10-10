@@ -120,7 +120,11 @@ func TestRealLocalNetworkProjectedSegmentsAndWithdrawal(t *testing.T) {
 	testRealNativeProjectedSegments(t, true)
 }
 func TestRealNativeSharedResourcePeers(t *testing.T) { testRealNativeProjectedSegments(t, false, true) }
+func TestRealNativeResolvedManagementEndpoint(t *testing.T) {
+	testRealNativeProjectedSegments(t, false, false, true)
+}
 func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
+	namedPeer := len(shared) > 1 && shared[1]
 	executable := os.Getenv("LOOM_LINUX_MIXED_EXECUTABLE")
 	if executable == "" {
 		t.Skip("set LOOM_LINUX_MIXED_EXECUTABLE in a fresh network namespace")
@@ -138,6 +142,16 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 	}
 	p, keys, input, at := nativeProjectionFixture(t)
+	if namedPeer {
+		for i := range p.DeviceAuthorizations {
+			p.DeviceAuthorizations[i].DNSServers = []string{"192.0.2.53"}
+		}
+		for i := range p.NetworkIntent.Resources {
+			if p.NetworkIntent.Resources[i].ID == "demo-exit-wg" {
+				p.NetworkIntent.Resources[i].DialHost = "demo-peer.example"
+			}
+		}
+	}
 	business := "192.0.2.80"
 	if lan {
 		virtual, err := control.AllocateLocalNetworkPrefix(p.NetworkID, "demo-service", 0, "192.0.2.0/24", nil)
@@ -263,6 +277,12 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if namedPeer {
+				wg, err = resolveWireGuardEndpoints(context.Background(), wg, wireGuardExecution{}, view.DNSServers, nativePeerTestDNS(t))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			options := Options{Config: filepath.Join(t.TempDir(), "runtime.json"), IP: strictIP}
 			options.defaults()
 			tx, err = prepareNativeWireGuard(view, wg, options)
@@ -272,6 +292,11 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 			if err = tx.saveOwnership(); err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() {
+				if err := tx.Cleanup(); err != nil {
+					t.Error(err)
+				}
+			})
 		}
 		config, err = appendNativeReceivers(config, view, wg, tx, keys[id])
 		if err != nil {
@@ -332,8 +357,28 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	if _, err := readTransportResources(ctx, exitView, nil, os.Getpid(), time.Now()); err == nil {
 		t.Fatal("unrelated process was accepted as native receiver")
 	}
-	_, entryConfig, _ := render("demo-entry", false)
-	_, _, stopEntry := start("entry", entryConfig)
+	entryView, entryConfig, entryTransaction := render("demo-entry", namedPeer)
+	entryProcess, entryDone, stopEntryProcess := start("entry", entryConfig)
+	stopEntry := func() {
+		stopEntryProcess()
+		if entryTransaction != nil {
+			if err := entryTransaction.Cleanup(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if namedPeer {
+		entryExecutions, err := prepareHY2Executions(entryView, input, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := waitTransportResources(ctx, entryView, entryExecutions, entryProcess.Process.Pid, func() time.Time { return at }, entryDone); err != nil {
+			t.Fatal(err)
+		}
+		if err := entryTransaction.activateNative(ctx, entryProcess.Process.Pid, entryDone); err != nil {
+			t.Fatal(err)
+		}
+	}
 	client, clientConfig, _ := render("demo-access", false)
 	_, _, stopAccess := start("access", clientConfig)
 	listener, err := net.Listen("tcp", "0.0.0.0:18080")
@@ -406,6 +451,11 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 			if r.ID == "demo-exit-wg" {
 				target = r
 			}
+		}
+		if namedPeer {
+			// This independent kernel fixture needs the same known test DNS
+			// answer; it does not use the application's runtime adapter.
+			target.DialHost = "192.0.2.12"
 		}
 		nativeManagementPeer(t, peerIndex, private, peerResource, target)
 	}
