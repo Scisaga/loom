@@ -60,21 +60,29 @@ func importCatalog(source, destination, catalogID string, key ed25519.PublicKey,
 		}
 		packages[pkg.Entry.Artifact.Digest] = Input{Body: artifact, Manifest: pkg.ManifestBody, Signature: pkg.Signature}
 	}
-	return publish(destination, body, signature, key, packages, expected, selectCurrent)
+	target, err := New(destination, key)
+	if err != nil {
+		return control.ReleaseSet{}, err
+	}
+	// Both stores are private to this invocation and use the same independent
+	// key. Keep the verified parse, never a promise about future file contents.
+	target.packages = store.packages
+	return publishTo(target, body, signature, packages, expected, selectCurrent)
 }
 
 // Publish writes an already signed catalog and exact packages. The expected
 // pointer is an explicit plan input, compared while holding the target lock.
 func Publish(directory string, body, signature []byte, key ed25519.PublicKey, packages map[string]Input, expected string) (control.ReleaseSet, error) {
-	return publish(directory, body, signature, key, packages, expected, true)
-}
-
-func publish(directory string, body, signature []byte, key ed25519.PublicKey, packages map[string]Input, expected string, selectCurrent bool) (control.ReleaseSet, error) {
-	var zero control.ReleaseSet
 	store, err := New(directory, key)
 	if err != nil {
-		return zero, err
+		return control.ReleaseSet{}, err
 	}
+	return publishTo(store, body, signature, packages, expected, true)
+}
+
+func publishTo(store *Store, body, signature []byte, packages map[string]Input, expected string, selectCurrent bool) (control.ReleaseSet, error) {
+	var zero control.ReleaseSet
+	directory, key := store.root, store.key
 	catalog, err := control.VerifyReleaseCatalog(body, signature, key)
 	if err != nil {
 		return zero, err
@@ -88,12 +96,15 @@ func publish(directory string, body, signature []byte, key ed25519.PublicKey, pa
 	verifiedInput := control.ReleaseSet{Catalog: catalog}
 	for _, entry := range catalog.Entries {
 		artifact, ok := packages[entry.Artifact.Digest]
-		if !ok || control.ReleaseDigest(artifact.Body) != entry.Artifact.Digest {
+		if !ok || uint64(len(artifact.Body)) != uint64(entry.Artifact.Size) || control.ReleaseDigest(artifact.Body) != entry.Artifact.Digest {
 			return zero, errors.New("catalog package input is missing or differs")
 		}
-		parsed, err := InspectInput(entry.Artifact.Name, artifact, key)
-		if err != nil {
-			return zero, err
+		parsed, cached := store.packages[packageCacheKey(entry)]
+		if !cached || parsed.Entry != entry || !bytes.Equal(artifact.Manifest, parsed.ManifestBody) || !bytes.Equal(artifact.Signature, parsed.Signature) {
+			parsed, err = InspectInput(entry.Artifact.Name, artifact, key)
+			if err != nil {
+				return zero, err
+			}
 		}
 		if parsed.Entry != entry {
 			return zero, errors.New("catalog entry differs from verified package input")

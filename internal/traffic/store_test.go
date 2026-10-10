@@ -176,6 +176,10 @@ func TestAppendRejectsSymlinkAndBroadExistingFile(t *testing.T) {
 	if err := os.WriteFile(broadPath, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Creation permissions are filtered by umask; exercise an actually broad file.
+	if err := os.Chmod(broadPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	broadStore, err := NewStore(broadPath, time.Hour, time.Minute)
 	if err != nil {
 		t.Fatal(err)
