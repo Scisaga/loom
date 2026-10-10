@@ -17,11 +17,7 @@ func releaseChecksum(value ReleaseArtifact) []byte {
 	return []byte(strings.TrimPrefix(value.Digest, "sha256:") + "  " + value.Name + "\n")
 }
 
-func (server *Server) projectReleases(snapshot *WebSnapshot) error {
-	set, err := server.Releases.Read()
-	if err != nil {
-		return err
-	}
+func projectReleases(snapshot *WebSnapshot, set ReleaseSet) {
 	result := []Release{}
 	for _, pkg := range set.Packages {
 		// The generic bootstrap is consumed by the invitation delivery flow, not
@@ -57,7 +53,6 @@ func (server *Server) projectReleases(snapshot *WebSnapshot) error {
 			Signature: &ReleaseFile{Name: file.Name + ".sig", SHA256: strings.TrimPrefix(ReleaseDigest(pkg.Signature), "sha256:"), Size: int64(len(pkg.Signature)), URL: url + "signature"}})
 	}
 	snapshot.Releases = result
-	return nil
 }
 
 func (server *Server) releaseDownload(w http.ResponseWriter, r *http.Request) {

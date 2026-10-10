@@ -113,6 +113,15 @@ rebuild_ui(verified_inputs, now_utc) = WebProjection
 core_state != inverse(WebProjection)
 ```
 
+管理快照在一次请求内先读取并验证当前发布目录，再将同一个 `ReleaseSet` 交给下载列表和匹配
+该目录的组件期望投影。其他仍被签名期望引用的保留目录继续单独验证。现有实现的缺口是同一次
+快照重复读取相同目录的全部包；最小变化只复用本次已验证结果，不增加信任有效期或跨请求缓存。
+读取失败的部分返回值不能复用；当前目录失败时继续显示发布警告，仍可独立解析有效保留目录的
+组件期望。下一次请求重新读取原指针并校验原字节，下载选择变化不能改写已签名的期望引用。
+领域、wire、持久和 UI 值不变，`ReleaseSet` 仍是可丢弃的只读投影，操作者无新增输入。
+反例是当前目录校验失败却返回同摘要的部分值：不能因此让组件显示已核实。最小检查覆盖同目录
+只读一次、不同保留目录、连续请求间指针变化与校验失败、失败部分值拒绝及恢复；下载原件校验不变。
+
 ## 页面和状态
 
 Overview、Devices、Device detail、Topology、Live paths、Services、Releases/Device versions、Events、

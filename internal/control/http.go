@@ -348,7 +348,16 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		return WebSnapshot{}, errors.New("control projection unavailable")
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	releases := server.expectedReleaseSets(projection)
+	var currentRelease ReleaseSet
+	var releaseErr error
+	verified := []ReleaseSet{}
+	if server.Releases != nil {
+		currentRelease, releaseErr = server.Releases.Read()
+		if releaseErr == nil {
+			verified = append(verified, currentRelease)
+		}
+	}
+	releases := server.expectedReleaseSets(projection, verified...)
 	snapshot := buildWebSnapshot(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), releases...)
 	server.memberSnapshot(&snapshot)
 	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
@@ -370,8 +379,10 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		snapshot.Events = snapshotEvents(projectReportHistory(reports))
 	}
 	if server.Releases != nil {
-		if err := server.projectReleases(&snapshot); err != nil {
+		if releaseErr != nil {
 			snapshot.UIState.Warnings = append(snapshot.UIState.Warnings, WebWarning{Code: "release_catalog_unavailable", Message: "Signed release catalog or referenced artifacts could not be verified."})
+		} else {
+			projectReleases(&snapshot, currentRelease)
 		}
 	}
 	return snapshot, nil

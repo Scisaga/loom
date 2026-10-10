@@ -116,7 +116,7 @@ func validateExpectedNode(value ExpectedComponent, projection Projection) error 
 
 // Missing release files do not invalidate or erase a signed reference. Only its
 // affected executable projection fails; restored original files permit retry.
-func (server *Server) expectedReleaseSets(projection Projection) []ReleaseSet {
+func (server *Server) expectedReleaseSets(projection Projection, verified ...ReleaseSet) []ReleaseSet {
 	sets := []ReleaseSet{}
 	if server.Releases == nil {
 		return sets
@@ -127,6 +127,17 @@ func (server *Server) expectedReleaseSets(projection Projection) []ReleaseSet {
 			continue
 		}
 		seen[value.CatalogDigest] = true
+		found := false
+		for _, set := range verified {
+			if set.ID == value.CatalogDigest {
+				sets = append(sets, set)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
 		if set, err := server.Releases.ReadCatalog(value.CatalogDigest); err == nil {
 			sets = append(sets, set)
 		}
