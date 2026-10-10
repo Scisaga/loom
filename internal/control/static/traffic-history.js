@@ -13,7 +13,7 @@ export function trafficHistoryRequest(projection,scope){
  else if(kind==='device'){const value=list(projection.devices).find(v=>v.id===id&&v.authorized);if(!value)return null;devices=[value]}
  else if(kind==='link'){const link=list(projection.links).find(v=>v.id===id&&v.authorized&&v.spec_digest);if(!link)return null;devices=[link.from,link.to].map(id=>list(projection.devices).find(v=>v.id===id&&v.authorized));if(devices.some(v=>!v))return null;binding=[link.from,link.to,link.resource_id,link.spec_digest]}
  else return null;
- return {key:JSON.stringify([projection.network_id,projection.control_config_id,scope,binding,devices.map(v=>[v.id,v.authorized,list(v.dependencies)])]),version:JSON.stringify(devices.map(v=>[v.id,v.last_report_at])),url:'/api/control/ui/traffic-history?'+new URLSearchParams({[kind]:id})};
+ return {key:JSON.stringify([projection.network_id,projection.control_config_id,scope,binding,devices.map(v=>[v.id,v.authorized,list(v.dependencies)])]),version:JSON.stringify(devices.map(v=>[v.id,v.last_report_at,v.evidence?.report_sequence])),url:'/api/control/ui/traffic-history?'+new URLSearchParams({[kind]:id})};
 }
 export function trafficSummary(projection,scope,entry){
  const request=trafficHistoryRequest(projection,scope),record=request&&entry?.key===request.key?entry:null;

@@ -388,7 +388,7 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	}
 	for _, r := range client.Resources {
 		if r.ID == "demo-entry-wg" {
-			if err := clientadapter.ProbeWireGuard(diagnostic, client.NetworkID, r); err != nil {
+			if roundTrip, err := clientadapter.ProbeWireGuard(diagnostic, client.NetworkID, r); err != nil || roundTrip <= 0 {
 				t.Fatal("native first hop diagnostic", err)
 			}
 		}

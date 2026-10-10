@@ -31,7 +31,7 @@ func observeLinks(ctx context.Context, view control.DeviceView, _ wireGuardExecu
 		at := now()
 		pending, cancel := context.WithTimeout(ctx, 3*time.Second)
 		started := time.Now()
-		probeErr := clientadapter.ProbeWireGuard(pending, view.NetworkID, resources[link.ResourceID])
+		roundTrip, probeErr := clientadapter.ProbeWireGuard(pending, view.NetworkID, resources[link.ResourceID])
 		duration := time.Since(started).Milliseconds()
 		cancel()
 		if ctx.Err() != nil {
@@ -42,6 +42,9 @@ func observeLinks(ctx context.Context, view control.DeviceView, _ wireGuardExecu
 			state = "unavailable"
 		}
 		value := control.Observation{Level: "link", ResourceID: link.ResourceID, LinkID: link.ID, Target: net.JoinHostPort(link.ProbeTarget.Host, strconv.Itoa(link.ProbeTarget.Port)), Action: link.ProbeTarget.Action, SpecDigest: digest, NetworkGeneration: generation, Result: state, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(interval).UnixMilli(), DurationMS: &duration}
+		if probeErr == nil {
+			value.RoundTripMS = new(roundTrip.Milliseconds())
+		}
 		if err := value.Validate(); err != nil {
 			return nil, err
 		}

@@ -1,3 +1,4 @@
+import {linkRoundTripText} from './link-history.js';
 // Read-only navigation and rendering. Authority and reports enter as projections.
 import {reportIsCurrent} from './model.js';
 import {trafficSummary,trafficRatesHTML} from './traffic-history.js';
@@ -82,7 +83,7 @@ function routeDiagram(row,path,projection,target,now,traffic){
   const linkIndex=index-(startsHere?1:2),linkID=linkIndex>=0&&index<nodes.length-1?path.link_ids[linkIndex]:null;
   const resource=index===1&&!startsHere&&path.first_resource_id?path.first_transport+' · '+path.first_resource_id:'';
   const label=resource||(linkID?(list(projection.links).find(l=>l.id===linkID)?.transport||'Transport unknown')+' · '+linkID:path.final_exit==='direct'?'Direct':'');
-  return `<span class="paths-edge"><span class="paths-arrow" aria-hidden="true">→</span>${label?`<small>${esc(label)}</small>`:''}${resource||linkID?'<small>RTT unknown</small>':''}${linkID?sharedRate(linkID,projection,traffic,now):''}</span>`;
+  return `<span class="paths-edge"><span class="paths-arrow" aria-hidden="true">→</span>${label?`<small>${esc(label)}</small>`:''}${linkID?`<small>${esc(linkRoundTripText(list(projection.links).find(v=>v.id===linkID),now))}</small>`:resource?'<small>RTT unknown</small>':''}${linkID?sharedRate(linkID,projection,traffic,now):''}</span>`;
  };
  return `<div class="paths-route" aria-label="${current?'Current reported route':'Authorized route preview; current route unconfirmed'}">${nodes.map((v,i)=>`${edge(i)}<div class="paths-hop"><b>${esc(v.name)}</b><small>${esc(v.role)}</small></div>`).join('')}</div><p class="tiny dim">${current?'Current selection':path.selected?'Last reported selection':'Authorized candidate preview'} · ${esc(stamp(row.evidence?.reported_at))}. ${current?'':row.current?'This candidate is not the current selection. ':'Current route remains unconfirmed. '}Shared-link measurements are not this Service’s traffic.</p>`;
 

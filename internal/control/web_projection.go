@@ -202,7 +202,7 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 				device.RuntimeState = report.Runtime.State
 			}
 			runtime := report.Runtime
-			device.Evidence = &DeviceEvidence{Freshness: freshness, CurrentUntil: until, ReportedAt: device.LastReportAt, ViewDigest: report.ViewDigest, NetworkGeneration: report.NetworkGeneration, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...)}
+			device.Evidence = &DeviceEvidence{Freshness: freshness, CurrentUntil: until, ReportedAt: device.LastReportAt, ReportSequence: report.ReportSequence, ViewDigest: report.ViewDigest, NetworkGeneration: report.NetworkGeneration, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...)}
 			for _, sample := range report.Observations {
 				device.Evidence.Measurements = append(device.Evidence.Measurements, WebObservation{Observation: sample, CurrentUntil: webObservationUntil(report, sample, until, now)})
 			}
@@ -236,6 +236,10 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 					if sample.Level == "link" && sample.LinkID == link.ID && sample.CurrentUntil > now.UnixMilli() &&
 						(sample.Result == "available" || sample.Result == "unavailable") {
 						link.Availability, link.CurrentUntil = sample.Result, sample.CurrentUntil
+						link.ObservedAt = sample.ObservedAt
+						if sample.Result == "available" {
+							link.RoundTripMS = sample.RoundTripMS
+						}
 					}
 				}
 			}

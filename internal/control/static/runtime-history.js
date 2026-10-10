@@ -3,7 +3,7 @@ import{esc,list}from'./model.js';
 export function runtimeHistoryKey(projection,device){
  return JSON.stringify([projection.network_id,projection.control_config_id,device.id,device.authorized,list(device.dependencies)]);
 }
-export const runtimeHistoryVersion=device=>JSON.stringify([device.last_report_at,device.evidence?.view_digest,device.evidence?.runtime]);
+export const runtimeHistoryVersion=device=>JSON.stringify([device.last_report_at,device.evidence?.report_sequence,device.evidence?.view_digest,device.evidence?.runtime]);
 
 export function runtimeHistoryHTML(projection,device,history){
  const current=device.runtime_state||'unknown',stateClass=current==='running'?'ok':current==='error'?'bad':'dim';

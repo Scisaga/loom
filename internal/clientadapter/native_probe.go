@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/net/proxy"
@@ -62,71 +63,74 @@ func (d diagnosticDialer) DialContext(ctx context.Context, network, address stri
 }
 
 // ProbeWireGuard proves an authenticated DNS request and response through the
-// running native WG sender. It is neither a Service success nor an ICMP probe.
-func ProbeWireGuard(ctx context.Context, network string, resource control.TransportResource) error {
+// running native WG sender. The returned DNS round trip excludes connection
+// establishment. It is neither a Service success nor a WG handshake RTT.
+func ProbeWireGuard(ctx context.Context, network string, resource control.TransportResource) (time.Duration, error) {
 	diagnostic, ok := ctx.Value(nativeDiagnosticKey{}).(nativeDiagnostic)
 	if !ok {
-		return errors.New("no running native diagnostic entry")
+		return 0, errors.New("no running native diagnostic entry")
 	}
 	address, err := control.WireGuardAccessAddress(resource, "")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	dialer, err := proxy.SOCKS5("tcp", NativeProbeAddress, &proxy.Auth{User: resource.ID, Password: diagnostic.secret}, diagnosticDialer{diagnostic, ctx})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	connection, err := dialer.(proxy.ContextDialer).DialContext(ctx, "tcp", net.JoinHostPort(address.String(), "53"))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer connection.Close()
 	stop := context.AfterFunc(ctx, func() { connection.Close() })
 	defer stop()
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := connection.SetDeadline(deadline); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	var nonce [2]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
+		return 0, err
 	}
 	question := dnsmessage.Question{Name: dnsmessage.MustNewName("loom-probe.example."), Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET}
 	message := dnsmessage.Message{Header: dnsmessage.Header{ID: binary.BigEndian.Uint16(nonce[:]), RecursionDesired: true}, Questions: []dnsmessage.Question{question}}
 	body, err := message.Pack()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	packet := make([]byte, len(body)+2)
 	binary.BigEndian.PutUint16(packet, uint16(len(body)))
 	copy(packet[2:], body)
+	started := time.Now()
 	if _, err := io.Copy(connection, bytes.NewReader(packet)); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := io.ReadFull(connection, nonce[:]); err != nil {
-		return err
+		return 0, err
 	}
 	size := int(binary.BigEndian.Uint16(nonce[:]))
 	if size < 12 || size > 4096 {
-		return errors.New("native DNS response size is invalid")
+		return 0, errors.New("native DNS response size is invalid")
 	}
 	response := make([]byte, size)
 	if _, err := io.ReadFull(connection, response); err != nil {
-		return err
+		return 0, err
 	}
+	roundTrip := time.Since(started)
 	var decoded dnsmessage.Message
 	if decoded.Unpack(response) != nil || !decoded.Header.Response || decoded.Header.ID != message.Header.ID || decoded.Header.RCode != dnsmessage.RCodeSuccess || len(decoded.Questions) != 1 || decoded.Questions[0] != question {
-		return errors.New("native DNS response does not match the request")
+		return 0, errors.New("native DNS response does not match the request")
 	}
 	pool, err := control.WireGuardTargetPrefix(network, resource)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, answer := range decoded.Answers {
 		if value, ok := answer.Body.(*dnsmessage.AAAAResource); ok && answer.Header.Name == question.Name && pool.Contains(netip.AddrFrom16(value.AAAA)) {
-			return nil
+			return roundTrip, nil
 		}
 	}
-	return errors.New("native DNS response has no authenticated execution address")
+	return 0, errors.New("native DNS response has no authenticated execution address")
 }

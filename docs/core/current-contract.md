@@ -1058,6 +1058,9 @@ libbox 与共享 Go 核心同处一个已加载模块，其坐标不表示 VPN �
 
 Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest,`
 `network_generation,result,observed_at,valid_until`，可选 `duration_ms` 为非负整数。
+可选 `round_trip_ms` 也是非负整数，仅允许出现在成功的 Link `wireguard_dns` 观测中，并须有
+`duration_ms >= round_trip_ms`。它测量已建立执行 DNS 连接后的请求/响应往返，定义见下文。
+字段缺席表示未测量，显式零表示毫秒精度下的实测零；缺席不补值，原有已签字节不变，schema 仍为 3。
 level 仅 `resource/link/service`；不适用的四个 ID 字段固定为空字符串，不能缺席。
 resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，service 层仅 service_id/candidate_id 非空；
 每条保留实际 target 和 action。spec_digest 分别绑定资源、Link+资源或候选规范内容。
@@ -1096,6 +1099,13 @@ probe_target 的规范 IP:Port（IPv6 使用方括号）。spec_digest 为 `loom
 响应须匹配问题、事务号、成功码及执行地址池。没有运行会话、返回不匹配或超时均不能记 available。
 没有独立 Hy2 探测凭据或远端代理会话。duration_ms 是本次 DNS 完整往返的单调时钟耗时，
 不是 WG 握手 RTT 或 Service HTTPS 延迟。
+`round_trip_ms` 使用同一次请求的单调时钟：SOCKS 认证、WG 与 DNS TCP 连接建立完成且问题编码
+完成后，在写入 DNS 长度帧前开始计时，完整响应帧读完即结束；只有上述响应验证全部通过才报告。
+这是该方向 WG 内的 DNS 探测往返，包含两端处理和本机代理转交，不声称是纯线路时延或 WG 握手
+耗时。连接建立、名称解析和问题编码不计入这个值，完整 `duration_ms` 保持原义；例如连接建立慢
+而请求往返快时，两者必须分别显示。失败、取消和无实际响应不能产生 RTT，不能从旧 duration 推算。
+复用既有探测、授权和频率，不新增探测连接、参数或持久实体。运行时计时值进入同一 Observation，
+沿原 schema 3 签名报告持久化与同步；Web 只投影原值及同范围历史，不倒写客户端选择。
 每轮按现有运行刷新周期重新采样，valid_until 为该次 observed_at 加调用方的刷新周期；这是
 设备声明的该轮样本边界，接收端另核对下面的最大窗口。取消或未执行不生成成功样本，
 失败只影响该次 Link 观测，不停止其他 Service；UI 保留原时间和样本结果，仅有效结果参与当前拓扑投影。

@@ -42,6 +42,7 @@ type DeviceEvidence struct {
 	LocalNetworks     *[]LocalNetworkPrefix `json:"local_networks,omitempty"`
 	Preference        *ReportPreference     `json:"preference,omitempty"`
 	ReportedAt        string                `json:"reported_at"`
+	ReportSequence    U64                   `json:"report_sequence"`
 	ViewDigest        string                `json:"view_digest"`
 	NetworkGeneration string                `json:"network_generation"`
 	Selections        []ReportSelection     `json:"selections,omitempty"`
@@ -67,7 +68,8 @@ type Link struct {
 	Authorized   bool   `json:"authorized"`
 	Availability string `json:"availability"`
 	CurrentUntil int64  `json:"current_until,omitempty"`
-	LatencyMS    int64  `json:"latency_ms,omitempty"`
+	RoundTripMS  *int64 `json:"round_trip_ms,omitempty"`
+	ObservedAt   int64  `json:"observed_at,omitempty"`
 }
 
 type Path struct {

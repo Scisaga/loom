@@ -254,11 +254,15 @@ type Observation struct {
 	ObservedAt        int64  `json:"observed_at"`
 	ValidUntil        int64  `json:"valid_until"`
 	DurationMS        *int64 `json:"duration_ms,omitempty"`
+	RoundTripMS       *int64 `json:"round_trip_ms,omitempty"`
 }
 
 func (observation Observation) Validate() error {
 	if ValidateDigest(observation.SpecDigest) != nil || ValidateID(observation.NetworkGeneration) != nil || !validateTime(observation.ObservedAt) || !validateTime(observation.ValidUntil) || observation.ObservedAt >= observation.ValidUntil || observation.DurationMS != nil && *observation.DurationMS < 0 {
 		return errors.New("observation identity or time is invalid")
+	}
+	if value := observation.RoundTripMS; value != nil && (*value < 0 || observation.Level != "link" || observation.Action != "wireguard_dns" || observation.Result != "available" || observation.DurationMS == nil || *value > *observation.DurationMS) {
+		return errors.New("round trip requires a successful native Link probe within its complete duration")
 	}
 	switch observation.Result {
 	case "available", "unavailable", "unknown":

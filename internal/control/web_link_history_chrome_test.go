@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -36,13 +38,33 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	spec, _ := LinkSpecDigest(view, link.ID)
 	digest, _ := DeviceViewDigest(view)
 	now := time.Now().UTC().Truncate(time.Millisecond)
+	resources := []ResourceReadback{}
+	for _, resource := range view.Resources {
+		if resource.OwnerNodeID != view.DeviceID {
+			continue
+		}
+		acl, err := InboundACLDigest(view, resource.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value := ResourceReadback{ResourceID: resource.ID, ListenerID: resource.ListenerID, Listen: net.JoinHostPort(resource.DialHost, strconv.Itoa(resource.DialPort)), ACLDigest: acl, CertificateDigest: "sha256:" + strings.Repeat("0", 64)}
+		if resource.Kind == "wireguard" {
+			value.CertificateDigest = ""
+			value.PublicKey = *resource.Authentication.PublicKey
+		}
+		resources = append(resources, value)
+	}
+	sort.Slice(resources, func(i, j int) bool { return resources[i].ResourceID < resources[j].ResourceID })
 	reports := []DeviceReport{}
-	for index, state := range []string{"unavailable", "available"} {
-		at := now.Add(-time.Duration(1-index) * time.Hour)
+	for index, state := range []string{"unavailable", "available", "available"} {
+		at := now.Add(-[]time.Duration{time.Hour, 5 * time.Second, 0}[index])
 		sample := Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns",
-			NetworkGeneration: "demo-generation", Result: state, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(time.Minute).UnixMilli()}
+			NetworkGeneration: "demo-generation", Result: state, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(100))}
+		if state == "available" {
+			sample.RoundTripMS = new(int64(0))
+		}
 		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: p.NetworkID, DeviceID: view.DeviceID, ViewDigest: digest, ReportSequence: U64(index + 1), ReportedAt: at.UnixMilli(), NetworkGeneration: sample.NetworkGeneration,
-			Selections: []ReportSelection{}, Observations: []Observation{sample}, Runtime: RuntimeReadback{State: "stopped", AppliedViewDigest: digest}, Components: []ComponentReadback{{ComponentID: "agent", Version: strings.Repeat("a", 40), ArtifactDigest: "sha256:" + strings.Repeat("b", 64), Platform: "linux-amd64"}}}, f.keys[0])
+			Selections: []ReportSelection{}, Observations: []Observation{sample}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest, Resources: &resources}, Components: []ComponentReadback{{ComponentID: "agent", Version: strings.Repeat("a", 40), ArtifactDigest: "sha256:" + strings.Repeat("b", 64), Platform: "linux-amd64"}}}, f.keys[0])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +83,9 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Authority{root: root, projection: p}
-	server := &Server{Runtime: &Runtime{Authority: a, Reports: store}, Now: func() time.Time { return now }}
+	var clock atomic.Int64
+	clock.Store(now.UnixMilli())
+	server := &Server{Runtime: &Runtime{Authority: a, Reports: store}, Now: func() time.Time { return time.UnixMilli(clock.Load()) }}
 	var refuse atomic.Bool
 	handler := server.AdminHandler()
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +106,7 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="demo-link"]');return row.querySelectorAll('.link-hour.available').length===1&&row.querySelectorAll('.link-hour.unavailable').length===1&&row.querySelectorAll('.link-hour.missing').length===22&&row.textContent.includes('demo-entry → demo-exit')&&row.textContent.includes('not uptime')&&row.lastElementChild.textContent.includes('Unknown')&&row.querySelector('.link-hour.available').title.includes('demo-generation')})()`) != true {
 		t.Fatal("Link row confused direction, traffic, absence or original sample state")
 	}
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="demo-link"]')?.textContent.includes('WG DNS RTT: 0 ms')&&document.querySelector('[data-link-spread="demo-link"]')?.textContent.includes('P95−P50: 0 ms')`)
 	chromeDo(t, debug, `(()=>{document.querySelector('#topology [data-node="demo-entry"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));document.querySelector('[data-link-history-retry]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelector('#topology').dataset.locked==='demo-entry'`)
 	refuse.Store(true)
@@ -97,6 +122,29 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24`)
+	// Report sequences change while the device wall-clock timestamp is unchanged.
+	// Missing newest RTT cannot retain the older current distribution.
+	latest := reports[len(reports)-1]
+	for _, rtt := range []*int64{nil, new(int64(40))} {
+		latest.ReportSequence++
+		latest.Observations = append([]Observation{}, latest.Observations...)
+		latest.Observations[0].ObservedAt++
+		latest.Observations[0].ValidUntil++
+		latest.Observations[0].RoundTripMS = rtt
+		clock.Store(latest.Observations[0].ObservedAt)
+		latest, err = SignDeviceReport(latest, f.keys[0])
+		if err != nil || verifyCurrentReport(latest, p) != nil {
+			t.Fatal("changed RTT fixture rejected", err)
+		}
+		if err := store.Put(latest, p.DeviceAuthorizations[0].DevicePublicKey); err != nil {
+			t.Fatal(err)
+		}
+		if rtt == nil {
+			waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="demo-link"]')?.textContent.includes('Unknown')&&document.querySelector('[data-link-spread="demo-link"]')?.textContent.includes('Unknown')`)
+		} else {
+			waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="demo-link"]')?.textContent.includes('40 ms')&&document.querySelector('[data-link-spread="demo-link"]')?.textContent.includes('40 ms')`)
+		}
+	}
 	componentID, _ := ExpectedComponentID("demo-entry", "agent", "linux-amd64")
 	a.mu.Lock()
 	a.projection.NetworkIntent.ExpectedComponents = []ExpectedComponent{{ID: componentID, NodeID: "demo-entry", ComponentID: "agent", Platform: "linux-amd64", CatalogDigest: "sha256:" + strings.Repeat("c", 64), ManifestDigest: "sha256:" + strings.Repeat("d", 64)}}

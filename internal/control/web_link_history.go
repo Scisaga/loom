@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -21,6 +22,20 @@ type WebLinkHistory struct {
 	From       int64              `json:"from"`
 	Until      int64              `json:"until"`
 	Buckets    []WebHistoryBucket `json:"buckets"`
+	RoundTrips *WebLinkRoundTrips `json:"round_trips,omitempty"`
+}
+
+// A read-only statistic of original successful probes, never a health fact.
+type WebLinkRoundTrips struct {
+	From              int64  `json:"from"`
+	Until             int64  `json:"until"`
+	NetworkGeneration string `json:"network_generation"`
+	ReportSequence    U64    `json:"report_sequence"`
+	CurrentUntil      int64  `json:"current_until"`
+	Samples           int    `json:"samples"`
+	P50MS             *int64 `json:"p50_ms,omitempty"`
+	P95MS             *int64 `json:"p95_ms,omitempty"`
+	SpreadMS          *int64 `json:"spread_ms,omitempty"`
 }
 
 func (server *Server) linkHistory(w http.ResponseWriter, r *http.Request) {
@@ -81,11 +96,21 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 	possible := func(id, digest string, at int64) bool {
 		return id == result.LinkID && digest == spec && at >= result.From && at <= result.Until && at >= latest[(at-result.From)/time.Hour.Milliseconds()]
 	}
+	recentFrom := now.Add(-15 * time.Minute).UnixMilli()
+	recentPossible := func(id, digest string, at int64) bool {
+		return id == link.ID && digest == spec && at >= recentFrom && at <= result.Until
+	}
+	recent := map[int64]*Observation{}
+	recentBodies := map[int64]string{}
 	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+		highest, err := highestDeviceReportSequence(tx, store.index.Load(), network, identity.ID)
+		if err != nil {
+			return err
+		}
 		return walkDeviceReportHistory(ctx, tx, store.index.Load(), network, identity.ID, func(_ string, ref reportReference, raw []byte) error {
-			candidate := false
+			candidate := ref.ReportSequence == highest
 			for _, sample := range ref.LinkSamples {
-				if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
+				if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
 					candidate = true
 					break
 				}
@@ -100,15 +125,40 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 			if report.Verify(identity.DevicePublicKey) != nil {
 				return nil
 			}
+			if ref.ReportSequence == highest {
+				_, until := webReportTime(report, now)
+				for _, sample := range report.Observations {
+					currentUntil := webObservationUntil(report, sample, until, now)
+					if sample.Level == "link" && matchesNativeLinkObservation(sample, link, spec) && sample.Result == "available" && sample.RoundTripMS != nil && currentUntil > result.Until {
+						result.RoundTrips = &WebLinkRoundTrips{From: recentFrom, Until: result.Until, NetworkGeneration: report.NetworkGeneration, ReportSequence: highest, CurrentUntil: currentUntil}
+					}
+				}
+			}
 			for _, sample := range report.Observations {
-				if sample.Level != "link" || !possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || sample.NetworkGeneration != report.NetworkGeneration || !matchesNativeLinkObservation(sample, link, spec) {
+				if sample.Level != "link" || sample.NetworkGeneration != report.NetworkGeneration || !matchesNativeLinkObservation(sample, link, spec) {
 					continue
 				}
-				hour := (sample.ObservedAt - result.From) / time.Hour.Milliseconds()
 				body, err := CanonicalEncode(sample)
 				if err != nil {
 					return err
 				}
+				if scope := result.RoundTrips; scope != nil && sample.NetworkGeneration == scope.NetworkGeneration && recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) &&
+					report.ReportedAt <= result.Until+webClockTolerance.Milliseconds() && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest &&
+					sample.ObservedAt <= report.ReportedAt+webClockTolerance.Milliseconds() && sample.ValidUntil-sample.ObservedAt <= (30*time.Second).Milliseconds() {
+					// Keep failed and missing-RTT contents in conflict detection, too.
+					// No equal-time contradictory sample can win by report order.
+					if old, found := recentBodies[sample.ObservedAt]; !found {
+						recentBodies[sample.ObservedAt] = string(body)
+						value := sample
+						recent[sample.ObservedAt] = &value
+					} else if old != string(body) {
+						recent[sample.ObservedAt] = nil
+					}
+				}
+				if !possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
+					continue
+				}
+				hour := (sample.ObservedAt - result.From) / time.Hour.Milliseconds()
 				if latest[hour] == 0 || sample.ObservedAt > latest[hour] {
 					latest[hour], chosen[hour] = sample.ObservedAt, string(body)
 					value := sample
@@ -120,5 +170,22 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 			return nil
 		})
 	})
+	if scope := result.RoundTrips; scope != nil {
+		values := []int64{}
+		for _, sample := range recent {
+			if sample != nil && sample.Result == "available" && sample.RoundTripMS != nil {
+				values = append(values, *sample.RoundTripMS)
+			}
+		}
+		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+		scope.Samples = len(values)
+		if n := len(values); n > 0 {
+			scope.P50MS = new(values[(n*50+99)/100-1])
+			scope.P95MS = new(values[(n*95+99)/100-1])
+			if n >= 2 {
+				scope.SpreadMS = new(*scope.P95MS - *scope.P50MS)
+			}
+		}
+	}
 	return result, err
 }

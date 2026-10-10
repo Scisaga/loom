@@ -76,7 +76,8 @@ func (packet connectedProbePacket) WriteTo(body []byte, peer net.Addr) (int, err
 
 func probeFirstHop(ctx context.Context, probe control.ResourceProbe, dns []string, at time.Time) error {
 	if probe.Resource.Kind == "wireguard" {
-		return ProbeWireGuard(ctx, probe.NetworkID, probe.Resource)
+		_, err := ProbeWireGuard(ctx, probe.NetworkID, probe.Resource)
+		return err
 	}
 	dial := control.EndpointDialer(ctx)
 	addresses, err := netx.ResolveCertifiedIPs(ctx, probe.Resource.DialHost, dns, dial)

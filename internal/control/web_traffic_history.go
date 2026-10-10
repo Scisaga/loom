@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	bolt "go.etcd.io/bbolt"
@@ -102,23 +101,9 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 	err := withObservationDB(ctx, store.path, false, func(db *bolt.Tx) error {
 		// Locate this device's highest sequence inside this same DB snapshot. A
 		// highest-sequence fork is skipped by the walker and has no current rate.
-		cursor := db.Bucket(observationBucket).Cursor()
-		prefix := []byte(network + "\x00" + identity.ID + "\x00")
-		end := append([]byte{}, prefix...)
-		end[len(end)-1]++
-		key, raw := cursor.Seek(end)
-		if key == nil {
-			key, raw = cursor.Last()
-		} else {
-			key, raw = cursor.Prev()
-		}
-		var highest U64
-		if bytes.HasPrefix(key, prefix) {
-			_, ref, err := reportRecord(key, raw, store.index.Load())
-			if err != nil {
-				return err
-			}
-			highest = ref.ReportSequence
+		highest, err := highestDeviceReportSequence(db, store.index.Load(), network, identity.ID)
+		if err != nil {
+			return err
 		}
 		return walkDeviceReportHistory(ctx, db, store.index.Load(), network, identity.ID, func(_ string, ref reportReference, raw []byte) error {
 			if ref.CounterAt == nil || *ref.CounterAt < start || *ref.CounterAt > until {

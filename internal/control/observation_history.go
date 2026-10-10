@@ -7,6 +7,26 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+// Read inside the caller's original-report snapshot. A fork at this position
+// cannot be replaced with an older report by the history walker.
+func highestDeviceReportSequence(tx *bolt.Tx, cached *reportIndex, network, device string) (U64, error) {
+	cursor := tx.Bucket(observationBucket).Cursor()
+	prefix := []byte(network + "\x00" + device + "\x00")
+	end := append([]byte{}, prefix...)
+	end[len(end)-1]++
+	key, raw := cursor.Seek(end)
+	if key == nil {
+		key, raw = cursor.Last()
+	} else {
+		key, raw = cursor.Prev()
+	}
+	if !bytes.HasPrefix(key, prefix) {
+		return 0, nil
+	}
+	_, ref, err := reportRecord(key, raw, cached)
+	return ref.ReportSequence, err
+}
+
 // Walk the original device range newest sequence first, excluding every fork.
 // Read-only bbolt values stay valid until the caller's transaction ends.
 func walkDeviceReportHistory(ctx context.Context, tx *bolt.Tx, cached *reportIndex, network, device string, visit func(string, reportReference, []byte) error) error {
