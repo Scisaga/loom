@@ -69,16 +69,19 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 		if prior := bucket.Sample; prior != nil && (prior.ReportedAt > pending.ReportedAt || prior.ReportedAt == pending.ReportedAt && prior.ReportSequence > pending.ReportSequence) {
 			return nil
 		}
-		var report DeviceReport
-		if err := decodeStoredReport(pendingRaw, &report); err != nil {
-			return err
-		}
-		if report.Verify(publicKey) != nil {
+		report, err := store.verifiedReport(pendingRaw, publicKey)
+		if err != nil {
 			return nil
 		}
 		bucket.Sample = &WebRuntimeSample{ReportID: ReleaseDigest(pendingRaw), ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt,
 			ViewDigest: report.ViewDigest, State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}
 		return nil
-	}, func(ref reportReference) bool { return ref.ReportedAt >= result.From && ref.ReportedAt <= result.Until })
+	}, reportHistoryWindow{kind: reportTime, from: result.From, until: result.Until, include: func(ref reportReference) bool {
+		if ref.ReportedAt < result.From || ref.ReportedAt > result.Until {
+			return false
+		}
+		prior := result.Buckets[(ref.ReportedAt-result.From)/time.Hour.Milliseconds()].Sample
+		return prior == nil || prior.ReportedAt < ref.ReportedAt || prior.ReportedAt == ref.ReportedAt && prior.ReportSequence <= ref.ReportSequence
+	}})
 	return result, err
 }

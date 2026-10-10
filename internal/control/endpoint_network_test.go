@@ -217,11 +217,7 @@ func TestEndpointTLSClaimConfigurationReportAndRevocation(t *testing.T) {
 		t.Fatal("authorized Direct candidate is unavailable")
 	}
 
-	store, err := OpenObservationStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server.Runtime.Reports = store
+	store := server.Runtime.Reports
 	report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: config.NetworkID, DeviceID: invite.DeviceID, ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-loopback", ReportedAt: time.Now().UnixMilli(), Selections: []ReportSelection{{ServiceID: "demo-service", CandidateID: view.View.Routes[0].ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, key)
 	if err != nil {
 		t.Fatal(err)

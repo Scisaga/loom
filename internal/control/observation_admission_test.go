@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,140 +25,76 @@ func admissionReports(t *testing.T) (*ObservationStore, []DeviceReport, string) 
 	}
 	reports := make([]DeviceReport, 2)
 	for i := range reports {
-		value, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ReportSequence: U64(i + 1),
-			ViewDigest: "sha256:" + strings.Repeat("0", 64), NetworkGeneration: "demo-underlay", ReportedAt: 1,
-			Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "stopped"}}, key)
+		value, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ReportSequence: U64(i + 1), ViewDigest: "sha256:" + strings.Repeat("0", 64), NetworkGeneration: "demo-underlay", ReportedAt: int64(i + 1), Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "stopped"}}, key)
 		if err != nil {
 			t.Fatal(err)
 		}
 		reports[i] = value
 	}
 	testSetObservationReports(t, root, reports[:1])
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return store, reports, public
 }
-
-func holdReportOperation(t *testing.T, store *ObservationStore, write bool) func() {
-	t.Helper()
-	entered, release := make(chan struct{}), make(chan struct{})
+func TestReportReadersUseCommittedSnapshotWhileWriterWaits(t *testing.T) {
+	store, reports, public := admissionReports(t)
+	store.write <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- store.withDatabase(context.Background(), write, func(*bolt.Tx) error {
-			close(entered)
-			<-release
-			return nil
-		})
+		done <- store.mergeReports(ctx, reports[1:], map[reportOwner]string{{"demo-network", "demo-device"}: public}, false)
 	}()
-	select {
-	case <-entered:
-	case err := <-done:
-		t.Fatal("operation never entered original database", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("operation did not start")
+	latest, err := store.Latest(ctx)
+	if err != nil || len(latest) != 1 || latest[0].ReportSequence != 1 {
+		t.Fatal("read blocked behind uncommitted writer", err)
 	}
-	var once sync.Once
-	finish := func() {
-		once.Do(func() {
-			close(release)
-			if err := <-done; err != nil {
-				t.Error(err)
-			}
-		})
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal("waiting writer did not cancel", err)
 	}
-	t.Cleanup(finish)
-	return finish
-}
-
-func waitForReportOperation(t *testing.T, store *ObservationStore) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	// Observe a queued operation without consuming any read/write permission.
-	for store.databaseAccess.TryAcquire(0) {
-		if time.Now().After(deadline) {
-			t.Fatal("report operation did not queue")
-		}
-		time.Sleep(time.Millisecond)
+	<-store.write
+	if err := store.Put(reports[1], public); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestPendingReportCommitPrecedesLaterSnapshot(t *testing.T) {
-	store, reports, public := admissionReports(t)
-	release := holdReportOperation(t, store, false)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	written := make(chan error, 1)
-	go func() {
-		written <- store.mergeReports(ctx, reports[1:], map[reportOwner]string{{"demo-network", "demo-device"}: public}, false)
-	}()
-	waitForReportOperation(t, store)
-	type readback struct {
-		reports []DeviceReport
-		err     error
+	before := testObservationBytes(t, store)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
 	}
-	read := make(chan readback, 1)
-	go func() {
-		values, err := store.Latest(ctx)
-		read <- readback{values, err}
-	}()
-	release()
-	if err := <-written; err != nil {
-		t.Fatal("pending original could not commit", err)
-	}
-	value := <-read
-	if value.err != nil || len(value.reports) != 1 || value.reports[0].ReportSequence != 2 {
-		t.Fatal("later snapshot overtook pending report commit", value)
-	}
-	reopened, err := OpenObservationStore(filepath.Dir(store.path))
+	reopened, err := testOpenObservationStore(t, filepath.Dir(store.path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := CanonicalEncode(observationState{Schema: 3, Reports: reports})
-	if !bytes.Equal(testObservationBytes(t, filepath.Dir(reopened.path)), want) {
-		t.Fatal("read/write scheduling changed originals or restart recovery")
+	if !bytes.Equal(before, testObservationBytes(t, reopened)) {
+		t.Fatal("restart changed originals")
 	}
 }
-
-func TestReportOperationCancellationAndFailureReleaseAdmission(t *testing.T) {
-	for _, write := range []bool{false, true} {
-		t.Run(map[bool]string{false: "reader", true: "writer"}[write], func(t *testing.T) {
-			store, reports, public := admissionReports(t)
-			before := testObservationBytes(t, filepath.Dir(store.path))
-			release := holdReportOperation(t, store, !write)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			done := make(chan error, 1)
-			go func() {
-				if write {
-					done <- store.mergeReports(ctx, reports[1:], map[reportOwner]string{{"demo-network", "demo-device"}: public}, false)
-				} else {
-					_, err := store.Latest(ctx)
-					done <- err
-				}
-			}()
-			waitForReportOperation(t, store)
-			cancel()
-			select {
-			case err := <-done:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatal("cancelled request did not fail explicitly", err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("cancelled request waited for unrelated database operation")
-			}
-			release()
-			failure := errors.New("demo transaction failure")
-			if err := store.withDatabase(context.Background(), true, func(*bolt.Tx) error { return failure }); !errors.Is(err, failure) {
-				t.Fatal("transaction error was lost", err)
-			}
-			if !bytes.Equal(before, testObservationBytes(t, filepath.Dir(store.path))) {
-				t.Fatal("cancelled or failed operation changed signed originals")
-			}
-			if err := store.Put(reports[1], public); err != nil {
-				t.Fatal("cancelled or failed operation retained admission", err)
-			}
-		})
+func TestReportFailedTransactionLeavesOriginalsAndIndexesUnchanged(t *testing.T) {
+	store, reports, public := admissionReports(t)
+	before := testObservationBytes(t, store)
+	failure := errors.New("demo transaction failure")
+	err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		raw, _ := CanonicalEncode(reports[1])
+		key := referenceOf(reports[1]).key(ReleaseDigest(raw))
+		if err := tx.Bucket(observationBucket).Put(key, raw); err != nil {
+			return err
+		}
+		if err := indexReport(tx, key, reports[1]); err != nil {
+			return err
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) || !bytes.Equal(before, testObservationBytes(t, store)) {
+		t.Fatal("transaction changed originals", err)
+	}
+	raw, _ := CanonicalEncode(reports[1])
+	known, err := store.knownReports(context.Background(), []string{ReleaseDigest(raw)})
+	if err != nil || len(known) != 0 {
+		t.Fatal("failed transaction left an index", err)
+	}
+	if err := store.Put(reports[1], public); err != nil {
+		t.Fatal(err)
 	}
 }

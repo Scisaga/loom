@@ -114,11 +114,8 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 		if !candidate {
 			return nil
 		}
-		var report DeviceReport
-		if err := decodeStoredReport(raw, &report); err != nil {
-			return err
-		}
-		if report.Verify(identity.DevicePublicKey) != nil {
+		report, err := store.verifiedReport(raw, identity.DevicePublicKey)
+		if err != nil {
 			return nil
 		}
 		if ref.ReportSequence == highest {
@@ -164,14 +161,14 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 			}
 		}
 		return nil
-	}, func(ref reportReference) bool {
+	}, reportHistoryWindow{kind: linkTime, from: result.From, until: result.Until, link: link.ID, spec: spec, include: func(ref reportReference) bool {
 		for _, sample := range ref.LinkSamples {
 			if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
 				return true
 			}
 		}
 		return false
-	})
+	}})
 	if scope := result.RoundTrips; scope != nil {
 		values := []int64{}
 		for _, sample := range recent {

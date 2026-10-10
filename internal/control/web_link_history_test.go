@@ -107,7 +107,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 	original := testObservationBytes(t, root)
 	var previous WebLinkHistory
 	for attempt := 0; attempt < 2; attempt++ {
-		store, err := OpenObservationStore(root)
+		store, err := testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		store.index.Store(nil)
+		store.cache.clear()
 		cold, err := store.linkHistory(context.Background(), view.NetworkID, identity, link, spec, now)
 		if err != nil || !reflect.DeepEqual(cold, got) {
 			t.Fatal("discarding the original position index changed Link history", err)
@@ -139,8 +139,11 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 				t.Fatal("wrong scope, fork, conflict, identity or missing input entered history", index)
 			}
 		}
-		if attempt > 0 && !reflect.DeepEqual(got, previous) || !bytes.Equal(original, testObservationBytes(t, root)) {
+		if attempt > 0 && !reflect.DeepEqual(got, previous) || !bytes.Equal(original, testObservationBytes(t, store)) {
 			t.Fatal("reopening history changed original signed bytes or samples")
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
 		}
 		previous = got
 	}
@@ -153,7 +156,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +181,7 @@ func TestWebLinkHistoryQueryCannotExpandEndpointPermission(t *testing.T) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}

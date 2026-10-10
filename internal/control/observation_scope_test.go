@@ -14,7 +14,7 @@ import (
 )
 
 func TestReportCommitReadsActualOwnerHistory(t *testing.T) {
-	for _, scenario := range []string{"external-highest-and-fork", "unrelated-corruption"} {
+	for _, scenario := range []string{"restarted-highest-and-fork", "unrelated-corruption"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			if err := os.Chmod(root, 0700); err != nil {
@@ -36,25 +36,28 @@ func TestReportCommitReadsActualOwnerHistory(t *testing.T) {
 			}
 			firstA, firstB := sign("demo-a", 1, 1), sign("demo-b", 1, 1)
 			testSetObservationReports(t, root, []DeviceReport{firstA, firstB})
-			store, err := OpenObservationStore(root)
+			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scenario == "external-highest-and-fork" {
-				other, err := OpenObservationStore(root)
+			if scenario == "restarted-highest-and-fork" {
+				if err := store.Put(sign("demo-a", 3, 1), public("demo-a")); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Close(); err != nil {
+					t.Fatal(err)
+				}
+				store, err = testOpenObservationStore(t, root)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := other.Put(sign("demo-a", 3, 1), public("demo-a")); err != nil {
-					t.Fatal(err)
-				}
 				if err := store.Put(sign("demo-a", 2, 1), public("demo-a")); !errors.Is(err, ErrReportReplay) {
-					t.Fatal("stale metadata hid another writer's higher sequence", err)
+					t.Fatal("stale metadata hid the durable higher sequence", err)
 				}
 				if err := store.Put(sign("demo-b", 2, 1), public("demo-b")); err != nil {
 					t.Fatal("another device's sequence blocked an independent owner", err)
 				}
-				store.index.Store(nil)
+				store.cache.clear()
 				if err := store.Put(sign("demo-a", 3, 2), public("demo-a")); !errors.Is(err, ErrReportEquivocation) {
 					t.Fatal("discarded metadata hid a durable fork", err)
 				}
@@ -63,7 +66,7 @@ func TestReportCommitReadsActualOwnerHistory(t *testing.T) {
 					t.Fatal("fork acquired a winner or independent owner was lost", latest, err)
 				}
 				want, err := CanonicalEncode(observationState{Schema: 3, Reports: []DeviceReport{firstA, sign("demo-a", 3, 1), sign("demo-a", 3, 2), firstB, sign("demo-b", 2, 1)}})
-				if err != nil || !bytes.Equal(want, testObservationBytes(t, root)) {
+				if err != nil || !bytes.Equal(want, testObservationBytes(t, store)) {
 					t.Fatal("reopen lost or changed original signed history", err)
 				}
 				return

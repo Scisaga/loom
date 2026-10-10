@@ -34,7 +34,7 @@ func TestReportPositionBatchIsAtomicAndIndependentOfUnqueriedHistory(t *testing.
 	}
 	originals := []DeviceReport{sign("demo-a", 1, 1), sign("demo-a", 3, 3), sign("demo-b", 1, 1), sign("demo-b", 3, 3)}
 	testSetObservationReports(t, root, originals)
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestReportPositionBatchIsAtomicAndIndependentOfUnqueriedHistory(t *testing.
 	if err := store.Put(fork, keys[reportOwner{"demo-network", "demo-a"}]); !errors.Is(err, ErrReportEquivocation) {
 		t.Fatal("old fork was lost", err)
 	}
-	store.index.Store(nil)
+	store.cache.clear()
 	latest, err = store.Latest(context.Background())
 	if err != nil || len(latest) != 2 || latest[0].ReportSequence != 5 || latest[1].ReportSequence != 5 {
 		t.Fatal("latest positions changed after cache loss", err)
@@ -105,7 +105,7 @@ func TestReportPositionBatchIsAtomicAndIndependentOfUnqueriedHistory(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(want, testObservationBytes(t, root)) {
+	if !bytes.Equal(want, testObservationBytes(t, store)) {
 		t.Fatal("batch or fork changed or missing after reopening")
 	}
 }

@@ -61,12 +61,15 @@ func TestWireGuardCountersPreserveOriginalReportsAndSignedPrecision(t *testing.T
 	testSetObservationReports(t, root, []DeviceReport{report})
 	old := testObservationBytes(t, root)
 	for i := 0; i < 2; i++ {
-		store, err := OpenObservationStore(root)
+		store, err := testOpenObservationStore(t, root)
 		if err != nil || !reflect.DeepEqual(store.History(), []DeviceReport{report}) {
 			t.Fatal("counter original lost on restart", err)
 		}
-		if !bytes.Equal(old, testObservationBytes(t, root)) {
+		if !bytes.Equal(old, testObservationBytes(t, store)) {
 			t.Fatal("restart rewrote original")
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
 		}
 	}
 	for _, mutate := range []func(*WireGuardCounters){

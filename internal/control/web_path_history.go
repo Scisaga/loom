@@ -86,8 +86,8 @@ func (store *ObservationStore) pathHistory(ctx context.Context, network string, 
 	latest := [24]int64{}
 	chosen := [24]string{}
 	err := store.walkDeviceHistorySnapshot(ctx, network, authorization.ID, func(_ U64, _ reportReference, raw []byte) error {
-		var report DeviceReport
-		if err := decodeStoredReport(raw, &report); err != nil {
+		report, err := store.decodedReport(raw)
+		if err != nil {
 			return err
 		}
 		checked, valid := false, false
@@ -100,7 +100,8 @@ func (store *ObservationStore) pathHistory(ctx context.Context, network string, 
 				continue
 			}
 			if !checked {
-				valid = report.Verify(authorization.DevicePublicKey) == nil
+				_, err := store.verifiedReport(raw, authorization.DevicePublicKey)
+				valid = err == nil
 				checked = true
 			}
 			if !valid {
@@ -122,6 +123,6 @@ func (store *ObservationStore) pathHistory(ctx context.Context, network string, 
 			}
 		}
 		return nil
-	})
+	}, reportHistoryWindow{kind: observationTime, from: result.From, until: result.Until})
 	return result, err
 }

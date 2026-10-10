@@ -88,7 +88,7 @@ func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *tes
 	testSetObservationReports(t, root, []DeviceReport{report})
 	original := testObservationBytes(t, root)
 	for i := 0; i < 2; i++ {
-		store, err := OpenObservationStore(root)
+		store, err := testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,8 +97,11 @@ func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *tes
 		if snapshot.Devices[0].Evidence == nil || !reflect.DeepEqual(snapshot.Devices[0].Evidence.Preference, report.Preference) || !snapshot.Paths[0].Selected || snapshot.Paths[0].FinalExit != "direct" {
 			t.Fatal("readback replaced actual Direct or lost unavailable fixed intent")
 		}
-		if !bytes.Equal(original, testObservationBytes(t, root)) {
+		if !bytes.Equal(original, testObservationBytes(t, store)) {
 			t.Fatal("restart modified the original signed setting sample")
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
 		}
 	}
 	view.Responsibilities = []string{"control"}
@@ -106,7 +109,7 @@ func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *tes
 		t.Fatal("server-only report invented an access setting")
 	}
 	projection.NetworkIntent.Services[0].Name = "Demo changed service"
-	store, _ := OpenObservationStore(root)
+	store, _ := testOpenObservationStore(t, root)
 	if len(store.Verified(projection)) != 0 {
 		t.Fatal("old View preference survived a scope change")
 	}

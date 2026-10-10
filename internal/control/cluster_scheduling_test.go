@@ -127,7 +127,7 @@ func TestMemberSchedulingKeepsReceivingWhileAnotherMemberWaits(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("remote request did not observe cancellation")
 	}
-	reopened, err := OpenObservationStore(runtime.Authority.root)
+	reopened, err := testOpenObservationStore(t, runtime.Authority.root)
 	if err != nil {
 		t.Fatal(err)
 	}

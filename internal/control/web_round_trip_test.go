@@ -80,7 +80,7 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 	original := testObservationBytes(t, root)
 	var previous WebLinkHistory
 	for attempt := 0; attempt < 2; attempt++ {
-		store, err := OpenObservationStore(root)
+		store, err := testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,15 +92,18 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 		if v == nil || v.Samples != 5 || v.P50MS == nil || *v.P50MS != 10 || v.P95MS == nil || *v.P95MS != 20 || v.SpreadMS == nil || *v.SpreadMS != 10 || v.NetworkGeneration != base.NetworkGeneration || v.ReportSequence != reports[len(reports)-1].ReportSequence {
 			t.Fatalf("wrong distinct scoped distribution: %+v", v)
 		}
-		store.index.Store(nil)
+		store.cache.clear()
 		cold, err := store.linkHistory(context.Background(), p.NetworkID, identity, link, spec, now)
-		if err != nil || !reflect.DeepEqual(got, cold) || attempt > 0 && !reflect.DeepEqual(previous, got) || !bytes.Equal(original, testObservationBytes(t, root)) {
+		if err != nil || !reflect.DeepEqual(got, cold) || attempt > 0 && !reflect.DeepEqual(previous, got) || !bytes.Equal(original, testObservationBytes(t, store)) {
 			t.Fatal("index or reopen changed original evidence", err)
 		}
 		previous = got
 		stale, err := store.linkHistory(context.Background(), p.NetworkID, identity, link, spec, now.Add(time.Minute))
 		if err != nil || stale.RoundTrips != nil {
 			t.Fatal("expired highest Link revived an older distribution", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
 		}
 	}
 	for _, mode := range []string{"one", "zero", "missing", "failure", "stopped", "fork", "wrong-key", "new-network", "changed-spec"} {
@@ -145,7 +148,7 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 				t.Fatal(err)
 			}
 			testSetObservationReports(t, root, values)
-			store, err := OpenObservationStore(root)
+			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)
 			}

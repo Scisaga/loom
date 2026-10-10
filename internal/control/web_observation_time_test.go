@@ -120,7 +120,7 @@ func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testin
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,10 @@ func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testin
 	}
 	read := func(now time.Time) WebSnapshot {
 		t.Helper()
-		store, err = OpenObservationStore(root)
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		store, err = testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +145,7 @@ func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testin
 		return snapshot
 	}
 	put()
-	original := testObservationBytes(t, root)
+	original := testObservationBytes(t, store)
 	current := read(at)
 	if current.Paths[0].Availability != "available" || !current.Paths[0].Selected {
 		t.Fatal("authenticated target result or selector readback was lost")
@@ -153,7 +156,7 @@ func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testin
 		}
 	}
 	stale := read(at.Add(3 * time.Minute))
-	if stale.Paths[0].Availability != "unknown" || !stale.Paths[0].Selected || !bytes.Equal(original, testObservationBytes(t, root)) {
+	if stale.Paths[0].Availability != "unknown" || !stale.Paths[0].Selected || !bytes.Equal(original, testObservationBytes(t, store)) {
 		t.Fatal("restart renewed old success or changed original history/selection")
 	}
 	report.ReportSequence, report.ReportedAt = 2, at.Add(200*time.Second).UnixMilli()
@@ -169,8 +172,8 @@ func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testin
 	report.ReportSequence, report.ReportedAt = 4, at.Add(201*time.Second).UnixMilli()
 	report.Observations[0].ValidUntil++
 	put() // A projection limit must not reinterpret or reject canonical signed bytes.
-	original = testObservationBytes(t, root)
-	if value := read(at.Add(201 * time.Second)); value.Paths[0].Availability != "unknown" || !bytes.Equal(original, testObservationBytes(t, root)) {
+	original = testObservationBytes(t, store)
+	if value := read(at.Add(201 * time.Second)); value.Paths[0].Availability != "unknown" || !bytes.Equal(original, testObservationBytes(t, store)) {
 		t.Fatal("excessive lifetime became current or was rewritten on restart")
 	}
 }

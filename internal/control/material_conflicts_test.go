@@ -228,7 +228,7 @@ func TestMemberDeltaPreservesForksBeyondEqualFrontiers(t *testing.T) {
 		if _, err := authority.PutMaterial(original); err != nil {
 			t.Fatal(err)
 		}
-		reports, err := OpenObservationStore(root)
+		reports, err := testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}

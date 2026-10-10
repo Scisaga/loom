@@ -15,7 +15,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-func TestObservationDatabaseLockWaitCancelsWithoutChangingDatabase(t *testing.T) {
+func TestObservationDatabaseRejectsCompetingOwnerWithoutChangingDatabase(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -37,12 +37,12 @@ func TestObservationDatabaseLockWaitCancelsWithoutChangingDatabase(t *testing.T)
 	defer cancel()
 	called := false
 	err = withReportDatabase(ctx, path, true, func(*bolt.Tx) error { called = true; return nil })
-	if !errors.Is(err, context.DeadlineExceeded) || called {
-		t.Fatal("contended write did not stop before entering its transaction", err)
+	if !errors.Is(err, bolt.ErrTimeout) || called {
+		t.Fatal("competing database owner was not rejected", err)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(original, after) {
-		t.Fatal("canceled lock acquisition changed the database", err)
+		t.Fatal("rejected competing owner changed the database", err)
 	}
 	if err := held.Close(); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestObservationTransactionsExceedFormerAggregateCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal("large accepted history prevented restart", err)
 	}
@@ -128,14 +128,17 @@ func TestObservationTransactionsExceedFormerAggregateCapacity(t *testing.T) {
 	if err := store.Put(next, public); err != nil {
 		t.Fatal("valid report beyond former capacity was rejected", err)
 	}
-	restarted, err := OpenObservationStore(root)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if latest := restarted.All(); len(latest) != 1 || latest[0].ReportSequence != high+2 {
 		t.Fatal("large history append was not durable")
 	}
-	index, err := restarted.reportIndexSnapshot(context.Background())
+	index := testCollectReports(t, restarted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +152,7 @@ func TestObservationTransactionsExceedFormerAggregateCapacity(t *testing.T) {
 	}
 	before := index
 	sentinel := errors.New("demo transaction failure")
-	err = withObservationDB(context.Background(), path, true, func(tx *bolt.Tx) error {
+	err = restarted.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
 		value := sign(high + 4)
 		raw, _ := CanonicalEncode(value)
 		if err := tx.Bucket(observationBucket).Put(referenceOf(value).key(ReleaseDigest(raw)), raw); err != nil {
@@ -160,8 +163,8 @@ func TestObservationTransactionsExceedFormerAggregateCapacity(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Fatal(err)
 	}
-	after, err := restarted.reportIndexSnapshot(context.Background())
-	if err != nil || len(before.reports) != len(after.reports) {
+	after := testCollectReports(t, restarted)
+	if len(before.reports) != len(after.reports) {
 		t.Fatal("failed transaction partially committed", err)
 	}
 	for id := range before.reports {

@@ -38,7 +38,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	testSetObservationReports(t, root, []DeviceReport{})
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}

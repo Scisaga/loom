@@ -32,7 +32,7 @@ func TestTrafficHistoryProjectionDoesNotBlockReportCommit(t *testing.T) {
 		reports[i] = value
 	}
 	testSetObservationReports(t, root, []DeviceReport{reports[0], reports[2]})
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestTrafficHistoryProjectionDoesNotBlockReportCommit(t *testing.T) {
 	if err != nil || len(latest) != 1 || latest[0].ReportSequence != 4 {
 		t.Fatal("concurrent report was not durably accepted", latest, err)
 	}
-	original := testObservationBytes(t, root)
+	original := testObservationBytes(t, store)
 	want, err := CanonicalEncode(observationState{Schema: 3, Reports: reports})
 	if err != nil || string(original) != string(want) {
 		t.Fatal("history query changed signed originals", err)
@@ -107,11 +107,11 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 				reports[i] = value
 			}
 			testSetObservationReports(t, root, reports)
-			store, err := OpenObservationStore(root)
+			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := testObservationBytes(t, root)
+			before := testObservationBytes(t, store)
 			original, err := CanonicalEncode(reports[0])
 			if err != nil {
 				t.Fatal(err)
@@ -124,7 +124,7 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 				if visited == 0 {
 					if action == "cancel" {
 						cancel()
-					} else if err := withObservationDB(context.Background(), store.path, true, func(tx *bolt.Tx) error {
+					} else if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
 						if action == "delete" {
 							return tx.Bucket(observationBucket).Delete(storageKey)
 						}
@@ -150,7 +150,7 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 			if err == nil {
 				t.Fatal("query returned success after its original changed or cancellation")
 			}
-			if action == "cancel" && (!errors.Is(err, context.Canceled) || visited != 1 || !bytes.Equal(before, testObservationBytes(t, root))) {
+			if action == "cancel" && (!errors.Is(err, context.Canceled) || visited != 1 || !bytes.Equal(before, testObservationBytes(t, store))) {
 				t.Fatal("cancelled projection continued or changed originals", visited, err)
 			}
 		})
@@ -183,11 +183,11 @@ func TestHistorySnapshotExcludesForksAcrossBatchesAndAtHighestSequence(t *testin
 				t.Fatal(err)
 			}
 			testSetObservationReports(t, root, append(reports, fork))
-			store, err := OpenObservationStore(root)
+			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			original := testObservationBytes(t, root)
+			original := testObservationBytes(t, store)
 			seen := map[U64]bool{}
 			err = store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(highest U64, ref reportReference, raw []byte) error {
 				if highest != 65 || ref.ReportSequence == forkSequence || seen[ref.ReportSequence] {
@@ -203,7 +203,7 @@ func TestHistorySnapshotExcludesForksAcrossBatchesAndAtHighestSequence(t *testin
 				seen[ref.ReportSequence] = true
 				return report.Verify(public)
 			})
-			if err != nil || len(seen) != 64 || !bytes.Equal(original, testObservationBytes(t, root)) {
+			if err != nil || len(seen) != 64 || !bytes.Equal(original, testObservationBytes(t, store)) {
 				t.Fatal("fork exclusion changed valid history or original bytes", len(seen), err)
 			}
 		})
@@ -216,7 +216,7 @@ func TestHistorySnapshotRejectsMalformedPhysicalKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	testSetObservationReports(t, root, nil)
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}

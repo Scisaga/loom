@@ -81,7 +81,7 @@ func TestWebRuntimeHistoryReadsOriginalHourlySamples(t *testing.T) {
 	original := testObservationBytes(t, root)
 	var previous WebRuntimeHistory
 	for attempt := 0; attempt < 2; attempt++ {
-		store, err := OpenObservationStore(root)
+		store, err := testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +90,7 @@ func TestWebRuntimeHistoryReadsOriginalHourlySamples(t *testing.T) {
 			t.Fatal(err)
 		}
 		if attempt == 0 {
-			store.index.Store(nil)
+			store.cache.clear()
 			cold, err := store.runtimeHistory(context.Background(), projection.NetworkID, view.DeviceID, projection.DeviceAuthorizations[0].DevicePublicKey, now)
 			if err != nil || !reflect.DeepEqual(cold, result) {
 				t.Fatal("discarding the report index changed historical samples", err)
@@ -123,8 +123,11 @@ func TestWebRuntimeHistoryReadsOriginalHourlySamples(t *testing.T) {
 				t.Fatal("fork, invalid signature, other identity or missing sample acquired a runtime state", index)
 			}
 		}
-		if attempt > 0 && !reflect.DeepEqual(previous, result) || !bytes.Equal(original, testObservationBytes(t, root)) {
+		if attempt > 0 && !reflect.DeepEqual(previous, result) || !bytes.Equal(original, testObservationBytes(t, store)) {
 			t.Fatal("reopen changed original reports or their historical projection")
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
 		}
 		previous = result
 	}

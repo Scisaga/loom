@@ -4,15 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	bolt "go.etcd.io/bbolt"
-	"golang.org/x/sync/semaphore"
 )
 
 var ErrReportEquivocation = errors.New("device signed different reports at one sequence")
@@ -32,11 +29,12 @@ func reportBefore(left DeviceReport, leftBody []byte, right DeviceReport, rightB
 }
 
 type ObservationStore struct {
-	path           string
-	mu             sync.Mutex
-	index          atomic.Pointer[reportIndex]
-	indexRead      chan struct{}
-	databaseAccess *semaphore.Weighted // Per-operation admission; no database handle or durable state.
+	path     string
+	entry    os.FileInfo
+	db       *bolt.DB
+	lifetime sync.RWMutex
+	write    chan struct{}
+	cache    reportCache
 }
 
 type reportOwner struct{ network, device string }
@@ -71,8 +69,18 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	store := &ObservationStore{path: path, indexRead: make(chan struct{}, 1), databaseAccess: semaphore.NewWeighted(math.MaxInt64)}
-	if _, err := store.reportIndexSnapshot(context.Background()); err != nil {
+	db, entry, err := openReportDatabase(context.Background(), path, false)
+	if err != nil {
+		return nil, err
+	}
+	store := &ObservationStore{path: path, entry: entry, db: db, write: make(chan struct{}, 1)}
+	indexed := false
+	err = db.View(func(tx *bolt.Tx) error { indexed = tx.Bucket(reportIndexBucket) != nil; return nil })
+	if err == nil && !indexed {
+		err = store.withDatabase(context.Background(), true, ensureReportIndexes)
+	}
+	if err != nil {
+		db.Close()
 		return nil, err
 	}
 	return store, nil
@@ -121,16 +129,9 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	sort.Slice(owners, func(i, j int) bool {
 		return owners[i].network < owners[j].network || owners[i].network == owners[j].network && owners[i].device < owners[j].device
 	})
-	lock, err := lockProtectedControlPath(ctx, filepath.Join(filepath.Dir(store.path), ".observations.lock"))
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	store.mu.Lock()
-	defer store.mu.Unlock()
 	fork := false
-	err = store.withDatabase(ctx, true, func(tx *bolt.Tx) error {
-		cached := store.index.Load()
+	err := store.withDatabase(ctx, true, func(tx *bolt.Tx) error {
+		touched := map[storedReportRange]bool{}
 		bucket := tx.Bucket(observationBucket)
 		high := map[reportOwner]U64{}
 		known := map[reportPosition]map[string]bool{}
@@ -157,11 +158,7 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 			}
 			sort.Slice(sequences, func(i, j int) bool { return sequences[i] < sequences[j] })
 			for _, sequence := range sequences {
-				err := readReportPosition(ctx, bucket, owner, sequence, cached, func(id string, ref reportReference, raw []byte) error {
-					var prior DeviceReport
-					if err := decodeStoredReport(raw, &prior); err != nil {
-						return err
-					}
+				err := readReportPosition(ctx, bucket, owner, sequence, func(id string, ref reportReference, prior DeviceReport) error {
 					if prior.Verify(keys[owner]) != nil {
 						return errors.New("stored report position does not verify against the immutable device key")
 					}
@@ -200,16 +197,23 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 				known[position] = ids
 			}
 			ids[id] = true
-			if err := bucket.Put(referenceOf(report).key(id), bodies[i]); err != nil {
+			key := referenceOf(report).key(id)
+			if err := bucket.Put(key, bodies[i]); err != nil {
+				return err
+			}
+			if err := indexReport(tx, key, report); err != nil {
+				return err
+			}
+			touched[storedReportRange{report.NetworkID, reportScope{report.DeviceID, reportRangeStart(report.ReportSequence)}}] = true
+		}
+		for group := range touched {
+			if err := updateReportRange(tx, group); err != nil {
 				return err
 			}
 		}
 		return ctx.Err()
 	})
 	if err != nil {
-		return err
-	}
-	if err := syncControlDirectory(filepath.Dir(store.path)); err != nil {
 		return err
 	}
 	if fork {
@@ -240,9 +244,10 @@ func (store *ObservationStore) Latest(ctx context.Context) ([]DeviceReport, erro
 			}
 			var original DeviceReport
 			count := 0
-			err = readReportPosition(ctx, bucket, owner, highest, store.index.Load(), func(_ string, _ reportReference, raw []byte) error {
+			err = readReportPosition(ctx, bucket, owner, highest, func(_ string, _ reportReference, report DeviceReport) error {
 				count++
-				return decodeStoredReport(raw, &original)
+				original = report
+				return nil
 			})
 			if err != nil {
 				return err

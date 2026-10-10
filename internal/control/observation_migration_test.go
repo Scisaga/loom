@@ -77,7 +77,7 @@ func TestReportMigrationPreservesAcceptedIdentityHistoryAndRestart(t *testing.T)
 	if err == nil {
 		t.Fatal("migration proceeded while the formal control listener owned its lock")
 	}
-	if _, err := OpenObservationStore(root); err == nil {
+	if _, err := testOpenObservationStore(t, root); err == nil {
 		t.Fatal("daemon silently consumed the JSON container")
 	}
 	result, err := MigrateObservationHistory(context.Background(), root, socket, evidence)
@@ -91,11 +91,11 @@ func TestReportMigrationPreservesAcceptedIdentityHistoryAndRestart(t *testing.T)
 	if _, err := os.Lstat(filepath.Join(root, "observations.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("old runtime reader input remains")
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(testObservationBytes(t, root), original) {
+	if !bytes.Equal(testObservationBytes(t, store), original) {
 		t.Fatal("migration changed an original signed value or fork")
 	}
 	if err := store.Put(sign(2), claim.DevicePublicKey); !errors.Is(err, ErrReportReplay) {
@@ -107,7 +107,10 @@ func TestReportMigrationPreservesAcceptedIdentityHistoryAndRestart(t *testing.T)
 	if err := store.Put(sign(4), claim.DevicePublicKey); err != nil {
 		t.Fatal("normal report could not continue after migration", err)
 	}
-	reopened, err := OpenObservationStore(root)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +155,7 @@ func TestReportMigrationInterruptedPublicationAndRefusals(t *testing.T) {
 					reports = append(reports, sign(4))
 				}
 				testSetObservationReports(t, root, reports)
-				if _, err := OpenObservationStore(root); err == nil {
+				if _, err := testOpenObservationStore(t, root); err == nil {
 					t.Fatal("dual containers entered the daemon")
 				}
 			}

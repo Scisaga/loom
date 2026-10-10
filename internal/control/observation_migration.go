@@ -183,11 +183,20 @@ func migrateReportContainer(ctx context.Context, root, evidence string, keys map
 
 func compareOriginalReports(ctx context.Context, path string, reports []DeviceReport, originals [][]byte) error {
 	return withReportDatabase(ctx, path, false, func(tx *bolt.Tx) error {
-		index, err := scanObservationIndex(ctx, tx, nil)
-		if err != nil {
+		count := 0
+		if err := tx.Bucket(observationBucket).ForEach(func(key, raw []byte) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if _, _, err := reportRecord(key, raw); err != nil {
+				return err
+			}
+			count++
+			return nil
+		}); err != nil {
 			return err
 		}
-		if len(index.reports) != len(originals) {
+		if count != len(originals) {
 			return errors.New("migrated report count differs from the original collection")
 		}
 		for i, report := range reports {

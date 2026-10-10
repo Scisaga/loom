@@ -354,7 +354,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	capture.mu.Unlock()
 	readHistory := func(node int) []byte {
 		t.Helper()
-		return testObservationBytes(t, roots[node])
+		return testObservationBytes(t, peers[node].server.Runtime.Reports)
 	}
 	if !bytes.Equal(readHistory(0), readHistory(1)) {
 		t.Fatal("member history changed original canonical signed bytes")
@@ -505,7 +505,7 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 			t.Fatal("invalid or duplicated transfer priority IDs were accepted")
 		}
 	}
-	index, err := server.Runtime.Reports.reportIndexSnapshot(context.Background())
+	index := testCollectReports(t, server.Runtime.Reports)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 	group := storedReportRange{projection.NetworkID, scope}
 	beforeIDs := append([]string{}, index.groups[group]...)
 	beforeDigest := index.digests[group]
-	ids, err := index.ids(projection, scope)
+	ids, err := server.Runtime.Reports.reportIDs(context.Background(), projection, scope)
 	if err != nil || len(ids) != 2 || index.reports[ids[0]].ReportSequence != base.ReportSequence || !reflect.DeepEqual(beforeIDs, index.groups[group]) || index.digests[group] != beforeDigest {
 		t.Fatal("latest-first transfer changed the immutable range set or digest")
 	}
@@ -566,141 +566,5 @@ func TestReportMemberBatchReturnsBoundedOriginalPrefix(t *testing.T) {
 	}
 	if len(missing) != 0 {
 		t.Fatal("bounded responses left requested originals behind")
-	}
-}
-
-func TestReportLocationsRemainImmutableAndOriginalReadsRejectChangedFiles(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Chmod(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	store, err := OpenObservationStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := testKey(t)
-	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
-	digest := "sha256:" + strings.Repeat("0", 64)
-	makeReport := func(sequence U64) DeviceReport {
-		t.Helper()
-		value, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ReportSequence: sequence, ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: 1, Selections: []ReportSelection{}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "stopped", AppliedViewDigest: digest}, Components: []ComponentReadback{}}, key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return value
-	}
-	snapshot := func() *reportIndex {
-		t.Helper()
-		value, err := store.reportIndexSnapshot(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		return value
-	}
-	if err := store.Put(makeReport(1), public); err != nil {
-		t.Fatal(err)
-	}
-	first := snapshot()
-	other, err := OpenObservationStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := other.Put(makeReport(2), public); err != nil {
-		t.Fatal(err)
-	}
-	second := snapshot()
-	if len(first.reports) != 1 || len(second.reports) != 2 {
-		t.Fatal("external writer changed an old snapshot or escaped file revalidation")
-	}
-	if err := store.Put(makeReport(3), public); err != nil {
-		t.Fatal(err)
-	}
-	third := snapshot()
-	if len(second.reports) != 2 || len(third.reports) != 3 {
-		t.Fatal("cache update mutated a snapshot still in use by a reader")
-	}
-	for _, cold := range []bool{false, true} {
-		lock, err := lockProtectedControlPath(context.Background(), filepath.Join(root, ".observations.lock"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		store.mu.Lock()
-		if cold {
-			store.index.Store(nil)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		committed, readErr := store.reportIndexSnapshot(ctx)
-		cancel()
-		store.mu.Unlock()
-		lock.Close()
-		if readErr != nil || !reflect.DeepEqual(third, committed) {
-			t.Fatalf("committed snapshot waited for an uncommitted writer (cold=%t): %v", cold, readErr)
-		}
-	}
-	// A request waiting for another reader must release its resources on
-	// cancellation without changing the committed cache or taking a write lock.
-	prior := store.index.Load()
-	store.indexRead <- struct{}{}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	_, readErr := store.reportIndexSnapshot(ctx)
-	cancel()
-	<-store.indexRead
-	if !errors.Is(readErr, context.DeadlineExceeded) || store.index.Load() != prior {
-		t.Fatal("waiting snapshot did not cancel without changing committed state", readErr)
-	}
-	var readers sync.WaitGroup
-	results := make(chan *reportIndex, 8)
-	failures := make(chan error, 8)
-	for range 8 {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
-			value, err := store.reportIndexSnapshot(context.Background())
-			results <- value
-			failures <- err
-		}()
-	}
-	if err := store.Put(makeReport(4), public); err != nil {
-		t.Fatal(err)
-	}
-	readers.Wait()
-	close(results)
-	close(failures)
-	for err := range failures {
-		if err != nil {
-			t.Fatal("concurrent committed snapshot failed", err)
-		}
-	}
-	for value := range results {
-		if len(value.reports) != 3 && len(value.reports) != 4 {
-			t.Fatal("reader saw a partial report commit")
-		}
-	}
-	if len(third.reports) != 3 || len(snapshot().reports) != 4 {
-		t.Fatal("concurrent commit changed an old snapshot or lost the new report")
-	}
-	// The same count is not the same input set. Replacing or removing
-	// originals must be visible even when the previous index is warm.
-	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(5)})
-	latest, err := store.Latest(context.Background())
-	if err != nil || len(latest) != 1 || latest[0].ReportSequence != 5 || len(snapshot().reports) != 4 {
-		t.Fatal("unchanged item count hid a changed original", err)
-	}
-	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2)})
-	latest, err = store.Latest(context.Background())
-	if err != nil || len(latest) != 1 || latest[0].ReportSequence != 2 || len(snapshot().reports) != 2 {
-		t.Fatal("warm index resurrected an absent original", err)
-	}
-	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(4)})
-	_ = snapshot()
-	testCorruptReport(t, store.path, func(raw []byte) []byte { return bytes.Replace(raw, []byte(`"schema":3`), []byte(`"schema":4`), 1) })
-	firstRaw, _ := CanonicalEncode(makeReport(1))
-	if _, err := store.readReports(context.Background(), []string{ReleaseDigest(firstRaw)}); err == nil {
-		t.Fatal("physical directory bypassed verification of a changed requested original")
-	}
-	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(4)})
-	testCorruptReport(t, store.path, func(raw []byte) []byte { return append(raw, '\n') })
-	if _, err := store.readReports(context.Background(), []string{ReleaseDigest(firstRaw)}); err == nil {
-		t.Fatal("warm location index bypassed a noncanonical requested original")
 	}
 }

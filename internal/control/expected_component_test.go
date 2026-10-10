@@ -172,10 +172,7 @@ func TestExpectedComponentFormalWriteRestartAndIndependentResolution(t *testing.
 	if err != nil || after.ViewDigest != view.ViewDigest {
 		t.Fatal("download pointer changed a device expectation", err)
 	}
-	reports, err := OpenObservationStore(server.Runtime.Authority.root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	reports := server.Runtime.Reports
 	report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: invite.DeviceID, ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-network", ReportedAt: server.now().UnixMilli(), Selections: []ReportSelection{}, Observations: []Observation{}, Components: view.View.ExpectedComponents, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}}, key)
 	if err != nil || reports.Put(report, claim.DevicePublicKey) != nil || len(reports.Verified(accepted.Projection, server.expectedReleaseSets(accepted.Projection)...)) != 1 {
 		t.Fatal("exact current-view report was rejected", err)

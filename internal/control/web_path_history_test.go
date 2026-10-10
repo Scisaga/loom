@@ -113,7 +113,7 @@ func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 	testSetObservationReports(t, root, reports)
 	body := testObservationBytes(t, root)
 	for attempt := 0; attempt < 2; attempt++ {
-		store, err := OpenObservationStore(root)
+		store, err := testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,9 +135,12 @@ func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 				t.Fatal("old scope, target, generation, signature, fork or out-of-window sample entered history", index)
 			}
 		}
-		readback := testObservationBytes(t, root)
+		readback := testObservationBytes(t, store)
 		if !bytes.Equal(body, readback) {
 			t.Fatal("history query or restart changed signed reports")
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

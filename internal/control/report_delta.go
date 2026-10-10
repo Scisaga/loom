@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-
-	bolt "go.etcd.io/bbolt"
 )
 
 const reportRangeSize U64 = 1024
@@ -192,78 +190,6 @@ type storedReportRange struct {
 	scope   reportScope
 }
 
-// Immutable, disposable projections of the same original collection. No
-// authorization or completion state is cached. Readers may retain a snapshot.
-type reportIndex struct {
-	reports map[string]reportReference
-	groups  map[storedReportRange][]string
-	digests map[storedReportRange]string
-}
-
-func emptyReportIndex() *reportIndex {
-	return &reportIndex{reports: map[string]reportReference{}, groups: map[storedReportRange][]string{}, digests: map[storedReportRange]string{}}
-}
-func (index *reportIndex) rebuildGroups() error {
-	for id, ref := range index.reports {
-		key := storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence)}}
-		index.groups[key] = append(index.groups[key], id)
-	}
-	for key, ids := range index.groups {
-		sort.Strings(ids)
-		body, err := CanonicalEncode(ids)
-		if err != nil {
-			return err
-		}
-		index.digests[key] = ReleaseDigest(body)
-	}
-	return nil
-}
-func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*reportIndex, error) {
-	select {
-	case store.indexRead <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	defer func() { <-store.indexRead }()
-	var index *reportIndex
-	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		var err error
-		index, err = scanObservationIndex(ctx, tx, store.index.Load())
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	store.index.Store(index)
-	return index, nil
-}
-func (index *reportIndex) ranges(projection Projection) reportRanges {
-	value := reportRanges{3, projection.NetworkID, []reportRangeSummary{}}
-	for key, digest := range index.digests {
-		if _, allowed := identityFor(projection, key.scope.DeviceID); key.network == projection.NetworkID && allowed {
-			value.Ranges = append(value.Ranges, reportRangeSummary{key.scope.DeviceID, key.scope.FirstSequence, digest})
-		}
-	}
-	sort.Slice(value.Ranges, func(i, j int) bool { return scopeBefore(value.Ranges[i].scope(), value.Ranges[j].scope()) })
-	return value
-}
-func (index *reportIndex) ids(projection Projection, scope reportScope) ([]string, error) {
-	if _, ok := identityFor(projection, scope.DeviceID); !ok || scope.Validate() != nil {
-		return nil, errors.New("report range is outside current device authorization")
-	}
-	ids := index.groups[storedReportRange{projection.NetworkID, scope}]
-	if ids == nil {
-		ids = []string{}
-	}
-	// The range digest still uses the ID-sorted set. This separate transfer
-	// order cannot authorize a report or assert a remote high-water mark.
-	ids = append([]string{}, ids...)
-	sort.Slice(ids, func(i, j int) bool {
-		a, b := index.reports[ids[i]], index.reports[ids[j]]
-		return a.ReportSequence > b.ReportSequence || a.ReportSequence == b.ReportSequence && ids[i] < ids[j]
-	})
-	return ids, nil
-}
 func sortedReportIDs[T any](values map[string]T) []string {
 	ids := make([]string, 0, len(values))
 	for id := range values {
@@ -284,9 +210,13 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 		return errors.New("local report history unavailable")
 	}
 	projection := runtime.Authority.Snapshot()
-	index, err := runtime.Reports.reportIndexSnapshot(ctx)
+	localRanges, err := runtime.Reports.reportRanges(ctx, projection)
 	if err != nil {
 		return err
+	}
+	digests := map[reportScope]string{}
+	for _, item := range localRanges.Ranges {
+		digests[item.scope()] = item.Digest
 	}
 	var remote reportRanges
 	if err := runtime.peerReportJSON(ctx, member, http.MethodGet, "/internal/report-ranges", nil, &remote, maxControlInputBytes); err != nil {
@@ -306,7 +236,7 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 			failures = errors.Join(failures, errors.New("peer report range is outside current authorization"))
 			continue
 		}
-		if index.digests[storedReportRange{projection.NetworkID, item.scope()}] == item.Digest {
+		if digests[item.scope()] == item.Digest {
 			continue
 		}
 		if item.FirstSequence == latest[item.DeviceID] {
@@ -341,6 +271,14 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 			}
 			byScope[value.scope()] = value.ReportIDs
 		}
+		allIDs := []string{}
+		for _, values := range byScope {
+			allIDs = append(allIDs, values...)
+		}
+		known, err := runtime.Reports.knownReports(ctx, allIDs)
+		if err != nil {
+			return err
+		}
 		wanted := map[string]reportScope{}
 		for position := 0; len(wanted) < reportTransferCount; position++ {
 			remaining := false
@@ -351,7 +289,7 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 				}
 				remaining = true
 				id := values[position]
-				if report, known := index.reports[id]; known {
+				if report, known := known[id]; known {
 					if report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
 						return errors.New("known report differs from peer ID scope")
 					}

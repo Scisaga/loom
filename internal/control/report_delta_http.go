@@ -11,12 +11,12 @@ func (server *Server) internalReportRanges(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "report index does not accept query parameters", http.StatusBadRequest)
 		return
 	}
-	index, err := server.Runtime.Reports.reportIndexSnapshot(r.Context())
+	value, err := server.Runtime.Reports.reportRanges(r.Context(), server.Runtime.Authority.Snapshot())
 	if err != nil {
 		http.Error(w, "report index unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeReportIndex(w, index.ranges(server.Runtime.Authority.Snapshot()))
+	writeReportIndex(w, value)
 }
 func (server *Server) internalReportIDs(w http.ResponseWriter, r *http.Request) {
 	if server.Runtime.Reports == nil {
@@ -32,14 +32,9 @@ func (server *Server) internalReportIDs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	index, err := server.Runtime.Reports.reportIndexSnapshot(r.Context())
-	if err != nil {
-		http.Error(w, "report index unavailable", http.StatusServiceUnavailable)
-		return
-	}
 	value := reportIDs{3, projection.NetworkID, []reportRangeIDs{}}
 	for _, scope := range request.Ranges {
-		ids, err := index.ids(projection, scope)
+		ids, err := server.Runtime.Reports.reportIDs(r.Context(), projection, scope)
 		if err != nil {
 			http.Error(w, "report range unavailable", http.StatusForbidden)
 			return

@@ -67,6 +67,9 @@ func TestControlMemberRotationActivatesOnlyCertifiedPreparedIdentity(t *testing.
 	if _, err = os.Stat(filepath.Join(root, "node-next.json")); !os.IsNotExist(err) {
 		t.Fatal("consumed preparation remained a second input")
 	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
 	restarted, err := OpenRuntime(root, nil)
 	if err != nil {
 		t.Fatal(err)

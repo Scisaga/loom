@@ -230,6 +230,9 @@ func TestAuthorityForkEvidenceIsDurableAndStopsSigning(t *testing.T) {
 	if runtime.Writable() || len(runtime.Authority.Snapshot().NetworkIntent.Services) != 0 {
 		t.Fatal("fork retained authority or restored an ancestor")
 	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
 	reopened, err := OpenRuntime(root, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -257,7 +260,7 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,17 +273,17 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := store.Put(report, public); err != nil {
 		t.Fatal(err)
 	}
-	before := testObservationBytes(t, root)
+	before := testObservationBytes(t, store)
 	if err := store.Put(report, public); err != nil {
 		t.Fatal(err)
 	}
-	after := testObservationBytes(t, root)
+	after := testObservationBytes(t, store)
 	if !bytes.Equal(before, after) {
 		t.Fatal("report retry changed original signed values")
 	}
-	otherWriter, err := OpenObservationStore(root)
-	if err != nil {
-		t.Fatal(err)
+	if other, err := OpenObservationStore(root); err == nil {
+		other.Close()
+		t.Fatal("second database owner was accepted")
 	}
 	fork := report
 	fork.Signature = ""
@@ -292,19 +295,22 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := store.Put(fork, public); !errors.Is(err, ErrReportEquivocation) {
 		t.Fatalf("report fork not rejected: %v", err)
 	}
-	store, err = OpenObservationStore(root)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(store.History()) != 2 || len(store.All()) != 0 {
 		t.Fatal("report fork evidence lost or one fork was chosen")
 	}
-	forkBytes := testObservationBytes(t, root)
+	forkBytes := testObservationBytes(t, store)
 	reverseRoot := t.TempDir()
 	if err := os.Chmod(reverseRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	reverse, err := OpenObservationStore(reverseRoot)
+	reverse, err := testOpenObservationStore(t, reverseRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +320,7 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := reverse.Put(report, public); !errors.Is(err, ErrReportEquivocation) {
 		t.Fatal("reverse arrival order lost the signed fork", err)
 	}
-	reversedBytes := testObservationBytes(t, reverseRoot)
+	reversedBytes := testObservationBytes(t, reverse)
 	if !bytes.Equal(forkBytes, reversedBytes) {
 		t.Fatal("arrival order changed canonical signed history")
 	}
@@ -338,14 +344,11 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err := store.Put(stale, public); !errors.Is(err, ErrReportReplay) {
 		t.Fatal("older sequence overrode report high-water")
 	}
-	if err := otherWriter.Put(stale, public); !errors.Is(err, ErrReportReplay) {
-		t.Fatal("another writer's accepted sequence was hidden by the decode cache", err)
-	}
 	if len(store.Verified(server.Runtime.Authority.Snapshot())) != 1 {
 		t.Fatal("latest signed current-view report unavailable")
 	}
 	path := filepath.Join(root, "observations.db")
-	testCorruptReport(t, path, func(raw []byte) []byte { return append(raw, '\n') })
+	testCorruptReport(t, store, func(raw []byte) []byte { return append(raw, '\n') })
 	invalid, _ := os.ReadFile(path)
 	reportBody, _ := CanonicalEncode(report)
 	forkBody, _ := CanonicalEncode(fork)
@@ -418,27 +421,27 @@ func TestObservationEvidenceCannotBeReinitializedOrImplicitlyMigrated(t *testing
 	if _, err := InitializeAuthority(root, config, genesis); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenObservationStore(root); err != nil {
+	if _, err := testOpenObservationStore(t, root); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "observations.db")
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenObservationStore(root); err == nil {
+	if _, err := testOpenObservationStore(t, root); err == nil {
 		t.Fatal("missing report high-water history was silently reset")
 	}
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenObservationStore(root); err == nil {
+	if _, err := testOpenObservationStore(t, root); err == nil {
 		t.Fatal("empty report history was accepted as an empty decode cache")
 	}
 	old := []byte("{\"schema\":2,\"records\":[],\"latest\":[]}")
 	if err := os.WriteFile(path, old, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenObservationStore(root); err == nil {
+	if _, err := testOpenObservationStore(t, root); err == nil {
 		t.Fatal("old report evidence entered current decoder")
 	}
 	after, err := os.ReadFile(path)

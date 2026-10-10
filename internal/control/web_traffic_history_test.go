@@ -99,7 +99,7 @@ func TestTrafficHistoryUsesOnlyOriginalAdjacentScopedCounters(t *testing.T) {
 			original := testObservationBytes(t, root)
 			var first WebDeviceTraffic
 			for i := 0; i < 2; i++ {
-				store, err := OpenObservationStore(root)
+				store, err := testOpenObservationStore(t, root)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -124,7 +124,7 @@ func TestTrafficHistoryUsesOnlyOriginalAdjacentScopedCounters(t *testing.T) {
 				} else if !reflect.DeepEqual(first, got) {
 					t.Fatal("restart changed derived history")
 				}
-				if !bytes.Equal(original, testObservationBytes(t, root)) {
+				if !bytes.Equal(original, testObservationBytes(t, store)) {
 					t.Fatal("query rewrote signed samples")
 				}
 				if tc.coverage == 0 {
@@ -149,6 +149,9 @@ func TestTrafficHistoryUsesOnlyOriginalAdjacentScopedCounters(t *testing.T) {
 						t.Fatal("old link scope leaked into new one", err)
 					}
 				}
+				if err := store.Close(); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
 	}
@@ -160,7 +163,7 @@ func TestTrafficHistoryFormalScopesAndAuthentication(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}

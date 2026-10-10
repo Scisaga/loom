@@ -102,11 +102,8 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 			newer = nil
 			return nil
 		}
-		var report DeviceReport
-		if err := decodeStoredReport(raw, &report); err != nil {
-			return err
-		}
-		if report.Verify(identity.DevicePublicKey) != nil || report.WireGuardCounters == nil || report.ReportedAt > until {
+		report, err := store.verifiedReport(raw, identity.DevicePublicKey)
+		if err != nil || report.WireGuardCounters == nil || report.ReportedAt > until {
 			newer = nil
 			return nil
 		}
@@ -148,9 +145,7 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 		}
 		newer = &report
 		return nil
-	}, func(ref reportReference) bool {
-		return ref.CounterAt != nil && *ref.CounterAt >= start && *ref.CounterAt <= until
-	})
+	}, reportHistoryWindow{kind: counterTime, from: start, until: until})
 	if result.Recent != nil && result.Recent.LastAt < until-3*time.Minute.Milliseconds() {
 		result.Recent = nil
 	}

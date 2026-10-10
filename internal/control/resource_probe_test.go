@@ -148,11 +148,14 @@ func TestResourceReportBindsExecutionAndRestartsAsRawEvidence(t *testing.T) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenObservationStore(root)
+	store, err := testOpenObservationStore(t, root)
 	if err != nil || store.Put(report, p.DeviceAuthorizations[0].DevicePublicKey) != nil {
 		t.Fatal("resource report did not persist", err)
 	}
-	store, err = OpenObservationStore(root)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = testOpenObservationStore(t, root)
 	if err != nil || !reflect.DeepEqual(store.Verified(p), []DeviceReport{report}) {
 		t.Fatal("resource report lost its original bytes or signature", err)
 	}

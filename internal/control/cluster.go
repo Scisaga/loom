@@ -56,7 +56,7 @@ func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
 func (runtime *Runtime) Close() error {
 	runtime.once.Do(func() { close(runtime.stop) })
 	<-runtime.done
-	return nil
+	return runtime.Reports.Close()
 }
 func (runtime *Runtime) Writable() bool {
 	return runtime.Authority != nil && runtime.Authority.signingReady(runtime.Config)

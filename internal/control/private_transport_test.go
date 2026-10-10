@@ -204,7 +204,7 @@ func TestPrivateMemberDeltaAndBrowserTLSUseCurrentAuthority(t *testing.T) {
 				{Node: "demo-relay-b", Addresses: good.ListenAddresses()},
 			}}}
 		channel.AttachAuthority(authority)
-		reports, err := OpenObservationStore(root)
+		reports, err := testOpenObservationStore(t, root)
 		if err != nil {
 			t.Fatal(err)
 		}

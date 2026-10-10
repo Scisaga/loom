@@ -55,18 +55,22 @@ func highestReportPosition(bucket *bolt.Bucket, owner reportOwner) (U64, error) 
 	return ref.ReportSequence, err
 }
 
-func readReportPosition(ctx context.Context, bucket *bolt.Bucket, owner reportOwner, sequence U64, cached *reportIndex, visit func(string, reportReference, []byte) error) error {
+func readReportPosition(ctx context.Context, bucket *bolt.Bucket, owner reportOwner, sequence U64, visit func(string, reportReference, DeviceReport) error) error {
 	prefix := binary.BigEndian.AppendUint64(reportOwnerPrefix(owner), uint64(sequence))
 	cursor := bucket.Cursor()
 	for key, raw := cursor.Seek(prefix); bytes.HasPrefix(key, prefix); key, raw = cursor.Next() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		id, ref, err := reportRecord(key, raw, cached)
-		if err != nil {
+		var report DeviceReport
+		if err := decodeStoredReport(raw, &report); err != nil {
 			return err
 		}
-		if err := visit(id, ref, raw); err != nil {
+		id, ref := ReleaseDigest(raw), referenceOf(report)
+		if !bytes.Equal(ref.key(id), key) {
+			return errors.New("report position differs from its original")
+		}
+		if err := visit(id, ref, report); err != nil {
 			return err
 		}
 	}

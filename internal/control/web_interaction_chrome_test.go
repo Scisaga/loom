@@ -344,7 +344,10 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	releaseSource.original.Packages[0].Components[0].ArtifactDigest = "sha256:" + strings.Repeat("a", 64)
 	server.Releases = releaseSource
 	var err error
-	server.Runtime.Reports, err = OpenObservationStore(server.Runtime.Authority.root)
+	if err := server.Runtime.Reports.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server.Runtime.Reports, err = testOpenObservationStore(t, server.Runtime.Authority.root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,10 +571,14 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("device versions lost signed components or restored publisher progress")
 	}
 	// Reopen the ordinary report history rather than storing component state.
-	reopenedReports, err := OpenObservationStore(server.Runtime.Authority.root)
+	if err := server.Runtime.Reports.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopenedReports, err := testOpenObservationStore(t, server.Runtime.Authority.root)
 	if err != nil || len(reopenedReports.Verified(server.Runtime.Authority.Snapshot())) != 1 || len(reopenedReports.Verified(server.Runtime.Authority.Snapshot())[0].Components) != 2 {
 		t.Fatal("signed component reports did not survive observation store reopen", err)
 	}
+	server.Runtime.Reports = reopenedReports
 	assertChromeLivePaths(t, debug)
 	report = assertChromeEvidenceExpiry(t, debug, report, sendReport)
 	for _, sample := range []struct {
