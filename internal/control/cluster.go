@@ -116,38 +116,81 @@ func (a *Authority) signingReady(config NodeConfig) bool {
 	return true
 }
 func (runtime *Runtime) reconcileLoop() {
-	defer close(runtime.done)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	for {
-		runtime.reconcilePeers()
-		select {
-		case <-runtime.stop:
-			return
-		case <-runtime.wake:
-		case <-ticker.C:
-		}
-	}
+	runtime.reconcilePeers(ticker.C)
 }
-func (runtime *Runtime) reconcilePeers() {
-	for _, member := range runtime.Authority.Snapshot().Config.Members {
-		if member.ControlID == runtime.Config.ControlID {
-			continue
-		}
+
+// Only in-flight calls live here. Membership and missing originals are always
+// read again; completion is neither a health result nor a durable sync cursor.
+func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
+	defer close(runtime.done)
+	ctx, cancel := context.WithCancel(context.Background())
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	type call struct {
+		member Member
+		cancel context.CancelFunc
+		done   chan struct{}
+	}
+	inflight := map[string]*call{}
+	for {
 		select {
 		case <-runtime.stop:
 			return
 		default:
 		}
-		// One report batch needs frontier, ranges, IDs and original bodies.
-		// Each private request already has a 15-second bound; a shorter shared
-		// deadline can repeatedly cancel the first batch before any progress.
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		if err := runtime.reconcilePeer(ctx, member); err != nil {
-			log.Printf("private control synchronization unavailable for member %s: %v", member.ControlID, err)
+		members := map[string]Member{}
+		config := runtime.Authority.Snapshot().Config
+		for _, member := range config.Members {
+			if member.ControlID != runtime.Config.ControlID {
+				members[member.ControlID] = member
+			}
 		}
-		cancel()
+		for id, active := range inflight {
+			if member, present := members[id]; !present || member != active.member {
+				active.cancel()
+			}
+			select {
+			case <-active.done:
+				delete(inflight, id)
+			default:
+			}
+		}
+		// Use the canonical member order, with at most one call per control.
+		// A slow member must not gate the next attempt of an available member.
+		for _, member := range config.Members {
+			if _, eligible := members[member.ControlID]; !eligible || inflight[member.ControlID] != nil {
+				continue
+			}
+			peerCtx, peerCancel := context.WithCancel(ctx)
+			active := &call{member: member, cancel: peerCancel, done: make(chan struct{})}
+			inflight[member.ControlID] = active
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				defer close(active.done)
+				defer peerCancel()
+				if err := runtime.reconcilePeerAttempt(peerCtx, member); err != nil && peerCtx.Err() == nil {
+					log.Printf("private control synchronization unavailable for member %s: %v", member.ControlID, err)
+				}
+			}()
+		}
+		select {
+		case <-runtime.stop:
+			return
+		case <-runtime.wake:
+		case <-ticks:
+		}
 	}
+}
+
+func (runtime *Runtime) reconcilePeerAttempt(ctx context.Context, member Member) error {
+	// Frontier, ranges, IDs and originals retain the existing combined budget.
+	// Cancelling the runtime or replacing this member also ends the attempt.
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	return runtime.reconcilePeer(ctx, member)
 }
 func frontierFor(values []FactFrontier, keyID string) FactFrontier {
 	for _, value := range values {

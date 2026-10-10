@@ -258,7 +258,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	capture.mu.Lock()
 	capture.delay = 3 * time.Second
 	capture.mu.Unlock()
-	peers[1].server.Runtime.reconcilePeers()
+	_ = peers[1].server.Runtime.reconcilePeerAttempt(context.Background(), members[0])
 	capture.mu.Lock()
 	capture.delay = 0
 	capture.mu.Unlock()

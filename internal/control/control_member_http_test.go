@@ -19,6 +19,10 @@ func membershipTLSPeers(t *testing.T, f materialFixture) []reportTestPeer {
 }
 
 func membershipTLSPeersWithCA(t *testing.T, f materialFixture, dropProofOn int) ([]reportTestPeer, transportCA) {
+	return membershipTLSPeersWithHandler(t, f, dropProofOn, nil)
+}
+
+func membershipTLSPeersWithHandler(t *testing.T, f materialFixture, dropProofOn int, wrap func(int, http.Handler) http.Handler) ([]reportTestPeer, transportCA) {
 	t.Helper()
 	a, configs := materialAuthorities(t, f)
 	parent := t.TempDir()
@@ -64,6 +68,9 @@ func membershipTLSPeersWithCA(t *testing.T, f materialFixture, dropProofOn int) 
 				}
 				next.ServeHTTP(w, r)
 			})
+		}
+		if wrap != nil {
+			handler = wrap(i, handler)
 		}
 		httpServer := &http.Server{Handler: handler, ConnContext: controlConnContext, ReadHeaderTimeout: time.Second}
 		go httpServer.Serve(channel.ControlListener())
