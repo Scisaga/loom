@@ -156,16 +156,17 @@ func projectWebPaths(projection Projection, releases ...ReleaseSet) []Path {
 
 func projectWebLinks(projection Projection) []Link {
 	resources := map[string]TransportResource{}
-	eligible := map[string]bool{}
+	senders, receivers := map[string]bool{}, map[string]bool{}
 	for _, device := range projection.DeviceAuthorizations {
-		eligible[device.ID] = containsString(device.Responsibilities, "forward")
+		senders[device.ID] = containsString(device.Responsibilities, "forward")
+		receivers[device.ID] = senders[device.ID] || containsString(device.Responsibilities, "internet_egress")
 	}
 	for _, resource := range projection.NetworkIntent.Resources {
 		resources[resource.ID] = resource
 	}
 	result := []Link{}
 	for _, link := range projection.NetworkIntent.Links {
-		if !eligible[link.FromNodeID] || !eligible[link.ToNodeID] {
+		if !senders[link.FromNodeID] || !receivers[link.ToNodeID] {
 			continue
 		}
 		from, to, _, err := linkResources(link, resources)

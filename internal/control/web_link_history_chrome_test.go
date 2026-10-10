@@ -21,6 +21,7 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 		t.Skip("set LOOM_WEB_CHROME_TEST=1 for browser history acceptance")
 	}
 	p := relayProjectionFixture(t)
+	p.DeviceAuthorizations[1].Responsibilities = []string{"internet_egress"}
 	f := newMaterialFixture(t)
 	for i := range p.DeviceAuthorizations {
 		if p.DeviceAuthorizations[i].ID == "demo-entry" {

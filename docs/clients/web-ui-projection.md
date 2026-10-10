@@ -194,6 +194,8 @@ Topology 的选中连线、详情与逐 LinkID 表格使用同一组测量，保
 参数扩大范围。现行显式 Link 是原生 WG 中继；其历史只接受发送端签名的 `wireguard_dns` 原观测，
 不创造 Hy2 Link、不套用设备 runtime 或 Service 结果。删除链路、撤销端点或改变资源规范后，
 原范围不再作为该行的历史；其他 Service 或组件期望的变化不删除仍匹配的 Link 样本。
+端点资格与现行 Link 写入相同：发送端具有 forward；原生 WG 接收端具有 forward 或
+internet_egress。仅承担最终出网的接收端不能因缺少 forward 被拓扑和历史隐藏。
 Web snapshot 的 Link 行携带同一资源 ID 与原生规范摘要，用于范围变化时废弃派生查询结果；
 摘要由已有 Link 规范函数计算，不成为可写字段或另一个链路身份。
 

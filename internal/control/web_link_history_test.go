@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"reflect"
 	"strings"
@@ -89,7 +90,9 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 	add(9, func(v *Observation) { v.NetworkGeneration = "demo-earlier-network" })
 	add(10, func(v *Observation) { v.ResourceID = link.FromResourceID })
 	add(11, func(v *Observation) { v.Action = "hysteria2_tls" })
-	add(12, func(v *Observation) { v.Target = "[fd00::99]:53" })
+	add(12, func(v *Observation) {
+		v.Target = net.JoinHostPort(netip.MustParseAddr(link.ProbeTarget.Host).Next().String(), "53")
+	})
 	add(13, nil)
 	reports[len(reports)-1].DeviceID = link.ToNodeID
 	resign()
@@ -190,10 +193,16 @@ func TestWebLinkHistoryQueryCannotExpandEndpointPermission(t *testing.T) {
 		check(query, http.StatusBadRequest)
 	}
 	check("link=demo-missing", http.StatusNotFound)
+	// Native WG may terminate at an Internet egress without a forwarding role.
+	a.projection.DeviceAuthorizations[1].Responsibilities = []string{"internet_egress"}
+	check("link=demo-link", http.StatusOK)
+	if links := projectWebLinks(a.Snapshot()); len(links) != 1 || links[0].ID != "demo-link" {
+		t.Fatal("authorized Internet-only receiver disappeared from the topology")
+	}
 	for _, change := range []func(*Projection){
 		func(p *Projection) { p.NetworkIntent.Links = []NetworkLink{} },
 		func(p *Projection) { p.DeviceAuthorizations[2].Responsibilities = []string{"internet_egress"} },
-		func(p *Projection) { p.DeviceAuthorizations[1].Responsibilities = []string{"internet_egress"} },
+		func(p *Projection) { p.DeviceAuthorizations[1].Responsibilities = []string{"access"} },
 	} {
 		a.projection = cloneAuthorityProjection(p)
 		change(&a.projection)

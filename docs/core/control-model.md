@@ -443,6 +443,8 @@ Hy2 的唯一规范认证形状为公开 CA DER 集合和 server_name，见[现�
 `initiator_node_id` 决定 UDP 建连方向，From/To 决定业务方向，两者分离。双向业务由两个有向 Link
 表达，端点资源相同的反向 Link 复用同一接口和 peer。资源保存单个 /32 或 /128 地址；执行只安装
 对端的精确地址路由，不获得默认路由、LAN 或宿主 DNS 权限。现有本机 WG 私钥继续由文件引用提供。
+业务发送端必须具有 forward；原生 WG 接收端具有 forward 或 internet_egress 即可。
+最终出网接收端不因缺少 forward 失去其已获授权的 Link，Web 与历史查询使用同一资格。
 
 Hy2 的 `link_only=true` 不开放普通公开首跳。当前业务首跳为独立 Hy2 或启用了
 `access_enabled` 的 WG；后续显式中继使用原生 WG。用户选择入口、最终出口与完整候选，
