@@ -569,7 +569,7 @@ func TestReportMemberBatchReturnsBoundedOriginalPrefix(t *testing.T) {
 	}
 }
 
-func TestReportIndexSnapshotsRemainImmutableAndRejectChangedFiles(t *testing.T) {
+func TestReportLocationsRemainImmutableAndOriginalReadsRejectChangedFiles(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -694,12 +694,13 @@ func TestReportIndexSnapshotsRemainImmutableAndRejectChangedFiles(t *testing.T) 
 	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(4)})
 	_ = snapshot()
 	testCorruptReport(t, store.path, func(raw []byte) []byte { return bytes.Replace(raw, []byte(`"schema":3`), []byte(`"schema":4`), 1) })
-	if _, err := store.reportIndexSnapshot(context.Background()); err == nil {
-		t.Fatal("same-length corruption bypassed original-byte verification")
+	firstRaw, _ := CanonicalEncode(makeReport(1))
+	if _, err := store.readReports(context.Background(), []string{ReleaseDigest(firstRaw)}); err == nil {
+		t.Fatal("physical directory bypassed verification of a changed requested original")
 	}
 	testSetObservationReports(t, root, []DeviceReport{makeReport(1), makeReport(2), makeReport(3), makeReport(4)})
 	testCorruptReport(t, store.path, func(raw []byte) []byte { return append(raw, '\n') })
-	if _, err := store.reportIndexSnapshot(context.Background()); err == nil {
-		t.Fatal("warm index bypassed noncanonical original")
+	if _, err := store.readReports(context.Background(), []string{ReleaseDigest(firstRaw)}); err == nil {
+		t.Fatal("warm location index bypassed a noncanonical requested original")
 	}
 }

@@ -62,7 +62,7 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 		result.Buckets[index].Hour = start.Add(time.Duration(index) * time.Hour).UnixMilli()
 	}
 	err := store.walkDeviceHistorySnapshot(ctx, network, device, func(_ U64, pending reportReference, pendingRaw []byte) error {
-		if pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
+		if pendingRaw == nil || pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
 			return nil
 		}
 		bucket := &result.Buckets[(pending.ReportedAt-result.From)/time.Hour.Milliseconds()]
@@ -79,6 +79,6 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 		bucket.Sample = &WebRuntimeSample{ReportID: ReleaseDigest(pendingRaw), ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt,
 			ViewDigest: report.ViewDigest, State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}
 		return nil
-	})
+	}, func(ref reportReference) bool { return ref.ReportedAt >= result.From && ref.ReportedAt <= result.Until })
 	return result, err
 }

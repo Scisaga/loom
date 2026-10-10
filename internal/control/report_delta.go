@@ -218,26 +218,6 @@ func (index *reportIndex) rebuildGroups() error {
 	}
 	return nil
 }
-func (index *reportIndex) withReports(reports []DeviceReport) (*reportIndex, error) {
-	if len(reports) == 0 {
-		return index, nil
-	}
-	next := emptyReportIndex()
-	for id, ref := range index.reports {
-		next.reports[id] = ref
-	}
-	for _, report := range reports {
-		raw, err := CanonicalEncode(report)
-		if err != nil {
-			return nil, err
-		}
-		next.reports[ReleaseDigest(raw)] = referenceOf(report)
-	}
-	if err := next.rebuildGroups(); err != nil {
-		return nil, err
-	}
-	return next, nil
-}
 func (store *ObservationStore) reportIndexSnapshot(ctx context.Context) (*reportIndex, error) {
 	select {
 	case store.indexRead <- struct{}{}:

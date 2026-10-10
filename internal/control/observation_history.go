@@ -9,10 +9,11 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// Pin only locations while holding the read handle. Keys do not authenticate
-// their values: every pinned original is copied and checked before projection,
-// including forks and originals the caller excludes from its time window.
-func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, visit func(U64, reportReference, []byte) error) error {
+// Pin locations and forks. An optional query filter can exclude a known content
+// ID's immutable metadata. Exclusions are delivered with nil raw bytes so that
+// counters still break adjacency; they cannot supply a projected sample.
+// Every selected original, and the highest position, is read and checked.
+func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, visit func(U64, reportReference, []byte) error, include ...func(reportReference) bool) error {
 	if ValidateID(network) != nil || ValidateID(device) != nil {
 		return errors.New("invalid report history scope")
 	}
@@ -49,6 +50,24 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 		highest = sequence(keys[0])
 	}
 	for offset := 0; offset < len(keys); {
+		// Skip a run outside the query without repeatedly opening the database.
+		// These notifications can only break adjacency, never supply a sample.
+		if len(include) != 0 && cached != nil && sequence(keys[offset]) != highest {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			id, _, err := locateReportKey(keys[offset])
+			if err != nil {
+				return err
+			}
+			if ref, found := cached.reports[id]; found && bytes.Equal(ref.key(id), keys[offset]) && !include[0](ref) {
+				if err := visit(highest, ref, nil); err != nil {
+					return err
+				}
+				offset++
+				continue
+			}
+		}
 		first := offset
 		var originals [][]byte
 		copied := 0
@@ -56,6 +75,17 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 			for offset < len(keys) && len(originals) < 64 {
 				if err := ctx.Err(); err != nil {
 					return err
+				}
+				if len(include) != 0 && cached != nil && sequence(keys[offset]) != highest {
+					id, _, err := locateReportKey(keys[offset])
+					if err != nil {
+						return err
+					}
+					if ref, found := cached.reports[id]; found && bytes.Equal(ref.key(id), keys[offset]) && !include[0](ref) {
+						originals = append(originals, nil)
+						offset++
+						continue
+					}
 				}
 				raw := tx.Bucket(observationBucket).Get(keys[offset])
 				if len(raw) == 0 || len(raw) > controlHTTPBodyLimit {
@@ -79,6 +109,16 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				return err
 			}
 			position := first + i
+			if raw == nil {
+				id, _, err := locateReportKey(keys[position])
+				if err != nil {
+					return err
+				}
+				if err := visit(highest, cached.reports[id], nil); err != nil {
+					return err
+				}
+				continue
+			}
 			_, ref, err := reportRecord(keys[position], raw, cached)
 			if err != nil {
 				return err

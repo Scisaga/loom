@@ -239,13 +239,30 @@ func initializeObservationDB(path string) error {
 }
 
 func scanObservationIndex(ctx context.Context, tx *bolt.Tx, cached *reportIndex) (*reportIndex, error) {
+	// The directory describes physical locations, not authenticated reports.
+	// Every original used by a caller is checked by reportRecord at that point.
+	location := func(key, raw []byte) (string, reportReference, error) {
+		id, ref, err := locateReportKey(key)
+		if err != nil {
+			return "", ref, err
+		}
+		if len(raw) == 0 || len(raw) > controlHTTPBodyLimit {
+			return "", ref, errors.New("invalid report at directory location")
+		}
+		if cached != nil {
+			if prior, ok := cached.reports[id]; ok && prior.NetworkID == ref.NetworkID && prior.DeviceID == ref.DeviceID && prior.ReportSequence == ref.ReportSequence {
+				return id, prior, nil
+			}
+		}
+		return reportRecord(key, raw, nil)
+	}
 	if cached != nil {
 		count, unchanged := 0, true
 		err := tx.Bucket(observationBucket).ForEach(func(key, raw []byte) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			id, ref, err := reportRecord(key, raw, cached)
+			id, ref, err := location(key, raw)
 			if err != nil {
 				return err
 			}
@@ -262,14 +279,13 @@ func scanObservationIndex(ctx context.Context, tx *bolt.Tx, cached *reportIndex)
 			return cached, nil
 		}
 	}
-	// Rebuild only after a content change, in the same committed snapshot.
-	// The checked fast path still hashes and checks every original and key.
+	// Rebuild only after a location change, in the same committed snapshot.
 	result := emptyReportIndex()
 	err := tx.Bucket(observationBucket).ForEach(func(key, raw []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		id, ref, err := reportRecord(key, raw, cached)
+		id, ref, err := location(key, raw)
 		if err != nil {
 			return err
 		}
@@ -288,9 +304,20 @@ func scanObservationIndex(ctx context.Context, tx *bolt.Tx, cached *reportIndex)
 func (store *ObservationStore) readReports(ctx context.Context, ids []string) (map[string]DeviceReport, error) {
 	result := map[string]DeviceReport{}
 	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		index, err := scanObservationIndex(ctx, tx, store.index.Load())
-		if err != nil {
-			return err
+		index := store.index.Load()
+		missing := index == nil
+		for _, id := range ids {
+			if index != nil {
+				_, found := index.reports[id]
+				missing = missing || !found
+			}
+		}
+		if missing {
+			var err error
+			index, err = scanObservationIndex(ctx, tx, index)
+			if err != nil {
+				return err
+			}
 		}
 		used := len(observationPrefix) + len(observationSuffix)
 		for _, id := range ids {
@@ -298,7 +325,15 @@ func (store *ObservationStore) readReports(ctx context.Context, ids []string) (m
 			if !found {
 				return errors.New("requested report is absent")
 			}
-			raw := tx.Bucket(observationBucket).Get(ref.key(id))
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			key := ref.key(id)
+			raw := tx.Bucket(observationBucket).Get(key)
+			actual, _, err := reportRecord(key, raw, index)
+			if err != nil || actual != id {
+				return errors.New("requested original differs from its directory location")
+			}
 			if used+len(raw)+1 > reportBatchBytes {
 				break
 			}

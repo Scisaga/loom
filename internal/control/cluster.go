@@ -44,9 +44,6 @@ func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := reports.reportIndexSnapshot(context.Background()); err != nil {
-		return nil, err
-	}
 	runtime := &Runtime{Config: config, Authority: a, Reports: reports, Channel: channel, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	if channel != nil {
 		channel.AttachAuthority(a)

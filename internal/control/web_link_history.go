@@ -101,6 +101,9 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 	recent := map[int64]*Observation{}
 	recentBodies := map[int64]string{}
 	err := store.walkDeviceHistorySnapshot(ctx, network, identity.ID, func(highest U64, ref reportReference, raw []byte) error {
+		if raw == nil {
+			return nil
+		}
 		candidate := ref.ReportSequence == highest
 		for _, sample := range ref.LinkSamples {
 			if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
@@ -161,6 +164,13 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 			}
 		}
 		return nil
+	}, func(ref reportReference) bool {
+		for _, sample := range ref.LinkSamples {
+			if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
+				return true
+			}
+		}
+		return false
 	})
 	if scope := result.RoundTrips; scope != nil {
 		values := []int64{}

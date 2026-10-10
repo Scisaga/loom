@@ -1,13 +1,10 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"net/url"
 	"time"
-
-	bolt "go.etcd.io/bbolt"
 )
 
 // These values are disposable projections of signed reports, never write input.
@@ -88,63 +85,42 @@ func (store *ObservationStore) pathHistory(ctx context.Context, network string, 
 	}
 	latest := [24]int64{}
 	chosen := [24]string{}
-	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		index, err := scanObservationIndex(ctx, tx, store.index.Load())
-		if err != nil {
+	err := store.walkDeviceHistorySnapshot(ctx, network, authorization.ID, func(_ U64, _ reportReference, raw []byte) error {
+		var report DeviceReport
+		if err := decodeStoredReport(raw, &report); err != nil {
 			return err
 		}
-		counts := map[U64]int{}
-		for _, ref := range index.reports {
-			if ref.NetworkID == network && ref.DeviceID == authorization.ID {
-				counts[ref.ReportSequence]++
-			}
-		}
-		cursor := tx.Bucket(observationBucket).Cursor()
-		prefix := []byte(network + "\x00" + authorization.ID + "\x00")
-		for key, raw := cursor.Seek(prefix); key != nil && bytes.HasPrefix(key, prefix); key, raw = cursor.Next() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			var report DeviceReport
-			if err := decodeStoredReport(raw, &report); err != nil {
-				return err
-			}
-			if counts[report.ReportSequence] != 1 {
+		checked, valid := false, false
+		for _, observation := range report.Observations {
+			if observation.Level != "service" || observation.ServiceID != route.ServiceID || observation.CandidateID != route.ID || observation.SpecDigest != route.SpecDigest || observation.Target != target || observation.Action != "https_request" || observation.NetworkGeneration != report.NetworkGeneration || observation.ObservedAt < result.From || observation.ObservedAt > result.Until {
 				continue
 			}
-			checked, valid := false, false
-			for _, observation := range report.Observations {
-				if observation.Level != "service" || observation.ServiceID != route.ServiceID || observation.CandidateID != route.ID || observation.SpecDigest != route.SpecDigest || observation.Target != target || observation.Action != "https_request" || observation.NetworkGeneration != report.NetworkGeneration || observation.ObservedAt < result.From || observation.ObservedAt > result.Until {
-					continue
-				}
-				hour := int((observation.ObservedAt - result.From) / time.Hour.Milliseconds())
-				if latest[hour] != 0 && observation.ObservedAt < latest[hour] {
-					continue
-				}
-				if !checked {
-					valid = report.Verify(authorization.DevicePublicKey) == nil
-					checked = true
-				}
-				if !valid {
-					continue
-				}
-				encoded, err := CanonicalEncode(observation)
-				if err != nil {
-					return err
-				}
-				if latest[hour] == 0 || observation.ObservedAt > latest[hour] {
-					latest[hour] = observation.ObservedAt
-					chosen[hour] = string(encoded)
-					value := observation
-					result.Buckets[hour].Observation = &value
-					result.Buckets[hour].Ambiguous = false
-				} else if string(encoded) != chosen[hour] {
-					result.Buckets[hour].Observation = nil
-					result.Buckets[hour].Ambiguous = true
-				}
+			hour := int((observation.ObservedAt - result.From) / time.Hour.Milliseconds())
+			if latest[hour] != 0 && observation.ObservedAt < latest[hour] {
+				continue
+			}
+			if !checked {
+				valid = report.Verify(authorization.DevicePublicKey) == nil
+				checked = true
+			}
+			if !valid {
+				continue
+			}
+			encoded, err := CanonicalEncode(observation)
+			if err != nil {
+				return err
+			}
+			if latest[hour] == 0 || observation.ObservedAt > latest[hour] {
+				latest[hour] = observation.ObservedAt
+				chosen[hour] = string(encoded)
+				value := observation
+				result.Buckets[hour].Observation = &value
+				result.Buckets[hour].Ambiguous = false
+			} else if string(encoded) != chosen[hour] {
+				result.Buckets[hour].Observation = nil
+				result.Buckets[hour].Ambiguous = true
 			}
 		}
-		store.index.Store(index)
 		return nil
 	})
 	return result, err

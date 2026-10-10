@@ -347,8 +347,10 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	path := filepath.Join(root, "observations.db")
 	testCorruptReport(t, path, func(raw []byte) []byte { return append(raw, '\n') })
 	invalid, _ := os.ReadFile(path)
-	if err := store.Put(next, public); err == nil {
-		t.Fatal("cached report history bypassed strict original decoding")
+	reportBody, _ := CanonicalEncode(report)
+	forkBody, _ := CanonicalEncode(fork)
+	if _, err := store.readReports(context.Background(), []string{ReleaseDigest(reportBody), ReleaseDigest(forkBody)}); err == nil {
+		t.Fatal("cached report location bypassed strict decoding of a requested original")
 	}
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, invalid) {
 		t.Fatal("rejected history was overwritten from cache")
