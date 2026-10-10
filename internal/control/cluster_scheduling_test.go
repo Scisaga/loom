@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"net/http"
 	"sync/atomic"
@@ -148,7 +151,7 @@ func TestMemberSchedulingCancelsReplacedMembershipIdentity(t *testing.T) {
 			var calls, active, maximum atomic.Int32
 			peers, _ := membershipTLSPeersWithHandler(t, f, -1, func(i int, next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if i != 1 || r.URL.Path != "/internal/control-proof" {
+					if i != 1 || r.URL.Path != "/internal/frontier" {
 						next.ServeHTTP(w, r)
 						return
 					}
@@ -223,5 +226,34 @@ func TestMemberSchedulingCancelsReplacedMembershipIdentity(t *testing.T) {
 				t.Fatal("old and replacement attempts overlapped", maximum.Load())
 			}
 		})
+	}
+}
+
+func TestMemberRequestRechecksCertificateLifetime(t *testing.T) {
+	root, config, genesis := authorityFixture(t)
+	authority, err := InitializeAuthority(root, config, genesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := authority.Snapshot().Config.Members[0]
+	key, _ := decodePublicKey(member.PublicKey)
+	now := time.Now()
+	leaf := &x509.Certificate{Subject: pkix.Name{CommonName: member.ControlID}, PublicKey: key,
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}
+	issuer := &x509.Certificate{NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}
+	// TLS has already verified this connection. Its next HTTP request must
+	// still reject an expired leaf or issuer; observation time is unrelated.
+	request := &http.Request{TLS: &tls.ConnectionState{NegotiatedProtocol: controlALPN,
+		PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf, issuer}}}}
+	server := &Server{Runtime: &Runtime{Authority: authority}, Now: func() time.Time { return now.Add(24 * time.Hour) }}
+	if !server.memberRequest(request) || !server.historicalProofRequest(request) {
+		t.Fatal("current TLS identity was rejected using the business observation clock")
+	}
+	for _, certificate := range []*x509.Certificate{leaf, issuer} {
+		certificate.NotAfter = now.Add(-time.Second)
+		if server.memberRequest(request) || server.historicalProofRequest(request) {
+			t.Fatal("an earlier TLS handshake preserved an expired HTTP request identity")
+		}
+		certificate.NotAfter = now.Add(time.Hour)
 	}
 }

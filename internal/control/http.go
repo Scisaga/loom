@@ -291,7 +291,7 @@ func (server *Server) exactHost(host string) bool {
 	return false
 }
 func (server *Server) memberRequest(r *http.Request) bool {
-	if server.Runtime == nil || r.TLS == nil || r.TLS.NegotiatedProtocol != controlALPN || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
+	if server.Runtime == nil || r.TLS == nil || r.TLS.NegotiatedProtocol != controlALPN || !certificateChainsCurrent(r.TLS.VerifiedChains, time.Now()) || len(r.TLS.PeerCertificates) == 0 {
 		return false
 	}
 	leaf := r.TLS.PeerCertificates[0]
@@ -308,7 +308,7 @@ func (server *Server) memberRequest(r *http.Request) bool {
 	return false
 }
 func (server *Server) historicalProofRequest(r *http.Request) bool {
-	if server.Runtime == nil || r.TLS == nil || r.TLS.NegotiatedProtocol != controlALPN || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
+	if server.Runtime == nil || r.TLS == nil || r.TLS.NegotiatedProtocol != controlALPN || !certificateChainsCurrent(r.TLS.VerifiedChains, time.Now()) || len(r.TLS.PeerCertificates) == 0 {
 		return false
 	}
 	leaf := r.TLS.PeerCertificates[0]

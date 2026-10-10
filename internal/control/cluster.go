@@ -190,8 +190,27 @@ func (runtime *Runtime) reconcilePeerAttempt(ctx context.Context, member Member)
 	// Cancelling the runtime or replacing this member also ends the attempt.
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
+	if runtime.Channel == nil {
+		return errors.New("private member transport is unavailable")
+	}
+	client, err := runtime.Channel.peerClient(member.NodeID)
+	if err != nil {
+		return err
+	}
+	client.Transport.(*http.Transport).DisableKeepAlives = false
+	defer client.CloseIdleConnections()
+	ctx = context.WithValue(ctx, memberHTTPAttemptKey{}, memberHTTPAttempt{member, client})
 	return runtime.reconcilePeer(ctx, member)
 }
+
+// One call owns this connection; it is not a member cache or a sync cursor.
+// Proof-only recovery must never borrow its ordinary-request transport.
+type memberHTTPAttemptKey struct{}
+type memberHTTPAttempt struct {
+	member Member
+	client *http.Client
+}
+
 func frontierFor(values []FactFrontier, keyID string) FactFrontier {
 	for _, value := range values {
 		if value.KeyID == keyID {
@@ -369,9 +388,22 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 	if !current {
 		return nil, errors.New("peer is no longer a control member")
 	}
-	client, err := runtime.Channel.peerClientFor(member.NodeID, method == http.MethodGet && path == "/internal/control-proof")
-	if err != nil {
-		return nil, err
+	proofOnly := method == http.MethodGet && path == "/internal/control-proof"
+	var client *http.Client
+	if attempt, ok := ctx.Value(memberHTTPAttemptKey{}).(memberHTTPAttempt); ok && !proofOnly {
+		if attempt.member != member {
+			return nil, errors.New("member request differs from its connection scope")
+		}
+		client = attempt.client
+	}
+	reusedScope := client != nil
+	if client == nil {
+		var err error
+		client, err = runtime.Channel.peerClientFor(member.NodeID, proofOnly)
+		if err != nil {
+			return nil, err
+		}
+		defer client.CloseIdleConnections()
 	}
 	// NodeID is an opaque domain ID, not a DNS name or a URL component. The
 	// member is already fixed by peerClient and its authenticated dial closure.
@@ -385,6 +417,16 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 		return nil, err
 	}
 	defer response.Body.Close()
+	if reusedScope {
+		if response.TLS == nil {
+			return nil, errors.New("member response has no TLS identity")
+		}
+		// A connection established earlier in this attempt cannot preserve an
+		// expired certificate or a peer key removed by a concurrent proof.
+		if err := runtime.Channel.relayTargetTLS(member.NodeID, controlALPN, false).VerifyConnection(*response.TLS); err != nil {
+			return nil, err
+		}
+	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("private member request failed: HTTP %d", response.StatusCode)
 	}

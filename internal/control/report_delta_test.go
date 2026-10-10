@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,11 +29,16 @@ type reportTransferCapture struct {
 	forgedID    string
 	forgedScope reportScope
 	delay       time.Duration
+	connections map[string]string
+	closed      map[string]bool
 }
 
 func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.mu.Lock()
+		if capture.connections != nil {
+			capture.connections[r.URL.Path] = r.RemoteAddr
+		}
 		forgedID, forgedScope, delay := capture.forgedID, capture.forgedScope, capture.delay
 		capture.mu.Unlock()
 		if delay > 0 {
@@ -168,6 +174,13 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 		runtime.Channel = channel
 		server := &Server{Runtime: runtime, Channel: channel, Config: configs[i], Now: func() time.Time { return time.Unix(2000000000, 0).UTC() }}
 		httpServer := &http.Server{Handler: capture.handler(t, server.Handler()), ConnContext: controlConnContext, ReadHeaderTimeout: time.Second}
+		httpServer.ConnState = func(connection net.Conn, state http.ConnState) {
+			capture.mu.Lock()
+			defer capture.mu.Unlock()
+			if state == http.StateClosed && capture.closed != nil {
+				capture.closed[connection.RemoteAddr().String()] = true
+			}
+		}
 		go httpServer.Serve(channel.ControlListener())
 		return reportTestPeer{server, channel, httpServer}
 	}
@@ -256,6 +269,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	// backlog. A subsequent attempt must refresh the ranges for new reports.
 	capture.mu.Lock()
 	capture.delay = 3 * time.Second
+	capture.connections, capture.closed = map[string]string{}, map[string]bool{}
 	capture.mu.Unlock()
 	if err := peers[1].server.Runtime.reconcilePeerAttempt(context.Background(), members[0]); err != nil {
 		t.Fatal("committed batch did not yield before another historical request", err)
@@ -263,7 +277,30 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	capture.mu.Lock()
 	capture.delay = 0
 	callsAfterBatch := capture.calls
+	connection := capture.connections["/internal/frontier"]
+	for _, path := range []string{"/internal/material-conflicts", "/internal/report-ranges", "/internal/report-ids", "/internal/reports"} {
+		if connection == "" || capture.connections[path] != connection {
+			t.Error("ordinary requests in one member attempt rebuilt their TLS connection", path)
+		}
+	}
+	if capture.connections["/internal/control-proof"] == "" || capture.connections["/internal/control-proof"] == connection {
+		t.Error("proof-only connection was shared with ordinary requests")
+	}
+	capture.connections = nil
 	capture.mu.Unlock()
+	closed := false
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		capture.mu.Lock()
+		closed = capture.closed[connection]
+		capture.mu.Unlock()
+		if closed {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !closed {
+		t.Error("member attempt retained its idle TLS connection after returning")
+	}
 	if callsAfterBatch != 1 {
 		t.Fatal("one attempt continued draining the old report directory", callsAfterBatch)
 	}
