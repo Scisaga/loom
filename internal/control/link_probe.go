@@ -39,9 +39,14 @@ func verifyLinkObservation(value Observation, view DeviceView) error {
 			continue
 		}
 		digest, err := LinkSpecDigest(view, link.ID)
-		if err == nil && value.ResourceID == link.ResourceID && value.SpecDigest == digest && value.Target == net.JoinHostPort(link.ProbeTarget.Host, strconv.Itoa(link.ProbeTarget.Port)) && value.Action == "wireguard_dns" {
+		if err == nil && matchesNativeLinkObservation(value, link, digest) {
 			return nil
 		}
 	}
 	return errors.New("Link observation is outside the source's current native probe specification")
+}
+
+func matchesNativeLinkObservation(value Observation, link NetworkLink, digest string) bool {
+	return value.LinkID == link.ID && value.ResourceID == link.ResourceID && value.SpecDigest == digest &&
+		value.Target == net.JoinHostPort(link.ProbeTarget.Host, strconv.Itoa(link.ProbeTarget.Port)) && value.Action == "wireguard_dns"
 }

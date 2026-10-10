@@ -97,6 +97,18 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24`)
+	componentID, _ := ExpectedComponentID("demo-entry", "agent", "linux-amd64")
+	a.mu.Lock()
+	a.projection.NetworkIntent.ExpectedComponents = []ExpectedComponent{{ID: componentID, NodeID: "demo-entry", ComponentID: "agent", Platform: "linux-amd64", CatalogDigest: "sha256:" + strings.Repeat("c", 64), ManifestDigest: "sha256:" + strings.Repeat("d", 64)}}
+	a.mu.Unlock()
+	if _, err := ProjectDeviceView(a.Snapshot(), "demo-entry"); err == nil {
+		t.Fatal("component fixture must reject full View generation without its release")
+	}
+	if chromeDo(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=demo-link');const value=await r.json();return r.status===200&&value.buckets.filter(v=>v.observation).length===2})()`) != true {
+		t.Fatal("component expectations erased original Link observations")
+	}
+	chromeDo(t, debug, `(()=>{document.querySelector('[data-link-history-retry]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelectorAll('.link-hour.available').length===1`)
 	a.mu.Lock()
 	a.projection.NetworkIntent.Links = []NetworkLink{}
 	a.mu.Unlock()

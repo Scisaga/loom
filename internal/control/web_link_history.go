@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -33,14 +34,14 @@ func (server *Server) linkHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	eligible := false
+	spec := ""
 	for _, link := range projectWebLinks(projection) {
 		if link.ID == query.Get("link") {
-			eligible = true
+			spec = link.SpecDigest
 			break
 		}
 	}
-	if !eligible {
+	if spec == "" {
 		http.Error(w, "Link is outside current endpoint permissions", http.StatusNotFound)
 		return
 	}
@@ -52,17 +53,9 @@ func (server *Server) linkHistory(w http.ResponseWriter, r *http.Request) {
 		if !found {
 			break
 		}
-		// The ordinary Web Link projection above checks both endpoint roles;
-		// the source View supplies its exact native probe specification.
-		view, err := ProjectDeviceView(projection, identity.ID)
-		if err != nil {
-			http.Error(w, "current Link scope unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if _, err := LinkSpecDigest(view, link.ID); err != nil {
-			break
-		}
-		value, err := server.Runtime.Reports.linkHistory(r.Context(), identity, view, link, server.now())
+		// The current Link projection checks endpoint roles and both native
+		// resources. Unrelated program expectations cannot erase Link history.
+		value, err := server.Runtime.Reports.linkHistory(r.Context(), projection.NetworkID, identity, link, spec, server.now())
 		if err != nil {
 			http.Error(w, "original report history unavailable", http.StatusServiceUnavailable)
 			return
@@ -73,11 +66,10 @@ func (server *Server) linkHistory(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Link is outside current endpoint permissions", http.StatusNotFound)
 }
 
-func (store *ObservationStore) linkHistory(ctx context.Context, identity DeviceAuthorization, view DeviceView, link NetworkLink, now time.Time) (WebLinkHistory, error) {
+func (store *ObservationStore) linkHistory(ctx context.Context, network string, identity DeviceAuthorization, link NetworkLink, spec string, now time.Time) (WebLinkHistory, error) {
 	start := now.UTC().Truncate(time.Hour).Add(-23 * time.Hour)
-	spec, err := LinkSpecDigest(view, link.ID)
-	if err != nil {
-		return WebLinkHistory{}, err
+	if ValidateID(network) != nil || identity.ID != link.FromNodeID || ValidateDigest(spec) != nil {
+		return WebLinkHistory{}, errors.New("Link history scope does not match its sender")
 	}
 	result := WebLinkHistory{Schema: 3, LinkID: link.ID, FromNodeID: link.FromNodeID, ToNodeID: link.ToNodeID, ResourceID: link.ResourceID, SpecDigest: spec,
 		From: start.UnixMilli(), Until: now.UnixMilli(), Buckets: make([]WebHistoryBucket, 24)}
@@ -89,8 +81,8 @@ func (store *ObservationStore) linkHistory(ctx context.Context, identity DeviceA
 	possible := func(id, digest string, at int64) bool {
 		return id == result.LinkID && digest == spec && at >= result.From && at <= result.Until && at >= latest[(at-result.From)/time.Hour.Milliseconds()]
 	}
-	err = withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
-		return walkDeviceReportHistory(ctx, tx, store.index.Load(), view.NetworkID, identity.ID, func(_ string, ref reportReference, raw []byte) error {
+	err := withObservationDB(ctx, store.path, false, func(tx *bolt.Tx) error {
+		return walkDeviceReportHistory(ctx, tx, store.index.Load(), network, identity.ID, func(_ string, ref reportReference, raw []byte) error {
 			candidate := false
 			for _, sample := range ref.LinkSamples {
 				if possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) {
@@ -109,7 +101,7 @@ func (store *ObservationStore) linkHistory(ctx context.Context, identity DeviceA
 				return nil
 			}
 			for _, sample := range report.Observations {
-				if sample.Level != "link" || !possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || sample.NetworkGeneration != report.NetworkGeneration || verifyLinkObservation(sample, view) != nil {
+				if sample.Level != "link" || !possible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) || sample.NetworkGeneration != report.NetworkGeneration || !matchesNativeLinkObservation(sample, link, spec) {
 					continue
 				}
 				hour := (sample.ObservedAt - result.From) / time.Hour.Milliseconds()

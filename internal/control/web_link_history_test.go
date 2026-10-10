@@ -114,12 +114,12 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 		if _, err := store.Latest(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		got, err := store.linkHistory(context.Background(), identity, view, link, now)
+		got, err := store.linkHistory(context.Background(), view.NetworkID, identity, link, spec, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		store.index.Store(nil)
-		cold, err := store.linkHistory(context.Background(), identity, view, link, now)
+		cold, err := store.linkHistory(context.Background(), view.NetworkID, identity, link, spec, now)
 		if err != nil || !reflect.DeepEqual(cold, got) {
 			t.Fatal("discarding the original position index changed Link history", err)
 		}
@@ -132,7 +132,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 			}
 		}
 		if got.Buckets[23].Observation.DurationMS == nil || *got.Buckets[23].Observation.DurationMS != 0 || got.Buckets[14].Observation.NetworkGeneration != "demo-earlier-network" || !got.Buckets[19].Ambiguous {
-			t.Fatal("zero RTT, original generation or equal-time conflict lost")
+			t.Fatal("zero probe duration, original generation or equal-time conflict lost")
 		}
 		for _, index := range []int{20, 19, 18, 17, 13, 12, 11, 10, 1} {
 			if got.Buckets[index].Observation != nil {
@@ -157,7 +157,11 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedHistory, err := store.linkHistory(context.Background(), identity, changed, link, now)
+	changedSpec, err := LinkSpecDigest(changed, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedHistory, err := store.linkHistory(context.Background(), changed.NetworkID, identity, link, changedSpec, now)
 	if err != nil || changedHistory.SpecDigest == spec {
 		t.Fatal("changed resource did not replace the history scope", err)
 	}
@@ -193,6 +197,14 @@ func TestWebLinkHistoryQueryCannotExpandEndpointPermission(t *testing.T) {
 		check(query, http.StatusBadRequest)
 	}
 	check("link=demo-missing", http.StatusNotFound)
+	// Production devices have component expectations. Missing release material
+	// blocks their executable View, but is unrelated to the authorized Link.
+	componentID, _ := ExpectedComponentID("demo-entry", "agent", "linux-amd64")
+	a.projection.NetworkIntent.ExpectedComponents = []ExpectedComponent{{ID: componentID, NodeID: "demo-entry", ComponentID: "agent", Platform: "linux-amd64", CatalogDigest: "sha256:" + strings.Repeat("c", 64), ManifestDigest: "sha256:" + strings.Repeat("d", 64)}}
+	if _, err := ProjectDeviceView(a.Snapshot(), "demo-entry"); err == nil {
+		t.Fatal("fixture must expose the missing release dependency of a full View")
+	}
+	check("link=demo-link", http.StatusOK)
 	// Native WG may terminate at an Internet egress without a forwarding role.
 	a.projection.DeviceAuthorizations[1].Responsibilities = []string{"internet_egress"}
 	check("link=demo-link", http.StatusOK)
