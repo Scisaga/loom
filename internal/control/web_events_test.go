@@ -393,3 +393,29 @@ func TestWebEventsConflictAndMemberCertificateComeFromSignedOriginals(t *testing
 		t.Fatal("majority certificate was not projected")
 	}
 }
+
+func TestWebEventsFixedCutoffExcludesLaterSignatureFork(t *testing.T) {
+	f := newMaterialFixture(t)
+	authorities, locals := materialAuthorities(t, f)
+	first := f.sign(t, 0, 1, nil, "demo-first", "service.put", "service", "demo-service", materialTestService("demo-service"))
+	raw, _, _ := EncodeMaterial(first)
+	if _, err := authorities[0].PutMaterial(raw); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := OpenRuntime(authorities[0].root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	server := &Server{Runtime: runtime, Config: locals[0]}
+	before := eventTestQuery(t, server, url.Values{"object": {"demo-service"}})
+	fork := f.sign(t, 0, 1, nil, "demo-fork", "service.put", "service", "demo-service", materialTestService("demo-service"))
+	raw, _, _ = EncodeMaterial(fork)
+	if _, err := runtime.Authority.PutMaterial(raw); !errors.Is(err, ErrMaterialEquivocation) {
+		t.Fatal("late fork evidence was not accepted", err)
+	}
+	after := eventTestQuery(t, server, eventTestValues(before.Query))
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("post-cutoff original changed the historical query")
+	}
+}

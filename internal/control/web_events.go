@@ -317,24 +317,32 @@ func (a *Authority) authorityEvents(ctx context.Context, from, until time.Time) 
 			remember(member.NodeID, member.PublicKey)
 		}
 	}
-	graph, err := newMaterialGraph(genesisMaterial, certificates, materials)
-	if err != nil {
-		return nil, nil, since, err
-	}
-	valid := map[string]bool{}
 	arrivals := map[string]time.Time{}
+	inWindow := []Material{}
 	for _, material := range materials {
 		id, err := MaterialID(material)
 		if err != nil {
 			return nil, nil, since, err
 		}
-		valid[id] = graph.validate(id) == nil
 		path, _ := a.materialPath(id)
 		at, err := fileReception(path, receptionAttribute)
 		if err != nil {
 			return nil, nil, since, err
 		}
 		arrivals[id] = at
+		if at.IsZero() || at.Before(until) {
+			inWindow = append(inWindow, material)
+		}
+	}
+	materials = inWindow
+	graph, err := newMaterialGraph(genesisMaterial, certificates, materials)
+	if err != nil {
+		return nil, nil, since, err
+	}
+	valid := map[string]bool{}
+	for _, material := range materials {
+		id, _ := MaterialID(material)
+		valid[id] = graph.validate(id) == nil
 	}
 	all := append([]Material{genesisMaterial}, materials...)
 	events := []WebEvent{}
