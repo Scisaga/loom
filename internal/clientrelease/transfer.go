@@ -71,11 +71,18 @@ func WriteArchive(source, catalog string, key ed25519.PublicKey, output io.Write
 	if err != nil {
 		return err
 	}
+	return store.WriteArchive(catalog, output, reuse)
+}
+
+// WriteArchive reuses this call's authenticated parsing, while ReadCatalog
+// and the transfer still check actual bytes. Its validation lock is released
+// before streaming, so a slow target does not block independent targets.
+func (store *Store) WriteArchive(catalog string, output io.Writer, reuse []TransferFile) error {
 	set, err := store.ReadCatalog(catalog)
 	if err != nil {
 		return err
 	}
-	files, err := TransferFiles(source, set)
+	files, err := TransferFiles(store.root, set)
 	if err != nil {
 		return err
 	}
@@ -89,7 +96,7 @@ func WriteArchive(source, catalog string, key ed25519.PublicKey, output io.Write
 		}
 		delete(remaining, file.Name)
 	}
-	root, err := os.OpenRoot(source)
+	root, err := os.OpenRoot(store.root)
 	if err != nil {
 		return err
 	}

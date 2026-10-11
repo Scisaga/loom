@@ -285,7 +285,7 @@ func Publish(ctx context.Context, o Options) error {
 		reader, writer := io.Pipe()
 		finished := make(chan error, 1)
 		go func() {
-			err := clientrelease.WriteArchive(o.Source, set.ID, o.PublicKey, writer, reuse)
+			err := store.WriteArchive(set.ID, writer, reuse)
 			writer.CloseWithError(err)
 			finished <- err
 		}()
