@@ -16,6 +16,7 @@ import (
 
 var observationBucket = []byte("reports")
 var reportIndexBucket = []byte("report-index")
+var reportReceptionBucket = []byte("receptions")
 
 // Original scope and time only; never authorization or a durable high-water mark.
 type reportReference struct {
@@ -74,7 +75,7 @@ func observationStructure(tx *bolt.Tx) error {
 		return errors.New("original report bucket is missing")
 	}
 	return tx.ForEach(func(name []byte, bucket *bolt.Bucket) error {
-		if (!bytes.Equal(name, observationBucket) && !bytes.Equal(name, reportIndexBucket)) || bucket.Sequence() != 0 {
+		if (!bytes.Equal(name, observationBucket) && !bytes.Equal(name, reportIndexBucket) && !bytes.Equal(name, reportReceptionBucket)) || bucket.Sequence() != 0 {
 			return errors.New("unknown observation bucket or independent sequence")
 		}
 		return nil

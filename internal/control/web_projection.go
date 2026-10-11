@@ -2,7 +2,6 @@ package control
 
 import (
 	"sort"
-	"strconv"
 	"time"
 )
 
@@ -266,13 +265,4 @@ func projectWebLastReportTimes(snapshot *WebSnapshot, reports []DeviceReport, pr
 			}
 		}
 	}
-}
-
-func projectReportHistory(reports []DeviceReport) []Event {
-	events := []Event{}
-	for _, report := range reports {
-		at := time.UnixMilli(report.ReportedAt).UTC().Format(time.RFC3339Nano)
-		events = append(events, Event{ID: "report-" + report.DeviceID + "-" + strconv.FormatInt(report.ReportedAt, 10), At: at, Kind: "runtime", Subject: report.DeviceID, To: report.Runtime.State, Detail: "Authenticated runtime report: " + report.Runtime.State + ".", Level: "information"})
-	}
-	return events
 }

@@ -36,7 +36,6 @@ type WebSnapshot struct {
 	Releases              []Release                    `json:"releases"`
 	Publisher             *PublisherStatus             `json:"publisher,omitempty"`
 	Deployments           []Deployment                 `json:"deployments"`
-	Events                []Event                      `json:"events"`
 	Administrators        []WebAdministrator           `json:"administrators"`
 }
 
@@ -107,21 +106,6 @@ func snapshotWarnings(messages []string) []WebWarning {
 	return result
 }
 
-func snapshotEvents(events []Event) []Event {
-	result := append([]Event{}, events...)
-	for index := range result {
-		if result[index].ID == "" {
-			sum := sha256.Sum256([]byte(result[index].At + "\x00" + result[index].Kind + "\x00" + result[index].Subject + "\x00" +
-				result[index].From + "\x00" + result[index].To + "\x00" + result[index].Detail))
-			result[index].ID = "event-" + hex.EncodeToString(sum[:8])
-		}
-		if result[index].Level == "" {
-			result[index].Level = "information"
-		}
-	}
-	return result
-}
-
 func buildWebSnapshot(projection Projection, admin, local, writable bool, releases ...ReleaseSet) WebSnapshot {
 	return buildWebSnapshotUsing(projection, admin, local, writable, func(id string) (DeviceView, error) {
 		return ProjectDeviceView(projection, id, releases...)
@@ -181,5 +165,5 @@ func buildWebSnapshotUsing(projection Projection, admin, local, writable bool, v
 		PublicTrust:   append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),
 		WebEndpoints:  append([]EndpointGeneration{}, webEndpoints...),
 		Services:      append([]Service{}, projection.NetworkIntent.Services...), LocalNetworkConflicts: lanConflicts, Releases: []Release{}, Deployments: []Deployment{},
-		Events: []Event{}, Administrators: projectWebAdministrators(projection)}
+		Administrators: projectWebAdministrators(projection)}
 }

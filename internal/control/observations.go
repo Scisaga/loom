@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
@@ -35,6 +36,7 @@ type ObservationStore struct {
 	lifetime sync.RWMutex
 	write    chan struct{}
 	cache    reportCache
+	now      func() time.Time
 }
 
 type reportOwner struct{ network, device string }
@@ -78,6 +80,23 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 	err = db.View(func(tx *bolt.Tx) error { indexed = tx.Bucket(reportIndexBucket) != nil; return nil })
 	if err == nil && !indexed {
 		err = store.withDatabase(context.Background(), true, ensureReportIndexes)
+	}
+	if err == nil {
+		ready := false
+		err = store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+			bucket := tx.Bucket(reportReceptionBucket)
+			if bucket == nil {
+				return nil
+			}
+			if _, err := receptionTime(bucket.Get(receptionSinceKey)); err != nil {
+				return err
+			}
+			ready = tx.Bucket(reportIndexBucket).Get(receptionIndexedKey) != nil
+			return nil
+		})
+		if err == nil && !ready {
+			err = store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error { return ensureReportReceptions(tx, time.Now()) })
+		}
 	}
 	if err != nil {
 		db.Close()
@@ -202,6 +221,13 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 				return err
 			}
 			if err := indexReport(tx, key, report); err != nil {
+				return err
+			}
+			at := time.Now()
+			if store.now != nil {
+				at = store.now()
+			}
+			if err := receiveReport(tx, key, at); err != nil {
 				return err
 			}
 			touched[storedReportRange{report.NetworkID, reportScope{report.DeviceID, reportRangeStart(report.ReportSequence)}}] = true

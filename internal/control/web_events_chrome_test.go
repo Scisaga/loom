@@ -1,0 +1,60 @@
+//go:build linux
+
+package control
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestWebChromeEventsScrollRetryDraftAndFilteredExport(t *testing.T) {
+	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
+		t.Skip("set LOOM_WEB_CHROME_TEST=1 for Events browser acceptance")
+	}
+	server, now := eventTestServer(t)
+	server.Now = nil
+	for i := 1; i <= 125; i++ {
+		state := "running"
+		if i%2 == 0 {
+			state = "stopped"
+		}
+		eventTestReport(t, server, i, state, now.Add(-time.Hour+time.Duration(i)*time.Second))
+	}
+	var refuse atomic.Bool
+	refuse.Store(true)
+	handler := server.AdminHandler()
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/control/ui/events" && r.URL.Query().Get("cursor") != "" && refuse.Swap(false) {
+			http.Error(w, "demo continuation failure", http.StatusServiceUnavailable)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	defer web.Close()
+	debug := openCommandChrome(t, web.URL+"/events?kind=runtime")
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-event-id]').length===100&&document.querySelectorAll('[data-event-bucket]').length===432`)
+	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('[data-event-id]')];window.demoFirst=rows[0].dataset.eventId;rows[0].querySelector('details').open=true;const input=document.querySelector('#events-filter [name=q]');input.value='Unsubmitted draft';input.focus();return document.querySelector('[data-events-total]').textContent.includes('125 events')})()`) != true {
+		t.Fatal("chart total only counted loaded page")
+	}
+	chromeDo(t, debug, `(()=>{document.querySelector('[data-events-bottom]').scrollIntoView();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-events-retry]')&&document.querySelectorAll('[data-event-id]').length===100`)
+	chromeDo(t, debug, `(()=>{document.querySelector('[data-events-retry]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-event-id]').length===125&&document.querySelector('[data-events-bottom]').textContent.includes('All events loaded')`)
+	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-event-id="'+demoFirst+'"]');return row.querySelector('details').open&&document.querySelector('#events-filter [name=q]').value==='Unsubmitted draft'&&new Set([...document.querySelectorAll('[data-event-id]')].map(v=>v.dataset.eventId)).size===125})()`) != true {
+		t.Fatal("continuation lost draft, open details or event identity")
+	}
+	if chromeDo(t, debug, `(async()=>{const original=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){window.demoExportURL=this.href};document.querySelector('[data-export-events]').click();HTMLAnchorElement.prototype.click=original;const u=new URL(demoExportURL),r=await fetch(u),body=await r.text();return u.searchParams.get('kind')==='runtime'&&!u.searchParams.has('q')&&u.searchParams.has('from')&&u.searchParams.has('until')&&u.searchParams.has('result')&&body.trim().split(String.fromCharCode(10)).length===126})()`) != true {
+		t.Fatal("export used draft or loaded rows instead of fixed full filter")
+	}
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#events-filter');f.elements.q.value='stopped';f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-events-total]').textContent.includes('124 events')&&document.querySelectorAll('[data-event-id]').length>=100`)
+	// Both transitions to stopped and transitions from stopped match search.
+	chromeDo(t, debug, `(()=>{document.querySelector('[data-events-clear]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#events-filter [name=q]').value===''&&document.querySelector('#events-filter [name=kind]').value===''&&document.querySelector('[data-events-total]')`)
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/services');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('h1')?.textContent==='Services'&&!document.querySelector('[data-events-bottom]')`)
+}

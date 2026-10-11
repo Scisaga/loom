@@ -192,6 +192,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/runtime-history", server.runtimeHistory)
 	mux.HandleFunc("GET /api/control/ui/link-history", server.linkHistory)
 	mux.HandleFunc("GET /api/control/ui/traffic-history", server.trafficHistory)
+	mux.HandleFunc("GET /api/control/ui/events", server.events)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
 	mux.HandleFunc("POST /api/control/services/local-network-allocation", server.localNetworkAllocation)
@@ -391,7 +392,6 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 			}
 		}
 		projectWebObservations(&snapshot, reports, server.now())
-		snapshot.Events = snapshotEvents(projectReportHistory(reports))
 	}
 	if server.Releases != nil {
 		if releaseErr != nil {

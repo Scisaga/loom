@@ -144,15 +144,3 @@ type PublisherStatus struct {
 	Status          string `json:"status"`
 	Distribution    string `json:"distribution"`
 }
-
-type Event struct {
-	ID      string `json:"id,omitempty"`
-	At      string `json:"at"`
-	Kind    string `json:"kind"`
-	Subject string `json:"subject"`
-	From    string `json:"from,omitempty"`
-	To      string `json:"to,omitempty"`
-	Detail  string `json:"detail"`
-	Level   string `json:"level,omitempty"`
-	Current bool   `json:"current"`
-}

@@ -142,6 +142,9 @@ func OpenAuthority(root string) (*Authority, error) {
 	if err := a.reloadLocked(); err != nil {
 		return nil, err
 	}
+	if err := ensureFileCoverage(root); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
@@ -227,6 +230,9 @@ func initializeAuthority(root string, config NodeConfig, proof ControlProof, mat
 		return nil, errors.New("genesis does not match the protected network anchor")
 	}
 	a := &Authority{root: root}
+	if err := ensureFileCoverage(root); err != nil {
+		return nil, err
+	}
 	path, _ := a.materialPath(id)
 	if err := os.Mkdir(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -867,6 +873,9 @@ func putControlBytes(path string, body []byte) error {
 	defer os.Remove(temporary)
 	if err = file.Chmod(0o600); err == nil {
 		_, err = file.Write(body)
+	}
+	if err == nil {
+		err = annotateOriginal(file)
 	}
 	if err == nil {
 		err = file.Sync()

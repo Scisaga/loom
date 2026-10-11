@@ -667,3 +667,5 @@ fieldset {
 .topology .edge.candidate {
   stroke-dasharray: 5 5
 }
+
+.page-events .filter-bar{display:flex;flex-wrap:wrap;align-items:end;gap:12px}.page-events .filter-bar label{min-width:140px;flex:1}.page-events .filter-bar input{width:100%}.event-history{margin-bottom:16px}.event-chart-scroll{overflow-x:auto;padding:16px 0 0}.event-chart{display:block;width:100%;min-width:900px;height:180px}.event-chart-axis{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);padding-top:8px}.event-legend{display:flex;flex-wrap:wrap;gap:16px;padding:16px 0;font-size:12px}.event-legend span,.event-type{display:inline-flex;align-items:center;gap:7px}.event-legend i,.event-type i{display:inline-block;width:9px;height:9px;border-radius:2px}.event-legend i.uncovered{background:none;border:1px dashed #a9b5b0}.event-load-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 0}.page-events .events-table details{max-width:600px}.page-events .events-table td{vertical-align:middle}.page-events .events-table small{display:block;color:var(--dim)}

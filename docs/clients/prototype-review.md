@@ -137,7 +137,7 @@ Windows 参考 Android [连接页](../../assets/client/android/connection-connec
 | 场景 | 类别 | 原生 PNG 文件名模式 | 可编辑 SVG | 目标行为与当前差距 |
 |---|---|---|---|---|
 | `connection-disconnected-unjoined` | 正常流程 | `*connection-disconnected-unjoined*.png` | [原型](../../assets/client/android/connection-disconnected-unjoined.svg) | 未加入/未连接及加入入口；固定截图不证明加入链已完成 |
-| `connection-connected-auto` | 正常流程 | `*connection-connected-auto*.png` | [原型](../../assets/client/android/connection-connected-auto.svg) | 已连接、当前路径、按 Service 展示；目标运行规则仍待正式入口验收 |
+| `connection-connected-auto` | 正常流程 | `*connection-connected-auto*.png` | [原型](../../assets/client/android/connection-connected-auto.svg) | 已连接、当前路径、按 Service 展示；目标运行规则已有原生与生产验收，视觉覆盖按当前原生基准单独核对 |
 | `connection-error` | 异常状态 | `*connection-error*.png` | [原型](../../assets/client/android/connection-error.svg) | 认证配置已保存、VPN 启动失败，无 active；旧 PNG 的业务失败推导未连接不再作为目标 |
 | `connection-business-failed` | 异常业务观测 | 暂无 | [原型](../../assets/client/android/connection-business-failed.svg) | VPN 已连接，具体目标失败，另一 Service 独立为未知；同连接页状态，无对应原生基准 |
 | `configuration-not-joined` | 正常流程 | `*configuration-not-joined*.png` | [原型](../../assets/client/android/configuration-not-joined.svg) | Android 可先有未加入本机配置；区别于 Windows 正常新增流程 |
@@ -248,22 +248,23 @@ hy2 则是该传输自己的实测探测吞吐；都不是容量承诺。波动�
 
 当前源码已按原签名 WG 计数接通网络 TX、所选 Link 双端 TX、设备 RX/TX、固定小时空槽和覆盖速率；
 隔离环境的正式 CLI、私有报告、mTLS 浏览器与重启验证已完成，精确发行与生产程序已激活；
-全控制面同步和页面验收仍有失败，不能据此称生产闭环完成。
+后续查询取消与所选 Link 刷新已修复并部署，最新回读范围见[交付对账](../delivery-audit.md)；
+陈旧副本不重新制造已修复的软件欠账。
 计数包含共享 peer 的管理、接入、中继和 WG 封装开销，不是每个 Service 或有向 Link 的独占流量。
 WG DNS RTT 与波动已接入既有真实探测、原签名报告和页面，在隔离环境完成 CLI、实际业务、浏览器与
-重启验证；精确发行已激活，本机 control 回读通过，其他成员仍有同步延迟或回程阻断。SVG 不作为这些能力或生产流量的验收证据。
+重启验证；精确发行已激活，本机 control 回读通过，较新所选 Link 刷新与原报告回读按[交付对账](../delivery-audit.md)判断，仍存在的迟到或回程阻断单列。SVG 不作为这些能力或生产流量的验收证据。
 
 下表只核对展示所需输入与当前差距，不从合成图表反推报告字段或补造采样；计算规则仍由
 [Web 投影](web-ui-projection.md#页面和状态)定义。
 
 | 指标 | 必要输入与范围 | 缺失时显示 | 当前实现差距 |
 |---|---|---|---|
-| 24 小时 RX／TX | 同端点、接口、epoch 的有效相邻计数器及时间；网络/链路按发送端 TX 聚合 | 无有效增量的小时留空，零值须有有效样本 | 源码、三端软件业务、精确发行和生产激活已有结果；全控制面生产读回未完成 |
+| 24 小时 RX／TX | 同端点、接口、epoch 的有效相邻计数器及时间；网络/链路按发送端 TX 聚合 | 无有效增量的小时留空，零值须有有效样本 | 源码、三端软件业务、精确发行和生产激活已有结果；最新范围见产品交付对账，陈旧副本单列 |
 | runtime／链路状态采样 | 每小时对应设备运行或 LinkID 范围内最后有效样本及时间 | 无样本为空心，明确失败才为失败色 | runtime 与精确 LinkID 状态条已正式部署，并经全部 control 浏览器及重启回读；不能用流量或业务成功填充 |
-| 当前 transport RTT | 精确方向、LinkID、传输、规范摘要、网络代的最新有效 RTT | 缺失或过期为 unknown | WG 已接入连接建立后的 DNS 往返原值并明确标名，精确发行已激活；局部页面通过，全控制面生产回读未通过 |
-| WG 五分钟实测速率 | 同一发送端有效字节增量、实际覆盖秒数及五分钟窗口 | 无有效时间覆盖为 unknown | 源码已从相邻原报告独立计算五分钟 TX 与实际覆盖时间；全控制面生产读回未完成 |
+| 当前 transport RTT | 精确方向、LinkID、传输、规范摘要、网络代的最新有效 RTT | 缺失或过期为 unknown | WG 已接入连接建立后的 DNS 往返原值并明确标名，精确发行已激活；局部页面通过，最新范围见产品交付对账，陈旧副本单列 |
+| WG 五分钟实测速率 | 同一发送端有效字节增量、实际覆盖秒数及五分钟窗口 | 无有效时间覆盖为 unknown | 源码已从相邻原报告独立计算五分钟 TX 与实际覆盖时间；最新范围见产品交付对账，陈旧副本单列 |
 | Hy2 探测吞吐 | 该传输真实单跳动作的字节、耗时及对应观测范围 | 无本传输结果为 unknown | WG 偏向的当前报告不能供给 Hy2 结果，不能借用 WG 数值 |
-| 十五分钟 RTT 波动 | 同范围成功 RTT 原始样本、时间与样本数 | 少于两个有效样本为 unknown | WG 已从同网络代的去重原样本计算 P50/P95 与差值，精确发行已激活；局部页面通过，全控制面生产回读未通过 |
+| 十五分钟 RTT 波动 | 同范围成功 RTT 原始样本、时间与样本数 | 少于两个有效样本为 unknown | WG 已从同网络代的去重原样本计算 P50/P95 与差值，精确发行已激活；局部页面通过，最新范围见产品交付对账，陈旧副本单列 |
 | 业务结果与 HTTPS 耗时 | 设备、Service、候选、实际目标、网络代、规范摘要、结果、采样/有效期 | 无有效结果为 unknown；失败没有成功耗时 | 逐设备/Service/实际目标结果与小时历史已接通并按实施状态验收；缺指标不能推导性能排名 |
 | 事件分桶 | 同查询窗口内的去重事件身份、类型、本 control 接收时间及保留覆盖 | 未覆盖留空；完整覆盖且无事件才为零 | 当前 SPA 尚未接入目标的完整筛选窗口聚合与连续加载 |
 
@@ -459,12 +460,12 @@ Administration 的四个文件对应四个同级内容视图，均使用相同�
 | Configuration state | [差异](../../assets/control-center/09-administration-configuration.svg#compare) · [采用 A](../../assets/control-center/09-administration-configuration.svg#review-a) · [采用 B](../../assets/control-center/09-administration-configuration.svg#review-b) · [新冲突需重读](../../assets/control-center/09-administration-configuration.svg#changed) · [A 的本地结果](../../assets/control-center/09-administration-configuration.svg#resolved-a) · [B 的本地结果](../../assets/control-center/09-administration-configuration.svg#resolved-b) · [签发来源](../../assets/control-center/09-administration-configuration.svg#sources) |
 
 当前 `internal/control/static/app.js` 的 `/ssot` 已显示 schema 3 签名事实前沿、成员、管理员、公开网站根的
-导入/下载和证书到期信息。网站 CSR 生成、签回叶导入、入口预检/切换及续签尚未接到这组原型网页流程；
-已有正式 CLI 和隔离软件验收见[实施状态](../progress.md)，不能抵扣对应网页交互。
-管理员本机补发的签发者、信任锚及多 control 签发能力仍待模型补齐，
+导入/下载和证书到期信息。网站 CSR 生成、签回叶导入、实际预检/切换、续签及退休已接入正式 Web，完成隔离真实浏览器与生产页面回读，
+见[网站证书管理](../progress.md#网站证书的管理页面接线)。生产网站根公开证书和原 CSR 签回叶仍由操作者提供；
+页面验收不能抵扣生产网站激活。
+管理员本机补发、独立验链锚、普通授信/撤销及生产登录已有验收，
 目标原型中的验链/授信合成结果不是已具备该能力的证明；用户已实际完成过管理员包取回、导入及登录
-的操作史继续保留，见[管理员交付模型](../operations/admin-access.md)。原型按钮不签发证书、不修改现网信任
-或管理入口，也不是已实现的生产功能。
+的操作史继续保留，见[管理员交付模型](../operations/admin-access.md)。原型按钮本身不签发证书、不修改现网信任或管理入口；正式实现的具体结果按验收记录判断。
 
 节点详情的加入状态均在同一 SVG 内预览，单独用浏览器打开下面的 fragment 链接；这只是固定场景，
 不是页面内的业务状态切换器：
