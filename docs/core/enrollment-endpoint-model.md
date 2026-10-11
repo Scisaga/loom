@@ -516,7 +516,7 @@ View、原已见事实高水位、身份私钥引用及不可回退 latch。Linu
 `Observation` 的完整语义见[客户端运行时模型](../clients/client-runtime-model.md#observation-与可用性)。
 本文只规定它由实际传输/业务动作产生并经设备认证私有通道报告，按设备、网络代、Service、
 候选及有效期约束；状态为 `available`、`unavailable`、`unknown`。链路报告包含 LinkID 和当前
-`link_spec_digest`，不同 WG/hy2 链路分别观测。共享资源握手或一个 HTTPS 目标成功，不证明另一条
+`link_spec_digest`，当前原生 WG 中继与公开 WG/Hy2 首跳资源分别观测。共享资源握手或一个 HTTPS 目标成功，不证明另一条
 链路或另一 Service 可用。缺失、过期和摘要不匹配回到 `unknown`，ICMP 不能填充业务成功。首次绑定前
 的引导连接诊断不作为设备签名 report 进入 `Observation`。
 
@@ -531,10 +531,9 @@ forward/出网节点的 listener、ACL、进程和返回路径回读。每条 Ob
 `Material`。不同 control 交换的是已验证报告及序列，不以接收先后选择较旧结果。
 
 报告记录的有效性按“设备 + 网络代 + 观测层级 + Service/候选或 LinkID + 实际目标 + 当前规范摘要”
-分别判断：一个 WG LinkID 的结果不能替代同节点对上的 Hy2 LinkID，也不能以 transport 成功替代
-HTTPS 业务成功。当前文档仍缺 report 逐字段字节、具体观测时间／有效期编码、最大可接受寿命与
-设备时钟偏差处理、相同序列不同签名内容的拒绝规则；这些在[字段级阻塞](current-contract.md#已确定的签名边界与字段级阻塞)
-补齐前，不能实现 schema 3 报告 writer/decoder 或声称报告过期算法已封闭。
+分别判断：一个 WG LinkID 的结果不能替代 Hy2 首跳资源样本，也不能以 transport 成功替代
+HTTPS 业务成功。report 逐字段字节、时间/有效期、接收端寿命及设备时钟偏差、同序列分叉拒绝均以
+[Report 与逐条观测](current-contract.md#report-与逐条观测)为唯一契约；本节不保留早期字段未封闭的实现禁令。
 
 ## 私有入口与运行时
 

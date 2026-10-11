@@ -1068,6 +1068,14 @@ Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,
 可选 `round_trip_ms` 也是非负整数，仅允许出现在成功的 Link `wireguard_dns` 观测中，并须有
 `duration_ms >= round_trip_ms`。它测量已建立执行 DNS 连接后的请求/响应往返，定义见下文。
 字段缺席表示未测量，显式零表示毫秒精度下的实测零；缺席不补值，原有已签字节不变，schema 仍为 3。
+可选 `hy2_transfer` 恰含 `duration_ns,rx_bytes,tx_bytes`；duration_ns 是正整数，两个字节数为规范 U64
+十进制字符串且均大于零。它只允许成功的 resource `hysteria2_tls` 观测携带，并要求
+`duration_ms` 存在且不小于 `floor(duration_ns / 1000000)`。缺席不改写旧报告或旧缓存原字节。
+它记录本次真实认证 socket 从首次发送尝试至完成已验链的 233 响应及原有受限正文读取的单调时钟时长，
+以及该 socket 实际读写的 UDP 有效载荷字节；包括 QUIC/TLS/HTTP3 开销和重传，不包括 IP/UDP 头。
+两个方向均相对报告设备：TX 发往该资源承载节点，RX 由其返回。时长不含名称解析和先前失败地址的尝试，
+外层 duration_ms 仍是原完整认证耗时。取消、认证失败及未完成测量不能生成吞吐值。
+这只是小量认证探测的实际传输速率，不表示饱和容量、业务用量、Service 成功或新的选路排序输入。
 level 仅 `resource/link/service`；不适用的四个 ID 字段固定为空字符串，不能缺席。
 resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，service 层仅 service_id/candidate_id 非空；
 每条保留实际 target 和 action。spec_digest 分别绑定资源、Link+资源或候选规范内容。
@@ -1092,6 +1100,9 @@ Resource 执行只在本轮实际应用并回读的选择需要该资源时触�
 认证，只有校验成功并收到 233 才为 available；WG 复用实际运行的原生会话，完成接收端执行 DNS
 请求与响应的核对才为 available。超时、拒绝和认证失败为该资源样本的 unavailable，
 取消不产生样本。完整耗时含本次必要解析及认证，不是 RTT 或完整 Service 请求耗时。
+Hy2 的可选传输测量复用这一认证动作及平台保护的同一 UDP socket；不新增测速服务器、探测凭据、
+授权、连接、配置键或持久对象。control 从当前 View 验证同一资源/凭据/动作/摘要范围；运行及 UI
+仅从原签名 Observation 单向投影 `8 × bytes / seconds`，缓存重用保留原字节、时间和截止。
 新样本成功保存十分钟、失败三十秒，复用时原时间不变；这是客户端必要重测窗口，报告及页面
 还须通过下述接收端时效投影。缓存只保留同网络代、同规范执行摘要且仍授权的原样本，可删除重建；撤权、
 凭据/资源/DNS 变化、到期或换网后不能复用。资源结果不能变成 Service 的整体健康；客户端按

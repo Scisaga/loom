@@ -241,20 +241,29 @@ func (runtime RuntimeReadback) Validate() error {
 }
 
 type Observation struct {
-	Level             string `json:"level"`
-	ServiceID         string `json:"service_id"`
-	CandidateID       string `json:"candidate_id"`
-	ResourceID        string `json:"resource_id"`
-	LinkID            string `json:"link_id"`
-	Target            string `json:"target"`
-	Action            string `json:"action"`
-	SpecDigest        string `json:"spec_digest"`
-	NetworkGeneration string `json:"network_generation"`
-	Result            string `json:"result"`
-	ObservedAt        int64  `json:"observed_at"`
-	ValidUntil        int64  `json:"valid_until"`
-	DurationMS        *int64 `json:"duration_ms,omitempty"`
-	RoundTripMS       *int64 `json:"round_trip_ms,omitempty"`
+	Level             string       `json:"level"`
+	ServiceID         string       `json:"service_id"`
+	CandidateID       string       `json:"candidate_id"`
+	ResourceID        string       `json:"resource_id"`
+	LinkID            string       `json:"link_id"`
+	Target            string       `json:"target"`
+	Action            string       `json:"action"`
+	SpecDigest        string       `json:"spec_digest"`
+	NetworkGeneration string       `json:"network_generation"`
+	Result            string       `json:"result"`
+	ObservedAt        int64        `json:"observed_at"`
+	ValidUntil        int64        `json:"valid_until"`
+	DurationMS        *int64       `json:"duration_ms,omitempty"`
+	RoundTripMS       *int64       `json:"round_trip_ms,omitempty"`
+	HY2Transfer       *HY2Transfer `json:"hy2_transfer,omitempty"`
+}
+
+// HY2Transfer is the actual UDP payload exchange of one authenticated first-hop
+// probe. Direction is relative to the reporting device; it is not capacity.
+type HY2Transfer struct {
+	DurationNS int64 `json:"duration_ns"`
+	RXBytes    U64   `json:"rx_bytes"`
+	TXBytes    U64   `json:"tx_bytes"`
 }
 
 func (observation Observation) Validate() error {
@@ -263,6 +272,11 @@ func (observation Observation) Validate() error {
 	}
 	if value := observation.RoundTripMS; value != nil && (*value < 0 || observation.Level != "link" || observation.Action != "wireguard_dns" || observation.Result != "available" || observation.DurationMS == nil || *value > *observation.DurationMS) {
 		return errors.New("round trip requires a successful native Link probe within its complete duration")
+	}
+	if value := observation.HY2Transfer; value != nil && (value.DurationNS <= 0 || value.RXBytes == 0 || value.TXBytes == 0 ||
+		observation.Level != "resource" || observation.Action != "hysteria2_tls" || observation.Result != "available" ||
+		observation.DurationMS == nil || value.DurationNS/1_000_000 > *observation.DurationMS) {
+		return errors.New("Hy2 transfer requires actual bytes and time within a successful first-hop authentication")
 	}
 	switch observation.Result {
 	case "available", "unavailable", "unknown":

@@ -77,18 +77,18 @@ func TestFirstHopSamplesDeduplicateParallelizeAndKeepOriginalWindows(t *testing.
 	}
 	var calls atomic.Int32
 	started, release := make(chan struct{}, 2), make(chan struct{})
-	probe := func(ctx context.Context, resource control.ResourceProbe, _ []string, _ time.Time) error {
+	probe := func(ctx context.Context, resource control.ResourceProbe, _ []string, _ time.Time) (*control.HY2Transfer, error) {
 		calls.Add(1)
 		started <- struct{}{}
 		select {
 		case <-release:
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 		if resource.Resource.ID == "demo-resource-b" {
-			return errors.New("demo authentication rejected")
+			return &control.HY2Transfer{DurationNS: 1, RXBytes: 4, TXBytes: 8}, errors.New("demo authentication rejected")
 		}
-		return nil
+		return &control.HY2Transfer{DurationNS: 1, RXBytes: 4, TXBytes: 8}, nil
 	}
 	type outcome struct {
 		values []control.Observation
@@ -112,12 +112,15 @@ func TestFirstHopSamplesDeduplicateParallelizeAndKeepOriginalWindows(t *testing.
 	if first.err != nil || len(first.values) != 2 || calls.Load() != 2 || first.values[0].Result != "available" || first.values[1].Result != "unavailable" {
 		t.Fatal("shared resource sampled twice or scope results were mixed", first.err)
 	}
+	if first.values[0].HY2Transfer == nil || first.values[1].HY2Transfer != nil {
+		t.Fatal("successful input was dropped or failed transfer became measured throughput")
+	}
 	if first.values[0].ValidUntil != at.Add(10*time.Minute).UnixMilli() || first.values[1].ValidUntil != at.Add(30*time.Second).UnixMilli() {
 		t.Fatal("new samples have wrong retry windows")
 	}
-	noProbe := func(context.Context, control.ResourceProbe, []string, time.Time) error {
+	noProbe := func(context.Context, control.ResourceProbe, []string, time.Time) (*control.HY2Transfer, error) {
 		t.Error("valid or unneeded resource was sampled")
-		return nil
+		return nil, nil
 	}
 	retained, err := observeFirstHops(context.Background(), view, selected, first.values, "demo-underlay", func() time.Time { return at.Add(29 * time.Second) }, noProbe)
 	if err != nil || !reflect.DeepEqual(first.values, retained) {
@@ -127,12 +130,12 @@ func TestFirstHopSamplesDeduplicateParallelizeAndKeepOriginalWindows(t *testing.
 		t.Fatal("Direct acquired transport observations", err)
 	}
 	var retries atomic.Int32
-	retry := func(_ context.Context, resource control.ResourceProbe, _ []string, _ time.Time) error {
+	retry := func(_ context.Context, resource control.ResourceProbe, _ []string, _ time.Time) (*control.HY2Transfer, error) {
 		if resource.Resource.ID != "demo-resource-b" {
 			t.Error("unexpired success was retried")
 		}
 		retries.Add(1)
-		return nil
+		return nil, nil
 	}
 	next, err := observeFirstHops(context.Background(), view, selected, retained, "demo-underlay", func() time.Time { return at.Add(30 * time.Second) }, retry)
 	if err != nil || retries.Load() != 1 || next[1].Result != "available" || !reflect.DeepEqual(next[0], first.values[0]) {
@@ -204,9 +207,12 @@ func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) 
 			}
 			attempt, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
-			err := probeFirstHop(attempt, value, nil, at)
+			transfer, err := probeFirstHop(attempt, value, nil, at)
 			if (err == nil) != test.good {
 				t.Fatalf("actual authenticated outcome: %v", err)
+			}
+			if test.good && (transfer == nil || transfer.RXBytes == 0 || transfer.TXBytes == 0 || transfer.DurationNS <= 0) || !test.good && transfer != nil {
+				t.Fatal("authentication bytes were missing or a failed login manufactured throughput")
 			}
 		})
 	}

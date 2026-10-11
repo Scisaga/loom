@@ -35,6 +35,7 @@ func resourceCacheFixture(t *testing.T) (control.DeviceViewEnvelope, []control.O
 
 func TestResourceCacheRestoresOriginalSuccessAndFailureWindows(t *testing.T) {
 	lkg, samples := resourceCacheFixture(t)
+	samples[0].HY2Transfer = &control.HY2Transfer{DurationNS: 10_000_000, RXBytes: 2000, TXBytes: 1000}
 	body, err := EncodeResourceObservations(lkg, samples)
 	if err != nil {
 		t.Fatal(err)

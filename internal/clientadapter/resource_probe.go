@@ -21,18 +21,19 @@ import (
 
 // AuthenticateHY2 performs a real TLS and Hy2 login, with no forwarding request.
 // The caller owns the underlay socket and supplies the certificate-check time.
-func AuthenticateHY2(ctx context.Context, resource control.TransportResource, socket net.PacketConn, peer net.Addr, credential string, at time.Time) error {
+func AuthenticateHY2(ctx context.Context, resource control.TransportResource, socket net.PacketConn, peer net.Addr, credential string, at time.Time) (*control.HY2Transfer, error) {
 	certificates, err := control.HY2TrustPEM(resource)
 	if err != nil || control.ValidatePublicKey(credential) != nil {
-		return errors.New("Hy2 authentication inputs are invalid")
+		return nil, errors.New("Hy2 authentication inputs are invalid")
 	}
 	roots := x509.NewCertPool()
 	for _, certificate := range certificates {
 		if !roots.AppendCertsFromPEM([]byte(certificate)) {
-			return errors.New("Hy2 trust is invalid")
+			return nil, errors.New("Hy2 trust is invalid")
 		}
 	}
-	udp := &quic.Transport{Conn: socket}
+	measured := &hy2ProbePacket{PacketConn: socket}
+	udp := &quic.Transport{Conn: measured}
 	defer udp.Close()
 	transport := &http3.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots,
 		ServerName: *resource.Authentication.ServerName, Time: func() time.Time { return at }},
@@ -42,20 +43,68 @@ func AuthenticateHY2(ctx context.Context, resource control.TransportResource, so
 	defer transport.Close()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://hysteria/auth", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	request.Header.Set("Hysteria-Auth", credential)
 	request.Header.Set("Hysteria-CC-RX", "0")
 	response, err := transport.RoundTrip(request)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 233 || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
-		return errors.New("Hy2 transport did not complete authenticated login")
+		return nil, errors.New("Hy2 transport did not complete authenticated login")
 	}
 	_, err = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	return err
+	if err != nil || ctx.Err() != nil {
+		if err == nil {
+			err = ctx.Err()
+		}
+		return nil, err
+	}
+	// Capture before closing HTTP3/QUIC: teardown bytes are not authentication.
+	return measured.transfer(), nil
+}
+
+type hy2ProbePacket struct {
+	net.PacketConn
+	lock    sync.Mutex
+	started time.Time
+	rx, tx  control.U64
+}
+
+func (packet *hy2ProbePacket) ReadFrom(body []byte) (int, net.Addr, error) {
+	n, peer, err := packet.PacketConn.ReadFrom(body)
+	packet.lock.Lock()
+	packet.rx += control.U64(n)
+	packet.lock.Unlock()
+	return n, peer, err
+}
+
+func (packet *hy2ProbePacket) WriteTo(body []byte, peer net.Addr) (int, error) {
+	packet.lock.Lock()
+	if packet.started.IsZero() {
+		packet.started = time.Now()
+	}
+	packet.lock.Unlock()
+	n, err := packet.PacketConn.WriteTo(body, peer)
+	packet.lock.Lock()
+	packet.tx += control.U64(n)
+	packet.lock.Unlock()
+	return n, err
+}
+
+func (packet *hy2ProbePacket) transfer() *control.HY2Transfer {
+	packet.lock.Lock()
+	defer packet.lock.Unlock()
+	if packet.started.IsZero() || packet.rx == 0 || packet.tx == 0 {
+		return nil
+	}
+	value := control.HY2Transfer{DurationNS: time.Since(packet.started).Nanoseconds(), RXBytes: packet.rx, TXBytes: packet.tx}
+	if value.DurationNS <= 0 {
+		return nil
+	}
+	return &value
 }
 
 // A connected platform UDP socket already filters the exact remote peer. Hide
@@ -74,31 +123,31 @@ func (packet connectedProbePacket) WriteTo(body []byte, peer net.Addr) (int, err
 	return packet.Write(body)
 }
 
-func probeFirstHop(ctx context.Context, probe control.ResourceProbe, dns []string, at time.Time) error {
+func probeFirstHop(ctx context.Context, probe control.ResourceProbe, dns []string, at time.Time) (*control.HY2Transfer, error) {
 	if probe.Resource.Kind == "wireguard" {
 		_, err := ProbeWireGuard(ctx, probe.NetworkID, probe.Resource)
-		return err
+		return nil, err
 	}
 	dial := control.EndpointDialer(ctx)
 	addresses, err := netx.ResolveCertifiedIPs(ctx, probe.Resource.DialHost, dns, dial)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, address := range addresses {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 		connection, err := dial(ctx, "udp", net.JoinHostPort(address.String(), strconv.Itoa(probe.Resource.DialPort)))
 		if err != nil {
 			continue
 		}
-		err = AuthenticateHY2(ctx, probe.Resource, connectedProbePacket{connection}, connection.RemoteAddr(), probe.Credential, at)
+		transfer, err := AuthenticateHY2(ctx, probe.Resource, connectedProbePacket{connection}, connection.RemoteAddr(), probe.Credential, at)
 		closeErr := connection.Close()
 		if err == nil {
-			return closeErr
+			return transfer, closeErr
 		}
 	}
-	return errors.New("public first hop authentication failed")
+	return nil, errors.New("public first hop authentication failed")
 }
 
 // RetainResourceObservations compares the complete execution specification.
@@ -126,7 +175,7 @@ func ObserveFirstHops(ctx context.Context, view control.DeviceView, selected []s
 }
 
 func observeFirstHops(ctx context.Context, view control.DeviceView, selected []string, previous []control.Observation, generation string, now func() time.Time,
-	probe func(context.Context, control.ResourceProbe, []string, time.Time) error) ([]control.Observation, error) {
+	probe func(context.Context, control.ResourceProbe, []string, time.Time) (*control.HY2Transfer, error)) ([]control.Observation, error) {
 	probes, err := control.FirstHopProbes(view)
 	if err != nil || control.ValidateID(generation) != nil || now == nil {
 		return nil, errors.New("resource observation inputs are invalid")
@@ -168,7 +217,7 @@ func observeFirstHops(ctx context.Context, view control.DeviceView, selected []s
 			attempt, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
 			started := time.Now()
-			probeErr := probe(attempt, execution, view.DNSServers, at)
+			transfer, probeErr := probe(attempt, execution, view.DNSServers, at)
 			duration := time.Since(started).Milliseconds()
 			if ctx.Err() != nil {
 				return
@@ -179,6 +228,9 @@ func observeFirstHops(ctx context.Context, view control.DeviceView, selected []s
 			}
 			value := control.Observation{Level: "resource", ResourceID: execution.Resource.ID, Target: execution.Target(), Action: execution.Action(),
 				SpecDigest: execution.SpecDigest, NetworkGeneration: generation, Result: result, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(lifetime).UnixMilli(), DurationMS: &duration}
+			if probeErr == nil {
+				value.HY2Transfer = transfer
+			}
 			lock.Lock()
 			cached[execution.Resource.ID] = value
 			lock.Unlock()
