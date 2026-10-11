@@ -142,6 +142,9 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 	if value.Type() == reflect.TypeFor[Operation]() {
 		return value.Interface().(Operation).Validate()
 	}
+	if value.Type() == reflect.TypeFor[ConflictResolution]() {
+		return inspectContractValue(reflect.ValueOf(value.Interface().(ConflictResolution).contractObject()), active)
+	}
 	if value.Type() == contractU64Type || value.Type() == reflect.PointerTo(contractU64Type) {
 		return nil
 	}
@@ -246,7 +249,7 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 	return nil
 }
 
-// Only these two domain sums select a concrete payload branch. This is not a
+// Only the fixed domain sums select a concrete payload branch. This is not a
 // custom codec registry: ordinary interface/map targets remain unsupported.
 func contractJSONValue(value reflect.Value) (any, error) {
 	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
@@ -260,6 +263,9 @@ func contractJSONValue(value reflect.Value) (any, error) {
 	}
 	if value.Type() == reflect.TypeFor[Operation]() {
 		return contractJSONValue(reflect.ValueOf(value.Interface().(Operation).contractObject()))
+	}
+	if value.Type() == reflect.TypeFor[ConflictResolution]() {
+		return contractJSONValue(reflect.ValueOf(value.Interface().(ConflictResolution).contractObject()))
 	}
 	if value.Type() == contractU64Type {
 		return strconv.FormatUint(value.Uint(), 10), nil

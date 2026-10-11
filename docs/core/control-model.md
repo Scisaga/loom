@@ -204,6 +204,45 @@ control 与设备永久保存已认证的按键高水位及不可回退 latch，
 
 普通节点删除保留防复活撤权事实，设备授权、资源引用、链路、局域网映射、DNS 与候选随之退出投影；同一身份/密钥不能借旧 Invite 复活，重入网使用新身份和密钥。
 
+#### 普通对象的显式冲突解决
+
+正式入口是 Administration 的 Configuration state。操作者审阅本 control 已验证的同对象并发值、
+全部当前事实引用和已知引用者，选一份公开值作为可编辑草稿，或明确删除对象。
+`conflict.resolve` 使用现有 Material、签发链和 Authority，不能修改冲突原文或新增完成记录。
+公共管理 payload 为 `conflicts,action,value?`；conflicts 必须规范排序、无重复，并恰为该对象本次
+审阅的全部当前冲突引用。dependencies 同时包含这些引用以及最终值所需的 Service、Policy、节点、
+资源等正常业务引用。put 的 value 必须是该 target_kind 的完整规范值，delete 不含 value。
+普通 put 仍不能绕过冲突拒绝。
+
+| 映射 | 值及边界 |
+|---|---|
+| domain | 既有对象的最终值与全部冲突 ID；不是新的权威实体 |
+| wire | schema 3 的既定 `conflict.resolve`；封闭种类解码，不接受任意 JSON |
+| persistent | 一份新的规范签名 Material；原冲突 Material 逐字保留，重试从原请求重建 |
+| runtime | 解决事实因果覆盖原并发值，投影为对应 put/delete；ACL、候选、DNS 与 View 沿原消费者计算 |
+| UI | 公开来源、字段差异、影响及草稿；设备只显示和提交 DevicePut，RuntimeKey 与加入绑定留在 daemon |
+
+可编辑的普通目标为 service、policy、device、resource、link、probe_target、expected_component、
+dns_record、public_trust、admin_certificate。最终值仍执行原对象的不变身份、引用、权限、网站信任、
+发布验签及 LAN 分配校验；设备的完整签名值由已验证因果前值保留原身份、公钥、RuntimeKey、平台和
+加入绑定后组合。delete 对应原目标删除语义，设备留下永久墓碑，不能删除仍为成员的 control 节点。
+Invite 和 Endpoint 的发行者/承载者生命周期以及成员问题仍走原正式入口，不借普通解决操作
+改写已完成事务或绕过多数规则。无效签发链、双签或尚缺依赖不是可任选的两份业务值；缺原件时
+拒绝解决，先补齐材料或按成员治理处理。不同目标的名称/前缀/身份冲突仍须逐项消除实际碰撞，
+解决一行不承诺相关其他行已恢复。
+
+签发前在现有 Authority 写锁内重新读回当前冲突集合；新事实已到达则拒绝旧草稿，保留草稿并要求
+刷新来源重新审阅。远端随后才到达的并发事实依然使对象暂停，不因解决事实的时间或序号选择赢家。
+网络超时可用同 request_id、同规范请求重试，异值重试拒绝；重启从原始事实恢复解决结果。
+签发时只声明本地接受，其他 control 的接收与设备应用分别回读。撤销、删除和治理门禁不因解决
+入口放宽；运行不可达不倒写冲突事实。
+
+正常链为两 control 并发修改同一 Service → 仅该 Service 暂停 → 管理员比较并编辑最终值 →
+新签名事实引用全部并发值 → 本地投影恢复 → 原 DeviceView/运行消费者取得结果 → 页面和 Events 回读。
+最小验证覆盖规范往返、完整引用及并发变化拒绝、设备秘密保留、删除防复活、重试/重启、当前引用
+影响与正式浏览器编辑，以及真实部署后原件/身份保全。禁止恢复全局 base head、任选时间戳赢家、
+通用秘密 JSON 编辑或另一份冲突/完成 store。
+
 ```mermaid
 flowchart LR
     G["固定 genesis"] --> C["ControlConfig<br/>多数签名链"]

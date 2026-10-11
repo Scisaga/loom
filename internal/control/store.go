@@ -699,6 +699,11 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 			}
 		}
 	}
+	if op.Operation == "conflict.resolve" {
+		if err := validateResolutionTarget(Material{TargetKind: op.TargetKind, TargetID: op.TargetID, Payload: op.Payload}, a.projection); err != nil {
+			return Submission{}, err
+		}
+	}
 	for _, check := range checks {
 		if check != nil {
 			if err := check(a.projection); err != nil {
@@ -724,8 +729,9 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 		return Submission{}, err
 	}
 	payload := op.Payload
-	if op.Operation == "device.put" {
-		public := op.Payload.(DevicePut)
+	publicOperation := effectiveOperation(op)
+	if publicOperation.Operation == "device.put" {
+		public := publicOperation.Payload.(DevicePut)
 		var original *DeviceAuthorization
 		graph, err := newMaterialGraph(a.genesis, a.certificates, a.materials)
 		if err != nil {
@@ -738,11 +744,12 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 		for _, rejected := range a.projection.InvalidMaterials {
 			excluded[rejected.MaterialID] = true
 		}
-		for _, fact := range a.materials {
+		for _, raw := range a.materials {
+			fact := effectiveMaterial(raw)
 			if fact.Operation != "device.join" && fact.Operation != "device.put" || fact.TargetID != op.TargetID {
 				continue
 			}
-			id, _ := MaterialID(fact)
+			id, _ := MaterialID(raw)
 			if excluded[id] || !graph.memberAuthorizationEffective(id, a.projection.ControlConfigID) {
 				continue
 			}
@@ -769,6 +776,10 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 			append([]string{}, public.Responsibilities...), append([]string{}, public.PolicyIDs...), append([]string{}, public.DistributionURLs...)
 		original.DNSServers = append([]string(nil), public.DNSServers...)
 		payload = *original
+		if value, ok := op.Payload.(ConflictResolution); ok {
+			value.Value = payload
+			payload = value
+		}
 	}
 	material := Material{Schema: MaterialSchema, NetworkID: config.NetworkID, IssuerControlID: config.ControlID, IssuerKeyID: keyID, ControlConfigID: a.projection.ControlConfigID, Sequence: sequence + 1, PreviousMaterialID: previous, Dependencies: append([]string{}, op.Dependencies...), RequestID: op.RequestID, TargetKind: op.TargetKind, TargetID: op.TargetID, Operation: op.Operation, Payload: payload}
 	private, err := config.PrivateKey()

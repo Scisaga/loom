@@ -195,6 +195,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control/ui/events", server.events)
 	mux.HandleFunc("GET /api/control/ui/live", server.live)
 	mux.HandleFunc("POST /api/control/operations", server.operation)
+	mux.HandleFunc("GET /api/control/ui/configuration", server.configurationReview)
 	mux.HandleFunc("POST /api/control/services/local-network-allocation", server.localNetworkAllocation)
 	mux.HandleFunc("GET /api/control/devices/{device}/view", server.exportDeviceView)
 	mux.HandleFunc("POST /api/control/members", server.controlChange)

@@ -64,7 +64,7 @@ func (graph *materialGraph) projectInConfig(ids []string, suspended map[string][
 		if seal, found := seals[material.IssuerKeyID]; found && material.Sequence > seal.Sequence {
 			return false
 		}
-		if isWithdrawal(material.Operation) {
+		if isWithdrawal(effectiveMaterial(material).Operation) {
 			effective[id] = true
 			return true
 		}
@@ -111,6 +111,7 @@ func (graph *materialGraph) projectInConfig(ids []string, suspended map[string][
 // ownership, identity binding and lifecycle were verified in the original
 // member context and cannot be reinterpreted after a later addition.
 func (graph *materialGraph) effectiveReferences(material Material, view Projection) bool {
+	material = effectiveMaterial(material)
 	reference := func(kind, id string, active bool) bool {
 		return requireTargetDependency(material, view, kind, id, active) == nil
 	}

@@ -126,7 +126,7 @@ func buildWebSnapshotUsing(projection Projection, admin, local, writable bool, v
 		capabilities.Credential = "local_admin"
 	}
 	if admin && writable {
-		capabilities.Operations = []string{"admin_certificate.delete", "admin_certificate.put", "device.delete", "device.put", "device.revoke", "dns_record.delete", "dns_record.put", "endpoint.put", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "public_trust.delete", "public_trust.put", "service.delete", "service.put"}
+		capabilities.Operations = []string{"admin_certificate.delete", "admin_certificate.put", "conflict.resolve", "device.delete", "device.put", "device.revoke", "dns_record.delete", "dns_record.put", "endpoint.put", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "public_trust.delete", "public_trust.put", "service.delete", "service.put"}
 	}
 	devices := projectWebDevices(projection, releases...)
 	warnings := []WebWarning{}

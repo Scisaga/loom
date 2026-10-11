@@ -394,3 +394,12 @@ main {max-width:1586px;padding:28px 20px 44px}
 .wg-traffic-group{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;height:100%;align-items:end}.wg-traffic-group .wg-traffic-hour{width:100%;min-width:0}.wg-traffic-group .wg-traffic-hour:nth-child(2){background-color:#4f9e93}.wg-traffic-group .wg-traffic-hour.missing{background:transparent}.wg-endpoint-legend{display:flex;flex-wrap:wrap;gap:8px}.wg-endpoint-legend small::before{content:"";display:inline-block;width:7px;height:7px;background:#6e8bc0;margin-right:5px}.wg-endpoint-legend small:nth-child(2)::before{background:#4f9e93}.topology-metrics{fill:#344d75;font-size:11px;pointer-events:none}.topology-edge[role=button]{cursor:pointer}.topology-edge[role=button]:focus-visible{outline:none;stroke:#466fc2}.selected-link{background:#edf3fa}.topology-traffic-card .wg-traffic{min-width:0;width:100%}
 
 .topology-traffic-card > p.tiny{white-space:normal;overflow:visible;text-overflow:clip}
+/* Current public configuration sources and reviewed ordinary operations. */
+#configuration-state>details{padding:16px 0;border-bottom:1px solid var(--border,#e7ebe7)}
+#configuration-state>details>summary{display:flex;justify-content:space-between;gap:16px;cursor:pointer}
+.configuration-sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px;margin:16px 0}
+.configuration-source{min-width:0;padding:16px;background:var(--panel,#f5f7f4);border-radius:12px}
+.configuration-source .mono,.configuration-value{overflow-wrap:anywhere;white-space:normal}
+.configuration-source pre{white-space:pre-wrap;overflow-wrap:anywhere}
+#configuration-state textarea{width:100%;box-sizing:border-box;font:inherit}
+#configuration-state form{margin-top:16px}

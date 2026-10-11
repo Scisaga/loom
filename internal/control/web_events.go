@@ -357,7 +357,7 @@ func (a *Authority) authorityEvents(ctx context.Context, from, until time.Time) 
 				}
 			}
 		}
-		if device, ok := material.Payload.(DeviceAuthorization); ok {
+		if device, ok := effectiveMaterial(material).Payload.(DeviceAuthorization); ok {
 			remember(device.ID, device.DevicePublicKey)
 		}
 		id, err := MaterialID(material)
@@ -395,7 +395,7 @@ func (a *Authority) authorityEvents(ctx context.Context, from, until time.Time) 
 		if strings.HasPrefix(material.Operation, "invite.") || material.Operation == "device.bind" {
 			kind = "enrollment"
 		}
-		if strings.HasSuffix(material.Operation, ".delete") || material.Operation == "device.revoke" {
+		if operation := effectiveMaterial(material).Operation; strings.HasSuffix(operation, ".delete") || operation == "device.revoke" {
 			kind = "revocation"
 		}
 		detail := material.TargetKind + ": " + material.Operation
@@ -429,7 +429,7 @@ func (a *Authority) authorityEvents(ctx context.Context, from, until time.Time) 
 					}
 					if !superseded {
 						maxima = append(maxima, fact)
-						withdrawn = withdrawn || isWithdrawal(graph.facts[fact].Operation)
+						withdrawn = withdrawn || isWithdrawal(effectiveMaterial(graph.facts[fact]).Operation)
 					}
 				}
 				if len(maxima) > 1 && !withdrawn {

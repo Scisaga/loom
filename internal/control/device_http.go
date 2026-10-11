@@ -44,22 +44,23 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 	if err != nil {
 		return Submission{}, nil, err
 	}
+	business := effectiveOperation(operation)
 	_, _, priorErr := server.Runtime.Authority.MaterialForRequest(operation.RequestID)
 	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
 		return Submission{}, nil, priorErr
 	}
-	if operation.Operation == "admin_certificate.put" && errors.Is(priorErr, os.ErrNotExist) {
-		if err := server.verifyAdminGrant(operation.Payload.(AdminCertificate)); err != nil {
+	if business.Operation == "admin_certificate.put" && errors.Is(priorErr, os.ErrNotExist) {
+		if err := server.verifyAdminGrant(business.Payload.(AdminCertificate)); err != nil {
 			return Submission{}, nil, err
 		}
 	}
-	if operation.Operation == "public_trust.put" && errors.Is(priorErr, os.ErrNotExist) {
-		if err := server.verifyPublicTrustGrant(operation.Payload.(PublicTrust)); err != nil {
+	if business.Operation == "public_trust.put" && errors.Is(priorErr, os.ErrNotExist) {
+		if err := server.verifyPublicTrustGrant(business.Payload.(PublicTrust)); err != nil {
 			return Submission{}, nil, err
 		}
 	}
-	if operation.Operation == "expected_component.put" && errors.Is(priorErr, os.ErrNotExist) {
-		value := operation.Payload.(ExpectedComponent)
+	if business.Operation == "expected_component.put" && errors.Is(priorErr, os.ErrNotExist) {
+		value := business.Payload.(ExpectedComponent)
 		if server.Releases == nil {
 			return Submission{}, nil, errExpectedRelease
 		}
@@ -136,7 +137,7 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 		}
 	}
 	var result Submission
-	if service, ok := operation.Payload.(Service); ok && service.LocalNetwork != nil {
+	if service, ok := business.Payload.(Service); ok && service.LocalNetwork != nil {
 		result, err = server.submitLocalNetworkOperation(ctx, operation, body)
 	} else {
 		result, err = server.Runtime.Submit(ctx, body)

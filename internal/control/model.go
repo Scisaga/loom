@@ -237,6 +237,8 @@ func validateMaterialPayload(operation, kind, id string, payload MaterialPayload
 		return errors.New("material target is invalid")
 	}
 	switch operation {
+	case "conflict.resolve":
+		return validateResolution(kind, id, payload, false)
 	case "public_trust.put":
 		value, ok := payload.(PublicTrust)
 		if !ok || kind != "public_trust" || value.ID != id {
@@ -372,6 +374,9 @@ func (material Material) validate(signature bool) error {
 	if material.Sequence == 1 && material.PreviousMaterialID != EmptyMaterialChainID() {
 		return errors.New("first material does not name the empty chain")
 	}
+	if err := resolutionReferences(material.Payload, material.Dependencies); err != nil {
+		return err
+	}
 	return validateMaterialPayload(material.Operation, material.TargetKind, material.TargetID, material.Payload)
 }
 
@@ -383,6 +388,12 @@ func (operation Operation) Validate() error {
 	}
 	if err := validateCurrentTransportPayload(operation.Payload); err != nil {
 		return err
+	}
+	if operation.Operation == "conflict.resolve" {
+		if err := resolutionReferences(operation.Payload, operation.Dependencies); err != nil {
+			return err
+		}
+		return validateResolution(operation.TargetKind, operation.TargetID, operation.Payload, true)
 	}
 	if operation.Operation == "device.put" {
 		value, ok := operation.Payload.(DevicePut)
@@ -405,7 +416,14 @@ func (material Material) OperationRequest() (Operation, error) {
 		if !ok {
 			return Operation{}, errors.New("device material payload is invalid")
 		}
-		operation.Payload = DevicePut{ID: value.ID, Name: value.Name, Responsibilities: append([]string{}, value.Responsibilities...), PolicyIDs: append([]string{}, value.PolicyIDs...), DistributionURLs: append([]string{}, value.DistributionURLs...), DNSServers: append([]string(nil), value.DNSServers...)}
+		operation.Payload = publicDeviceValue(value)
+	} else if value, ok := material.Payload.(ConflictResolution); ok && material.TargetKind == "device" && value.Action == "put" {
+		device, ok := value.Value.(DeviceAuthorization)
+		if !ok {
+			return Operation{}, errors.New("device resolution material is invalid")
+		}
+		value.Value = publicDeviceValue(device)
+		operation.Payload = value
 	}
 	return operation, operation.Validate()
 }
@@ -587,7 +605,9 @@ func decodeOperationObject(object map[string]any) (Operation, error) {
 	}
 	var payload MaterialPayload
 	var err error
-	if operation.Operation == "device.put" {
+	if operation.Operation == "conflict.resolve" {
+		payload, err = decodeResolution(operation.TargetKind, object["payload"], true)
+	} else if operation.Operation == "device.put" {
 		var value DevicePut
 		err = assignContractJSON(object["payload"], reflect.ValueOf(&value).Elem())
 		payload = value
@@ -602,6 +622,9 @@ func decodeOperationObject(object map[string]any) (Operation, error) {
 }
 
 func decodeMaterialPayload(operation, kind string, value any) (MaterialPayload, error) {
+	if operation == "conflict.resolve" {
+		return decodeResolution(kind, value, false)
+	}
 	var target any
 	switch operation {
 	case "public_trust.put":
@@ -934,7 +957,7 @@ func (graph *materialGraph) projectValues(ids []string, suspended map[string][]s
 		add("probe_target", value.ID, graph.genesisID, "probe_target.put", value)
 	}
 	for _, id := range ids {
-		material := graph.facts[id]
+		material := effectiveMaterial(graph.facts[id])
 		if !graph.memberAuthorizationEffective(id, configID) {
 			continue
 		}
@@ -1073,11 +1096,16 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 			return errors.New("request ID was already signed at an earlier sequence")
 		}
 	}
+	if material.Operation == "conflict.resolve" {
+		if err := validateResolutionTarget(material, view); err != nil {
+			return err
+		}
+	}
 	if target, exists := view.CurrentTarget(material.TargetKind, material.TargetID); exists {
 		if err := requireTargetDependency(material, view, material.TargetKind, material.TargetID, false); err != nil {
 			return err
 		}
-		if target.Conflicted && !isWithdrawal(material.Operation) {
+		if target.Conflicted && material.Operation != "conflict.resolve" && !isWithdrawal(material.Operation) {
 			return errors.New("conflicted target requires an explicit conflict resolution")
 		}
 	} else if material.Operation == "device.put" {
@@ -1087,6 +1115,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 	} else if isWithdrawal(material.Operation) || material.Operation == "invite.bind" {
 		return errors.New("operation requires an existing target")
 	}
+	material = effectiveMaterial(material)
 	switch value := material.Payload.(type) {
 	case PublicTrust:
 		return nil // The complete immutable certificate determines its stable ID.
@@ -1106,7 +1135,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 			}
 		}
 		for _, id := range history {
-			if prior, ok := graph.facts[id].Payload.(Service); ok && prior.ID == value.ID && prior.Kind != value.Kind {
+			if prior, ok := effectiveMaterial(graph.facts[id]).Payload.(Service); ok && prior.ID == value.ID && prior.Kind != value.Kind {
 				return errors.New("Service ID cannot change its historical kind")
 			}
 		}
@@ -1126,7 +1155,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 			}
 		}
 		for _, id := range history {
-			if prior, ok := graph.facts[id].Payload.(NetworkPolicy); ok && prior.ID == value.ID && prior.ServiceID != value.ServiceID {
+			if prior, ok := effectiveMaterial(graph.facts[id]).Payload.(NetworkPolicy); ok && prior.ID == value.ID && prior.ServiceID != value.ServiceID {
 				return errors.New("Policy ID cannot change its historical Service")
 			}
 		}
@@ -1148,7 +1177,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		return requireTargetDependency(material, view, "device", value.NodeID, true)
 	case TransportResource:
 		for _, id := range history {
-			if prior, ok := graph.facts[id].Payload.(TransportResource); ok && prior.ID == value.ID && (prior.OwnerNodeID != value.OwnerNodeID || prior.Kind != value.Kind || prior.ListenerID != value.ListenerID) {
+			if prior, ok := effectiveMaterial(graph.facts[id]).Payload.(TransportResource); ok && prior.ID == value.ID && (prior.OwnerNodeID != value.OwnerNodeID || prior.Kind != value.Kind || prior.ListenerID != value.ListenerID) {
 				return errors.New("resource kind, owner and listener identity cannot change")
 			}
 		}
@@ -1207,7 +1236,7 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 			}
 		}
 		for _, id := range history {
-			if prior, ok := graph.facts[id].Payload.(NetworkLink); ok && prior.ID == value.ID && (prior.FromNodeID != value.FromNodeID || prior.ToNodeID != value.ToNodeID || prior.FromResourceID != value.FromResourceID || prior.ResourceID != value.ResourceID || prior.InitiatorNodeID != value.InitiatorNodeID || prior.Purpose != value.Purpose) {
+			if prior, ok := effectiveMaterial(graph.facts[id]).Payload.(NetworkLink); ok && prior.ID == value.ID && (prior.FromNodeID != value.FromNodeID || prior.ToNodeID != value.ToNodeID || prior.FromResourceID != value.FromResourceID || prior.ResourceID != value.ResourceID || prior.InitiatorNodeID != value.InitiatorNodeID || prior.Purpose != value.Purpose) {
 				return errors.New("Link identity relationships cannot change")
 			}
 		}
@@ -1301,7 +1330,7 @@ func (graph *materialGraph) validateInvite(material Material, view Projection, h
 		return errors.New("Invite transaction ID is immutable and cannot be reissued")
 	}
 	for _, id := range history {
-		prior := graph.facts[id]
+		prior := effectiveMaterial(graph.facts[id])
 		if prior.TargetKind == "device" && prior.TargetID == invite.DeviceID {
 			return errors.New("device identity has already been bound or deleted")
 		}
@@ -1353,7 +1382,7 @@ func (graph *materialGraph) validateBinding(material Material, view Projection, 
 		return errors.New("Invite has already bound or terminated")
 	}
 	for _, id := range history {
-		prior := graph.facts[id]
+		prior := effectiveMaterial(graph.facts[id])
 		if device, ok := prior.Payload.(DeviceAuthorization); ok && (device.ID == invite.DeviceID || device.DevicePublicKey == binding.DevicePublicKey) {
 			return errors.New("device identity is already bound")
 		}
@@ -1390,7 +1419,7 @@ func (graph *materialGraph) validateTermination(material Material, view Projecti
 		return errors.New("Invite expiration precedes its signed expiry")
 	}
 	for _, id := range history {
-		if device, ok := graph.facts[id].Payload.(DeviceAuthorization); ok && device.TransactionID == termination.TransactionID {
+		if device, ok := effectiveMaterial(graph.facts[id]).Payload.(DeviceAuthorization); ok && device.TransactionID == termination.TransactionID {
 			return errors.New("completed enrollment cannot be terminated")
 		}
 	}
@@ -1403,7 +1432,7 @@ func (graph *materialGraph) validateDevice(material Material, view Projection, h
 	}
 	var previous *DeviceAuthorization
 	for _, id := range history {
-		prior := graph.facts[id]
+		prior := effectiveMaterial(graph.facts[id])
 		if prior.TargetKind == "device" && prior.TargetID == device.ID && prior.Operation == "device.delete" {
 			return errors.New("deleted device identity cannot be resurrected")
 		}
@@ -1665,7 +1694,7 @@ func (graph *materialGraph) validateEndpoint(material Material, view Projection,
 				completed = completed || join.TransactionID == invite.ID
 			}
 			for _, id := range history {
-				if authorization, ok := graph.facts[id].Payload.(DeviceAuthorization); ok && authorization.TransactionID == invite.ID {
+				if authorization, ok := effectiveMaterial(graph.facts[id]).Payload.(DeviceAuthorization); ok && authorization.TransactionID == invite.ID {
 					completed = true
 					break
 				}

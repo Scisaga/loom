@@ -243,6 +243,13 @@ daemon 校验依赖后生成签名事实并持久化，
 | `admin_certificate.delete` / admin_certificate | `{"id":ID}`；撤销精确叶，新请求及既有管理 WebSocket 重新检查当前授权 |
 | `conflict.resolve` / 被解决目标种类 | `conflicts:[]Digest,action:put或delete`；put 另含对应完整 `value`，delete 不含 value；引用须覆盖全部冲突，不能通过此操作绕过成员资格/已绑定 control 事务或设备墓碑 |
 
+普通对象解决的精确映射见[显式冲突解决](control-model.md#普通对象的显式冲突解决)。conflicts 恰为
+本次审阅的全部同对象当前并发引用，至少两项，严格升序、无重复，且每项都显式出现在 dependencies。
+put 的 value 由 target_kind 选择原对象完整规范类型；device 的公开管理 value 只允许 DevicePut 字段
+（包括当前可选 dns_servers），签名 Material 的 value 由 daemon 保留原身份、密钥及加入绑定后组成
+完整 DeviceAuthorization。delete 不含 value，采用原目标删除语义。Invite、Endpoint 的有限生命周期
+和成员治理不扩展为通用可编辑值；跨目标碰撞仍须沿真实事务、名称或前缀消除，不冒充一次任选合并。
+
 以上为本链所需操作，不新增成员治理或发布操作的编码。那些入口仍须遵循各自模型，
 待其精确字段确定后修订同一 schema 3；不得把未定义 payload 当任意 JSON 接受。
 

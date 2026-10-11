@@ -353,7 +353,7 @@ func (a *Authority) preserveRetiredWithdrawals(ctx context.Context, cert Control
 	}
 	configID, _ := ConfigID(cert.Config)
 	for _, id := range graph.ordered {
-		original := graph.facts[id]
+		original := effectiveMaterial(graph.facts[id])
 		seal, found := seals[original.IssuerKeyID]
 		if !found || original.Sequence <= seal.Sequence || !isWithdrawal(original.Operation) || graph.validate(id) != nil {
 			continue

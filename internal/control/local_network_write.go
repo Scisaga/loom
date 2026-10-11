@@ -144,6 +144,7 @@ func localNetworkAllocation(projection Projection, reports []DeviceReport, reque
 }
 
 func checkLocalNetworkWrite(operation Operation, projection Projection, reports []DeviceReport, reportErr error, releases ...ReleaseSet) error {
+	operation = effectiveOperation(operation)
 	value, lan := operation.Payload.(Service)
 	if !lan || value.LocalNetwork == nil {
 		return nil

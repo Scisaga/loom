@@ -7,6 +7,10 @@ import "errors"
 // allow any writer to issue the retired transport semantics again.
 func validateCurrentTransportPayload(payload MaterialPayload) error {
 	switch value := payload.(type) {
+	case ConflictResolution:
+		if value.Value != nil {
+			return validateCurrentTransportPayload(value.Value)
+		}
 	case TransportResource:
 		if value.AccessHY2ResourceID != "" {
 			return errors.New("WireGuard access cannot depend on a Hy2 resource")
