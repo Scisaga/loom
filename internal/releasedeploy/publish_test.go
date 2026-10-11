@@ -207,12 +207,17 @@ func TestReviewedAllTargetsRequireIdentityHTTPAndConditionalReadback(t *testing.
 		if err != nil {
 			return nil, err
 		}
+		info, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return nil, err
+		}
 		var body io.ReadCloser = file
 		if badHTTP {
 			file.Close()
 			body = io.NopCloser(strings.NewReader("demo wrong bytes"))
 		}
-		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: http.Header{}}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: body, ContentLength: info.Size(), Header: http.Header{}}, nil
 	})}
 	events := []Result{}
 	options := Options{Config: config, ReloadConfig: func() (localconfig.Config, error) { return config, nil }, Inputs: func(context.Context) (control.ReleaseDeploymentInputs, error) { return inputs, nil }, Transport: transport, Source: *reviewedStore, Catalog: set.ID, PublicKey: key, HTTP: client, Observe: func(r Result) { events = append(events, r) }}

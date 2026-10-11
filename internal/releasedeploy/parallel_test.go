@@ -82,7 +82,7 @@ func TestHTTPSRootsOverlapAndRequireCompleteBodies(t *testing.T) {
 			}
 			return &http.Response{StatusCode: http.StatusOK, Body: &closedBody{Reader: strings.NewReader(text), closed: &closed}}, nil
 		})}
-		err := verifyHTTPS(context.Background(), client, []string{"https://a.example/", "https://b.example/"}, set, func(Result) {})
+		err := verifyHTTPS(context.Background(), client, []string{"https://a.example/", "https://b.example/"}, set, func(Result) {}, nil)
 		if (err != nil) != truncated || closed.Load() != 2 {
 			t.Fatal("HTTPS result ignored content or left a response running", err, closed.Load())
 		}

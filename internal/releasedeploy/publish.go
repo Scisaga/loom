@@ -166,7 +166,7 @@ func (o Options) readTarget(ctx context.Context, t target) (TargetReadback, erro
 }
 
 // Publish does not install or activate any node program. Every selected target
-// is checked before the first upload, and all HTTP bodies before any pointer.
+// is checked before the first upload, and all required HTTP checks before any pointer.
 func Publish(ctx context.Context, o Options) error {
 	if o.ReloadConfig == nil || o.Inputs == nil || o.Transport == nil || o.HTTP == nil {
 		return errors.New("publication adapters are incomplete")
@@ -302,7 +302,8 @@ func Publish(ctx context.Context, o Options) error {
 	}); err != nil {
 		return err
 	}
-	if err = verifyHTTPS(ctx, o.HTTP, inputs.DistributionURLs, set, o.emit); err != nil {
+	retained := retainedPublicArtifacts(store.ProjectionSource(), all)
+	if err = verifyHTTPS(ctx, o.HTTP, inputs.DistributionURLs, set, o.emit, retained); err != nil {
 		return err
 	}
 	o.emit(Result{Operation: "https", Verified: true})
@@ -355,7 +356,41 @@ func catalogReadback(body []byte, set control.ReleaseSet) bool {
 	return json.Unmarshal(body, &value) == nil && value.Catalog == set.ID && value.Generation == set.Catalog.Generation && reflect.DeepEqual(value.Entries, set.Catalog.Entries)
 }
 
-func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set control.ReleaseSet, observe func(Result)) error {
+// The source independently authenticates old catalog metadata. Missing or
+// invalid metadata provides no reuse; it cannot prevent full verification.
+func retainedPublicArtifacts(source control.ReleaseSource, targets []target) map[control.ReleaseArtifact]bool {
+	var retained map[control.ReleaseArtifact]bool
+	seen := map[string]bool{}
+	for _, target := range targets {
+		if target.previous == "" {
+			return nil
+		}
+		if seen[target.previous] {
+			continue
+		}
+		set, err := source.ReadCatalog(target.previous)
+		if err != nil {
+			return nil
+		}
+		seen[target.previous] = true
+		entries := map[control.ReleaseArtifact]bool{}
+		for _, entry := range set.Catalog.Entries {
+			entries[entry.Artifact] = true
+		}
+		if retained == nil {
+			retained = entries
+		} else {
+			for artifact := range retained {
+				if !entries[artifact] {
+					delete(retained, artifact)
+				}
+			}
+		}
+	}
+	return retained
+}
+
+func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set control.ReleaseSet, observe func(Result), retained map[control.ReleaseArtifact]bool) error {
 	// Do not follow redirects, use process proxy settings, or accept transparent
 	// decompression as an exact artifact readback. Those are caller transport rules.
 	copy := *client
@@ -366,18 +401,30 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 		base := bases[i]
 		observe(Result{DistributionRoot: i + 1, Operation: "https"})
 		for j, entry := range entries {
-			observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: "https_artifact"})
+			method, operation := http.MethodGet, "https_artifact"
+			if retained[entry.Artifact] {
+				method, operation = http.MethodHead, "https_metadata"
+			}
+			observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: operation})
 			url, err := control.DistributionURL(base, entry.Artifact.Digest)
 			if err != nil {
 				return err
 			}
-			request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			request, err := http.NewRequestWithContext(ctx, method, url, nil)
 			if err != nil {
 				return err
 			}
 			response, err := copy.Do(request)
 			if err != nil {
 				return fmt.Errorf("HTTPS root %d artifact %d connection unconfirmed", i+1, j+1)
+			}
+			if method == http.MethodHead {
+				closeErr := response.Body.Close()
+				if response.StatusCode != http.StatusOK || response.Uncompressed || response.Header.Get("Content-Encoding") != "" || response.ContentLength != int64(entry.Artifact.Size) || closeErr != nil {
+					return fmt.Errorf("HTTPS root %d artifact %d existing path metadata unconfirmed; pointers were not advanced by this invocation", i+1, j+1)
+				}
+				observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: operation, Verified: true})
+				continue
 			}
 			hash := sha256.New()
 			size, readErr := io.Copy(hash, io.LimitReader(response.Body, int64(entry.Artifact.Size)+1))
