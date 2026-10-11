@@ -237,19 +237,22 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 		if status != "unavailable" {
 			return result(), nil
 		}
-		fallback := map[string]string{scope: BlockedSelection}
-		if attempt == 0 {
-			fallback, err = selectAll(routes, state.Observations, state.ResourceObservations, state.Preference, readback, state.NetworkGeneration, at, targets...)
-			if err != nil {
-				return result(), err
-			}
+		fallback, err := selectAll(routes, state.Observations, state.ResourceObservations, state.Preference, readback, state.NetworkGeneration, at, targets...)
+		if err != nil {
+			return result(), err
 		}
 		readback, err = ApplySelections(ctx, selector, fallback)
 		if err != nil {
 			return Activation{}, err
 		}
 	}
-	return result(), clientmodel.ErrNoUsableCandidate
+	// Exhausting this pass's probe budget does not disqualify an untried path.
+	// Keep its actual selection unknown until a later business sample establishes
+	// availability; reject only when the model has no remaining eligible path.
+	if len(result().Selections) == 0 && len(scopes) > 0 {
+		return result(), clientmodel.ErrNoUsableCandidate
+	}
+	return result(), nil
 }
 
 // Activate returns rejected scopes separately from genuine candidate selections.

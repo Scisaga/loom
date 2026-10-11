@@ -81,6 +81,77 @@ func schema3Fixture(t *testing.T, platform string, changes ...func(*control.Invi
 func windowsProtectedFixture(t *testing.T) (control.BootstrapInvite, func(string, uint64, ...func(*control.DeviceView)) control.DeviceViewEnvelope) {
 	return schema3Fixture(t, "windows")
 }
+
+func TestOwnedAuthorityCopiesIsolateNestedPayloadsAndPointers(t *testing.T) {
+	invite, envelope := schema3Fixture(t, "linux")
+	path := filepath.Join(t.TempDir(), "identity")
+	store, err := OpenForPlatform(path, invite, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := envelope(store.PublicKey(), 7)
+	if err := store.SaveLKG(input); err != nil {
+		t.Fatal(err)
+	}
+	original, err := control.CanonicalEncode(store.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy := store.LKG()
+	copy.FactFrontier[0].Sequence = 1
+	copy.View.Responsibilities[0] = "forward"
+	copy.View.Policies[0].ExitScope.Mode = "none"
+	copy.View.Endpoints[0].Modes[0] = "device"
+	copy.ControlProof.Genesis.Payload.(control.Genesis).ControlConfig.Members[0].PublicKey = "changed"
+	invitation := store.Invite()
+	invitation.Material.Payload.(control.Invite).PolicyIDs[0] = "demo-other-policy"
+	invitation.ControlProof.Genesis.Payload.(control.Genesis).ControlConfig.Members[0].PublicKey = "changed"
+	input.View.Policies[0].ExitScope.Mode = "none"
+	input.View.PolicyIDs[0] = "demo-other-policy"
+	invite.Material.Payload.(control.Invite).PolicyIDs[0] = "demo-other-policy"
+	after, err := control.CanonicalEncode(store.state)
+	if err != nil || !bytes.Equal(original, after) {
+		t.Fatal("caller changed private accepted authority")
+	}
+	restarted, err := Load(path)
+	if err != nil || !reflect.DeepEqual(restarted.state, store.state) {
+		t.Fatal("copied authority differs from protected restart state", err)
+	}
+	if changed, err := store.Reload(); err != nil || changed {
+		t.Fatal("unchanged validated authority was not retained", err)
+	}
+	store.authenticatedBytes = nil
+	if changed, err := store.Reload(); err != nil || changed || store.authenticatedBytes == nil {
+		t.Fatal("discarding a derived byte digest changed accepted authority", err)
+	}
+}
+
+func TestReloadRejectsNoncanonicalBytesDespiteMatchingOwnedValue(t *testing.T) {
+	invite, envelope := schema3Fixture(t, "linux")
+	path := filepath.Join(t.TempDir(), "identity")
+	store, err := OpenForPlatform(path, invite, "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveLKG(envelope(store.PublicKey(), 7)); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := append(body, '\n')
+	if err := os.WriteFile(path, bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Reload(); err == nil {
+		t.Fatal("matching in-memory authority bypassed actual canonical input validation")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(bad, after) {
+		t.Fatal("rejected input was rewritten")
+	}
+}
 func revokeView(view *control.DeviceView) {
 	view.Policies[0].Action = "deny"
 	view.BusinessProbeTargets = []control.ServiceProbeTargets{}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"sync"
@@ -53,7 +55,7 @@ func NewIdentityState(invite control.BootstrapInvite, platform string, private e
 	if err := state.Validate(); err != nil {
 		return State{}, err
 	}
-	return cloneCanonical(state), nil
+	return cloneOwnedAuthority(state), nil
 }
 
 // AcceptLKG returns the next authoritative value. The caller must commit it
@@ -96,7 +98,7 @@ func AcceptLKG(state State, envelope control.DeviceViewEnvelope) (State, error) 
 	if err := next.Validate(); err != nil {
 		return State{}, err
 	}
-	return cloneCanonical(next), nil
+	return cloneOwnedAuthority(next), nil
 }
 
 // AdvanceReportSequence reserves a number in the same identity value. Commit
@@ -109,7 +111,7 @@ func AdvanceReportSequence(state State) (State, control.U64, error) {
 		return State{}, 0, errors.New("report sequence cannot advance")
 	}
 	state.ReportSequence++
-	return cloneCanonical(state), state.ReportSequence, nil
+	return cloneOwnedAuthority(state), state.ReportSequence, nil
 }
 
 func EncodeIdentityState(state State) ([]byte, error) {
@@ -179,6 +181,9 @@ type Store struct {
 	protector clientsecret.Protector
 	state     State
 	failed    error
+	// Derived only from the exact bytes authenticated into state or committed
+	// and read back. Missing or different bytes always require full decoding.
+	authenticatedBytes *[sha256.Size]byte
 }
 
 func validStatePath(path string) bool {
@@ -283,22 +288,26 @@ func (store *Store) readBytesUnlocked() ([]byte, error) {
 	}
 	return body, nil
 }
-func (store *Store) readUnlocked() (State, error) {
+func (store *Store) readUnlocked() (State, [sha256.Size]byte, error) {
 	body, err := store.readBytesUnlocked()
 	if err != nil {
-		return State{}, err
+		return State{}, [sha256.Size]byte{}, err
 	}
 	defer clear(body)
+	digest := sha256.Sum256(body)
+	if store.authenticatedBytes != nil && digest == *store.authenticatedBytes {
+		return cloneOwnedAuthority(store.state), digest, nil
+	}
 	var state State
 	if err := control.DecodeCanonical(body, &state, stateLimits); err != nil {
-		return State{}, err
+		return State{}, digest, err
 	}
 	// DecodeCanonical already validates the complete domain value. Only the
 	// local protection adapter constraint remains outside that contract.
 	if err := store.validateProtection(state); err != nil {
-		return State{}, err
+		return State{}, digest, err
 	}
-	return state, nil
+	return state, digest, nil
 }
 func (store *Store) load() error {
 	lock, err := lockStateFile(store.path)
@@ -306,7 +315,7 @@ func (store *Store) load() error {
 		return err
 	}
 	defer lock.Close()
-	state, err := store.readUnlocked()
+	state, digest, err := store.readUnlocked()
 	if err != nil {
 		return err
 	}
@@ -314,6 +323,7 @@ func (store *Store) load() error {
 		return err
 	}
 	store.state = state
+	store.authenticatedBytes = &digest
 	return nil
 }
 func fixedIdentityEqual(left, right State) bool {
@@ -368,7 +378,7 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 		return store.fail(err)
 	}
 	defer lock.Close()
-	current, readErr := store.readUnlocked()
+	current, _, readErr := store.readUnlocked()
 	if readErr == nil {
 		if !fixedIdentityEqual(next, current) {
 			return errors.New("device write conflicts with current persistent identity")
@@ -478,6 +488,7 @@ func (store *Store) writeUnlocked(next, current State) error {
 	// next is privately owned by the locked caller. Exact readback proves the
 	// disk holds the same validated value; no external pointer is retained.
 	store.state = next
+	store.authenticatedBytes = new(sha256.Sum256(committed))
 	if review.PossiblePermissionRestoration {
 		body, _ := json.Marshal(review)
 		log.Printf("member certificate accepted; permission review is incomplete: %s", body)
@@ -505,21 +516,60 @@ func (store *Store) ClaimRequestID() string {
 	defer store.mu.Unlock()
 	return store.state.ClaimRequestID
 }
-func cloneCanonical[T any](value T) T {
-	body, err := control.CanonicalEncode(value)
-	if err != nil {
-		panic("invalid in-memory device authority")
-	}
-	var copy T
-	if control.DecodeCanonical(body, &copy, stateLimits) != nil {
-		panic("invalid in-memory device authority")
+
+// Only private, already validated domain values reach this copier. Input and
+// persistence boundaries retain canonical decoding and complete authentication.
+func cloneOwnedAuthority[T any](value T) T {
+	return cloneAuthorityValue(reflect.ValueOf(value)).Interface().(T)
+}
+func cloneAuthorityValue(value reflect.Value) reflect.Value {
+	copy := reflect.New(value.Type()).Elem()
+	switch value.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if !value.IsNil() {
+			if value.Kind() == reflect.Pointer {
+				copy.Set(reflect.New(value.Type().Elem()))
+				copy.Elem().Set(cloneAuthorityValue(value.Elem()))
+			} else {
+				copy.Set(cloneAuthorityValue(value.Elem()))
+			}
+		}
+	case reflect.Struct:
+		for i := 0; i < value.NumField(); i++ {
+			if value.Type().Field(i).PkgPath != "" {
+				panic("undefined private field in device authority")
+			}
+			copy.Field(i).Set(cloneAuthorityValue(value.Field(i)))
+		}
+	case reflect.Slice, reflect.Array:
+		if value.Kind() == reflect.Slice {
+			if value.IsNil() {
+				return copy
+			}
+			copy.Set(reflect.MakeSlice(value.Type(), value.Len(), value.Len()))
+		}
+		for i := 0; i < value.Len(); i++ {
+			copy.Index(i).Set(cloneAuthorityValue(value.Index(i)))
+		}
+	case reflect.Map:
+		if !value.IsNil() {
+			copy.Set(reflect.MakeMapWithSize(value.Type(), value.Len()))
+			for entries := value.MapRange(); entries.Next(); {
+				copy.SetMapIndex(cloneAuthorityValue(entries.Key()), cloneAuthorityValue(entries.Value()))
+			}
+		}
+	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		copy.Set(value)
+	default:
+		panic("undefined kind in device authority")
 	}
 	return copy
 }
 func (store *Store) Invite() control.BootstrapInvite {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	return cloneCanonical(store.state.Invite)
+	return cloneOwnedAuthority(store.state.Invite)
 }
 func (store *Store) LKG() *control.DeviceViewEnvelope {
 	store.mu.Lock()
@@ -527,7 +577,7 @@ func (store *Store) LKG() *control.DeviceViewEnvelope {
 	if store.state.LKG == nil {
 		return nil
 	}
-	copy := cloneCanonical(*store.state.LKG)
+	copy := cloneOwnedAuthority(*store.state.LKG)
 	return &copy
 }
 func (store *Store) Reload() (bool, error) {
@@ -536,19 +586,20 @@ func (store *Store) Reload() (bool, error) {
 	if store.failed != nil {
 		return false, errors.New("device persistence previously failed; reopen the state before continuing")
 	}
-	current := &Store{path: store.path, protector: store.protector}
+	current := &Store{path: store.path, protector: store.protector, state: store.state, authenticatedBytes: store.authenticatedBytes}
 	if err := current.load(); err != nil {
 		return false, store.fail(err)
+	}
+	if reflect.DeepEqual(current.state, store.state) {
+		store.authenticatedBytes = current.authenticatedBytes
+		return false, nil
 	}
 	if err := checkStateAdvance(current.state, store.state); err != nil {
 		return false, err
 	}
-	before, _ := control.CanonicalEncode(store.state.LKG)
-	after, _ := control.CanonicalEncode(current.state.LKG)
-	changed := !bytes.Equal(before, after)
-	clear(before)
-	clear(after)
+	changed := !reflect.DeepEqual(store.state.LKG, current.state.LKG)
 	store.state = current.state
+	store.authenticatedBytes = current.authenticatedBytes
 	return changed, nil
 }
 func (store *Store) SaveLKG(envelope control.DeviceViewEnvelope) error {

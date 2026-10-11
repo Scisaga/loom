@@ -57,6 +57,44 @@ func TestActivateUsesReadbackAndOneSameExitFallback(t *testing.T) {
 	}
 }
 
+func TestProbeBudgetRetainsRemainingAuthorizedPathAndRecovers(t *testing.T) {
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	scope := "service:demo-service"
+	target := "https://demo.example/test"
+	routes := []clientmodel.RouteCandidate{
+		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: scope},
+		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: scope},
+		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: scope},
+	}
+	selector := &fakeSelector{current: map[string]string{scope: "demo-a"}}
+	working := "demo-c"
+	var attempts []string
+	probes := Probes{target: func(context.Context) ProbeResult {
+		candidate := selector.current[scope]
+		attempts = append(attempts, candidate)
+		return ProbeResult{Available: candidate == working, Action: "https_request"}
+	}}
+	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-network"}
+	first, err := Activate(context.Background(), selector, routes, state, probes, func() time.Time { return at })
+	if err != nil || len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-c" ||
+		first.Selections[0].State != "unknown" || len(first.BlockedScopes) != 0 ||
+		!reflect.DeepEqual(attempts, []string{"demo-a", "demo-b"}) {
+		t.Fatal("bounded probing falsely rejected the untried authorized path", err)
+	}
+	second, err := Activate(context.Background(), selector, routes, first.State, probes, func() time.Time { return at })
+	if err != nil || len(second.Selections) != 1 || second.Selections[0].CandidateID != "demo-c" ||
+		second.Selections[0].State != "available" || !reflect.DeepEqual(attempts, []string{"demo-a", "demo-b", "demo-c"}) {
+		t.Fatal("next pass failed to test the remaining actual selection", err)
+	}
+	at = at.Add(11 * time.Minute)
+	working = "demo-a"
+	third, err := Activate(context.Background(), selector, routes, second.State, probes, func() time.Time { return at })
+	if err != nil || len(third.Selections) != 1 || third.Selections[0].CandidateID != "demo-a" ||
+		third.Selections[0].State != "available" || !reflect.DeepEqual(attempts[3:], []string{"demo-c", "demo-a"}) {
+		t.Fatal("temporary failure became a permanent path exclusion", err)
+	}
+}
+
 func TestApplyRejectsMismatchedSelectorReadback(t *testing.T) {
 	selector := &fakeSelector{current: map[string]string{"internet": "one-hop"}, readAs: "unauthorized"}
 	if _, err := ApplySelections(context.Background(), selector, map[string]string{"internet": "relay"}); err == nil {

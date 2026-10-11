@@ -88,7 +88,9 @@ func TestSlowRefreshReachesUntriedPathAfterTwoFailures(t *testing.T) {
 		return ProbeResult{Available: selector.current[scope] == "demo-c", Action: "https_request"}
 	}
 	first, err := Activate(context.Background(), selector, routes, defaultState("demo-network"), Probes{"": probe}, func() time.Time { return now })
-	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || !reflect.DeepEqual(attempts, []string{"demo-a", "demo-b"}) {
+	if err != nil || !reflect.DeepEqual(attempts, []string{"demo-a", "demo-b"}) ||
+		len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-c" ||
+		first.Selections[0].State != "unknown" || selector.current[scope] != "demo-c" {
 		t.Fatal("unexpected initial bounded attempts", attempts, err)
 	}
 	// Authentication, resource checks or a suspended client can outlast both
