@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -396,7 +397,7 @@ func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io
 	envelope, err := deviceclient.Fetch(pending, store)
 	if changed, readErr := store.Reload(); readErr != nil {
 		return false, errors.Join(errCertifiedPersistence, readErr)
-	} else if changed {
+	} else if current := store.LKG(); changed || before != nil && current != nil && before.Signature != current.Signature {
 		// A concurrent durable update wins over this in-flight response, even
 		// when only its authenticated frontier advanced. Retry on the next poll.
 		return !sameView(), nil
@@ -407,10 +408,10 @@ func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io
 	}
 	return acceptCertifiedView(store, envelope)
 }
-func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback, links []control.Observation, counters *control.WireGuardCounters) error {
+func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback, links []control.Observation, counters *control.WireGuardCounters) (control.DeviceReport, error) {
 	preference, err := clientadapter.ReportedPreference(lkg.View, activation.State.Preference)
 	if err != nil {
-		return err
+		return control.DeviceReport{}, err
 	}
 	selections := []control.ReportSelection{}
 	observations := append([]control.Observation{}, links...)
@@ -445,7 +446,7 @@ func reportSelection(ctx context.Context, store deviceclient.IdentityStore, lkg 
 		}
 	}
 	localNetworks, _ := collectLocalNetworks(ctx, lkg.View)
-	return deviceclient.Report(ctx, store, control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Preference: preference, LocalNetworks: localNetworks, WireGuardCounters: counters, Selections: selections, Observations: observations, Components: components, Runtime: readback})
+	return control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Preference: preference, LocalNetworks: localNetworks, WireGuardCounters: counters, Selections: selections, Observations: observations, Components: components, Runtime: readback}, nil
 }
 func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool, readback control.RuntimeReadback) Status {
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration, Selections: activation.Selections, Observations: activation.State.Observations, Runtime: readback.State, Reported: reported}
@@ -457,6 +458,8 @@ func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, repor
 }
 func runGeneration(ctx context.Context, options Options, store *deviceclient.Store, previous *control.DeviceViewEnvelope, transaction **wireGuardTransaction) (retErr error) {
 	options.defaults()
+	ctx, cancelGeneration := context.WithCancel(ctx)
+	defer cancelGeneration()
 	defer func() {
 		if err := os.Remove(options.Status); err != nil && !errors.Is(err, os.ErrNotExist) {
 			retErr = errors.Join(retErr, errRuntimeCleanup, err)
@@ -718,6 +721,36 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if componentErr != nil {
 		fmt.Fprintln(options.Log, "some component readbacks unavailable")
 	}
+	refreshRequests := make(chan struct{}, 1)
+	refreshNotices := make(chan string, 1)
+	privateFailures := make(chan error, 1)
+	reportRequests := make(chan *runtimeReportAttempt, 1)
+	reportResults := make(chan runtimeReportResult, 1)
+	var pendingReport *runtimeReportAttempt
+	var privateWorkers sync.WaitGroup
+	privateWorkers.Add(2)
+	go func() {
+		defer privateWorkers.Done()
+		refreshPrivateConfiguration(ctx, store, refreshRequests, refreshNotices, privateFailures, cancelGeneration)
+	}()
+	go func() {
+		defer privateWorkers.Done()
+		uploadRuntimeReports(ctx, reportRequests, reportResults, func(ctx context.Context, report control.DeviceReport) error {
+			pending, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			return deviceclient.Report(pending, store, report)
+		})
+	}()
+	defer func() {
+		cancelGeneration()
+		privateWorkers.Wait()
+		select {
+		case err := <-privateFailures:
+			retErr = errors.Join(retErr, err)
+		default:
+		}
+	}()
+	offerLatest(refreshRequests, struct{}{})
 	update := func() error {
 		// Frontier/proof progress with the same View is durable authentication
 		// progress, not a reason to interrupt unchanged execution.
@@ -798,19 +831,22 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		if err != nil {
 			return err
 		}
-		pending, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
 		var counters *control.WireGuardCounters
 		if readback.State == "running" {
 			counters, _ = clientadapter.ObserveWireGuardCounters(diagnosticContext, lkg.View, options.Now)
 		}
-		reportErr := reportSelection(pending, store, *lkg, activation, options.Now(), components, readback, linkObservations, counters)
-		if reportErr != nil {
-			fmt.Fprintln(options.Log, "private runtime report unavailable")
+		report, err := selectionReport(ctx, *lkg, activation, options.Now(), components, readback, linkObservations, counters)
+		if err != nil {
+			return err
 		}
-		status = runtimeStatus(lkg, activation, reportErr == nil, readback)
+		status = runtimeStatus(lkg, activation, false, readback)
 		status.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
-		return WriteStatus(options.Status, status)
+		if err := WriteStatus(options.Status, status); err != nil {
+			return err
+		}
+		pendingReport = &runtimeReportAttempt{report: report, status: status}
+		offerLatest(reportRequests, pendingReport)
+		return nil
 	}
 	if err := update(); err != nil {
 		return err
@@ -829,6 +865,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	ticker := time.NewTicker(options.RefreshPoll)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 		select {
 		case <-ctx.Done():
 			return nil
@@ -839,14 +878,28 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return errors.New("sing-box process exited")
 		case <-serverDone:
 			return errors.New("server sing-box process exited")
+		case notice := <-refreshNotices:
+			fmt.Fprint(options.Log, notice)
+			continue
+		case result := <-reportResults:
+			if result.err != nil {
+				fmt.Fprintln(options.Log, "private runtime report unavailable")
+			}
+			if ctx.Err() == nil {
+				if err := writeReportConfirmation(options.Status, pendingReport, result); err != nil {
+					return err
+				}
+			}
+			continue
 		case <-ticker.C:
 		case <-options.Reload:
 		}
-		if changed, err := certifiedViewChanged(ctx, store, options.Log); err != nil {
-			return err
-		} else if changed {
+		if _, err := store.Reload(); err != nil {
+			return errors.Join(errCertifiedPersistence, err)
+		} else if current := store.LKG(); current == nil || current.ViewDigest != lkg.ViewDigest {
 			return errCertifiedViewChanged
 		}
+		offerLatest(refreshRequests, struct{}{})
 		resolved, err := resolveWireGuardEndpoints(ctx, desiredWG, wg, lkg.View.DNSServers, nil)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -953,8 +1006,10 @@ func Run(ctx context.Context, options Options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	if _, err := certifiedViewChanged(ctx, store, options.Log); err != nil {
-		return err
+	if store.LKG() == nil {
+		if _, err := certifiedViewChanged(ctx, store, options.Log); err != nil {
+			return err
+		}
 	}
 	var transaction *wireGuardTransaction
 	var previous *control.DeviceViewEnvelope
