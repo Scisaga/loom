@@ -395,8 +395,10 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 	if selectorConnections.Load() != 1 {
 		t.Fatal("preference reload replaced the live selector API connection")
 	}
-	// A real selector blocks only this Service, keeps its process/API alive,
-	// and can recover when a failed observation expires without a new View.
+	// An explicitly sampled failure blocks this real selector without stopping
+	// its process/API. This fixture has no authenticated probe targets, so a
+	// later runtime refresh cannot promote its generic diagnostic into Service
+	// health; after expiry its actual selection must remain unknown.
 	routes, _, err := clientadapter.AccessProjection(store.LKG().View)
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +432,9 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 			}
 		}
 	}
-	waitState(0, "")
+	if selected, err := actualSelector.Read(ctx, routes[0].Scope); err != nil || selected != blockedSelection {
+		t.Fatal("failed sample did not block the actual selector", err)
+	}
 	if response, err := requestTarget("demo-service.example", proxy); err == nil {
 		response.Body.Close()
 		if response.StatusCode < 400 {
