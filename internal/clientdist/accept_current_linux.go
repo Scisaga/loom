@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -166,19 +168,27 @@ func checkAcceptanceExecution(ctx context.Context, currentPath string, options I
 	if len(args) < 3 || args[1] != "client" || args[2] != "run" {
 		return errors.New("original process is not the client runtime")
 	}
-	for flag, wanted := range map[string]string{"-state": options.State, "-sing-box": filepath.Join(currentPath, "sing-box"), "-capture": options.Capture, "-resource-inputs": options.ResourceInputs} {
-		got, found := "", false
-		for i := 3; i+1 < len(args); i++ {
-			if args[i] == flag {
-				if found {
-					return errors.New("original process arguments are ambiguous")
-				}
-				got, found = args[i+1], true
-			}
-		}
-		if got != wanted || !found && wanted != "" {
-			return errors.New("requested runtime inputs differ from the running original")
-		}
+	return checkAcceptanceArguments(args[3:], currentPath, options)
+}
+
+// The approved installed programs use these existing CLI defaults. Missing
+// flags are their actual execution inputs, not absent identity or new defaults.
+func checkAcceptanceArguments(args []string, currentPath string, options InstallOptions) error {
+	fs := flag.NewFlagSet("approved client run", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", defaultInstallState, "")
+	local := fs.String("runtime-state", "/var/lib/loom-device/runtime.json", "")
+	status := fs.String("status", "/run/loom-client/status.json", "")
+	config := fs.String("runtime-config", "/run/loom-client/config.json", "")
+	plane := fs.String("sing-box", filepath.Join(installRoot, "current", "sing-box"), "")
+	capture := fs.String("capture", "mixed", "")
+	resources := fs.String("resource-inputs", "", "")
+	wg := fs.String("wireguard-private-key", "/etc/wireguard/node.key", "")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		return errors.New("original runtime arguments cannot be verified")
+	}
+	if *state != options.State || *local != filepath.Join(filepath.Dir(options.State), "runtime.json") || *status != "/run/loom-client/status.json" || *config != "/run/loom-client/config.json" || *plane != filepath.Join(currentPath, "sing-box") && *plane != filepath.Join(installRoot, "current", "sing-box") || *capture != options.Capture || *resources != options.ResourceInputs || *wg != "/etc/wireguard/node.key" {
+		return errors.New("requested runtime inputs differ from the running original")
 	}
 	return nil
 }

@@ -82,3 +82,27 @@ func TestCurrentAcceptanceBindsOriginalsWithoutDecodingOldFloor(t *testing.T) {
 		t.Fatal("unprotected approval input accepted")
 	}
 }
+
+func TestCurrentAcceptancePreservesActualCLIInputs(t *testing.T) {
+	current := installRoot + "/releases/" + strings.Repeat("a", 64)
+	options := InstallOptions{State: defaultInstallState, Capture: "mixed", ResourceInputs: "/etc/demo/resources.json"}
+	for _, test := range []struct {
+		name  string
+		args  []string
+		valid bool
+	}{
+		{"deployed defaults", []string{"-capture", "mixed", "-resource-inputs", options.ResourceInputs}, true},
+		{"explicit same files", []string{"-state", options.State, "-sing-box", current + "/sing-box", "-capture", "mixed", "-resource-inputs", options.ResourceInputs}, true},
+		{"another identity", []string{"-state", "/var/lib/demo-other/state.json", "-resource-inputs", options.ResourceInputs}, false},
+		{"another data plane", []string{"-sing-box", "/opt/demo-unverified/sing-box", "-resource-inputs", options.ResourceInputs}, false},
+		{"another preference file", []string{"-runtime-state", "/var/lib/demo-other/runtime.json", "-resource-inputs", options.ResourceInputs}, false},
+		{"different capture", []string{"-capture", "tun", "-resource-inputs", options.ResourceInputs}, false},
+		{"missing resource inputs", []string{}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if (checkAcceptanceArguments(test.args, current, options) == nil) != test.valid {
+				t.Fatal("actual execution input mapping changed")
+			}
+		})
+	}
+}
