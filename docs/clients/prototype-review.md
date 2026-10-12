@@ -30,7 +30,8 @@ SVG 依据目标行为，通过 [`scripts/generate_windows_prototypes.py`](../..
 `59f7d6f0` 的生产控件已按本节布局核对九项原生 current，并完成连续两次相同哈希及必要交互检查。
 正式 Portable Mixed EXE 的三目标原业务、正常断开与同身份重启另有 VM 回读；下表中的 PNG 已按用户整组批准更新，不能用截图替代正式发布或实体终验。
 
-六款正式应用已随第 108 代目录发布，三个正常私有 Releases 页面及实际 Portable Mixed ZIP、
+六款正式应用的界面交付已随第 108 代目录完成；第 111 代随后以相同页面接线交付了共享 WG
+关闭修正，源码为 `03d3f7f1`、数据面为 `1.11.4-loom.12`。三个正常私有 Releases 页面及实际 Portable Mixed ZIP、
 manifest 与签名下载均已核对，见[交付对账](../delivery-audit.md)。本软件业务链已闭环；
 整组 PNG 已获批准并严格复验；实体 ARM64、睡眠、切网与显示行为仍由用户终验。
 
@@ -154,7 +155,8 @@ Windows 参考 Android [连接页](../../assets/client/android/connection-connec
 
 Android 的正式 Activity 与截图 fixture 共用 `LoomHomeScreen`。真机尺寸和系统栏可能不同，
 因此真机截图只用于设备交互回读，不与固定 Layoutlib PNG 逐像素比较。
-第 107 代正式 APK `3adb949f` 的连接页、诊断页、两服务三目标、同身份重启及正常停止已由同机模拟器
+第 111 代 `03d3f7f1` 的正式 APK 随共享 WG 关闭修正再次完成 WG HTTPS、正常断开、同身份重启及
+原报告核对，页面和获批基准保持；此前第 107 代正式 APK `3adb949f` 的连接页、诊断页、两服务三目标、同身份重启及正常停止已由同机模拟器
 验证，公开及私有下载和原报告验签见[交付对账](../delivery-audit.md)。十项原生基准已整组批准、原生重录并严格复验；基准更新不能抵扣实体终验。
 
 加入错误稿保留同一事务重试；“放弃本机加入”清理本机未完成的加入资料，不代表远端设备已撤销。
