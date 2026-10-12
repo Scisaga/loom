@@ -451,12 +451,14 @@ domain、wire 与 persistent 原件不变，runtime 只有本次可丢弃的校�
 `loom control serve` 可成对传入 `-release-root <绝对路径>` 和 `-release-pubkey <带外公钥文件>`，作为该
 control 的受保护只读安装输入；它们不进入 `.env` 或网络权威。私有 Releases 页面从验证结果投影 Linux
 archive、Windows 数据面 ZIP 和 Android 正式 APK，下载走既有管理员认证服务，原有页面与交互保留。
-Windows 数据面不是完整 Windows 应用安装器；其应用安装包尚未定义的 manifest 不进入目录。通用 bootstrap 供邀请交付
+Windows 数据面与六款正式应用各自使用现行 manifest，应用交付为 Installed MSI、Portable TUN/Mixed ZIP；
+不把数据面包当作完整应用。通用 bootstrap 供邀请交付
 入口使用，不作为另一款客户端卡片。sh 交付从当前设备授权中的 HTTPS distribution_urls 读回同一脚本，
 成功才在私有页面显示一次粘贴块。块中携带交付时仍获授权且读回通过的地址集合，目标机器按规范顺序
 分别尝试脚本和程序包，每次下载均核对固定摘要；全部失败时停止，不能重新创建加入事务。缺少有效入口时
 显示不可用，复制与刷新复用原邀请。页面中的整包摘要与真实运行文件摘要分开，下载成功不制造部署成功。
-现有公开 HTTPS 分发及正式私有下载已部署验收，见[实施状态](../progress.md)；生产自动更新仍未启用。
+现有公开 HTTPS 分发及正式私有下载已部署验收，见[实施状态](../progress.md)；六 Linux 节点的精确期望自动消费及旧 floor 前向接管已完成，见
+[已批准切换](release-forward-cutover.md)；公开 current 本身仍不授予安装权限。
 
 私有 Releases 的整包下载必须允许低速但持续前进的传输。实际浏览器已取得正确响应和部分 APK，
 但整响应的固定写入期限会在正文尚未完成时截断连接；端口可达和公开分发成功不能抵扣此失败。
@@ -486,9 +488,9 @@ domain、签名 manifest/catalog、原文件与持久目录保持；这里只改
 [现网字节与生产切换](../core/current-contract.md#现网字节与生产切换)。它保留旧发布 floor，退出旧发布入口，
 不使用 schema 3 catalog 作为激活依据，也不声称已完成下面的自动签名发布链。
 
-以下是目标操作顺序，不表示现有 publisher、节点或客户端已完成 schema 3 发布验收。
-现网 signed-current floor 与新 catalog 的一次性反重放切换尚无批准并验证的办法；**在此之前
-不得把 schema 3 `current` 用作生产激活依据**，也不得重置旧 floor。
+以下是现行操作顺序。用户已批准并实际完成六节点的[一次性前向接管](release-forward-cutover.md)，
+旧 floor 原位原字节保全，以对应现程序的原 Manifest/current 建立接受起点；正式期望及私有
+消费随后推进现行安装代。公开 `current` 不成为激活权限，原 floor 不重置、不进入新 decoder。
 
 1. 操作者沿同一正式发布入口提供本次精确 commit、制品、目标和理由。planner 从严格 `.env`、
    受保护安装信任输入中的发布验签公钥及当前认证 `Projection` 生成计划，核对签发密钥对应公钥、
@@ -511,7 +513,9 @@ domain、签名 manifest/catalog、原文件与持久目录保持；这里只改
    正式 Web 入口为节点详情的 Expected components；CLI 继续使用 `loom control write` 提交
    [expected_component.put/delete](../core/current-contract.md#节点期望组件的精确发布引用)，
    `loom control inspect` 可回读原引用，程序坐标和报告比较由私有节点详情回读。
-5. executor 在已授权节点安装精确制品，按职责完成安全 preflight、运行时应用及重启回读；节点和设备
+5. 已接管 Linux 节点由 `client update` 从已接受 LKG 的精确期望经 device tunnel 拉取原签名包，
+   复用唯一安装器及生成的更新 service/timer；显式安装继续使用同一入口。升级预检在停服前完成，
+   按职责完成运行时应用及重启回读；节点和设备
    从实际进程与文件报告组件、平台、制品摘要及版本。控制面分别显示签名发布、认证期望、实际运行
    和报告是否新鲜；只有实际摘要与期望相符且必要运行回读成功才显示“已应用”。
 
