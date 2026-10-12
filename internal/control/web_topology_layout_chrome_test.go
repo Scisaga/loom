@@ -13,22 +13,25 @@ func TestWebChromeTopologyLongNamesReadableAndInteractive(t *testing.T) {
 	server := httptest.NewServer((&Server{}).AdminHandler())
 	defer server.Close()
 	debug := openCommandChrome(t, server.URL+"/")
-	waitChromeEvaluation(t, debug, `document.querySelector('#app')!==null`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#app')!==null&&document.readyState==='complete'`)
 	result := chromeDo(t, debug, `(async()=>{
 	 const {topologyHTML,bindTopology}=await import('/assets/topology.js');
 	 const {topologyPositions}=await import('/assets/model.js');
 	 const results=[];
 	 for(const count of [6,17]) for(const compact of [false,true]) {
-	  const nodes=Array.from({length:count},(_,i)=>({ID:'demo-node-'+String(i).padStart(2,'0'),Name:i%2?'demo long connection name '+i:'演示节点名称较长时仍保留完整内容 '+i,Roles:['access','control','forward','internet_egress'],Location:'demo-location',Direction:i%3?'reverse_only':'',Control:i%2===0,Health:i%3?'unknown':'available'}));
+	  const nodes=Array.from({length:count},(_,i)=>({ID:'demo-node-'+String(i).padStart(2,'0'),Name:i%2?'demo connection name fills width '+i:'演示节点名称较长时仍保留完整内容 '+i,Roles:['access','control','forward','internet_egress'],Location:'demo-location',Direction:i%3?'reverse_only':'',Control:i%2===0,Health:i%3?'unknown':'available'}));
 	  const before=[...topologyPositions(nodes)],after=[...topologyPositions([...nodes].reverse().map(n=>({...n,Direction:n.Direction?'':'reverse_only',Control:!n.Control})))];
 	  if(JSON.stringify(before)!==JSON.stringify(after))return {error:'rings depend on roles, direction or input order'};
 	  const id=compact?'overview-topology':'network';
 	  const view={Nodes:nodes,SelectedLink:'demo-link',Links:[{ID:'demo-link',From:nodes[0].ID,To:nodes[1].ID,Kind:'tunnel',State:'unknown',Transport:'wireguard',Metrics:['WG DNS RTT: Unknown','15m Δ P95−P50: Unknown']}]};
-	  document.querySelector('#app').innerHTML='<section class="card overview-topology-card"><div id="demo-topology">'+topologyHTML(view,[{Chain:[nodes[0].ID,nodes[1].ID]}],id)+'</div></section>';
+	  const app=document.querySelector('#app');app.className='network-page '+(compact?'page-overview':'page-topology');
+	  app.innerHTML='<div class="'+(compact?'overview-primary':'topology-layout')+'"><section class="card '+(compact?'overview-topology-card':'topology-stage')+'"><div id="demo-topology">'+topologyHTML(view,[{Chain:[nodes[0].ID,nodes[1].ID]}],id)+'</div></section><aside></aside></div>';
 	  const container=document.querySelector('#demo-topology'),svg=container.querySelector('svg');
 	  bindTopology(container);
 	  await document.fonts.ready;
 	  const boxes=[...svg.querySelectorAll('.topology-label')].map(n=>n.getBBox()),bounds=svg.viewBox.baseVal;
+	  const drawing=svg.getBoundingClientRect();
+	  if(drawing.height+1<drawing.width*bounds.height/bounds.width)return {error:'fixed height shrinks actual text',count,compact};
 	  if(boxes.length!==count)return {error:'missing node text',count};
 	  for(let i=0;i<boxes.length;i++) {
 	   const a=boxes[i];

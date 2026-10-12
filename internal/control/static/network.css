@@ -257,7 +257,6 @@ main {max-width:1586px;padding:28px 20px 44px}
 .page-overview .overview-list-card td {height:22px;padding-top:1px;padding-bottom:1px}
 .page-overview .overview-list-card .badge {line-height:1.35}
 .overview-event-row time {white-space:nowrap;font-size:10px}
-.overview-topology-card .topology {height:280px}
 .overview-topology-card .topology .node-label {font-size:13px}
 .overview-topology-card .topology .sub {font-size:10px}
 .topology .route-ring {opacity:0}
@@ -265,7 +264,6 @@ main {max-width:1586px;padding:28px 20px 44px}
 .page-topology {padding-top:22px}
 .page-topology .overview-health {margin-top:10px;margin-bottom:16px}
 .page-topology .topology-stage #topology {min-height:0}
-.page-topology .topology-stage .topology {max-height:360px}
 @media(max-width:960px) {.page-topology .topology-stage {height:auto;min-height:440px}}
 
 .device-heading {margin-bottom:18px;align-items:center}

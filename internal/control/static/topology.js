@@ -39,7 +39,7 @@ function layout(nodes, compact) {
   for (const node of [...nodes].sort((a,b)=>a.ID<b.ID?-1:a.ID>b.ID?1:0)) {
     const point = positions.get(node.ID), left = point.x < 480 - .1, right = point.x > 480 + .1;
     const side = left ? 0 : right ? 1 : Number(groups[1].length < groups[0].length);
-    const name = labelLines(node.Name || node.ID, 32), detail = labelLines(subtitle(node), 38);
+    const name = labelLines(node.Name || node.ID, 30), detail = labelLines(subtitle(node), 38);
     groups[side].push({id:node.ID,point,name,detail,height:name.length*15+detail.length*12});
   }
   const used = groups.map(group=>group.reduce((sum,value)=>sum+value.height,0)+Math.max(0,group.length-1)*14);
