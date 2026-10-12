@@ -42,11 +42,11 @@ main {max-width:1586px;padding:28px 20px 44px}
 .step small {font-size:12px;font-weight:400;display:inline;color:inherit}
 .step>.tiny {display:block;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .snapshot-alert {display:flex;align-items:center;gap:16px;margin:12px 0 0;padding:8px 14px}
-.overview-primary {display:grid;grid-template-columns:minmax(0,1.868fr) minmax(340px,1fr);gap:16px;height:330px;margin-top:18px}
-.overview-primary .overview-topology-card {padding:12px 15px;height:330px}
+.overview-primary {display:grid;grid-template-columns:minmax(0,1.868fr) minmax(340px,1fr);gap:16px;min-height:330px;margin-top:18px}
+.overview-primary .overview-topology-card {padding:12px 15px;min-height:330px}
 .overview-card-head {display:flex;align-items:center;gap:14px;min-height:24px}
 .overview-card-head .legend {margin:0 0 0 auto;font-size:11px;gap:15px}
-.overview-topology-card .topology {height:280px;min-height:0}
+.overview-topology-card .topology {height:auto;min-height:280px}
 .overview-side {display:grid;grid-template-rows:142px minmax(0,1fr);gap:14px}
 .overview-side .overview-compact-card {padding:11px 17px;overflow:hidden}
 .overview-compact-card .sectionhead {margin-bottom:9px}
@@ -87,7 +87,7 @@ main {max-width:1586px;padding:28px 20px 44px}
 .topology-card-head p {font-size:12px;margin:2px 0 0}
 .topology-card-head .legend {margin:3px 0 0 auto;gap:12px;font-size:10px;justify-content:end}
 .topology-stage #topology {flex:1;display:flex;align-items:center;min-height:365px}
-.topology-stage .topology {min-height:0;height:auto;width:100%;max-height:400px}
+.topology-stage .topology {min-height:0;height:auto;width:100%}
 .topology-caption {font-size:11px;color:var(--dim);margin:9px 0 8px}
 .topology-side {display:grid;grid-template-rows:minmax(270px,1fr) minmax(192px,auto);gap:15px}
 .layer-carriers {padding:10px 0 13px;border-bottom:1px solid var(--line)}
@@ -114,6 +114,8 @@ main {max-width:1586px;padding:28px 20px 44px}
 .topology .node-hit {fill:transparent;stroke:none}
 .topology .node-label {font-weight:600}
 .topology .sub {font-weight:400}
+.topology-label .sub {font-family:var(--font-mono)}
+.topology .node-label-leader {fill:none;stroke:#c5cdc8;stroke-width:.75;pointer-events:none}
 .topology.has-focus .topology-route.is-muted {opacity:.12}
 .topology .ring-key {font-size:8px}
 .release-tabs {display:flex;gap:26px;border-bottom:1px solid var(--line);margin:0 0 20px}
@@ -194,9 +196,11 @@ main {max-width:1586px;padding:28px 20px 44px}
   #connection {max-width:200px;overflow:hidden;text-overflow:ellipsis}
   .overview-card-head .legend {gap:8px;font-size:9px}
   .overview-card-head .key {width:18px}
-  .overview-primary {grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr)}
+  .overview-primary {grid-template-columns:1fr}
+  .overview-side {grid-template-columns:1fr 1fr;grid-template-rows:auto}
   .traffic-compact-body {grid-template-columns:110px minmax(0,1fr);gap:10px}
-  .topology-layout {grid-template-columns:minmax(0,1.9fr) minmax(320px,1fr)}
+  .topology-layout {grid-template-columns:1fr}
+  .topology-side {grid-template-columns:1fr 1fr;grid-template-rows:minmax(270px,auto)}
   .topology-card-head .legend {max-width:210px;gap:5px 10px}
   .link-traffic-body {grid-template-columns:115px minmax(0,1fr);gap:8px}
 }
@@ -204,7 +208,7 @@ main {max-width:1586px;padding:28px 20px 44px}
   .network-page .steps + .grid {grid-template-columns:1fr}
   .overview-primary {height:auto;grid-template-columns:1fr}
   .overview-side {grid-template-columns:1fr 1fr;grid-template-rows:180px}
-  .overview-primary .overview-topology-card {height:330px}
+  .overview-primary .overview-topology-card {min-height:330px}
   .overview-secondary {grid-template-columns:1fr}
   .topology-layout {grid-template-columns:1fr}
   .topology-side {grid-template-columns:1fr 1fr;grid-template-rows:minmax(270px,auto)}

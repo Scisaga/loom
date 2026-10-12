@@ -43,9 +43,8 @@ export async function expectedComponentID(value){
   return 'sha256:'+Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
 export function topologyPositions(nodes){
-  const sorted=[...nodes].sort((a,b)=>Number(!!b.Control)-Number(!!a.Control)||a.ID.localeCompare(b.ID));
-  let inner=sorted.filter(n=>n.Direction!=='reverse_only'),outer=sorted.filter(n=>n.Direction==='reverse_only');
-  if(!outer.length&&inner.length>1)outer=inner.splice(Math.ceil(inner.length/2));
+  const sorted=[...nodes].sort((a,b)=>a.ID<b.ID?-1:a.ID>b.ID?1:0);
+  const middle=Math.ceil(sorted.length/2),inner=sorted.slice(0,middle),outer=sorted.slice(middle);
   const positions=new Map();
   [inner,outer].forEach((group,ring)=>group.forEach((node,index)=>{
     const angle=-90+(ring?180/group.length:0)+index*360/group.length,radians=angle*Math.PI/180;
