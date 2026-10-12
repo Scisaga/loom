@@ -254,16 +254,18 @@ type windowsRuntimeStatus struct {
 	Observations         []clientmodel.Observation       `json:"observations"`
 	ResourceObservations []control.Observation           `json:"resource_observations,omitempty"`
 	Reported             bool                            `json:"reported"`
+	SelectorReadAt       string                          `json:"selector_read_at"`
 }
 
 func windowsRuntimeStatusPath(root string) string {
 	return filepath.Join(root, "runtime", "status.json")
 }
 
-func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, activation clientadapter.Activation, reported bool) error {
+func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, activation clientadapter.Activation, reported bool, selectorReadAt time.Time) error {
 	status := windowsRuntimeStatus{Schema: 3, NetworkGeneration: activation.State.NetworkGeneration, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, RuntimeState: "running",
 		Preference: activation.State.Preference, Selections: activation.Selections, BlockedScopes: activation.BlockedScopes,
-		Observations: activation.State.Observations, ResourceObservations: activation.State.ResourceObservations, Reported: reported}
+		Observations: activation.State.Observations, ResourceObservations: activation.State.ResourceObservations, Reported: reported,
+		SelectorReadAt: selectorReadAt.UTC().Format(time.RFC3339Nano)}
 	body, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
 		return err
@@ -612,17 +614,19 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	}
 	activation, activationErr := activateWindowsServices(ctx, selector, lkg.View, routes, clientadapter.State{
 		Preference: store.Preference(), NetworkGeneration: generation, ResourceObservations: resourceSamples}, false)
+	selectorReadAt := time.Now()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if !windowsActivationApplied(activation, routes) {
 		return activationErr
 	}
-	if err := writeWindowsRuntimeStatus(root, lkg, activation, false); err != nil {
+	if err := writeWindowsRuntimeStatus(root, lkg, activation, false, selectorReadAt); err != nil {
 		return err
 	}
 	initiallySelected := windowsSelectedCandidates(activation)
 	activation, activationErr = activateWindowsServices(ctx, selector, lkg.View, routes, activation.State, true)
+	selectorReadAt = time.Now()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -655,7 +659,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		lastReportAt = time.Now()
 	}
 	lastFacts := windowsRuntimeFactsDigest(activation, componentReadbacks)
-	if err := writeWindowsRuntimeStatus(root, lkg, activation, reportErr == nil); err != nil {
+	if err := writeWindowsRuntimeStatus(root, lkg, activation, reportErr == nil, selectorReadAt); err != nil {
 		return err
 	}
 	if reportErr != nil {
@@ -700,6 +704,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 				nextState.ResourceObservations = nil
 			}
 			next, nextErr := activateWindowsServices(ctx, selector, lkg.View, routes, nextState, true)
+			selectorReadAt = time.Now()
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -728,7 +733,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 				}
 			}
 			activation = next
-			if writeErr := writeWindowsRuntimeStatus(root, lkg, activation, now.Sub(lastReportAt) < 60*time.Second); writeErr != nil {
+			if writeErr := writeWindowsRuntimeStatus(root, lkg, activation, now.Sub(lastReportAt) < 60*time.Second, selectorReadAt); writeErr != nil {
 				return writeErr
 			}
 			if nextErr != nil {

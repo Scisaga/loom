@@ -1575,7 +1575,7 @@ func (app *portableGUI) updateFonts() error {
 	app.deleteFonts()
 	app.fonts = []uintptr{regular, brand, profileNormal, profileSelected}
 	// Owner-draw 控件不会根据 WM_SETFONT 自动重新测量行高。
-	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(55)))
+	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(72)))
 	app.syncMisakaPathItemHeight()
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, ^uintptr(0), uintptr(app.scale(23)))
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, 0, uintptr(app.scale(23)))
@@ -1958,6 +1958,9 @@ func windowsTitleSnapshot(snapshot portableGUISnapshot) portableGUISnapshot {
 
 func (app *portableGUI) windowTitle(snapshot portableGUISnapshot) string {
 	snapshot = windowsTitleSnapshot(snapshot)
+	if snapshot.profilesReady && snapshot.selectedProfile == "" && snapshot.profileDraft == nil {
+		return "Loom"
+	}
 	state, _, _, _ := app.presentation(snapshot)
 	title := "Loom (" + windowsEditionLabel(app.edition) + ") " + state
 	if snapshot.profileName != "" {
@@ -2050,7 +2053,7 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 		return "正在检查", "正在检查本机身份和发行包。", "请稍候…", false
 	case guiNeedsJoin:
 		if snapshot.profilesReady && snapshot.selectedProfile == "" {
-			return "添加第一个连接配置", "使用加入邀请创建配置；每份配置单独保存加入身份。", "添加配置", true
+			return "尚无连接配置", "完成加入并保存后，配置才会出现在列表中。", "添加连接配置", true
 		}
 		message := "导入此配置的加入邀请，加入后保持断开。"
 		if !snapshot.profilesReady {

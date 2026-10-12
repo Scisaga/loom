@@ -45,8 +45,8 @@ func (app *portableGUI) createMisakaPane(instance uintptr) error {
 
 func (app *portableGUI) misakaContentEnd() int32 {
 	var r portableRect
-	procGetClientRect.Call(app.skin.pane, uintptr(unsafe.Pointer(&r)))
-	return app.scale(176) + r.right - app.scale(20)
+	procGetClientRect.Call(app.hwnd, uintptr(unsafe.Pointer(&r)))
+	return r.right - app.scale(24)
 }
 
 // §7.2：几何没有变化时不发送位置消息；更新仅使旧、新控件位置失效。

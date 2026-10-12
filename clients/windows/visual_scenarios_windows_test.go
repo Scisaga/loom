@@ -19,6 +19,13 @@ func TestGUIVisualScenarios(t *testing.T) {
 		app := newProfileGUITestWindow(t)
 		captureProfileGUIVisualScenario(t, app, "connected")
 	})
+	t.Run("profiles-empty", func(t *testing.T) {
+		app := newProfileGUITestWindow(t)
+		app.selectedProfile, app.profileName, app.activeProfile, app.activeProfileName = "", "", "", ""
+		app.joined, app.deviceID, app.state, app.paths, app.brokerProfiles = false, "", guiNeedsJoin, nil, nil
+		app.renderControls()
+		captureProfileGUIVisualScenario(t, app, "profiles-empty")
+	})
 	t.Run("path-expanded", func(t *testing.T) {
 		app := newProfileGUITestWindow(t)
 		procSendMessage.Call(app.hwnd, portableWMCommand, portableControlPathDetails, app.controls.pathsDetailsButton)
@@ -28,6 +35,8 @@ func TestGUIVisualScenarios(t *testing.T) {
 		app := newProfileGUITestWindow(t)
 		app.beginMisakaRename()
 		setPortableControlText(app.controls.profileNameEdit, "demo-renamed")
+		procSendMessage.Call(app.controls.profileNameEdit, 0x00B1, ^uintptr(0), ^uintptr(0))
+		procSendMessage.Call(app.controls.profileNameEdit, 0x00B7, 0, 0)
 		captureProfileGUIVisualScenario(t, app, "profile-rename")
 	})
 	t.Run("join-draft", func(t *testing.T) {

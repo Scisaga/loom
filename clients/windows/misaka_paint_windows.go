@@ -5,6 +5,7 @@ package main
 import (
 	"math"
 	"strings"
+	"unicode/utf8"
 	"unsafe"
 
 	"loom/internal/clientmodel"
@@ -39,7 +40,7 @@ func (app *portableGUI) paintMisaka(dc uintptr) {
 		}
 		c.Text(label, r, s(18), 400, color, 1)
 	}
-	c.Text("Loom", misakaRect(s(67), s(misakaTitleHeight+18), s(95), s(28)), s(23), 600, misakaText, 0)
+	c.Text("Loom", misakaRect(s(67), s(misakaTitleHeight+18), s(95), s(28)), s(20), 600, misakaText, 0)
 	c.Text("你的连接配置", misakaRect(s(68), s(misakaTitleHeight+45), s(98), s(18)), s(10), 400, misakaMuted, 0)
 	c.Text("连接配置", misakaRect(s(16), s(misakaTitleHeight+75), s(112), s(24)), s(12), 600, misakaMuted, 0)
 	c.Fill(misakaRect(s(16), bounds.bottom-s(64), s(144), s(1)), misakaBorder, 0)
@@ -72,43 +73,36 @@ func (app *portableGUI) paintMisakaPane(dc uintptr) {
 
 func (app *portableGUI) paintMisakaContent(c *misakaCanvas, snapshot portableGUISnapshot) {
 	s := app.scale
-	main, end := s(196), app.misakaContentEnd()
+	main, end := s(200), app.misakaContentEnd()
 	name := snapshot.profileName
 	if name == "" {
-		name = "连接"
+		name = "连接配置"
 	}
-	c.Text(name, misakaRect(main, s(57), end-main-s(110), s(31)), s(23), 600, misakaText, 0)
+	c.Text(name, misakaRect(main, s(57), end-main-s(110), s(31)), s(20), 600, misakaText, 0)
 	if !snapshot.joined {
 		app.paintMisakaJoinPanel(c, snapshot)
 		return
 	}
-	card := misakaRect(main, s(98), end-main, s(112))
-	c.Fill(card, misakaBorder, s(9))
-	inset := card
-	inset.left++
-	inset.top++
-	inset.right--
-	inset.bottom--
-	c.Fill(inset, misakaWhite, s(8))
-	c.Fill(misakaRect(main+s(18), s(185), end-main-s(36), s(1)), misakaBorder, 0)
+	hint := app.misakaConnectionHintHeight(snapshot)
+	card := misakaRect(main, s(104), end-main, s(112)+hint)
+	c.Fill(card, misakaSoftSurface, s(12))
+	c.Fill(misakaRect(main, s(168)+hint, end-main, s(1)), misakaBorder, 0)
 	device := "Device  " + snapshot.deviceID
 	if snapshot.deviceID == "" {
 		device = "尚未保存加入身份"
 	}
-	c.Text(device, misakaRect(main+s(18), s(189), end-main-s(36), s(18)), s(10), 400, misakaMuted, 0)
+	c.Text(device, misakaRect(main+s(16), s(168)+hint, end-main-s(32), s(48)), s(11), 400, misakaMuted, 0)
 	if snapshot.joined {
-		c.Text("路由模式", misakaRect(main, s(220), s(65), s(34)), s(11), 600, misakaText, 0)
-		modeGroup := misakaRect(main+s(73), s(220), s(231), s(34))
-		c.Fill(modeGroup, 0xE1E6E2, s(6))
-		modeGroup.left++
-		modeGroup.top++
-		modeGroup.right--
-		modeGroup.bottom--
-		c.Fill(modeGroup, 0xF1F3F1, s(5))
-		if misakaSelectedMode(snapshot) == clientmodel.ModeFixed && end-s(689) >= s(120) {
-			c.Text("前置路径自动选择", misakaRect(s(689), s(220), end-s(689), s(34)), s(10), 400, misakaMuted, 2)
+		c.Text("路由模式", misakaRect(main, s(240)+hint, s(72), s(32)), s(14), 500, misakaText, 0)
+		modeGroup := misakaRect(main+s(80), s(240)+hint, s(240), s(32))
+		c.Fill(modeGroup, 0xE4ECE7, s(8))
+		if misakaSelectedMode(snapshot) == clientmodel.ModeFixed && end-s(708) >= s(120) {
+			c.Text("前置路径自动选择", misakaRect(s(708), s(240)+hint, end-s(708), s(32)), s(11), 400, misakaMuted, 0)
 		}
-		c.Text("当前选路", misakaRect(main, s(269), s(140), s(25)), s(15), 600, misakaText, 0)
+		top := s(296) + hint
+		c.Fill(misakaRect(main, top, end-main, s(48)+app.misakaPathsHeight()+s(16)), misakaWhite, s(12))
+		c.Text("当前选路", misakaRect(main+s(16), top, s(140), s(48)), s(14), 500, misakaText, 0)
+		c.Fill(misakaRect(main, top+s(48)-s(1), end-main, s(1)), misakaBorder, 0)
 	}
 }
 
@@ -131,26 +125,22 @@ func (app *portableGUI) drawMisakaBrand(dc uintptr, large bool) {
 func (app *portableGUI) paintMisakaDraft(c *misakaCanvas, snapshot portableGUISnapshot) {
 	s := app.scale
 	x, y, w := app.misakaDraftBounds()
-	c.Text("添加连接配置", misakaRect(x, s(57), w, s(31)), s(23), 600, misakaText, 0)
-	c.Text("保存后保持断开，现有连接继续运行。", misakaRect(x, s(88), w, s(20)), s(11), 400, misakaMuted, 0)
+	c.Text("添加连接配置", misakaRect(x, s(57), w, s(31)), s(20), 600, misakaText, 0)
 	// §7.2：沿用首页的一层内容卡片，名称和邀请控件直接排列，不再嵌套上传面板。
-	card := misakaRect(x, y, w, s(330))
-	c.Fill(card, misakaBorder, s(9))
-	card.left++
-	card.top++
-	card.right--
-	card.bottom--
-	c.Fill(card, misakaWhite, s(8))
-	c.Text("配置名称", misakaRect(x+s(24), y+s(20), w-s(48), s(21)), s(11), 600, misakaMuted, 0)
-	field := misakaRect(x+s(24), y+s(46), w-s(48), s(36))
-	c.Fill(field, misakaBorder, s(6))
+	card := misakaRect(x, y, w, s(336))
+	c.Fill(card, misakaWhite, s(12))
+	c.Text("保存后保持断开，现有连接继续运行。", misakaRect(x+s(16), y, w-s(32), s(48)), s(11), 400, misakaMuted, 0)
+	c.Fill(misakaRect(x, y+s(48), w, s(1)), misakaBorder, 0)
+	c.Text("配置名称", misakaRect(x+s(16), y+s(60), w-s(32), s(24)), s(12), 500, misakaText, 0)
+	field := misakaRect(x+s(16), y+s(88), w-s(32), s(32))
+	c.Fill(field, misakaBorder, s(8))
 	field.left++
 	field.top++
 	field.right--
 	field.bottom--
-	c.Fill(field, misakaWhite, s(5))
-	c.Text("加入邀请", misakaRect(x+s(24), y+s(102), w-s(48), s(23)), s(11), 600, misakaMuted, 0)
-	c.Text("二维码 PNG 或 .loom-invite 文件，也可从剪贴板粘贴。", misakaRect(x+s(24), y+s(126), w-s(48), s(20)), s(11), 400, misakaMuted, 0)
+	c.Fill(field, misakaWhite, s(7))
+	c.Text("加入邀请", misakaRect(x+s(16), y+s(140), w-s(32), s(24)), s(12), 500, misakaText, 0)
+	c.Text("二维码 PNG 或 .loom-invite 文件，也可从剪贴板粘贴。", misakaRect(x+s(16), y+s(164), w-s(32), s(24)), s(11), 400, misakaMuted, 0)
 	text := app.skin.inviteLabel
 	if text == "" {
 		text = "尚未选择加入邀请。"
@@ -171,7 +161,8 @@ func (app *portableGUI) paintMisakaDraft(c *misakaCanvas, snapshot portableGUISn
 		text = app.skin.draftError
 		color = misakaRed
 	}
-	c.Paragraph(text, misakaRect(x+s(24), y+s(204), w-s(48), s(52)), s(12), 400, color)
+	c.Paragraph(text, misakaRect(x+s(16), y+s(236), w-s(32), s(28)), s(11), 400, color)
+	c.Fill(misakaRect(x, y+s(272), w, s(1)), misakaBorder, 0)
 }
 
 func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
@@ -198,12 +189,15 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 		if !app.beginMisakaPaint(item.dc, item.rect) {
 			return true
 		}
-		bg, fg, size := uint32(misakaWhite), uint32(misakaText), app.scale(23)
+		bg, fg, size := uint32(misakaWhite), uint32(misakaText), app.scale(20)
+		if app.snapshot().joined {
+			bg = misakaSoftSurface
+		}
 		if !app.snapshot().joined {
 			size = app.scale(20)
 		}
 		if item.hwndItem == app.controls.message {
-			bg, fg, size = misakaWhite, misakaMuted, app.scale(11)
+			fg, size = misakaMuted, app.scale(11)
 			if app.snapshot().state == guiConnected {
 				fg = misakaGreen
 			}
@@ -230,6 +224,9 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 	r := item.rect
 	bg, fg := uint32(misakaWhite), uint32(misakaText)
 	parent := uint32(misakaWhite)
+	if item.hwndItem == app.controls.primaryButton && app.snapshot().joined {
+		parent = misakaSoftSurface
+	}
 	if item.hwndItem == app.controls.deleteButton {
 		parent = misakaBackground
 	}
@@ -242,7 +239,7 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 	mode := misakaSelectedMode(snapshot)
 	isMode := item.hwndItem == app.controls.modeAuto || item.hwndItem == app.controls.modeFixed || item.hwndItem == app.controls.modeDirect
 	if isMode {
-		parent, bg, fg = 0xF1F3F1, 0xF1F3F1, misakaMuted
+		parent, bg, fg = 0xE4ECE7, 0xE4ECE7, misakaMuted
 		paintMisakaModeBackground(c, r, s, item.hwndItem == app.controls.modeDirect, item.hwndItem == app.controls.modeFixed)
 	} else {
 		c.Fill(r, parent, 0)
@@ -256,14 +253,14 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 	if item.hwndItem == app.controls.modeDirect {
 		selected = mode == clientmodel.ModeDirect
 	}
-	primary := item.hwndItem == app.controls.draftSubmit || item.hwndItem == app.controls.primaryButton && snapshot.state != guiConnected && !portableStatusAnimated(snapshot.state)
+	primary := item.hwndItem == app.controls.draftSubmit || item.hwndItem == app.controls.primaryButton && !portableStatusAnimated(snapshot.state)
 	if primary {
 		bg = misakaGreen
 		fg = misakaWhite
 	}
 	if selected {
-		bg = misakaWhite
-		fg = misakaGreen
+		bg = misakaGreen
+		fg = misakaWhite
 	}
 	if item.itemState&portableODSSelected != 0 {
 		if primary {
@@ -279,24 +276,33 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 		fg = 0x9BA09E
 	}
 	border := uint32(misakaBorder)
-	if primary || isMode && !selected || item.hwndItem == app.controls.addProfileButton {
+	if primary || isMode || item.hwndItem == app.controls.addProfileButton {
 		border = bg
 	}
 	if item.itemState&portableODSFocus != 0 {
 		border = misakaGreen
+		if selected {
+			border = misakaWhite
+		}
 	}
 	if isMode {
-		r.left += s(3)
-		r.top += s(3)
-		r.right -= s(3)
-		r.bottom -= s(3)
+		r.left += s(4)
+		r.top += s(4)
+		r.right -= s(4)
+		r.bottom -= s(4)
 	}
-	c.Fill(r, border, s(6))
-	r.left += s(1)
-	r.top += s(1)
-	r.right -= s(1)
-	r.bottom -= s(1)
-	c.Fill(r, bg, s(5))
+	radius := s(8)
+	if isMode {
+		radius = s(4)
+	}
+	c.Fill(r, border, radius)
+	if border != bg {
+		r.left += s(1)
+		r.top += s(1)
+		r.right -= s(1)
+		r.bottom -= s(1)
+	}
+	c.Fill(r, bg, max(int32(0), radius-s(1)))
 	label := misakaControlText(item.hwndItem)
 	switch item.hwndItem {
 	case app.controls.addProfileButton:
@@ -313,27 +319,14 @@ func paintMisakaModeBackground(c *misakaCanvas, rect portableRect, scale func(in
 	c.Fill(rect, misakaBackground, 0)
 	radius := int32(0)
 	if first || last {
-		radius = scale(6)
+		radius = scale(8)
 	}
-	c.Fill(rect, 0xE1E6E2, radius)
+	c.Fill(rect, 0xE4ECE7, radius)
 	middle := (rect.left + rect.right) / 2
 	if first {
-		c.Fill(misakaRect(middle, rect.top, rect.right-middle, rect.bottom-rect.top), 0xE1E6E2, 0)
+		c.Fill(misakaRect(middle, rect.top, rect.right-middle, rect.bottom-rect.top), 0xE4ECE7, 0)
 	} else if last {
-		c.Fill(misakaRect(rect.left, rect.top, middle-rect.left, rect.bottom-rect.top), 0xE1E6E2, 0)
-	}
-	rect.top++
-	rect.bottom--
-	if first {
-		rect.left++
-	} else if last {
-		rect.right--
-	}
-	c.Fill(rect, 0xF1F3F1, max(int32(0), radius-1))
-	if first {
-		c.Fill(misakaRect(middle, rect.top, rect.right-middle, rect.bottom-rect.top), 0xF1F3F1, 0)
-	} else if last {
-		c.Fill(misakaRect(rect.left, rect.top, middle-rect.left, rect.bottom-rect.top), 0xF1F3F1, 0)
+		c.Fill(misakaRect(rect.left, rect.top, middle-rect.left, rect.bottom-rect.top), 0xE4ECE7, 0)
 	}
 }
 
@@ -342,7 +335,11 @@ func (app *portableGUI) drawMisakaStatus(item *portableDrawItem) {
 		return
 	}
 	c, s := app.skin.canvas, app.scale
-	c.Fill(item.rect, misakaWhite, 0)
+	background := uint32(misakaWhite)
+	if app.snapshot().joined {
+		background = misakaSoftSurface
+	}
+	c.Fill(item.rect, background, 0)
 	state := app.snapshot().state
 	ink, fill := uint32(misakaMuted), uint32(0xF4F6F5)
 	if state == guiConnected || portableStatusAnimated(state) {
@@ -355,7 +352,7 @@ func (app *portableGUI) drawMisakaStatus(item *portableDrawItem) {
 		ink, fill = misakaRed, 0xFFF0ED
 	}
 	x, y := (item.rect.left+item.rect.right)/2, (item.rect.top+item.rect.bottom)/2
-	paintMisakaEllipse(c, misakaCenteredRect(x, y, s(38), s(38)), fill)
+	paintMisakaEllipse(c, misakaCenteredRect(x, y, s(32), s(32)), fill)
 	switch {
 	case portableStatusAnimated(state):
 		for index := 0; index < portableStatusFrameCount; index++ {
@@ -412,9 +409,10 @@ func (app *portableGUI) drawMisakaProfile(item *portableDrawItem) {
 	}
 	profile := snapshot.profiles[item.itemID]
 	r := item.rect
+	r.bottom -= s(8)
 	if item.itemState&portableODSSelected != 0 {
-		c.Fill(r, 0xE9F3ED, 0)
-		c.Fill(misakaRect(r.left, r.top, s(3), r.bottom-r.top), misakaGreen, 0)
+		c.Fill(r, misakaGreenLight, s(8))
+		c.Fill(misakaRect(r.left, r.top+s(20), s(2), s(24)), misakaGreen, s(1))
 	}
 	color := uint32(0xA4AAA6)
 	label := "未连接"
@@ -441,13 +439,28 @@ func (app *portableGUI) drawMisakaProfile(item *portableDrawItem) {
 	if profile.State == guiError {
 		color = misakaRed
 		label = "连接错误"
+		if profile.DeviceID == "" {
+			label = "导入失败"
+		}
 	}
 	if !portableStatusAnimated(profile.State) {
 		c.Fill(misakaRect(r.left+s(12), r.top+s(15), s(7), s(7)), color, s(4))
 	}
-	c.Text(label, misakaRect(r.left+s(29), r.top+s(33), r.right-r.left-s(35), s(16)), s(10), 400, misakaMuted, 0)
+	rename := app.skin.rename && app.skin.renameID == profile.ID
+	if rename {
+		field := misakaRect(r.left+s(28), r.top+s(4), r.right-r.left-s(36), s(32))
+		c.Fill(field, misakaGreen, s(8))
+		field.left++
+		field.top++
+		field.right--
+		field.bottom--
+		c.Fill(field, misakaWhite, s(7))
+	}
+	c.Text(label, misakaRect(r.left+s(29), r.top+s(44), r.right-r.left-s(35), s(16)), s(11), 400, misakaMuted, 0)
 	app.finishMisakaPaint(item.dc)
-	app.drawMisakaProfileName(item.dc, r, profile.Name, item.itemState&portableODSSelected != 0)
+	if !rename {
+		app.drawMisakaProfileName(item.dc, r, profile.Name, item.itemState&portableODSSelected != 0)
+	}
 	if portableStatusAnimated(profile.State) {
 		icon := app.statusIcons.icon(profile.State, app.statusFrame, app.statusIcon)
 		procDrawIconEx.Call(item.dc, uintptr(r.left+s(8)), uintptr(r.top+s(10)), icon, uintptr(s(16)), uintptr(s(16)), 0, 0, portableDrawIconNormal)
@@ -570,7 +583,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	if !app.beginMisakaPaint(item.dc, item.rect) {
 		return
 	}
-	c.Fill(item.rect, misakaBackground, 0)
+	c.Fill(item.rect, misakaWhite, 0)
 	if int(item.itemID) >= len(app.skin.lastPaths) {
 		r := item.rect
 		r.bottom -= s(12)
@@ -585,33 +598,14 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	}
 	row := app.skin.lastPaths[item.itemID]
 	r := item.rect
-	r.right -= s(3)
-	first, last := item.itemID == 0, int(item.itemID) == len(app.skin.lastPaths)-1
+	last := int(item.itemID) == len(app.skin.lastPaths)-1
 	// §7.3.3：所有服务共用一个面板，只有首尾保留圆角，行间以细线分隔。
-	fillPanel := func(bounds portableRect, color uint32, radius int32) {
-		c.Fill(bounds, color, radius)
-		if !first {
-			c.Fill(misakaRect(bounds.left, bounds.top, bounds.right-bounds.left, radius), color, 0)
-		}
-		if !last {
-			c.Fill(misakaRect(bounds.left, bounds.bottom-radius, bounds.right-bounds.left, radius), color, 0)
-		}
-	}
-	fillPanel(r, misakaBorder, s(8))
-	r.left++
-	r.right--
-	if first {
-		r.top++
-	}
-	if last {
-		r.bottom--
-	}
-	fillPanel(r, misakaWhite, s(7))
+	c.Fill(r, misakaWhite, 0)
 	if !last {
 		c.Fill(misakaRect(r.left, r.bottom-s(1), r.right-r.left, s(1)), misakaBorder, 0)
 	}
 	color := uint32(misakaMuted)
-	if row.Health == "部分失败" || row.Health == "测量过期" || row.Health == "未知" {
+	if row.Health == "部分失败" {
 		color = misakaAmber
 	}
 	if row.Health == "探测失败" || row.Health == "不可用" {
@@ -622,7 +616,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	if misakaSelectedMode(app.snapshot()) == clientmodel.ModeFixed {
 		serviceLabel = "统一上网路径"
 	}
-	c.Text(serviceLabel, misakaRect(r.left+s(18), r.top+s(8), serviceWidth, s(24)), s(13), 600, misakaText, 0)
+	c.Text(serviceLabel, misakaRect(r.left+s(16), r.top+s(8), serviceWidth, s(24)), s(12), 500, misakaText, 0)
 	if row.LinkLabels == "" {
 		quality := row.MeasurementSummary
 		if quality == "" || quality == "未知" {
@@ -630,44 +624,51 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		}
 		qualityLeft := r.left + s(30) + serviceWidth
 		c.Text(quality, misakaRect(qualityLeft, r.top+s(8), r.right-s(104)-qualityLeft, s(24)), s(11), 400, misakaMuted, 2)
-		health := misakaRect(r.right-s(92), r.top+s(9), s(76), s(22))
-		healthFill := uint32(0xF4F6F5)
+		healthLabel := row.Health
+		if healthLabel == "" || healthLabel == "未知" {
+			healthLabel = "测量未知"
+		}
+		healthWidth := s(36 + int32(utf8.RuneCountInString(healthLabel))*11)
+		health := misakaRect(r.right-s(16)-healthWidth, r.top+s(8), healthWidth, s(24))
+		healthFill := uint32(0xF0F3F1)
+		if row.Health == "可用" {
+			healthFill, color = misakaGreenLight, misakaGreen
+		}
 		if color == misakaRed {
 			healthFill = 0xFFF0ED
 		} else if color == misakaAmber {
 			healthFill = 0xFFF6E7
 		}
-		c.Fill(health, healthFill, s(11))
-		healthLabel := row.Health
-		if healthLabel == "" || healthLabel == "未知" {
-			healthLabel = "测量未知"
-		}
-		c.Text(healthLabel, health, s(10), 500, color, 1)
+		c.Fill(health, healthFill, s(12))
+		paintMisakaEllipse(c, misakaRect(health.left+s(12), health.top+s(10), s(4), s(4)), color)
+		c.Text(healthLabel, misakaRect(health.left+s(24), health.top, healthWidth-s(36), s(24)), s(11), 400, color, 0)
 	}
 	// §7.3.3：只拆分只读显示字符串用于布局，不由名称推导路径或操作 selector。
 	nodes := strings.Split(row.Chain, " → ")
 	if len(nodes) < 2 || row.Candidate == "" {
 		c.Text("实际路径未知", misakaRect(r.left+s(14), r.top+s(40), r.right-r.left-s(28), s(30)), s(12), 400, misakaMuted, 0)
-		app.finishMisakaPaint(item.dc)
-		return
+		if !app.pathsExpanded {
+			app.finishMisakaPaint(item.dc)
+			return
+		}
 	}
 	links := strings.Split(row.LinkLabels, "\n")
 	// §7.3.3：换行时重复衔接节点，跨行的那一段也必须有连线与测量。
 	for start := 0; start < len(nodes)-1; start += 3 {
 		count := min(4, len(nodes)-start)
-		usable := r.right - r.left - s(84)
+		usable := r.right - r.left - s(112)
 		step := usable / int32(max(1, count-1))
-		y := r.top + s(83+int32(start/3)*88)
+		y := r.top + s(misakaPathBaseHeight(row)-48+int32(start/3)*88)
 		if start > 0 {
 			c.Text("↳", misakaRect(r.left+s(12), y-s(12), s(22), s(24)), s(16), 400, misakaMuted, 1)
 		}
 		for index := 0; index < count; index++ {
-			x := r.left + s(42) + int32(index)*step
+			x := r.left + s(56) + int32(index)*step
 			if count == 1 {
-				x = r.left + s(42)
+				x = r.left + s(56)
 			}
 			if index < count-1 {
-				c.Fill(misakaRect(x+s(17), y-s(1), step-s(34), s(2)), 0xC7D8CD, 0)
+				c.Fill(misakaRect(x+s(24), y, step-s(48), s(1)), 0xC6D4CB, 0)
 				if start+index < len(links) {
 					parts := strings.Split(links[start+index], " · ")
 					lines := []string{links[start+index]}
@@ -693,15 +694,22 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		}
 	}
 	if app.pathsExpanded {
-		y := r.top + s(142+(misakaPathNodeRows(row)-1)*88)
-		width := r.right - r.left - s(36)
+		base := misakaPathBaseHeight(row) + (misakaPathNodeRows(row)-1)*88
+		c.Fill(misakaRect(r.left, r.top+s(base), r.right-r.left, s(1)), misakaBorder, 0)
+		y := r.top + s(base+16)
+		width := r.right - r.left - s(32)
 		details := app.misakaPathDetails(row, width)
 		place := func(bounds portableRect) portableRect {
-			bounds.left, bounds.right = bounds.left+r.left+s(18), bounds.right+r.left+s(18)
+			bounds.left, bounds.right = bounds.left+r.left+s(16), bounds.right+r.left+s(16)
 			bounds.top, bounds.bottom = bounds.top+y, bounds.bottom+y
 			return bounds
 		}
-		if len(details.blocks) == 0 {
+		if details.business != "" {
+			for _, block := range details.businessBlocks {
+				c.Paragraph(block.body, place(block.bodyBounds), s(misakaDetailBodySize), 400, misakaMuted)
+			}
+		}
+		if len(details.blocks) == 0 && details.business == "" {
 			c.Paragraph(details.best, place(details.bestBounds), s(misakaDetailBodySize), 400, misakaMuted)
 		}
 		for _, block := range details.blocks {

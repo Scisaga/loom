@@ -109,8 +109,8 @@ render_windows() {
     return "$unzip_result"
   fi
   local captured="$windows_collect/unpacked/windows/current"
-  if [[ ! -d $captured || $(find "$captured" -type f -name '*.png' | wc -l) -ne 8 ]]; then
-    echo "Windows VM did not return the eight expected screenshots" >&2
+  if [[ ! -d $captured || $(find "$captured" -type f -name '*.png' | wc -l) -ne 9 ]]; then
+    echo "Windows VM did not return the nine expected screenshots" >&2
     return 1
   fi
   rm -rf -- "$review_root/windows/current" "$review_root/windows/baseline"

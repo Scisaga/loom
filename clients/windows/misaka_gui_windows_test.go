@@ -188,8 +188,8 @@ func TestGUIMisakaCustomCanvasPaintsLightFrameAndSeparateSidebar(t *testing.T) {
 		want color.NRGBA
 	}{
 		{"custom title background", 350, 10, color.NRGBA{255, 255, 255, 255}},
-		{"sidebar background", 5, 105, color.NRGBA{247, 248, 247, 255}},
-		{"main background", 184, 200, color.NRGBA{252, 252, 251, 255}},
+		{"sidebar background", 5, 105, color.NRGBA{247, 249, 247, 255}},
+		{"main background", 184, 200, color.NRGBA{240, 244, 241, 255}},
 	} {
 		if got := picture.NRGBAAt(int(app.scale(sample.x)), int(app.scale(sample.y))); got != sample.want {
 			t.Errorf("%s is not painted: got=%v want=%v", sample.name, got, sample.want)
@@ -200,20 +200,20 @@ func TestGUIMisakaCustomCanvasPaintsLightFrameAndSeparateSidebar(t *testing.T) {
 	button := guiWindowRect(t, app.controls.primaryButton)
 	button.left, button.right = button.left-window.left, button.right-window.left
 	button.top, button.bottom = button.top-window.top, button.bottom-window.top
-	light, ink := 0, 0
+	light, green := 0, 0
 	for y := button.top + app.scale(4); y < button.bottom-app.scale(4); y++ {
 		for x := button.left + app.scale(4); x < button.right-app.scale(4); x++ {
 			pixel := picture.NRGBAAt(int(x), int(y))
 			if pixel.R > 235 && pixel.G > 235 && pixel.B > 235 {
 				light++
 			}
-			if pixel.R < 190 && pixel.G < 190 && pixel.B < 190 {
-				ink++
+			if int(pixel.G) > int(pixel.R)+30 && int(pixel.G) > int(pixel.B)+15 {
+				green++
 			}
 		}
 	}
-	if area := int((button.right - button.left) * (button.bottom - button.top)); light < area/3 || ink < int(app.scale(5)*app.scale(5)) {
-		t.Errorf("断开按钮缺少白底或可读文字: light=%d ink=%d area=%d", light, ink, area)
+	if area := int((button.right - button.left) * (button.bottom - button.top)); green < area/3 || light < int(app.scale(5)*app.scale(5)) {
+		t.Errorf("disconnect button lacks its green fill or readable white text: white=%d green=%d area=%d", light, green, area)
 	}
 	for index, row := range app.paths {
 		var rect portableRect

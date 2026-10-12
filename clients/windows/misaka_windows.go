@@ -32,20 +32,21 @@ const (
 const (
 	misakaTitleHeight    int32 = 36
 	misakaTitleIconSize  int32 = 20
-	misakaContentOriginY int32 = 40
+	misakaContentOriginY int32 = 36
 )
 
 const (
-	misakaBackground = 0xFCFCFB
-	misakaSidebar    = 0xF7F8F7
-	misakaWhite      = 0xFFFFFF
-	misakaText       = 0x181B1A
-	misakaMuted      = 0x717674
-	misakaBorder     = 0xD9DDDA
-	misakaGreen      = 0x239B68
-	misakaGreenLight = 0xEEF8F3
-	misakaAmber      = 0xA66A14
-	misakaRed        = 0xC04444
+	misakaBackground  = 0xF0F4F1
+	misakaSidebar     = 0xF7F9F7
+	misakaWhite       = 0xFFFFFF
+	misakaText        = 0x17211B
+	misakaMuted       = 0x647269
+	misakaBorder      = 0xE1E8E3
+	misakaGreen       = 0x239B68
+	misakaGreenLight  = 0xEAF6F0
+	misakaSoftSurface = 0xF7FBF8
+	misakaAmber       = 0xA66A14
+	misakaRed         = 0xC04444
 )
 
 type misakaUI struct {
@@ -184,6 +185,14 @@ func misakaColorRef(rgb uint32) uint32 { return rgb>>16 | rgb&0xFF00 | (rgb&0xFF
 
 func misakaRect(x, y, w, h int32) portableRect { return portableRect{x, y, x + w, y + h} }
 
+func (app *portableGUI) misakaConnectionHintHeight(snapshot portableGUISnapshot) int32 {
+	if snapshot.detail == "" {
+		return 0
+	}
+	width := max(app.scale(40), app.misakaContentEnd()-app.scale(200+80))
+	return max(app.scale(24), app.misakaDetailParagraphHeight(snapshot.detail, width, app.scale(11))+app.scale(8))
+}
+
 func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height int32) {
 	if app.skin == nil || app.skin.layingOut {
 		return
@@ -197,17 +206,20 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 	for pass := 0; pass < 2; pass++ {
 		end := app.misakaContentEnd()
 		content := s(320)
+		if !snapshot.joined && snapshot.selectedProfile != "" {
+			content = s(384)
+		}
 		if snapshot.joined {
-			content = s(300) + app.misakaPathsHeight() + s(20)
+			content = s(344) + app.misakaConnectionHintHeight(snapshot) + app.misakaPathsHeight() + s(40)
 		}
 		if snapshot.profileDraft != nil {
-			content = s(468)
+			content = s(464)
 		}
 		app.updateMisakaScroll(content - s(misakaContentOriginY))
 		if app.misakaContentEnd() == end {
 			break
 		}
-		// §7.2：滚动条出现或消失后宽度会变化，按最终宽度重算段落换行与范围。
+		// Keep the content inset independent from the native scrollbar.
 	}
 	app.syncMisakaPathItemHeight()
 	visible := make(map[uintptr]bool)
@@ -220,39 +232,43 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		moveMisakaControl(control, parent, misakaRect(x, y, max(1, w), max(1, h)))
 		visible[control] = true
 	}
-	side, main, end := s(176), s(196), app.misakaContentEnd()
-	move(app.controls.addProfileButton, side-s(42), s(misakaTitleHeight+72), s(28), s(28))
-	move(app.controls.networkList, s(12), s(misakaTitleHeight+110), side-s(24), height-s(misakaTitleHeight+174))
-	move(app.controls.stateIcon, main+s(15), s(115), s(38), s(38))
-	move(app.controls.stateValue, main+s(68), s(114), end-main-s(198), s(32))
-	move(app.controls.primaryButton, end-s(118), s(118), s(100), s(32))
-	move(app.controls.message, main+s(68), s(152), end-main-s(86), s(30))
+	side, main, end := s(176), s(200), app.misakaContentEnd()
+	move(app.controls.addProfileButton, side-s(44), s(104), s(32), s(32))
+	move(app.controls.networkList, s(12), s(144), side-s(24), height-s(misakaTitleHeight+174))
+	move(app.controls.stateIcon, main+s(16), s(120), s(32), s(32))
+	move(app.controls.stateValue, main+s(64), s(120), end-main-s(192), s(32))
+	move(app.controls.primaryButton, end-s(112), s(120), s(96), s(32))
+	move(app.controls.message, main+s(64), s(152), end-main-s(80), max(s(16), app.misakaConnectionHintHeight(snapshot)-s(8)))
 	if snapshot.selectedProfile != "" {
 		move(app.controls.deleteButton, end-s(90), s(57), s(90), s(28))
 	}
 	if !snapshot.joined {
 		// §7.2：未加入配置直接在同一块内容区完成导入，操作和说明不挤进连接摘要。
-		move(app.controls.stateValue, main+s(68), s(115), end-main-s(86), s(30))
-		move(app.controls.message, main+s(68), s(155), end-main-s(86), s(38))
-		move(app.controls.primaryButton, main+s(68), s(213), s(132), s(32))
+		move(app.controls.stateValue, main+s(64), s(120), end-main-s(80), s(32))
+		move(app.controls.message, main+s(64), s(160), end-main-s(80), s(40))
+		move(app.controls.primaryButton, main+s(64), s(232), s(152), s(32))
+		if snapshot.profilesReady && snapshot.selectedProfile == "" {
+			move(app.controls.primaryButton, main+s(64), s(208), s(152), s(32))
+		}
 		if !snapshot.profilesReady || snapshot.selectedProfile != "" {
-			move(app.controls.pasteButton, main+s(212), s(213), s(128), s(32))
+			move(app.controls.pasteButton, main+s(228), s(232), s(132), s(32))
 		}
 	}
 	if snapshot.joined {
-		modeWidth := s(77)
-		move(app.controls.modeDirect, main+s(73), s(220), modeWidth, s(34))
-		move(app.controls.modeAuto, main+s(73)+modeWidth, s(220), modeWidth, s(34))
-		move(app.controls.modeFixed, main+s(73)+modeWidth*2, s(220), s(231)-modeWidth*2, s(34))
+		hint := app.misakaConnectionHintHeight(snapshot)
+		modeWidth, modeTop := s(80), s(240)+hint
+		move(app.controls.modeDirect, main+s(80), modeTop, modeWidth, s(32))
+		move(app.controls.modeAuto, main+s(80)+modeWidth, modeTop, modeWidth, s(32))
+		move(app.controls.modeFixed, main+s(80)+modeWidth*2, modeTop, modeWidth, s(32))
 		if app.misakaRouteVisible(snapshot) {
 			var r portableRect
 			procMisakaGetWindowRect.Call(app.controls.routeCombo, uintptr(unsafe.Pointer(&r)))
 			h := r.bottom - r.top
 			if h <= 0 || h > s(100) {
-				h = s(28)
+				h = s(32)
 			}
 			parent := app.skin.pane
-			target := misakaRect(main+s(318)-s(176), s(220)+(s(34)-h)/2-s(misakaContentOriginY)-app.skin.scrollY, min(s(163), end-main-s(318)), h)
+			target := misakaRect(main+s(336)-s(176), modeTop+(s(32)-h)/2-s(misakaContentOriginY)-app.skin.scrollY, min(s(160), end-main-s(336)), h)
 			procMisakaMapPoints.Call(0, parent, uintptr(unsafe.Pointer(&r)), 2)
 			if r != target {
 				procMoveWindow.Call(app.controls.routeCombo, uintptr(target.left), uintptr(target.top), uintptr(target.right-target.left), uintptr(s(220)), 0)
@@ -261,8 +277,8 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 			}
 			visible[app.controls.routeCombo] = true
 		}
-		move(app.controls.pathsValue, main, s(300), end-main, app.misakaPathsHeight())
-		move(app.controls.pathsDetailsButton, end-s(86), s(265), s(86), s(26))
+		move(app.controls.pathsValue, main, s(344)+hint, end-main, app.misakaPathsHeight())
+		move(app.controls.pathsDetailsButton, end-s(112), s(304)+hint, s(96), s(32))
 	}
 	if app.skin.rename {
 		visible[app.controls.profileNameEdit] = true
@@ -273,11 +289,11 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		visible[app.controls.networkList] = true
 		visible[app.controls.addProfileButton] = true
 		x, y, w := app.misakaDraftBounds()
-		move(app.controls.draftName, x+s(29), y+s(51), w-s(58), s(25))
-		move(app.controls.draftImport, x+s(24), y+s(154), s(144), s(34))
-		move(app.controls.draftPaste, x+s(180), y+s(154), s(144), s(34))
-		move(app.controls.draftSubmit, x+w-s(148), y+s(272), s(124), s(34))
-		move(app.controls.draftCancel, x+w-s(246), y+s(272), s(86), s(34))
+		move(app.controls.draftName, x+s(28), y+s(92), w-s(56), s(24))
+		move(app.controls.draftImport, x+s(16), y+s(196), s(152), s(32))
+		move(app.controls.draftPaste, x+s(180), y+s(196), s(152), s(32))
+		move(app.controls.draftSubmit, x+w-s(140), y+s(288), s(124), s(32))
+		move(app.controls.draftCancel, x+w-s(248), y+s(288), s(96), s(32))
 	}
 	for _, control := range app.controls.all() {
 		setPortableControlVisible(control, visible[control])
@@ -290,9 +306,9 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 }
 
 func (app *portableGUI) misakaDraftBounds() (int32, int32, int32) {
-	x := app.scale(196)
+	x := app.scale(200)
 	w := app.misakaContentEnd() - x
-	return x, app.scale(118), w
+	return x, app.scale(104), w
 }
 
 func misakaSelectedMode(snapshot portableGUISnapshot) clientmodel.Mode {
@@ -323,7 +339,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 	setPortableControlText(app.controls.deleteButton, "删除配置")
 	enablePortableControl(app.controls.addProfileButton, snapshot.profilesReady && !app.isElevationPending())
 	if snapshot.profilesReady && snapshot.selectedProfile == "" {
-		setPortableControlText(app.controls.primaryButton, "添加配置")
+		setPortableControlText(app.controls.primaryButton, "添加连接配置")
 	}
 	if snapshot.activeProfile != "" && snapshot.activeProfile != snapshot.selectedProfile && snapshot.joined &&
 		(snapshot.state == guiStopped || snapshot.state == guiError) {
@@ -369,15 +385,15 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 func (app *portableGUI) misakaPathHeightAt(index int) int32 {
 	s := app.scale
 	if app.skin == nil || index < 0 || index >= len(app.skin.lastPaths) {
-		return 138
+		return 112
 	}
 	path := app.skin.lastPaths[index]
 	rows := misakaPathNodeRows(path)
-	needed := s(138 + (rows-1)*88)
-	if app.pathsExpanded && path.Candidate != "" {
-		width := max(s(40), app.misakaContentEnd()-s(196)-s(3)-2-s(36))
+	needed := s(misakaPathBaseHeight(path) + (rows-1)*88)
+	if app.pathsExpanded {
+		width := max(s(40), app.misakaContentEnd()-s(200)-s(32))
 		details := app.misakaPathDetails(path, width)
-		needed = 2 + s(142+(rows-1)*88) + details.height + s(16)
+		needed = s(misakaPathBaseHeight(path)+(rows-1)*88+16) + details.height + s(16)
 	}
 	return (needed*96 + app.dpi() - 1) / app.dpi()
 }
@@ -467,7 +483,10 @@ func (app *portableGUI) positionMisakaRename() {
 	var rect portableRect
 	procSendMessage.Call(app.controls.networkList, 0x0198, uintptr(index), uintptr(unsafe.Pointer(&rect)))
 	procMisakaMapPoints.Call(app.controls.networkList, app.hwnd, uintptr(unsafe.Pointer(&rect)), 2)
+	row := rect
 	rect = app.misakaProfileNameBounds(rect, app.misakaProfileNameFont(true))
+	rect.left = row.left + app.scale(40)
+	rect.right = row.right - app.scale(20)
 	procMoveWindow.Call(app.controls.profileNameEdit, uintptr(rect.left), uintptr(rect.top), uintptr(rect.right-rect.left), uintptr(rect.bottom-rect.top), 0)
 	procSendMessage.Call(app.controls.profileNameEdit, 0x00D3, 3, 0) // §7.2：原位编辑不增加系统文字边距。
 	setPortableControlVisible(app.controls.profileNameEdit, true)
@@ -750,6 +769,9 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 		}
 	case portableWMCtlColorStatic, 0x0133, 0x0134:
 		color := uint32(misakaWhite)
+		if lParam == app.controls.networkList {
+			color = misakaSidebar
+		}
 		if lParam == app.controls.message {
 			color = misakaBackground
 		}

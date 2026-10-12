@@ -50,8 +50,13 @@ func TestWindowsRuntimeReadyRequiresSelectorStatusWithoutBusinessSuccess(t *test
 		State:      clientadapter.State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-network"},
 		Selections: []clientadapter.SelectionStatus{{Scope: "demo-service", CandidateID: "demo-route", State: "unknown"}},
 	}
-	if err := writeWindowsRuntimeStatus(root, lkg, activation, false); err != nil {
+	readAt := time.Date(2030, 1, 1, 0, 0, 20, 0, time.UTC)
+	if err := writeWindowsRuntimeStatus(root, lkg, activation, false, readAt); err != nil {
 		t.Fatal(err)
+	}
+	status, err := readWindowsRuntimeStatus(root)
+	if err != nil || status.SelectorReadAt != readAt.Format(time.RFC3339Nano) {
+		t.Fatal("selector readback completion time was not preserved", err)
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const misakaProfileNameSize = 13
+const misakaProfileNameSize = 12
 
 // §7.2：同一名称在浏览和编辑时共用原生字体与排版基线，不能在两套字体度量之间跳动。
 func createMisakaProfileNameFont(dpi, weight int32) (uintptr, error) {
@@ -53,7 +53,7 @@ func (app *portableGUI) misakaProfileNameBounds(row portableRect, font uintptr) 
 	if height <= 0 {
 		height = app.scale(23)
 	}
-	return misakaRect(row.left+app.scale(29), row.top+app.scale(4)+max(int32(0), (app.scale(23)-height)/2), row.right-row.left-app.scale(35), height)
+	return misakaRect(row.left+app.scale(29), row.top+app.scale(4)+max(int32(0), (app.scale(32)-height)/2), row.right-row.left-app.scale(35), height)
 }
 
 func (app *portableGUI) drawMisakaProfileName(dc uintptr, row portableRect, name string, selected bool) {

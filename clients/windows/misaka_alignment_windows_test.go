@@ -124,24 +124,24 @@ func TestGUIMisakaAddAndPathSymbolsHaveVisibleGeometricCenters(t *testing.T) {
 	}
 }
 
-func TestGUIMisakaProfileSelectionHasSquareCornersAndContinuousRail(t *testing.T) {
+func TestGUIMisakaProfileSelectionKeepsRoundedRowAndShortRail(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	const width, height int32 = 400, 160
 	dc, pixels := misakaCanvasTestDC(t, width, height)
 	for _, dpi := range []int32{96, 120, 144, 168, 192} {
 		app.windowDPI = dpi
 		s := app.scale
-		r := misakaRect(s(12), s(8), s(152), s(55))
+		r := misakaRect(s(12), s(8), s(152), s(72))
 		app.drawMisakaProfile(&portableDrawItem{hwndItem: app.controls.networkList, dc: dc, rect: r, itemID: 0, itemState: portableODSSelected})
 		portableGDI32.NewProc("GdiFlush").Call()
-		for y := r.top; y < r.bottom; y++ {
-			if pixel := misakaCanvasTestPixel(pixels, width, r.left, y); pixel != misakaGreen {
+		for y := r.top + s(22); y < r.top+s(42); y++ {
+			if pixel := misakaCanvasTestPixel(pixels, width, r.left+s(1), y); pixel != misakaGreen {
 				t.Fatalf("[§7.2] DPI %d 选中项竖线在 y=%d 中断：%06x", dpi, y, pixel)
 			}
 		}
-		for _, point := range []portablePoint{{x: r.left + s(4), y: r.top}, {x: r.right - 1, y: r.top}, {x: r.left + s(4), y: r.bottom - 1}, {x: r.right - 1, y: r.bottom - 1}} {
-			if pixel := misakaCanvasTestPixel(pixels, width, point.x, point.y); pixel != 0xE9F3ED {
-				t.Errorf("[§7.2] DPI %d 选中项边角仍有裁切：(%d,%d)=%06x", dpi, point.x, point.y, pixel)
+		for _, point := range []portablePoint{{x: r.left, y: r.top}, {x: r.right - 1, y: r.top}, {x: r.left + s(40), y: r.bottom - s(4)}} {
+			if pixel := misakaCanvasTestPixel(pixels, width, point.x, point.y); pixel != misakaSidebar {
+				t.Errorf("DPI %d selected row lost its rounded corner or gap: (%d,%d)=%06x", dpi, point.x, point.y, pixel)
 			}
 		}
 	}
@@ -158,10 +158,10 @@ func TestGUIMisakaPathLabelsStayUnderTheirNodesAtBothEdges(t *testing.T) {
 			r := misakaRect(s(3), s(2), s(logicalWidth), s(150))
 			app.drawMisakaPath(&portableDrawItem{hwndItem: app.controls.pathsValue, dc: dc, rect: r, itemID: 0})
 			portableGDI32.NewProc("GdiFlush").Call()
-			left, right, top := r.left+1, r.right-s(3)-1, r.top+1
-			step := (right - left - s(84)) / 3
+			left, right, top := r.left, r.right, r.top
+			step := (right - left - s(112)) / 3
 			for _, index := range []int32{0, 3} {
-				x, y := left+s(42)+index*step, top+s(83)
+				x, y := left+s(56)+index*step, top+s(64)
 				area := misakaRect(x-s(55), y+s(23), s(110), s(20))
 				area.left, area.right = max(area.left, r.left+1), min(area.right, r.right-1)
 				ink := misakaAlignmentInk(pixels, width, area, func(rgb uint32) bool { return rgb>>16 < 160 && rgb>>8&255 < 160 && rgb&255 < 160 })
@@ -313,7 +313,7 @@ func TestGUIMisakaInlineEditorDoesNotCoverProfileStatus(t *testing.T) {
 		var row portableRect
 		procSendMessage.Call(app.controls.networkList, 0x0198, 0, uintptr(unsafe.Pointer(&row)))
 		procMisakaMapPoints.Call(app.controls.networkList, app.hwnd, uintptr(unsafe.Pointer(&row)), 2)
-		status := misakaRect(row.left+app.scale(29), row.top+app.scale(33), row.right-row.left-app.scale(35), app.scale(16))
+		status := misakaRect(row.left+app.scale(29), row.top+app.scale(44), row.right-row.left-app.scale(35), app.scale(16))
 		app.beginMisakaRename()
 		after := readProfileGUITestWindow(t, app)
 		editor := guiWindowRect(t, app.controls.profileNameEdit)

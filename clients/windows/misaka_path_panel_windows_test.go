@@ -31,7 +31,7 @@ func TestGUIMisakaPathsShareOnePanel(t *testing.T) {
 					t.Fatalf("DPI %d divider does not span the panel at (%d,%d): %06x != %06x", dpi, x, y, got, want)
 				}
 			}
-			if got := misakaCanvasTestPixel(pixels, width, 0, y); got != misakaBorder {
+			if got := misakaCanvasTestPixel(pixels, width, 0, y); got != want {
 				t.Fatalf("DPI %d panel side is not continuous: %06x", dpi, got)
 			}
 		}

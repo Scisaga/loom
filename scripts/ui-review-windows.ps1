@@ -30,8 +30,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $images = @(Get-ChildItem -LiteralPath $captureRoot -Filter '*.png' -File)
-if ($images.Count -ne 8) {
-    throw "Windows UI review produced $($images.Count) images; expected 8."
+if ($images.Count -ne 9) {
+    throw "Windows UI review produced $($images.Count) images; expected 9."
 }
 $metadata = @(
     '{'

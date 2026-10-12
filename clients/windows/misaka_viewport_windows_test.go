@@ -88,7 +88,7 @@ func TestGUIMisakaViewportScrollsWholeRightPaneAndReachesLastService(t *testing.
 		t.Fatal("[§7.2] 右侧滚动移动了左侧配置列表或添加按钮")
 	}
 	after := readProfileGUITestWindow(t, app)
-	header := misakaRect(app.scale(196), app.scale(57), app.scale(180), app.scale(31))
+	header := misakaRect(app.scale(200), app.scale(57), app.scale(180), app.scale(31))
 	if matching, total := misakaViewportMatchingPixels(before, after, header, delta); matching != total {
 		t.Errorf("[§7.2] 标题实际绘制没有与内容共同滚动：相同像素=%d/%d", matching, total)
 	}
@@ -209,7 +209,7 @@ func TestGUIMisakaViewportDraftResetMatchesActualChildPositions(t *testing.T) {
 	}
 	x, y, _ := app.misakaDraftBounds()
 	r := misakaViewportControlRect(t, app.controls.draftName, app.skin.pane)
-	if r.left != x+app.scale(29)-app.scale(176) || r.top != y+app.scale(51)-app.scale(40) {
+	if r.left != x+app.scale(28)-app.scale(176) || r.top != y+app.scale(92)-app.scale(misakaContentOriginY) {
 		t.Fatalf("[§7.2] 添加表单重置滚动后实际输入框位置过期：%+v", r)
 	}
 }

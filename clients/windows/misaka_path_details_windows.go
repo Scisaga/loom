@@ -90,8 +90,9 @@ type misakaDetailBlock struct {
 }
 
 type misakaPathDetailLayout struct {
-	best, reason, read, scope                                            string
+	best, reason, read, scope, business                                  string
 	bestBounds, reasonBounds, readBounds, scopeBounds, reasonTitleBounds portableRect
+	businessBlocks                                                       []misakaDetailBlock
 	blocks                                                               []misakaDetailBlock
 	height                                                               int32
 }
@@ -107,7 +108,10 @@ func windowsDetailTime(value string) string {
 // §7.2：测量逐段分组，标题与正文使用同一套实际字体度量，间距随 DPI 缩放。
 func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) misakaPathDetailLayout {
 	s := app.scale
-	layout := misakaPathDetailLayout{reason: row.Reason, read: "读取时间：" + windowsDetailTime(row.UpdatedAt)}
+	layout := misakaPathDetailLayout{reason: row.Reason, read: "selector 回读完成：未知", business: row.BusinessDetails}
+	if at, err := time.Parse(time.RFC3339Nano, row.SelectorReadAt); err == nil && !at.IsZero() {
+		layout.read = "selector 回读完成：" + windowsDetailTime(row.SelectorReadAt)
+	}
 	if layout.reason == "" {
 		layout.reason = "暂无选路说明"
 	}
@@ -122,6 +126,16 @@ func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) m
 		bounds := misakaRect(0, layout.height, width, height)
 		layout.height += height
 		return bounds
+	}
+	if layout.business != "" {
+		for _, text := range strings.Split(layout.business, "\n") {
+			bounds := line(text, misakaDetailBodySize, 400)
+			if bounds.bottom-bounds.top < s(24) {
+				layout.height += s(24) - (bounds.bottom - bounds.top)
+			}
+			layout.businessBlocks = append(layout.businessBlocks, misakaDetailBlock{body: text, bodyBounds: bounds})
+		}
+		layout.height += s(16)
 	}
 	if row.LinkLabels != "" {
 		for _, entry := range strings.Split(row.LinkDetails, "\n") {
@@ -149,7 +163,7 @@ func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) m
 			layout.blocks = append(layout.blocks, block)
 		}
 	}
-	if len(layout.blocks) == 0 {
+	if len(layout.blocks) == 0 && layout.business == "" {
 		layout.best = "暂无对应连线的有效观测"
 		if row.LinkLabels == "" {
 			layout.best = "当前测量：" + row.SelectedQuality + "；已测候选：" + row.BestQuality
@@ -184,6 +198,15 @@ func misakaPathNodeRows(row windowsPathDisplay) int32 {
 		return 1
 	}
 	return max(1, int32((len(strings.Split(row.Chain, " → "))+1)/3))
+}
+
+func misakaPathBaseHeight(row windowsPathDisplay) int32 {
+	for _, label := range strings.Split(row.LinkLabels, "\n") {
+		if len(strings.Split(label, " · ")) > 2 {
+			return 128
+		}
+	}
+	return 112
 }
 
 func (app *portableGUI) syncMisakaPathItemHeight() {

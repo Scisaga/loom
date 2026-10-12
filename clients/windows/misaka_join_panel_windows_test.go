@@ -73,7 +73,7 @@ func TestGUIMisakaNoProfilesShowsOneAddEntry(t *testing.T) {
 	app.selectedProfile, app.profileName, app.activeProfile, app.activeProfileName = "", "", "", ""
 	app.joined, app.deviceID, app.state, app.paths, app.brokerProfiles = false, "", guiNeedsJoin, nil, nil
 	app.renderControls()
-	if profileGUIText(app.controls.stateValue) != "添加第一个连接配置" || profileGUIText(app.controls.primaryButton) != "添加配置" || profileGUIStyle(app.controls.pasteButton)&portableWSVisible != 0 {
+	if profileGUIText(app.controls.stateValue) != "尚无连接配置" || profileGUIText(app.controls.primaryButton) != "添加连接配置" || profileGUIStyle(app.controls.pasteButton)&portableWSVisible != 0 {
 		t.Fatal("[§7.2] 无配置时必须先进入完整加入表单，不能向缺少目标的配置直接粘贴")
 	}
 }

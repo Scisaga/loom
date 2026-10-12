@@ -45,9 +45,11 @@ func newProfileGUITestWindow(t *testing.T) *portableGUI {
 		},
 		paths: []windowsPathDisplay{
 			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", Health: "可用",
-				MeasurementSummary: "TCP/TLS 与 UDP/DNS 已验证", SelectedQuality: "真实业务成功", BestQuality: "当前 selector 候选", Reason: "selector 回读为当前候选", UpdatedAt: "2026-01-02T03:04:05Z"},
+				MeasurementSummary: "TCP/TLS 与 UDP/DNS 已验证", SelectedQuality: "真实业务成功", BestQuality: "当前 selector 候选", Reason: "selector 回读为当前候选", UpdatedAt: "2030-01-01T10:00:00Z",
+				BusinessDetails: "业务目标：https://web.example/ · 可用\n观测范围：demo-web · 候选 demo-candidate-a · 网络 demo-network\n业务采样：2030-01-01 10:00:00 UTC · 有效至：2030-01-01 10:05:00 UTC", SelectorReadAt: "2030-01-01T10:00:20Z"},
 			{Service: "demo-api", Candidate: "demo-candidate-b", Chain: "本机 → demo-prefix-b → demo-exit → 目标", Health: "未知",
-				MeasurementSummary: "尚无真实业务结果", SelectedQuality: "未知", BestQuality: "当前 selector 候选", Reason: "等待真实业务结果", UpdatedAt: "2026-01-02T03:04:06Z"},
+				MeasurementSummary: "尚无真实业务结果", SelectedQuality: "未知", BestQuality: "当前 selector 候选", Reason: "等待真实业务结果",
+				BusinessDetails: "业务目标：https://api.example/ · 未知（没有对应唯一样本）", SelectorReadAt: "2030-01-01T10:00:20Z"},
 		},
 	}
 	hwnd, err := createPortableWindow(app)

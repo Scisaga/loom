@@ -25,7 +25,7 @@ func misakaProfileNameInk(picture *image.NRGBA, area portableRect) (portableRect
 	return bounds, count
 }
 
-func TestGUIMisakaRenameKeepsVisibleGlyphOriginSizeAndWeight(t *testing.T) {
+func TestGUIMisakaRenameKeepsGlyphSizeWeightAndTwelveDIPFieldInset(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	for _, dpi := range []int32{96, 120, 144, 168, 192} {
 		width, height := portableMinimumWindowSize(dpi)
@@ -44,6 +44,9 @@ func TestGUIMisakaRenameKeepsVisibleGlyphOriginSizeAndWeight(t *testing.T) {
 			after := readProfileGUITestWindow(t, app)
 			plainBounds, plainInk := misakaProfileNameInk(before, area)
 			editBounds, editInk := misakaProfileNameInk(after, area)
+			inset := app.scale(40) - app.scale(29)
+			plainBounds.left += inset
+			plainBounds.right += inset
 			if plainInk < 10 || plainBounds != editBounds {
 				t.Errorf("[§7.2] DPI %d、名称 %q 进入编辑后实际字形位置或尺寸变化：显示=%+v 编辑=%+v", dpi, name, plainBounds, editBounds)
 			}
@@ -57,12 +60,12 @@ func TestGUIMisakaRenameKeepsVisibleGlyphOriginSizeAndWeight(t *testing.T) {
 
 func TestGUIMisakaProfileFocusDoesNotAddUnderline(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	const width, height int32 = 400, 140
+	const width, height int32 = 400, 180
 	dc, pixels := misakaCanvasTestDC(t, width, height)
 	for _, dpi := range []int32{96, 120, 144, 168, 192} {
 		app.windowDPI = dpi
 		s := app.scale
-		rect := misakaRect(s(4), s(2), s(152), s(55))
+		rect := misakaRect(s(4), s(2), s(152), s(72))
 		for _, focused := range []bool{true, false, true} {
 			state := uint32(portableODSSelected)
 			if focused {
@@ -72,7 +75,7 @@ func TestGUIMisakaProfileFocusDoesNotAddUnderline(t *testing.T) {
 			portableGDI32.NewProc("GdiFlush").Call()
 			for y := rect.bottom - s(4); y < rect.bottom; y++ {
 				for x := rect.left + s(6); x < rect.right-s(6); x++ {
-					if pixel := misakaCanvasTestPixel(pixels, width, x, y); pixel != 0xE9F3ED {
+					if pixel := misakaCanvasTestPixel(pixels, width, x, y); pixel != misakaSidebar {
 						t.Fatalf("[§7.2] DPI %d、焦点 %t 在菜单项底部留下额外横线：(%d,%d)=%06x", dpi, focused, x, y, pixel)
 					}
 				}
