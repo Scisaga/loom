@@ -85,6 +85,15 @@ func TestWebChromeRevokedDeviceReviewAndExplicitRegrant(t *testing.T) {
 		Dependencies: current.MaterialIDs, Payload: DeleteTarget{ID: public.ID}})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	for _, page := range []string{"/devices", "/", "/topology"} {
+		if err := debug.call(ctx, "Page.navigate", map[string]any{"url": httpServer.URL + page}, nil); err != nil {
+			t.Fatal(err)
+		}
+		waitChromeEvaluation(t, debug, `location.pathname==='`+page+`'&&document.querySelector('#connection').textContent.includes('local writes available')&&document.querySelector('#app h1')`)
+		if chromeDo(t, debug, `document.querySelector('#app a[href="/devices/`+invite.DeviceID+`"]')===null&&document.querySelector('.topology [data-node="`+invite.DeviceID+`"]')===null`) != true {
+			t.Fatal("permanently deleted device remains in the current inventory or topology", page)
+		}
+	}
 	if err := debug.call(ctx, "Page.navigate", map[string]any{"url": httpServer.URL + "/devices/" + invite.DeviceID}, nil); err != nil {
 		t.Fatal(err)
 	}

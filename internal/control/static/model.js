@@ -1,6 +1,17 @@
 export const list=value=>Array.isArray(value)?value:[];
 export const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// The snapshot also carries historical review values for direct detail URLs.
+// Completed cleanup must not turn those values into new pending nodes.
+export function currentDevices(snapshot){
+  const targets=new Map(list(snapshot.targets).filter(v=>v.target_kind==='device').map(v=>[v.target_id,v]));
+  return list(snapshot.devices).filter(device=>{
+    if(device.authorized||device.conflicted)return true;
+    if(device.enrollment==='terminated')return false;
+    return !device.deleted||!!targets.get(device.id)?.device_for_review;
+  });
+}
+
 export const reportIsCurrent=(value,now)=>value?.freshness==='current'&&value.current_until>now;
 
 // Only reduce the received display projection. Original reported fields remain
