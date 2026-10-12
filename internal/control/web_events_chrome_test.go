@@ -5,11 +5,47 @@ package control
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestWebChromeOverviewRecentEventsUsesExplicitShortWindow(t *testing.T) {
+	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
+		t.Skip("set LOOM_WEB_CHROME_TEST=1 for summary query acceptance")
+	}
+	server, _ := eventTestServer(t)
+	server.Now = nil
+	queries := make(chan url.Values, 1)
+	normal := server.AdminHandler()
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/control/ui/events" {
+			select {
+			case queries <- r.URL.Query():
+			default:
+			}
+		}
+		normal.ServeHTTP(w, r)
+	}))
+	defer host.Close()
+	debug := openCommandChrome(t, host.URL+"/")
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-overview-event-window]')?.title.endsWith('Z')`)
+	select {
+	case query := <-queries:
+		from, errFrom := time.Parse(time.RFC3339Nano, query.Get("from"))
+		until, errUntil := time.Parse(time.RFC3339Nano, query.Get("until"))
+		if errFrom != nil || errUntil != nil || until.Sub(from) != time.Hour || time.Since(until) > time.Minute || query.Has("cursor") {
+			t.Fatal("summary requested the full default window or an ambiguous cutoff")
+		}
+	default:
+		t.Fatal("summary did not use the formal authenticated Events query")
+	}
+	if chromeDo(t, debug, `document.querySelector('[data-overview-event-window]').textContent.includes('past hour')&&document.querySelector('.overview-events a[data-nav]').pathname==='/events'`) != true {
+		t.Fatal("summary scope or full history entry was lost")
+	}
+}
 
 func TestWebChromeEventsScrollRetryDraftAndFilteredExport(t *testing.T) {
 	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {

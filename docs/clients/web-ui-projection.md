@@ -177,6 +177,10 @@ domain、签名 wire、persistent 和 daemon 的既有报告/路径字段不变�
 | `Release/Deployment` | 验签 catalog、`Projection` 期望摘要、publisher 与设备回读 | 精确制品、应用快照、真实一致性，不显示未回读的已应用版本 |
 | `Event` | 不可变签名 Material 与有效设备报告 | 普通事实、成员变更、冲突、撤权和运行变化，脱敏后显示、不含 `RuntimeKey` 等秘密，不另建事件权威 |
 
+Overview 的近期事件只读取调用方明确注入的最近一小时 UTC 窗口，显示最新三条本地接收记录，
+页内标明范围并保留查询截至时间；没有记录时如实留空。完整 72 小时分桶与连续加载继续由 Events
+正式入口承担。摘要复用同一查询 handler，不为三条记录读取整个长窗口，不增加事件 store。
+
 ### 拓扑的可读布局
 
 Overview 和 Topology 保留双圈、原节点、真实连线、路径选择及键盘操作。双圈只安排位置，不表达
