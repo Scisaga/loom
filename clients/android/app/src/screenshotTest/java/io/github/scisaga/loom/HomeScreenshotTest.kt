@@ -14,10 +14,12 @@ import io.github.scisaga.loom.enrollment.EnrollmentStatus
 import io.github.scisaga.loom.profiles.ConnectionProfile
 import io.github.scisaga.loom.profiles.ProfileIndex
 import io.github.scisaga.loom.route.RouteMode
+import io.github.scisaga.loom.route.RouteBusinessStatus
 import io.github.scisaga.loom.route.RoutePathStatus
 import io.github.scisaga.loom.route.RouteStatus
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.VpnStatus
+import java.time.Instant
 
 private const val secondProfileID = "00112233445566778899aabbccddeeff"
 
@@ -81,6 +83,11 @@ private val connectedRoute = RouteStatus(
     detail = "Auto · 当前 selector 已回读",
     observationDetail = "真实 DNS 与 HTTPS 业务成功",
     currentPaths = demoPaths,
+    businessEvidence = listOf(
+        RouteBusinessStatus("service:demo-web", "https://web.example/", "demo-candidate-direct", "demo-network", "available",
+            "2030-01-01T00:00:00Z", "2030-01-01T00:10:00Z", 123, true),
+        RouteBusinessStatus("service:demo-api", "https://api.example/", "demo-candidate-fallback", "demo-network"),
+    ),
     running = true,
 )
 
@@ -104,6 +111,7 @@ private fun homeState(
     notificationsAllowed = notificationsAllowed,
     diagnostics = "libbox demo-1.11.4 · core demo-v2",
     selectedTab = tab,
+    evidenceTime = Instant.parse("2030-01-01T00:00:20Z"),
 )
 
 @PreviewTest
@@ -141,7 +149,7 @@ fun connectionError() {
                 tab = HomeTab.CONNECTION,
                 status = VpnStatus(
                     phase = ConnectionPhase.ERROR,
-                    detail = "demo-exit 的真实业务检查失败",
+                    detail = "VPN 启动失败；认证配置仍保留",
                     requestedProfileId = "primary",
                     deviceName = "demo-phone",
                 ),
@@ -149,6 +157,24 @@ fun connectionError() {
                 route = connectedRoute.copy(running = false, blocked = true, detail = "当前没有可用候选"),
             ),
         )
+    }
+}
+
+@PreviewTest
+@Preview(name = "connection-business-failed", widthDp = 412, heightDp = 915, locale = "zh-rCN", fontScale = 1.0f)
+@Composable
+fun connectionBusinessFailed() {
+    LoomTheme {
+        val route = connectedRoute.copy(
+            currentPaths = listOf(demoPaths[1]),
+            businessEvidence = listOf(
+                RouteBusinessStatus("service:demo-web", "https://web.example/", "demo-candidate-direct", "demo-network", "unavailable",
+                    "2030-01-01T00:00:00Z", "2030-01-01T00:00:30Z"),
+                RouteBusinessStatus("service:demo-api", "https://api.example/", "demo-candidate-fallback", "demo-network"),
+            ),
+        )
+        LoomHomeScreen(homeState(HomeTab.CONNECTION, status = connectedStatus, profiles = multipleProfiles,
+            join = readyEnrollment, route = route, activeRoute = route))
     }
 }
 

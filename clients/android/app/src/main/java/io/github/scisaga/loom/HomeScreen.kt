@@ -23,6 +23,7 @@ import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.route.RouteStatus
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.VpnStatus
+import java.time.Instant
 
 /** A read-only UI projection. It is never persisted and cannot update client authority. */
 internal data class HomeUiState(
@@ -34,6 +35,7 @@ internal data class HomeUiState(
     val notificationsAllowed: Boolean,
     val diagnostics: String,
     val selectedTab: HomeTab,
+    val evidenceTime: Instant,
     val scanning: Boolean = false,
     val activePermissionRestorationWarning: Boolean = false,
 )
@@ -119,6 +121,8 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                         paths = state.activeRoute.currentPaths,
                         running = state.activeRoute.running && status.phase == ConnectionPhase.CONNECTED,
                         profileName = activeProfile?.name.orEmpty(),
+                        businessEvidence = state.activeRoute.businessEvidence,
+                        evidenceTime = state.evidenceTime,
                     )
                 }
 
@@ -178,6 +182,7 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                         activeProfile?.name ?: viewedProfile.name,
                         status.deviceName.ifBlank { state.join.deviceName },
                         state.diagnostics,
+                        state.evidenceTime,
                     )
                 }
             }

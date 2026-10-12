@@ -4,6 +4,9 @@ import android.content.Intent
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.compose.ui.test.onNodeWithTag
@@ -39,6 +42,7 @@ import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManagerFactory
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -233,6 +237,45 @@ class CertifiedRuntimeInstrumentedTest {
         await("private join or protected restart must restore the certified profile") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
         connect()
         website()
+        if (args.getString("demoBusinessUI") == "true") {
+            require(independentServices)
+            await("business rows must retain each actual authorized target", 120) {
+                val rows = routing.status(profileID).value.businessEvidence
+                rows.size == 3 && rows.count { it.scope == "service:demo-service" && it.result == "available" && it.current } == 2 &&
+                    rows.singleOrNull { it.scope == "service:demo-service-b" }?.let {
+                        it.result == "unavailable" && !it.current && it.observedAt.isNotBlank() && it.validUntil.isNotBlank()
+                    } == true
+            }
+            assertTrue("other Service must still carry actual HTTPS", business())
+            val rows = routing.status(profileID).value.businessEvidence
+            for (tab in listOf("tab-connection", "tab-diagnostics")) {
+                compose.onNodeWithTag(tab).performClick()
+                rows.forEach { row ->
+                    val parent = hasAnyAncestor(hasTestTag("business-target-${row.scope}-${row.target}"))
+                    for (text in listOf(row.target, "采样：${row.observedAt}", "有效至：${row.validUntil}")) {
+                        compose.onNode(parent and hasText(text)).performScrollTo().assertIsDisplayed()
+                    }
+                    val expected = if (row.current) "当前目标观测：可用" else "历史目标观测：不可用 · 当前结果未知"
+                    compose.onNode(parent and hasText(expected)).performScrollTo().assertIsDisplayed()
+                }
+            }
+            assertEquals(ConnectionPhase.CONNECTED, VpnRuntime.status.value.phase)
+            val values = JSONArray()
+            rows.forEach { row ->
+                values.put(JSONObject().put("scope", row.scope).put("target", row.target).put("candidate", row.candidate)
+                    .put("network_generation", row.networkGeneration).put("result", row.result).put("observed_at", row.observedAt)
+                    .put("valid_until", row.validUntil).put("current", row.current))
+            }
+            File(directory, "demo-business-ui.json").writeText(JSONObject().put("rows", values)
+                .put("view_digest", enrollment.status(profileID).value.viewDigest).put("phase", VpnRuntime.status.value.phase.name).toString())
+            await("controller must read actual business observations and UI", 120) { File(directory, "demo-business-ui-finish").isFile }
+            compose.onNodeWithTag("tab-connection").performClick()
+            click("connection-toggle")
+            await("normal disconnect must release the VPN") { VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED }
+            assertTrue("normal stop must leave no current business health", routing.status(profileID).value.businessEvidence.none { it.current })
+            await("controller must read the signed stopped report") { File(directory, "demo-business-ui-stopped").isFile }
+            return
+        }
         args.getString("demoResourceStep")?.let { step ->
             require(step in setOf("refresh", "restart", "recovery"))
             await("resource sample must follow the actual authorized selector") {

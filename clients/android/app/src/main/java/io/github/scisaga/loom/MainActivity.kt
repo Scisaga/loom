@@ -79,6 +79,8 @@ import io.github.scisaga.loom.profiles.ConnectionProfile
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.profiles.checkedProfileName
 import io.github.scisaga.loom.route.RouteManager
+import io.github.scisaga.loom.route.RouteBusinessStatus
+import io.github.scisaga.loom.route.currentAt
 import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.route.RoutePathStatus
 import io.github.scisaga.loom.route.RouteStatus
@@ -89,8 +91,11 @@ import io.github.scisaga.loom.vpn.VpnRuntime
 import io.github.scisaga.loom.vpn.VpnStatus
 import io.github.scisaga.loomcore.Loomcore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.Duration
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
@@ -314,6 +319,17 @@ private fun LoomHomeRoute(
     var renameText by remember { mutableStateOf("") }
     var deleting by remember { mutableStateOf<ConnectionProfile?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(HomeTab.CONNECTION) }
+    var evidenceTime by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(activeRoute.businessEvidence, route.businessEvidence, selectedTab) {
+        val rows = activeRoute.businessEvidence + route.businessEvidence
+        while (true) {
+            val now = Instant.now()
+            evidenceTime = now
+            val next = rows.filter { it.current }.mapNotNull { runCatching { Instant.parse(it.validUntil) }.getOrNull() }
+                .filter { it.isAfter(now) }.minOrNull() ?: break
+            delay(Duration.between(now, next).toMillis().coerceAtLeast(1))
+        }
+    }
     LaunchedEffect(viewedProfile.id) { enrollment.initialize(viewedProfile.id) }
     LaunchedEffect(Unit) {
         diagnostics = withContext(Dispatchers.IO) {
@@ -333,6 +349,7 @@ private fun LoomHomeRoute(
                 notificationsAllowed = notificationsAllowed,
                 diagnostics = diagnostics,
                 selectedTab = selectedTab,
+                evidenceTime = evidenceTime,
                 scanning = scanning,
                 activePermissionRestorationWarning = status.activeProfileId.isNotBlank() && activeJoin.possiblePermissionRestoration,
             ),
@@ -622,7 +639,7 @@ private fun HomeTabIcon(tab: HomeTab, selected: Boolean) {
 }
 
 internal fun enrollmentSummary(join: EnrollmentStatus): String = when {
-    join.phase == EnrollmentPhase.READY -> "设备已加入 · 配置签名已验证"
+    join.phase == EnrollmentPhase.READY -> "设备已加入 · 认证配置已保存"
     join.phase == EnrollmentPhase.PULLING -> "正在下载并验证配置更新"
     join.phase == EnrollmentPhase.ERROR && join.viewDigest.isNotEmpty() -> "更新未完成 · 已安装配置保留"
     join.viewDigest.isNotEmpty() -> "设备已加入 · 已安装配置保留"
@@ -748,7 +765,7 @@ internal fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStat
                     Text(
                         buildString {
                             if (status.deviceName.isNotBlank()) append("设备 ${status.deviceName} · ")
-                            append("配置签名已验证")
+                            append("认证配置已保存")
                         },
                         color = Muted,
                         fontSize = 12.sp,
@@ -763,7 +780,7 @@ internal fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStat
 }
 
 @Composable
-internal fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean, profileName: String) {
+internal fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean, profileName: String, businessEvidence: List<RouteBusinessStatus> = emptyList(), evidenceTime: Instant = Instant.EPOCH) {
     var showingDetails by rememberSaveable(profileName, running) { mutableStateOf(true) }
     var selectedDetail by rememberSaveable(profileName, running) { mutableStateOf(0) }
     LaunchedEffect(paths.size) {
@@ -798,6 +815,7 @@ internal fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean, pro
             if (running && profileName.isNotBlank()) {
                 Text(profileName, color = Muted, fontSize = 12.sp, modifier = Modifier.testTag("path-profile-name"))
             }
+            if (businessEvidence.isNotEmpty() || running) BusinessEvidenceRows(businessEvidence, running, evidenceTime)
             if (summaries.isEmpty()) {
                 Text(
                     if (running) "当前没有已选业务路径" else "连接后显示各服务的实际路径",
@@ -872,9 +890,40 @@ private fun RouteDetail(path: RoutePathStatus) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(displayRouteService(path.service), color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         RouteChainDiagram(path)
-        Text("当前结果：${displayRouteState(path.state)}", color = Muted, fontSize = 12.sp)
+        Text("候选结果：${displayRouteState(path.state)}", color = Muted, fontSize = 12.sp)
         Text("实际候选：${displayRouteCandidate(path.candidate)}", color = Muted, fontSize = 12.sp)
-        if (path.updatedAt.isNotBlank()) Text("决策时间：${path.updatedAt}", color = Muted, fontSize = 11.sp)
+        if (path.updatedAt.isNotBlank()) Text("选择回读：${path.updatedAt}", color = Muted, fontSize = 11.sp)
+    }
+}
+
+@Composable
+internal fun BusinessEvidenceRows(values: List<RouteBusinessStatus>, running: Boolean, now: Instant) {
+    Column(Modifier.fillMaxWidth().testTag("business-evidence"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("业务观测", color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        if (values.isEmpty()) {
+            Text("未知 · 没有当前授权目标的对应样本", color = Muted, fontSize = 12.sp)
+        }
+        values.forEach { value ->
+            Column(Modifier.fillMaxWidth().testTag("business-target-${value.scope}-${value.target}"), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(displayRouteService(value.scope), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(value.target, color = Ink, fontSize = 12.sp)
+                val result = displayRouteState(value.result)
+                Text(
+                    when {
+                        value.observedAt.isBlank() -> "未知 · 尚无对应观测"
+                        value.currentAt(now) && running -> "当前目标观测：$result"
+                        else -> "历史目标观测：$result · 当前结果未知"
+                    },
+                    color = Muted, fontSize = 12.sp,
+                )
+                if (value.candidate.isNotBlank()) Text("来源候选：${displayRouteCandidate(value.candidate)}", color = Muted, fontSize = 11.sp)
+                if (value.observedAt.isNotBlank()) {
+                    Text("采样：${value.observedAt}", color = Muted, fontSize = 11.sp)
+                    Text("有效至：${value.validUntil}", color = Muted, fontSize = 11.sp)
+                    value.metricMillis?.let { Text("业务探测耗时：$it ms", color = Muted, fontSize = 11.sp) }
+                }
+            }
+        }
     }
 }
 
@@ -885,6 +934,7 @@ internal fun NetworkEvidenceCard(
     profileName: String,
     deviceName: String,
     diagnostics: String,
+    evidenceTime: Instant,
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -895,12 +945,8 @@ internal fun NetworkEvidenceCard(
             Text("网络诊断", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Text("配置：$profileName", color = Muted, fontSize = 13.sp)
             if (deviceName.isNotBlank()) Text("设备：$deviceName", color = Muted, fontSize = 13.sp)
-            Text(
-                "业务 DNS/HTTPS\n${status.dnsProbe} / ${status.httpsProbe}\n" +
-                    "可信上报：${status.trustedReport}\n服务器观测：${route.observationDetail}",
-                color = Ink,
-                fontSize = 13.sp,
-            )
+            Text("可信上报：${status.trustedReport}", color = Ink, fontSize = 13.sp)
+            BusinessEvidenceRows(route.businessEvidence, route.running && status.phase == ConnectionPhase.CONNECTED, evidenceTime)
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE3E8E5)))
             Text("信任边界", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text(diagnostics, color = Ink, fontSize = 13.sp, modifier = Modifier.testTag("device-info-card"))

@@ -18,6 +18,7 @@ readonly -a android_scenes=(
   configuration-not-joined
   configuration-ready-multiple-profiles
   connection-connected-auto
+  connection-business-failed
   connection-disconnected-unjoined
   connection-error
   diagnostics-connected
@@ -50,6 +51,11 @@ copy_android_set() {
   install -d "$destination"
   for scene in "${android_scenes[@]}"; do
     mapfile -t matches < <(find "$source_root" -type f -name "*_${scene}_*.png" -print | sort)
+    if [[ ${#matches[@]} -eq 0 && $source_root == "$android_reference" ]]; then
+      # Keep an unapproved target scene absent; the gallery records the missing
+      # baseline and fails. Only the renderer's approved record path writes it.
+      continue
+    fi
     if [[ ${#matches[@]} -ne 1 ]]; then
       echo "Android scene $scene resolved to ${#matches[@]} PNG files under $source_root" >&2
       return 1
@@ -57,7 +63,7 @@ copy_android_set() {
     match=${matches[0]}
     install -m 0644 "$match" "$destination/$scene.png"
   done
-  if [[ $(find "$source_root" -type f -name '*.png' | wc -l) -ne ${#android_scenes[@]} ]]; then
+  if [[ $(find "$source_root" -type f -name '*.png' | wc -l) -ne $(find "$destination" -type f -name '*.png' | wc -l) ]]; then
     echo "Android renderer produced an unexpected scene set under $source_root" >&2
     return 1
   fi

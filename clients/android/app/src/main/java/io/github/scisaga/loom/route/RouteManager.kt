@@ -40,6 +40,7 @@ data class RouteStatus(
     val detail: String = "等待认证 DeviceView",
     val observationDetail: String = "业务结果尚未产生",
     val currentPaths: List<RoutePathStatus> = emptyList(),
+    val businessEvidence: List<RouteBusinessStatus> = emptyList(),
     val running: Boolean = false,
 )
 
@@ -126,11 +127,11 @@ class RouteManager private constructor(context: Context) {
                 val current = if (runtime.runningProfile?.recordID == profile.recordID) runtime.actual else emptyMap()
                 runCatching { evaluate(profileId, runtime, profile, current) }
                     .onSuccess { projected ->
-                        publish(runtime, projected, running = runtime.runningProfile?.recordID == profile.recordID)
+                        publish(profileId, runtime, projected, running = runtime.runningProfile?.recordID == profile.recordID)
                     }
                     .onFailure { error ->
                         runtime.mutableStatus.value = runtime.mutableStatus.value.copy(
-                            available = false, currentPaths = emptyList(), running = false,
+                            available = false, currentPaths = emptyList(), businessEvidence = emptyList(), running = false,
                             detail = "认证配置已保存；运行投影不可用：${error.message ?: error.javaClass.simpleName}",
                             observationDetail = "业务结果尚未产生",
                         )
@@ -151,6 +152,7 @@ class RouteManager private constructor(context: Context) {
         protected.put(ProfileStorage.networkGeneration(profileId), runtime.generation.encodeToByteArray())
         protected.put(ProfileStorage.networkIdentity(profileId), identity.encodeToByteArray())
         protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
+        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(businessEvidence = emptyList())
         true
     }
 
@@ -171,7 +173,7 @@ class RouteManager private constructor(context: Context) {
         runtime.actual = LinkedHashMap(readback)
         runtime.application = desired
         runtime.runningProfile = profile
-        publish(runtime, desired, running = true)
+        publish(profileId, runtime, desired, running = true)
         desired
     }
 
@@ -188,9 +190,9 @@ class RouteManager private constructor(context: Context) {
                     SelectorClient(available.config).apply(desired.execution())
                     runtime.actual = LinkedHashMap(SelectorClient(available.config).readCurrent(desired.execution()))
                     runtime.application = desired
-                    publish(runtime, desired, running = true, observation = businessObservationDetail(profileId, runtime))
+                    publish(profileId, runtime, desired, running = true, observation = businessObservationDetail(profileId, runtime))
                 } else {
-                    publish(runtime, evaluate(profileId, runtime, available, emptyMap()), running = false)
+                    publish(profileId, runtime, evaluate(profileId, runtime, available, emptyMap()), running = false)
                 }
             }
         }
@@ -205,7 +207,7 @@ class RouteManager private constructor(context: Context) {
         selector.apply(desired.execution())
         runtime.actual = LinkedHashMap(selector.readCurrent(desired.execution()))
         runtime.application = desired
-        publish(runtime, desired, running = true, observation = businessObservationDetail(profileId, runtime))
+        publish(profileId, runtime, desired, running = true, observation = businessObservationDetail(profileId, runtime))
         val now = Instant.now()
         serviceBusinessProbeInputs(profile, desired, runtime.generation).filter { input ->
             observations(profileId).objects().none {
@@ -257,7 +259,7 @@ class RouteManager private constructor(context: Context) {
         })
         runtime.application = observed
         val detail = businessObservationDetail(profileId, runtime)
-        publish(runtime, observed, running = true, observation = detail)
+        publish(profileId, runtime, observed, running = true, observation = detail)
         onRecorded()
         if (!finishBatch || nextForScope?.candidate == input.selector.candidate) return@withLock emptyList()
         // Only this Service may change during its fallback. After the second
@@ -274,7 +276,7 @@ class RouteManager private constructor(context: Context) {
         check(next.execution().all { actual[it.selector] == it.candidate }) { "fallback selector 回读不一致" }
         runtime.actual = LinkedHashMap(actual)
         runtime.application = next
-        publish(runtime, next, running = true, observation = businessObservationDetail(profileId, runtime))
+        publish(profileId, runtime, next, running = true, observation = businessObservationDetail(profileId, runtime))
         if (!allowFallback || nextForScope == null || nextForScope.candidate == input.selector.candidate) return@withLock emptyList()
         serviceBusinessProbeInputs(profile, next, runtime.generation).filter { it.selector.selector == input.selector.selector }.filter { candidate ->
             observations(profileId).objects().none { it.optString("candidate_id") == candidate.selector.candidate &&
@@ -330,7 +332,8 @@ class RouteManager private constructor(context: Context) {
         runtime.application = null
         runtime.actual = linkedMapOf()
         protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
-        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(running = false, busy = false, currentPaths = emptyList(), observationDetail = "业务结果尚未产生")
+        runtime.mutableStatus.value = runtime.mutableStatus.value.copy(running = false, busy = false, currentPaths = emptyList(),
+            businessEvidence = runtime.mutableStatus.value.businessEvidence.map { it.copy(current = false) }, observationDetail = "业务结果尚未产生")
     }
 
     suspend fun removeProfile(profileId: String) = operation.withLock {
@@ -426,6 +429,7 @@ class RouteManager private constructor(context: Context) {
     }
 
     private fun publish(
+        profileId: String,
         runtime: ProfileRuntime,
         route: AppliedRoute,
         running: Boolean,
@@ -446,6 +450,7 @@ class RouteManager private constructor(context: Context) {
             detail = (if (running) "$label 已应用并读回" else "$label · 等待连接") +
                 if (route.blockedScopes.isEmpty()) "" else "；暂无可用路径：${route.blockedScopes.joinToString()}",
             observationDetail = observation,
+            businessEvidence = businessEvidence(profileId, runtime, route, running, Instant.parse(now)),
             currentPaths = route.selectors.map { selected ->
                 RoutePathStatus(
                     service = selected.selector,
@@ -458,6 +463,37 @@ class RouteManager private constructor(context: Context) {
             },
             running = running,
         )
+    }
+
+    private fun businessEvidence(
+        profileId: String,
+        runtime: ProfileRuntime,
+        route: AppliedRoute,
+        running: Boolean,
+        now: Instant,
+    ): List<RouteBusinessStatus> {
+        val profile = if (running) runtime.runningProfile else runtime.availableProfile
+        if (profile == null) return emptyList()
+        val candidates = JSONArray(profile.routes).objects().associate { it.getString("id") to it.getString("scope") }
+        val targets = profile.businessProbeTargets.flatMap { group ->
+            candidates.values.distinct().filter { it == "service:${group.serviceID}" || it == "local_network:${group.serviceID}" }
+                .map { it to group.targets }
+        }.toMap()
+        val selected = route.selectors.filter { runtime.actual[it.selector] == it.candidate }.associate { it.selector to it.candidate }
+        val samples = observations(profileId).objects().mapNotNull { sample ->
+            runCatching {
+                if (sample.getString("action") != "https_request") return@mapNotNull null
+                val metric = if (sample.has("metric_millis")) {
+                    val value = sample.get("metric_millis")
+                    if (value !is Int && value !is Long) return@mapNotNull null
+                    (value as Number).toLong()
+                } else null
+                RouteBusinessStatus(sample.getString("scope"), sample.getString("target"), sample.getString("candidate_id"),
+                    sample.getString("network_generation"), sample.getString("result"), sample.getString("observed_at"),
+                    sample.getString("valid_until"), metric)
+            }.getOrNull()
+        }
+        return projectBusinessEvidence(targets, candidates, selected, samples, runtime.generation, now, running)
     }
 
     private fun runtime(profileId: String): ProfileRuntime {
