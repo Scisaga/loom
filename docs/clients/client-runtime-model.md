@@ -1194,7 +1194,7 @@ B 的历史失败依据保留，但不假称仍选中了该候选；没有样本
 ## Windows 的业务观测与原生页面
 
 目标是正常原生页面逐 Service、实际目标、候选和网络范围展示业务原时间/有效期，与 selector 回读
-完成时间分开；失败服务退出选择后保留它自己的原依据，其他服务继续运行。当前运行状态已有原
+完成时间分开；失败服务退出选择后保留它自己的原依据，其他服务继续运行。修订前运行状态已有原
 Observation，但展开 UI 缺有效期，且把最新业务采样当成 selector 读取时间，属于显示接线缺口。
 
 最小修订延续 windowsPathDisplay：原临时 windowsRuntimeStatus 的 Selections/BlockedScopes 与

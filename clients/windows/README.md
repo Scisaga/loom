@@ -69,6 +69,13 @@ candidate may cause one same-exit fallback. Business observations bind Service,
 candidate, actual target and network generation; a result for one Service does
 not establish another Service's health.
 
+Each Service expands into its authorized targets, original candidate and network
+scope, result, sample time, and expiry. A rejected Service keeps its own historical
+failure evidence while other Services continue. Missing, expired, conflicting, or
+incorrectly bound samples cannot establish current health. The selector readback
+completion time is recorded separately in the disposable runtime status; refreshing
+the UI or waiting for a report does not replace it with a business sample time.
+
 Ordinary Direct has `final_exit=direct` and no managed hops. A device authorized
 to execute as its own final egress keeps its NodeID in `final_exit` even though
 its network hop list is empty. Local egress has no entry hop, so entry-node scopes

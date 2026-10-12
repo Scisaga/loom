@@ -23,23 +23,30 @@ domain、wire、persistent 的可逆性仍由各自核心模型规定；SVG 只�
 ## Windows：原生场景与目标视觉设计
 
 基准目录为 [`clients/windows/testdata/ui-golden/`](../../clients/windows/testdata/ui-golden/)，截图由生产
-`portableGUI` 在 Windows 11 VM 上以 96 DPI、`876×614 DIP` 渲染。当前有八张原生基准和九张目标 SVG；
-存在对应 PNG 时用场景 ID 关联，首次空态只有目标稿。PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。
+`portableGUI` 在 Windows 11 VM 上以 96 DPI、`876×614 DIP` 渲染。当前有八张获批原生基准和九张目标 SVG；
+生产控件已生成九项 current，首次空态也有原生渲染，整组基准批准仍单列。存在对应基准时用场景 ID
+关联；PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。
 SVG 依据目标行为，通过 [`scripts/generate_windows_prototypes.py`](../../scripts/generate_windows_prototypes.py) 生成；
 它只读取固定合成内容和公开图形资源，不读取本机配置、身份、网络或时钟，不接入原生截图流程。
-原生实现与目标布局的视觉差距须另行回读；下表列明行为及证据差异，截图存在不证明业务链已完成。
+`59f7d6f0` 的生产控件已按本节布局核对九项原生 current，并完成连续两次相同哈希及必要交互检查。
+正式 Portable Mixed EXE 的三目标原业务、正常断开与同身份重启另有 VM 回读；下表中的 PNG 仍为旧
+获批基准，不能用它们推定新实现缺失，也不能用 current 替代正式发布或实体终验。
+
+六款正式应用已随第 108 代目录发布，三个正常私有 Releases 页面及实际 Portable Mixed ZIP、
+manifest 与签名下载均已核对，见[交付对账](../delivery-audit.md)。本软件业务链已闭环；
+整组 PNG 基准仍待批准，实体 ARM64、睡眠、切网与显示行为仍由用户终验。
 
 | 场景 | 类别 | 原生 PNG | 可编辑 SVG | 目标行为与当前差距 |
 |---|---|---|---|---|
-| `profiles-empty` | 正常流程 | 暂无 | [原型](../../assets/client/windows/profiles-empty.svg) | 首次列表为空，只有添加入口；无设备身份、当前连接和删除操作；尚无对应原生基准 |
-| `connected` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/connected.png) | [原型](../../assets/client/windows/connected.svg) | 已连接、自动模式、按 Service 区分实际结果；目标布局待原生回读 |
-| `path-expanded` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/path-expanded.png) | [原型](../../assets/client/windows/path-expanded.svg) | 目标 URL、Service/候选范围、业务采样/有效期及 selector 回读时间分别表达；旧 PNG 未体现新增说明 |
-| `profile-rename` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/profile-rename.png) | [原型](../../assets/client/windows/profile-rename.svg) | 重命名保留输入及焦点；目标布局待原生回读 |
+| `profiles-empty` | 正常流程 | 暂无获批基准 | [原型](../../assets/client/windows/profiles-empty.svg) | 首次列表为空，只有添加入口；无设备身份、当前连接和删除操作；已有原生 current，待整组批准 |
+| `connected` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/connected.png) | [原型](../../assets/client/windows/connected.svg) | 已连接、自动模式、按 Service 区分实际结果；当前生产布局与正常 VM 业务已核对，旧基准待更新 |
+| `path-expanded` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/path-expanded.png) | [原型](../../assets/client/windows/path-expanded.svg) | 当前 UI 已分别表达目标、范围、原业务采样/有效期及 selector 回读完成时间，与真实报告对应；旧 PNG 未体现新增说明 |
+| `profile-rename` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/profile-rename.png) | [原型](../../assets/client/windows/profile-rename.svg) | 当前生产控件保留输入、焦点与光标，目标布局已原生核对；旧基准待更新 |
 | `join-draft` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/join-draft.png) | [原型](../../assets/client/windows/join-draft.svg) | 导入邀请并加入保存后才进列表；另一连接运行是示例上下文，不是新增前提 |
 | `join-empty` | 历史实现对照（异常条目） | [截图](../../clients/windows/testdata/ui-golden/join-empty.png) | [原型](../../assets/client/windows/join-empty.svg) | 已有条目缺加入身份或完整配置；原连接继续；不是首次使用或新增的下一步 |
 | `join-error` | 异常状态 | [截图](../../clients/windows/testdata/ui-golden/join-error.png) | [原型](../../assets/client/windows/join-error.svg) | 侧栏与主体均为导入失败；旧侧栏“连接错误”不再限制目标文案 |
-| `viewport-bottom` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/viewport-bottom.png) | [原型](../../assets/client/windows/viewport-bottom.svg) | 固定视口底部、滚动与完整服务行；目标布局待原生回读 |
-| `fixed-tun` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/fixed-tun.png) | [原型](../../assets/client/windows/fixed-tun.svg) | 指定最终出口、TUN 形态与当前选择；目标布局待原生回读 |
+| `viewport-bottom` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/viewport-bottom.png) | [原型](../../assets/client/windows/viewport-bottom.svg) | 固定视口底部、滚动与完整服务行已由当前生产控件核对；旧基准待更新 |
+| `fixed-tun` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/fixed-tun.png) | [原型](../../assets/client/windows/fixed-tun.svg) | 指定最终出口、TUN 形态与当前选择的生产布局已原生核对；沿用既有 TUN 业务，未重复完整执行矩阵 |
 
 `join-draft` 与 `join-empty` 不是连续两步。正常入口是侧栏“＋”→ 输入名称、导入邀请 →
 “加入并保存”→ 受保护的加入身份及认证配置提交后，新配置进入列表并保持断开；原有连接继续运行。
