@@ -23,29 +23,27 @@ domain、wire、persistent 的可逆性仍由各自核心模型规定；SVG 只�
 ## Windows：原生场景与目标视觉设计
 
 基准目录为 [`clients/windows/testdata/ui-golden/`](../../clients/windows/testdata/ui-golden/)，截图由生产
-`portableGUI` 在 Windows 11 VM 上以 96 DPI、`876×614 DIP` 渲染。当前有八张获批原生基准和九张目标 SVG；
-生产控件已生成九项 current，首次空态也有原生渲染，整组基准批准仍单列。存在对应基准时用场景 ID
+`portableGUI` 在 Windows 11 VM 上以 96 DPI、`876×614 DIP` 渲染。当前有九张获批原生基准和九张目标 SVG，包含首次空态；整组已由生产控件渲染并严格复验。存在对应基准时用场景 ID
 关联；PNG 是 `WM_PRINT` 内容基准，不包含 DWM 外角和阴影。
 SVG 依据目标行为，通过 [`scripts/generate_windows_prototypes.py`](../../scripts/generate_windows_prototypes.py) 生成；
 它只读取固定合成内容和公开图形资源，不读取本机配置、身份、网络或时钟，不接入原生截图流程。
 `59f7d6f0` 的生产控件已按本节布局核对九项原生 current，并完成连续两次相同哈希及必要交互检查。
-正式 Portable Mixed EXE 的三目标原业务、正常断开与同身份重启另有 VM 回读；下表中的 PNG 仍为旧
-获批基准，不能用它们推定新实现缺失，也不能用 current 替代正式发布或实体终验。
+正式 Portable Mixed EXE 的三目标原业务、正常断开与同身份重启另有 VM 回读；下表中的 PNG 已按用户整组批准更新，不能用截图替代正式发布或实体终验。
 
 六款正式应用已随第 108 代目录发布，三个正常私有 Releases 页面及实际 Portable Mixed ZIP、
 manifest 与签名下载均已核对，见[交付对账](../delivery-audit.md)。本软件业务链已闭环；
-整组 PNG 基准仍待批准，实体 ARM64、睡眠、切网与显示行为仍由用户终验。
+整组 PNG 已获批准并严格复验；实体 ARM64、睡眠、切网与显示行为仍由用户终验。
 
 | 场景 | 类别 | 原生 PNG | 可编辑 SVG | 目标行为与当前差距 |
 |---|---|---|---|---|
-| `profiles-empty` | 正常流程 | 暂无获批基准 | [原型](../../assets/client/windows/profiles-empty.svg) | 首次列表为空，只有添加入口；无设备身份、当前连接和删除操作；已有原生 current，待整组批准 |
-| `connected` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/connected.png) | [原型](../../assets/client/windows/connected.svg) | 已连接、自动模式、按 Service 区分实际结果；当前生产布局与正常 VM 业务已核对，旧基准待更新 |
-| `path-expanded` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/path-expanded.png) | [原型](../../assets/client/windows/path-expanded.svg) | 当前 UI 已分别表达目标、范围、原业务采样/有效期及 selector 回读完成时间，与真实报告对应；旧 PNG 未体现新增说明 |
-| `profile-rename` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/profile-rename.png) | [原型](../../assets/client/windows/profile-rename.svg) | 当前生产控件保留输入、焦点与光标，目标布局已原生核对；旧基准待更新 |
+| `profiles-empty` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/profiles-empty.png) | [原型](../../assets/client/windows/profiles-empty.svg) | 首次列表为空，只有添加入口；无设备身份、当前连接和删除操作；已有获批原生基准 |
+| `connected` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/connected.png) | [原型](../../assets/client/windows/connected.svg) | 已连接、自动模式、按 Service 区分实际结果；当前生产布局与正常 VM 业务已核对，已更新获批基准 |
+| `path-expanded` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/path-expanded.png) | [原型](../../assets/client/windows/path-expanded.svg) | 当前 UI 已分别表达目标、范围、原业务采样/有效期及 selector 回读完成时间，与真实报告对应；新增说明已进入获批基准 |
+| `profile-rename` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/profile-rename.png) | [原型](../../assets/client/windows/profile-rename.svg) | 当前生产控件保留输入、焦点与光标，目标布局已原生核对；已更新获批基准 |
 | `join-draft` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/join-draft.png) | [原型](../../assets/client/windows/join-draft.svg) | 导入邀请并加入保存后才进列表；另一连接运行是示例上下文，不是新增前提 |
 | `join-empty` | 历史实现对照（异常条目） | [截图](../../clients/windows/testdata/ui-golden/join-empty.png) | [原型](../../assets/client/windows/join-empty.svg) | 已有条目缺加入身份或完整配置；原连接继续；不是首次使用或新增的下一步 |
 | `join-error` | 异常状态 | [截图](../../clients/windows/testdata/ui-golden/join-error.png) | [原型](../../assets/client/windows/join-error.svg) | 侧栏与主体均为导入失败；旧侧栏“连接错误”不再限制目标文案 |
-| `viewport-bottom` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/viewport-bottom.png) | [原型](../../assets/client/windows/viewport-bottom.svg) | 固定视口底部、滚动与完整服务行已由当前生产控件核对；旧基准待更新 |
+| `viewport-bottom` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/viewport-bottom.png) | [原型](../../assets/client/windows/viewport-bottom.svg) | 固定视口底部、滚动与完整服务行已由当前生产控件核对；已更新获批基准 |
 | `fixed-tun` | 正常流程 | [截图](../../clients/windows/testdata/ui-golden/fixed-tun.png) | [原型](../../assets/client/windows/fixed-tun.svg) | 指定最终出口、TUN 形态与当前选择的生产布局已原生核对；沿用既有 TUN 业务，未重复完整执行矩阵 |
 
 `join-draft` 与 `join-empty` 不是连续两步。正常入口是侧栏“＋”→ 输入名称、导入邀请 →
@@ -139,26 +137,25 @@ Windows 参考 Android [连接页](../../assets/client/android/connection-connec
 [`clients/android/app/src/screenshotTestDebug/reference/.../HomeScreenshotTestKt/`](../../clients/android/app/src/screenshotTestDebug/reference/io/github/scisaga/loom/HomeScreenshotTestKt/)。
 下表已有 PNG 的模式在该目录内各匹配唯一文件，文件名含渲染器生成的哈希；使用
 `scripts/ui-review preview android` 可在 `out/ui-review/android/baseline/` 得到稳定场景名副本。
-原生基准固定为中文、浅色、`fontScale=1.0`、`412×915dp`。当前有九个原生基准、十张目标 SVG。
+原生基准固定为中文、浅色、`fontScale=1.0`、`412×915dp`。当前有十个获批原生基准、十张目标 SVG。
 
 | 场景 | 类别 | 原生 PNG 文件名模式 | 可编辑 SVG | 目标行为与当前差距 |
 |---|---|---|---|---|
 | `connection-disconnected-unjoined` | 正常流程 | `*connection-disconnected-unjoined*.png` | [原型](../../assets/client/android/connection-disconnected-unjoined.svg) | 未加入/未连接及加入入口；固定截图不证明加入链已完成 |
 | `connection-connected-auto` | 正常流程 | `*connection-connected-auto*.png` | [原型](../../assets/client/android/connection-connected-auto.svg) | 已连接、当前路径、按 Service 展示；目标运行规则已有原生与生产验收，视觉覆盖按当前原生基准单独核对 |
 | `connection-error` | 异常状态 | `*connection-error*.png` | [原型](../../assets/client/android/connection-error.svg) | 认证配置已保存、VPN 启动失败，无 active；旧 PNG 的业务失败推导未连接不再作为目标 |
-| `connection-business-failed` | 异常业务观测 | 暂无获批基准 | [原型](../../assets/client/android/connection-business-failed.svg) | 当前生产 Compose 已实现并生成原生 current；VPN 保持连接，目标失败依据和另一 Service 分列，原时间/有效期不重写；整组基准审查单列 |
+| `connection-business-failed` | 异常业务观测 | `*connection-business-failed*.png` | [原型](../../assets/client/android/connection-business-failed.svg) | 当前生产 Compose 已实现并生成原生 current；VPN 保持连接，目标失败依据和另一 Service 分列，原时间/有效期不重写；已纳入整组获批基准 |
 | `configuration-not-joined` | 正常流程 | `*configuration-not-joined*.png` | [原型](../../assets/client/android/configuration-not-joined.svg) | Android 可先有未加入本机配置；区别于 Windows 正常新增流程 |
-| `configuration-ready-multiple-profiles` | 正常流程 | `*configuration-ready-multiple-profiles*.png` | [原型](../../assets/client/android/configuration-ready-multiple-profiles.svg) | 区分认证配置已保存、当前连接和模式；旧 PNG 未体现保存文案 |
-| `configuration-join-error` | 异常状态 | `*configuration-join-error*.png` | [原型](../../assets/client/android/configuration-join-error.svg) | 原事务重试；放弃本机资料不撤销远端设备；目标文案尚未落入原生基准 |
-| `diagnostics-connected` | 正常运行与未知观测 | `*diagnostics-connected*.png` | [原型](../../assets/client/android/diagnostics-connected.svg) | 当前生产 UI 已逐 Service/目标展示来源、采样/有效期；旧获批 PNG 仍为汇总文案，current 的实际业务与原签名报告已经对应 |
+| `configuration-ready-multiple-profiles` | 正常流程 | `*configuration-ready-multiple-profiles*.png` | [原型](../../assets/client/android/configuration-ready-multiple-profiles.svg) | 区分认证配置已保存、当前连接和模式；保存文案已进入获批基准 |
+| `configuration-join-error` | 异常状态 | `*configuration-join-error*.png` | [原型](../../assets/client/android/configuration-join-error.svg) | 原事务重试；放弃本机资料不撤销远端设备；目标文案已进入获批基准 |
+| `diagnostics-connected` | 正常运行与未知观测 | `*diagnostics-connected*.png` | [原型](../../assets/client/android/diagnostics-connected.svg) | 当前生产 UI 已逐 Service/目标展示来源、采样/有效期；获批 PNG 已更新为逐目标文案，实际业务与原签名报告已经对应 |
 | `profile-picker` | 正常流程 | `*profile-picker*.png` | [原型](../../assets/client/android/profile-picker.svg) | 当前连接与浏览配置分开；请求切换中的状态尚无原生截图 |
 | `notification-warning` | 异常提示 | `*notification-warning*.png` | [原型](../../assets/client/android/notification-warning.svg) | 通知警告不改变连接和业务结果；截图不证明系统通知权限流程 |
 
 Android 的正式 Activity 与截图 fixture 共用 `LoomHomeScreen`。真机尺寸和系统栏可能不同，
 因此真机截图只用于设备交互回读，不与固定 Layoutlib PNG 逐像素比较。
 第 107 代正式 APK `3adb949f` 的连接页、诊断页、两服务三目标、同身份重启及正常停止已由同机模拟器
-验证，公开及私有下载和原报告验签见[交付对账](../delivery-audit.md)。current 渲染集合为十项，获批基准
-仍为九项；已有软件业务不因基准尚未更新而降格为未实现，基准更新也不能抵扣实体终验。
+验证，公开及私有下载和原报告验签见[交付对账](../delivery-audit.md)。十项原生基准已整组批准、原生重录并严格复验；基准更新不能抵扣实体终验。
 
 加入错误稿保留同一事务重试；“放弃本机加入”清理本机未完成的加入资料，不代表远端设备已撤销。
 诊断稿分别展示 `demo-web` 对 `web.example` 的有效观测，以及 `demo-api` 对 `api.example` 尚无当前网络

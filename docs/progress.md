@@ -2878,3 +2878,16 @@ Windows 第 108 代交付闭环后，下一核心工作项继续核对自动消�
 全仓库核对确认 `internal/releasefloor` 没有调用者；其中 schema 1 signed-current floor 的读写器及
 对应失效测试已删除。现行安装的接受前沿仍由原规范 Manifest/current 表达；旧原始 floor 文件保持，
 旧证据的显式离线验签入口保持。此次源码清理不启用自动消费，也不修改部署或任何认证进度。
+
+### 整组原生基准与自动更新授信决定
+
+用户已批准 Android 十项和 Windows 九项整组新截图。`scripts/ui-review record all`
+仅由生产 Compose/Win32 renderer 更新获批基准，再次原生渲染后十九项场景、尺寸与全部 RGBA 像素
+严格相同；新增 Android 业务失败与 Windows 首次空态各一项。人工逐图核对与 binary diff 保留，
+证据为 `deploy/evidence/2026-10-13-ui-baselines/result.json`。未重建或重发未改的 Android/Windows
+应用，不重复既有业务验证，不抵扣 DWM 外框或实体终验。Windows VM 正常停止后恢复原目录访问权限。
+
+用户同时明确选择[已批准前向切换](operations/release-forward-cutover.md)：六节点旧 floor 原位、
+原字节保全，以已授权、已运行且独立验签的现程序建立一次性现行包接受起点，继续自动更新。
+这取代此前“等待决定”的阻碍；没有恢复或补造丢失的旧签名历史。安装接受、私有精确材料交付、
+自动消费、失败/重启、生产业务回读及旧入口删除仍是同一个待完成的软件工作项，立即继续实现。

@@ -152,10 +152,10 @@ The production Compose tree is the sole rendering source for native visual
 regression screenshots. `LoomHomeRoute` owns
 `StateFlow`, managers, Android permissions, and side effects;
 `LoomHomeScreen` consumes only an immutable UI projection and is shared by the
-Activity and screenshot fixtures. The nine committed references are rendered
+Activity and screenshot fixtures. The ten approved, committed references are rendered
 by Compose screenshot alpha16 at Chinese/light/`412×915dp`/font scale 1.0.
-The current renderer also includes the tenth `connection-business-failed` scene;
-its generated PNG is review output until the complete gallery is approved.
+The set includes `connection-business-failed`. The complete Android and Windows
+gallery was approved together, recorded by the native renderers, and strictly verified.
 
 The editable [Android SVGs](../../assets/client/android/) express target behavior.
 The connection error scene keeps an accepted configuration while VPN startup fails;

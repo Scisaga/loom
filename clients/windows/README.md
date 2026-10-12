@@ -222,16 +222,16 @@ edition-specific logo.
 The committed PNGs in `testdata/ui-golden` come from the production
 `portableGUI`, Win32 controls, Direct2D/DirectWrite, and the existing
 `WM_PRINT` memory capture. They are not a second renderer. Linux cross-compiles
-the scenario test executable; the current fixed same-host Windows 11 VM baseline contains eight
+the scenario test executable; the current fixed same-host Windows 11 VM baseline contains nine
 synthetic `demo-*` scenes at 96 DPI and `876×614px`, without MSI installation or
 real identity data.
 
 The [target prototypes](../../docs/clients/prototype-review.md#windows原生场景与目标视觉设计)
 can add or revise scenes according to requirements. They include a first-use
-`profiles-empty` scene with no native baseline, distinguish import failure from
+`profiles-empty` scene with an approved native baseline, distinguish import failure from
 runtime failure, and separate business sample times from selector readback.
-These changes do not update native PNGs; the eight existing baseline scenes do
-not freeze the target scene set or the future product behavior.
+The complete Android and Windows gallery was approved together, recorded by the
+native renderers, and strictly verified. Baselines do not freeze future requirements.
 
 From the repository root run:
 
