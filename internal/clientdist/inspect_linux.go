@@ -59,15 +59,18 @@ func InspectInstallation(ctx context.Context, options InstallOptions) (control.I
 		return value, nil
 	}
 	currentPath, current, err := acceptedPackage(public)
+	if options.AcceptCurrent != "" {
+		currentPath, current, err = acceptCurrentPackage(ctx, options, candidate, currentPath, current)
+	}
 	if err != nil {
 		value.ErrorCode = "existing_package_unverified"
 		return value, nil
 	}
-	if current != nil {
+	if current != nil && (options.AcceptCurrent == "" || filepath.Base(currentPath) == candidate.ID) {
 		generation := current.Generation
 		value.AcceptedGeneration = &generation
 	}
-	if err := advancePackage(currentPath, current, candidate); err != nil {
+	if err := advanceInstallationPackage(options, currentPath, current, candidate); err != nil {
 		value.ErrorCode = "package_would_rollback_or_equivocate"
 		return value, nil
 	}

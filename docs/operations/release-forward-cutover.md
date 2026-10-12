@@ -71,3 +71,25 @@ manifest 代规则：低代拒绝，同代异值拒绝，同代同值幂等；�
 
 用户对替代授信起点的决定已收到；剩余为安装接受、私有交付和自动运行的软件接线与相应
 真实验收。以上是本核心工作项的全部剩余链，不能把已有签名分发或本切换文档写成自动更新完成。
+
+## 本次接线的最小对应
+
+一次性 `-accept-current <owner-only 文件>` 与 `-upgrade` 或只读 `-inspect` 一起使用；输入是规范
+schema 3 的操作参数，固定 `floor_digest,manifest_digest,network_id,genesis_digest,device_id,
+device_public_key,unit_digest,current_path`。它不是可重放配置或第二接受记录。当前目录只能含原
+Loom/数据面两程序，两者须与完整原签名包逐字相同；活动 unit、真实进程、state、resource-inputs
+与 capture 须对应固定输入。规范 current 已接受该同一 manifest 时可幂等重试，但不能重新授信另一个包。
+正常安装只读核验旧 floor 文件的保护属性，保留原字节；已有规范 Manifest/current 才允许忽略其退役
+格式。缺少规范接受记录且没有本次显式参数时仍拒绝，不新增旧 floor decoder。
+
+自动入口为同一安装器的 `loom client update`。既有 daemon 继续独占配置/报告写入；更新命令只读
+已经持久接受的 LKG，沿原 device tunnel 请求该 View 的精确期望包。私有响应仅携带原签名 catalog、
+manifest 及其原签名；是无状态交付值，不保存新权威、不修改 DeviceView 的四字段组件坐标。当前
+期望与请求 View 不同、引用歧义、撤权或暂时缺材料则拒绝本次下载；原业务不因更新请求失败停止。
+包内 agent 和数据面都必须匹配当前 View 的全部同平台期望。完整下载、外层原签名与包内原件逐字
+核验后才交给原安装锁；锁内重新核对当前 LKG，避免下载期间撤权或期望替换后激活。
+
+正常安装生成 `loom-client-update.service` 与 `.timer` 两个可删除重建的执行投影，复用安装的 state、
+resource-inputs 与 capture，无新配置文件。timer 启动两分钟后检查、随后每五分钟检查；每次是有界
+一次性命令，失败不触碰当前程序、不改偏好或网络。它不是选路后台循环；同节点安装仍由原系统安装锁
+串行，daemon 的私有 IO 和本地业务继续解耦。被动当前报告不能替代安装代和实际进程的分别回读。

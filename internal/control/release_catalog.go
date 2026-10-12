@@ -52,9 +52,10 @@ type ReleasePackage struct {
 }
 
 type ReleaseSet struct {
-	ID       string
-	Catalog  ReleaseCatalog
-	Packages []ReleasePackage
+	ID                            string
+	Catalog                       ReleaseCatalog
+	Packages                      []ReleasePackage
+	CatalogBody, CatalogSignature []byte
 }
 
 type ReleaseSource interface {

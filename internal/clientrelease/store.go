@@ -148,7 +148,7 @@ func (store *Store) readSignedCatalog(root *os.Root, id string) (control.Release
 	if control.ReleaseDigest(body) != id {
 		return zero, errors.New("release catalog differs from its content address")
 	}
-	result := control.ReleaseSet{ID: id, Catalog: catalog, Packages: []control.ReleasePackage{}}
+	result := control.ReleaseSet{ID: id, Catalog: catalog, Packages: []control.ReleasePackage{}, CatalogBody: body, CatalogSignature: signature}
 	for _, entry := range catalog.Entries {
 		if uint64(entry.Artifact.Size) > maxPackageBytes {
 			return zero, errors.New("release package exceeds the reader boundary")

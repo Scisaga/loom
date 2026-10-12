@@ -1659,6 +1659,30 @@ DeviceView 精确坐标 → 客户端实际进程报告 → 管理员原入口�
 所有生成函数只消费显式字节和代坐标；不读时钟、随机数或远端状态。正式生产 current 激活继续受下节
 现网字节与生产切换门禁约束，现网旧 floor 原字节保全。
 
+### 私有设备的精确签名包交付
+
+Linux 自动更新沿现有 device tunnel，不扩大公开 Nginx 路由。三个无持久生命周期的交付值均使用
+规范 schema 3：请求 `{schema,platform,view_digest}`；响应
+`{schema,platform,view_digest,catalog_body,catalog_signature,manifest_body,manifest_signature}`；
+下载请求 `{schema,platform,view_digest,catalog_digest,artifact_digest}`。platform 仅允许
+linux-amd64/linux-arm64，摘要为既有 Digest。body 是原规范 JSON 字节的 UTF-8 字符串，解码后
+逐字恢复原件；两个 signature 是原 64 字节签名的规范无填充 base64url，不是重签封装。
+未知、重复、旧 schema、不规范字节、错平台、错 View 和错签名均拒绝。原 catalog/manifest 保持
+既有签名域，DeviceView.expected_components 的四字段及其历史签名原文均不改变。
+
+正式入口为 `POST /device/release` 和 `POST /device/release/download`。同一认证设备的当前
+Projection 及独立验签的明确期望引用决定可交付包，View 摘要须与客户端持久接受值相同；
+bootstrap、撤权设备、其他身份、歧义或缺签名材料不能下载。优先定位 agent 的明确包引用，
+仅有数据面期望时定位其包；这只定位一个原子 Linux 包，不是选路或性能排序。包内所有已期望
+组件都须与该 View 相符；客户端另外拒绝改变没有期望的组件，除非它与原已接受程序坐标相同。
+不同期望可引用不同原 catalog，但同一个实际文件仍按相同版本/摘要核对。
+
+交付缓存可删除；自动消费者独立验原 catalog、manifest、完整下载长度/摘要及包内原签名/逐文件
+内容，再调用唯一安装锁。锁内接受前重读已持久 LKG，下载期间 View 变更则拒绝。公开 current
+只负责下载展示，不参与此授权或接受代。原 daemon 保持唯一身份/配置/报告写入路径。
+正常链为正式期望 put → daemon 持久 View → 私有精确包 → 同一 installer → 当前程序/业务/
+签名报告回读；中断、低代、同代异值和重启继续使用原 Manifest/current，失败不恢复旧记录。
+
 ### 通用 Linux bootstrap 脚本的签名对应
 
 脚本是已定义 Artifact 的一种交付，不新增安装事务或接受记录。既有包内 install.sh 只能在程序包已到达

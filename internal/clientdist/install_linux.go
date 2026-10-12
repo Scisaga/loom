@@ -32,6 +32,8 @@ const installUnit = "/etc/systemd/system/loom-client.service"
 // deviceclient store remain the only package and Device authorities.
 type InstallOptions struct {
 	PackageRoot, PublicKey, State, ResourceInputs, Capture, InviteFile string
+	AcceptCurrent                                                      string
+	ExpectedViewDigest                                                 string
 	InviteStdin                                                        bool
 	Upgrade, NoEnroll, Inspect                                         bool
 	Input                                                              io.Reader
@@ -47,6 +49,12 @@ func (o InstallOptions) validate() error {
 	}
 	if modes != 1 {
 		return errors.New("install requires exactly one invitation source, upgrade, no-enroll, or inspect")
+	}
+	if o.AcceptCurrent != "" && (!installPath(o.AcceptCurrent) || !o.Upgrade && !o.Inspect) {
+		return errors.New("accept-current requires explicit upgrade or inspection and a protected absolute file")
+	}
+	if o.ExpectedViewDigest != "" && (!o.Upgrade || o.AcceptCurrent != "" || control.ValidateDigest(o.ExpectedViewDigest) != nil) {
+		return errors.New("automatic installation must bind an accepted View")
 	}
 	if !installPath(o.PackageRoot) || !installPath(o.State) || o.ResourceInputs != "" && !installPath(o.ResourceInputs) {
 		return errors.New("installation paths must be absolute canonical paths")
@@ -406,10 +414,16 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	var current *Manifest
 	if !options.NoEnroll {
 		currentPath, current, err = acceptedPackage(public)
+		if options.AcceptCurrent != "" {
+			currentPath, current, err = acceptCurrentPackage(ctx, options, candidate, currentPath, current)
+		}
 		if err != nil {
 			return fmt.Errorf("existing deployment needs a verified forward cutover: %w", err)
 		}
-		if err = advancePackage(currentPath, current, candidate); err != nil {
+		if err = advanceInstallationPackage(options, currentPath, current, candidate); err != nil {
+			return err
+		}
+		if err = checkUpdateExpectation(options, candidate.Manifest, current); err != nil {
 			return err
 		}
 	}
@@ -429,6 +443,9 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	}
 	unit, previousUnit, err := installationInputs(ctx, options, release, currentPath, current)
 	if err != nil {
+		return err
+	}
+	if err = checkUpdateUnits(ctx, options); err != nil {
 		return err
 	}
 	if current != nil {
@@ -473,6 +490,9 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 		args = append(args, "-resource-inputs", options.ResourceInputs)
 	}
 	if err = installCommand(ctx, nil, options.Log, binary, args...); err != nil {
+		return err
+	}
+	if err = checkUpdateExpectation(options, candidate.Manifest, current); err != nil {
 		return err
 	}
 	if err = protectedDirectory(filepath.Dir(installUnit), 0o755); err != nil {
@@ -542,6 +562,9 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if err = replaceInstallLink("/usr/local/bin/loom", filepath.Join(installRoot, "current", "loom")); err != nil {
 		return err
 	}
+	if err = installUpdateUnits(ctx, options); err != nil {
+		return err
+	}
 	succeeded = true
 	if current != nil && currentPath != release {
 		if err = removeReplacedPrograms(currentPath, *current); err != nil {
@@ -583,6 +606,9 @@ func checkManagedUnit(ctx context.Context, body, candidate []byte, currentPath s
 	}
 	if current == nil {
 		return errors.New("existing unit has no accepted package; verified forward cutover is required")
+	}
+	if checkAcceptanceUnit(options, body, currentPath, current) {
+		return checkAcceptanceExecution(ctx, currentPath, options)
 	}
 	var template []byte
 	for _, file := range current.Files {
@@ -673,7 +699,17 @@ func removeSupersededPrograms(public ed25519.PublicKey, current Manifest, releas
 // It checks the original unit and exact executables without writing or running
 // them, including when an interrupted first installation has no current link.
 func installationInputs(ctx context.Context, options InstallOptions, release, currentPath string, current *Manifest) ([]byte, []byte, error) {
-	for _, path := range []string{"/var/lib/loom/release-floor.json", "/var/lib/loom-device/migration-overlay.json", "/var/lib/loom/client-v2", "/etc/loom/agent/v2", "/etc/loom/sing-box/v2", "/etc/systemd/system/loom-client.service.d/00-host-network-quarantine.conf"} {
+	if _, err := os.Lstat(priorReleaseFloor); err == nil {
+		if current == nil {
+			return nil, nil, errors.New("protected prior deployment needs an explicit accepted package")
+		}
+		if _, err := installedFile(priorReleaseFloor, 64<<10, 0o600); err != nil {
+			return nil, nil, errors.New("protected retired release floor cannot be verified")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	for _, path := range []string{"/var/lib/loom-device/migration-overlay.json", "/var/lib/loom/client-v2", "/etc/loom/agent/v2", "/etc/loom/sing-box/v2", "/etc/systemd/system/loom-client.service.d/00-host-network-quarantine.conf"} {
 		if _, err := os.Lstat(path); err == nil {
 			return nil, nil, errors.New("protected prior deployment needs a verified forward cutover")
 		} else if !errors.Is(err, os.ErrNotExist) {

@@ -37,6 +37,20 @@ manifest.sig 相同的原始 Ed25519 签名；旧 JSON 签名封装拒绝。构�
 页面。页面下载同时固定 catalog 与 archive 摘要，附件保持原 manifest 签名字节；下载后的正式核验仍使用
 上述独立公钥命令。目录更新不会绕过 installer 已接受的组件代，也不自动激活服务。
 
+## 已批准现程序的接管与自动更新
+
+[前向切换](release-forward-cutover.md) 已获用户明确批准。一次性接管使用完整原签名包及
+owner-only 的 `-accept-current` 绑定文件，正式执行仍在原安装锁内核对每个节点的原 floor、
+Device、公钥、现程序、unit 和执行输入。原 floor 保持原位原字节，现行接受前沿仍只有
+内容目录/current；不读取旧格式，不对新旧对象的代数作数值比较。
+
+新程序正常安装后生成与相同 state、resource-inputs、capture 对应的更新 service/timer。
+`loom client update -capture mixed` 是同一个有界一次性入口，timer 两分钟后开始、每五分钟检查。
+它只读已接受 LKG，经私有 device tunnel 取得管理员期望引用的原签名材料；公开下载目录变化
+不会自行授予升级。无期望、暂时不可达、错签名或未请求的组件变化均拒绝本次更新，保留现程序。
+失败/失活的 runtime 不由 timer 自动重新激活；须沿正常 installer 检查并恢复。
+生产切换、业务与恢复证据仍见实施状态，源码接线和测试不单独构成完成。
+
 ## 私有 Enrollment 与安装
 
 ### 正式安装入口

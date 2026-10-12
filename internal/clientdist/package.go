@@ -358,6 +358,7 @@ type SignedPackage struct {
 	Manifest     Manifest
 	ManifestBody []byte
 	Signature    []byte
+	Files        map[string][]byte
 }
 
 func VerifyPackage(archive []byte, pub ed25519.PublicKey) (SignedPackage, error) {
@@ -527,7 +528,7 @@ func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing fu
 		return zero, fmt.Errorf("Linux archive is not canonical")
 	}
 	if proof != nil {
-		*proof = SignedPackage{Manifest: manifest, ManifestBody: append([]byte(nil), files["manifest.json"]...), Signature: append([]byte(nil), signature...)}
+		*proof = SignedPackage{Manifest: manifest, ManifestBody: append([]byte(nil), files["manifest.json"]...), Signature: append([]byte(nil), signature...), Files: files}
 	}
 	return manifest, nil
 }
