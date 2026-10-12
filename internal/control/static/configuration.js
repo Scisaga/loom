@@ -1,7 +1,7 @@
 // A disposable public review and browser draft. Authority, conflict references
 // and completion remain the existing signed originals and ordinary operation.
 export function createConfigurationReview({api,esc,table,canonical,canOperate,redraw,refresh,toast}){
- let review=null,error='',loading=false,frontier='',dirty=false,onlyConflicts=false;
+ let review=null,error='',loading=false,frontier='',dirty=false,onlyConflicts=false,search='';
  const drafts=new Map;
  const key=row=>row.target.target_kind+':'+row.target.target_id;
  const state=row=>row.target.conflicted?'Conflict · paused':row.target.deleted?'Deleted':'Effective here';
@@ -24,7 +24,7 @@ export function createConfigurationReview({api,esc,table,canonical,canOperate,re
   const sources=row.sources.map(source=>`<article class="configuration-source"><h4>${esc(source.control_id||'Unavailable')} · ${esc(source.status)}</h4><small>${esc(source.operation)} · sequence ${esc(source.sequence)}</small><p class="mono">${esc(source.material_id)}</p>${source.reason?`<p>${esc(source.reason)}</p>`:''}${sourceValue(source)?`<details><summary>Public value</summary><pre>${esc(JSON.stringify(source.value,null,2))}</pre></details>`:''}${row.resolvable&&sourceValue(source)&&canOperate('conflict.resolve')?`<button type="button" data-configuration-choice="${esc(id)}" data-source="${esc(source.material_id)}">Use this value as a draft</button>`:''}</article>`).join('');
   let editor='';
   if(draft&&canOperate('conflict.resolve'))editor=`<form id="configuration-resolution-${esc(id)}" data-configuration-form data-key="${esc(id)}" data-request-id="${esc(draft.requestId)}" data-review="${esc(JSON.stringify(draft.review))}"><h4>${draft.action==='put'?'Review final '+esc(label(t.target_kind))+' value':'Review deletion'}</h4>${draft.action==='put'?fields(draft.value):`<p>Delete ${esc(t.target_kind)} ${esc(t.target_id)}. Referencing permissions and routes will close. Device deletion keeps a permanent tombstone.</p>`}<div class="field"><label>Additional reviewed dependencies</label><input name="additional_dependencies" placeholder="Optional fact IDs, comma separated"><small>Required object references are included from this reviewed view.</small></div><label class="choice"><input type="checkbox" name="reviewed" required> I reviewed all ${draft.review.conflicts.length} conflict facts and the known references above.</label><div class="service-save"><span role="alert"></span><button class="primary" type="submit">Submit reviewed resolution</button></div></form>`;
-  return `<details data-key="${esc(id)}" data-configuration-target="${esc(id)}" ${draft?'open':''}><summary><b>${esc(t.target_kind)} · ${esc(t.target_id)}</b><span>${esc(state(row))}</span></summary>${t.conflicted?differences(row.sources):''}<div class="configuration-sources">${sources}</div>${references(row)}${row.reason?`<p role="status">${esc(row.reason)}</p>`:''}${row.resolvable&&canOperate('conflict.resolve')?`<button class="danger" type="button" data-configuration-delete="${esc(id)}">Resolve by deleting this object</button>`:''}${editor}</details>`;
+  return `<details data-key="${esc(id)}" data-configuration-target="${esc(id)}" ${draft?'open':''}><summary><b>${esc(t.target_id)}<small>${esc(label(t.target_kind))}</small></b><span>${esc(state(row))}</span><span>${t.conflicted?'Review competing signed changes':t.deleted?'Historical originals retained':'Current value verified here'}</span></summary>${t.conflicted?differences(row.sources):''}<div class="configuration-sources">${sources}</div>${references(row)}${row.reason?`<p role="status">${esc(row.reason)}</p>`:''}${row.resolvable&&canOperate('conflict.resolve')?`<button class="danger" type="button" data-configuration-delete="${esc(id)}">Resolve by deleting this object</button>`:''}${editor}</details>`;
  }
  async function load(redrawWhenDone=true){
   if(loading)return;loading=true;error='';
@@ -34,7 +34,7 @@ export function createConfigurationReview({api,esc,table,canonical,canOperate,re
   const current=canonical([projection.control_config_id,projection.targets]);
   if(frontier!==current){frontier=current;dirty=!!review&&current!==canonical([review.control_config_id,review.targets]);if(dirty&&!drafts.size&&!loading)queueMicrotask(load)}
   if(!review&&!loading&&!error)queueMicrotask(load);
-  return `<section class="card" id="configuration-state"><h2>Configuration state</h2><p>Current results on this control. Local acceptance, peer reception and device application are separate.</p><div class="actions"><button type="button" data-configuration-filter>${onlyConflicts?'Show all objects':'Show conflicts'}</button><button type="button" data-configuration-refresh>Refresh sources and references</button></div>${dirty?'<p role="status">New facts may have arrived. The draft retains the sources you reviewed; refresh and review again before submitting.</p>':''}${error?`<p role="alert">${esc(error)}</p>`:''}${!review?'<p>Loading verified public sources…</p>':review.rows.filter(row=>!onlyConflicts||row.target.conflicted).map(rowHTML).join('')||'<p>No currently known conflicts.</p>'}</section>`;
+  return `<section class="card" id="configuration-state"><h2>Configuration state</h2><p>Current results on this control. Local acceptance, peer reception and device application are separate.</p><div class="configuration-toolbar"><input type="search" data-configuration-search placeholder="Find a service, policy or device" value="${esc(search)}" aria-label="Find a configuration object"><button type="button" data-configuration-filter>${onlyConflicts?'Show all objects':'Show conflicts'}</button><button type="button" data-configuration-refresh>Refresh sources and references</button></div>${dirty?'<p role="status">New facts may have arrived. The draft retains the sources you reviewed; refresh and review again before submitting.</p>':''}${error?`<p role="alert">${esc(error)}</p>`:''}${!review?'<p>Loading verified public sources…</p>':review.rows.filter(row=>!onlyConflicts||row.target.conflicted).map(rowHTML).join('')||'<p>No currently known conflicts.</p>'}</section>`;
  }
  function pick(id,source,action){
   const row=review.rows.find(v=>key(v)===id);if(!row?.resolvable)return;
@@ -81,5 +81,6 @@ export function createConfigurationReview({api,esc,table,canonical,canOperate,re
    drafts.delete(form.dataset.key);form.remove();await refresh(false);await load();toast('Resolution accepted locally. Peer reception and device application need their own readback.');return true;
   }catch(e){output.textContent=e.message;toast(e.message,true);return true}finally{form.submitting=false}
  }
- return {html,click,submit};
+ function filter(value){search=value;redraw()}
+ return {html,click,submit,filter};
 }

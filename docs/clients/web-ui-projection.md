@@ -947,3 +947,17 @@ request ID 或因果基线。并发冲突在原编辑区域保留草稿和冲突
 - reader 证书、reader 能力、无 admin 证书可读取的管理快照；
 - 每个按钮独立的 manager、store、receipt 或与 SPA 重复的页面专用状态机；
 - 用页面颜色、DNS 解析、传输握手或公开网站可达性推导授权与健康。
+
+
+### Administration 的四个对象视图
+
+正式入口统一为 `/ssot` 的 Administration。左侧只有 Control nodes、Administrators、Web
+certificates、Configuration state 四个同级视图；`section` 和已有对象 fragment 只选择展示，
+没有独立权威、wire、持久、运行时生命周期。数据继续使用同一成员链、普通事实、公开证书诊断
+和可丢弃的配置审阅结果；缺少 peer receipt 或证书材料时保持 unknown。
+
+对象查询、原位展开、公开文件授权、续签请求/签回/激活/实际浏览器验证和显式冲突解决使用原操作。
+管理员只上传公开授权文件，P12/密码/私钥仍从受保护本机手工取回。配置搜索只筛选本次已经读到的
+公开对象，不替代完整原件和依赖复核。原 `/settings` 启动入口及验证链接退出，统一使用 Administration。
+最小验证为四视图前进/后退、对象展开、管理员公开文件授权/撤权、成员多数结果、证书原流程、
+冲突草稿/重读及实际部署浏览器回读；不为版式验证修改生产信任或成员。

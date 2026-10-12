@@ -22,7 +22,7 @@ export function websiteManagementHTML(projection,{esc,table,draftAttributes,canO
     if(latest&&entry.state==='serving')actions+=button(entry,'request','Prepare renewal');
     if(entry.state==='prepared')actions+=button(entry,'serve','Activate after TLS preflight');
     if(entry.state==='serving'){
-     actions+=`<a class="button" href="https://control.loom:${entry.port}/settings?website=${encodeURIComponent(entry.id)}&generation=${entry.generation}">Verify this entry in browser</a>`;
+     actions+=`<a class="button" href="https://control.loom:${entry.port}/ssot?section=certificates&website=${encodeURIComponent(entry.id)}&generation=${entry.generation}">Verify this entry in browser</a>`;
      if(connection?.id===entry.id&&BigInt(connection.generation)>BigInt(entry.generation))actions+=button(entry,'drain-previous','Drain previous generation');
      actions+=button(entry,'stop','Stop this generation');
     }

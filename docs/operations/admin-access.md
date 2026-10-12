@@ -52,7 +52,7 @@ URL 须带该端口。同一 URL 使用的全部地址须在该客户端端口�
 连接到其中可达的一台即可；解析成功不证明该节点健康、具备成员资格或有管理权限。该路径不依赖 SSH
 转发，也不要求离网笔记本解析 `control.loom`。
 
-Settings 的 Website trust 区域导入、导出公开根，并显示承载 control 本机可验证的证书到期诊断。
+Administration 的 Web certificates 区域导入、导出公开根，并显示承载 control 本机可验证的证书到期诊断。
 其他 control 的叶材料没有本地副本时显示未知及承载者；到期诊断不表示网络可达。DNS 页面列出
 经认证的 serving 网站入口和带端口的链接，端口冲突时停止发布该名称并显示冲突。
 Mixed 客户端通过显式代理解析和访问该链接；Android/Windows TUN 返回真实网站 IP，并以同一组
@@ -99,7 +99,7 @@ sudo loom control admin issue \
 P12 使用固定的 [Modern2023 编码参数](https://pkg.go.dev/software.sslmate.com/src/go-pkcs12#Modern2023)，
 时间与加密熵由调用方注入。同一目录重试验证并保留原证书、私钥和密码，损坏、不同名称或有效时长拒绝覆盖。
 
-原管理员在 Settings 的 Administrators 中选择公开 `admin.json`，点击 Grant administrator access；
+原管理员在 Administration 的 Administrators 中选择公开 `admin.json`，点击 Grant administrator access；
 它提交 `admin_certificate.put`。CLI 使用同一 `control write` 普通操作。页面显示完整叶指纹和有效期，
 Revoke 提交 `admin_certificate.delete`。交付值和授权生命周期的精确字段、依赖、重试、并发及重启规则见
 [管理员叶契约](../core/current-contract.md#管理员精确叶授权与交付)。撤销所有浏览器叶时，root-only Unix 管理入口仍可补发和授予。
@@ -149,7 +149,7 @@ loom control website verify-certificate -request /private/demo-delivery/request.
 命令检查受约束根、原 CSR 公钥、精确名称、用途、有效期及直接签发链，回读公开摘要和到期时间。
 它不导入浏览器信任或激活入口；后续正式安装还须核对本机叶私钥并完成 prepared 预检和实际浏览器回读。
 
-在现有受认证 Web 的 Settings → Website trust 上传单个公开根 PEM，可发布该根并回读、导出或撤销。
+在现有受认证 Web 的 Administration → Web certificates 上传单个公开根 PEM，可发布该根并回读、导出或撤销。
 设备下一次认证刷新后取得同一公开根；Linux 可从已验证本机 View 列出并显式导出：
 
 ```bash
@@ -175,13 +175,13 @@ loom client website-root -state /var/lib/loom-device/state.json \
 
 
 网站签回经上述核验后，沿已有 `control endpoint-inputs` 安装本机输入，再用 `control write` 提交
-prepared 与 serving。网站 EndpointGeneration 的 `website_trust_id` 必须引用已通过 Settings 或同一
+prepared 与 serving。网站 EndpointGeneration 的 `website_trust_id` 必须引用已通过 Administration 或同一
 普通操作授权的根；`key_file` 必须定位该 control 原 CSR 目录中的 `key.pem`，`certificate_file`
 定位单张签回叶。网站根私钥不参与安装。正式输入安装会核对当前成员、原请求、公钥与完整根约束。
 同一 TCP 地址可按不同 SNI 分别提供原设备证书和 `control.loom` 网站证书；同名异证书的续签仍需
 另一个可验证的既有拨号地址，不能通过改写原代或关闭原设备通道强行预检。
 
-同一流程也可从承载 control 的 Settings → Website certificate operations 操作。已有入口行的
+同一流程也可从承载 control 的 Administration → Web certificates 操作。已有入口行的
 Prepare renewal 生成紧邻下一代的绑定请求；新入口使用 New entry ID 从第一代开始。下载的是上述
 规范请求 JSON，离线核验和签发要求不变。页面刷新及服务重启从原受保护文件回读，不重新生成叶键。
 选择已独立核验并授权的网站根、公开签回叶（可附加该精确根）、已提供的拨号地址与本机监听地址后，

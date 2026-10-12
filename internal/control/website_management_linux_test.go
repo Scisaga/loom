@@ -243,7 +243,7 @@ func TestWebChromeWebsiteRequestImportAndActivation(t *testing.T) {
 	f, trust, key, _ := websiteManagementFixture(t)
 	h := httptest.NewServer(f.server.AdminHandler())
 	defer h.Close()
-	browser := openCommandChrome(t, h.URL+"/settings")
+	browser := openCommandChrome(t, h.URL+"/ssot?section=certificates")
 	waitChromeEvaluation(t, browser, `document.querySelector('[data-website-form=request]')`)
 	chromeDo(t, browser, `(()=>{const f=document.querySelector('[data-website-form=request]');f.elements.endpoint_id.value='demo-web';f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, browser, `document.querySelector('[data-website-request="demo-web"]')`)

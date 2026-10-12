@@ -596,7 +596,7 @@ func (server *Server) page(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 	allowed := map[string]bool{"/": true, "/devices": true, "/topology": true, "/routing": true,
-		"/services": true, "/policies": true, "/releases": true, "/deployments": true, "/events": true, "/ssot": true, "/settings": true}
+		"/services": true, "/policies": true, "/releases": true, "/deployments": true, "/events": true, "/ssot": true}
 	devicePath := strings.TrimPrefix(request.URL.Path, "/devices/")
 	validDevicePath := devicePath != request.URL.Path && devicePath != "" && !strings.Contains(devicePath, "/")
 	if strings.HasPrefix(devicePath, "invites/") {

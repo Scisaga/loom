@@ -257,8 +257,9 @@ func TestWebChromeAdministratorPublicFileAndRevocation(t *testing.T) {
 	value, _ := adminTestLeaf(t, filepath.Dir(root), ca, "demo-web-admin", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
 	h := httptest.NewServer(server.AdminHandler())
 	defer h.Close()
-	d := openCommandChrome(t, h.URL+"/ssot")
+	d := openCommandChrome(t, h.URL+"/ssot?section=administrators")
 	waitChromeEvaluation(t, d, `document.querySelector('#admin-certificate-form')`)
+	chromeDo(t, d, `document.querySelector('[data-admin-add]').click();true`)
 	public, _ := CanonicalEncode(value)
 	literal, _ := json.Marshal(string(public))
 	chromeDo(t, d, `(()=>{const f=document.querySelector('#admin-certificate-form'),dt=new DataTransfer;dt.items.add(new File([`+string(literal)+`],'admin.json',{type:'application/json'}));f.elements.certificate.files=dt.files;f.requestSubmit();return true})()`)
@@ -266,6 +267,8 @@ func TestWebChromeAdministratorPublicFileAndRevocation(t *testing.T) {
 	if len(server.Runtime.Authority.Snapshot().AdminCertificates) != 1 {
 		t.Fatal("browser grant did not persist")
 	}
+	chromeDo(t, d, `document.querySelector('#administrators tbody a[data-nav]').click();true`)
+	waitChromeEvaluation(t, d, `document.querySelector('[data-delete-kind=admin_certificate]')`)
 	chromeDo(t, d, `(()=>{window.confirm=()=>true;document.querySelector('[data-delete-kind=admin_certificate]').click();return true})()`)
 	waitChromeEvaluation(t, d, `!document.querySelector('[data-delete-kind=admin_certificate]')`)
 	reopened, err := OpenAuthority(root)

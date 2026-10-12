@@ -14,7 +14,7 @@ func TestControlMemberBrowserUsesMajorityAndReadsCommittedTable(t *testing.T) {
 	peers := membershipTLSPeers(t, f)
 	server := httptest.NewServer(peers[0].server.AdminHandler())
 	defer server.Close()
-	debug := openCommandChrome(t, server.URL+"/settings")
+	debug := openCommandChrome(t, server.URL+"/ssot?section=controls")
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('#control-members tbody tr').length===2&&document.querySelector('#member-change-form')`)
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#member-change-form');f.elements.node.value='demo-node-b';f.elements.change.value='revoke';f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('#control-members tbody tr').length===1&&document.querySelector('#member-change-form [role=alert]').textContent.includes('certificate accepted')`)

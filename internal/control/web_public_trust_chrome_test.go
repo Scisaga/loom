@@ -26,7 +26,7 @@ func TestWebChromeWebsiteRootWriteExportRestartDelete(t *testing.T) {
 	defer func() { server.Runtime.Close() }()
 	httpServer := httptest.NewServer(server.AdminHandler())
 	defer httpServer.Close()
-	browser := openCommandChrome(t, httpServer.URL+"/settings")
+	browser := openCommandChrome(t, httpServer.URL+"/ssot?section=certificates")
 	waitChromeEvaluation(t, browser, `document.querySelector('#public-trust-form')&&document.querySelector('#connection').title.includes('local writes available')`)
 	value := testWebsiteTrust(t, time.Now())
 	der, _ := base64.RawURLEncoding.DecodeString(value.CertificateDER)
