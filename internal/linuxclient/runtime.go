@@ -295,19 +295,7 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	if err != nil {
 		return err
 	}
-	config, serverConfig, err := generationConfigs(view.View, secret, nil, capture, executions, website)
-	if err != nil {
-		return err
-	}
-	profile, _, err := projectWireGuard(view.View)
-	if err != nil {
-		return err
-	}
-	if serverConfig != "" {
-		serverConfig, err = appendNativeReceivers(serverConfig, view.View, profile, nil, "/etc/wireguard/node.key")
-	} else {
-		config, err = appendNativeReceivers(config, view.View, profile, nil, "/etc/wireguard/node.key")
-	}
+	config, serverConfig, err := preflightProjectedConfigs(ctx, view.View, secret, capture, executions, website, "/etc/wireguard/node.key", nil)
 	if err != nil {
 		return err
 	}
@@ -317,6 +305,30 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 		}
 	}
 	return preflightRuntimeConfig(executable, config)
+}
+
+// Resolve the same signed WG endpoint inputs as runtime application before
+// assembling its native receiver. This only reads DNS and renders configs;
+// it neither creates an interface nor declares a peer available.
+func preflightProjectedConfigs(ctx context.Context, view control.DeviceView, secret, capture string, executions []hy2Execution, website clientadapter.WebsiteAccess, keyPath string, dial func(context.Context, string, string) (net.Conn, error)) (string, string, error) {
+	config, serverConfig, err := generationConfigs(view, secret, nil, capture, executions, website)
+	if err != nil {
+		return "", "", err
+	}
+	profile, _, err := projectWireGuard(view)
+	if err != nil {
+		return "", "", err
+	}
+	profile, err = resolveWireGuardEndpoints(ctx, profile, wireGuardExecution{}, view.DNSServers, dial)
+	if err != nil {
+		return "", "", err
+	}
+	if serverConfig != "" {
+		serverConfig, err = appendNativeReceivers(serverConfig, view, profile, nil, keyPath)
+	} else {
+		config, err = appendNativeReceivers(config, view, profile, nil, keyPath)
+	}
+	return config, serverConfig, err
 }
 
 func generationConfigs(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, websites ...clientadapter.WebsiteAccess) (string, string, error) {

@@ -135,7 +135,7 @@ SSH 前置检查据此与原 Invite、签发者已接受的绑定及当前授权
 claim 尚未由签发者接受时，installer 不启用 service。使用同一 Invite 重跑会 resume 同一事务，不生成第二身份。
 `--no-enroll` 只安装已验证 release，不创建身份也不启动 service。已 Enrollment
 的机器升级时使用 `sudo ./install.sh --capture mixed --upgrade`；它复用现有 owner-only 身份与完整
-LKG，候选 preflight 失败不接受新发布代，已停止的服务保持禁用；接受后启动失败则保留新包和失活状态。
+LKG，已有身份的升级先以认证 DNS 解析 WG 主机名并预检候选，通过后才停止原服务；预检失败不接受新发布代且保留原业务。接受后启动失败则保留新包和失活状态。
 installer 在激活前拒绝尚存的旧权威路径、迁移 overlay、旧 unit 和事故 quarantine drop-in；
 这些材料与启动项只能由经批准的前向切换处理，不由安装器自动搬走。既有平台信任公钥不匹配时同样拒绝覆盖。
 

@@ -448,6 +448,13 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if err = checkUpdateUnits(ctx, options); err != nil {
 		return err
 	}
+	if options.Upgrade {
+		// Keep the prior authorized service running if any candidate input or
+		// certified DNS cannot pass its read-only preflight.
+		if err = preflightInstallation(ctx, options, release); err != nil {
+			return err
+		}
+	}
 	if current != nil {
 		if err = installCommand(ctx, nil, options.Log, "systemctl", "disable", "--now", "loom-client.service"); err != nil {
 			return err
@@ -485,12 +492,10 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	args := []string{"client", "preflight", "-state", options.State, "-sing-box", filepath.Join(release, "sing-box"), "-capture", options.Capture}
-	if options.ResourceInputs != "" {
-		args = append(args, "-resource-inputs", options.ResourceInputs)
-	}
-	if err = installCommand(ctx, nil, options.Log, binary, args...); err != nil {
-		return err
+	if !options.Upgrade {
+		if err = preflightInstallation(ctx, options, release); err != nil {
+			return err
+		}
 	}
 	if err = checkUpdateExpectation(options, candidate.Manifest, current); err != nil {
 		return err
@@ -576,6 +581,20 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	}
 	fmt.Fprintln(options.Log, "Exact Linux runtime installed and read back; inspect client status and the private signed report for business results.")
 	return nil
+}
+
+func preflightInstallation(ctx context.Context, options InstallOptions, release string) error {
+	if options.AcceptCurrent != "" {
+		// The immutable original program predates the corrected preflight. Its
+		// actual runtime already consumes resolved endpoints; use this trusted
+		// installer's current adapter without rewriting the signed original.
+		return linuxclient.PreflightResources(options.State, filepath.Join(release, "sing-box"), options.Capture, options.ResourceInputs)
+	}
+	args := []string{"client", "preflight", "-state", options.State, "-sing-box", filepath.Join(release, "sing-box"), "-capture", options.Capture}
+	if options.ResourceInputs != "" {
+		args = append(args, "-resource-inputs", options.ResourceInputs)
+	}
+	return installCommand(ctx, nil, options.Log, filepath.Join(release, "loom"), args...)
 }
 
 // A unit is a projection of signed package bytes and explicit local inputs.
