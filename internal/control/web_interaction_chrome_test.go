@@ -205,7 +205,7 @@ func TestWebChromeServicePolicyAndStaleDraft(t *testing.T) {
 	httpServer := httptest.NewServer(server.AdminHandler())
 	defer httpServer.Close()
 	debug := openCommandChrome(t, httpServer.URL+"/services?new=1")
-	waitChromeEvaluation(t, debug, `document.querySelector('#service-form')&&document.querySelector('#connection').textContent.includes('local writes available')`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#service-form')&&document.querySelector('#connection').title.includes('local writes available')`)
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#service-form');f.elements.id.value='demo-web-service';f.elements.name.value='Demo Web';f.elements.matchers.value='dns_exact demo.example';f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')`)
 	projection := runtime.Authority.Snapshot()
@@ -419,7 +419,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("form was created before its authenticated policy snapshot arrived")
 	}
 	releaseSnapshot()
-	waitChromeEvaluation(t, debug, `document.querySelector('#enrollment-form [name=endpoint]')?.options.length>0&&document.querySelector('#connection').textContent.includes('local writes available')`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#enrollment-form [name=endpoint]')?.options.length>0&&document.querySelector('#connection').title.includes('local writes available')`)
 	transactionID, ok := chromeDo(t, debug, `document.querySelector('#enrollment-form').dataset.transactionId`).(string)
 	if !ok {
 		t.Fatal("browser form has no stable transaction ID")

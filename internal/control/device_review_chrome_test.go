@@ -89,7 +89,7 @@ func TestWebChromeRevokedDeviceReviewAndExplicitRegrant(t *testing.T) {
 		if err := debug.call(ctx, "Page.navigate", map[string]any{"url": httpServer.URL + page}, nil); err != nil {
 			t.Fatal(err)
 		}
-		waitChromeEvaluation(t, debug, `location.pathname==='`+page+`'&&document.querySelector('#connection').textContent.includes('local writes available')&&document.querySelector('#app h1')`)
+		waitChromeEvaluation(t, debug, `location.pathname==='`+page+`'&&document.querySelector('#connection').title.includes('local writes available')&&document.querySelector('#app h1')`)
 		if chromeDo(t, debug, `document.querySelector('#app a[href="/devices/`+invite.DeviceID+`"]')===null&&document.querySelector('.topology [data-node="`+invite.DeviceID+`"]')===null`) != true {
 			t.Fatal("permanently deleted device remains in the current inventory or topology", page)
 		}
@@ -97,5 +97,5 @@ func TestWebChromeRevokedDeviceReviewAndExplicitRegrant(t *testing.T) {
 	if err := debug.call(ctx, "Page.navigate", map[string]any{"url": httpServer.URL + "/devices/" + invite.DeviceID}, nil); err != nil {
 		t.Fatal(err)
 	}
-	waitChromeEvaluation(t, debug, `document.querySelector('#app .device-heading')&&document.querySelector('#connection').textContent.includes('local writes available')&&!document.querySelector('#device-policy-form')`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#app .device-heading')&&document.querySelector('#connection').title.includes('local writes available')&&!document.querySelector('#device-policy-form')`)
 }

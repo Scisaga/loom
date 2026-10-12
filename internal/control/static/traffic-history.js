@@ -47,12 +47,17 @@ function endpointBars(summary){
  return `<div class="wg-endpoint-legend">${endpoints.map(v=>`<small>${esc(v.id)} TX: ${trafficBytes(v.buckets.reduce((a,b)=>b.tx===null?a:(a??0n)+b.tx,null))}</small>`).join('')}</div><div class="wg-traffic-hours wg-endpoint-hours" aria-label="24 hourly WG TX deltas grouped by endpoint">${summary.buckets.map((bucket,i)=>`<span class="wg-traffic-group">${endpoints.map(v=>hourBar(v.buckets[i],'tx',maximum,v.id)).join('')}</span>`).join('')}</div>`;
 }
 
+function pairedBars(summary){
+ const maximum=summary.buckets.reduce((value,bucket)=>['rx','tx'].reduce((v,key)=>bucket[key]!==null&&bucket[key]>v?bucket[key]:v,value),1n);
+ return `<div class="wg-traffic-hours wg-paired-hours" aria-label="24 hourly WG RX and TX observed deltas">${summary.buckets.map(bucket=>`<span class="wg-traffic-group">${hourBar(bucket,'rx',maximum)}${hourBar(bucket,'tx',maximum)}</span>`).join('')}</div><div class="wg-paired-legend"><small>RX ${trafficBytes(summary.rx)}</small><small>TX ${trafficBytes(summary.tx)}</small></div>`;
+}
+
 export function trafficHistoryHTML(summary,both=false,compact=false,endpoints=false){
  if(!summary.scope)return '<small>WG traffic unavailable for this authorization.</small>';
  let contents='<small>Loading WG counters…</small>';
  if(summary.error)contents='<small>WG traffic could not be read.</small>';
  else if(summary.data){
-  contents=`${both?`<small>RX ${trafficBytes(summary.rx)}</small>${bars(summary,'rx')}<small>TX ${trafficBytes(summary.tx)}</small>`:''}${endpoints?endpointBars(summary):bars(summary,'tx')}<small>${summary.covered}/24 hours with observed deltas${compact?'':' · partial coverage'}</small>`;
+  contents=both&&compact?pairedBars(summary):`${both?`<small>RX ${trafficBytes(summary.rx)}</small>${bars(summary,'rx')}<small>TX ${trafficBytes(summary.tx)}</small>`:''}${endpoints?endpointBars(summary):bars(summary,'tx')}<small>${summary.covered}/24 hours with observed deltas${compact?'':' · partial coverage'}</small>`;
  }
  return `<div class="wg-traffic ${compact?'compact':''}" data-traffic-scope="${esc(summary.scope)}">${contents}<small><button type="button" class="tiny" data-traffic-retry="${esc(summary.scope)}">${summary.error?'Retry':summary.data?'Refresh':'Reload'}</button>${summary.data&&!compact?' · as of '+esc(new Date(summary.data.until).toISOString()):''}</small></div>`;
 }

@@ -10,16 +10,17 @@ func TestWebChromeTopologyLongNamesReadableAndInteractive(t *testing.T) {
 	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
 		t.Skip("set LOOM_WEB_CHROME_TEST=1 for native topology layout acceptance")
 	}
-	server := httptest.NewServer((&Server{}).AdminHandler())
+	fixture, _, _, _, _, _ := enrollmentAuthorityFixture(t)
+	server := httptest.NewServer(fixture.AdminHandler())
 	defer server.Close()
 	debug := openCommandChrome(t, server.URL+"/")
-	waitChromeEvaluation(t, debug, `document.querySelector('#app')!==null&&document.readyState==='complete'`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#app h1')&&document.querySelector('#connection').title.includes('local writes available')`)
 	result := chromeDo(t, debug, `(async()=>{
 	 const {topologyHTML,bindTopology}=await import('/assets/topology.js');
 	 const {topologyPositions}=await import('/assets/model.js');
 	 const results=[];
 	 for(const count of [6,17]) for(const compact of [false,true]) {
-	  const nodes=Array.from({length:count},(_,i)=>({ID:'demo-node-'+String(i).padStart(2,'0'),Name:i%2?'demo connection name fills width '+i:'演示节点名称较长时仍保留完整内容 '+i,Roles:['access','control','forward','internet_egress'],Location:'demo-location',Direction:i%3?'reverse_only':'',Control:i%2===0,Health:i%3?'unknown':'available'}));
+	  const nodes=Array.from({length:count},(_,i)=>({ID:'demo-node-'+String(i).padStart(2,'0'),Name:i%2?'demo connection name fills width '+i:'演示节点名称较长时仍保留完整内容 '+i,Roles:['access','control','forward','internet_egress'],Location:'demo-location',Direction:i%3?'reverse_only':'',Control:i%2===0,Runtime:i%3?'unknown':'running'}));
 	  const before=[...topologyPositions(nodes)],after=[...topologyPositions([...nodes].reverse().map(n=>({...n,Direction:n.Direction?'':'reverse_only',Control:!n.Control})))];
 	  if(JSON.stringify(before)!==JSON.stringify(after))return {error:'rings depend on roles, direction or input order'};
 	  const id=compact?'overview-topology':'network';

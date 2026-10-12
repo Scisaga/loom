@@ -9,68 +9,73 @@ const hash = value => {
 };
 
 function curve(a, b, key, kind) {
-  if (kind === 'candidate' && a.ring === b.ring) {
+  if (kind === 'first_hop' && a.ring === b.ring) {
     const delta = (b.angle - a.angle + 360) % 360;
     return {d: `M ${n(a.x)} ${n(a.y)} A ${n(a.rx)} ${n(a.ry)} 0 0 ${delta > 180 ? 0 : 1} ${n(b.x)} ${n(b.y)}`};
   }
   const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy) || 1;
-  const bend = (hash(key) % 7 - 3) * 7 || 4;
+  const bend = kind==='first_hop' ? (hash(key)%2?24:-24) : 0;
   const cx = (a.x + b.x) / 2 - dy / distance * bend, cy = (a.y + b.y) / 2 + dx / distance * bend;
   return {d: `M ${n(a.x)} ${n(a.y)} Q ${n(cx)} ${n(cy)} ${n(b.x)} ${n(b.y)}`};
 }
 
 function subtitle(node) {
-  return [node.Location, list(node.Roles).join(' + ')].filter(Boolean).join(' · ');
+  return [node.Location, list(node.Roles).map(role=>role.replaceAll('_',' ')).join(' · ')].filter(Boolean).join(' · ');
 }
 
 function labelLines(value, limit) {
-  const lines = [];let line = '', used = 0;
-  for (const character of String(value).replace(/\s+/g, ' ')) {
-    const units = character.codePointAt(0) < 128 ? 1 : 2;
-    if (used + units > limit) {lines.push(line);line = '';used = 0}
-    line += character;used += units;
+  const lines=[];let line='',used=0;
+  for(const word of String(value).trim().split(/\s+/)){
+    const length=[...word].reduce((sum,c)=>sum+(c.codePointAt(0)<128?1:2),0);
+    if(line&&used+1+length>limit){lines.push(line);line='';used=0}
+    if(line){line+=' ';used++}
+    for(const character of word){
+      const units=character.codePointAt(0)<128?1:2;
+      if(used+units>limit){lines.push(line);line='';used=0}
+      line+=character;used+=units;
+    }
   }
   if (line) lines.push(line);
   return lines;
 }
 
 function layout(nodes, compact) {
-  const positions = topologyPositions(nodes), groups = [[], []], labels = new Map();
-  for (const node of [...nodes].sort((a,b)=>a.ID<b.ID?-1:a.ID>b.ID?1:0)) {
-    const point = positions.get(node.ID), left = point.x < 480 - .1, right = point.x > 480 + .1;
-    const side = left ? 0 : right ? 1 : Number(groups[1].length < groups[0].length);
-    const name = labelLines(node.Name || node.ID, 30), detail = labelLines(subtitle(node), 38);
-    groups[side].push({id:node.ID,point,name,detail,height:name.length*15+detail.length*12});
-  }
-  const used = groups.map(group=>group.reduce((sum,value)=>sum+value.height,0)+Math.max(0,group.length-1)*14);
-  const height = Math.max(compact ? 280 : 360, ...used.map(value=>value+84)), cy = height/2, outerRY = cy-58;
-  for (const point of positions.values()) {
-    const ratio = point.ring==='outer'?1:75/130;
-    point.x = 480 + (point.x-480)*205/310;
-    point.y = cy + (point.y-180)*outerRY/130;
-    point.rx = point.ring==='outer'?205:205*170/310;
-    point.ry = outerRY*ratio;
-  }
-  groups.forEach((group,side)=>{
-    group.sort((a,b)=>a.point.y-b.point.y||(a.id<b.id?-1:a.id>b.id?1:0));
-    let y = (height-used[side])/2;
-    for (const value of group) {
-      labels.set(value.id,{...value,x:side?715:245,y:y+12,sub:y+value.name.length*15+10,anchor:side?'start':'end',lineX:side?702:258,lineY:y+value.height/2});
-      y += value.height+14;
+  const positions=topologyPositions(nodes), labels=new Map(), base=compact?280:405;
+  const units=line=>[...line].reduce((sum,c)=>sum+(c.codePointAt(0)<128?1:2),0);
+  let height=base;
+  for(let attempt=0;attempt<80;attempt++,height+=80){
+    const cy=height*(compact?.44:.42),outerRY=height*(compact?.38:.44),outerRX=288;
+    labels.clear();const boxes=[];
+    for(const node of nodes){
+      const point=positions.get(node.ID),ratio=point.ring==='outer'?1:.58,angle=point.angle*Math.PI/180;
+      point.rx=outerRX*ratio;point.ry=outerRY*(point.ring==='outer'?1:.59);
+      point.x=480+point.rx*Math.cos(angle);point.y=cy+point.ry*Math.sin(angle);
+      const middle=Math.abs(point.x-480)<1,top=middle&&point.y<cy,anchor=middle?'middle':point.x<480?'end':'start',x=middle?point.x:point.x+(point.x<480?-18:18);
+      const available=middle?440:point.x<480?x-8:952-x;
+      const name=labelLines(node.Name||node.ID,Math.min(24,Math.floor(available/8))),detail=labelLines(subtitle(node),Math.min(32,Math.floor(available/6)));
+      const y=middle?top?point.y-22-(name.length-1)*15:point.y+24:point.y-2-(name.length-1)*7.5;
+      const sub=top?y-18-(detail.length-1)*12:y+name.length*15+5;
+      labels.set(node.ID,{id:node.ID,point,name,detail,x,y,sub,anchor});
+      const width=Math.max(0,...name.map(line=>units(line)*8),...detail.map(line=>units(line)*6));
+      const left=anchor==='end'?x-width:anchor==='middle'?x-width/2:x,upper=Math.min(y-13,sub-10),bottom=Math.max(y+(name.length-1)*15+3,sub+(detail.length-1)*12+3);
+      boxes.push({left,right:left+width,top:upper,bottom});
     }
-  });
-  return {positions,labels,height,cy,outerRY};
+    const fits=boxes.every(box=>box.left>=8&&box.right<=952&&box.top>=5&&box.bottom<=height-5);
+    const overlap=boxes.some((a,i)=>boxes.slice(i+1).some(b=>a.left<b.right+8&&b.left<a.right+8&&a.top<b.bottom+8&&b.top<a.bottom+8));
+    if(fits&&!overlap)return {positions,labels,height,cy,outerRY,outerRX};
+  }
+  return {positions,labels,height,cy:height*(compact?.44:.42),outerRY:height*(compact?.38:.44),outerRX:288};
 }
 
 export function topologyHTML(view, routes = [], id = 'network') {
   const nodes = list(view.Nodes).filter(node => node.ID);
   const compact = id === 'overview-topology', diagram = layout(nodes, compact), {positions,labels} = diagram;
-  const selected = new Set(), direct = new Set(), routeEdges = new Map(), curves = new Map();
+  const selected = new Set(), direct = new Set(), routeEdges = new Map(), firstEdges=new Set(), curves = new Map();
   const edges = list(view.Links)
     .filter(link => positions.has(link.From) && positions.has(link.To))
     .map(link => {
       const key = pair(link.From, link.To), path = curve(positions.get(link.From), positions.get(link.To), key, link.Kind);
-      if (!curves.has(key) || link.Kind !== 'candidate') curves.set(key, {...path, from: link.From});
+      if (!curves.has(key) || link.Kind !== 'first_hop') curves.set(key, {...path, from: link.From});
       return {link, key, path};
     });
   for (const route of routes) {
@@ -82,20 +87,25 @@ export function topologyHTML(view, routes = [], id = 'network') {
     }
     for (let index = 0; index + 1 < chain.length; index++) {
       if (positions.has(chain[index]) && positions.has(chain[index + 1])) {
-        routeEdges.set(`${chain[index]}\0${chain[index + 1]}`, [chain[index], chain[index + 1]]);
+        if(index===0&&route.FirstTransport&&(route.FirstTransport==='wireguard'?view.ShowWG===false:view.ShowHy2===false))continue;
+        if(index>0&&view.ShowWG===false)continue;
+        const id=`${chain[index]}\0${chain[index + 1]}`;
+        routeEdges.set(id, [chain[index], chain[index + 1]]);
+        if(index===0&&route.FirstTransport)firstEdges.add(id);
       }
     }
   }
   const arrow = id + '-arrow';
-  const edgeMarkup = edges.map(edge => `<g class="topology-edge" ${edge.link.ID?`data-topology-link="${esc(edge.link.ID)}" role="button" tabindex="0" aria-pressed="${edge.link.ID===view.SelectedLink}" aria-label="${esc(edge.link.ID)}, inspect shared link traffic"`:''} data-from="${esc(edge.link.From)}" data-to="${esc(edge.link.To)}"><title>${esc(edge.link.From)} → ${esc(edge.link.To)} · ${esc(edge.link.Transport)} · ${esc(edge.link.State || 'unknown')} · shared peer · ${esc(list(edge.link.Metrics).join(' · ') || 'WG rate: Unknown')}</title><path class="${esc(edge.link.Kind || 'tunnel')} ${esc(edge.link.State || 'unknown')}" d="${edge.path.d}"/><path class="edge-hit" d="${edge.path.d}"/></g>`).join('');
+  const edgeMarkup = edges.map(edge => `<g class="topology-edge" ${edge.link.ID?`data-topology-link="${esc(edge.link.ID)}" role="button" tabindex="0" aria-pressed="${edge.link.ID===view.SelectedLink}" aria-label="${esc(edge.link.ID)}, inspect shared link traffic"`:''} data-from="${esc(edge.link.From)}" data-to="${esc(edge.link.To)}"><title>${esc(edge.link.From)} → ${esc(edge.link.To)} · ${esc(edge.link.Transport)} · ${esc(edge.link.State || 'unknown')} · shared peer · ${esc(list(edge.link.Metrics).join(' · ') || 'WG rate: Unknown')}</title><path class="${edge.link.Kind==='first_hop'?edge.link.Transport==='hysteria2'?'hy2-first-hop':'first-hop':esc(edge.link.Kind || 'tunnel')} ${esc(edge.link.State || 'unknown')}" d="${edge.path.d}"/><path class="edge-hit" d="${edge.path.d}"/></g>`).join('');
   const selectedEdge = edges.find(edge => edge.link.ID === view.SelectedLink);
-  const metricY = diagram.height + 12;
-  const metricRows = selectedEdge ? Math.ceil(Math.max(1,list(selectedEdge.link.Metrics).length)/2) : 0;
-  const height = selectedEdge ? metricY + metricRows * 16 + 16 : diagram.height;
-  const metricMarkup = selectedEdge ? `<text class="topology-metrics" x="480" y="${metricY}" text-anchor="middle"><tspan x="480">${esc(selectedEdge.link.ID)} · shared WG peer</tspan>${(list(selectedEdge.link.Metrics).length?list(selectedEdge.link.Metrics):['WG rate: Unknown']).reduce((rows,value,index)=>{if(index%2===0)rows.push([]);rows[rows.length-1].push(value);return rows},[]).map(row=>`<tspan x="480" dy="16">${esc(row.join(' · '))}</tspan>`).join('')}</text>` : '';
+  const height=diagram.height;
+  const measurements=list(selectedEdge?.link.Metrics),rates=measurements.find(value=>value.startsWith(selectedEdge?.link.From+' TX: ')),plain=[measurements[0]?.split(': ').slice(1).join(': '),rates?.split(' TX: ')[1],measurements[1]?.split(': ').slice(1).join(': ')].filter(Boolean).join(' · ');
+  const metricX=selectedEdge?n((positions.get(selectedEdge.link.From).x+positions.get(selectedEdge.link.To).x)/2):0,metricY=selectedEdge?n((positions.get(selectedEdge.link.From).y+positions.get(selectedEdge.link.To).y)/2-24):0;
+  const metricMarkup=selectedEdge?`<text class="topology-metrics" x="${metricX}" y="${metricY}" text-anchor="middle"><title>${esc(selectedEdge.link.ID)} · ${esc(measurements.join(' · '))}</title><tspan x="${metricX}">${esc(view.SelectedServiceName?view.SelectedServiceName+' · selected':selectedEdge.link.ID+' · inspected')}</tspan><tspan x="${metricX}" dy="14">${esc(plain)}</tspan></text>`:'';
+
   const routeMarkup = [...routeEdges.values()].map(([from, to]) => {
-    const path = curves.get(pair(from, to)) || {...curve(positions.get(from), positions.get(to), pair(from, to), 'tunnel'), from};
-    return `<path class="route topology-route" data-from="${esc(from)}" data-to="${esc(to)}" marker-${path.from === from ? 'end' : 'start'}="url(#${arrow})" d="${path.d}"/>`;
+    const path=firstEdges.has(`${from}\0${to}`)?{...curve(positions.get(from),positions.get(to),pair(from,to),'first_hop'),from}:curves.get(pair(from,to))||{...curve(positions.get(from),positions.get(to),pair(from,to),'tunnel'),from};
+    return `<path class="route topology-route ${firstEdges.has(`${from}\0${to}`)?'first-hop':''}" data-from="${esc(from)}" data-to="${esc(to)}" marker-${path.from === from ? 'end' : 'start'}="url(#${arrow})" d="${path.d}"/>`;
   }).join('');
   const directMarkup = [...direct].filter(node => positions.has(node)).map(node => {
     const point = positions.get(node);
@@ -103,16 +113,20 @@ export function topologyHTML(view, routes = [], id = 'network') {
   }).join('');
   const nodeMarkup = nodes.filter(node => positions.has(node.ID)).map(node => {
     const point = positions.get(node.ID), location = labels.get(node.ID);
-    const health = node.Health === 'available' ? '' : node.Health === 'unavailable' ? 'problem' : 'unknown';
+    const health = node.Runtime === 'running' ? '' : node.Runtime === 'error' ? 'problem' : 'unknown';
     const text = (lines,y,step,className)=>`<text class="${className}" text-anchor="${location.anchor}" x="${location.x}" y="${n(y)}">${lines.map((line,index)=>`<tspan x="${location.x}" dy="${index?step:0}">${esc(line)}</tspan>`).join('')}</text>`;
-    return `<g class="topology-node" data-node="${esc(node.ID)}" data-ring="${point.ring}" role="button" tabindex="0" aria-pressed="false" aria-label="${esc(node.Name || node.ID)}, focus adjacent links"><title>${esc(node.Name || node.ID)} · ${esc(node.ID)} · ${esc(subtitle(node))} · ${esc(node.Health || 'unknown')}</title><path class="node-label-leader" d="M ${n(point.x)} ${n(point.y)} L ${location.lineX} ${n(location.lineY)}"/>${selected.has(node.ID) ? `<circle class="route-ring" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/>` : ''}<circle class="node-hit" cx="${n(point.x)}" cy="${n(point.y)}" r="16"/><circle class="node-focus" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/><circle class="node ${health} ${selected.has(node.ID) ? 'selected' : ''}" cx="${n(point.x)}" cy="${n(point.y)}" r="6"/><g class="topology-label">${text(location.name,location.y,15,'node-label')}${text(location.detail,location.sub,12,'sub node-label')}</g></g>`;
+    return `<g class="topology-node" data-node="${esc(node.ID)}" data-ring="${point.ring}" role="button" tabindex="0" aria-pressed="false" aria-label="${esc(node.Name || node.ID)}, focus adjacent links"><title>${esc(node.Name || node.ID)} · ${esc(node.ID)} · ${esc(subtitle(node))} · Runtime: ${esc(node.Runtime || 'unknown')}</title>${selected.has(node.ID) ? `<circle class="route-ring" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/>` : ''}<circle class="node-hit" cx="${n(point.x)}" cy="${n(point.y)}" r="16"/><circle class="node-focus" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/><circle class="node ${health} ${selected.has(node.ID) ? 'selected' : ''}" cx="${n(point.x)}" cy="${n(point.y)}" r="6"/><g class="topology-label">${text(location.name,location.y,15,'node-label')}${text(location.detail,location.sub,12,'sub node-label')}</g></g>`;
   }).join('');
-  return `<svg class="topology" data-selected-link="${esc(view.SelectedLink||'')}" viewBox="0 0 960 ${height}" role="group" aria-label="Interactive concentric network topology"><defs><marker id="${arrow}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#466fc2"/></marker></defs><ellipse class="topology-ring outer" cx="480" cy="${diagram.cy}" rx="205" ry="${diagram.outerRY}"/><ellipse class="topology-ring inner" cx="480" cy="${diagram.cy}" rx="${205*170/310}" ry="${diagram.outerRY*75/130}"/><text class="ring-key" text-anchor="end" x="942" y="21">hover preview · click lock · Esc clear</text>${edgeMarkup}${metricMarkup}${routeMarkup}${directMarkup}${nodeMarkup}${nodes.length ? '' : `<text class="sub" text-anchor="middle" x="480" y="${diagram.cy}">No certified topology</text>`}</svg>`;
+  return `<svg class="topology" data-selected-link="${esc(view.SelectedLink||'')}" viewBox="0 0 960 ${height}" role="group" aria-label="Interactive concentric network topology"><defs><marker id="${arrow}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#466fc2"/></marker></defs><ellipse class="topology-ring outer" cx="480" cy="${diagram.cy}" rx="${diagram.outerRX}" ry="${diagram.outerRY}"/><ellipse class="topology-ring inner" cx="480" cy="${diagram.cy}" rx="${diagram.outerRX*.58}" ry="${diagram.outerRY*.59}"/>${edgeMarkup}${metricMarkup}${routeMarkup}${directMarkup}${nodeMarkup}${nodes.length ? '' : `<text class="sub" text-anchor="middle" x="480" y="${diagram.cy}">No certified topology</text>`}</svg>`;
 }
 
+const bindings=new WeakMap;
 export function bindTopology(container) {
   const svg = container?.querySelector('svg');
   if (!svg) return;
+  bindings.get(container)?.abort();
+  const controller=new AbortController;bindings.set(container,controller);
+  const listen=(event,handler)=>svg.addEventListener(event,handler,{signal:controller.signal});
   const nodes = [...svg.querySelectorAll('.topology-node')];
   const focused = container.contains(document.activeElement) ? document.activeElement.dataset.node : '';
   const known = new Set(nodes.map(node => node.dataset.node));
@@ -146,16 +160,16 @@ export function bindTopology(container) {
     const node = event.target.closest('.topology-node'), edge = event.target.closest('.topology-edge');
     apply(node?.dataset.node || '', edge);
   };
-  svg.addEventListener('pointerover', preview);
-  svg.addEventListener('focusin', preview);
-  svg.addEventListener('pointerleave', () => apply(locked));
-  svg.addEventListener('focusout', () => apply(locked));
-  svg.addEventListener('click', event => {
+  listen('pointerover', preview);
+  listen('focusin', preview);
+  listen('pointerleave', () => apply(locked));
+  listen('focusout', () => apply(locked));
+  listen('click', event => {
     const node = event.target.closest('.topology-node');
     locked = node ? locked === node.dataset.node ? '' : node.dataset.node : '';
     apply(locked);
   });
-  svg.addEventListener('keydown', event => {
+  listen('keydown', event => {
     const node = event.target.closest('.topology-node'), edge = event.target.closest('[data-topology-link]');
     if (edge && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();

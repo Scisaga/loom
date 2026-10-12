@@ -14,6 +14,17 @@ export function currentDevices(snapshot){
 
 export const reportIsCurrent=(value,now)=>value?.freshness==='current'&&value.current_until>now;
 
+export function nodeRuntimeState(device,now){
+  if(!device?.authorized||device.conflicted||!reportIsCurrent(device.evidence,now))return 'unknown';
+  return ['running','error','stopped','unknown'].includes(device.runtime_state)?device.runtime_state:'unknown';
+}
+
+export function nodeRuntimeCounts(devices,now){
+  const counts={running:0,error:0,stopped:0,unknown:0};
+  for(const device of devices)counts[nodeRuntimeState(device,now)]++;
+  return counts;
+}
+
 // Only reduce the received display projection. Original reported fields remain
 // intact, and a later local clock reading can never revive an excluded sample.
 export function expireEvidence(snapshot,now){
@@ -47,6 +58,15 @@ export function componentComparisons(device,report){
     const result=device?.component_error?'unavailable':!wanted?'unconfigured':!observed?'missing':!wanted.artifact_digest||!observed.artifact_digest?'unknown':wanted.artifact_digest===observed.artifact_digest&&wanted.version===observed.version?'reported_match':'reported_mismatch';
     return {component_id:value.component_id,platform:value.platform,expected:wanted,actual:observed,result};
   });
+}
+
+export function appliedReadback(device,now){
+  const report=device.evidence,rows=componentComparisons(device,report).filter(row=>row.expected);
+  if(!device.authorized||device.conflicted||device.component_error||!rows.length||!reportIsCurrent(report,now))return 'unknown';
+  if(!report.runtime?.applied_view_digest||!report.view_digest)return 'unknown';
+  if(report.runtime.applied_view_digest!==report.view_digest)return 'reported_mismatch';
+  if(rows.some(row=>row.result==='reported_mismatch'))return 'reported_mismatch';
+  return rows.every(row=>row.result==='reported_match')?'reported_match':'unknown';
 }
 export async function expectedComponentID(value){
   const identity={node_id:value.node_id,component_id:value.component_id,platform:value.platform},bytes=new TextEncoder().encode('loom-expected-component-v3\0'+canonical(identity));

@@ -23,7 +23,7 @@ func TestWebChromeDNSWriteReadRestart(t *testing.T) {
 	httpServer := httptest.NewServer(server.AdminHandler())
 	defer httpServer.Close()
 	browser := openCommandChrome(t, httpServer.URL+"/services?tab=dns&new=1")
-	waitChromeEvaluation(t, browser, `document.querySelector('#dns-record-form')&&document.querySelector('#connection').textContent.includes('local writes available')`)
+	waitChromeEvaluation(t, browser, `document.querySelector('#dns-record-form')&&document.querySelector('#connection').title.includes('local writes available')`)
 	chromeDo(t, browser, `(()=>{const f=document.querySelector('#dns-record-form');f.elements.id.value='demo-web-dns';f.elements.name.value='demo-business.loom';f.elements.addresses.value='192.0.2.10\n2001:db8::10';f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, browser, `document.querySelector('#notice').textContent.includes('Accepted locally')&&location.search.includes('record=demo-web-dns')`)
 	records := runtime.Authority.Snapshot().NetworkIntent.DNSRecords

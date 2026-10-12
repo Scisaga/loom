@@ -27,7 +27,7 @@ func TestWebChromeWebsiteRootWriteExportRestartDelete(t *testing.T) {
 	httpServer := httptest.NewServer(server.AdminHandler())
 	defer httpServer.Close()
 	browser := openCommandChrome(t, httpServer.URL+"/settings")
-	waitChromeEvaluation(t, browser, `document.querySelector('#public-trust-form')&&document.querySelector('#connection').textContent.includes('local writes available')`)
+	waitChromeEvaluation(t, browser, `document.querySelector('#public-trust-form')&&document.querySelector('#connection').title.includes('local writes available')`)
 	value := testWebsiteTrust(t, time.Now())
 	der, _ := base64.RawURLEncoding.DecodeString(value.CertificateDER)
 	certificate, _ := json.Marshal(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})))

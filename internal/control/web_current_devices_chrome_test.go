@@ -13,10 +13,11 @@ func TestWebChromeCurrentDevicesFollowSignedLifecycle(t *testing.T) {
 	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
 		t.Skip("set LOOM_WEB_CHROME_TEST=1 for current inventory acceptance")
 	}
-	host := httptest.NewServer((&Server{}).AdminHandler())
+	fixture, _, _, _, _, _ := enrollmentAuthorityFixture(t)
+	host := httptest.NewServer(fixture.AdminHandler())
 	defer host.Close()
 	debug := openCommandChrome(t, host.URL+"/")
-	waitChromeEvaluation(t, debug, `document.querySelector('#app')!==null&&document.readyState==='complete'`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#app h1')&&document.querySelector('#connection').title.includes('local writes available')`)
 	for _, state := range []string{"open", "bound", "cancelled", "expired", "completed", "revoked", "deleted", "conflicted"} {
 		t.Run(state, func(t *testing.T) {
 			server, invite, materialID, claim, _, dependencies := enrollmentAuthorityFixture(t)

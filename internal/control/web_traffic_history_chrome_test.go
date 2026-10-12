@@ -114,6 +114,13 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if chromeDo(t, debug, `document.querySelector('[data-link-row="demo-link"]').textContent.includes('Shared peer')`) != true {
 		t.Fatal("shared Link counters look like exclusive service bytes")
 	}
+	chromeDo(t, debug, `document.querySelector('[data-topology-link="demo-link"]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card').dataset.selectedLink==='demo-link'`)
+	if chromeDo(t, debug, `!new URLSearchParams(location.search).has('link')`) != true {
+		t.Fatal("hover preview changed the pinned selection")
+	}
+	chromeDo(t, debug, `document.querySelector('#topology').dispatchEvent(new PointerEvent('pointerleave'));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card').dataset.selectedLink===''`)
 	chromeDo(t, debug, `document.querySelector('[data-topology-link="demo-link"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-selected-link="demo-link"].topology-traffic-card .wg-endpoint-hours')?.querySelectorAll('[data-traffic-endpoint]').length===48`)
 	if chromeDo(t, debug, `(()=>{const card=document.querySelector('.topology-traffic-card');return new URLSearchParams(location.search).get('link')==='demo-link'&&card.querySelectorAll('[data-traffic-endpoint="demo-exit"][data-traffic-value="unknown"]').length===24&&card.querySelectorAll('[data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]').length===1&&document.querySelector('.topology-metrics').textContent.includes('0.139 Mbps')})()`) != true {

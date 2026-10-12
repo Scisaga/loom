@@ -5,9 +5,9 @@ export function runtimeHistoryKey(projection,device){
 }
 export const runtimeHistoryVersion=device=>JSON.stringify([device.last_report_at,device.evidence?.report_sequence,device.evidence?.view_digest,device.evidence?.runtime]);
 
-export function runtimeHistoryHTML(projection,device,history){
+export function runtimeHistoryHTML(projection,device,history,showCurrent=true){
  const current=device.runtime_state||'unknown',stateClass=current==='running'?'ok':current==='error'?'bad':'dim';
- const prefix=`<span class="${stateClass}">Runtime: ${esc(current)}</span>`;
+ const prefix=showCurrent?`<span class="${stateClass}">Runtime: ${esc(current)}</span>`:'';
  if(!device.authorized)return `${prefix}<small>Runtime history unavailable for this authorization.</small>`;
  const item=history?.key===runtimeHistoryKey(projection,device)?history:null;
  let contents='<small>Loading runtime samples…</small>';
