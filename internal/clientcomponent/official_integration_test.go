@@ -76,9 +76,13 @@ func TestReviewedArtifactRevisionBindingFromEnvironment(t *testing.T) {
 		}
 		return body
 	}
+	previousVersion, err := ReviewedSourceVersion(read(previous, "source-provenance.json"))
+	if err != nil || previousVersion == DataPlaneVersion {
+		t.Fatal("requires a distinct reviewed historical source build", err)
+	}
 	for _, item := range []struct{ root, version, other string }{
-		{previous, "1.11.4-loom.1", DataPlaneVersion},
-		{current, DataPlaneVersion, "1.11.4-loom.1"},
+		{previous, previousVersion, DataPlaneVersion},
+		{current, DataPlaneVersion, previousVersion},
 	} {
 		inputs := map[string][]byte{}
 		for name := range reviewedArtifacts[item.version].sources {

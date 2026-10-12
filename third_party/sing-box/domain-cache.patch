@@ -1505,7 +1505,15 @@
  	System         bool
 --- a/transport/wireguard/device_stack.go
 +++ b/transport/wireguard/device_stack.go
-@@ -16,6 +16,7 @@
+@@ -6,6 +6,7 @@
+ 	"context"
+ 	"net"
+ 	"os"
++	"sync"
+ 
+ 	"github.com/sagernet/gvisor/pkg/buffer"
+ 	"github.com/sagernet/gvisor/pkg/tcpip"
+@@ -16,6 +17,7 @@
  	"github.com/sagernet/gvisor/pkg/tcpip/stack"
  	"github.com/sagernet/gvisor/pkg/tcpip/transport/tcp"
  	"github.com/sagernet/gvisor/pkg/tcpip/transport/udp"
@@ -1513,7 +1521,34 @@
  	"github.com/sagernet/sing-tun"
  	E "github.com/sagernet/sing/common/exceptions"
  	M "github.com/sagernet/sing/common/metadata"
-@@ -93,6 +94,12 @@
+@@ -27,14 +29,18 @@
+ var _ Device = (*stackDevice)(nil)
+ 
+ type stackDevice struct {
+-	stack      *stack.Stack
+-	mtu        uint32
+-	events     chan wgTun.Event
+-	outbound   chan *stack.PacketBuffer
+-	done       chan struct{}
+-	dispatcher stack.NetworkDispatcher
+-	addr4      tcpip.Address
+-	addr6      tcpip.Address
++	receiveMu    sync.RWMutex
++	closeOnce    sync.Once
++	closeErr     error
++	stack        *stack.Stack
++	mtu          uint32
++	events       chan wgTun.Event
++	outbound     chan *stack.PacketBuffer
++	done         chan struct{}
++	dispatcherMu sync.RWMutex
++	dispatcher   stack.NetworkDispatcher
++	addr4        tcpip.Address
++	addr6        tcpip.Address
+ }
+ 
+ func newStackDevice(options DeviceOptions) (*stackDevice, error) {
+@@ -93,6 +99,12 @@
  		networkProtocol = header.IPv6ProtocolNumber
  		bind.Addr = w.addr6
  	}
@@ -1526,7 +1561,7 @@
  	switch N.NetworkName(network) {
  	case N.NetworkTCP:
  		tcpConn, err := DialTCPWithBind(ctx, w.stack, bind, addr, networkProtocol)
-@@ -123,6 +130,12 @@
+@@ -123,6 +135,12 @@
  		networkProtocol = header.IPv6ProtocolNumber
  		bind.Addr = w.addr6
  	}
@@ -1539,15 +1574,90 @@
  	udpConn, err := gonet.DialUDP(w.stack, &bind, nil, networkProtocol)
  	if err != nil {
  		return nil, err
+@@ -164,6 +182,14 @@
+ }
+ 
+ func (w *stackDevice) Write(bufs [][]byte, offset int) (count int, err error) {
++	w.receiveMu.RLock()
++	defer w.receiveMu.RUnlock()
++	select {
++	case <-w.done:
++		return
++	default:
++	}
++
+ 	for _, b := range bufs {
+ 		b = b[offset:]
+ 		if len(b) == 0 {
+@@ -179,7 +205,12 @@
+ 		packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{
+ 			Payload: buffer.MakeWithData(b),
+ 		})
+-		w.dispatcher.DeliverNetworkPacket(networkProtocol, packetBuffer)
++		w.dispatcherMu.RLock()
++		dispatcher := w.dispatcher
++		w.dispatcherMu.RUnlock()
++		if dispatcher != nil {
++			dispatcher.DeliverNetworkPacket(networkProtocol, packetBuffer)
++		}
+ 		packetBuffer.DecRef()
+ 		count++
+ 	}
+@@ -203,14 +234,21 @@
+ }
+ 
+ func (w *stackDevice) Close() error {
+-	close(w.done)
+-	close(w.events)
+-	w.stack.Close()
+-	for _, endpoint := range w.stack.CleanupEndpoints() {
+-		endpoint.Abort()
+-	}
+-	w.stack.Wait()
+-	return nil
++	w.closeOnce.Do(func() {
++		// WireGuard closes the device before stopping its receive workers.
++		// Drain admitted deliveries before detaching the stack; never hold this
++		// lock across stack teardown and its endpoint callbacks.
++		w.receiveMu.Lock()
++		close(w.done)
++		w.receiveMu.Unlock()
++		close(w.events)
++		w.stack.Close()
++		for _, endpoint := range w.stack.CleanupEndpoints() {
++			endpoint.Abort()
++		}
++		w.stack.Wait()
++	})
++	return w.closeErr
+ }
+ 
+ func (w *stackDevice) BatchSize() int {
+@@ -244,10 +282,14 @@
+ }
+ 
+ func (ep *wireEndpoint) Attach(dispatcher stack.NetworkDispatcher) {
++	ep.dispatcherMu.Lock()
+ 	ep.dispatcher = dispatcher
++	ep.dispatcherMu.Unlock()
+ }
+ 
+ func (ep *wireEndpoint) IsAttached() bool {
++	ep.dispatcherMu.RLock()
++	defer ep.dispatcherMu.RUnlock()
+ 	return ep.dispatcher != nil
+ }
+ 
 --- a/transport/wireguard/device_system_stack.go
 +++ b/transport/wireguard/device_system_stack.go
-@@ -3,16 +3,21 @@
+@@ -3,26 +3,34 @@
  package wireguard
  
  import (
 +	"context"
 +	"net"
  	"net/netip"
++	"sync"
  
  	"github.com/sagernet/gvisor/pkg/buffer"
  	"github.com/sagernet/gvisor/pkg/tcpip"
@@ -1563,7 +1673,11 @@
  	"github.com/sagernet/wireguard-go/device"
  )
  
-@@ -22,7 +27,7 @@
+ var _ Device = (*systemStackDevice)(nil)
+ 
+ type systemStackDevice struct {
++	receiveMu sync.RWMutex
++	closeErr  error
  	*systemDevice
  	stack     *stack.Stack
  	endpoint  *deviceEndpoint
@@ -1572,7 +1686,7 @@
  }
  
  func newSystemStackDevice(options DeviceOptions) (*systemStackDevice, error) {
-@@ -38,29 +43,52 @@
+@@ -38,29 +46,60 @@
  	if err != nil {
  		return nil, err
  	}
@@ -1611,6 +1725,14 @@
  }
  
  func (w *systemStackDevice) Write(bufs [][]byte, offset int) (count int, err error) {
++	w.receiveMu.RLock()
++	defer w.receiveMu.RUnlock()
++	select {
++	case <-w.endpoint.done:
++		return
++	default:
++	}
++
  	if w.batchDevice != nil {
 -		w.writeBufs = w.writeBufs[:0]
 +		// Peer receive goroutines run concurrently. BatchWrite mutates slice
@@ -1631,7 +1753,35 @@
  		}
  	} else {
  		for _, packet := range bufs {
-@@ -94,18 +122,40 @@
+@@ -81,46 +120,82 @@
+ }
+ 
+ func (w *systemStackDevice) Close() error {
+-	close(w.endpoint.done)
+-	w.stack.Close()
+-	for _, endpoint := range w.stack.CleanupEndpoints() {
+-		endpoint.Abort()
+-	}
+-	w.stack.Wait()
+-	return w.systemDevice.Close()
++	w.closeOnce.Do(func() {
++		// WireGuard closes the device before stopping its receive workers.
++		// Drain admitted deliveries before detaching the stack; never hold this
++		// lock across stack teardown and its endpoint callbacks.
++		w.receiveMu.Lock()
++		close(w.endpoint.done)
++		w.receiveMu.Unlock()
++		w.stack.Close()
++		for _, endpoint := range w.stack.CleanupEndpoints() {
++			endpoint.Abort()
++		}
++		w.stack.Wait()
++		w.closeErr = w.systemDevice.Close()
++	})
++	return w.closeErr
+ }
+ 
+ func (w *systemStackDevice) writeStack(packet []byte) bool {
  	var (
  		networkProtocol tcpip.NetworkProtocolNumber
  		destination     netip.Addr
@@ -1675,6 +1825,47 @@
  		}
  	}
  	packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{
+ 		Payload: buffer.MakeWithData(packet),
+ 	})
+-	w.endpoint.dispatcher.DeliverNetworkPacket(networkProtocol, packetBuffer)
++	w.endpoint.dispatcherMu.RLock()
++	dispatcher := w.endpoint.dispatcher
++	w.endpoint.dispatcherMu.RUnlock()
++	if dispatcher != nil {
++		dispatcher.DeliverNetworkPacket(networkProtocol, packetBuffer)
++	}
+ 	packetBuffer.DecRef()
+ 	return true
+ }
+ 
+ type deviceEndpoint struct {
+-	mtu        uint32
+-	done       chan struct{}
+-	device     *device.Device
+-	dispatcher stack.NetworkDispatcher
++	mtu          uint32
++	done         chan struct{}
++	device       *device.Device
++	dispatcherMu sync.RWMutex
++	dispatcher   stack.NetworkDispatcher
+ }
+ 
+ func (ep *deviceEndpoint) MTU() uint32 {
+@@ -146,10 +221,14 @@
+ }
+ 
+ func (ep *deviceEndpoint) Attach(dispatcher stack.NetworkDispatcher) {
++	ep.dispatcherMu.Lock()
+ 	ep.dispatcher = dispatcher
++	ep.dispatcherMu.Unlock()
+ }
+ 
+ func (ep *deviceEndpoint) IsAttached() bool {
++	ep.dispatcherMu.RLock()
++	defer ep.dispatcherMu.RUnlock()
+ 	return ep.dispatcher != nil
+ }
+ 
 --- a/transport/wireguard/endpoint.go
 +++ b/transport/wireguard/endpoint.go
 @@ -2,6 +2,7 @@
@@ -2099,7 +2290,7 @@
 +
 +func TestConcurrentPeersKeepTheirOwnHostBatch(t *testing.T) {
 +	batch := &checkedHostBatch{entered: make(chan struct{}, 2), release: make(chan struct{})}
-+	device := &systemStackDevice{systemDevice: &systemDevice{
++	device := &systemStackDevice{endpoint: &deviceEndpoint{done: make(chan struct{})}, systemDevice: &systemDevice{
 +		batchDevice: batch,
 +		options: DeviceOptions{Address: []netip.Prefix{netip.MustParsePrefix("192.0.2.20/32")},
 +			HostSources: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32")}},
@@ -2293,4 +2484,187 @@
 +		return "", nil, err
 +	}
 +	return e.counterEpoch, values, nil
++}
+
+--- /dev/null
++++ b/transport/wireguard/stack_close_test.go
+@@ -0,0 +1,179 @@
++//go:build with_gvisor
++
++package wireguard
++
++import (
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/gvisor/pkg/tcpip"
++	"github.com/sagernet/gvisor/pkg/tcpip/stack"
++	"github.com/sagernet/sing-tun"
++	wgTun "github.com/sagernet/wireguard-go/tun"
++)
++
++type demoClosingTun struct {
++	tun.Tun
++	closes atomic.Int32
++}
++
++func (d *demoClosingTun) Close() error { d.closes.Add(1); return nil }
++
++type demoBlockingDispatcher struct {
++	stack.NetworkDispatcher
++	entered    chan struct{}
++	release    chan struct{}
++	deliveries atomic.Int32
++}
++
++func (d *demoBlockingDispatcher) DeliverNetworkPacket(_ tcpip.NetworkProtocolNumber, _ *stack.PacketBuffer) {
++	d.deliveries.Add(1)
++	d.entered <- struct{}{}
++	<-d.release
++}
++
++func TestStackCloseDrainsReceivedPacketsBeforeDetach(t *testing.T) {
++	for _, system := range []bool{false, true} {
++		name := "userspace"
++		if system {
++			name = "system"
++		}
++		t.Run(name, func(t *testing.T) {
++			dispatcher := &demoBlockingDispatcher{entered: make(chan struct{}, 1), release: make(chan struct{})}
++			var write func([][]byte, int) (int, error)
++			var closeDevice func() error
++			var detached func() bool
++			var receiveMu *sync.RWMutex
++			var host *demoClosingTun
++			if system {
++				ep := &deviceEndpoint{mtu: 1408, done: make(chan struct{})}
++				ipStack, err := tun.NewGVisorStack(ep)
++				if err != nil {
++					t.Fatal(err)
++				}
++				host = &demoClosingTun{}
++				d := &systemStackDevice{systemDevice: &systemDevice{device: host, events: make(chan wgTun.Event)}, endpoint: ep, stack: ipStack}
++				ep.Attach(dispatcher)
++				write = d.Write
++				closeDevice = d.Close
++				detached = func() bool { return !ep.IsAttached() }
++				receiveMu = &d.receiveMu
++			} else {
++				d := &stackDevice{mtu: 1408, done: make(chan struct{}), events: make(chan wgTun.Event), outbound: make(chan *stack.PacketBuffer, 1)}
++				ipStack, err := tun.NewGVisorStack((*wireEndpoint)(d))
++				if err != nil {
++					t.Fatal(err)
++				}
++				d.stack = ipStack
++				(*wireEndpoint)(d).Attach(dispatcher)
++				write = d.Write
++				closeDevice = d.Close
++				detached = func() bool { return !(*wireEndpoint)(d).IsAttached() }
++				receiveMu = &d.receiveMu
++			}
++			packet := make([]byte, 40)
++			packet[0] = 0x60
++			writeDone := make(chan error, 1)
++			go func() { _, err := write([][]byte{packet}, 0); writeDone <- err }()
++			select {
++			case <-dispatcher.entered:
++			case <-time.After(3 * time.Second):
++				t.Fatal("received packet did not reach dispatcher")
++			}
++			closeDone := make(chan error, 1)
++			go func() { closeDone <- closeDevice() }()
++			// A pending close owns the next write lock; observe it without relying on a sleep.
++			deadline := time.Now().Add(3 * time.Second)
++			for receiveMu.TryRLock() {
++				receiveMu.RUnlock()
++				if time.Now().After(deadline) {
++					t.Fatal("close did not wait for the admitted packet")
++				}
++			}
++			if detached() {
++				t.Fatal("stack detached before admitted packet completed")
++			}
++			select {
++			case err := <-closeDone:
++				t.Fatalf("close completed during delivery: %v", err)
++			default:
++			}
++			close(dispatcher.release)
++			select {
++			case err := <-writeDone:
++				if err != nil {
++					t.Fatal(err)
++				}
++			case <-time.After(3 * time.Second):
++				t.Fatal("received packet did not finish")
++			}
++			select {
++			case err := <-closeDone:
++				if err != nil {
++					t.Fatal(err)
++				}
++			case <-time.After(3 * time.Second):
++				t.Fatal("stack teardown deadlocked")
++			}
++			if !detached() {
++				t.Fatal("stack endpoint remained attached")
++			}
++			for i := 0; i < 10; i++ {
++				if _, err := write([][]byte{packet}, 0); err != nil {
++					t.Fatal(err)
++				}
++			}
++			if dispatcher.deliveries.Load() != 1 {
++				t.Fatal("closed stack admitted another packet")
++			}
++			if err := closeDevice(); err != nil {
++				t.Fatal(err)
++			}
++			if host != nil && host.closes.Load() != 1 {
++				t.Fatal("host device was not closed exactly once")
++			}
++		})
++	}
++}
++
++func TestStackDispatcherDetachIsSafeDuringRead(t *testing.T) {
++	for _, system := range []bool{false, true} {
++		dispatcher := &demoBlockingDispatcher{entered: make(chan struct{}, 1), release: make(chan struct{})}
++		close(dispatcher.release)
++		// This dispatcher is never called; all writes use an already detached endpoint.
++		var attach func(stack.NetworkDispatcher)
++		var attached func() bool
++		var write func([][]byte, int) (int, error)
++		if system {
++			ep := &deviceEndpoint{done: make(chan struct{})}
++			d := &systemStackDevice{systemDevice: &systemDevice{}, endpoint: ep}
++			attach = ep.Attach
++			attached = ep.IsAttached
++			write = d.Write
++		} else {
++			d := &stackDevice{done: make(chan struct{})}
++			attach = (*wireEndpoint)(d).Attach
++			attached = (*wireEndpoint)(d).IsAttached
++			write = d.Write
++		}
++		done := make(chan struct{})
++		go func() {
++			defer close(done)
++			for i := 0; i < 1000; i++ {
++				attach(dispatcher)
++				attach(nil)
++			}
++		}()
++		for i := 0; i < 1000; i++ {
++			_ = attached()
++		}
++		<-done
++		packet := make([]byte, 40)
++		packet[0] = 0x60
++		if _, err := write([][]byte{packet}, 0); err != nil {
++			t.Fatal(err)
++		}
++	}
 +}
