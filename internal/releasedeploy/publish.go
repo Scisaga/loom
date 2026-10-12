@@ -45,6 +45,7 @@ type Result struct {
 	DistributionRoot  int             `json:"distribution_root,omitempty"`
 	Artifact          int             `json:"artifact,omitempty"`
 	ReadBytes         int64           `json:"read_bytes,omitempty"`
+	Attempt           int             `json:"attempt,omitempty"`
 	Operation         string          `json:"operation"`
 	Verified          bool            `json:"verified,omitempty"`
 	CoordinatesDiffer bool            `json:"ssh_coordinates_differ,omitempty"`
@@ -426,20 +427,75 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 				observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: operation, Verified: true})
 				continue
 			}
-			hash := sha256.New()
-			size, readErr := io.Copy(hash, io.LimitReader(response.Body, int64(entry.Artifact.Size)+1))
-			closeErr := response.Body.Close()
-			if readErr != nil {
-				return fmt.Errorf("HTTPS root %d artifact %d body interrupted after %d of %d bytes: %w; pointers were not advanced by this invocation", i+1, j+1, size, entry.Artifact.Size, readErr)
-			}
-			if response.StatusCode != http.StatusOK || response.Uncompressed || readErr != nil || closeErr != nil || size != int64(entry.Artifact.Size) || "sha256:"+hex.EncodeToString(hash.Sum(nil)) != entry.Artifact.Digest {
-				return fmt.Errorf("HTTPS root %d artifact %d exact bytes unconfirmed; pointers were not advanced by this invocation", i+1, j+1)
+			size, err := verifyArtifactBody(ctx, &copy, url, entry.Artifact, response, func(attempt int, size int64) {
+				observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: "https_artifact_resume", ReadBytes: size, Attempt: attempt})
+			})
+			if err != nil {
+				return fmt.Errorf("HTTPS root %d artifact %d body unconfirmed after %d of %d bytes: %w; pointers were not advanced by this invocation", i+1, j+1, size, entry.Artifact.Size, err)
 			}
 			observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: "https_artifact", ReadBytes: size, Verified: true})
 		}
 		observe(Result{DistributionRoot: i + 1, Operation: "https", Verified: true})
 		return nil
 	})
+}
+
+// A resumed prefix has no authority of its own. Only the complete signed length
+// and digest can verify this body; all progress disappears when this call ends.
+func verifyArtifactBody(ctx context.Context, client *http.Client, url string, artifact control.ReleaseArtifact, response *http.Response, retry func(int, int64)) (int64, error) {
+	hash := sha256.New()
+	want, size := int64(artifact.Size), int64(0)
+	for attempt := 1; attempt <= 3; attempt++ {
+		valid := !response.Uncompressed && response.Header.Get("Content-Encoding") == ""
+		switch response.StatusCode {
+		case http.StatusOK:
+			// Range support is optional. A full response starts a new hash.
+			hash.Reset()
+			size = 0
+		case http.StatusPartialContent:
+			valid = valid && size > 0 && response.Header.Get("Content-Range") == fmt.Sprintf("bytes %d-%d/%d", size, want-1, want) && response.ContentLength == want-size
+		default:
+			valid = false
+		}
+		if !valid {
+			response.Body.Close()
+			return size, errors.New("unexpected status, encoding or content range")
+		}
+		read, readErr := io.Copy(hash, io.LimitReader(response.Body, want-size+1))
+		size += read
+		closeErr := response.Body.Close()
+		if err := ctx.Err(); err != nil {
+			return size, err
+		}
+		if closeErr != nil || size > want {
+			return size, errors.New("body closure or length mismatch")
+		}
+		if readErr == nil && size == want {
+			if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != artifact.Digest {
+				return size, errors.New("complete body digest mismatch")
+			}
+			return size, nil
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+			return size, readErr
+		}
+		if attempt == 3 || size >= want {
+			return size, errors.New("incomplete body exhausted bounded reconnects")
+		}
+		retry(attempt+1, size)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return size, err
+		}
+		if size > 0 {
+			request.Header.Set("Range", fmt.Sprintf("bytes=%d-", size))
+		}
+		response, err = client.Do(request)
+		if err != nil {
+			return size, err
+		}
+	}
+	panic("unreachable")
 }
 
 // parallelByNode waits for all workers, including on failure. A failed node does
