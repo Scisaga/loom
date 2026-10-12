@@ -139,16 +139,19 @@ Windows 参考 Android [连接页](../../assets/client/android/connection-connec
 | `connection-disconnected-unjoined` | 正常流程 | `*connection-disconnected-unjoined*.png` | [原型](../../assets/client/android/connection-disconnected-unjoined.svg) | 未加入/未连接及加入入口；固定截图不证明加入链已完成 |
 | `connection-connected-auto` | 正常流程 | `*connection-connected-auto*.png` | [原型](../../assets/client/android/connection-connected-auto.svg) | 已连接、当前路径、按 Service 展示；目标运行规则已有原生与生产验收，视觉覆盖按当前原生基准单独核对 |
 | `connection-error` | 异常状态 | `*connection-error*.png` | [原型](../../assets/client/android/connection-error.svg) | 认证配置已保存、VPN 启动失败，无 active；旧 PNG 的业务失败推导未连接不再作为目标 |
-| `connection-business-failed` | 异常业务观测 | 暂无 | [原型](../../assets/client/android/connection-business-failed.svg) | VPN 已连接，具体目标失败，另一 Service 独立为未知；同连接页状态，无对应原生基准 |
+| `connection-business-failed` | 异常业务观测 | 暂无获批基准 | [原型](../../assets/client/android/connection-business-failed.svg) | 当前生产 Compose 已实现并生成原生 current；VPN 保持连接，目标失败依据和另一 Service 分列，原时间/有效期不重写；整组基准审查单列 |
 | `configuration-not-joined` | 正常流程 | `*configuration-not-joined*.png` | [原型](../../assets/client/android/configuration-not-joined.svg) | Android 可先有未加入本机配置；区别于 Windows 正常新增流程 |
 | `configuration-ready-multiple-profiles` | 正常流程 | `*configuration-ready-multiple-profiles*.png` | [原型](../../assets/client/android/configuration-ready-multiple-profiles.svg) | 区分认证配置已保存、当前连接和模式；旧 PNG 未体现保存文案 |
 | `configuration-join-error` | 异常状态 | `*configuration-join-error*.png` | [原型](../../assets/client/android/configuration-join-error.svg) | 原事务重试；放弃本机资料不撤销远端设备；目标文案尚未落入原生基准 |
-| `diagnostics-connected` | 正常运行与未知观测 | `*diagnostics-connected*.png` | [原型](../../assets/client/android/diagnostics-connected.svg) | Service、目标、采样/有效期分别展示；旧原生诊断仍为汇总探测文案 |
+| `diagnostics-connected` | 正常运行与未知观测 | `*diagnostics-connected*.png` | [原型](../../assets/client/android/diagnostics-connected.svg) | 当前生产 UI 已逐 Service/目标展示来源、采样/有效期；旧获批 PNG 仍为汇总文案，current 的实际业务与原签名报告已经对应 |
 | `profile-picker` | 正常流程 | `*profile-picker*.png` | [原型](../../assets/client/android/profile-picker.svg) | 当前连接与浏览配置分开；请求切换中的状态尚无原生截图 |
 | `notification-warning` | 异常提示 | `*notification-warning*.png` | [原型](../../assets/client/android/notification-warning.svg) | 通知警告不改变连接和业务结果；截图不证明系统通知权限流程 |
 
 Android 的正式 Activity 与截图 fixture 共用 `LoomHomeScreen`。真机尺寸和系统栏可能不同，
 因此真机截图只用于设备交互回读，不与固定 Layoutlib PNG 逐像素比较。
+第 107 代正式 APK `3adb949f` 的连接页、诊断页、两服务三目标、同身份重启及正常停止已由同机模拟器
+验证，公开及私有下载和原报告验签见[交付对账](../delivery-audit.md)。current 渲染集合为十项，获批基准
+仍为九项；已有软件业务不因基准尚未更新而降格为未实现，基准更新也不能抵扣实体终验。
 
 加入错误稿保留同一事务重试；“放弃本机加入”清理本机未完成的加入资料，不代表远端设备已撤销。
 诊断稿分别展示 `demo-web` 对 `web.example` 的有效观测，以及 `demo-api` 对 `api.example` 尚无当前网络

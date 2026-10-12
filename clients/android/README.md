@@ -49,6 +49,13 @@ for one Service does not establish another Service's health.
 If the selected candidate is unavailable, the model may choose one same-exit fallback and
 the host performs one second business check—there is no full candidate scan.
 
+The normal connection and diagnostics pages display each authorized Service and
+HTTPS target with its original candidate, result, sample time and expiry. A failed
+candidate leaving selection retains its historical explanation; missing samples
+remain unknown. UI expiry changes only the display, and normal stop or configuration
+replacement does not restore cleared samples. VPN connection and actual business
+outcomes remain separate. See the [business display projection](../../docs/clients/client-runtime-model.md#android-的业务观测展示).
+
 After selector readback, the existing report loop separately authenticates the
 public Hy2 first hops actually needed by the selection. Shared resources are
 sampled once per original validity window through protected underlay sockets.
@@ -147,6 +154,8 @@ regression screenshots. `LoomHomeRoute` owns
 `LoomHomeScreen` consumes only an immutable UI projection and is shared by the
 Activity and screenshot fixtures. The nine committed references are rendered
 by Compose screenshot alpha16 at Chinese/light/`412×915dp`/font scale 1.0.
+The current renderer also includes the tenth `connection-business-failed` scene;
+its generated PNG is review output until the complete gallery is approved.
 
 The editable [Android SVGs](../../assets/client/android/) express target behavior.
 The connection error scene keeps an accepted configuration while VPN startup fails;

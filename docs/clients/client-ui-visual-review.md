@@ -96,8 +96,10 @@ Windows 原生截图场景集中复用生产 `portableGUI`、真实 Win32 控件
 - `viewport-bottom`
 - `fixed-tun`
 
-以上是当前原生基准集合，不是目标场景数量上限。Windows 首次空态和 Android 业务失败仍连接的
-目标稿尚无对应原生基准，见[场景对照](prototype-review.md)；不得为补齐对照而复制 SVG 充当 PNG 基准。
+以上是当前原生基准集合，不是目标场景数量上限。Android 当前生产 Compose 已实现逐目标观测，
+Layoutlib 新增 `connection-business-failed` 后实际渲染十个场景；九个获批基准保持，新增场景仍由
+图廊明确记录为缺基准并失败，不能把 current 生成当成批准。Windows 首次空态与 Android 新场景
+尚无获批原生基准，见[场景对照](prototype-review.md)；不得复制 SVG 充当 PNG 基准。
 
 fixture 只使用 `demo-*`、固定时间和示例数据，不访问 Keystore、DPAPI、网络、相机、libbox 或系统
 身份。动画、光标、焦点、时钟和异步状态必须冻结。Windows 元数据还固定系统 build 和 renderer；
