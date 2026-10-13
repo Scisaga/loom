@@ -206,7 +206,7 @@ func TestWebChromeServicePolicyAndStaleDraft(t *testing.T) {
 	defer httpServer.Close()
 	debug := openCommandChrome(t, httpServer.URL+"/services?new=1")
 	waitChromeEvaluation(t, debug, `document.querySelector('#service-form')&&document.querySelector('#connection').title.includes('local writes available')`)
-	chromeDo(t, debug, `(()=>{const f=document.querySelector('#service-form');f.elements.id.value='demo-web-service';f.elements.name.value='Demo Web';f.elements.matchers.value='dns_exact demo.example';f.requestSubmit();return true})()`)
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#service-form');f.elements.id.value='demo-web-service';f.elements.name.value='Demo Web';f.querySelector('[data-matcher-value]').value='demo.example';f.querySelector('[data-matcher-value]').dispatchEvent(new Event('input',{bubbles:true}));f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')`)
 	projection := runtime.Authority.Snapshot()
 	if len(projection.NetworkIntent.Services) != 1 {
@@ -484,7 +484,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	// Hold the post-command HTTP snapshot while the live stream accepts the
 	// actual claim below. Its old open transaction must not overwrite completed.
 	delayNextSnapshot.Store(true)
-	chromeDo(t, debug, `(()=>{history.pushState({},'','/services?new=1');dispatchEvent(new PopStateEvent('popstate'));const f=document.querySelector('#service-form');f.elements.id.value='demo-unrelated-service';f.elements.name.value='Demo unrelated';f.elements.matchers.value='dns_exact unrelated.example';f.requestSubmit();return true})()`)
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/services?new=1');dispatchEvent(new PopStateEvent('popstate'));const f=document.querySelector('#service-form');f.elements.id.value='demo-unrelated-service';f.elements.name.value='Demo unrelated';f.querySelector('[data-matcher-value]').value='unrelated.example';f.querySelector('[data-matcher-value]').dispatchEvent(new Event('input',{bubbles:true}));f.requestSubmit();return true})()`)
 	select {
 	case <-snapshotCaptured:
 	case <-time.After(3 * time.Second):

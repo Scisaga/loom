@@ -488,6 +488,19 @@ Web 服务端以受保护安装信任输入中的发布验签公钥核验签名 
 目录刷新不替换正在编辑的选择；清除只撤销该期望。详情和 Device versions 的对照均使用现行事实引用，
 材料缺失或冲突明确显示不可用，不显示“未设置”或旧的成功比较。
 
+Services/Policies 的目录与编辑区按 `05/06` 开放排列。目录搜索、所选对象及新建/复制只是
+浏览输入；冲突对象保留暂停项和 Configuration state 入口，不用旧值生成可写表单，未知
+直达 ID 不打开其他对象。Service matcher 的可增删行只格式化既有 kind/value 列表，suffix
+显示前导点而规范值不含它；最终仍由同一严格 matcher 解析器与 operation 保存。
+Policy 的 any/only/none 并列可见，节点标签只表示原 NodeID 集合，顺序不表示路径；只有
+only 使用非空集合，清空标签保持 only 并拒绝保存，不改成 any。标签选择器是原表单的
+公开草稿，唯一提交值仍为原规范集合，不能写策略或增加权限；不可用原引用可见并可显式
+移除，候选按当前职责展示而不要求观测变绿。固定 Service、LAN 只读网关、复制/共享影响、
+父设备/邀请草稿与原请求重试保持，原表单 canonical 序列化及依赖校验不变。DNS 只保留
+一个列表/筛选，记录编辑原位展开；所有 A/AAAA 原答案仍可读写，不把合成单地址当上限。
+最小检查覆盖 continuous tag 多选/搜索/移除、空 only 拒绝与 LAN 字段排除、真实 matcher/
+Policy/DNS 写入及持久/运行消费、共享/复制的原草稿与依赖、原型布局和正式认证入口。
+
 发布页原型接线只增加现有 Web `Release` 的公开单向投影：`CatalogGeneration` 来自已验签
 `ReleaseSet.Catalog.Generation`，`Audience` 来自同条签名 `ReleaseArtifact.Audience`。不新增
 协议号、发布对象、最低版本约束或持久值，原 catalog/manifest 字节不动。纯 `releases.js`
