@@ -1,6 +1,7 @@
 package control
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
@@ -11,7 +12,10 @@ func TestWebChromeLivePathsPrototypeScopeAndLayout(t *testing.T) {
 		t.Skip("set LOOM_WEB_CHROME_TEST=1 for Live paths prototype acceptance")
 	}
 	server, _, _, _, _, _ := enrollmentAuthorityFixture(t)
-	host := httptest.NewServer(server.AdminHandler())
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'")
+		server.AdminHandler().ServeHTTP(w, r)
+	}))
 	defer host.Close()
 	debug := openCommandChrome(t, host.URL+"/routing")
 	waitChromeEvaluation(t, debug, `document.querySelector('.paths-layout')`)
@@ -41,7 +45,7 @@ func TestWebChromeLivePathsPrototypeScopeAndLayout(t *testing.T) {
 	if chromeDo(t, debug, `(async()=>{const {routingHTML}=await import('/assets/routing.js');const s=window.demoRoutingScope,p=s.paths[0];p.first_resource_id='demo-long-shared-first-hop-resource';p.link_ids=['demo-long-shared-link-with-its-original-direction-and-specification'];s.links[0].id=p.link_ids[0];document.querySelector('#app').innerHTML=routingHTML(s,new URLSearchParams({service:'demo-media',device:p.device}),Date.now());await document.fonts.ready;return true})()`) != true {
 		t.Fatal("long scoped path could not render")
 	}
-	if chromeDo(t, debug, `(()=>{const box=document.querySelector('.paths-route').getBoundingClientRect(),nodes=[...document.querySelectorAll('.paths-node-icon')].map(n=>n.getBoundingClientRect());return [...document.querySelectorAll('.paths-edge-metrics')].every(n=>{const r=n.getBoundingClientRect();return r.top>=box.top&&r.bottom<=Math.min(...nodes.map(v=>v.top))})&&document.documentElement.scrollWidth<=innerWidth})()`) != true {
+	if chromeDo(t, debug, `(()=>{const box=document.querySelector('.paths-route').getBoundingClientRect(),nodes=[...document.querySelectorAll('.paths-node-icon')].map(n=>n.getBoundingClientRect());return document.querySelectorAll('.paths-route [style]').length===0&&[...document.querySelectorAll('.paths-edge-metrics')].every(n=>{const r=n.getBoundingClientRect();return r.top>=box.top&&r.bottom<=Math.min(...nodes.map(v=>v.top))})&&document.documentElement.scrollWidth<=innerWidth})()`) != true {
 		t.Fatal("long Link metrics were clipped or overlapped the route nodes")
 	}
 
