@@ -107,7 +107,7 @@ func TestWebChromePolicyCopyPreservesAssignmentDraftAndSharedSource(t *testing.T
 	// Review the current device explicitly and select the already saved copy.
 	chromeDo(t, debug, `(()=>{location.reload();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form [name=name]')?.value==='Demo concurrent name'`)
-	chromeDo(t, debug, `(()=>{const f=document.querySelector('#device-policy-form');f.querySelector('[name=policy_id][value=demo-copied-policy]').click();f.requestSubmit();return true})()`)
+	chromeDo(t, debug, `(()=>{window.confirm=()=>true;const f=document.querySelector('#device-policy-form');f.querySelector('[name=policy_id][value=demo-copied-policy]').click();f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')`)
 	reopened, err := OpenAuthority(server.Runtime.Authority.root)
 	if err != nil {
@@ -136,7 +136,7 @@ func TestWebChromePolicyCopyPreservesAssignmentDraftAndSharedSource(t *testing.T
 	}
 	// Permanent deletion during the second copy must preserve only an inert
 	// public draft, never recreate an authorization entry or discard the fields.
-	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-access');dispatchEvent(new PopStateEvent('popstate'));document.querySelector('#device-policy-form [name=name]').value='Demo retained after deletion';document.querySelector('[data-copy-policy="demo-policy"]').click();return true})()`)
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-access');dispatchEvent(new PopStateEvent('popstate'));document.querySelector('#device-policy-form [name=name]').value='Demo retained after deletion';document.querySelector('[data-copy-policy="demo-copied-policy"]').click();return true})()`)
 	target, _ = projection.CurrentTarget("device", original.ID)
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-delete-during-copy", Operation: "device.delete", TargetKind: "device", TargetID: original.ID, Dependencies: target.MaterialIDs, Payload: DeleteTarget{ID: original.ID}})
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#policy-form');f.elements.id.value='demo-unassigned-copy';f.requestSubmit();return true})()`)

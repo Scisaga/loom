@@ -317,7 +317,7 @@ func TestWebChromeLocalEgressAuthorizationAndRevocation(t *testing.T) {
 	}
 	devicePath, _ := json.Marshal("/devices/" + invite.DeviceID)
 	chromeDo(t, debug, `(()=>{history.pushState({},'',`+string(devicePath)+`);dispatchEvent(new PopStateEvent('popstate'));return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelector('#app').innerText.includes('local egress: '+`+string(deviceID)+`)`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-device-panel=access] a[href^=\"/routing\"]')!==null`)
 	if chromeDo(t, debug, `document.querySelector('#app').innerText.includes('target (Direct)')`) == true {
 		t.Fatal("browser mislabelled local egress as ordinary Direct")
 	}
@@ -454,9 +454,16 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("download and device detail produced different invitations")
 	}
 	chromeDo(t, debug, `(()=>{document.querySelector('a[data-nav][href="/devices/demo-browser-device"]').click();return true})()`)
-	waitChromeEvaluation(t, debug, `location.pathname==='/devices/demo-browser-device'&&document.querySelector('#invite-uri')&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
+	waitChromeEvaluation(t, debug, `location.pathname==='/devices/demo-browser-device'&&document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='open'&&!document.querySelector('#invite-uri')`)
+	if chromeDo(t, debug, `!document.querySelector('#device-enrollment img.qr')&&document.querySelectorAll('[data-device-panel]:not([hidden])').length===1`) != true {
+		t.Fatal("pending device detail redelivered a capability or mixed sections")
+	}
+	// Reopen the original delivery from Identity & actions; the detail itself
+	// keeps joining and runtime separate from a capability display.
+	chromeDo(t, debug, `(()=>{document.querySelector('[data-device-section=identity]').click();document.querySelector('#device-enrollment a[data-nav]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#invite-uri')&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
 	if chromeDo(t, debug, `document.querySelector('#invite-uri').value`) != encoded {
-		t.Fatal("continuing into device detail changed the delivered transaction")
+		t.Fatal("reopening delivery changed the original invitation")
 	}
 	before := server.Runtime.Authority.Frontier()
 	chromeDo(t, debug, `(()=>{document.querySelector('[data-invite-refresh]').click();return true})()`)
@@ -553,11 +560,12 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		}
 	}
 	sendReport(report)
+	chromeDo(t, debug, `(()=>{document.querySelector('#device-runtime').open=true;document.querySelector('#device-measurements').open=true;return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime [data-runtime-state]')?.textContent==='running'&&document.querySelector('#device-measurements')?.innerText.includes('https://demo-service.example/zero-duration')`)
 	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('#device-measurements tbody tr')];return rows[0].cells[1].textContent==='https://demo-service.example/no-duration'&&rows[0].cells[3].firstChild.textContent==='—'&&rows[0].cells[3].querySelector('small').textContent==='Complete HTTPS request'&&rows[1].cells[1].textContent==='https://demo-service.example/zero-duration'&&rows[1].cells[3].firstChild.textContent==='0 ms'&&rows[1].cells[3].querySelector('small').textContent==='Complete HTTPS request'})()`) != true {
 		t.Fatal("measurements confused target/candidate or zero/missing duration")
 	}
-	if chromeDo(t, debug, `(()=>{const fields=[...document.querySelectorAll('#device-runtime dt')].map(v=>v.textContent);return fields.join('|')==='State|Applied view|Error code'&&!document.querySelector('.device-status').textContent.includes('overlay')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const fields=[...document.querySelectorAll('#device-runtime dt')].map(v=>v.textContent);return fields.join('|')==='State|Applied view|Error code'&&document.querySelector('.device-layout')!==null&&!document.querySelector('.device-status')})()`) != true {
 		t.Fatal("current runtime report was interpreted with legacy execution fields")
 	}
 	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('#device-runtime tr[data-component]')];return rows.length===2&&rows[0].dataset.component==='agent'&&rows[0].dataset.platform==='linux-amd64'&&rows[0].innerText.includes('demo-agent')&&rows[0].innerText.includes('sha256:'+'a'.repeat(64))&&rows.every(v=>v.innerText.includes('No expectation set'))})()`) != true {
@@ -566,8 +574,8 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if chromeDo(t, debug, `(async()=>{const {componentComparisons}=await import('/assets/model.js');const value={component_id:'sing-box',platform:'linux-amd64',version:'demo-version',artifact_digest:'sha256:'+'c'.repeat(64)},device={expected_components:[value]};const mismatch=componentComparisons(device,{components:[{...value,platform:'linux-arm64'}]});const missing=componentComparisons(device,{components:[{...value,artifact_digest:''}]});return mismatch.length===2&&mismatch[0].result==='missing'&&mismatch[1].result==='unconfigured'&&missing[0].result==='unknown'})()`) != true {
 		t.Fatal("component comparison ignored platform or accepted a missing digest")
 	}
-	chromeDo(t, debug, `(()=>{history.pushState({},'','/deployments');dispatchEvent(new PopStateEvent('popstate'));document.querySelector('[data-version-device="demo-browser-device"] details').open=true;return true})()`)
-	if chromeDo(t, debug, `document.querySelector('h1').textContent==='Device versions'&&document.querySelector('[data-version-device="demo-browser-device"]').innerText.includes('demo-dataplane')&&!document.querySelector('.release-workflow')&&!document.querySelector('.publisher-card')`) != true {
+	chromeDo(t, debug, `(()=>{history.pushState({},'','/deployments');dispatchEvent(new PopStateEvent('popstate'));document.querySelector('[data-version-device="demo-browser-device"][data-version-component="sing-box"] a[data-nav]').click();return true})()`)
+	if chromeDo(t, debug, `document.querySelector('h1').textContent==='Device versions'&&document.querySelector('[data-version-device="demo-browser-device"][data-version-component="sing-box"]').innerText.includes('demo-dataplane')&&!document.querySelector('.release-workflow')&&!document.querySelector('.publisher-card')`) != true {
 		t.Fatal("device versions lost signed components or restored publisher progress")
 	}
 	// Reopen the ordinary report history rather than storing component state.
@@ -606,6 +614,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 		t.Fatal("browser expectation did not enter the signed device view", err)
 	}
 	assertChromeWaitingForView(t, debug)
+	chromeDo(t, debug, `(()=>{document.querySelector("#device-runtime").open=true;return true})()`)
 	report.ReportSequence++
 	report.ViewDigest, report.Runtime.AppliedViewDigest = view.ViewDigest, view.ViewDigest
 	sendReport(report)
@@ -629,7 +638,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	report.Selections, report.Observations = []ReportSelection{}, []Observation{}
 	sendReport(report)
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime [data-runtime-state]')?.textContent==='error'&&document.querySelector('#device-runtime').textContent.includes('demo-execution-failed')`)
-	if chromeDo(t, debug, `document.querySelector('#device-runtime dd.mono').textContent==='—'&&!document.querySelector('.device-status').textContent.includes('overlay')`) != true {
+	if chromeDo(t, debug, `document.querySelector('#device-runtime dd.mono').textContent==='—'&&!document.querySelector('.device-status')`) != true {
 		t.Fatal("failed execution manufactured an applied view or legacy overlay")
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices');dispatchEvent(new PopStateEvent('popstate'));return true})()`)

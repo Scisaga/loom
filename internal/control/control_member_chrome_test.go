@@ -42,7 +42,7 @@ func TestControlMemberBrowserGrantsAndRevokesOnlyOrdinaryRoles(t *testing.T) {
 	}
 	httpServer := httptest.NewServer(server.AdminHandler())
 	defer httpServer.Close()
-	debug := openCommandChrome(t, httpServer.URL+"/devices/"+invite.DeviceID)
+	debug := openCommandChrome(t, httpServer.URL+"/devices/"+invite.DeviceID+"?edit=identity")
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form')`)
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#device-policy-form');f.querySelector('[name=responsibility][value=access]').click();f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.device-heading')?.textContent.includes('access + control')&&!document.querySelector('#device-policy-form').submitting`)

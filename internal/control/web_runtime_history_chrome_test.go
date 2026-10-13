@@ -18,7 +18,7 @@ func assertChromeRuntimeHistory(t *testing.T, debug *chromeDevTools) {
 	if chromeDo(t, debug, `document.querySelector('[name=q]')===demoHistorySearch&&demoHistorySearch.value==='Unsaved filter'&&demoHistorySearch.selectionStart===1&&demoHistorySearch.selectionEnd===4`) != true {
 		t.Fatal("history refresh lost the unsubmitted device filter")
 	}
-	chromeDo(t, debug, `(()=>{document.querySelector('a[href="/devices/demo-browser-device"]').click();return true})()`)
+	chromeDo(t, debug, `(()=>{document.querySelector('a[href="/devices/demo-browser-device"]').click();document.querySelector('#device-runtime').open=true;return true})()`)
 	waitChromeEvaluation(t, debug, `location.pathname==='/devices/demo-browser-device'&&document.querySelector('[data-runtime-history="demo-browser-device"] .runtime-hour.error')`)
 	chromeDo(t, debug, `(()=>{window.confirm=()=>true;document.querySelector('#device-policy-form [data-revoke-device]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `(async()=>{const response=await fetch('/api/control/ui/runtime-history?device=demo-browser-device');return response.status===404&&!document.querySelector('[data-runtime-history="demo-browser-device"]')})()`)
