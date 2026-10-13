@@ -5,6 +5,7 @@ package control
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/csv"
@@ -94,6 +95,44 @@ func TestWebEventsCachedPredecessorStillReadsActualOriginal(t *testing.T) {
 	server.events(response, httptest.NewRequest(http.MethodGet, "/api/control/ui/events?"+values.Encode(), nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatal("cached signature replaced a damaged predecessor original")
+	}
+}
+
+func TestEventRuntimeProjectionKeepsExactBytesKeyAndDisposableCache(t *testing.T) {
+	server, now := eventTestServer(t)
+	report := eventTestReport(t, server, 1, "running", now.Add(-time.Minute))
+	raw, err := CanonicalEncode(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _ := server.Config.PublicKey()
+	key := base64.RawURLEncoding.EncodeToString(public)
+	ref, runtime, err := server.Runtime.Reports.originalRuntime(raw, key)
+	if err != nil || !bytes.Equal(ref.key(ReleaseDigest(raw)), referenceOf(report).key(ReleaseDigest(raw))) || runtime.State != report.Runtime.State || runtime.Resources != nil {
+		t.Fatal("runtime projection lost the authenticated identity or retained listener state", err)
+	}
+	runtime.State = "stopped"
+	_, again, err := server.Runtime.Reports.originalRuntime(raw, key)
+	if err != nil || again.State != "running" {
+		t.Fatal("caller changed the immutable runtime projection", err)
+	}
+	other := testKey(t)
+	otherKey := base64.RawURLEncoding.EncodeToString(other.Public().(ed25519.PublicKey))
+	if _, _, err := server.Runtime.Reports.originalRuntime(raw, otherKey); err == nil {
+		t.Fatal("a cached runtime accepted a different public key")
+	}
+	changed := report
+	changed.Runtime.State = "stopped"
+	changedRaw, _ := CanonicalEncode(changed)
+	if _, _, err := server.Runtime.Reports.originalRuntime(changedRaw, key); err == nil {
+		t.Fatal("cached runtime replaced verification of changed original bytes")
+	}
+	values := url.Values{"from": {now.Add(-90 * time.Second).Format(time.RFC3339Nano)}, "until": {now.Format(time.RFC3339Nano)}}
+	before := eventTestQuery(t, server, values)
+	server.Runtime.Reports.cache.clear()
+	after := eventTestQuery(t, server, values)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("deleting the runtime cache changed the complete event result")
 	}
 }
 func TestWebEventsCompleteWindowPaginationExportAndRestart(t *testing.T) {

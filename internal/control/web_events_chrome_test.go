@@ -84,7 +84,7 @@ func TestWebChromeEventsScrollRetryDraftAndFilteredExport(t *testing.T) {
 		t.Fatal("Events drifted from its compact toolbar, open chart, three columns or strict styles")
 	}
 
-	chromeDo(t, debug, `(()=>{const select=document.querySelector('[data-events-window]');select.value='custom';select.dispatchEvent(new Event('change'));const f=select.form;f.elements.from.value=new Date(Date.parse(f.elements.until.value)-30*60000).toISOString();f.requestSubmit();return true})()`)
+	chromeDo(t, debug, `(()=>{const select=document.querySelector('[data-events-window]');select.value='custom';select.dispatchEvent(new Event('change'));const f=select.form;f.elements.from.value=new Date(Date.parse(f.elements.until.value)-30*60000).toISOString().replace(/\.([0-9]*?)0+Z$/,(_,fraction)=>fraction?'.'+fraction+'Z':'Z');f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-events-total]').textContent.includes('0 events')&&document.querySelector('.events-range[open]')`)
 	if chromeDo(t, debug, `!new URLSearchParams(location.search).has('window')&&document.querySelector('[data-events-window]').value==='custom'`) != true {
 		t.Fatal("time-window presentation became an unknown wire field or lost its exact UTC range")
