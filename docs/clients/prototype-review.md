@@ -402,8 +402,8 @@ LAN 场景选中已加入的 `demo-laptop` 与 `demo-office / demo-lan-policy`�
 服务暂停沿用 work-apps 已有冲突事实，并提供 Configuration state 的冲突对比入口。
 
 原 Observations 的通用矩阵和两块规则说明已移除；过期、缺失、不同传输不可互相代替等语义在对应
-候选和图表中保留。部署回读留在设备详情及 Releases。当前 SPA 的 `/routing` 仍按旧 policy scope
-组织路径，尚未接入本稿的服务汇总、实际路径归组、逐设备 Service/Policy、完整目标、业务历史和原位异常展示。
+候选和图表中保留。部署回读留在设备详情及 Releases。当前 SPA 的 `/routing` 已恢复该两层布局、实际路径归组、逐设备 Service/Policy、目标与业务历史；
+三个正式浏览器及原度量回读见[交付对账](../delivery-audit.md)，原型不作为远端即时状态。
 
 Services、DNS、Policies 及 `07` 至 `09` 的管理稿沿用这种组织方式。服务和策略目录分别保留
 四个与三个对象，选中有效对象时编辑草稿，使用者列表从设备授权派生；字段旁不另建 Policy 绑定。
@@ -444,7 +444,7 @@ Events 的筛选控件及 Apply/Clear 排在一行、统一高 42 px，默认 La
 步骤预先标为已完成。当前 SPA 已按
 [管理记录的阅读顺序](web-ui-projection.md#服务发布与管理记录的阅读顺序)接入 Events、网站证书和
 Configuration state；普通同对象显式解决已完成正常浏览器、签名原件、运行消费和生产部署，范围见
-[交付对账](../delivery-audit.md)。生产网站材料与当前原生视觉逐场景验收仍缺，SVG 不是部署回读。
+[交付对账](../delivery-audit.md)。生产网站材料及用户实体终验仍分别单列；原生截图基准已获整组批准，范围见交付对账，SVG 不是部署回读。
 
 | 场景/页面 | 目标原型 | 当前界面迭代重点 |
 |---|---|---|

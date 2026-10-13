@@ -599,19 +599,20 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 		if err != nil {
 			return nil, since, err
 		}
-		report, err := store.decodedReport(raw)
+		_, ref, err := locateReportKey(location.key)
 		if err != nil {
 			return nil, since, err
 		}
+		report, err := verifyEventReport(store, raw, keys[ref.DeviceID])
 		id := ReleaseDigest(raw)
-		if !bytes.Equal(referenceOf(report).key(id), location.key) || verifyEventReport(store, raw, keys[report.DeviceID]) != nil {
+		if err != nil || !bytes.Equal(referenceOf(report).key(id), location.key) {
 			return nil, since, errors.New("received report does not verify")
 		}
 		previousState := ""
 		detail := "Authenticated runtime baseline: " + report.Runtime.State + "."
 		if prior != nil {
-			var previous DeviceReport
-			if decodeStoredReport(prior, &previous) != nil || verifyEventReport(store, prior, keys[report.DeviceID]) != nil || !bytes.Equal(referenceOf(previous).key(ReleaseDigest(prior)), location.previous) {
+			previous, err := verifyEventReport(store, prior, keys[report.DeviceID])
+			if err != nil || !bytes.Equal(referenceOf(previous).key(ReleaseDigest(prior)), location.previous) {
 				return nil, since, errors.New("previous runtime report does not verify")
 			}
 			if previous.Runtime.State == report.Runtime.State && previous.Runtime.AppliedViewDigest == report.Runtime.AppliedViewDigest && previous.Runtime.ErrorCode == report.Runtime.ErrorCode {
@@ -619,17 +620,27 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 			}
 			previousState = previous.Runtime.State
 			detail = fmt.Sprintf("Authenticated runtime change: %s → %s.", previous.Runtime.State, report.Runtime.State)
+			if previousState == report.Runtime.State {
+				changed := []string{}
+				if previous.Runtime.AppliedViewDigest != report.Runtime.AppliedViewDigest {
+					changed = append(changed, "applied View")
+				}
+				if previous.Runtime.ErrorCode != report.Runtime.ErrorCode {
+					changed = append(changed, "runtime error")
+				}
+				detail = fmt.Sprintf("Authenticated %s changed; runtime remains %s.", strings.Join(changed, " and "), report.Runtime.State)
+			}
 		}
 		result = append(result, WebEvent{ID: id, At: location.at.Format(time.RFC3339Nano), Kind: "runtime", Source: report.DeviceID, Subject: report.DeviceID, ObjectKind: "device", From: previousState, To: report.Runtime.State, Detail: detail})
 	}
 	return result, since, ctx.Err()
 }
 
-func verifyEventReport(store *ObservationStore, raw []byte, keys []string) error {
+func verifyEventReport(store *ObservationStore, raw []byte, keys []string) (DeviceReport, error) {
 	for _, key := range keys {
-		if _, err := store.verifiedReport(raw, key); err == nil {
-			return nil
+		if report, err := store.verifiedReport(raw, key); err == nil {
+			return report, nil
 		}
 	}
-	return errors.New("no historical identity verifies report")
+	return DeviceReport{}, errors.New("no historical identity verifies report")
 }

@@ -74,6 +74,28 @@ func eventTestQuery(t *testing.T, server *Server, values url.Values) WebEvents {
 func eventTestValues(q WebEventQuery) url.Values {
 	return url.Values{"from": {q.From}, "until": {q.Until}, "kind": {q.Kind}, "source": {q.Source}, "object": {q.Subject}, "q": {q.Search}, "interval": {fmt.Sprint(q.Interval)}, "result": {q.ResultDigest}}
 }
+
+func TestWebEventsCachedPredecessorStillReadsActualOriginal(t *testing.T) {
+	server, now := eventTestServer(t)
+	prior := eventTestReport(t, server, 1, "running", now.Add(-2*time.Minute))
+	eventTestReport(t, server, 2, "stopped", now.Add(-time.Minute))
+	values := url.Values{"from": {now.Add(-90 * time.Second).Format(time.RFC3339Nano)}, "until": {now.Format(time.RFC3339Nano)}, "kind": {"runtime"}}
+	result := eventTestQuery(t, server, values)
+	if result.Total != 1 || result.Events[0].From != "running" || result.Events[0].To != "stopped" {
+		t.Fatal("query lost its verified predecessor outside the window")
+	}
+	if err := server.Runtime.Reports.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		raw, _ := CanonicalEncode(prior)
+		return tx.Bucket(observationBucket).Put(referenceOf(prior).key(ReleaseDigest(raw)), []byte("corrupt"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	server.events(response, httptest.NewRequest(http.MethodGet, "/api/control/ui/events?"+values.Encode(), nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatal("cached signature replaced a damaged predecessor original")
+	}
+}
 func TestWebEventsCompleteWindowPaginationExportAndRestart(t *testing.T) {
 	server, now := eventTestServer(t)
 	start := now.Add(-72 * time.Hour)

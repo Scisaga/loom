@@ -3,6 +3,7 @@
 package control
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -68,11 +69,29 @@ func TestWebChromeEventsScrollRetryDraftAndFilteredExport(t *testing.T) {
 			http.Error(w, "demo continuation failure", http.StatusServiceUnavailable)
 			return
 		}
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'")
 		handler.ServeHTTP(w, r)
 	}))
 	defer web.Close()
 	debug := openCommandChrome(t, web.URL+"/events?kind=runtime")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 1586, "height": 1040, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-event-id]').length===100&&document.querySelectorAll('[data-event-bucket]').length===432`)
+	if chromeDo(t, debug, `(()=>{const form=document.querySelector('#events-filter'),r=form.getBoundingClientRect();return Math.abs(r.height-42)<1&&document.querySelectorAll('.event-table-head>span').length===3&&!document.querySelector('.event-history.card')&&document.querySelectorAll('.event-record [style]').length===0&&document.querySelectorAll('.event-legend [style]').length===0&&form.querySelector('[data-events-window]')?.value==='72'&&document.documentElement.scrollWidth<=innerWidth})()`) != true {
+		t.Fatal("Events drifted from its compact toolbar, open chart, three columns or strict styles")
+	}
+
+	chromeDo(t, debug, `(()=>{const select=document.querySelector('[data-events-window]');select.value='custom';select.dispatchEvent(new Event('change'));const f=select.form;f.elements.from.value=new Date(Date.parse(f.elements.until.value)-30*60000).toISOString();f.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-events-total]').textContent.includes('0 events')&&document.querySelector('.events-range[open]')`)
+	if chromeDo(t, debug, `!new URLSearchParams(location.search).has('window')&&document.querySelector('[data-events-window]').value==='custom'`) != true {
+		t.Fatal("time-window presentation became an unknown wire field or lost its exact UTC range")
+	}
+	chromeDo(t, debug, `history.back();true`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-event-id]').length===100&&document.querySelector('[data-events-window]').value==='72'`)
+
 	if chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('[data-event-id]')];window.demoFirst=rows[0].dataset.eventId;rows[0].querySelector('details').open=true;const input=document.querySelector('#events-filter [name=q]');input.value='Unsubmitted draft';input.focus();return document.querySelector('[data-events-total]').textContent.includes('125 events')})()`) != true {
 		t.Fatal("chart total only counted loaded page")
 	}
