@@ -33,9 +33,16 @@ func TestWebChromeLivePathsPrototypeScopeAndLayout(t *testing.T) {
 	 paths[1].first_transport='wireguard';paths[1].chain=['demo-exit'];paths[1].link_ids=[];if(routingSummary(routingContext(snapshot,params,now).records,snapshot).groups.length!==3)return false;
 	 const detail=new DOMParser().parseFromString(routingHTML(snapshot,new URLSearchParams({service:service.id,device:devices[0].id,q:'device',filter:'failed'}),now),'text/html');
 	 if(detail.querySelector('.paths-detail.card')||detail.querySelectorAll('.paths-identity>div').length!==4||!detail.querySelector('.paths-hop .icon')||!detail.querySelector('[data-end-to-end]').textContent.includes('0 ms')||!detail.querySelector('[data-paths-runtime]').textContent.includes('unknown')||new URL(detail.querySelector('[data-paths-back]').href,'https://example.test').searchParams.get('filter')!=='failed')return false;
-	 devices[0].evidence.current_until=now-1;const expired=routingContext(snapshot,new URLSearchParams({service:service.id,device:devices[0].id}),now).detail;if(expired.current||expired.targetState!=='unknown')return false;
+	 window.demoRoutingScope=structuredClone(snapshot);devices[0].evidence.current_until=now-1;const expired=routingContext(snapshot,new URLSearchParams({service:service.id,device:devices[0].id}),now).detail;if(expired.current||expired.targetState!=='unknown')return false;
 	 return true;
 	})()`) != true {
 		t.Fatal("prototype layout or actual scoped route/target counts drifted")
 	}
+	if chromeDo(t, debug, `(async()=>{const {routingHTML}=await import('/assets/routing.js');const s=window.demoRoutingScope,p=s.paths[0];p.first_resource_id='demo-long-shared-first-hop-resource';p.link_ids=['demo-long-shared-link-with-its-original-direction-and-specification'];s.links[0].id=p.link_ids[0];document.querySelector('#app').innerHTML=routingHTML(s,new URLSearchParams({service:'demo-media',device:p.device}),Date.now());await document.fonts.ready;return true})()`) != true {
+		t.Fatal("long scoped path could not render")
+	}
+	if chromeDo(t, debug, `(()=>{const box=document.querySelector('.paths-route').getBoundingClientRect(),nodes=[...document.querySelectorAll('.paths-node-icon')].map(n=>n.getBoundingClientRect());return [...document.querySelectorAll('.paths-edge-metrics')].every(n=>{const r=n.getBoundingClientRect();return r.top>=box.top&&r.bottom<=Math.min(...nodes.map(v=>v.top))})&&document.documentElement.scrollWidth<=innerWidth})()`) != true {
+		t.Fatal("long Link metrics were clipped or overlapped the route nodes")
+	}
+
 }
