@@ -11,24 +11,24 @@ func assertChromeLivePaths(t *testing.T, debug *chromeDevTools) {
 	t.Helper()
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/routing?service=demo-service');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-paths-device="demo-browser-device"]')&&document.querySelector('[data-service="demo-unrelated-service"]')`)
-	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-paths-device="demo-browser-device"]');return row.textContent.includes('Demo browser policy')&&row.textContent.includes('Reported: Direct')&&row.textContent.includes('Current target success')&&!document.body.innerText.includes('Fresh')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-paths-device="demo-browser-device"]');return row.textContent.includes('Demo browser policy')&&row.textContent.includes('Direct')&&row.textContent.includes('Current target success')&&!document.body.innerText.includes('Fresh')})()`) != true {
 		t.Fatal("Live paths lost the assigned Policy, manufactured current health or still uses legacy scopes")
 	}
-	chromeDo(t, debug, `(()=>{const form=document.querySelector('[name=q]').form;form.elements.q.value='demo-browser-device';form.requestSubmit();[...document.querySelectorAll('.paths-filters a')].find(a=>a.textContent==='Unconfirmed route / target').click();document.querySelector('[data-paths-device="demo-browser-device"] a').click();return true})()`)
+	chromeDo(t, debug, `(()=>{const form=document.querySelector('[name=q]').form;form.elements.q.value='demo-browser-device';form.requestSubmit();[...document.querySelectorAll('.paths-filters a')].find(a=>a.textContent.startsWith('Direct ·')).click();document.querySelector('[data-paths-device="demo-browser-device"] a').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.paths-detail')&&document.querySelector('.paths-current')?.textContent.includes('Current selection confirmed')`)
 	if chromeDo(t, debug, `document.querySelector('[data-routing-preference]')?.textContent==='Mode: not reported'`) != true {
 		t.Fatal("a Direct selection was used to infer a routing preference")
 	}
-	if chromeDo(t, debug, `(()=>{const back=new URL(document.querySelector('[data-paths-back]').href);return back.searchParams.get('service')==='demo-service'&&back.searchParams.get('q')==='demo-browser-device'&&back.searchParams.get('filter')==='unconfirmed'&&!back.searchParams.has('device')&&document.querySelectorAll('.paths-detail select').length===0&&document.querySelector('.paths-policy').textContent.includes('Any eligible node')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const back=new URL(document.querySelector('[data-paths-back]').href);return back.searchParams.get('service')==='demo-service'&&back.searchParams.get('q')==='demo-browser-device'&&back.searchParams.get('filter')==='route:direct'&&!back.searchParams.has('device')&&document.querySelectorAll('.paths-detail select').length===0&&document.querySelector('.paths-policy').textContent.includes('Any eligible node')})()`) != true {
 		t.Fatal("detail lost the Service/filter return context or reintroduced device/Service choosers")
 	}
-	chromeDo(t, debug, `(()=>{[...document.querySelectorAll('[role=tab]')].find(a=>a.textContent==='Historical samples').click();[...document.querySelectorAll('.paths-history-select a')].find(a=>a.textContent==='https://demo-service.example/zero-duration').click();return true})()`)
+	chromeDo(t, debug, `(()=>{[...document.querySelectorAll('[role=tab]')].find(a=>a.textContent==='History').click();[...document.querySelectorAll('.paths-history-select a')].find(a=>a.textContent==='https://demo-service.example/zero-duration').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.paths-hour').length===24&&[...document.querySelectorAll('.paths-hour')].some(v=>v.title.includes('0 ms'))`)
 	if chromeDo(t, debug, `(async()=>{const q=new URLSearchParams(location.search);q.delete('q');q.delete('filter');q.delete('tab');const candidate=document.querySelector('.paths-history-select a').href;const id=new URL(candidate).searchParams.get('candidate');q.set('candidate',id);q.set('device','demo-browser-device');const response=await fetch('/api/control/ui/path-history?'+q);const body=await response.json();const sample=body.buckets.find(v=>v.observation)?.observation;const malformed=await fetch('/api/control/ui/path-history?'+q+'&service=demo-service');const outside=new URLSearchParams(q);outside.set('target','https://other.example/');const rejected=await fetch('/api/control/ui/path-history?'+outside);return response.ok&&sample?.result==='available'&&sample.duration_ms===0&&malformed.status===400&&rejected.status===404})()`) != true {
 		t.Fatal("history lost original zero duration or admitted an ambiguous/unauthorized scope")
 	}
 	chromeDo(t, debug, `(()=>{document.querySelector('[data-paths-back]').click();return true})()`)
-	waitChromeEvaluation(t, debug, `!document.querySelector('.paths-detail')&&document.querySelector('[name=q]')?.value==='demo-browser-device'&&document.querySelector('.paths-filters [aria-current=true]')?.textContent==='Unconfirmed route / target'`)
+	waitChromeEvaluation(t, debug, `!document.querySelector('.paths-detail')&&document.querySelector('[name=q]')?.value==='demo-browser-device'&&document.querySelector('.paths-filters [aria-current=true]')?.textContent.startsWith('Direct ·')`)
 	chromeDo(t, debug, `(()=>{history.back();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.paths-detail')&&new URLSearchParams(location.search).get('tab')==='history'`)
 	chromeDo(t, debug, `(()=>{history.forward();return true})()`)

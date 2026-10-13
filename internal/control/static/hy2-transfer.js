@@ -13,8 +13,13 @@ function originalTransfer(sample){
 const rate=(bytes,ns)=>{const value=8000*Number(bytes)/ns;return value<.001?'<0.001 Mbps':`${value.toFixed(3)} Mbps`};
 
 export function hy2TransferHTML(sample,now){
- const value=originalTransfer(sample),current=value&&sample.current_until>now;
- return `<div data-hy2-transfer>${current?`Hy2 probe TX: ${esc(rate(value.tx,value.ns))} · RX: ${esc(rate(value.rx,value.ns))}`:'Hy2 authentication probe rate: Unknown'}<small>Small authentication exchange · UDP payload includes QUIC/TLS overhead and retransmissions · not capacity or business usage</small>${value?`<small>Reported TX ${esc(String(value.tx))} B · RX ${esc(String(value.rx))} B · ${(value.ns/1e6).toFixed(3)} ms</small>`:''}</div>`;
+ const value=originalTransfer(sample);
+ return `<div data-hy2-transfer>${esc(hy2TransferRateText(sample,now))}<small>Small authentication exchange · UDP payload includes QUIC/TLS overhead and retransmissions · not capacity or business usage</small>${value?`<small>Reported TX ${esc(String(value.tx))} B · RX ${esc(String(value.rx))} B · ${(value.ns/1e6).toFixed(3)} ms</small>`:''}</div>`;
+}
+
+export function hy2TransferRateText(sample,now){
+ const value=originalTransfer(sample);
+ return value&&sample.current_until>now?`Hy2 probe TX: ${rate(value.tx,value.ns)} · RX: ${rate(value.rx,value.ns)}`:'Hy2 authentication probe rate: Unknown';
 }
 
 // Public first-hop rows follow certified candidates, never fabricated LinkIDs.
