@@ -3065,3 +3065,21 @@ Overview 恢复设备、成员、业务探测和组件回读四项摘要，拓�
 本项仅关闭共用顶栏、Overview/Nodes/Topology 与状态消费；其余设备流程、Live paths、
 Services/Policies/DNS、Releases/Device versions、Events 布局和 Administration 的具体原型差距
 继续在产品交付对账中保持 open，不将正常导航或功能测试通过冒充全部页面视觉交付。
+
+
+## Administration 原型恢复
+
+四个同级视图按原稿恢复为左侧导航、右侧开放对象列表和原位展开。Control nodes 只由原成员链与
+真实待加入对象生成，peer receipt 缺失继续 unknown；Administrators 保留公开文件授权、对象指纹详情
+和独立撤权；Web certificates 保留根/叶材料、绑定请求、签回、实际激活/验证/退休的原链；
+Configuration state 保留同一公开来源、搜索、差异与显式解决草稿。原 `/settings` 页面入口及网站验证
+链接已退出，统一从 Administration 进入；没有改原型、成员、授权、现网证书或私钥。
+
+`2026-10-13-administration-prototype/result.json` 记录三个正常认证浏览器的四视图、对象展开、
+前进/后退、原管理员材料、实际新静态文件及旧入口 404。必要原生检查覆盖成员多数、管理员公开文件
+授权/撤权及重启、网站请求/导入/激活/续签、冲突草稿与重读；仓库规定检查均通过。三个 control
+仅更新到源码 `7c3c88ed` 的中控程序，原客户端/数据面/Android/Windows/发布器及客户端接受代不变，
+原 unit 的重启消费、身份/数据/floor/高水位/latch、国内与国际各自业务、旧中控程序及临时材料清理读回成立。
+
+本项关闭 Administration 的四视图组织，不抵扣生产离线网站材料、用户笔记本/实体机边界，
+也不关闭剩余设备流程、Live paths、Services/Policies/DNS、Releases/Device versions 与 Events 的原型差距。
