@@ -34,6 +34,7 @@ func TestWebChromeRevokedDeviceReviewAndExplicitRegrant(t *testing.T) {
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form [data-revoke-device]')`)
 	chromeDo(t, debug, `(()=>{window.confirm=()=>true;document.querySelector('#device-policy-form [data-revoke-device]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-policy-form button[type=submit]')?.textContent==='Grant ordinary authorization'`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-overview-panel').textContent.includes('Joined · not authorized')&&!document.querySelector('#device-overview-panel').textContent.includes('Pending join')`)
 	projection := server.Runtime.Authority.Snapshot()
 	target, _ := projection.CurrentTarget("device", invite.DeviceID)
 	if len(projection.DeviceAuthorizations) != 0 || target.DeviceForReview == nil || !reflect.DeepEqual(*target.DeviceForReview, public) {
