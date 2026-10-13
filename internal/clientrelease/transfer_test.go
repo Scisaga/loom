@@ -4,15 +4,18 @@ import (
 	"archive/tar"
 	"bytes"
 	"crypto/ed25519"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"loom/internal/control"
 )
 
 func TestTransferRejectsUnownedMembersBeforeCatalogAcceptance(t *testing.T) {
+	workRoot := transferTestDiskRoot(t)
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x31}, 32)).Public().(ed25519.PublicKey)
 	for _, name := range []string{"../demo", "current.json", "bin/not-a-digest", "materials/demo.json"} {
 		var body bytes.Buffer
@@ -20,10 +23,104 @@ func TestTransferRejectsUnownedMembersBeforeCatalogAcceptance(t *testing.T) {
 		writer.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: 1, Typeflag: tar.TypeReg})
 		writer.Write([]byte("x"))
 		writer.Close()
-		if directory, err := ReceiveArchive(&body, control.ReleaseDigest([]byte("demo")), key); err == nil {
+		if directory, err := ReceiveArchiveAt(&body, control.ReleaseDigest([]byte("demo")), key, workRoot); err == nil {
 			os.RemoveAll(directory)
 			t.Fatal("unreferenced transfer member accepted", name)
 		}
+		entries, err := os.ReadDir(workRoot)
+		if err != nil || len(entries) != 0 {
+			t.Fatal("rejected transfer retained its private capture", err)
+		}
+	}
+}
+
+func transferTestDiskRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := downloadWorkFilesystem(root); err != nil {
+		t.Skip("transfer capture requires explicit disk-backed test scratch")
+	}
+	return root
+}
+
+func TestTransferCaptureRequiresExplicitProtectedDiskRoot(t *testing.T) {
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x31}, 32)).Public().(ed25519.PublicKey)
+	for _, path := range []string{"", "relative-demo-root"} {
+		if directory, err := ReceiveArchiveAt(bytes.NewReader(nil), control.ReleaseDigest([]byte("demo")), key, path); err == nil {
+			os.RemoveAll(directory)
+			t.Fatal("implicit or relative transfer work root accepted")
+		}
+	}
+	if err := downloadWorkFilesystem("/run"); err != nil {
+		if directory, err := ReceiveArchiveAt(bytes.NewReader(nil), control.ReleaseDigest([]byte("demo")), key, "/run"); err == nil {
+			os.RemoveAll(directory)
+			t.Fatal("memory filesystem accepted for transfer capture")
+		}
+	}
+	root := t.TempDir()
+	link := filepath.Join(root, "demo-link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	if directory, err := ReceiveArchiveAt(bytes.NewReader(nil), control.ReleaseDigest([]byte("demo")), key, link); err == nil {
+		os.RemoveAll(directory)
+		t.Fatal("symlink transfer work root accepted")
+	}
+}
+
+type transferMutatingReader struct {
+	reader io.Reader
+	mutate func() error
+}
+
+func (reader *transferMutatingReader) Read(body []byte) (int, error) {
+	if reader.mutate != nil {
+		change := reader.mutate
+		reader.mutate = nil
+		if err := change(); err != nil {
+			return 0, err
+		}
+	}
+	return reader.reader.Read(body)
+}
+
+func TestTransferCaptureDoesNotDeleteReplacement(t *testing.T) {
+	workRoot := transferTestDiskRoot(t)
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x31}, 32)).Public().(ed25519.PublicKey)
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{Name: digestPath("bin", control.ReleaseDigest([]byte("x")), ""), Mode: 0644, Size: 1, Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
+		t.Fatal(err)
+	}
+	writer.Write([]byte("x"))
+	writer.Close()
+	var replaced string
+	input := &transferMutatingReader{reader: bytes.NewReader(archive.Bytes()), mutate: func() error {
+		entries, err := os.ReadDir(workRoot)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), ".loom-release-upload-") {
+				continue
+			}
+			replaced = filepath.Join(workRoot, entry.Name())
+			if err := os.Rename(replaced, replaced+".original"); err != nil {
+				return err
+			}
+			if err := os.Mkdir(replaced, 0700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(replaced, "demo-canary"), []byte("preserve"), 0600)
+		}
+		return os.ErrNotExist
+	}}
+	if directory, err := ReceiveArchiveAt(input, control.ReleaseDigest([]byte("demo")), key, workRoot); err == nil {
+		os.RemoveAll(directory)
+		t.Fatal("replaced capture accepted")
+	}
+	if body, err := os.ReadFile(filepath.Join(replaced, "demo-canary")); err != nil || string(body) != "preserve" {
+		t.Fatal("rejected transfer deleted the replacement directory", err)
 	}
 }
 
@@ -31,6 +128,7 @@ func TestReviewedPrepareAndTransferPreservePointerAndSignedBytes(t *testing.T) {
 	if *reviewedStore == "" || *reviewedPublic == "" {
 		t.Skip("requires explicit signed package store and independent public key")
 	}
+	workRoot := transferTestDiskRoot(t)
 	key, err := control.ReadReleasePublicKey(*reviewedPublic)
 	if err != nil {
 		t.Fatal(err)
@@ -43,11 +141,19 @@ func TestReviewedPrepareAndTransferPreservePointerAndSignedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var archive bytes.Buffer
-	if err = WriteArchive(*reviewedStore, set.ID, key, &archive, nil); err != nil {
+	archive, err := os.CreateTemp(workRoot, "demo-transfer-*")
+	if err != nil {
 		t.Fatal(err)
 	}
-	directory, err := ReceiveArchive(bytes.NewReader(archive.Bytes()), set.ID, key)
+	defer archive.Close()
+	if err = WriteArchive(*reviewedStore, set.ID, key, archive, nil); err != nil {
+		t.Fatal(err)
+	}
+	archiveEntry, err := archive.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := ReceiveArchiveAt(io.NewSectionReader(archive, 0, archiveEntry.Size()), set.ID, key, workRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +187,7 @@ func TestReviewedPrepareAndTransferPreservePointerAndSignedBytes(t *testing.T) {
 	if !bytes.Equal(original, after) {
 		t.Fatal("prepare changed accepted pointer")
 	}
-	if directory, err := ReceiveArchive(bytes.NewReader(append(archive.Bytes(), 'x')), set.ID, key); err == nil {
+	if directory, err := ReceiveArchiveAt(io.MultiReader(io.NewSectionReader(archive, 0, archiveEntry.Size()), bytes.NewReader([]byte{'x'})), set.ID, key, workRoot); err == nil {
 		os.RemoveAll(directory)
 		t.Fatal("trailing archive bytes accepted")
 	}

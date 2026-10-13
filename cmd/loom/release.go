@@ -64,8 +64,12 @@ func cmdReleaseImport(args []string) error {
 	if err != nil {
 		return err
 	}
+	to, err := filepath.Abs(*root)
+	if err != nil {
+		return err
+	}
 	if *stream {
-		directory, err := clientrelease.ReceiveArchive(os.Stdin, *catalog, key)
+		directory, err := clientrelease.ReceiveArchiveAt(os.Stdin, *catalog, key, filepath.Dir(to))
 		if err != nil {
 			return err
 		}
@@ -73,10 +77,6 @@ func cmdReleaseImport(args []string) error {
 		*source = directory
 	}
 	from, err := filepath.Abs(*source)
-	if err != nil {
-		return err
-	}
-	to, err := filepath.Abs(*root)
 	if err != nil {
 		return err
 	}

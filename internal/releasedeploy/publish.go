@@ -112,8 +112,8 @@ func literal(value string) string { return "'" + strings.ReplaceAll(value, "'", 
 
 // The public key is derived from the caller's independently fixed file, not
 // from a package. Its temporary copy neither changes nor supplies install trust.
-func keyedScript(key ed25519.PublicKey, command string) string {
-	return "set -eu\numask 077\nrelease_tmp=$(mktemp -d)\ntrap 'rm -rf -- \"$release_tmp\"' EXIT HUP INT TERM\nprintf '%s\\n' " + literal(base64.StdEncoding.EncodeToString(key)) + " > \"$release_tmp/public.key\"\n" + command + " -pubkey \"$release_tmp/public.key\"\n"
+func keyedScript(key ed25519.PublicKey, command, workRoot string) string {
+	return "set -eu\numask 077\nrelease_tmp=$(mktemp -d -- " + literal(filepath.Join(workRoot, ".loom-release-XXXXXX")) + ")\ntrap 'rm -rf -- \"$release_tmp\"' EXIT HUP INT TERM\ncase \"$(stat -f -c %T -- \"$release_tmp\")\" in tmpfs|ramfs) exit 74;; esac\nprintf '%s\\n' " + literal(base64.StdEncoding.EncodeToString(key)) + " > \"$release_tmp/public.key\"\n" + command + " -pubkey \"$release_tmp/public.key\"\n"
 }
 
 func (o Options) emit(value Result) {
@@ -158,7 +158,7 @@ func (o Options) run(ctx context.Context, alias, script string) ([]byte, error) 
 
 func (o Options) readTarget(ctx context.Context, t target) (TargetReadback, error) {
 	var result TargetReadback
-	body, err := o.run(ctx, t.alias, keyedScript(o.PublicKey, "loom release target -root "+literal(t.root)))
+	body, err := o.run(ctx, t.alias, keyedScript(o.PublicKey, "loom release target -root "+literal(t.root), filepath.Dir(t.root)))
 	if err != nil {
 		return result, err
 	}
@@ -291,7 +291,7 @@ func Publish(ctx context.Context, o Options) error {
 			finished <- err
 		}()
 		bounded, cancel := context.WithTimeout(ctx, 20*time.Minute)
-		body, remoteErr := o.Transport.Stream(bounded, t.alias, keyedScript(o.PublicKey, command), reader)
+		body, remoteErr := o.Transport.Stream(bounded, t.alias, keyedScript(o.PublicKey, command, filepath.Dir(t.root)), reader)
 		reader.Close()
 		writeErr := <-finished
 		cancel()
@@ -317,7 +317,7 @@ func Publish(ctx context.Context, o Options) error {
 		// the comparison remains inside the target's existing publication lock.
 		command := "loom release import -source " + literal(t.root) + " -root " + literal(t.root) + " -catalog " + literal(set.ID) + " -expected-current " + literal(t.previous)
 		o.emit(Result{Target: i + 1, Operation: "select"})
-		body, err := o.run(ctx, t.alias, keyedScript(o.PublicKey, command))
+		body, err := o.run(ctx, t.alias, keyedScript(o.PublicKey, command, filepath.Dir(t.root)))
 		if err != nil || !catalogReadback(body, set) {
 			return fmt.Errorf("target %d pointer advancement unconfirmed; inspect every target before retry", i+1)
 		}

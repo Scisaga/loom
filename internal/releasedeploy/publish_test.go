@@ -133,7 +133,7 @@ func (d *demoTransport) Stream(ctx context.Context, _ string, script string, inp
 	if err = command.Start(); err != nil {
 		return nil, err
 	}
-	directory, err := clientrelease.ReceiveArchive(output, d.catalog, d.key)
+	directory, err := clientrelease.ReceiveArchiveAt(output, d.catalog, d.key, filepath.Dir(root[1]))
 	output.Close()
 	completed := command.Wait()
 	if err != nil {
