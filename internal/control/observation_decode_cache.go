@@ -2,7 +2,10 @@ package control
 
 import (
 	"container/list"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 )
@@ -86,6 +89,12 @@ func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceRep
 	if err := report.Verify(key); err != nil {
 		return DeviceReport{}, err
 	}
+	store.rememberVerifiedRuntime(id, key, report)
+	return report, nil
+}
+
+func (store *ObservationStore) rememberVerifiedRuntime(id, key string, report DeviceReport) {
+	cache := &store.cache
 	cache.mu.Lock()
 	if element := cache.items[id]; element != nil {
 		value := element.Value.(*reportCacheEntry)
@@ -107,7 +116,6 @@ func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceRep
 		}
 	}
 	cache.mu.Unlock()
-	return report, nil
 }
 
 // The input remains freshly read original bytes. This projection never renews
@@ -131,4 +139,32 @@ func (store *ObservationStore) originalRuntime(raw []byte, key string) (reportRe
 		return reportReference{}, RuntimeReadback{}, err
 	}
 	return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, nil
+}
+
+// Historical identity alternatives share one canonical report and signature
+// message; no failed key causes another full decode or message construction.
+func (store *ObservationStore) originalRuntimeKeys(raw []byte, keys []string) (reportReference, RuntimeReadback, error) {
+	report, err := store.decodedReport(raw)
+	if err != nil {
+		return reportReference{}, RuntimeReadback{}, err
+	}
+	if err := report.Validate(); err != nil {
+		return reportReference{}, RuntimeReadback{}, err
+	}
+	message, err := signedContractBytes(reportDomain, report.unsigned())
+	if err != nil {
+		return reportReference{}, RuntimeReadback{}, err
+	}
+	signature, _ := base64.RawURLEncoding.DecodeString(report.Signature)
+	for _, key := range keys {
+		public, err := base64.RawURLEncoding.DecodeString(key)
+		if err != nil || len(public) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(public) != key {
+			continue
+		}
+		if ed25519.Verify(ed25519.PublicKey(public), message, signature) {
+			store.rememberVerifiedRuntime(ReleaseDigest(raw), key, report)
+			return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, nil
+		}
+	}
+	return reportReference{}, RuntimeReadback{}, errors.New("no historical identity verifies report")
 }

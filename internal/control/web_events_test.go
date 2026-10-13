@@ -121,6 +121,12 @@ func TestEventRuntimeProjectionKeepsExactBytesKeyAndDisposableCache(t *testing.T
 	if _, _, err := server.Runtime.Reports.originalRuntime(raw, otherKey); err == nil {
 		t.Fatal("a cached runtime accepted a different public key")
 	}
+	if _, runtime, err := verifyEventRuntime(server.Runtime.Reports, raw, []string{otherKey, key}); err != nil || runtime.State != "running" {
+		t.Fatal("the distinct control key hid an accepted cached device signature", err)
+	}
+	if _, _, err := verifyEventRuntime(server.Runtime.Reports, raw, []string{otherKey}); err == nil {
+		t.Fatal("runtime cache supplied an identity outside the query's historical key set")
+	}
 	changed := report
 	changed.Runtime.State = "stopped"
 	changedRaw, _ := CanonicalEncode(changed)
@@ -129,6 +135,11 @@ func TestEventRuntimeProjectionKeepsExactBytesKeyAndDisposableCache(t *testing.T
 	}
 	values := url.Values{"from": {now.Add(-90 * time.Second).Format(time.RFC3339Nano)}, "until": {now.Format(time.RFC3339Nano)}}
 	before := eventTestQuery(t, server, values)
+	server.Runtime.Reports.cache.clear()
+	coldReference, coldRuntime, err := verifyEventRuntime(server.Runtime.Reports, raw, []string{otherKey, key})
+	if err != nil || coldRuntime.State != "running" || !bytes.Equal(coldReference.key(ReleaseDigest(raw)), ref.key(ReleaseDigest(raw))) {
+		t.Fatal("cold multi-key verification changed canonical identity or runtime", err)
+	}
 	server.Runtime.Reports.cache.clear()
 	after := eventTestQuery(t, server, values)
 	if !reflect.DeepEqual(before, after) {

@@ -637,10 +637,20 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 }
 
 func verifyEventRuntime(store *ObservationStore, raw []byte, keys []string) (reportReference, RuntimeReadback, error) {
-	for _, key := range keys {
-		if reference, runtime, err := store.originalRuntime(raw, key); err == nil {
-			return reference, runtime, nil
+	// A node's control signing key and device key are distinct. An earlier
+	// nonmatching historical key must not force revalidation before a known
+	// exact-byte signature whose key is still in this query's accepted set.
+	store.cache.mu.Lock()
+	verifiedKey := ""
+	if element := store.cache.items[ReleaseDigest(raw)]; element != nil {
+		value := element.Value.(*reportCacheEntry)
+		if value.verifiedKey != "" && containsString(keys, value.verifiedKey) {
+			verifiedKey = value.verifiedKey
 		}
 	}
-	return reportReference{}, RuntimeReadback{}, errors.New("no historical identity verifies report")
+	store.cache.mu.Unlock()
+	if verifiedKey != "" {
+		return store.originalRuntime(raw, verifiedKey)
+	}
+	return store.originalRuntimeKeys(raw, keys)
 }
