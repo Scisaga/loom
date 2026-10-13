@@ -33,7 +33,7 @@ export function eventsView({api,redraw}){
  }
  function draft(){
   const form=document.querySelector('#events-filter');
-  if(form&&form.dataset.eventsKey===String(state?.token))state.draft=Object.fromEntries(new FormData(form));
+  if(form&&form.dataset.eventsKey===String(state?.token))state.draft={...Object.fromEntries(new FormData(form)),range:form.querySelector('[data-events-window]').value};
   return state.draft||Object.fromEntries(new URLSearchParams(location.search));
  }
  function chart(data){
@@ -51,7 +51,7 @@ export function eventsView({api,redraw}){
  }
  function html(projection){
   const s=ensure();if(!s)return '';
-  const values=draft(),custom=!!(values.from||values.until),field=(name,label,placeholder='',attrs='')=>`<input aria-label="${label}" name="${name}" value="${esc(values[name]||'')}" placeholder="${esc(placeholder)}" ${attrs}>`;
+  const values={...draft()},custom=values.range==='custom'||values.range!=='72'&&!!(values.from||values.until),field=(name,label,placeholder='',attrs='')=>`<input aria-label="${label}" name="${name}" value="${esc(!custom&&['from','until'].includes(name)?'':values[name]||'')}" placeholder="${esc(placeholder)}" ${attrs}>`;
   const objectLink=v=>v.kind==='conflict'?['/ssot?section=configuration','Inspect current conflict →']:v.object_kind==='device'?['/devices/'+encodeURIComponent(v.subject),'Open current device →']:v.object_kind==='invite'?['/devices/invites/'+encodeURIComponent(v.subject),'Open current invitation →']:v.object_kind==='service'?['/services?service='+encodeURIComponent(v.subject),'Open current service →']:v.object_kind==='policy'?['/policies?policy='+encodeURIComponent(v.subject),'Open current policy →']:['/ssot?section=configuration','Open current configuration →'];
   const sources=new Map((projection.members||[]).map(v=>[v.control_id,v.control_id]));for(const d of projection.devices||[])sources.set(d.id,d.name||d.id);for(const v of s.rows)sources.set(v.source,v.source);
   const objects=new Map((projection.targets||[]).map(v=>[v.target_id,v.target_kind+' · '+v.target_id]));for(const v of s.rows)objects.set(v.subject,v.subject);
@@ -69,11 +69,11 @@ export function eventsView({api,redraw}){
   if(s.data?.next_cursor&&!s.loading&&!s.error){observer=new IntersectionObserver(entries=>{if(entries.some(v=>v.isIntersecting))load()},{rootMargin:'250px'});const bottom=document.querySelector('[data-events-bottom]');if(bottom)observer.observe(bottom)}
  }
  function submit(form){
-  const params=new URLSearchParams(new FormData(form));if(state?.data&&!params.get('from')?.trim()&&!params.get('until')?.trim()){params.set('from',state.params.get('from'));params.set('until',state.params.get('until'))}for(const [key,value]of [...params])if(!value.trim())params.delete(key);else params.set(key,value.trim());
+  const params=new URLSearchParams(new FormData(form));params.set('range',form.querySelector('[data-events-window]').value);if(state?.data&&!params.get('from')?.trim()&&!params.get('until')?.trim()){params.set('from',state.params.get('from'));params.set('until',state.params.get('until'))}for(const [key,value]of [...params])if(!value.trim())params.delete(key);else params.set(key,value.trim());
   // UTC inputs are explicit strings. Let the formal decoder reject ambiguity.
   history.pushState({},'','/events'+(params.size?'?'+params:''));form.remove();reset();redraw();scrollTo(0,0);
  }
- function refresh(){const values=state?draft():null,params=new URLSearchParams(location.search);if(state?.data&&new Date(state.data.query.until)-new Date(state.data.query.from)===72*3600000){params.delete('from');params.delete('until');history.replaceState({},'','/events'+(params.size?'?'+params:''))}reset();const s=ensure();if(s&&values)s.draft=values;redraw()}
+ function refresh(){const values=state?draft():null,params=new URLSearchParams(location.search);if(state?.data&&values.range==='72'&&new Date(state.data.query.until)-new Date(state.data.query.from)===72*3600000){params.delete('from');params.delete('until');delete values.from;delete values.until;history.replaceState({},'','/events'+(params.size?'?'+params:''))}reset();const s=ensure();if(s&&values)s.draft=values;redraw()}
  function clear(){history.pushState({},'','/events');document.querySelector('#events-filter')?.remove();reset();redraw();scrollTo(0,0)}
  function exportCSV(){if(!state?.data)return;const params=new URLSearchParams(state.params);params.set('format','csv');const link=document.createElement('a');link.href='/api/control/ui/events?'+params;link.download='loom-events.csv';link.click()}
  return {html,observe,submit,refresh,clear,exportCSV,retry:load};

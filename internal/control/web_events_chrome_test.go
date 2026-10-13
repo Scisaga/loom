@@ -106,7 +106,7 @@ func TestWebChromeEventsScrollRetryDraftAndFilteredExport(t *testing.T) {
 		t.Fatal("export used draft or loaded rows instead of fixed full filter")
 	}
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#events-filter');f.elements.q.value='stopped';f.requestSubmit();return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-events-total]').textContent.includes('124 events')&&document.querySelectorAll('[data-event-id]').length>=100`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-events-total]').textContent.includes('124 events')&&document.querySelectorAll('[data-event-id]').length>=100&&document.querySelector('[data-events-window]').value==='72'&&Math.abs(document.querySelector('#events-filter').getBoundingClientRect().height-42)<1`)
 	// Both transitions to stopped and transitions from stopped match search.
 	chromeDo(t, debug, `(()=>{document.querySelector('[data-events-clear]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#events-filter [name=q]').value===''&&document.querySelector('#events-filter [name=kind]').value===''&&document.querySelector('[data-events-total]')`)
