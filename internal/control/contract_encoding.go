@@ -29,8 +29,10 @@ var contractValidatorType = reflect.TypeFor[interface{ Validate() error }]()
 // retain their domain order. A value's Validate method, when present, runs
 // before encoding; the codec never sorts a domain set to repair invalid input.
 // Types whose Validate method exists only on a pointer are unsupported.
+// Static type inspection is shared only within this value walk; each concrete
+// value still runs its validator and cycle/null/collection checks.
 func CanonicalEncode(value any) ([]byte, error) {
-	if err := inspectContractValue(reflect.ValueOf(value), map[contractVisit]bool{}); err != nil {
+	if err := inspectContractValue(reflect.ValueOf(value), map[contractVisit]bool{}, map[reflect.Type]bool{}); err != nil {
 		return nil, err
 	}
 	parsed, err := contractJSONValue(reflect.ValueOf(value))
@@ -132,7 +134,7 @@ func contractPointerOnlyValidator(value reflect.Type) bool {
 	return !value.Implements(contractValidatorType) && reflect.PointerTo(value).Implements(contractValidatorType)
 }
 
-func inspectContractValue(value reflect.Value, active map[contractVisit]bool) error {
+func inspectContractValue(value reflect.Value, active map[contractVisit]bool, checked map[reflect.Type]bool) error {
 	if !value.IsValid() {
 		return errors.New("contract null is not permitted")
 	}
@@ -143,16 +145,18 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 		return value.Interface().(Operation).Validate()
 	}
 	if value.Type() == reflect.TypeFor[ConflictResolution]() {
-		return inspectContractValue(reflect.ValueOf(value.Interface().(ConflictResolution).contractObject()), active)
+		return inspectContractValue(reflect.ValueOf(value.Interface().(ConflictResolution).contractObject()), active, checked)
 	}
 	if value.Type() == contractU64Type || value.Type() == reflect.PointerTo(contractU64Type) {
 		return nil
 	}
-	if contractPointerOnlyValidator(value.Type()) {
-		return errors.New("contract validation requires a value receiver")
-	}
-	if contractCustomMethods(value.Type()) {
-		return errors.New("custom contract codecs are not permitted")
+	if !checked[value.Type()] {
+		if contractPointerOnlyValidator(value.Type()) {
+			return errors.New("contract validation requires a value receiver")
+		}
+		if contractCustomMethods(value.Type()) {
+			return errors.New("custom contract codecs are not permitted")
+		}
 	}
 	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Map || value.Kind() == reflect.Slice {
 		visit := contractVisit{kind: value.Type(), pointer: value.Pointer()}
@@ -170,11 +174,11 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 			// An optional pointer may be omitted. A required null is rejected by
 			// parseContractJSON after this inspection.
 			if value.Kind() == reflect.Pointer {
-				return inspectContractType(value.Type().Elem(), map[reflect.Type]bool{})
+				return inspectContractType(value.Type().Elem(), checked)
 			}
 			return nil
 		}
-		return inspectContractValue(value.Elem(), active)
+		return inspectContractValue(value.Elem(), active, checked)
 	}
 	if value.CanInterface() {
 		if validator, ok := value.Interface().(interface{ Validate() error }); ok {
@@ -189,7 +193,7 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 			return errors.New("contract string is not UTF-8")
 		}
 	case reflect.Struct:
-		if err := inspectContractType(value.Type(), map[reflect.Type]bool{}); err != nil {
+		if err := inspectContractType(value.Type(), checked); err != nil {
 			return err
 		}
 		seen := map[string]bool{}
@@ -207,7 +211,7 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 				}
 				return errors.New("omitting an empty contract collection would lose its domain value")
 			}
-			if err := inspectContractValue(fieldValue, active); err != nil {
+			if err := inspectContractValue(fieldValue, active, checked); err != nil {
 				return err
 			}
 		}
@@ -223,7 +227,7 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 			if !contractJSONKey(iter.Key().String()) {
 				return errors.New("contract object key is not ASCII")
 			}
-			if err := inspectContractValue(iter.Value(), active); err != nil {
+			if err := inspectContractValue(iter.Value(), active, checked); err != nil {
 				return err
 			}
 		}
@@ -237,7 +241,7 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool) er
 			return errors.New("contract byte strings require an explicit scalar encoding")
 		}
 		for index := range value.Len() {
-			if err := inspectContractValue(value.Index(index), active); err != nil {
+			if err := inspectContractValue(value.Index(index), active, checked); err != nil {
 				return err
 			}
 		}

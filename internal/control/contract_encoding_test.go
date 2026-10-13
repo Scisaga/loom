@@ -10,6 +10,38 @@ import (
 	"testing"
 )
 
+type contractRepeatedCheckedValue struct {
+	Name string `json:"name"`
+}
+
+func (value contractRepeatedCheckedValue) Validate() error {
+	if value.Name == "demo-rejected" {
+		return errors.New("demo value rejected")
+	}
+	return nil
+}
+
+func TestContractTypeReuseStillChecksEveryValue(t *testing.T) {
+	valid := []contractRepeatedCheckedValue{{"demo-first"}, {"demo-second"}}
+	raw, err := CanonicalEncode(valid)
+	if err != nil || string(raw) != `[{"name":"demo-first"},{"name":"demo-second"}]` {
+		t.Fatal("type inspection reuse changed canonical bytes", err)
+	}
+	for _, name := range []string{"demo-rejected", string([]byte{0xff})} {
+		values := append([]contractRepeatedCheckedValue{}, valid...)
+		values[1].Name = name
+		if _, err := CanonicalEncode(values); err == nil {
+			t.Fatal("a later value bypassed validation after its type was checked")
+		}
+	}
+	type collection struct {
+		Values []int `json:"values"`
+	}
+	if _, err := CanonicalEncode([]collection{{[]int{}}, {nil}}); err == nil {
+		t.Fatal("an earlier explicit collection hid a later null of the same type")
+	}
+}
+
 var contractTestLimits = ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 12, MaxItems: 64}
 
 type contractUnexpectedEncoder struct {

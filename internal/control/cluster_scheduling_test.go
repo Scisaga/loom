@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
@@ -50,7 +52,9 @@ func TestMemberConnectionsReuseAcrossAttemptsAndClose(t *testing.T) {
 	clients.close()
 	for _, info := range retained {
 		_ = info.Conn.SetReadDeadline(time.Now().Add(time.Second))
-		if _, err := info.Conn.Read(make([]byte, 1)); err == nil || !strings.Contains(err.Error(), "closed") {
+		// The peer may finish TLS closure before the local idle pool closes it.
+		// EOF also proves the retained connection is unusable; a timeout does not.
+		if _, err := info.Conn.Read(make([]byte, 1)); err == nil || !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "closed") {
 			t.Fatal("connection remained open after owner closure", err)
 		}
 	}
