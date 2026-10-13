@@ -491,21 +491,6 @@ fieldset {
   color: white
 }
 
-.package {
-  display: flex;
-  flex-direction: column
-}
-
-.package .actions {
-  margin-top: auto;
-  padding-top: 16px
-}
-
-.package .digest {
-  overflow-wrap: anywhere;
-  font-size: 11px
-}
-
 .qr-delivery {
   grid-column: 1 / -1;
   min-width: 0

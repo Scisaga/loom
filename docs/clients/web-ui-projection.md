@@ -488,6 +488,17 @@ Web 服务端以受保护安装信任输入中的发布验签公钥核验签名 
 目录刷新不替换正在编辑的选择；清除只撤销该期望。详情和 Device versions 的对照均使用现行事实引用，
 材料缺失或冲突明确显示不可用，不显示“未设置”或旧的成功比较。
 
+发布页原型接线只增加现有 Web `Release` 的公开单向投影：`CatalogGeneration` 来自已验签
+`ReleaseSet.Catalog.Generation`，`Audience` 来自同条签名 `ReleaseArtifact.Audience`。不新增
+协议号、发布对象、最低版本约束或持久值，原 catalog/manifest 字节不动。纯 `releases.js`
+由该目录、设备当前期望引用与原报告生成四列文件列表及三列设备比较；选择文件/设备/展开行
+只写浏览 URL，复制与下载使用现行精确 URL，不带凭据。当前链接是受保护下载入口，签名
+公开受众与该链接的访问认证分别说明。文件验签不能替代安装，Archive 摘要与其组件摘要
+不能互相比较。选中文件只筛出其组件/平台；设备的当前期望来源不指向该文件时原位说明，
+不能用其他期望的匹配来声称该文件已应用。没有当前同 View 的报告时历史坐标仍可读，
+当前比较为 unknown；没有期望单独表示未设置。Device versions 按稳定设备/组件/平台排列，
+组件多时逐行比较，不把一个组件或设备的成功扩成整体完成。
+
 ### 服务、发布与管理记录的阅读顺序
 
 Services、DNS、Policies、三平台 Releases、Device versions、Events 与 Administration

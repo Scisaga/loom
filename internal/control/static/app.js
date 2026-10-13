@@ -1,3 +1,4 @@
+import {releasesHTML,deviceVersionsHTML} from './releases.js';
 import {createConfigurationReview} from './configuration.js';
 import {hy2TransferHTML,hy2FirstHopRows} from './hy2-transfer.js';
 import{trafficBytes,trafficRates,trafficSummary,trafficHistoryHTML,trafficRatesHTML,trafficHistoryRequest,trafficNextExpiry}from'./traffic-history.js';
@@ -397,26 +398,8 @@ function servicesPage(){
  app.innerHTML=heading('Services','Define the targets that policies can authorize.',canOperate('service.put')?'<a class="button primary" href="/services?new=1" data-nav>＋ Add Service</a>':'')+`<div class="service-tabs"><a class="selected" href="/services" data-nav>Services</a><a href="/services?tab=dns" data-nav>Exact .loom DNS</a><a href="/policies" data-nav>Policies</a></div><div class="services-layout"><aside class="card service-catalog">${catalog||'<p class="empty">No services.</p>'}</aside>${editor}</div>`;
  const form=document.querySelector('#service-form');if(form)updateLANForm(form);
 }
-function releaseTabs(active){return `<div class="release-tabs" role="tablist">${[['linux','Linux'],['android','Android'],['windows','Windows'],['deployments','Device versions']].map(([id,label])=>`<a role="tab" aria-selected="${active===id}" href="${id==='deployments'?'/deployments':`/releases?platform=${id}`}" data-nav>${label}</a>`).join('')}</div>`}
-function releasesPage(){
-  const requested=new URLSearchParams(location.search).get('platform'),platform=['linux','android','windows'].includes(requested)?requested:'linux';
-  const productPlatform=value=>value==='linux-server'?'linux':value==='windows-desktop'?'windows':value;
-  const artifacts=list(projection.releases).filter(value=>productPlatform(value.platform)===platform);
-  const companion=(label,file)=>file?.url?`<a class="button" href="${esc(file.url)}" download title="SHA-256 ${esc(file.sha256)}">${label}</a>`:'';
-  const card=value=>`<section class="card package" data-key="release:${esc(value.path)}"><div class="package-heading"><span class="platform-mark ${esc(platform)}">${esc(platform.slice(0,1).toUpperCase())}</span><div><h3>${esc(value.title||value.name)}</h3><span class="muted">${esc(value.platform)} · ${esc(value.arch)} · ${esc(value.variant)}</span></div></div><p>${esc(value.version)} · source <span class="mono">${esc(short(value.source_commit))}</span></p><dl class="device-facts"><dt>SHA-256</dt><dd class="mono">${esc(value.sha256)}</dd><dt>Signature</dt><dd>${esc(value.signing||'Unknown')}</dd><dt>Size</dt><dd>${byteSize(value.size)}</dd></dl><div class="actions"><a class="button primary" href="${esc(value.url)}" download>Download exact bytes</a>${companion('Checksum',value.checksum)}${companion('Manifest',value.manifest)}${companion('Signature',value.signature)}${companion('SBOM',value.sbom)}</div></section>`;
-  const developer=artifacts.filter(value=>/(debug|developer|nightly|preview)/i.test(`${value.variant||''} ${value.signing||''}`)),stable=artifacts.filter(value=>!developer.includes(value));
-  const group=(title,values,empty)=>`<section class="release-group"><div class="sectionhead"><h2>${title}</h2><span class="tiny dim">${values.length} exact artifact${values.length===1?'':'s'}</span></div><div class="grid package-grid">${values.map(card).join('')||`<p class="empty">${empty}</p>`}</div></section>`;
-  app.className='network-page page-releases';
-  app.innerHTML=heading('Releases','Verified packages remain visible independently from fleet deployment evidence.')+releaseTabs(platform)+group('Stable',stable,`No verified ${esc(platform)} stable release is available.`)+(developer.length?group('Developer / debug',developer,'No developer build is available.'):'');
-}
-function deploymentsPage(){
- const rows=list(projection.devices).map(device=>{
-  const report=latestReport(device.id),components=componentRows(device,report);
-  return `<tr data-version-device="${esc(device.id)}"><td><a href="/devices/${encodeURIComponent(device.id)}" data-nav>${esc(device.name||device.id)}</a><small>${esc(device.platform||'Platform unknown')}</small></td><td>${report?esc(when(report.reported_at)):'No current-view report'}<small>${esc(report?.runtime?.state||'Runtime unknown')}</small></td><td>${device.component_error?`<p class="bad">${esc(device.component_error)}</p>`:''}${components?`<details><summary>${list(report?.components).length} reported component(s)</summary>${table(['Component / platform','Expected','Reported','Comparison'],components)}</details>`:'No component readback'}</td></tr>`;
- }).join('');
- app.className='network-page page-deployments';
- app.innerHTML=heading('Device versions','Reported program versions and digests, with the time of each signed readback.')+releaseTabs('deployments')+`<section class="card convergence-card">${table(['Device','Signed report','Components'],rows)}<p class="tiny dim">Reported coordinates describe that observation. No expectation set does not mean an upgrade has been applied. Downloading a release does not set a device expectation.</p></section>`;
-}
+function releasesPage(){app.className='network-page page-releases';app.innerHTML=releasesHTML(projection,new URLSearchParams(location.search),evidenceNow())}
+function deploymentsPage(){app.className='network-page page-deployments';app.innerHTML=deviceVersionsHTML(projection,new URLSearchParams(location.search),evidenceNow())}
 const eventHistory=eventsView({api,redraw:()=>stableRender()});
 function eventsPage(){app.className='network-page page-events';app.innerHTML=eventHistory.html(projection)}
 function dnsPage(){
@@ -496,6 +479,7 @@ document.addEventListener('click',async event=>{
  const sshCheck=event.target.closest('[data-ssh-check]');if(sshCheck){await checkSSHForm(sshCheck.closest('form'),sshCheck);return}
  const sshExecute=event.target.closest('[data-ssh-execute]');if(sshExecute){sshExecute.disabled=true;try{await startSSH(sshExecute.dataset.sshExecute);inviteCache.delete(sshExecute.dataset.sshExecute);stableRender()}catch(error){sshExecute.disabled=false;toast(error.message,true)}return}
  const reload=event.target.closest('[data-invite-refresh]');if(reload){inviteCache.delete(reload.dataset.inviteRefresh);stableRender();return}
+ const releaseCopy=event.target.closest('[data-copy-release-link]');if(releaseCopy){await navigator.clipboard.writeText(new URL(releaseCopy.dataset.copyReleaseLink,location.origin).href);toast('Exact file link copied.');return}
  if(event.target.closest('[data-copy-install-command]')){await navigator.clipboard.writeText(document.querySelector('#invite-command').value);toast('Complete install command copied.');return}
  if(event.target.closest('[data-copy-invite]')){await navigator.clipboard.writeText(document.querySelector('#invite-uri').value);toast('Signed invitation copied.');return}
  if(event.target.closest('[data-refresh-events]')){eventHistory.refresh();return}

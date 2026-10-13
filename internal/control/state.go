@@ -90,9 +90,11 @@ type Path struct {
 }
 
 type Release struct {
-	CatalogDigest  string              `json:"catalog_digest"`
-	ManifestDigest string              `json:"manifest_digest"`
-	Components     []ComponentReadback `json:"components"`
+	CatalogGeneration U64                 `json:"catalog_generation"`
+	Audience          string              `json:"audience"`
+	CatalogDigest     string              `json:"catalog_digest"`
+	ManifestDigest    string              `json:"manifest_digest"`
+	Components        []ComponentReadback `json:"components"`
 
 	Path         string       `json:"path"`
 	Name         string       `json:"name"`
