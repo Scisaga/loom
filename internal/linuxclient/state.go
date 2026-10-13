@@ -298,7 +298,7 @@ func WriteStatus(path string, status Status) error {
 func (status Status) validate() error {
 	if status.Schema != 3 || status.DeviceID == "" || control.ValidateDigest(status.ViewDigest) != nil || status.FactFrontier == nil ||
 		status.Preference.Validate() != nil || status.NetworkGeneration == "" ||
-		status.Runtime != "running" && status.Runtime != "error" && status.Runtime != "stopped" ||
+		status.Runtime != "running" && status.Runtime != "error" && status.Runtime != "stopped" && status.Runtime != "unknown" ||
 		status.Runtime != "running" && (len(status.Selections) != 0 || len(status.Observations) != 0) {
 		return errors.New("Linux client status is incomplete")
 	}

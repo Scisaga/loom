@@ -44,6 +44,7 @@ func cmdRelease(args []string) error {
 }
 
 func cmdReleaseImport(args []string) error {
+	defer limitReleaseCLIHeap()()
 	fs := flag.NewFlagSet("release import", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	source := fs.String("source", "", "本次临时上传的签名目录")

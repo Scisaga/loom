@@ -104,10 +104,33 @@ func RequireTUNDNSExecutor(ctx context.Context, executable string, config []byte
 	}
 	ctx, cancel := context.WithTimeout(ctx, SingBoxCheckTimeout)
 	defer cancel()
+	version := clientcomponent.DataPlaneVersion
+	if runtime.GOOS == "linux" {
+		file, err := os.Open(executable)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		entry, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		verified, err := clientcomponent.InspectLinuxSourceBuildReader(file, entry.Size(), runtime.GOARCH)
+		current, statErr := os.Lstat(executable)
+		if err != nil || statErr != nil || !current.Mode().IsRegular() || !os.SameFile(entry, current) || entry.Size() != current.Size() || entry.ModTime() != current.ModTime() {
+			return errors.New("TUN domain DNS requires an unchanged reviewed Linux data-plane artifact")
+		}
+		// The exact deployed cache-safe artifact remains inspectable during its
+		// forward cutover. Older reviewed builds do not gain this runtime property.
+		if verified.Version != clientcomponent.LinuxDataPlaneVersion && verified.Version != clientcomponent.DataPlaneVersion {
+			return errors.New("TUN domain DNS requires the reviewed persistent-cache artifact")
+		}
+		version = verified.Version
+	}
 	command := exec.CommandContext(ctx, executable, "version")
 	configureCheckCommand(command)
 	body, err := command.Output()
-	if err != nil || !strings.HasPrefix(string(body), "sing-box version "+clientcomponent.DataPlaneVersion+"\n") {
+	if err != nil || !strings.HasPrefix(string(body), "sing-box version "+version+"\n") {
 		return errors.New("TUN domain DNS requires the verified persistent-cache data-plane build")
 	}
 	return nil

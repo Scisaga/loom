@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -238,7 +239,7 @@ func processOwnsUDP(pid int, listen string) bool {
 
 func (execution hy2Execution) readback(ctx context.Context, pid int, now time.Time) (control.ResourceReadback, error) {
 	if !processOwnsUDP(pid, execution.input.Listen) {
-		return control.ResourceReadback{}, errors.New("resource UDP listener is not owned by this execution process")
+		return control.ResourceReadback{}, executionFailure("resource_ownership", "unverified", ErrWireGuardOwnership)
 	}
 	host, port, _ := net.SplitHostPort(execution.input.Listen)
 	ip, _ := netip.ParseAddr(host)
@@ -264,7 +265,7 @@ func (execution hy2Execution) readback(ctx context.Context, pid int, now time.Ti
 	request.Header.Set("Hysteria-CC-RX", "0")
 	response, err := transport.RoundTrip(request)
 	if err != nil {
-		return control.ResourceReadback{}, errors.New("resource QUIC/TLS readback failed")
+		return control.ResourceReadback{}, resourceProbeFailure(err)
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -273,7 +274,7 @@ func (execution hy2Execution) readback(ctx context.Context, pid int, now time.Ti
 		wanted = http.StatusNotFound
 	}
 	if response.StatusCode != wanted || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || len(response.TLS.PeerCertificates) == 0 {
-		return control.ResourceReadback{}, errors.New("resource identity or Hy2 authentication readback failed")
+		return control.ResourceReadback{}, executionFailure("resource_readback", "identity_rejected", errors.New("resource authentication rejected"))
 	}
 	digest := sha256.Sum256(response.TLS.PeerCertificates[0].Raw)
 	return control.ResourceReadback{ResourceID: execution.resource.ID, ListenerID: execution.resource.ListenerID, Listen: execution.input.Listen,
@@ -307,8 +308,8 @@ func waitTransportResources(ctx context.Context, view control.DeviceView, execut
 		select {
 		case <-pending.Done():
 			return fmt.Errorf("resource runtime did not become ready: %w", err)
-		case <-done:
-			return errors.New("resource runtime exited before readback")
+		case err := <-done:
+			return processFailure("resource_process", err)
 		case <-ticker.C:
 		}
 	}
@@ -318,10 +319,54 @@ func waitTransportResources(ctx context.Context, view control.DeviceView, execut
 // receiver key was matched before starting this exact process. Only native DNS
 // and business observations assert remote transport or Service availability.
 func readTransportResources(ctx context.Context, view control.DeviceView, executions []hy2Execution, pid int, now time.Time) ([]control.ResourceReadback, error) {
-	values, err := readHY2Resources(ctx, executions, pid, now)
+	values, err := readTransportOwnership(view, executions, pid)
 	if err != nil {
 		return nil, err
 	}
+	hy2, err := readHY2Resources(ctx, executions, pid, now)
+	if err != nil {
+		// A probe took time. Before treating a timeout as missing evidence,
+		// check every owned listener again, including the independent WG one.
+		if errors.Is(err, errResourceReadbackTimeout) {
+			if _, ownershipErr := readTransportOwnership(view, executions, pid); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+		}
+		return nil, err
+	}
+	values = append(values, hy2...)
+	sort.Slice(values, func(i, j int) bool { return values[i].ResourceID < values[j].ResourceID })
+	return values, nil
+}
+
+func readTransportOwnership(view control.DeviceView, executions []hy2Execution, pid int) ([]control.ResourceReadback, error) {
+	ownedHY2 := map[string]control.TransportResource{}
+	for _, resource := range view.Resources {
+		if resource.OwnerNodeID == view.DeviceID && resource.Kind == "hysteria2" {
+			ownedHY2[resource.ID] = resource
+		}
+	}
+	if len(executions) != len(ownedHY2) {
+		return nil, executionFailure("resource_acl", "rejected", errors.New("resource execution set differs from the applied configuration"))
+	}
+	for _, execution := range executions {
+		resource, found := ownedHY2[execution.resource.ID]
+		if !found || !reflect.DeepEqual(resource, execution.resource) {
+			return nil, executionFailure("resource_acl", "rejected", errors.New("resource execution differs from the applied configuration"))
+		}
+		delete(ownedHY2, execution.resource.ID)
+		if !processOwnsUDP(pid, execution.input.Listen) {
+			return nil, executionFailure("resource_ownership", "unverified", ErrWireGuardOwnership)
+		}
+		acl, err := control.InboundACLDigest(view, execution.resource.ID)
+		if err != nil || acl != execution.acl {
+			if err == nil {
+				err = errors.New("resource ACL differs from the applied configuration")
+			}
+			return nil, executionFailure("resource_acl", "rejected", err)
+		}
+	}
+	values := []control.ResourceReadback{}
 	for _, resource := range view.Resources {
 		if resource.OwnerNodeID != view.DeviceID || resource.Kind != "wireguard" {
 			continue
@@ -330,12 +375,12 @@ func readTransportResources(ctx context.Context, view control.DeviceView, execut
 		if !processOwnsUDP(pid, listen) {
 			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(resource.DialPort))
 			if !processOwnsUDP(pid, listen) {
-				return nil, errors.New("native WG listener is not owned by this execution process")
+				return nil, executionFailure("resource_ownership", "unverified", ErrWireGuardOwnership)
 			}
 		}
 		acl, err := control.InboundACLDigest(view, resource.ID)
 		if err != nil {
-			return nil, err
+			return nil, executionFailure("resource_acl", "rejected", err)
 		}
 		values = append(values, control.ResourceReadback{ResourceID: resource.ID, ListenerID: resource.ListenerID, Listen: listen, PublicKey: *resource.Authentication.PublicKey, ACLDigest: acl})
 	}

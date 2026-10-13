@@ -2668,3 +2668,582 @@
 +		}
 +	}
 +}
+--- a/.loom-wireguard/conn/bind_std.go
++++ b/.loom-wireguard/conn/bind_std.go
+@@ -13,6 +13,7 @@
+ 	"runtime"
+ 	"strconv"
+ 	"sync"
++	"sync/atomic"
+ 	"syscall"
+ 
+ 	"github.com/sagernet/sing/common"
+@@ -48,6 +49,7 @@
+ 	// these two fields are not guarded by mu
+ 	udpAddrPool sync.Pool
+ 	msgsPool    sync.Pool
++	batchSize   atomic.Int32
+ 
+ 	blackhole4 bool
+ 	blackhole6 bool
+@@ -68,7 +70,7 @@
+ 
+ 		msgsPool: sync.Pool{
+ 			New: func() any {
+-				msgs := make([]ipv6.Message, IdealBatchSize)
++				msgs := make([]ipv6.Message, initialBatchSize())
+ 				for i := range msgs {
+ 					msgs[i].Buffers = make(net.Buffers, 1)
+ 					msgs[i].OOB = make([]byte, controlSize)
+@@ -205,6 +207,12 @@
+ 	if len(fns) == 0 {
+ 		return nil, 0, syscall.EAFNOSUPPORT
+ 	}
++	s.batchSize.Store(int32(initialBatchSize()))
++	if s.ipv4RxOffload || s.ipv6RxOffload {
++		// Keep the original capacity for two maximum GRO aggregates. A small
++		// ordinary read batch must not truncate packets from an unchanged peer.
++		s.batchSize.Store(IdealBatchSize)
++	}
+ 
+ 	return fns, uint16(port), nil
+ }
+@@ -212,12 +220,25 @@
+ func (s *StdNetBind) putMessages(msgs *[]ipv6.Message) {
+ 	for i := range *msgs {
+ 		(*msgs)[i] = ipv6.Message{Buffers: (*msgs)[i].Buffers, OOB: (*msgs)[i].OOB}
++		(*msgs)[i].Buffers[0] = nil
+ 	}
+ 	s.msgsPool.Put(msgs)
+ }
+ 
+-func (s *StdNetBind) getMessages() *[]ipv6.Message {
+-	return s.msgsPool.Get().(*[]ipv6.Message)
++func (s *StdNetBind) getMessages(size int) *[]ipv6.Message {
++	msgs := s.msgsPool.Get().(*[]ipv6.Message)
++	if cap(*msgs) < size {
++		*msgs = make([]ipv6.Message, size)
++	} else {
++		*msgs = (*msgs)[:size]
++	}
++	for i := range *msgs {
++		if (*msgs)[i].Buffers == nil {
++			(*msgs)[i].Buffers = make(net.Buffers, 1)
++			(*msgs)[i].OOB = make([]byte, controlSize)
++		}
++	}
++	return msgs
+ }
+ 
+ // If compilation fails here these are no longer the same underlying type.
+@@ -239,7 +260,7 @@
+ 	sizes []int,
+ 	eps []Endpoint,
+ ) (n int, err error) {
+-	msgs := s.getMessages()
++	msgs := s.getMessages(len(bufs))
+ 	for i := range bufs {
+ 		(*msgs)[i].Buffers[0] = bufs[i]
+ 		(*msgs)[i].OOB = (*msgs)[i].OOB[:cap((*msgs)[i].OOB)]
+@@ -303,9 +324,19 @@
+ // rename the IdealBatchSize constant to BatchSize.
+ func (s *StdNetBind) BatchSize() int {
+ 	if runtime.GOOS == "linux" {
+-		return IdealBatchSize
++		if size := s.batchSize.Load(); size != 0 {
++			return int(size)
++		}
++		return initialBatchSize()
+ 	}
+ 	return 1
++}
++
++func initialBatchSize() int {
++	if runtime.GOOS == "linux" {
++		return 16
++	}
++	return IdealBatchSize
+ }
+ 
+ func (s *StdNetBind) Close() error {
+@@ -371,7 +402,7 @@
+ 		return syscall.EAFNOSUPPORT
+ 	}
+ 
+-	msgs := s.getMessages()
++	msgs := s.getMessages(len(bufs))
+ 	defer s.putMessages(msgs)
+ 	ua := s.udpAddrPool.Get().(*net.UDPAddr)
+ 	defer s.udpAddrPool.Put(ua)
+--- /dev/null
++++ b/.loom-wireguard/conn/bind_memory_linux_test.go
+@@ -0,0 +1,56 @@
++//go:build linux && !android
++
++package conn
++
++import (
++	"bytes"
++	"net"
++	"testing"
++)
++
++func TestMessageDescriptorsFollowBatchAndReleasePayload(t *testing.T) {
++	bind := NewStdNetBind(nil).(*StdNetBind)
++	for _, size := range []int{16, IdealBatchSize, 16} {
++		messages := bind.getMessages(size)
++		if len(*messages) != size {
++			t.Fatal("descriptor count differs from admitted batch")
++		}
++		for i := range *messages {
++			(*messages)[i].Buffers[0] = make([]byte, 65535)
++		}
++		bind.putMessages(messages)
++		for _, message := range *messages {
++			if message.Buffers[0] != nil || message.Addr != nil {
++				t.Fatal("idle descriptor retained a previous packet")
++			}
++		}
++	}
++}
++
++func TestMaximumGROAggregateStillSplits(t *testing.T) {
++	bind := NewStdNetBind(nil).(*StdNetBind)
++	messages := bind.getMessages(IdealBatchSize)
++	defer bind.putMessages(messages)
++	for i := range *messages {
++		(*messages)[i].Buffers[0] = make([]byte, 65535)
++	}
++	const segment = 1023
++	peer := &net.UDPAddr{IP: net.IPv4(192, 0, 2, 20), Port: 51820}
++	for i := IdealBatchSize - 2; i < IdealBatchSize; i++ {
++		message := &(*messages)[i]
++		message.N = 64 * segment
++		message.Addr = peer
++		for j := 0; j < 64; j++ {
++			copy(message.Buffers[0][j*segment:(j+1)*segment], bytes.Repeat([]byte{byte(j)}, segment))
++		}
++	}
++	n, err := splitCoalescedMessages(*messages, IdealBatchSize-2, func([]byte) (int, error) { return segment, nil })
++	if err != nil || n != IdealBatchSize {
++		t.Fatalf("unchanged GRO boundary failed: count=%d error=%v", n, err)
++	}
++	for i, message := range *messages {
++		if message.N != segment || !bytes.Equal(message.Buffers[0][:segment], bytes.Repeat([]byte{byte(i % 64)}, segment)) {
++			t.Fatal("GRO changed datagram bytes or boundaries")
++		}
++	}
++}
+--- a/.loom-wireguard/device/device.go
++++ b/.loom-wireguard/device/device.go
+@@ -74,7 +74,7 @@
+ 	pool struct {
+ 		inboundElementsContainer  *WaitPool
+ 		outboundElementsContainer *WaitPool
+-		messageBuffers            *WaitPool
++		messageBuffers            messageBufferPool
+ 		inboundElements           *WaitPool
+ 		outboundElements          *WaitPool
+ 	}
+--- a/.loom-wireguard/device/pools.go
++++ b/.loom-wireguard/device/pools.go
+@@ -55,9 +55,7 @@
+ 		s := make([]*QueueOutboundElement, 0, device.BatchSize())
+ 		return &QueueOutboundElementsContainer{elems: s}
+ 	})
+-	device.pool.messageBuffers = NewWaitPool(PreallocatedBuffersPerPool, func() any {
+-		return new([MaxMessageSize]byte)
+-	})
++	device.pool.messageBuffers = newMessageBufferPool()
+ 	device.pool.inboundElements = NewWaitPool(PreallocatedBuffersPerPool, func() any {
+ 		return new(QueueInboundElement)
+ 	})
+@@ -95,11 +93,30 @@
+ }
+ 
+ func (device *Device) GetMessageBuffer() *[MaxMessageSize]byte {
+-	return device.pool.messageBuffers.Get().(*[MaxMessageSize]byte)
++	value := device.pool.messageBuffers.Get()
++	if value == nil {
++		return nil
++	}
++	return value.(*[MaxMessageSize]byte)
+ }
+ 
+ func (device *Device) PutMessageBuffer(msg *[MaxMessageSize]byte) {
+ 	device.pool.messageBuffers.Put(msg)
++}
++
++func (device *Device) getMessageScratch() *[MaxMessageSize]byte {
++	if boundedMessageBuffers {
++		return device.pool.messageBuffers.(interface{ GetScratch() any }).GetScratch().(*[MaxMessageSize]byte)
++	}
++	return device.GetMessageBuffer()
++}
++
++func (device *Device) putMessageScratch(msg *[MaxMessageSize]byte) {
++	if boundedMessageBuffers {
++		device.pool.messageBuffers.(interface{ PutScratch(any) }).PutScratch(msg)
++		return
++	}
++	device.PutMessageBuffer(msg)
+ }
+ 
+ func (device *Device) GetInboundElement() *QueueInboundElement {
+--- a/.loom-wireguard/device/receive.go
++++ b/.loom-wireguard/device/receive.go
+@@ -95,14 +95,14 @@
+ 	)
+ 
+ 	for i := range bufsArrs {
+-		bufsArrs[i] = device.GetMessageBuffer()
++		bufsArrs[i] = device.getMessageScratch()
+ 		bufs[i] = bufsArrs[i][:]
+ 	}
+ 
+ 	defer func() {
+ 		for i := 0; i < maxBatchSize; i++ {
+ 			if bufsArrs[i] != nil {
+-				device.PutMessageBuffer(bufsArrs[i])
++				device.putMessageScratch(bufsArrs[i])
+ 			}
+ 		}
+ 	}()
+@@ -168,6 +168,10 @@
+ 
+ 				// create work element
+ 				peer := value.peer
++				replacement := device.GetMessageBuffer()
++				if replacement == nil {
++					continue
++				}
+ 				elem := device.GetInboundElement()
+ 				elem.packet = packet
+ 				elem.buffer = bufsArrs[i]
+@@ -182,7 +186,7 @@
+ 					elemsByPeer[peer] = elemsForPeer
+ 				}
+ 				elemsForPeer.elems = append(elemsForPeer.elems, elem)
+-				bufsArrs[i] = device.GetMessageBuffer()
++				bufsArrs[i] = replacement
+ 				bufs[i] = bufsArrs[i][:]
+ 				continue
+ 
+@@ -208,6 +212,10 @@
+ 				continue
+ 			}
+ 
++			replacement := device.GetMessageBuffer()
++			if replacement == nil {
++				continue
++			}
+ 			select {
+ 			case device.queue.handshake.c <- QueueHandshakeElement{
+ 				msgType:  msgType,
+@@ -215,9 +223,10 @@
+ 				packet:   packet,
+ 				endpoint: endpoints[i],
+ 			}:
+-				bufsArrs[i] = device.GetMessageBuffer()
++				bufsArrs[i] = replacement
+ 				bufs[i] = bufsArrs[i][:]
+ 			default:
++				device.PutMessageBuffer(replacement)
+ 			}
+ 		}
+ 		for peer, elemsContainer := range elemsByPeer {
+--- a/.loom-wireguard/device/send.go
++++ b/.loom-wireguard/device/send.go
+@@ -61,6 +61,10 @@
+ func (device *Device) NewOutboundElement() *QueueOutboundElement {
+ 	elem := device.GetOutboundElement()
+ 	elem.buffer = device.GetMessageBuffer()
++	if elem.buffer == nil {
++		device.PutOutboundElement(elem)
++		return nil
++	}
+ 	elem.nonce = 0
+ 	// keypair and peer were cleared (if necessary) by clearPointers.
+ 	return elem
+@@ -82,6 +86,9 @@
+ func (peer *Peer) SendKeepalive() {
+ 	if len(peer.queue.staged) == 0 && peer.isRunning.Load() {
+ 		elem := peer.device.NewOutboundElement()
++		if elem == nil {
++			return
++		}
+ 		elemsContainer := peer.device.GetOutboundElementsContainer()
+ 		elemsContainer.elems = append(elemsContainer.elems, elem)
+ 		select {
+@@ -229,14 +236,15 @@
+ 	)
+ 
+ 	for i := range elems {
+-		elems[i] = device.NewOutboundElement()
++		elems[i] = device.GetOutboundElement()
++		elems[i].buffer = device.getMessageScratch()
+ 		bufs[i] = elems[i].buffer[:]
+ 	}
+ 
+ 	defer func() {
+ 		for _, elem := range elems {
+ 			if elem != nil {
+-				device.PutMessageBuffer(elem.buffer)
++				device.putMessageScratch(elem.buffer)
+ 				device.PutOutboundElement(elem)
+ 			}
+ 		}
+@@ -277,13 +285,17 @@
+ 			if peer == nil {
+ 				continue
+ 			}
++			replacement := device.NewOutboundElement()
++			if replacement == nil {
++				continue
++			}
+ 			elemsForPeer, ok := elemsByPeer[peer]
+ 			if !ok {
+ 				elemsForPeer = device.GetOutboundElementsContainer()
+ 				elemsByPeer[peer] = elemsForPeer
+ 			}
+ 			elemsForPeer.elems = append(elemsForPeer.elems, elem)
+-			elems[i] = device.NewOutboundElement()
++			elems[i] = replacement
+ 			bufs[i] = elems[i].buffer[:]
+ 		}
+ 
+@@ -326,6 +338,9 @@
+ 		return
+ 	}
+ 	elem := device.NewOutboundElement()
++	if elem == nil {
++		return
++	}
+ 	packet := elem.buffer[MessageTransportHeaderSize:]
+ 	var n int
+ 	for _, packetSlice := range packetSlices {
+--- a/.loom-wireguard/device/queueconstants_default.go
++++ b/.loom-wireguard/device/queueconstants_default.go
+@@ -1,4 +1,4 @@
+-//go:build !android && !ios && !windows
++//go:build !linux && !android && !ios && !windows
+ 
+ /* SPDX-License-Identifier: MIT
+  *
+--- /dev/null
++++ b/.loom-wireguard/device/queueconstants_linux.go
+@@ -0,0 +1,12 @@
++//go:build linux && !android
++
++package device
++
++const (
++	QueueStagedSize            = 16
++	QueueOutboundSize          = 16
++	QueueInboundSize           = 16
++	QueueHandshakeSize         = 64
++	MaxSegmentSize             = (1 << 16) - 1
++	PreallocatedBuffersPerPool = 0
++)
+--- /dev/null
++++ b/.loom-wireguard/device/message_buffers.go
+@@ -0,0 +1,6 @@
++package device
++
++type messageBufferPool interface {
++	Get() any
++	Put(any)
++}
+--- /dev/null
++++ b/.loom-wireguard/device/message_buffers_linux.go
+@@ -0,0 +1,73 @@
++//go:build linux && !android
++
++package device
++
++import "sync"
++
++const (
++	boundedMessageBuffers = true
++	// Reserve a replacement before a receive/TUN scratch packet enters a queue.
++	// The global budget covers all peers; failed admission never blocks a batch.
++	maxLiveMessageBuffers = 256
++	maxIdleMessageBuffers = 32
++)
++
++type linuxMessageBufferPool struct {
++	mu      sync.Mutex
++	inuse   uint32
++	scratch uint32
++	idle    []*[MaxMessageSize]byte
++}
++
++func newMessageBufferPool() messageBufferPool {
++	return &linuxMessageBufferPool{idle: make([]*[MaxMessageSize]byte, 0, maxIdleMessageBuffers)}
++}
++
++func (p *linuxMessageBufferPool) Get() any {
++	p.mu.Lock()
++	if p.inuse-p.scratch >= maxLiveMessageBuffers {
++		p.mu.Unlock()
++		return nil
++	}
++	p.inuse++
++	return p.takeLocked()
++}
++
++func (p *linuxMessageBufferPool) GetScratch() any {
++	p.mu.Lock()
++	p.scratch++
++	p.inuse++
++	return p.takeLocked()
++}
++
++func (p *linuxMessageBufferPool) takeLocked() any {
++	if n := len(p.idle); n > 0 {
++		buffer := p.idle[n-1]
++		p.idle[n-1] = nil
++		p.idle = p.idle[:n-1]
++		p.mu.Unlock()
++		return buffer
++	}
++	p.mu.Unlock()
++	return new([MaxMessageSize]byte)
++}
++
++func (p *linuxMessageBufferPool) Put(value any) {
++	p.mu.Lock()
++	p.putLocked(value)
++}
++
++func (p *linuxMessageBufferPool) PutScratch(value any) {
++	p.mu.Lock()
++	p.scratch--
++	p.putLocked(value)
++}
++
++func (p *linuxMessageBufferPool) putLocked(value any) {
++	p.inuse--
++	// Keep a small warm set rather than the entire previous traffic peak.
++	if len(p.idle) < maxIdleMessageBuffers {
++		p.idle = append(p.idle, value.(*[MaxMessageSize]byte))
++	}
++	p.mu.Unlock()
++}
+--- /dev/null
++++ b/.loom-wireguard/device/message_buffers_other.go
+@@ -0,0 +1,11 @@
++//go:build !linux || android
++
++package device
++
++const boundedMessageBuffers = false
++
++func newMessageBufferPool() messageBufferPool {
++	return NewWaitPool(PreallocatedBuffersPerPool, func() any {
++		return new([MaxMessageSize]byte)
++	})
++}
+--- /dev/null
++++ b/.loom-wireguard/device/message_buffers_linux_test.go
+@@ -0,0 +1,100 @@
++//go:build linux && !android
++
++package device
++
++import (
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func TestMessageBudgetRejectsWithoutWaitingAndRecovers(t *testing.T) {
++	p := newMessageBufferPool().(*linuxMessageBufferPool)
++	values := make([]any, maxLiveMessageBuffers)
++	for i := range values {
++		values[i] = p.Get()
++		if values[i] == nil {
++			t.Fatal("budget rejected an admitted message")
++		}
++	}
++	done := make(chan any, 1)
++	go func() { done <- p.Get() }()
++	select {
++	case value := <-done:
++		if value != nil {
++			t.Fatal("message exceeded whole-device budget")
++		}
++	case <-time.After(time.Second):
++		t.Fatal("exhausted producer waited while holding its batch")
++	}
++	p.Put(values[0])
++	values[0] = p.Get()
++	if values[0] == nil {
++		t.Fatal("released capacity did not recover")
++	}
++	for _, value := range values {
++		p.Put(value)
++	}
++	if p.inuse != 0 || len(p.idle) != maxIdleMessageBuffers {
++		t.Fatal("burst was not returned to the bounded idle set")
++	}
++}
++
++func TestConcurrentMessageBudgetDoesNotAlias(t *testing.T) {
++	p := newMessageBufferPool().(*linuxMessageBufferPool)
++	var active sync.Map
++	var wait sync.WaitGroup
++	var alias atomic.Bool
++	for i := 0; i < 32; i++ {
++		wait.Add(1)
++		go func() {
++			defer wait.Done()
++			for j := 0; j < 1000; j++ {
++				value := p.Get()
++				if value == nil {
++					continue
++				}
++				if _, loaded := active.LoadOrStore(value, true); loaded {
++					alias.Store(true)
++				}
++				active.Delete(value)
++				p.Put(value)
++			}
++		}()
++	}
++	wait.Wait()
++	if alias.Load() || p.inuse != 0 || len(p.idle) > maxIdleMessageBuffers {
++		t.Fatal("concurrent admission aliased or retained the burst")
++	}
++}
++
++func TestScratchSwapPreservesQueueBudgetDuringClose(t *testing.T) {
++	p := newMessageBufferPool().(*linuxMessageBufferPool)
++	// Simulate dual-stack receive plus a system TUN. They own permanent
++	// scratch credits even when packet ownership swaps to processing queues.
++	scratch := make([]any, 3*128)
++	for i := range scratch {
++		scratch[i] = p.GetScratch()
++	}
++	queued := make([]any, maxLiveMessageBuffers)
++	for i := range queued {
++		replacement := p.Get()
++		if replacement == nil {
++			t.Fatal("queue budget counted permanent scratch as queued data")
++		}
++		queued[i], scratch[i] = scratch[i], replacement
++	}
++	if p.Get() != nil {
++		t.Fatal("scratch swap exceeded the shared queued-byte budget")
++	}
++	for _, buffer := range scratch {
++		p.PutScratch(buffer)
++	}
++	for _, buffer := range queued {
++		p.Put(buffer)
++	}
++	if p.scratch != 0 || p.inuse != 0 || len(p.idle) != maxIdleMessageBuffers {
++		t.Fatal("closing scratch and queues leaked memory ownership")
++	}
++}

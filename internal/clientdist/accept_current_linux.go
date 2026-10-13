@@ -128,8 +128,7 @@ func acceptCurrentPackage(ctx context.Context, options InstallOptions, candidate
 		return "", nil, errors.New("existing program directory is not the approved two-file layout")
 	}
 	for _, component := range []Component{candidate.Manifest.Loom, candidate.Manifest.SingBox} {
-		body, err := installedFile(filepath.Join(value.CurrentPath, component.Path), maxArchiveBytes, 0o755)
-		if err != nil || len(body) != component.Size || sha256Hex(body) != component.SHA256 {
+		if err := verifyInstalledProgram(ctx, value.CurrentPath, component); err != nil {
 			return "", nil, errors.New("existing executable differs from independently signed original")
 		}
 	}

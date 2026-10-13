@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode"
@@ -27,6 +28,7 @@ import (
 // Target reads the actual installed identity and the entire signed current.
 // Missing files below an existing pointer are never treated as an empty target.
 func cmdReleaseTarget(args []string) error {
+	defer limitReleaseCLIHeap()()
 	fs := flag.NewFlagSet("release target", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	root := fs.String("root", "", "YAML 选定的分发根目录")
@@ -68,6 +70,18 @@ func cmdReleaseTarget(args []string) error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+// One-shot target verification may inspect unchanged packages from other
+// platforms. Keep its removable parsing work from growing between packages;
+// the measured disk-backed Linux path already avoids complete body copies.
+func limitReleaseCLIHeap() func() {
+	previous := debug.SetMemoryLimit(-1)
+	if previous <= 64<<20 {
+		return func() {}
+	}
+	debug.SetMemoryLimit(64 << 20)
+	return func() { debug.SetMemoryLimit(previous) }
 }
 
 func cmdReleasePublish(args []string) error {

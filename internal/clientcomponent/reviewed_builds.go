@@ -19,8 +19,9 @@ func ReviewedSourceVersion(body []byte) (string, error) {
 }
 
 // Artifact coordinates identify exact reproducible source and executable bytes.
-// Every entry uses the same schema and verifier. Only DataPlaneVersion is writable;
-// earlier signed artifacts retain their original meaning and never act as a runtime fallback.
+// Every entry uses the same schema and verifier. Current artifact coordinates
+// are selected per platform; historical authenticated bytes remain verifiable.
+// Earlier signed artifacts retain their original meaning and never act as a runtime fallback.
 type reviewedArtifact struct {
 	sources map[string]string
 	windows map[string]string
@@ -28,6 +29,19 @@ type reviewedArtifact struct {
 }
 
 var reviewedArtifacts = map[string]reviewedArtifact{
+	LinuxDataPlaneVersion: {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "2318f19e2244efd6d7af3dea8635961363de55106d2375837edf5b13a7d75c90",
+			"domain-cache.patch":     "e22f4def13acc7be3cef3535d8f33cee358f7204956c8a72cccf40ce2d805352",
+			"prepare-sing-box.py":    "766469db5a51dae8ee035440d6d8b6f26fcad82a76ada2df8276db73e812fe0b",
+			"build-dataplane.sh":     "814920e14f40c39ce149d6f400f731b8905c6ea3e4f287f16d2aadcb69e3371c",
+		},
+		linux: map[string]string{
+			"amd64": "2ef1e73df24ee3049a471938d0c44d38e278a67fe4ec85d8c44972f798c429ff",
+			"arm64": "efc4f3b037a130b3f9f17e5be7b12c7daa1eddff65ccb3f7803794e43e357748",
+		},
+	},
 	"1.11.4-loom.12": {
 		sources: map[string]string{
 			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",

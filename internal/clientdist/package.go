@@ -143,7 +143,7 @@ type archiveFile struct {
 // emits a byte-for-byte reproducible gzip stream.
 func Build(in BuildInput) (Artifact, error) {
 	return buildWithInspect(in, inspectSingBox, func(inputs map[string][]byte, version string) (map[string][]byte, error) {
-		if version != clientcomponent.DataPlaneVersion {
+		if version != clientcomponent.LinuxDataPlaneVersion {
 			return nil, fmt.Errorf("Linux package writer requires the current reviewed data-plane artifact")
 		}
 		return clientcomponent.LinuxSourceFiles(inputs, version)
@@ -358,7 +358,6 @@ type SignedPackage struct {
 	Manifest     Manifest
 	ManifestBody []byte
 	Signature    []byte
-	Files        map[string][]byte
 }
 
 func VerifyPackage(archive []byte, pub ed25519.PublicKey) (SignedPackage, error) {
@@ -528,7 +527,7 @@ func verifyArchive(body, signature []byte, pub ed25519.PublicKey, inspectSing fu
 		return zero, fmt.Errorf("Linux archive is not canonical")
 	}
 	if proof != nil {
-		*proof = SignedPackage{Manifest: manifest, ManifestBody: append([]byte(nil), files["manifest.json"]...), Signature: append([]byte(nil), signature...), Files: files}
+		*proof = SignedPackage{Manifest: manifest, ManifestBody: append([]byte(nil), files["manifest.json"]...), Signature: append([]byte(nil), signature...)}
 	}
 	return manifest, nil
 }

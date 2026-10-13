@@ -32,6 +32,7 @@ func InspectInstallation(ctx context.Context, options InstallOptions) (control.I
 	if err != nil || candidate.Manifest.Arch != runtime.GOARCH {
 		return value, errors.New("candidate package cannot be verified for this architecture")
 	}
+	defer candidate.Close()
 	if err := checkDirectory(filepath.Dir(options.State), 0o700, false); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return value, errors.New("existing device directory cannot be verified")
 	}

@@ -268,8 +268,12 @@ func TestReviewedLinuxPackages(t *testing.T) {
 			writeTestBytes(t, archive+".sig", artifact.Signature)
 			pub := filepath.Join(dir, "trusted.pub")
 			writeTestBytes(t, pub, []byte(base64.StdEncoding.EncodeToString(public)+"\n"))
-			if got, err := VerifyFiles(archive, pub); err != nil || !bytes.Equal(got.Archive, artifact.Archive) {
+			got, err := VerifyFiles(archive, pub)
+			if err != nil || got.SHA256 != sha256Hex(artifact.Archive) || got.Size != int64(len(artifact.Archive)) {
 				t.Fatal("real file verification failed", err)
+			}
+			if err := got.Close(); err != nil {
+				t.Fatal(err)
 			}
 			unpacked := filepath.Join(dir, "unpacked")
 			if err := os.Mkdir(unpacked, 0o755); err != nil {
@@ -284,6 +288,7 @@ func TestReviewedLinuxPackages(t *testing.T) {
 			if err != nil || directory.ID != sha256Hex(encoded) || !reflect.DeepEqual(directory.Manifest, manifest) {
 				t.Fatal("unpacked verified inputs differ", err)
 			}
+			defer directory.Close()
 			if err := os.Chmod(filepath.Join(packageRoot, "loom"), 0o777); err != nil {
 				t.Fatal(err)
 			}

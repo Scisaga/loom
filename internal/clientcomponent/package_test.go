@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/binary"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,15 +86,21 @@ func buildFixtureArtifact(t *testing.T) (Artifact, ed25519.PrivateKey) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	patch, err := os.ReadFile("../../third_party/sing-box/domain-cache.patch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	patch := []byte("demo patch")
 	files := map[string][]byte{"sing-box-windows-amd64.exe": sing, "LICENSE": []byte("demo license"), "source-provenance.json": []byte("demo provenance"), "domain-cache.patch": patch, "prepare-sing-box.py": []byte("demo prepare"), "build-dataplane.sh": []byte("demo build")}
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x12}, ed25519.SeedSize))
 	if _, err := Build("amd64", 1, files, archive, key); err == nil {
 		t.Fatal("unreviewed executable accepted by production builder")
 	}
+	// Like the injected PE inspector and demo sources, this patch is synthetic.
+	// Keep its review scoped to this nonparallel fixture; real Windows artifacts
+	// retain their original source pins and use the separate integration tests.
+	original := reviewedArtifacts[DataPlaneVersion]
+	fixtureReview := original
+	fixtureReview.sources = maps.Clone(original.sources)
+	fixtureReview.sources["domain-cache.patch"] = sha256Hex(patch)
+	reviewedArtifacts[DataPlaneVersion] = fixtureReview
+	t.Cleanup(func() { reviewedArtifacts[DataPlaneVersion] = original })
 	result, err := buildWithInspect("amd64", control.U64(1), files, archive, key, fixtureSingInspector(t, fixtureIdentity()), inspectWintun)
 	if err != nil {
 		t.Fatal(err)

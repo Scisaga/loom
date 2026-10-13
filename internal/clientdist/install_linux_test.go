@@ -99,7 +99,11 @@ func TestInstalledPayloadRejectsMutation(t *testing.T) {
 			if err := test.mutate(root); err != nil {
 				t.Fatal(err)
 			}
-			if (verifyInstalledPayload(root, VerifiedDirectory{Files: files}) == nil) != test.valid {
+			input := &packageInput{files: map[string]*packageFileInput{}}
+			for name, body := range files {
+				input.files[name] = &packageFileInput{name: name, mode: packageFileMode(name), size: int64(len(body)), digest: sha256Hex(body)}
+			}
+			if (verifyInstalledPayload(root, VerifiedDirectory{input: input}) == nil) != test.valid {
 				t.Fatal("unexpected installed payload acceptance")
 			}
 		})

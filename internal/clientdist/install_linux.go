@@ -8,12 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,6 +32,7 @@ const installUnit = "/etc/systemd/system/loom-client.service"
 type InstallOptions struct {
 	PackageRoot, PublicKey, State, ResourceInputs, Capture, InviteFile string
 	AcceptCurrent                                                      string
+	UpdateUnitMigration                                                string
 	ExpectedViewDigest                                                 string
 	InviteStdin                                                        bool
 	Upgrade, NoEnroll, Inspect                                         bool
@@ -55,6 +55,9 @@ func (o InstallOptions) validate() error {
 	}
 	if o.ExpectedViewDigest != "" && (!o.Upgrade || o.AcceptCurrent != "" || control.ValidateDigest(o.ExpectedViewDigest) != nil) {
 		return errors.New("automatic installation must bind an accepted View")
+	}
+	if o.UpdateUnitMigration != "" && (!installPath(o.UpdateUnitMigration) || !o.Upgrade || o.AcceptCurrent != "") {
+		return errors.New("update unit migration requires an explicit upgrade and protected absolute proof file")
 	}
 	if !installPath(o.PackageRoot) || !installPath(o.State) || o.ResourceInputs != "" && !installPath(o.ResourceInputs) {
 		return errors.New("installation paths must be absolute canonical paths")
@@ -166,9 +169,20 @@ func packageFileMode(name string) os.FileMode {
 }
 
 func verifyInstalledPayload(directory string, candidate VerifiedDirectory) error {
+	return verifyInstalledPayloadContext(context.Background(), directory, candidate)
+}
+
+func verifyInstalledPayloadContext(ctx context.Context, directory string, candidate VerifiedDirectory) error {
+	if candidate.input == nil {
+		return errors.New("verified package file metadata unavailable")
+	}
 	count := 0
+	buffer := make([]byte, packageCopyBuffer)
 	err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if path == directory {
@@ -184,12 +198,17 @@ func verifyInstalledPayload(directory string, candidate VerifiedDirectory) error
 			}
 			return errors.New("unexpected directory in installed release")
 		}
-		expected, ok := candidate.Files[name]
+		expected, ok := candidate.input.files[name]
 		if !ok {
 			return errors.New("unexpected file in installed release")
 		}
-		got, err := installedFile(path, maxArchiveBytes, packageFileMode(name))
-		if err != nil || !bytes.Equal(got, expected) {
+		actual, err := openPackageInput(path, name, true)
+		if err != nil {
+			return err
+		}
+		digest, err := hashPackageInput(ctx, actual, buffer)
+		closeErr := actual.file.Close()
+		if err != nil || closeErr != nil || actual.size != expected.size || digest != expected.digest {
 			return errors.New("existing release payload differs from the verified package")
 		}
 		count++
@@ -198,13 +217,16 @@ func verifyInstalledPayload(directory string, candidate VerifiedDirectory) error
 	if err != nil {
 		return err
 	}
-	if count != len(candidate.Files) {
+	if count != len(candidate.input.files) {
 		return errors.New("installed release is incomplete")
 	}
 	return nil
 }
 
-func cachePackage(candidate VerifiedDirectory) (string, error) {
+func cachePackage(ctx context.Context, candidate VerifiedDirectory) (string, error) {
+	if candidate.input == nil {
+		return "", errors.New("verified package file metadata unavailable")
+	}
 	root := filepath.Join(installRoot, "releases")
 	if err := protectedDirectory(root, 0o755); err != nil {
 		return "", err
@@ -214,7 +236,7 @@ func cachePackage(candidate VerifiedDirectory) (string, error) {
 		if err = protectedDirectory(destination, 0o755); err != nil {
 			return "", err
 		}
-		return destination, verifyInstalledPayload(destination, candidate)
+		return destination, verifyInstalledPayloadContext(ctx, destination, candidate)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
@@ -226,12 +248,12 @@ func cachePackage(candidate VerifiedDirectory) (string, error) {
 	if err = os.Chmod(temporary, 0o755); err != nil {
 		return "", err
 	}
-	for _, name := range slices.Sorted(maps.Keys(candidate.Files)) {
+	for _, name := range packageInputNames() {
 		path := filepath.Join(temporary, name)
 		if err = protectedDirectory(filepath.Dir(path), 0o755); err != nil {
 			return "", err
 		}
-		if err = installFile(path, candidate.Files[name], packageFileMode(name)); err != nil {
+		if err = installPackageFile(ctx, path, candidate.input.files[name]); err != nil {
 			return "", err
 		}
 	}
@@ -241,7 +263,7 @@ func cachePackage(candidate VerifiedDirectory) (string, error) {
 	if err = syncDirectory(root); err != nil {
 		return "", err
 	}
-	return destination, verifyInstalledPayload(destination, candidate)
+	return destination, verifyInstalledPayloadContext(ctx, destination, candidate)
 }
 
 func readInstallKey(path string) (ed25519.PublicKey, []byte, error) {
@@ -343,7 +365,11 @@ func replaceInstallLink(path, target string) error {
 
 // Install performs one forward operation. A failure after current advances
 // disables execution and retains that signed generation and Device state.
-func Install(ctx context.Context, options InstallOptions) (resultErr error) {
+func Install(ctx context.Context, options InstallOptions) error {
+	return install(ctx, options, nil)
+}
+
+func install(ctx context.Context, options InstallOptions, captured *VerifiedDirectory) (resultErr error) {
 	if options.State == "" {
 		options.State = defaultInstallState
 	}
@@ -403,9 +429,25 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	candidate, err := VerifyDirectory(options.PackageRoot, public)
-	if err != nil {
-		return err
+	var candidate VerifiedDirectory
+	if captured == nil {
+		if err := protectedDirectory(installRoot, 0755); err != nil {
+			return err
+		}
+		candidate, err = VerifyDirectoryAt(ctx, options.PackageRoot, public, installRoot)
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, candidate.Close()) }()
+	} else {
+		candidate = *captured
+		manifest, err := VerifyManifest(candidate.ManifestBody, candidate.Signature, public)
+		if err != nil || !reflect.DeepEqual(manifest, candidate.Manifest) || candidate.ID != sha256Hex(candidate.ManifestBody) {
+			return errors.New("captured package metadata differs from installation trust")
+		}
+		if err := verifyInstalledPayloadContext(ctx, candidate.Root, candidate); err != nil {
+			return err
+		}
 	}
 	if candidate.Manifest.Arch != runtime.GOARCH {
 		return errors.New("package architecture differs from the installation host")
@@ -433,7 +475,7 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if err = installFile(installTrust, keyBody, 0o644); err != nil {
 		return err
 	}
-	release, err := cachePackage(candidate)
+	release, err := cachePackage(ctx, candidate)
 	if err != nil {
 		return err
 	}
@@ -445,7 +487,8 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	if err = checkUpdateUnits(ctx, options); err != nil {
+	updateUnits, err := checkUpdateUnits(ctx, options, currentPath, current)
+	if err != nil {
 		return err
 	}
 	if options.Upgrade {
@@ -567,7 +610,7 @@ func Install(ctx context.Context, options InstallOptions) (resultErr error) {
 	if err = replaceInstallLink("/usr/local/bin/loom", filepath.Join(installRoot, "current", "loom")); err != nil {
 		return err
 	}
-	if err = installUpdateUnits(ctx, options); err != nil {
+	if err = installUpdateUnits(ctx, options, updateUnits); err != nil {
 		return err
 	}
 	succeeded = true
@@ -663,11 +706,11 @@ func checkManagedUnit(ctx context.Context, body, candidate []byte, currentPath s
 func removeReplacedPrograms(directory string, previous Manifest) error {
 	for _, component := range []Component{previous.Loom, previous.SingBox} {
 		path := filepath.Join(directory, component.Path)
-		body, err := installedFile(path, maxArchiveBytes, 0o755)
+		err := verifyInstalledProgram(context.Background(), directory, component)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err != nil || sha256Hex(body) != component.SHA256 {
+		if err != nil {
 			return errors.New("replaced executable ownership or bytes differ; retained for inspection")
 		}
 		if err = os.Remove(path); err != nil {
@@ -769,8 +812,7 @@ func installationInputs(ctx context.Context, options InstallOptions, release, cu
 	}
 	if current != nil {
 		for _, component := range []Component{current.Loom, current.SingBox} {
-			body, err := installedFile(filepath.Join(currentPath, component.Path), maxArchiveBytes, 0o755)
-			if err != nil || sha256Hex(body) != component.SHA256 {
+			if err := verifyInstalledProgram(ctx, currentPath, component); err != nil {
 				return nil, nil, errors.New("accepted executable changed; refusing to execute its cleanup")
 			}
 		}

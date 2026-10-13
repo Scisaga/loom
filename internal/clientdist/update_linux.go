@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 
 	"loom/internal/control"
@@ -18,6 +21,7 @@ import (
 
 type UpdateOptions struct {
 	State, ResourceInputs, Capture string
+	UpdateUnitMigration            string
 	Log                            io.Writer
 }
 
@@ -97,15 +101,20 @@ func verifyDelivery(delivery control.DeviceReleaseDelivery, public ed25519.Publi
 
 // Update is a bounded one-shot consumer. The original daemon writes Device
 // state; the updater reads it and invokes the same locked installer.
-func Update(ctx context.Context, options UpdateOptions) error {
+func Update(ctx context.Context, options UpdateOptions) (resultErr error) {
 	if options.Log == nil {
 		options.Log = io.Discard
 	}
 	if options.State == "" {
 		options.State = defaultInstallState
 	}
-	if os.Geteuid() != 0 || !installPath(options.State) || options.ResourceInputs != "" && !installPath(options.ResourceInputs) || options.Capture != "mixed" && options.Capture != "tun" {
+	if os.Geteuid() != 0 || !installPath(options.State) || options.ResourceInputs != "" && !installPath(options.ResourceInputs) || options.Capture != "mixed" && options.Capture != "tun" || options.UpdateUnitMigration != "" && !installPath(options.UpdateUnitMigration) {
 		return errors.New("update requires root and explicit canonical runtime inputs")
+	}
+	if options.UpdateUnitMigration != "" {
+		if _, err := readUpdateUnitMigration(options.UpdateUnitMigration); err != nil {
+			return err
+		}
 	}
 	active, err := systemdProperty(ctx, "ActiveState")
 	if err != nil || active != "active" {
@@ -118,13 +127,6 @@ func Update(ctx context.Context, options UpdateOptions) error {
 	currentPath, current, err := acceptedPackage(public)
 	if err != nil || current == nil {
 		return errors.New("automatic update requires an accepted canonical package")
-	}
-	verified, err := VerifyDirectory(currentPath, public)
-	if err != nil {
-		return err
-	}
-	if err := verifyInstalledPayload(currentPath, verified); err != nil {
-		return err
 	}
 	store, err := deviceclient.Load(options.State)
 	if err != nil || store.LKG() == nil {
@@ -147,40 +149,63 @@ func Update(ctx context.Context, options UpdateOptions) error {
 		return err
 	}
 	if filepath.Base(currentPath) == id {
+		if options.UpdateUnitMigration != "" {
+			return errors.New("explicit update unit migration requires a new authenticated package; verify an unchanged package with an ordinary update")
+		}
+		verified, err := VerifyInstalledDirectory(ctx, currentPath, public)
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, verified.Close()) }()
+		if verified.ID != id || !reflect.DeepEqual(verified.Manifest, *current) {
+			return errors.New("accepted package changed during update inspection")
+		}
+		actual, err := os.Readlink(filepath.Join(installRoot, "current"))
+		if err != nil || actual != currentPath {
+			return errors.New("accepted package pointer changed during update inspection")
+		}
 		fmt.Fprintln(options.Log, "Current verified package satisfies the accepted expectation; no installation performed.")
 		return nil
 	}
 	request := control.DeviceReleaseDownload{Schema: 3, Platform: delivery.Platform, ViewDigest: lkg.ViewDigest, CatalogDigest: control.ReleaseDigest([]byte(delivery.CatalogBody)), ArtifactDigest: entry.Artifact.Digest}
-	archive, err := deviceclient.DownloadRelease(ctx, store, request, int64(entry.Artifact.Size))
+	if err := protectedDirectory(installRoot, 0755); err != nil {
+		return err
+	}
+	temporary, err := os.MkdirTemp(installRoot, ".update-")
 	if err != nil {
 		return err
 	}
-	if control.ReleaseDigest(archive) != entry.Artifact.Digest {
+	workspaceEntry, err := os.Lstat(temporary)
+	if err != nil || !packageDirectoryPrivate(workspaceEntry) {
+		return errors.New("private update workspace ownership differs")
+	}
+	workspace := &packageInput{root: temporary, entry: workspaceEntry, remove: true}
+	defer func() { resultErr = errors.Join(resultErr, workspace.close()) }()
+	if err := packageWorkRoot(temporary); err != nil {
+		return err
+	}
+	archive, err := os.CreateTemp(temporary, "archive-")
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, archive.Close()) }()
+	hash := sha256.New()
+	if err := deviceclient.DownloadReleaseTo(ctx, store, request, int64(entry.Artifact.Size), io.MultiWriter(archive, hash)); err != nil {
+		return err
+	}
+	if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != entry.Artifact.Digest {
 		return errors.New("downloaded archive differs from the signed digest")
 	}
-	signed, err := VerifyPackage(archive, public)
+	if err := archive.Sync(); err != nil {
+		return err
+	}
+	signed, err := VerifyArchiveFile(ctx, archive, public, temporary)
 	if err != nil {
 		return err
 	}
+	defer func() { resultErr = errors.Join(resultErr, signed.Close()) }()
 	if !bytes.Equal(signed.ManifestBody, []byte(delivery.ManifestBody)) || base64.RawURLEncoding.EncodeToString(signed.Signature) != delivery.ManifestSignature {
 		return errors.New("archive and delivered manifest originals differ")
 	}
-	if err := protectedDirectory("/run/loom-install", 0700); err != nil {
-		return err
-	}
-	temporary, err := os.MkdirTemp("/run/loom-install", "download-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(temporary)
-	for name, body := range signed.Files {
-		path := filepath.Join(temporary, name)
-		if err := protectedDirectory(filepath.Dir(path), 0700); err != nil {
-			return err
-		}
-		if err := installFile(path, body, packageFileMode(name)); err != nil {
-			return err
-		}
-	}
-	return Install(ctx, InstallOptions{PackageRoot: temporary, State: options.State, ResourceInputs: options.ResourceInputs, Capture: options.Capture, Upgrade: true, ExpectedViewDigest: lkg.ViewDigest, Log: options.Log})
+	return install(ctx, InstallOptions{PackageRoot: signed.Root, State: options.State, ResourceInputs: options.ResourceInputs, Capture: options.Capture, Upgrade: true, UpdateUnitMigration: options.UpdateUnitMigration, ExpectedViewDigest: lkg.ViewDigest, Log: options.Log}, &signed)
 }

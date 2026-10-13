@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"flag"
@@ -304,31 +305,18 @@ func cmdClientVerify(args []string) error {
 	if *signaturePath == "" {
 		*signaturePath = *archivePath + ".sig"
 	}
-	archive, err := readRegularClientInput(*archivePath, false)
+	absoluteArchive, err := filepath.Abs(*archivePath)
 	if err != nil {
 		return err
 	}
-	checksum, err := readRegularClientInput(*checksumPath, false)
+	verified, err := clientdist.VerifyFilesWithPathsAt(context.Background(), absoluteArchive, *checksumPath, *signaturePath, *pubPath, filepath.Dir(absoluteArchive))
 	if err != nil {
 		return err
 	}
-	signature, err := readRegularClientInput(*signaturePath, false)
-	if err != nil {
-		return err
-	}
-	pub, err := readKey(*pubPath, ed25519.PublicKeySize)
-	if err != nil {
-		return fmt.Errorf("读带外可信平台公钥:%w", err)
-	}
-	manifest, err := clientdist.Verify(archive, checksum, signature, ed25519.PublicKey(pub))
-	if err != nil {
-		return err
-	}
+	defer verified.Close()
+	manifest := verified.Manifest
 	if *expectedArch != "" && manifest.Arch != *expectedArch {
 		return fmt.Errorf("Linux 客户端包架构为 %s，预期 %s", manifest.Arch, *expectedArch)
-	}
-	if fields := strings.Fields(string(checksum)); len(fields) != 2 || fields[1] != filepath.Base(*archivePath) {
-		return fmt.Errorf("校验附件声明的文件名与 %s 不一致", filepath.Base(*archivePath))
 	}
 	fmt.Printf("✓ Linux 客户端包验证通过\n")
 	fmt.Printf("  平台      %s/%s\n", manifest.OS, manifest.Arch)

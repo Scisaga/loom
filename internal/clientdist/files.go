@@ -1,69 +1,120 @@
 package clientdist
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// Published is verified metadata for a Web download surface. Callers must not
-// construct download metadata from a sidecar alone: archive, checksum,
-// signature, embedded manifest and the separately pinned public key are one
-// verification transaction.
+// Published holds the exact captured archive descriptor and bounded metadata.
+// Close must follow every successful verification, including metadata-only use.
 type Published struct {
-	Manifest  Manifest
-	SHA256    string
-	Size      int64
-	Archive   []byte
-	Checksum  []byte
-	Signature []byte
-	PublicKey []byte
+	Manifest                       Manifest
+	SHA256                         string
+	Size                           int64
+	Archive                        *os.File
+	Checksum, Signature, PublicKey []byte
+	capture                        *packageInput
 }
 
-// VerifyFiles verifies the production archive and its adjacent sidecars.
+func (v Published) Close() error {
+	if v.capture == nil {
+		return nil
+	}
+	return v.capture.close()
+}
+
 func VerifyFiles(archivePath, publicKeyPath string) (Published, error) {
-	var out Published
-	archive, err := readRegularBounded(archivePath, maxArchiveBytes)
-	if err != nil {
-		return out, err
+	return VerifyFilesAt(context.Background(), archivePath, publicKeyPath, "")
+}
+
+func VerifyFilesAt(ctx context.Context, archivePath, publicKeyPath, workRoot string) (Published, error) {
+	return VerifyFilesWithPathsAt(ctx, archivePath, archivePath+".sha256", archivePath+".sig", publicKeyPath, workRoot)
+}
+
+func VerifyFilesWithPathsAt(ctx context.Context, archivePath, checksumPath, signaturePath, publicKeyPath, workRoot string) (result Published, resultErr error) {
+	var zero Published
+	var capture *packageInput
+	defer func() {
+		if resultErr != nil && capture != nil {
+			resultErr = errors.Join(resultErr, capture.close())
+			result = zero
+		}
+	}()
+	if workRoot == "" {
+		absolute, err := filepath.Abs(archivePath)
+		if err != nil {
+			return zero, err
+		}
+		workRoot = filepath.Dir(absolute)
 	}
-	checksum, err := readRegularBounded(archivePath+".sha256", 4<<10)
+	checksum, err := readRegularBounded(checksumPath, 4<<10)
 	if err != nil {
-		return out, err
+		return zero, err
 	}
-	signature, err := readRegularBounded(archivePath+".sig", 16<<10)
+	signature, err := readRegularBounded(signaturePath, 16<<10)
 	if err != nil {
-		return out, err
+		return zero, err
 	}
 	publicBody, err := readRegularBounded(publicKeyPath, 4<<10)
 	if err != nil {
-		return out, err
+		return zero, err
 	}
-	publicKey, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(publicBody)))
+	public, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(publicBody)))
 	if err != nil {
-		publicKey, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(string(publicBody)))
+		public, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(string(publicBody)))
 	}
-	if err != nil || len(publicKey) != ed25519.PublicKeySize {
-		return out, fmt.Errorf("[§4.3 签名高于传输信任] 带外平台公钥 %s 无效", publicKeyPath)
+	if err != nil || len(public) != ed25519.PublicKeySize {
+		return zero, errors.New("independent Linux installation public key is invalid")
 	}
-	manifest, err := Verify(archive, checksum, signature, ed25519.PublicKey(publicKey))
+	entry, err := os.Lstat(archivePath)
+	if err != nil || !entry.Mode().IsRegular() || entry.Size() <= 0 || entry.Size() > maxArchiveBytes || !packageFileLinks(entry) {
+		return zero, errors.New("archive is not a bounded ordinary file")
+	}
+	source, err := os.Open(archivePath)
 	if err != nil {
-		return out, err
+		return zero, err
 	}
-	wantName := "loom-client-linux-" + manifest.Arch + ".tar.gz"
-	if filepath.Base(archivePath) != wantName {
-		return out, fmt.Errorf("[§10.2 渲染目标必须显式] 客户端包文件名是 %q，期望 %q", filepath.Base(archivePath), wantName)
+	defer func() { resultErr = errors.Join(resultErr, source.Close()) }()
+	input := &packageFileInput{path: archivePath, size: entry.Size(), file: source, entry: entry}
+	if err := input.stable(); err != nil {
+		return zero, err
 	}
-	fields := strings.Fields(string(checksum))
-	if len(fields) != 2 || fields[1] != wantName {
-		return out, fmt.Errorf("客户端包校验附件声明的文件名无效")
+	capture, err = newPackageCapture(workRoot)
+	if err != nil {
+		return zero, err
 	}
-	// Return the exact verified bytes. A handler that reopens archivePath after
-	// this point would reintroduce a verify/use race with the publisher.
-	return Published{
-		Manifest: manifest, SHA256: fields[0], Size: int64(len(archive)), Archive: archive,
-		Checksum: checksum, Signature: signature, PublicKey: publicBody,
-	}, nil
+	if err := capturePackageMember(ctx, capture, "archive", input.size, io.NewSectionReader(source, 0, input.size), make([]byte, packageCopyBuffer)); err != nil {
+		return zero, err
+	}
+	if err := input.stable(); err != nil {
+		return zero, err
+	}
+	archive := capture.files["archive"]
+	archive.digest, err = hashPackageInput(ctx, archive, make([]byte, packageCopyBuffer))
+	if err != nil {
+		return zero, err
+	}
+	verified, err := VerifyArchiveFile(ctx, archive.file, ed25519.PublicKey(public), capture.root)
+	if err != nil {
+		return zero, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, verified.Close()) }()
+	name := "loom-client-linux-" + verified.Manifest.Arch + ".tar.gz"
+	if filepath.Base(archivePath) != name {
+		return zero, errors.New("Linux archive filename differs from architecture")
+	}
+	if !strings.HasSuffix(string(checksum), "\n") || string(checksum) != fmt.Sprintf("%s  %s\n", archive.digest, name) {
+		return zero, errors.New("Linux archive checksum differs or is not canonical")
+	}
+	if string(signature) != string(verified.Signature) {
+		return zero, errors.New("detached and embedded manifest signatures differ")
+	}
+	return Published{Manifest: verified.Manifest, SHA256: archive.digest, Size: archive.size, Archive: archive.file, Checksum: checksum, Signature: signature, PublicKey: publicBody, capture: capture}, nil
 }

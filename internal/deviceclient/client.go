@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -145,19 +146,97 @@ func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error
 		return nil, errors.New("device has no accepted LKG")
 	}
 	ctx = withCertifiedDNS(ctx, lkg.View.DNSServers)
-	var failures []error
+	endpoints := []control.EndpointGeneration{}
 	for _, endpoint := range endpointOrder(lkg.View.Endpoints) {
-		if endpoint.State != "serving" {
-			continue
+		if endpoint.State == "serving" {
+			endpoints = append(endpoints, endpoint)
 		}
-		hello := control.TunnelHello{Schema: 3, Mode: "device", EndpointID: endpoint.ID, Generation: endpoint.Generation, DeviceID: lkg.View.DeviceID}
-		connection, err := control.DialEndpoint(ctx, endpoint, hello, store.PrivateKey())
-		if err == nil {
-			return connection, nil
-		}
-		failures = append(failures, err)
 	}
-	if len(failures) == 0 {
+	if len(endpoints) == 0 {
+		return nil, errors.New("device LKG has no serving endpoint")
+	}
+	return connectDeviceEndpoints(ctx, endpoints, lkg.View.DeviceID, store.PrivateKey(), control.DialEndpoint)
+}
+
+// Every authenticated endpoint gets its own bounded attempt. A black hole in
+// the first entry cannot consume the budget of the next entry. Two in-flight
+// attempts are sufficient for fallback without opening every member at once.
+func connectDeviceEndpoints(ctx context.Context, endpoints []control.EndpointGeneration, deviceID string, private ed25519.PrivateKey,
+	dial func(context.Context, control.EndpointGeneration, control.TunnelHello, ed25519.PrivateKey) (net.Conn, error)) (net.Conn, error) {
+	const parallel = 2
+	const attemptTimeout = 5 * time.Second
+	type result struct {
+		index      int
+		connection net.Conn
+		err        error
+	}
+	activeContext, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	results := make(chan result, parallel)
+	started, active := 0, 0
+	failures := make([]error, len(endpoints))
+	start := func(index int) {
+		active++
+		started++
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			attempt, finish := context.WithTimeout(activeContext, attemptTimeout)
+			endpoint := endpoints[index]
+			hello := control.TunnelHello{Schema: 3, Mode: "device", EndpointID: endpoint.ID, Generation: endpoint.Generation, DeviceID: deviceID}
+			connection, err := dial(attempt, endpoint, hello, private)
+			finish()
+			results <- result{index, connection, err}
+		}()
+	}
+	// Cancellation always waits for started attempts. A losing or late success
+	// owns a real connection and must close it before the caller continues.
+	drain := func() {
+		cancel()
+		for active > 0 {
+			value := <-results
+			active--
+			if value.connection != nil {
+				_ = value.connection.Close()
+			}
+		}
+		workers.Wait()
+	}
+	for started < len(endpoints) && active < parallel && ctx.Err() == nil {
+		start(started)
+	}
+	for active > 0 {
+		select {
+		case <-ctx.Done():
+			drain()
+			return nil, ctx.Err()
+		case value := <-results:
+			active--
+			if value.err == nil && value.connection != nil {
+				drain()
+				if err := ctx.Err(); err != nil {
+					_ = value.connection.Close()
+					return nil, err
+				}
+				return value.connection, nil
+			}
+			if value.connection != nil {
+				_ = value.connection.Close()
+			}
+			if value.err == nil {
+				value.err = errors.New("device endpoint returned no connection")
+			}
+			failures[value.index] = value.err
+			if started < len(endpoints) && ctx.Err() == nil {
+				start(started)
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(endpoints) == 0 {
 		return nil, errors.New("device LKG has no serving endpoint")
 	}
 	return nil, errors.Join(failures...)

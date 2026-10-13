@@ -35,6 +35,9 @@ func TestReviewedStoreRechecksBytesAndRebuildsCache(t *testing.T) {
 			return err
 		}
 		if entry.IsDir() {
+			if rel == ".download-work" {
+				return filepath.SkipDir // Disposable local captures are not signed release inputs.
+			}
 			return os.MkdirAll(filepath.Join(directory, rel), 0o755)
 		}
 		body, err := os.ReadFile(path)

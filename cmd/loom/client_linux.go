@@ -183,6 +183,9 @@ func cmdClientStatus(args []string) error {
 		return err
 	}
 	if status.Runtime != "running" {
+		if status.Runtime == "unknown" {
+			return errors.New("certified configuration is saved; Linux client runtime readback is unknown")
+		}
 		return errors.New("certified configuration is saved; Linux client runtime is not running")
 	}
 	return nil

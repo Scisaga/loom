@@ -57,14 +57,14 @@ func TestWebChromeNodeRuntimeUsesSignedStateAcrossPages(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitChromeEvaluation(t, debug, `location.pathname==='`+page+`'&&document.querySelector('#connection').title.includes('local writes available')&&document.querySelector('#app h1')`)
-			result := chromeDo(t, debug, `(async()=>{const {nodeRuntimeState}=await import('/assets/model.js'),snapshot=await(await fetch('/api/control/ui/snapshot')).json(),device=snapshot.devices.find(d=>d.id==='`+invite.DeviceID+`');return nodeRuntimeState(device,Date.now())==='`+want+`'&&!document.querySelector('.overview-health').textContent.includes('0 available')&&!document.body.innerText.includes('current available evidence')})()`)
+			result := chromeDo(t, debug, `(async()=>{const {nodeRuntimeState}=await import('/assets/model.js'),snapshot=await(await fetch('/api/control/ui/snapshot')).json(),device=snapshot.devices.find(d=>d.id==='`+invite.DeviceID+`');return nodeRuntimeState(device,Date.now())==='`+want+`'&&!document.querySelector('.overview-health')?.textContent.includes('0 available')&&!document.body.innerText.includes('current available evidence')})()`)
 			if result != true {
 				t.Fatal("page consumed global availability instead of the signed runtime", state, page)
 			}
 			if page == "/devices" && chromeDo(t, debug, `document.querySelector('[data-runtime-history="`+invite.DeviceID+`"]')?.closest('tr').textContent.includes('Runtime: `+want+`')`) != true {
 				t.Fatal("inventory runtime row disagrees with the summary", state)
 			}
-			if page == "/devices/"+invite.DeviceID && chromeDo(t, debug, `document.querySelector('.overview-health').textContent.includes('Runtime: `+want+`')`) != true {
+			if page == "/devices/"+invite.DeviceID && chromeDo(t, debug, `document.querySelector('[data-runtime-state]')?.textContent==='`+want+`'&&document.querySelector('.device-summary-metrics').textContent.includes('`+want+`')`) != true {
 				t.Fatal("device detail uses a different status", state)
 			}
 			if strings.HasSuffix(page, "topology") || page == "/" {

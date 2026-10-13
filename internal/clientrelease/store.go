@@ -4,6 +4,7 @@ package clientrelease
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"errors"
@@ -26,16 +27,26 @@ const maxPackageBytes = 256 << 20
 // ProjectionSource reads signed metadata without touching that cache or its lock.
 type Store struct {
 	root     string
+	workRoot string
 	key      ed25519.PublicKey
 	mu       sync.Mutex
 	packages map[string]control.ReleasePackage
 }
 
 func New(root string, key ed25519.PublicKey) (*Store, error) {
+	return NewWithWorkRoot(root, key, filepath.Join(root, ".download-work"))
+}
+
+// NewWithWorkRoot puts disposable byte captures on caller-owned disk, separately
+// from a control's read-only release input. Captures are never release authority.
+func NewWithWorkRoot(root string, key ed25519.PublicKey, workRoot string) (*Store, error) {
 	if !filepath.IsAbs(root) || filepath.Clean(root) != root || len(key) != ed25519.PublicKeySize {
 		return nil, errors.New("release root or independent trust input is invalid")
 	}
-	return &Store{root: root, key: append(ed25519.PublicKey(nil), key...), packages: map[string]control.ReleasePackage{}}, nil
+	if !filepath.IsAbs(workRoot) || filepath.Clean(workRoot) != workRoot || workRoot == root {
+		return nil, errors.New("release download work root is invalid")
+	}
+	return &Store{root: root, workRoot: workRoot, key: append(ed25519.PublicKey(nil), key...), packages: map[string]control.ReleasePackage{}}, nil
 }
 
 func digestPath(prefix, digest, name string) string {
@@ -185,14 +196,12 @@ func (store *Store) readCatalog(root *os.Root, id string) (control.ReleaseSet, e
 		entry, manifest, signed := pkg.Entry, pkg.ManifestBody, pkg.Signature
 		parsed, ok := store.packages[packageCacheKey(entry)]
 		if !ok {
-			artifact, err := readFile(root, digestPath("bin", entry.Artifact.Digest, ""), int64(entry.Artifact.Size))
+			artifact, err := store.captureArtifact(context.Background(), root, entry.Artifact)
 			if err != nil {
 				return zero, err
 			}
-			if len(artifact) != int(entry.Artifact.Size) || control.ReleaseDigest(artifact) != entry.Artifact.Digest {
-				return zero, errors.New("release package differs from its signed digest or size")
-			}
-			parsed, err = InspectInput(entry.Artifact.Name, Input{Body: artifact, Manifest: manifest, Signature: signed}, store.key)
+			parsed, err = store.inspectCaptured(context.Background(), artifact, pkg)
+			err = errors.Join(err, artifact.Close())
 			if err != nil {
 				return zero, err
 			}
@@ -262,31 +271,43 @@ func Inspect(name string, body []byte, key ed25519.PublicKey) (control.ReleasePa
 }
 
 func (store *Store) Open(catalogID string, artifact control.ReleaseArtifact) (io.ReadCloser, error) {
-	current, err := store.ReadCatalog(catalogID)
-	if err != nil {
-		return nil, err
-	}
-	found := false
-	for _, entry := range current.Catalog.Entries {
-		if entry.Artifact == artifact {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return nil, errors.New("artifact is not in the verified current catalog")
-	}
 	root, err := os.OpenRoot(store.root)
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
-	body, err := readFile(root, digestPath("bin", artifact.Digest, ""), int64(artifact.Size))
+	current, err := store.readSignedCatalog(root, catalogID)
 	if err != nil {
 		return nil, err
 	}
-	if len(body) != int(artifact.Size) || control.ReleaseDigest(body) != artifact.Digest {
-		return nil, errors.New("artifact changed before download")
+	var selected *control.ReleasePackage
+	for _, pkg := range current.Packages {
+		if pkg.Entry.Artifact == artifact {
+			selected = &pkg
+			break
+		}
 	}
-	return io.NopCloser(bytes.NewReader(body)), nil
+	if selected == nil {
+		return nil, errors.New("artifact is not in the verified current catalog")
+	}
+	input, err := store.captureArtifact(context.Background(), root, artifact)
+	if err != nil {
+		return nil, err
+	}
+	store.mu.Lock()
+	parsed, cached := store.packages[packageCacheKey(selected.Entry)]
+	store.mu.Unlock()
+	if !cached {
+		parsed, err = store.inspectCaptured(context.Background(), input, *selected)
+	}
+	if err == nil && (parsed.Entry != selected.Entry || !bytes.Equal(parsed.ManifestBody, selected.ManifestBody) || !bytes.Equal(parsed.Signature, selected.Signature)) {
+		err = errors.New("release package differs from its original signed coordinates")
+	}
+	if err != nil {
+		return nil, errors.Join(err, input.Close())
+	}
+	store.mu.Lock()
+	store.packages[packageCacheKey(selected.Entry)] = parsed
+	store.mu.Unlock()
+	return input, nil
 }

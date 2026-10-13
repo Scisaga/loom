@@ -329,6 +329,39 @@ domain/wire/持久状态继续使用原 Observation，runtime 按其原始截止
 
 ### 本地执行与私有管理请求
 
+#### 周期回读不足与执行失败
+
+已成功启动并完成首轮完整回读的 generation，在后续刷新中遇到明确的局部网络超时，不应把一次观测
+不足升级为整代应用失败。先回读全部资源的真实进程/UDP listener 及本 generation 精确 WG 所有权；
+只有这些执行边界仍成立、认证 LKG 未变且失败仅为明确超时时，保留执行，投影 runtime `unknown`，
+下一次既有刷新重新取得完整证据即可在同 View 恢复 running。首次启动的完整 readiness 不放宽。
+TLS/证书/身份/认证或 ACL 不符、所有权丢失、持久化与清理失败及未分类错误仍失败关闭；取消按原停止
+和精确清理链执行。`net.ErrClosed` 本身不能证明只是超时，不能掩盖携带该原因的 TLS crypto 错误。
+
+domain、签名 wire 与身份 persistent 不变；原四态 RuntimeReadback 已包含 unknown，本机 schema 3 Status
+使用同一含义。unknown 的当前 applied digest 为空、resources 与 WG counters 缺席、当前 selection/观测
+展示为空；唯一 LocalState 中原样本及截止保持，不清空有效失败或延长窗口。实际测得的 components
+仍可报告，UI 显示其原坐标但完整应用保持未知。日志只记录固定操作/失败类别及子进程退出状态或信号，
+不拼接含秘密、私有地址或远端正文的原错误。反例是周期回读 TLS 身份改变：即使另一 WG listener
+存在，也不能按普通超时继续把整个执行当正确。
+
+必要验证为局部周期超时后进程与真实 WG 业务保持、unknown 正常回读及同 View 恢复；启动、crypto/
+ACL/所有权/清理失败仍拒绝；停止与撤权不恢复旧权限；unknown 保留实际组件而拒绝旧资源证明，原样本
+不续期。无新生命周期、自动重启 service、重试调度器或持久完成状态。
+
+#### 数据面的消息工作集
+
+传输需要当前活跃连接、正在收发与排队的消息，不能由历史流量增长持续保留无界的消息池。Linux WG
+批处理大小必须与 bind 的 message 数组、TUN 读取和 GRO/GSO 分段边界一致；缩减只能改变本机工作集，
+不能截断合法 UDP 聚合或改变认证、AllowedIP、Service/Policy。消息池保留和队列总字节按当前执行
+资源设有限边界；取消与关闭先终止新交付并等待在途处理，再释放同一 owner 的缓冲与接口。
+
+domain/wire/persistent 仍为原 TransportResource、NetworkLink 与授权；批数组、消息池和连接缓冲都是
+可释放的本代运行资源，不产生第二份权威。UI 继续消费真实业务观测，回压或资源不足不能伪造健康。
+先在专用 namespace 用同形 demo 资源测空闲、真实 TCP/UDP、突发和连接排空后的 live/allocated heap、
+RSS 及吞吐/延迟，再调整有证据的工作集。最小验证包含最大合法包与 GRO/GSO 边界、突发回压、协议
+独立承载、收包与关闭并发及同身份重启；限额和较小常数都不能单独作为通过标准。
+
 目标是在配置入口或报告入口暂时不回应时，已获授权的本地执行仍能处理偏好、切网和有限期观测。
 Linux 原刷新循环先等待配置，再执行本地选择并等待报告；一个慢管理请求因此拖延下一轮本地处理。
 最小变化是本 generation 中配置刷新和报告上传各自只有一个后台在途请求，本地循环不等待它们。

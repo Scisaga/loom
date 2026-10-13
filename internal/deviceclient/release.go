@@ -31,41 +31,63 @@ func Release(ctx context.Context, store IdentityStore, platform string) (control
 	return result, err
 }
 
-func DownloadRelease(ctx context.Context, store IdentityStore, request control.DeviceReleaseDownload, size int64) ([]byte, error) {
-	if request.Validate() != nil || size <= 0 || size > 256<<20 {
-		return nil, errors.New("release download bounds are invalid")
+// DownloadReleaseTo streams the exact signed-length body to caller-owned
+// protected storage. It never changes the device's identity or accepted View.
+func DownloadReleaseTo(ctx context.Context, store IdentityStore, request control.DeviceReleaseDownload, size int64, destination io.Writer) error {
+	if destination == nil || request.Validate() != nil || size <= 0 || size > 256<<20 {
+		return errors.New("release download bounds are invalid")
 	}
 	lkg := store.LKG()
 	if lkg == nil || lkg.ViewDigest != request.ViewDigest {
-		return nil, errors.New("release download is not bound to accepted configuration")
+		return errors.New("release download is not bound to accepted configuration")
 	}
 	connection, err := deviceConnection(ctx, store)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer connection.Close()
 	body, err := control.CanonicalEncode(request)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://loom.private/device/release/download", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	client := tunnelHTTPClient(connection)
-	client.Timeout = 0 // The caller bounds the whole operation; body writes are streamed.
+	client.Timeout = 0
 	response, err := client.Do(httpRequest)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer response.Body.Close()
+	return copyReleaseBody(ctx, response, size, destination)
+}
+
+func copyReleaseBody(ctx context.Context, response *http.Response, size int64, destination io.Writer) error {
 	if response.StatusCode != http.StatusOK || response.ContentLength != size {
-		return nil, errors.New("exact release body unavailable")
+		return errors.New("exact release body unavailable")
 	}
-	result, err := io.ReadAll(io.LimitReader(response.Body, size+1))
-	if err != nil || int64(len(result)) != size {
-		return nil, errors.New("release body length differs from signed coordinates")
+	reader := &releaseBodyReader{ctx: ctx, reader: io.LimitReader(response.Body, size+1)}
+	n, err := io.CopyBuffer(destination, reader, make([]byte, 32<<10))
+	if err != nil {
+		return err
 	}
-	return result, nil
+	if n != size {
+		return errors.New("release body length differs from signed coordinates")
+	}
+	return nil
+}
+
+type releaseBodyReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader *releaseBodyReader) Read(body []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(body)
 }

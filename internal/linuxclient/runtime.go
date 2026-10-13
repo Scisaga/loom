@@ -429,6 +429,9 @@ func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activa
 	observations := append([]control.Observation{}, links...)
 	observations = append(observations, activation.State.ResourceObservations...)
 	for _, selection := range activation.Selections {
+		if readback.State != "running" {
+			break
+		}
 		for _, route := range lkg.View.Routes {
 			if route.ID == selection.CandidateID {
 				selections = append(selections, control.ReportSelection{ServiceID: route.ServiceID, CandidateID: route.ID})
@@ -463,11 +466,36 @@ func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activa
 func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool, readback control.RuntimeReadback) Status {
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration, Selections: activation.Selections, Observations: activation.State.Observations, Runtime: readback.State, Reported: reported}
 	value.ResourceObservations = append([]control.Observation(nil), activation.State.ResourceObservations...)
+	if readback.State != "running" {
+		value.Selections, value.Observations = []SelectionStatus{}, []clientmodel.Observation{}
+		value.ResourceObservations = nil
+		return value
+	}
 	if readback.Resources != nil {
 		value.Resources = *readback.Resources
 	}
 	return value
 }
+
+func resourceRuntimeReadback(ctx context.Context, lkg *control.DeviceViewEnvelope, executions []hy2Execution, pid int, now time.Time,
+	periodic bool, transaction *wireGuardTransaction) (control.RuntimeReadback, error) {
+	resources, err := readTransportResources(ctx, lkg.View, executions, pid, now)
+	if err != nil {
+		if ctx.Err() != nil || !periodic || !errors.Is(err, errResourceReadbackTimeout) {
+			return control.RuntimeReadback{}, err
+		}
+		if err := transaction.readbackNative(); err != nil {
+			return control.RuntimeReadback{}, err
+		}
+		return control.RuntimeReadback{State: "unknown", ErrorCode: "resource_readback_timeout"}, nil
+	}
+	readback := control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}
+	if len(resources) != 0 {
+		readback.Resources = &resources
+	}
+	return readback, nil
+}
+
 func runGeneration(ctx context.Context, options Options, store *deviceclient.Store, previous *control.DeviceViewEnvelope, transaction **wireGuardTransaction) (retErr error) {
 	options.defaults()
 	ctx, cancelGeneration := context.WithCancel(ctx)
@@ -763,7 +791,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 	}()
 	offerLatest(refreshRequests, struct{}{})
-	update := func() error {
+	update := func(periodic bool) error {
 		// Frontier/proof progress with the same View is durable authentication
 		// progress, not a reason to interrupt unchanged execution.
 		if current := store.LKG(); current != nil && current.ViewDigest == lkg.ViewDigest {
@@ -801,12 +829,12 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 					return err
 				}
 			}
-			resources, err := readTransportResources(ctx, lkg.View, executions, resourcePID, options.Now())
+			readback, err = resourceRuntimeReadback(ctx, lkg, executions, resourcePID, options.Now(), periodic, *transaction)
 			if err != nil {
 				return err
 			}
-			if len(resources) != 0 {
-				readback.Resources = &resources
+			if readback.State == "unknown" {
+				fmt.Fprintln(options.Log, executionFailure("resource_readback", "network_timeout", errResourceReadbackTimeout))
 			}
 		}
 		status := runtimeStatus(lkg, activation, false, readback)
@@ -860,7 +888,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		offerLatest(reportRequests, pendingReport)
 		return nil
 	}
-	if err := update(); err != nil {
+	if err := update(false); err != nil {
 		return err
 	}
 	if options.captureNamespace != nil {
@@ -884,12 +912,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		case <-ctx.Done():
 			return nil
 		case err := <-done:
-			if err == nil {
-				return errors.New("sing-box exited unexpectedly")
-			}
-			return errors.New("sing-box process exited")
-		case <-serverDone:
-			return errors.New("server sing-box process exited")
+			return processFailure("access_process", err)
+		case err := <-serverDone:
+			return processFailure("resource_process", err)
 		case notice := <-refreshNotices:
 			fmt.Fprint(options.Log, notice)
 			continue
@@ -932,7 +957,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			}
 			return errRuntimeAddressChanged
 		}
-		if err := update(); err != nil {
+		if err := update(true); err != nil {
 			return err
 		}
 	}
@@ -955,7 +980,7 @@ func writeInactiveStatus(store *deviceclient.Store, options Options, state strin
 	value.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
 	return value, WriteStatus(options.Status, value)
 }
-func waitForRepair(ctx context.Context, store *deviceclient.Store, options Options) error {
+func waitForRepair(ctx context.Context, store *deviceclient.Store, options Options, failure error) error {
 	components, _ := linuxComponentReadbacks(ctx, 0)
 	for {
 		status, err := writeInactiveStatus(store, options, "error")
@@ -965,7 +990,8 @@ func waitForRepair(ctx context.Context, store *deviceclient.Store, options Optio
 		pending, cancel := context.WithTimeout(ctx, 20*time.Second)
 		preference, prefErr := clientadapter.ReportedPreference(store.LKG().View, status.Preference)
 		if prefErr == nil {
-			_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, Preference: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: "runtime_apply_failed"}})
+			diagnostic := safeRuntimeFailure(failure)
+			_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, Preference: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: diagnostic.operation + "_" + diagnostic.class}})
 		}
 		cancel()
 		timer := time.NewTimer(options.RefreshPoll)
@@ -1042,6 +1068,10 @@ func Run(ctx context.Context, options Options) (retErr error) {
 			}
 		}
 		previous = nil
+		if err != nil && ctx.Err() == nil {
+			err = safeRuntimeFailure(err)
+			fmt.Fprintln(options.Log, err)
+		}
 		if errors.Is(err, errCertifiedPersistence) {
 			return err
 		}
@@ -1062,8 +1092,7 @@ func Run(ctx context.Context, options Options) (retErr error) {
 		if err == nil {
 			return nil
 		}
-		fmt.Fprintln(options.Log, "accepted configuration is saved; runtime application failed")
-		if err := waitForRepair(ctx, store, options); err != nil {
+		if err := waitForRepair(ctx, store, options, err); err != nil {
 			return err
 		}
 		if ctx.Err() != nil {
@@ -1168,8 +1197,8 @@ func atomicJSONBytes(path string, body []byte) (retErr error) {
 
 func checkRuntime(singBox, config string) error {
 	command := exec.Command(singBox, "check", "-c", config)
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("sing-box preflight failed: %w: %s", err, string(output))
+	if _, err := command.CombinedOutput(); err != nil {
+		return executionFailure("runtime_preflight", "rejected", err)
 	}
 	return nil
 }

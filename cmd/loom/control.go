@@ -210,7 +210,7 @@ func cmdControlServe(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		releaseStore, err := clientrelease.New(*releaseRoot, key)
+		releaseStore, err := clientrelease.NewWithWorkRoot(*releaseRoot, key, filepath.Join(*root, "release-download-work"))
 		if err != nil {
 			return err
 		}
