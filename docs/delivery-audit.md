@@ -27,8 +27,8 @@ Android 与六款 Windows 应用的执行源码为 `03d3f7f1`，数据面为 `1.
 | 管理组合职责节点；普通事实与成员治理分开 | Nodes、Administration；`loom control write/inspect` 与成员命令 | Authority 的 Material、连续成员证书及确定性 Projection；无普通事实 Raft/QC | 动态成员的 CLI、浏览器、原始票史、封笔、重启及三端认证证明见 `2026-10-07-control-members/` 与实施历史；生产不为演练改成员 | 本链无已证实软件欠账；长期大规模与分区性能不由现有结果承诺 | 保持原签名字节及多数门禁；发现具体反例才新增验证 |
 | 添加设备及同事务恢复；职责决定 QR/SSH/sh | Add Device、邀请详情、Android 文件/扫码、Windows 加入并保存、Linux 签名安装脚本 | issuer-only claim/resume、持久身份/LKG；绑定与授权分开；原邀请不重建 | 生产 sh/SSH 加入、恢复、撤权及删除；Android 模拟器与 Windows VM 原生加入见平台及节点发布证据 | 用户实体终验单列；不能随机撤销正在使用的设备以扩张测试 | 正常入口、签名处理、持久恢复、实际业务及删除副作用在已验范围成立 |
 | 授予服务权限并复用策略；单设备替换不改共享规则 | Services、Policies、节点 Access policies | Policy 固定所属 Service，any/only/none、allow/deny；设备只有 PolicyIDs | `2026-10-06-device-policy/` 及 `2026-10-05-policy-assignment/`：生产修改/复制/撤权/重新授予、旧凭据拒绝、恢复与页面回读 | 没有将所有传输排列或全部平台场景重新遍历的需求 | 沿同一授权投影执行，保留共享影响与单设备草稿返回 |
-| Direct、Auto、指定最终出口；有替代路径时继续业务 | 三端模式控件；Linux 正式偏好命令；Live paths | 同一候选模型、同出口中继、稳定选择；失败范围与服务目标分别判断 | `2026-10-10-first-hop-selection/`、`2026-10-10-selection-order/`、`2026-10-11-private-io/`：三端必要尝试，生产三种模式、两项独立服务、失败后 Auto 恢复 | 扩展性能排序待用户确定，另列；不要求全部路径或副本一直绿 | 实际 selector 回读、相应 Service 的 HTTPS 及原偏好恢复；报告迟到不制造客户端故障 |
-| WG 与 Hy2 独立；一个节点一个共享 WG | 正式 client run/service、认证资源与显式 Link | 原生 WG 首跳/中继与独立 Hy2 接入，接收节点终止首跳协议 | `2026-10-08-transport-correction/`、共享 WG、普通首跳及最新 Linux 发布：业务、撤权、停止/异常/恢复、旧程序清除 | 无已证实要求恢复嵌套执行的缺口 | 共享资源、身份及精确所有权保留；禁止普通 WG 依赖 Hy2 |
+| Direct、Auto、指定最终出口；有替代路径时继续业务 | 三端模式控件；Linux 正式偏好命令；Live paths | 同一自动候选模型、同出口中继；精确段观测与 Service 业务结果参与稳定选择，必要备选持续采样 | 原三种模式及失败恢复证据保留；`2026-10-15-topology-correction/result.json` 验收私有远端观测、真实大候选回读、正式部署及独立 Service 请求 | 扩展性能排序待用户确定，另列；不要求全部路径或副本一直绿，也不把本轮相同选择写成远端观测触发了切路 | 实际 selector 回读、相应 Service 的 HTTPS 及原偏好恢复；报告迟到不制造客户端故障 |
+| WG 与 Hy2 独立；一个节点一个共享 WG | 正式 client run/service、认证资源与自动派生中继 | 原生 WG 首跳/中继与独立 Hy2 接入，接收节点终止首跳协议；节点职责与资源派生段，人工 Link 不再是运行前提 | 原独立传输/共享 WG 证据保留；`2026-10-15-topology-correction/result.json` 验收全部 Linux 更新、自动中继及正常/异常清理恢复 | 无已证实要求恢复嵌套执行或人工邻接的缺口 | 共享资源、身份及精确所有权保留；禁止普通 WG 依赖 Hy2 |
 | 普通精确 `.loom` 名称 | Services/DNS，三端正常业务入口 | 签名 DNS 记录、授权过滤、实际名称传递及缓存恢复 | `2026-10-06-dns-overlay/` 与后续原生传输修正：三端 DNS/业务、撤权与重启 | `control.loom` 生产网站材料单列 | 不用普通名称成功抵扣正式网站 TLS 与浏览器信任 |
 | Linux 显式代理与专用 namespace TUN | 签名 installer、`loom client run`；明确选择 Mixed 或隔离 capture | 初始 netns TUN 失败关闭；独立 access capture 与服务端 underlay | `2026-10-06-tun-capture/`、具名目标修正及最新六节点：生命周期、真实业务、基础网络回读 | 物理网络终验归用户；不授权任意修改宿主网络 | 精确清理、正常与异常恢复、独立管理和基础连接保持 |
 | Android 多配置/单 VPN，Windows 三种交付形态 | 原生配置、连接/断开、导入；MSI、Portable TUN、Portable Mixed | Keystore/DPAPI 持久、selector/报告、同身份升级；生产 UI 保留 | 正式签名 Android APK 在模拟器、Windows x64 同机 VM：真实独立 WG/Hy2、加入、撤权、恢复、升级/卸载与签名报告；首跳及多服务后续验证见实施历史 | 实体机与原生视觉覆盖另列 | 软件业务在已验范围成立，不把交叉编译、VM 或旧 PNG 当实体终验 |
@@ -132,3 +132,17 @@ Topology 都只显示当前真实节点，原事实、墓碑、报告与事务�
 其他组件不变。三个 control 原身份、TLS/管理员材料、事实、成员与授权、客户端 PID/程序和旧 floor
 已回读保全；原 service 重启消费持久 unit 后，三个正常页面与各自实际连线成立。该轮国内、国际
 分别沿原 Service 目标成功，原偏好保持；不以报告颜色或所有成员即时同步作为完成前提。
+
+最新执行基线已前向更新为第 115 代 `b1e477e5`，证据为
+`2026-10-15-topology-correction/result.json`；上文各轮继续表示其发生时的历史范围。
+六 Linux、三个 control 与既存 relay/edge 入口实际消费新程序，正式 Android APK、Windows
+六种包及三个公开目录分别验签和回读。中继候选从节点职责与 WG 资源自动派生，人工 Link 已退出
+当前配置和候选入口；Service/Policy 限定权限，真实段观测与业务测量共同决定实际选择，必要备选
+持续恢复采样。灰线、蓝色单层笔画及鼠标稳定命中在三个原管理员浏览器成立；发送报文与业务健康
+分开，未测或失败链路保持真实三态。
+
+此前副本迟到的事实前沿已补齐，正常 daemon 的新签名报告也实测传播到全部成员，不能以人工补齐
+抵扣持续同步。全部实际组件、正式无变化更新、代表节点正常/异常清理与恢复、原身份及不可回退
+状态均通过。共享网络保全有一个已归因的外部安全代理链比较例外，详细范围见
+[本轮实施记录](progress.md#自动中继候选与真实动态选择正式更新和回读完成)；不称所有外部链路
+可用或全量防火墙跨时刻恒等。公开网站信任、指定生产 LAN 与实体机终验仍按上表独立保留。

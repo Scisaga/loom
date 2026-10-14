@@ -181,7 +181,11 @@ HostAdapter 可以按交付形态投影本机 capture 配置，但不得增加�
 三端从原设备认证入口取得当前 View 范围内的中继段原始观测，临时保存于同一运行代的 RAM；响应绑定
 network、接收设备与 View 摘要，每项保留报告来源、序列、摘要、原样本和当前截止。客户端选择调用同一
 `SelectWithLinks`，按候选的精确中继依赖消费这些样本，不持久化为授权、不替远端重新报告。网络读取
-失败只保留仍适用且未过期的 RAM 样本；换 View 或停止丢弃，重启先为 unknown。Android 桥返回原规范
+失败不产生新样本、不改变结果或延长截止；已有 RAM 样本只有仍适用且未过期时才可继续消费，
+缓存可随时删除重建，丢弃不能生成失败或成功。Linux 当前失败时丢弃本次范围，Windows 和 Android
+保留至原截止，各端都只消费与当前已接受并运行的 View、接收设备、Link/spec、来源及目标/动作
+相符的有效证据。成功的新交付整体替换原范围，空集合也一样，不能用旧样本回填缺项；接受撤权、
+资源/spec 变化、换 View 或停止后丢弃，重启先为 unknown。Android 桥返回原规范
 响应，Kotlin 只保存当前运行 profile 的 View 绑定；Windows 同一 generation 在原 State 中保存和刷新。
 网络 I/O 不占用 Android 的运行/路由锁，迟到结果须再次核对身份、View 和运行代。
 
@@ -314,8 +318,9 @@ ICMP 结果只能作为地址 RTT 提示：
 - ICMP RTT 不能冒充 HY2、WireGuard 或业务端到端延迟。
 
 同一底层网络代内，当前业务所需的授权首跳按稳定资源 ID 去重，并行且各至多发起一次必要的真实
-transport 检查。中继段的链路观测还必须绑定 `LinkID`、`link_spec_digest`、资源传输、观测范围和网络代；同一节点对的
-WG 与 hy2 分别产生真实结果，不能共享握手、RTT 或可用状态。未实测的链路仍为 `unknown`，不为填满
+transport 检查。WG 与 Hy2 首跳分别产生真实结果，不能共享握手、RTT 或可用状态。自动 WG
+中继段的链路观测还必须绑定 `LinkID`、`link_spec_digest`、资源传输、观测范围和网络代；正反方向
+分别观测，不能借共享 peer 计数制造业务成功。未实测的链路仍为 `unknown`，不为填满
 传输组合而扫描每条完整路径。这个约束由现有 `Observation` 的键和进行中状态自然表达，不新增
 scheduler、probe budget 或一次性 registry。入口之后复用已有的有效中继观测。
 
@@ -1190,8 +1195,8 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
 3. **Direct 与本地出网语义**：普通 Direct 的终点为 `direct`、链为空；设备限定本地出网终点为本机
    NodeID、链同样为空。两者身份不同，Direct 模式只取前者，Auto 与指定本机出口可取获授权的后者；
    重建不丢失 NodeID，均不产生回拨本机的入口检查；一跳直达包含远端最终出口，不与二者混淆。
-4. **同出口多路径**：同一最终出口同时产生一跳直达和中继；不同 WG/hy2 首跳资源及同节点对的
-   WG/hy2 中继 `LinkID` 分别形成候选 ID，资源可按 ID 复用；关闭
+4. **同出口多路径**：同一最终出口同时产生一跳直达和中继；不同 WG/Hy2 首跳资源及自动 WG
+   中继段的 `LinkID` 分别形成候选 ID，资源可按 ID 复用；关闭
    `public_data_ingress` 只删除引用该入口的一跳候选，其他共享资源首跳仍保留；开启它不会自动得到
    `available`；hybrid access 在出口无
    公网入口时仍可通过自己已认证且平台支持的 link 形成候选，不生成本机回环 inbound 凭据。
