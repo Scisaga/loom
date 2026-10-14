@@ -2,11 +2,22 @@ package clientcomponent
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestHistoricalLinuxBuildInstructionsRetainAuthenticatedBytes(t *testing.T) {
+	// This digest belongs to the source payload in the original signed Linux
+	// artifact. Selecting another current build must not reinterpret that text.
+	body := linuxSourceBuildInstructions("1.11.4-loom.13")
+	if len(body) != 860 || fmt.Sprintf("%x", sha256.Sum256(body)) != "1cf7a8e6e3e6286fdf75f3cd394212216b00fddb9f43b1190d0f2e069b8adeb5" {
+		t.Fatal("historical Linux build instructions changed")
+	}
+}
 
 func TestReviewedLinuxReadersFromEnvironment(t *testing.T) {
 	root := os.Getenv("LOOM_LINUX_DATAPLANE_DIR")

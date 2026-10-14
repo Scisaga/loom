@@ -32,6 +32,19 @@ var reviewedArtifacts = map[string]reviewedArtifact{
 	LinuxDataPlaneVersion: {
 		sources: map[string]string{
 			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "a43c2d45f590becd13e2133579885bba02d78fdd2c31190356248e00aa74b7e8",
+			"domain-cache.patch":     "c9b450f627a53d5dcafd7f5ba09a36964b2aba2f9fc0e2cf04627eb19050990e",
+			"prepare-sing-box.py":    "2e52356738db7b4f3a2c326d5b662438d8f4f0f0001c137bcca97da8321272ab",
+			"build-dataplane.sh":     "404802e038ff27ed00fbae01f84802e49b47887081d86b79446776d2afc5b947",
+		},
+		linux: map[string]string{
+			"amd64": "dff74c981b5b43b1190bf7b5d09810d6ddd65007a7c85733a74badc99ff318eb",
+			"arm64": "15d2b410514635d40d6c72ac67309522cadec9811e78facbab3288995e58d0df",
+		},
+	},
+	"1.11.4-loom.13": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
 			"source-provenance.json": "2318f19e2244efd6d7af3dea8635961363de55106d2375837edf5b13a7d75c90",
 			"domain-cache.patch":     "e22f4def13acc7be3cef3535d8f33cee358f7204956c8a72cccf40ce2d805352",
 			"prepare-sing-box.py":    "766469db5a51dae8ee035440d6d8b6f26fcad82a76ada2df8276db73e812fe0b",

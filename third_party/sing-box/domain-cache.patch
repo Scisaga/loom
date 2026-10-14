@@ -2952,6 +2952,18 @@
  			}
  		}
  		for peer, elemsContainer := range elemsByPeer {
+@@ -526,6 +535,11 @@
+ 				device.log.Errorf("Failed to write packets to TUN device: %v", err)
+ 			}
+ 		}
++		// TUN write has consumed the batch. A reslice alone would retain its
++		// payloads for the lifetime of this peer, including failed writes.
++		for i := range bufs {
++			bufs[i] = nil
++		}
+ 		for _, elem := range elemsContainer.elems {
+ 			device.PutMessageBuffer(elem.buffer)
+ 			device.PutInboundElement(elem)
 --- a/.loom-wireguard/device/send.go
 +++ b/.loom-wireguard/device/send.go
 @@ -61,6 +61,10 @@
@@ -3022,6 +3034,18 @@
  	packet := elem.buffer[MessageTransportHeaderSize:]
  	var n int
  	for _, packetSlice := range packetSlices {
+@@ -546,6 +561,11 @@
+ 		peer.timersAnyAuthenticatedPacketSent()
+ 
+ 		err := peer.SendBuffers(bufs)
++		// Synchronous send has consumed the batch. Release aliases before the
++		// message pool drops buffers beyond its warm set, including send errors.
++		for i := range bufs {
++			bufs[i] = nil
++		}
+ 		if dataSent {
+ 			peer.timersDataSent()
+ 		}
 --- a/.loom-wireguard/device/queueconstants_default.go
 +++ b/.loom-wireguard/device/queueconstants_default.go
 @@ -1,4 +1,4 @@
@@ -3245,5 +3269,631 @@
 +	}
 +	if p.scratch != 0 || p.inuse != 0 || len(p.idle) != maxIdleMessageBuffers {
 +		t.Fatal("closing scratch and queues leaked memory ownership")
++	}
++}
+--- /dev/null
++++ b/.loom-wireguard/device/packet_reachability_linux_test.go
+@@ -0,0 +1,228 @@
++//go:build linux && !android
++
++package device
++
++import (
++	"encoding/binary"
++	"errors"
++	"net/netip"
++	"runtime"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/wireguard-go/conn"
++	"github.com/sagernet/wireguard-go/tun"
++)
++
++type reachabilityBind struct {
++	conn.Bind
++	entered chan struct{}
++	release chan struct{}
++	calls   atomic.Int32
++	invalid atomic.Bool
++	fail    bool
++}
++
++func (*reachabilityBind) BatchSize() int { return conn.IdealBatchSize }
++
++func (b *reachabilityBind) Send(bufs [][]byte, _ conn.Endpoint) error {
++	if b.calls.Add(1) == 1 {
++		close(b.entered)
++		<-b.release
++	}
++	// The synchronous I/O owns every slice until it returns, including errors.
++	for _, packet := range bufs {
++		if len(packet) != 64 || packet[0] != MessageTransportType {
++			b.invalid.Store(true)
++			return errors.New("packet released before synchronous send completed")
++		}
++	}
++	if b.fail {
++		return errors.New("demo send failure")
++	}
++	return nil
++}
++
++type reachabilityTUN struct {
++	tun.Device
++	entered chan struct{}
++	release chan struct{}
++	calls   atomic.Int32
++	invalid atomic.Bool
++	fail    bool
++}
++
++func (*reachabilityTUN) BatchSize() int { return conn.IdealBatchSize }
++
++func (example *reachabilityTUN) Write(bufs [][]byte, offset int) (int, error) {
++	if example.calls.Add(1) == 1 {
++		close(example.entered)
++		<-example.release
++	}
++	for _, packet := range bufs {
++		if len(packet) != offset+20 || packet[offset] != 0x45 {
++			example.invalid.Store(true)
++			return 0, errors.New("packet released before synchronous TUN write completed")
++		}
++	}
++	if example.fail {
++		return 0, errors.New("demo TUN write failure")
++	}
++	return len(bufs), nil
++}
++
++func reachabilityPeer() (*Device, *Peer) {
++	example := &Device{log: &Logger{Verbosef: func(string, ...any) {}, Errorf: func(string, ...any) {}}}
++	example.net.bind = &reachabilityBind{}
++	example.tun.device = &reachabilityTUN{}
++	example.PopulatePools()
++	p := &Peer{device: example}
++	p.isRunning.Store(true)
++	p.endpoint.val = &conn.StdNetEndpoint{AddrPort: netip.MustParseAddrPort("192.0.2.20:51820")}
++	p.stopping.Add(1)
++	return example, p
++}
++
++func awaitReturnedPackets(t *testing.T, example *Device) {
++	t.Helper()
++	p := example.pool.messageBuffers.(*linuxMessageBufferPool)
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		p.mu.Lock()
++		returned := p.inuse == 0
++		p.mu.Unlock()
++		if returned {
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("sequential queue did not return its packets")
++}
++
++func awaitUnreachablePackets(t *testing.T, example *Device, finalized *atomic.Int32) {
++	t.Helper()
++	// The idle pool is allowed to keep its warm set. Every other packet from
++	// the full batch must become unreachable while the peer is still running
++	// and its real sequential routine is blocked waiting for the next batch.
++	want := int32(conn.IdealBatchSize - maxIdleMessageBuffers)
++	deadline := time.Now().Add(2 * time.Second)
++	for time.Now().Before(deadline) {
++		runtime.GC()
++		if finalized.Load() >= want {
++			runtime.KeepAlive(example)
++			return
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++	runtime.KeepAlive(example)
++	t.Fatalf("idle sequential routine retained returned packet payloads: finalized %d, want at least %d", finalized.Load(), want)
++}
++
++func queueSendBatch(example *Device, p *Peer, count int, finalized *atomic.Int32) {
++	c := example.GetOutboundElementsContainer()
++	for i := 0; i < count; i++ {
++		e := example.NewOutboundElement()
++		if finalized != nil {
++			runtime.SetFinalizer(e.buffer, func(*[MaxMessageSize]byte) { finalized.Add(1) })
++		}
++		e.buffer[0] = MessageTransportType
++		e.packet = e.buffer[:64]
++		c.elems = append(c.elems, e)
++	}
++	p.queue.outbound.c <- c
++}
++
++func TestSequentialSenderReleasesIdlePayloads(t *testing.T) {
++	for _, fail := range []bool{false, true} {
++		name := "success"
++		if fail {
++			name = "send_error"
++		}
++		t.Run(name, func(t *testing.T) {
++			example, p := reachabilityPeer()
++			b := &reachabilityBind{entered: make(chan struct{}), release: make(chan struct{}), fail: fail}
++			example.net.bind = b
++			p.queue.outbound = &autodrainingOutboundQueue{c: make(chan *QueueOutboundElementsContainer)}
++			go p.RoutineSequentialSender(conn.IdealBatchSize)
++			defer func() { close(p.queue.outbound.c); p.stopping.Wait() }()
++			var finalized atomic.Int32
++			queueSendBatch(example, p, conn.IdealBatchSize, &finalized)
++			<-b.entered
++			runtime.GC()
++			if finalized.Load() != 0 {
++				t.Fatal("synchronous send lost a live packet")
++			}
++			close(b.release)
++			awaitReturnedPackets(t, example)
++			// A shorter subsequent batch must not preserve the full batch's tail.
++			queueSendBatch(example, p, 2, nil)
++			awaitReturnedPackets(t, example)
++			if b.calls.Load() != 2 {
++				t.Fatal("shorter send batch was not consumed")
++			}
++			if b.invalid.Load() {
++				t.Fatal("send packet aliases were released before synchronous I/O returned")
++			}
++			awaitUnreachablePackets(t, example, &finalized)
++		})
++	}
++}
++
++func queueReceiveBatch(example *Device, p *Peer, keypair *Keypair, count int, firstCounter uint64, finalized *atomic.Int32) {
++	c := example.GetInboundElementsContainer()
++	for i := 0; i < count; i++ {
++		e := example.GetInboundElement()
++		e.buffer = example.GetMessageBuffer()
++		if finalized != nil {
++			runtime.SetFinalizer(e.buffer, func(*[MaxMessageSize]byte) { finalized.Add(1) })
++		}
++		e.packet = e.buffer[MessageTransportOffsetContent : MessageTransportOffsetContent+20]
++		e.packet[0] = 0x45
++		binary.BigEndian.PutUint16(e.packet[2:4], 20)
++		copy(e.packet[12:16], []byte{192, 0, 2, 10})
++		e.counter = firstCounter + uint64(i)
++		e.keypair = keypair
++		e.endpoint = p.endpoint.val
++		c.elems = append(c.elems, e)
++	}
++	p.queue.inbound.c <- c
++}
++
++func TestSequentialReceiverReleasesIdlePayloads(t *testing.T) {
++	for _, fail := range []bool{false, true} {
++		name := "success"
++		if fail {
++			name = "tun_write_error"
++		}
++		t.Run(name, func(t *testing.T) {
++			example, p := reachabilityPeer()
++			tun := &reachabilityTUN{entered: make(chan struct{}), release: make(chan struct{}), fail: fail}
++			example.tun.device = tun
++			example.allowedips.Insert(netip.MustParsePrefix("192.0.2.10/32"), p)
++			keypair := new(Keypair)
++			p.keypairs.current = keypair
++			p.queue.inbound = &autodrainingInboundQueue{c: make(chan *QueueInboundElementsContainer)}
++			go p.RoutineSequentialReceiver(conn.IdealBatchSize)
++			defer func() { close(p.queue.inbound.c); p.stopping.Wait() }()
++			var finalized atomic.Int32
++			queueReceiveBatch(example, p, keypair, conn.IdealBatchSize, 1, &finalized)
++			<-tun.entered
++			runtime.GC()
++			if finalized.Load() != 0 {
++				t.Fatal("synchronous TUN write lost a live packet")
++			}
++			close(tun.release)
++			awaitReturnedPackets(t, example)
++			queueReceiveBatch(example, p, keypair, 2, conn.IdealBatchSize+1, nil)
++			awaitReturnedPackets(t, example)
++			if tun.calls.Load() != 2 {
++				t.Fatal("shorter TUN batch was not consumed")
++			}
++			if tun.invalid.Load() {
++				t.Fatal("TUN packet aliases were released before synchronous I/O returned")
++			}
++			awaitUnreachablePackets(t, example, &finalized)
++		})
++	}
++}
+--- a/route/route.go
++++ b/route/route.go
+@@ -124,7 +124,7 @@
+ 			for _, buffer := range buffers {
+ 				conn = bufio.NewCachedConn(conn, buffer)
+ 			}
+-			r.hijackDNSStream(ctx, conn, metadata)
++			r.hijackDNSStream(ctx, conn, metadata, onClose)
+ 			return nil
+ 		}
+ 	}
+--- a/route/dns.go
++++ b/route/dns.go
+@@ -3,7 +3,9 @@
+ import (
+ 	"context"
+ 	"errors"
++	"io"
+ 	"net"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
+@@ -20,15 +22,96 @@
+ 	mDNS "github.com/miekg/dns"
+ )
+ 
+-func (r *Router) hijackDNSStream(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) error {
++func (r *Router) hijackDNSStream(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) error {
++	return handleHijackedDNSStream(ctx, r, conn, metadata, onClose)
++}
++
++func handleHijackedDNSStream(ctx context.Context, router adapter.Router, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) (retErr error) {
++	parentCtx := ctx
++	ctx, cancel := context.WithCancel(ctx)
++	defer cancel()
++	var closeOnce sync.Once
++	closeConnection := func() { closeOnce.Do(func() { conn.Close() }) }
++	defer func() {
++		closeConnection()
++		if onClose != nil {
++			onClose(retErr)
++		}
++	}()
++	stop := context.AfterFunc(ctx, closeConnection)
++	defer stop()
++	var pending sync.WaitGroup
++	var writeMu, errorMu sync.Mutex
++	var failure error
++	abort := func(err error) {
++		if parentCtx.Err() != nil {
++			err = parentCtx.Err()
++		}
++		errorMu.Lock()
++		if failure == nil {
++			failure = err
++		}
++		errorMu.Unlock()
++		cancel()
++		closeConnection()
++	}
++	writeResponse := func(body []byte) (int, error) {
++		writeMu.Lock()
++		defer writeMu.Unlock()
++		if err := ctx.Err(); err != nil {
++			return 0, err
++		}
++		if err := conn.SetWriteDeadline(time.Now().Add(C.DNSTimeout)); err != nil {
++			return 0, err
++		}
++		n, err := conn.Write(body)
++		if err == nil && n != len(body) {
++			err = io.ErrShortWrite
++		}
++		return n, err
++	}
++	responseDone := func(err error) {
++		if err != nil {
++			abort(err)
++		}
++		pending.Done()
++	}
+ 	metadata.Destination = M.Socksaddr{}
++	var readErr error
+ 	for {
+-		conn.SetReadDeadline(time.Now().Add(C.DNSTimeout))
+-		err := dnsOutbound.HandleStreamDNSRequest(ctx, r, conn, metadata)
+-		if err != nil {
+-			return err
++		if readErr = conn.SetReadDeadline(time.Now().Add(C.DNSTimeout)); readErr != nil {
++			break
++		}
++		pending.Add(1)
++		queryCtx, queryCancel := context.WithTimeout(ctx, C.DNSTimeout)
++		readErr = dnsOutbound.HandleStreamDNSRequestEx(queryCtx, router, conn, metadata, writeResponse, func(err error) {
++			queryCancel()
++			responseDone(err)
++		})
++		if readErr != nil {
++			queryCancel()
++			pending.Done()
++			break
+ 		}
+ 	}
++	if !errors.Is(readErr, io.EOF) {
++		abort(readErr)
++	}
++	// EOF is a read half-close. Already received queries still own responses;
++	// wait for those bounded writes before releasing the other direction.
++	pending.Wait()
++	errorMu.Lock()
++	defer errorMu.Unlock()
++	if failure != nil {
++		return failure
++	}
++	if err := parentCtx.Err(); err != nil {
++		return err
++	}
++	if errors.Is(readErr, io.EOF) {
++		return nil
++	}
++	return readErr
+ }
+ 
+ func (r *Router) hijackDNSPacket(ctx context.Context, conn N.PacketConn, packetBuffers []*N.PacketBuffer, metadata adapter.InboundContext) {
+--- a/protocol/dns/handle.go
++++ b/protocol/dns/handle.go
+@@ -20,6 +20,12 @@
+ )
+ 
+ func HandleStreamDNSRequest(ctx context.Context, router adapter.Router, conn net.Conn, metadata adapter.InboundContext) error {
++	return HandleStreamDNSRequestEx(ctx, router, conn, metadata, nil, nil)
++}
++
++// HandleStreamDNSRequestEx reports completion of the response belonging to one
++// fully received query. The stream owner supplies a serialized frame writer.
++func HandleStreamDNSRequestEx(ctx context.Context, router adapter.Router, conn net.Conn, metadata adapter.InboundContext, writeResponse func([]byte) (int, error), responseDone func(error)) error {
+ 	var queryLength uint16
+ 	err := binary.Read(conn, binary.BigEndian, &queryLength)
+ 	if err != nil {
+@@ -40,23 +46,34 @@
+ 		return err
+ 	}
+ 	metadataInQuery := metadata
+-	go func() error {
+-		response, err := router.Exchange(adapter.WithContext(ctx, &metadataInQuery), &message)
+-		if err != nil {
+-			conn.Close()
++	go func() {
++		err := func() error {
++			response, err := router.Exchange(adapter.WithContext(ctx, &metadataInQuery), &message)
++			if err != nil {
++				if responseDone == nil {
++					conn.Close()
++				}
++				return err
++			}
++			responseBuffer := buf.NewPacket()
++			defer responseBuffer.Release()
++			responseBuffer.Resize(2, 0)
++			n, err := response.PackBuffer(responseBuffer.FreeBytes())
++			if err != nil {
++				return err
++			}
++			responseBuffer.Truncate(len(n))
++			binary.BigEndian.PutUint16(responseBuffer.ExtendHeader(2), uint16(len(n)))
++			if writeResponse != nil {
++				_, err = writeResponse(responseBuffer.Bytes())
++			} else {
++				_, err = conn.Write(responseBuffer.Bytes())
++			}
+ 			return err
+-		}
+-		responseBuffer := buf.NewPacket()
+-		defer responseBuffer.Release()
+-		responseBuffer.Resize(2, 0)
+-		n, err := response.PackBuffer(responseBuffer.FreeBytes())
+-		if err != nil {
+-			return err
+-		}
+-		responseBuffer.Truncate(len(n))
+-		binary.BigEndian.PutUint16(responseBuffer.ExtendHeader(2), uint16(len(n)))
+-		_, err = conn.Write(responseBuffer.Bytes())
+-		return err
++		}()
++		if responseDone != nil {
++			responseDone(err)
++		}
+ 	}()
+ 	return nil
+ }
+--- /dev/null
++++ b/route/loom_dns_stream_lifecycle_test.go
+@@ -0,0 +1,201 @@
++package route
++
++import (
++	"bytes"
++	"context"
++	"encoding/binary"
++	"errors"
++	"io"
++	"net"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	D "github.com/miekg/dns"
++	"github.com/sagernet/sing-box/adapter"
++)
++
++type lifecycleDNSRouter struct {
++	adapter.Router
++	exchange func(context.Context, *D.Msg) (*D.Msg, error)
++}
++
++func (r lifecycleDNSRouter) Exchange(ctx context.Context, message *D.Msg) (*D.Msg, error) {
++	return r.exchange(ctx, message)
++}
++
++type lifecycleDNSConn struct {
++	reader     *bytes.Reader
++	readErr    error
++	blockRead  bool
++	writeErr   error
++	blockWrite bool
++	closed     chan struct{}
++	closeOnce  sync.Once
++	closeCalls atomic.Int32
++	writers    atomic.Int32
++	maxWriters atomic.Int32
++	mu         sync.Mutex
++	frames     [][]byte
++}
++
++func (c *lifecycleDNSConn) Read(body []byte) (int, error) {
++	if c.reader.Len() > 0 {
++		return c.reader.Read(body)
++	}
++	if c.blockRead {
++		<-c.closed
++		return 0, net.ErrClosed
++	}
++	if c.readErr != nil {
++		return 0, c.readErr
++	}
++	return 0, io.EOF
++}
++func (c *lifecycleDNSConn) Write(body []byte) (int, error) {
++	n := c.writers.Add(1)
++	defer c.writers.Add(-1)
++	for old := c.maxWriters.Load(); n > old; old = c.maxWriters.Load() {
++		if c.maxWriters.CompareAndSwap(old, n) {
++			break
++		}
++	}
++	if c.blockWrite {
++		<-c.closed
++		return 0, net.ErrClosed
++	}
++	if c.writeErr != nil {
++		return 0, c.writeErr
++	}
++	time.Sleep(3 * time.Millisecond)
++	select {
++	case <-c.closed:
++		return 0, net.ErrClosed
++	default:
++	}
++	c.mu.Lock()
++	c.frames = append(c.frames, bytes.Clone(body))
++	c.mu.Unlock()
++	return len(body), nil
++}
++func (c *lifecycleDNSConn) Close() error {
++	c.closeCalls.Add(1)
++	c.closeOnce.Do(func() { close(c.closed) })
++	return nil
++}
++func (c *lifecycleDNSConn) LocalAddr() net.Addr { return &net.TCPAddr{IP: net.IPv6loopback, Port: 53} }
++func (c *lifecycleDNSConn) RemoteAddr() net.Addr {
++	return &net.TCPAddr{IP: net.IPv6loopback, Port: 12345}
++}
++func (c *lifecycleDNSConn) SetDeadline(time.Time) error      { return nil }
++func (c *lifecycleDNSConn) SetReadDeadline(time.Time) error  { return nil }
++func (c *lifecycleDNSConn) SetWriteDeadline(time.Time) error { return nil }
++
++func lifecycleDNSQueries(t *testing.T, count int) []byte {
++	t.Helper()
++	var body []byte
++	for n := 0; n < count; n++ {
++		q := D.Msg{}
++		q.SetQuestion("demo-service.example.", D.TypeAAAA)
++		q.Id = uint16(n + 1)
++		wire, err := q.Pack()
++		if err != nil {
++			t.Fatal(err)
++		}
++		var length [2]byte
++		binary.BigEndian.PutUint16(length[:], uint16(len(wire)))
++		body = append(body, length[:]...)
++		body = append(body, wire...)
++	}
++	return body
++}
++
++func TestLoomHijackedDNSStreamOwnership(t *testing.T) {
++	for _, mode := range []string{"eof_after_accepted_pipelined_queries", "malformed", "read_timeout", "cancel_blocked_read_and_exchange", "write_failure", "cancel_blocked_write"} {
++		t.Run(mode, func(t *testing.T) {
++			body := lifecycleDNSQueries(t, 8)
++			if mode == "malformed" {
++				body = []byte{0, 0}
++			}
++			conn := &lifecycleDNSConn{reader: bytes.NewReader(body), closed: make(chan struct{})}
++			ctx, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			router := lifecycleDNSRouter{exchange: func(ctx context.Context, q *D.Msg) (*D.Msg, error) {
++				select {
++				case <-time.After(30 * time.Millisecond):
++					answer := new(D.Msg)
++					answer.SetReply(q)
++					return answer, nil
++				case <-ctx.Done():
++					return nil, ctx.Err()
++				}
++			}}
++			if mode == "read_timeout" {
++				conn.readErr = &net.DNSError{Err: "demo timeout", IsTimeout: true}
++			}
++			if mode == "write_failure" {
++				conn.writeErr = io.ErrClosedPipe
++			}
++			if mode == "cancel_blocked_read_and_exchange" {
++				conn.blockRead = true
++				router.exchange = func(ctx context.Context, q *D.Msg) (*D.Msg, error) { <-ctx.Done(); return nil, ctx.Err() }
++			}
++			if mode == "cancel_blocked_write" {
++				conn.blockWrite = true
++			}
++			var callbacks atomic.Int32
++			done := make(chan error, 1)
++			go func() {
++				done <- handleHijackedDNSStream(ctx, router, conn, adapter.InboundContext{}, func(err error) {
++					if conn.closeCalls.Load() != 1 {
++						t.Error("callback before owned close or duplicate close")
++					}
++					callbacks.Add(1)
++				})
++			}()
++			if mode == "cancel_blocked_read_and_exchange" || mode == "cancel_blocked_write" {
++				time.Sleep(50 * time.Millisecond)
++				cancel()
++			}
++			select {
++			case err := <-done:
++				if mode == "eof_after_accepted_pipelined_queries" {
++					if err != nil {
++						t.Fatal(err)
++					}
++					if len(conn.frames) != 8 || conn.maxWriters.Load() != 1 {
++						t.Fatalf("responses truncated/interleaved: frames=%d writers=%d", len(conn.frames), conn.maxWriters.Load())
++					}
++					seen := map[uint16]bool{}
++					for _, wire := range conn.frames {
++						if int(binary.BigEndian.Uint16(wire)) != len(wire)-2 {
++							t.Fatal("invalid response frame")
++						}
++						var answer D.Msg
++						if answer.Unpack(wire[2:]) != nil || !answer.Response || seen[answer.Id] {
++							t.Fatal("mismatched or duplicate response")
++						}
++						seen[answer.Id] = true
++					}
++				} else if err == nil {
++					t.Fatal("terminal failure became success")
++				}
++				if mode == "write_failure" && !errors.Is(err, io.ErrClosedPipe) {
++					t.Fatalf("write cause lost: %v", err)
++				}
++				if mode == "read_timeout" {
++					var networkError net.Error
++					if !errors.As(err, &networkError) || !networkError.Timeout() {
++						t.Fatalf("read timeout cause lost: %v", err)
++					}
++				}
++				if callbacks.Load() != 1 || conn.closeCalls.Load() != 1 {
++					t.Fatal("completion was not exactly once")
++				}
++			case <-time.After(time.Second):
++				t.Fatal("terminal stream work did not finish")
++			}
++		})
 +	}
 +}

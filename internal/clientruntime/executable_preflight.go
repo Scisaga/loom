@@ -122,7 +122,7 @@ func RequireTUNDNSExecutor(ctx context.Context, executable string, config []byte
 		}
 		// The exact deployed cache-safe artifact remains inspectable during its
 		// forward cutover. Older reviewed builds do not gain this runtime property.
-		if verified.Version != clientcomponent.LinuxDataPlaneVersion && verified.Version != clientcomponent.DataPlaneVersion {
+		if verified.Version != clientcomponent.LinuxDataPlaneVersion && verified.Version != "1.11.4-loom.13" && verified.Version != clientcomponent.DataPlaneVersion {
 			return errors.New("TUN domain DNS requires the reviewed persistent-cache artifact")
 		}
 		version = verified.Version
