@@ -149,8 +149,11 @@ main {max-width:1586px;padding:28px 24px 24px}
 .topology .node-label {font-weight:600}
 .topology .sub {font-weight:400}
 .topology-label .sub {font-family:Inter,ui-sans-serif,system-ui;font-weight:400}
-.topology .first-hop {stroke:var(--route);stroke-dasharray:4 4}
+.topology .first-hop {stroke:var(--route);stroke-dasharray:6 5;stroke-linecap:round}
 .topology .hy2-first-hop {stroke:var(--warn);stroke-width:1.4;stroke-dasharray:4 5}
+.topology .edge-hit {stroke-width:18;stroke-dasharray:none;pointer-events:stroke}
+.topology .edge-stroke,.topology .topology-route,.topology .topology-ring {pointer-events:none}
+.topology .topology-edge.has-route .edge-stroke {visibility:hidden}
 .topology .topology-metrics {pointer-events:none;fill:var(--route);font:500 10px Inter,ui-sans-serif,system-ui;paint-order:stroke;stroke:white;stroke-width:3px}
 .topology.has-focus .topology-route.is-muted {opacity:.12}
 .key.first-hop {border-color:var(--route);border-top-style:dashed}

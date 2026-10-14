@@ -8,13 +8,13 @@ const hash = value => {
   return result;
 };
 
-function curve(a, b, key, kind) {
-  if (kind === 'first_hop' && a.ring === b.ring) {
+function curve(a, b, key, kind, lane = null) {
+  if (lane === null && kind === 'first_hop' && a.ring === b.ring) {
     const delta = (b.angle - a.angle + 360) % 360;
     return {d: `M ${n(a.x)} ${n(a.y)} A ${n(a.rx)} ${n(a.ry)} 0 0 ${delta > 180 ? 0 : 1} ${n(b.x)} ${n(b.y)}`};
   }
   const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy) || 1;
-  const bend = kind==='first_hop' ? (hash(key)%2?24:-24) : 0;
+  const bend = lane ?? (kind==='first_hop' ? (hash(key)%2?24:-24) : 0);
   const cx = (a.x + b.x) / 2 - dy / distance * bend, cy = (a.y + b.y) / 2 + dx / distance * bend;
   return {d: `M ${n(a.x)} ${n(a.y)} Q ${n(cx)} ${n(cy)} ${n(b.x)} ${n(b.y)}`};
 }
@@ -70,14 +70,22 @@ function layout(nodes, compact) {
 export function topologyHTML(view, routes = [], id = 'network') {
   const nodes = list(view.Nodes).filter(node => node.ID);
   const compact = id === 'overview-topology', diagram = layout(nodes, compact), {positions,labels} = diagram;
-  const selected = new Set(), direct = new Set(), routeEdges = new Map(), firstEdges=new Set(), curves = new Map();
+  const selected = new Set(), direct = new Set(), routeEdges = new Map(), pairs = new Map();
   const edges = list(view.Links)
     .filter(link => positions.has(link.From) && positions.has(link.To))
     .map(link => {
-      const key = pair(link.From, link.To), path = curve(positions.get(link.From), positions.get(link.To), key, link.Kind);
-      if (!curves.has(key) || link.Kind !== 'first_hop') curves.set(key, {...path, from: link.From});
-      return {link, key, path};
-    });
+      const key = link.ID ? 'link:'+link.ID : 'first-hop:'+JSON.stringify([link.From,link.To,link.ResourceID||'',link.Transport]);
+      const edge={link,key,hasRoute:false}, peers=pairs.get(pair(link.From,link.To))||[];
+      peers.push(edge);pairs.set(pair(link.From,link.To),peers);
+      return edge;
+    }).sort((a,b)=>a.key<b.key?-1:a.key>b.key?1:0);
+  for(const [key,peers] of pairs){
+    peers.sort((a,b)=>a.key<b.key?-1:a.key>b.key?1:0);
+    for(const [index,edge] of peers.entries()){
+      const [from,to]=peers.length>1?[edge.link.From,edge.link.To].sort():[edge.link.From,edge.link.To];
+      edge.path={...curve(positions.get(from),positions.get(to),key,edge.link.Kind,peers.length>1?(index-(peers.length-1)/2)*80:null),from};
+    }
+  }
   for (const route of routes) {
     const chain = list(route.Chain);
     for (const node of chain) selected.add(node);
@@ -89,35 +97,41 @@ export function topologyHTML(view, routes = [], id = 'network') {
       if (positions.has(chain[index]) && positions.has(chain[index + 1])) {
         if(index===0&&route.FirstTransport&&(route.FirstTransport==='wireguard'?view.ShowWG===false:view.ShowHy2===false))continue;
         if(index>0&&view.ShowWG===false)continue;
-        const id=`${chain[index]}\0${chain[index + 1]}`;
-        routeEdges.set(id, [chain[index], chain[index + 1]]);
-        if(index===0&&route.FirstTransport)firstEdges.add(id);
+        const from=chain[index],to=chain[index+1],first=index===0&&!!route.FirstTransport;
+        const linkID=list(route.LinkIDs)[index-(route.FirstTransport?1:0)];
+        const edge=edges.find(({link})=>link.From===from&&link.To===to&&(first?
+          link.Kind==='first_hop'&&link.Transport===route.FirstTransport&&(!route.FirstResourceID||link.ResourceID===route.FirstResourceID):
+          link.Kind!=='first_hop'&&(!linkID||link.ID===linkID)));
+        if(!edge&&(first?route.FirstResourceID:linkID))continue;
+        const key=edge?.key||JSON.stringify([from,to,first?route.FirstResourceID||route.FirstTransport:linkID||'']);
+        if(edge)edge.hasRoute=true;
+        const path=edge?.path||{...curve(positions.get(from),positions.get(to),pair(from,to),first?'first_hop':'tunnel'),from};
+        routeEdges.set(key,{from,to,first,path,linkID:edge?.link.ID||linkID,resourceID:first?edge?.link.ResourceID||route.FirstResourceID:'',transport:first?route.FirstTransport:edge?.link.Transport||'wireguard'});
       }
     }
   }
   const arrow = id + '-arrow';
-  const edgeMarkup = edges.map(edge => `<g class="topology-edge" ${edge.link.ID?`data-topology-link="${esc(edge.link.ID)}" role="button" tabindex="0" aria-pressed="${edge.link.ID===view.SelectedLink}" aria-label="${esc(edge.link.ID)}, inspect shared link traffic"`:''} data-from="${esc(edge.link.From)}" data-to="${esc(edge.link.To)}"><title>${esc(edge.link.From)} → ${esc(edge.link.To)} · ${esc(edge.link.Transport)} · ${esc(edge.link.State || 'unknown')} · shared peer · ${esc(list(edge.link.Metrics).join(' · ') || 'WG rate: Unknown')}</title><path class="${edge.link.Kind==='first_hop'?edge.link.Transport==='hysteria2'?'hy2-first-hop':'first-hop':esc(edge.link.Kind || 'tunnel')} ${esc(edge.link.State || 'unknown')}" d="${edge.path.d}"/><path class="edge-hit" d="${edge.path.d}"/></g>`).join('');
+  const edgeMarkup = edges.map(edge => `<g class="topology-edge ${edge.hasRoute?'has-route':''}" data-key="${esc(edge.key)}" ${edge.link.ID?`data-topology-link="${esc(edge.link.ID)}" role="button" tabindex="0" aria-pressed="${edge.link.ID===view.SelectedLink}" aria-label="${esc(edge.link.ID)}, inspect shared link traffic"`:''} data-resource="${esc(edge.link.ResourceID||'')}" data-transport="${esc(edge.link.Transport)}" data-from="${esc(edge.link.From)}" data-to="${esc(edge.link.To)}"><title>${esc(edge.link.From)} → ${esc(edge.link.To)} · ${esc(edge.link.Transport)} · ${esc(edge.link.State || 'unknown')} · shared peer · ${esc(list(edge.link.Metrics).join(' · ') || 'WG rate: Unknown')}</title><path class="edge-stroke ${edge.link.Kind==='first_hop'?edge.link.Transport==='hysteria2'?'hy2-first-hop':'first-hop':esc(edge.link.Kind || 'tunnel')} ${esc(edge.link.State || 'unknown')}" d="${edge.path.d}"/><path class="edge-hit" d="${edge.path.d}"/></g>`).join('');
   const selectedEdge = edges.find(edge => edge.link.ID === view.SelectedLink);
   const height=diagram.height;
   const measurements=list(selectedEdge?.link.Metrics),rates=measurements.find(value=>value.startsWith(selectedEdge?.link.From+' TX: ')),plain=[measurements[0]?.split(': ').slice(1).join(': '),rates?.split(' TX: ')[1],measurements[1]?.split(': ').slice(1).join(': ')].filter(Boolean).join(' · ');
   const metricX=selectedEdge?n((positions.get(selectedEdge.link.From).x+positions.get(selectedEdge.link.To).x)/2):0,metricY=selectedEdge?n((positions.get(selectedEdge.link.From).y+positions.get(selectedEdge.link.To).y)/2-24):0;
   const metricMarkup=selectedEdge?`<text class="topology-metrics" x="${metricX}" y="${metricY}" text-anchor="middle"><title>${esc(selectedEdge.link.ID)} · ${esc(measurements.join(' · '))}</title><tspan x="${metricX}">${esc(view.SelectedServiceName?view.SelectedServiceName+' · selected':selectedEdge.link.ID+' · inspected')}</tspan><tspan x="${metricX}" dy="14">${esc(plain)}</tspan></text>`:'';
 
-  const routeMarkup = [...routeEdges.values()].map(([from, to]) => {
-    const path=firstEdges.has(`${from}\0${to}`)?{...curve(positions.get(from),positions.get(to),pair(from,to),'first_hop'),from}:curves.get(pair(from,to))||{...curve(positions.get(from),positions.get(to),pair(from,to),'tunnel'),from};
-    return `<path class="route topology-route ${firstEdges.has(`${from}\0${to}`)?'first-hop':''}" data-from="${esc(from)}" data-to="${esc(to)}" marker-${path.from === from ? 'end' : 'start'}="url(#${arrow})" d="${path.d}"/>`;
+  const routeMarkup = [...routeEdges].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,{from,to,first,path,linkID,resourceID,transport}]) => {
+    return `<path class="route topology-route ${first?'first-hop':''}" data-key="route:${esc(key)}" data-route-link="${esc(linkID||'')}" data-route-resource="${esc(resourceID||'')}" data-transport="${esc(transport)}" data-from="${esc(from)}" data-to="${esc(to)}" marker-${path.from === from ? 'end' : 'start'}="url(#${arrow})" d="${path.d}"/>`;
   }).join('');
   const directMarkup = [...direct].filter(node => positions.has(node)).map(node => {
     const point = positions.get(node);
-    return `<g class="route-local-exit" transform="translate(${n(point.x + (point.x>480?-96:14))} ${n(point.y + 10)})"><rect width="82" height="19" rx="9.5" fill="#f5f7fc" stroke="#b9c9e9"/><circle cx="10" cy="9.5" r="3" fill="#466fc2"/><text x="18" y="13">LOCAL EXIT</text></g>`;
+    return `<g class="route-local-exit" data-key="exit:${esc(node)}" transform="translate(${n(point.x + (point.x>480?-96:14))} ${n(point.y + 10)})"><rect width="82" height="19" rx="9.5" fill="#f5f7fc" stroke="#b9c9e9"/><circle cx="10" cy="9.5" r="3" fill="#466fc2"/><text x="18" y="13">LOCAL EXIT</text></g>`;
   }).join('');
   const nodeMarkup = nodes.filter(node => positions.has(node.ID)).map(node => {
     const point = positions.get(node.ID), location = labels.get(node.ID);
     const health = node.Runtime === 'running' ? '' : node.Runtime === 'error' ? 'problem' : 'unknown';
     const text = (lines,y,step,className)=>`<text class="${className}" text-anchor="${location.anchor}" x="${location.x}" y="${n(y)}">${lines.map((line,index)=>`<tspan x="${location.x}" dy="${index?step:0}">${esc(line)}</tspan>`).join('')}</text>`;
-    return `<g class="topology-node" data-node="${esc(node.ID)}" data-ring="${point.ring}" role="button" tabindex="0" aria-pressed="false" aria-label="${esc(node.Name || node.ID)}, focus adjacent links"><title>${esc(node.Name || node.ID)} · ${esc(node.ID)} · ${esc(subtitle(node))} · Runtime: ${esc(node.Runtime || 'unknown')}</title>${selected.has(node.ID) ? `<circle class="route-ring" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/>` : ''}<circle class="node-hit" cx="${n(point.x)}" cy="${n(point.y)}" r="16"/><circle class="node-focus" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/><circle class="node ${health} ${selected.has(node.ID) ? 'selected' : ''}" cx="${n(point.x)}" cy="${n(point.y)}" r="6"/><g class="topology-label">${text(location.name,location.y,15,'node-label')}${text(location.detail,location.sub,12,'sub node-label')}</g></g>`;
+    return `<g class="topology-node" data-key="node:${esc(node.ID)}" data-node="${esc(node.ID)}" data-ring="${point.ring}" role="button" tabindex="0" aria-pressed="false" aria-label="${esc(node.Name || node.ID)}, focus adjacent links"><title>${esc(node.Name || node.ID)} · ${esc(node.ID)} · ${esc(subtitle(node))} · Runtime: ${esc(node.Runtime || 'unknown')}</title>${selected.has(node.ID) ? `<circle class="route-ring" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/>` : ''}<circle class="node-hit" cx="${n(point.x)}" cy="${n(point.y)}" r="16"/><circle class="node-focus" cx="${n(point.x)}" cy="${n(point.y)}" r="11"/><circle class="node ${health} ${selected.has(node.ID) ? 'selected' : ''}" cx="${n(point.x)}" cy="${n(point.y)}" r="6"/><g class="topology-label">${text(location.name,location.y,15,'node-label')}${text(location.detail,location.sub,12,'sub node-label')}</g></g>`;
   }).join('');
-  return `<svg class="topology" data-selected-link="${esc(view.SelectedLink||'')}" viewBox="0 0 960 ${height}" role="group" aria-label="Interactive concentric network topology"><defs><marker id="${arrow}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#466fc2"/></marker></defs><ellipse class="topology-ring outer" cx="480" cy="${diagram.cy}" rx="${diagram.outerRX}" ry="${diagram.outerRY}"/><ellipse class="topology-ring inner" cx="480" cy="${diagram.cy}" rx="${diagram.outerRX*.58}" ry="${diagram.outerRY*.59}"/>${edgeMarkup}${metricMarkup}${routeMarkup}${directMarkup}${nodeMarkup}${nodes.length ? '' : `<text class="sub" text-anchor="middle" x="480" y="${diagram.cy}">No certified topology</text>`}</svg>`;
+  return `<svg class="topology" data-key="topology:${esc(id)}" data-selected-link="${esc(view.SelectedLink||'')}" data-pinned-link="${esc(view.PinnedLink||'')}" viewBox="0 0 960 ${height}" role="group" aria-label="Interactive concentric network topology"><defs><marker id="${arrow}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#466fc2"/></marker></defs><ellipse class="topology-ring outer" cx="480" cy="${diagram.cy}" rx="${diagram.outerRX}" ry="${diagram.outerRY}"/><ellipse class="topology-ring inner" cx="480" cy="${diagram.cy}" rx="${diagram.outerRX*.58}" ry="${diagram.outerRY*.59}"/><g data-key="edges">${edgeMarkup}</g><g data-key="metrics">${metricMarkup}</g><g data-key="routes">${routeMarkup}${directMarkup}</g><g data-key="nodes">${nodeMarkup}</g>${nodes.length ? '' : `<text class="sub" text-anchor="middle" x="480" y="${diagram.cy}">No certified topology</text>`}</svg>`;
 }
 
 const bindings=new WeakMap;
@@ -132,12 +146,13 @@ export function bindTopology(container) {
   const known = new Set(nodes.map(node => node.dataset.node));
   let locked = known.has(container.dataset.locked) ? container.dataset.locked : '';
   const selectedEdge = [...svg.querySelectorAll('[data-topology-link]')].find(edge => edge.dataset.topologyLink === svg.dataset.selectedLink);
+  const pinnedEdge = [...svg.querySelectorAll('[data-topology-link]')].find(edge => edge.dataset.topologyLink === svg.dataset.pinnedLink);
   const apply = (nodeID, edge = null) => {
-    if (!nodeID && !edge) edge = selectedEdge;
+    if (!nodeID && (!edge || pinnedEdge)) edge = pinnedEdge || selectedEdge;
     const active = !!(nodeID || edge), visible = new Set(nodeID ? [nodeID] : []);
     svg.classList.toggle('has-focus', active);
     for (const item of svg.querySelectorAll('.topology-edge,.topology-route')) {
-      const related = edge ? item.dataset.topologyLink && edge.dataset.topologyLink ? item.dataset.topologyLink === edge.dataset.topologyLink : item.dataset.from === edge.dataset.from && item.dataset.to === edge.dataset.to :
+      const related = edge ? edge.dataset.topologyLink ? (item.dataset.topologyLink||item.dataset.routeLink)===edge.dataset.topologyLink : item.dataset.from===edge.dataset.from&&item.dataset.to===edge.dataset.to&&item.dataset.transport===edge.dataset.transport&&(item.dataset.resource||item.dataset.routeResource)===edge.dataset.resource :
         !!nodeID && (item.dataset.from === nodeID || item.dataset.to === nodeID);
       item.classList.toggle('is-related', related);
       item.classList.toggle('is-muted', active && !related);
@@ -184,5 +199,9 @@ export function bindTopology(container) {
     }
   });
   if (focused) svg.querySelector(`[data-node="${CSS.escape(focused)}"]`)?.focus();
-  apply(locked);
+  const hovered=svg.querySelector('.topology-node:hover,.topology-edge:hover'),active=document.activeElement?.closest('.topology-node,.topology-edge');
+  const previewed=hovered||(svg.contains(active)?active:null);
+  let previewEdge=previewed?.matches('.topology-edge')?previewed:null;
+  if(previewEdge?.dataset.topologyLink)previewEdge=selectedEdge||previewEdge;
+  apply(locked||previewed?.dataset.node||'',locked?null:previewEdge);
 }
