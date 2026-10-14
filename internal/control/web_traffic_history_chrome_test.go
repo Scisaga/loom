@@ -171,8 +171,8 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{const card=document.querySelector('.topology-traffic-card');return new URLSearchParams(location.search).get('link')==='`+link.ID+`'&&card.querySelectorAll('[data-traffic-endpoint="demo-exit"][data-traffic-value="unknown"]').length===24&&card.querySelectorAll('[data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]').length===1&&card.querySelector('.metric').textContent==='1.0 MiB'&&document.querySelector('.topology-metrics').textContent.includes('57 ms')})()`) != true {
 		t.Fatal("selected Link mixed endpoint scopes or lost exact shared rate")
 	}
-	if chromeDo(t, debug, `document.querySelectorAll('#topology [data-direction-difference]').length===1`) != true {
-		t.Fatal("independent directional results lack their connection difference mark")
+	if chromeDo(t, debug, `(()=>{const edge=document.querySelector('#topology .topology-edge'),line=edge.querySelector('.edge-stroke');return !edge.querySelector('circle')&&line.dataset.observationPattern==='dashed'&&line.dataset.observationFrom==='demo-exit'&&line.dataset.observationTo==='demo-entry'&&line.hasAttribute('marker-start')&&!line.hasAttribute('marker-end')})()`) != true {
+		t.Fatal("confirmed directional WG DNS results lost their line pattern or point toward the failed direction")
 	}
 	topologyDemoScreenshotChrome(t, debug)
 	if chromeDo(t, debug, `(()=>{window.demoSharedScope=document.querySelector('.topology-traffic-card [data-traffic-scope]').dataset.trafficScope;document.querySelector('button[data-topology-direction="`+reverse.ID+`"]').click();return document.querySelector('.topology-traffic-card [data-traffic-scope]').dataset.trafficScope===demoSharedScope&&document.querySelector('.topology-traffic-card .metric').textContent==='1.0 MiB'&&new URLSearchParams(location.search).get('link')==='`+reverse.ID+`'})()`) != true {
@@ -207,11 +207,14 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-direction="`+link.ID+`"] [data-link-rtt]')?.textContent==='13 ms'&&document.querySelector('[data-link-direction="`+reverse.ID+`"] [data-link-rtt]')?.textContent==='57 ms'`)
-	if chromeDo(t, debug, `document.querySelectorAll('#topology [data-direction-difference]').length===0`) != true {
-		t.Fatal("equal directional states retained an invented difference mark")
+	if chromeDo(t, debug, `(()=>{const line=document.querySelector('#topology .edge-stroke');return line.dataset.observationPattern==='solid'&&getComputedStyle(line).strokeDasharray==='none'&&!line.hasAttribute('marker-start')&&!line.hasAttribute('marker-end')})()`) != true {
+		t.Fatal("two original successful WG DNS directions were not displayed as a solid line")
 	}
 	chromeDo(t, debug, `window.demoRealNow=Date.now;Date.now=()=>window.demoRealNow()+181000;document.querySelector('[data-traffic-retry="link:`+sharedID+`"]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="`+sharedID+`"] [data-traffic-rate="demo-entry"]')?.textContent.includes('Unknown')&&[...document.querySelectorAll('.topology-direction [data-link-rtt]')].every(value=>value.textContent==='Unknown')`)
+	if chromeDo(t, debug, `(()=>{const line=document.querySelector('#topology .edge-stroke');return line.dataset.observationPattern==='unknown'&&!line.hasAttribute('marker-start')&&!line.hasAttribute('marker-end')})()`) != true {
+		t.Fatal("expired directions were represented as confirmed success, failure or a one-way observation")
+	}
 	if chromeDo(t, debug, `document.querySelector('[data-link-row="`+sharedID+`"] [data-traffic-value="1048576"]')!==null`) != true {
 		t.Fatal("current rate expiry erased original traffic history")
 	}

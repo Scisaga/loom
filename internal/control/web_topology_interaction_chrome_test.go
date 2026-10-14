@@ -1,8 +1,11 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +66,66 @@ func topologyDemoScreenshotChrome(t *testing.T, debug *chromeDevTools) {
 	}
 	if err := os.WriteFile(path, content, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func topologyObservationArrowPixelsChrome(t *testing.T, debug *chromeDevTools) {
+	t.Helper()
+	for _, direction := range []string{"forward", "reverse"} {
+		geometry := chromeDo(t, debug, `(async()=>{
+		 const {topologyHTML}=await import('/assets/topology.js');
+		 const nodes=Array.from({length:6},(_,i)=>({ID:'demo-node-'+i,Name:'Demo node '+i,Runtime:'running',Roles:['forward']}));
+		 const reverse='`+direction+`'==='reverse',links=[
+		  {ID:'demo-forward',From:nodes[0].ID,To:nodes[1].ID,FromResourceID:'demo-resource-a',ResourceID:'demo-resource-b',Kind:'tunnel',Transport:'wireguard',State:reverse?'unavailable':'available'},
+		  {ID:'demo-reverse',From:nodes[1].ID,To:nodes[0].ID,FromResourceID:'demo-resource-b',ResourceID:'demo-resource-a',Kind:'tunnel',Transport:'wireguard',State:reverse?'available':'unavailable'}
+		 ];
+		 const app=document.querySelector('#app');app.className='network-page page-topology';app.innerHTML=topologyHTML({Nodes:nodes,Links:links});scrollTo(0,0);
+		 await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+		 const svg=app.querySelector('svg'),node=svg.querySelector('[data-node="'+nodes[reverse?0:1].ID+'"] .node'),r=node.getBoundingClientRect(),scale=node.getScreenCTM().a,padding=30*scale;
+		 return {cx:r.x+r.width/2,cy:r.y+r.height/2,radius:r.width/2+Number.parseFloat(getComputedStyle(node).strokeWidth)*scale/2,clip:{x:Math.floor(r.x-padding),y:Math.floor(r.y-padding),width:Math.ceil(r.width+padding*2),height:Math.ceil(r.height+padding*2),scale:1}};
+		})()`).(map[string]any)
+		capture := func() image.Image {
+			t.Helper()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var result struct {
+				Data string `json:"data"`
+			}
+			if err := debug.call(ctx, "Page.captureScreenshot", map[string]any{"format": "png", "captureBeyondViewport": true, "clip": geometry["clip"]}, &result); err != nil {
+				t.Fatal(err)
+			}
+			content, err := base64.StdEncoding.DecodeString(result.Data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pixels, err := png.Decode(bytes.NewReader(content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return pixels
+		}
+		withArrow := capture()
+		chromeDo(t, debug, `document.querySelector('.edge-stroke').removeAttribute('marker-start');document.querySelector('.edge-stroke').removeAttribute('marker-end');true`)
+		withoutArrow := capture()
+		clip := geometry["clip"].(map[string]any)
+		cx, cy, radius := geometry["cx"].(float64), geometry["cy"].(float64), geometry["radius"].(float64)
+		visible := 0
+		for y := 0; y < withArrow.Bounds().Dy(); y++ {
+			for x := 0; x < withArrow.Bounds().Dx(); x++ {
+				r1, g1, b1, a1 := withArrow.At(x, y).RGBA()
+				r2, g2, b2, a2 := withoutArrow.At(x, y).RGBA()
+				if r1 == r2 && g1 == g2 && b1 == b2 && a1 == a2 {
+					continue
+				}
+				dx, dy := float64(x)+clip["x"].(float64)+.5-cx, float64(y)+clip["y"].(float64)+.5-cy
+				if dx*dx+dy*dy > radius*radius {
+					visible++
+				}
+			}
+		}
+		if visible == 0 {
+			t.Fatalf("%s WG DNS observation arrow paints no visible pixels outside the node and its white border", direction)
+		}
 	}
 }
 
@@ -235,7 +298,7 @@ func TestWebChromeTopologyConnectionsKeepDirectionAndIndependentHits(t *testing.
 		}
 		cancel()
 		result := chromeDo(t, debug, `(async()=>{
-	 const {topologyHTML,bindTopology,topologyConnections}=await import('/assets/topology.js');
+	 const {topologyHTML,bindTopology,topologyConnections,topologyConnectionAppearance}=await import('/assets/topology.js');
 	 const nodes=Array.from({length:6},(_,i)=>({ID:'demo-node-'+i,Name:'Demo node '+i,Runtime:'running',Roles:['forward','internet_egress']}));
 	 const from=nodes[0].ID,to=nodes[1].ID;
 	 const links=[
@@ -254,10 +317,33 @@ func TestWebChromeTopologyConnectionsKeepDirectionAndIndependentHits(t *testing.
 	 const missing=topologyConnections([links[1]])[0];
 	 if(missing.key!==connection.key||missing.links.length!==1||missing.links[0].ID!=='demo-link-reverse')return {error:'one-direction connection invented or lost a direction'};
 	 if(JSON.stringify(topologyConnections(links))!==JSON.stringify(topologyConnections([...links].reverse())))return {error:'connection identity depends on input order'};
-	 for(const state of ['unknown','available']){
-	  const values=[links[0],{...links[1],State:state}],doc=new DOMParser().parseFromString(topologyHTML({Nodes:nodes,Links:values}), 'text/html');
-	  if(doc.querySelectorAll('[data-direction-difference]').length!==(state==='unknown'?1:0))return {error:'direction difference was suppressed or invented',state};
+	 const appearances=[
+	  {states:['available','available'],pattern:'solid'},
+	  {states:['available','unavailable'],pattern:'dashed',arrow:'end'},
+	  {states:['unavailable','available'],pattern:'dashed',arrow:'start'},
+	  {states:['unavailable','unavailable'],pattern:'dotted'},
+	  {states:['available','unknown'],pattern:'unknown'},
+	  {states:['unknown','unavailable'],pattern:'unknown'},
+	  {states:['unknown','unknown'],pattern:'unknown'},
+	  {states:['available'],pattern:'dashed',arrow:'end'},
+	  {states:['unavailable'],pattern:'dotted'},
+	  {states:['unknown'],pattern:'unknown'}
+	 ];
+	 const patterns=new Map();let stableHit='';
+	 for(const appearance of appearances){
+	  const values=appearance.states.map((state,index)=>({...links[index],State:state})),group=topologyConnections(values)[0],style=topologyConnectionAppearance(group);
+	  if(style.pattern!==appearance.pattern||style.singleDirection!==(values.length===1)||JSON.stringify(style.directions.map(value=>value.state))!==JSON.stringify(appearance.states))return {error:'original directional observations were reduced to the wrong display pattern',appearance,style};
+	  if(!!style.direction!==!!appearance.arrow||style.direction&&style.direction.from!==(appearance.arrow==='end'?from:to))return {error:'measurement direction borrowed missing or unsuccessful reverse evidence',appearance,style};
+	  const app=document.querySelector('#app');app.className='network-page page-topology';app.innerHTML=topologyHTML({Nodes:nodes,Links:values});
+	  const svg=app.querySelector('svg'),edge=svg.querySelector('.topology-edge'),line=edge.querySelector('.edge-stroke'),hit=edge.querySelector('.edge-hit'),computed=getComputedStyle(line);
+	  if(line.dataset.observationPattern!==appearance.pattern||line.dataset.singleDirection!==String(values.length===1)||!line.classList.contains('observation-'+appearance.pattern)||svg.querySelector('.topology-edge circle'))return {error:'line pattern did not replace the old state circle',appearance};
+	  if(['start','end'].some(end=>line.hasAttribute('marker-'+end)!==(appearance.arrow===end))||appearance.arrow&&!line.getAttribute('marker-'+appearance.arrow).includes('network-observation-arrow'))return {error:'grey measurement arrow has the wrong direction or scope',appearance};
+	  if(values.length===1&&!edge.querySelector('title').textContent.includes('Only this relay candidate; no reverse candidate'))return {error:'one authorized direction was represented as a failed reverse',appearance};
+	  const d=hit.getAttribute('d');if(stableHit&&stableHit!==d)return {error:'changing results or removing reverse candidate moved the hit curve',appearance};stableHit=d;
+	  if(computed.strokeDasharray==='none'!==(appearance.pattern==='solid')||getComputedStyle(hit).strokeWidth!=='18px'||getComputedStyle(hit).strokeDasharray!=='none'||getComputedStyle(hit).pointerEvents!=='stroke')return {error:'computed observation pattern changed the stable hit area',appearance,dashes:computed.strokeDasharray};
+	  patterns.set(appearance.pattern,{dash:computed.strokeDasharray,opacity:Number(computed.opacity)});
 	 }
+	 if(new Set([...patterns.values()].map(value=>value.dash)).size!==4||patterns.get('unknown').opacity>=patterns.get('solid').opacity)return {error:'unknown, dotted and confirmed directional patterns are not visibly distinct',patterns:[...patterns]};
 	 const views=[
 	  {routes:[{Chain:[from,to],FirstTransport:'hysteria2',FirstResourceID:'demo-resource-hy2',LinkIDs:[]}],resource:'demo-resource-hy2',id:'demo-resource-hy2'},
 	  {routes:[{Chain:[from,to],LinkIDs:['demo-link-forward']}],ids:['demo-link-forward'],id:'demo-link-forward',arrow:'end'},
@@ -272,7 +358,7 @@ func TestWebChromeTopologyConnectionsKeepDirectionAndIndependentHits(t *testing.
 	  await document.fonts.ready;
 	  const edges=[...svg.querySelectorAll('.topology-edge')];
 	  if(edges.length!==4)return {error:'drawing still duplicates a reciprocal WG connection',scenario:scenario.id};
-	  if(svg.querySelectorAll('[data-direction-difference]').length!==1||getComputedStyle(svg.querySelector('[data-direction-difference]')).pointerEvents!=='none')return {error:'direction difference mark is missing or intercepts the connection',scenario:scenario.id};
+	  if(svg.querySelector('.topology-edge circle'))return {error:'a state circle still replaces the requested line pattern',scenario:scenario.id};
 		  for(const edge of edges){
 		   const hit=getComputedStyle(edge.querySelector('.edge-hit'));
 		   if(hit.strokeWidth!=='18px'||hit.strokeDasharray!=='none'||hit.pointerEvents!=='stroke')return {error:'candidate hit area changed with visible stroke',scenario:scenario.id};
@@ -293,6 +379,7 @@ func TestWebChromeTopologyConnectionsKeepDirectionAndIndependentHits(t *testing.
 	  const routes=[...svg.querySelectorAll('.topology-route')],route=routes[0];
 	  if(routes.length!==1||!route||scenario.resource&&route.dataset.routeResource!==scenario.resource||scenario.ids&&JSON.stringify(JSON.parse(route.dataset.routeLinks).sort())!==JSON.stringify([...scenario.ids].sort()))return {error:'actual directions did not retain one route layer with the exact original identities',scenario:scenario.id};
 	  if(scenario.arrow&&['start','end'].some(end=>route.hasAttribute('marker-'+end)!==(scenario.arrow==='both'||scenario.arrow===end)))return {error:'actual path arrow points in the wrong business direction',scenario:scenario.id};
+	  if(scenario.ids&&(route.dataset.observationPattern!=='dashed'||getComputedStyle(route).strokeDasharray!==getComputedStyle(edges.find(edge=>JSON.parse(edge.dataset.topologyLinks||'[]').includes('demo-link-forward')).querySelector('.edge-stroke')).strokeDasharray||['start','end'].some(end=>route.hasAttribute('marker-'+end)&&!route.getAttribute('marker-'+end).includes('network-arrow'))))return {error:'blue reported route hid the observation pattern or borrowed the grey availability direction',scenario:scenario.id};
 	  const midpoint=route.getPointAtLength(route.getTotalLength()/2).matrixTransform(route.getScreenCTM()),target=document.elementFromPoint(midpoint.x,midpoint.y),edge=target?.closest('.topology-edge');
 	  if(!edge||target.closest('.topology-route')||scenario.resource&&edge.dataset.resource!==scenario.resource||scenario.ids&&!scenario.ids.every(id=>JSON.parse(edge.dataset.topologyLinks).includes(id)))return {error:'route decoration intercepts the original connection',scenario:scenario.id};
 	  const visible=edge.querySelector('path:not(.edge-hit)'),style=getComputedStyle(visible);
@@ -306,7 +393,7 @@ func TestWebChromeTopologyConnectionsKeepDirectionAndIndependentHits(t *testing.
 	  const oneDirection=new DOMParser().parseFromString(topologyHTML({Nodes:nodes,Links:links.filter(link=>link.ID!=='demo-link-forward'),SelectedLink:'demo-link-reverse'},[scenario.routes.find(route=>route.LinkIDs.includes('demo-link-reverse'))].filter(Boolean)),'text/html');
 	  const oneEdge=[...oneDirection.querySelectorAll('[data-topology-links]')].find(edge=>JSON.parse(edge.dataset.topologyLinks).includes('demo-link-reverse'));
 	  const original=[...edges].find(edge=>JSON.parse(edge.dataset.topologyLinks||'[]').includes('demo-link-reverse'));
-	  if(!oneEdge||JSON.parse(oneEdge.dataset.topologyLinks).length!==1||oneEdge.dataset.key!==original.dataset.key||oneEdge.querySelector('.edge-hit').getAttribute('d')!==original.querySelector('.edge-hit').getAttribute('d')||oneDirection.querySelector('[data-direction-difference]'))return {error:'removing one direction moved the shared connection or manufactured reverse data'};
+	  if(!oneEdge||JSON.parse(oneEdge.dataset.topologyLinks).length!==1||oneEdge.dataset.key!==original.dataset.key||oneEdge.querySelector('.edge-hit').getAttribute('d')!==original.querySelector('.edge-hit').getAttribute('d')||oneEdge.querySelector('.edge-stroke').dataset.singleDirection!=='true'||oneEdge.querySelector('.edge-stroke').dataset.observationPattern!=='dotted')return {error:'removing one direction moved the shared connection or manufactured reverse data'};
 	  results.push({scenario:scenario.id,independentHits:edges.length});
 	 }
 	 return {passed:true,results};
@@ -315,5 +402,6 @@ func TestWebChromeTopologyConnectionsKeepDirectionAndIndependentHits(t *testing.
 		if !ok || value["passed"] != true {
 			t.Fatalf("relay connections or actual directional route are not independently usable at %d px: %#v", width, result)
 		}
+		topologyObservationArrowPixelsChrome(t, debug)
 	}
 }

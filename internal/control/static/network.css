@@ -827,4 +827,14 @@ main {max-width:1586px;padding:28px 24px 24px}
 .topology-edge-card td {vertical-align:top}
 .topology-edge-card [data-shared-peer-traffic] {vertical-align:middle}
 
-.topology .topology-direction-difference {fill:var(--warn);stroke:white;stroke-width:1.5;pointer-events:none}
+/* These strokes project WG DNS observations; the wide solid hit path stays fixed. */
+.topology .edge-stroke.observation-solid,.topology .topology-route.observation-solid {stroke-dasharray:none}
+.topology .edge-stroke.observation-dashed,.topology .topology-route.observation-dashed {stroke-dasharray:6 5;stroke-linecap:butt}
+.topology .edge-stroke.observation-dotted,.topology .topology-route.observation-dotted {stroke-dasharray:1 6;stroke-linecap:round}
+.topology .edge-stroke.observation-unknown,.topology .topology-route.observation-unknown {stroke-dasharray:8 8;stroke-linecap:butt}
+.topology .edge-stroke.observation-unknown {opacity:.35}
+.topology .topology-edge.is-inspected .edge-stroke.observation-unknown,.topology .topology-edge:hover .edge-stroke.observation-unknown,.topology .topology-edge:focus-visible .edge-stroke.observation-unknown {opacity:.7}
+.key.observation-solid {border-top-style:solid}
+.key.observation-dashed {border-top-style:dashed}
+.key.observation-dotted {border-top-style:dotted}
+.key.observation-unknown {border-top-style:dashed;opacity:.4}
