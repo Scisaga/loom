@@ -96,7 +96,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 	defer httpServer.Close()
 	defer close(stop)
 	debug := openCommandChrome(t, httpServer.URL+"/topology?link="+reverse.ID)
-	waitChromeEvaluation(t, debug, `document.querySelectorAll('.topology-traffic-card [data-traffic-endpoint]').length===48&&document.querySelectorAll('[data-link-history] .link-hour').length===48`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('.topology-traffic-card [data-traffic-endpoint]').length===48&&document.querySelectorAll('.topology-edge-card [data-link-history] .link-hour').length===48&&document.querySelectorAll('.topology-direction [data-link-history] .link-hour').length===48`)
 	if trafficReads.Load() == 0 || completedLinkReads.Load() < 2 {
 		t.Fatal("new reports starved other history scopes or repeatedly cancelled in-flight reads")
 	}

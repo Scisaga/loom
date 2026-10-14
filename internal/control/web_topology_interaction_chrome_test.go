@@ -2,9 +2,11 @@ package control
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +21,47 @@ func topologyMouseChrome(t *testing.T, debug *chromeDevTools, kind string, point
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := debug.call(ctx, "Input.dispatchMouseEvent", params, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func topologyEscapeChrome(t *testing.T, debug *chromeDevTools) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, kind := range []string{"keyDown", "keyUp"} {
+		if err := debug.call(ctx, "Input.dispatchKeyEvent", map[string]any{"type": kind, "key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func topologyDemoScreenshotChrome(t *testing.T, debug *chromeDevTools) {
+	t.Helper()
+	// Screenshot pixels exceed the DevTools library's default text-message cap.
+	debug.connection.SetReadLimit(8 << 20)
+	defer debug.connection.SetReadLimit(32768)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 1600, "height": 1400, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
+		t.Fatal(err)
+	}
+	clip := chromeDo(t, debug, `(async()=>{scrollTo(0,0);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=document.querySelector('#app').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,scale:1}})()`)
+	var screenshot struct {
+		Data string `json:"data"`
+	}
+	if err := debug.call(ctx, "Page.captureScreenshot", map[string]any{"format": "png", "captureBeyondViewport": true, "clip": clip}, &screenshot); err != nil {
+		t.Fatal(err)
+	}
+	content, err := base64.StdEncoding.DecodeString(screenshot.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join("..", "..", "out", "topology-correction", "demo-bidirectional-details.png")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -69,7 +112,11 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 1600, "height": 1100, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
 		t.Fatal(err)
 	}
-	waitChromeEvaluation(t, debug, `document.querySelectorAll('#topology [data-topology-link]').length===2&&document.querySelectorAll('.link-hour').length===48`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('#topology [data-topology-link]').length===1&&document.querySelectorAll('.link-hour').length===48`)
+	if chromeDo(t, debug, `(()=>{const edge=document.querySelector('#topology [data-topology-links]');return JSON.parse(edge.dataset.topologyLinks).includes('`+link.ID+`')&&JSON.parse(edge.dataset.topologyLinks).includes('`+reverse.ID+`')})()`) != true {
+		t.Fatal("one relay connection lost an original direction")
+	}
+	primary := chromeDo(t, debug, `document.querySelector('#topology [data-topology-link]').dataset.topologyLink`).(string)
 	chromeDo(t, debug, `(async()=>{
 	 await document.fonts.ready;
 	 await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -86,14 +133,14 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	})()`)
 	pointFor := func(id string) map[string]any {
 		t.Helper()
-		point := chromeDo(t, debug, `(()=>{const edge=document.querySelector('[data-topology-link="`+id+`"]'),path=edge.querySelector('.edge-hit');for(const fraction of [.5,.4,.6,.3,.7]){const p=path.getPointAtLength(path.getTotalLength()*fraction).matrixTransform(path.getScreenCTM());if([0,3,-3].every(offset=>document.elementFromPoint(p.x,p.y+offset)?.closest('.topology-edge')===edge))return {x:p.x,y:p.y}}return {error:'No independently hittable section of the current relay curve'}})()`)
+		point := chromeDo(t, debug, `(()=>{const edge=[...document.querySelectorAll('#topology [data-topology-links]')].find(edge=>JSON.parse(edge.dataset.topologyLinks).includes('`+id+`')),path=edge.querySelector('.edge-hit');for(const fraction of [.5,.4,.6,.3,.7]){const p=path.getPointAtLength(path.getTotalLength()*fraction).matrixTransform(path.getScreenCTM());if([0,3,-3].every(offset=>document.elementFromPoint(p.x,p.y+offset)?.closest('.topology-edge')===edge))return {x:p.x,y:p.y}}return {error:'No independently hittable section of the current relay curve'}})()`)
 		value := point.(map[string]any)
 		if value["error"] != nil {
 			t.Fatalf("derived relay cannot be selected by a real pointer: %s: %#v", id, point)
 		}
 		return value
 	}
-	for _, id := range []string{reverse.ID, link.ID} {
+	for _, id := range []string{primary} {
 		point := pointFor(id)
 		for _, offset := range []float64{0, 3, -3, 0} {
 			topologyMouseChrome(t, debug, "mouseMoved", point, offset)
@@ -111,31 +158,49 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	}
 	// Keep the real pointer on the edge while an independent history refresh
 	// completes through the SPA's normal asynchronous redraw path.
-	chromeDo(t, debug, `window.demoTopologyHistoryAsOf=document.querySelector('[data-link-history="`+link.ID+`"] small[title]').title;document.querySelector('[data-link-history-retry="`+link.ID+`"]').click();true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-history="`+link.ID+`"] small[title]')?.title!==undefined&&document.querySelector('[data-link-history="`+link.ID+`"] small[title]').title!==demoTopologyHistoryAsOf`)
-	if chromeDo(t, debug, `demoTopologyDetached===0&&document.querySelector('#topology svg')===demoTopologySVG&&demoTopologyEdges.every(edge=>edge.isConnected)&&document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+link.ID+`'&&document.querySelector('[data-topology-link="`+link.ID+`"]').classList.contains('is-related')`) != true {
+	chromeDo(t, debug, `window.demoTopologyHistoryAsOf=document.querySelector('[data-link-history="`+primary+`"] small[title]').title;document.querySelector('[data-link-history-retry="`+primary+`"]').click();true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-history="`+primary+`"] small[title]')?.title!==undefined&&document.querySelector('[data-link-history="`+primary+`"] small[title]').title!==demoTopologyHistoryAsOf`)
+	if chromeDo(t, debug, `demoTopologyDetached===0&&document.querySelector('#topology svg')===demoTopologySVG&&demoTopologyEdges.every(edge=>edge.isConnected)&&document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+primary+`'&&document.querySelector('[data-topology-link="`+primary+`"]').classList.contains('is-related')`) != true {
 		t.Fatal("asynchronous history refresh detached the hovered topology or changed its LinkID")
 	}
-	point := pointFor(link.ID)
+	point := pointFor(primary)
 	topologyMouseChrome(t, debug, "mousePressed", point, 0)
 	topologyMouseChrome(t, debug, "mouseReleased", point, 0)
-	waitChromeEvaluation(t, debug, `new URLSearchParams(location.search).get('link')==='`+link.ID+`'&&document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+link.ID+`'`)
-	topologyMouseChrome(t, debug, "mouseMoved", pointFor(reverse.ID), 0)
-	if chromeDo(t, debug, `document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+link.ID+`'&&document.querySelector('[data-link-row="`+link.ID+`"]').classList.contains('selected-link')&&document.querySelector('[data-topology-link="`+link.ID+`"]').classList.contains('is-related')&&document.querySelector('[data-topology-link="`+reverse.ID+`"]').classList.contains('is-muted')`) != true {
-		t.Fatal("hover over another direction changed the pinned LinkID")
-	}
-	chromeDo(t, debug, `demoTopologyObserver.disconnect();document.querySelector('[data-topology-filter] [name=q]').value='`+reverse.ID+`';document.querySelector('[data-topology-filter] [name=q]').dispatchEvent(new Event('change',{bubbles:true}));true`)
-	waitChromeEvaluation(t, debug, `!document.querySelector('#topology [data-topology-link="`+link.ID+`"]')&&document.querySelector('.topology-traffic-card').dataset.selectedLink===''&&new URLSearchParams(location.search).get('link')==='`+link.ID+`'`)
-	chromeDo(t, debug, `document.querySelector('[data-topology-filter] [name=q]').value='';document.querySelector('[data-topology-filter] [name=q]').dispatchEvent(new Event('change',{bubbles:true}));true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('#topology [data-topology-link="`+link.ID+`"]')&&document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+link.ID+`'`)
-	chromeDo(t, debug, `document.querySelector('[data-topology-link="`+link.ID+`"]').focus();true`)
-	keysContext, keysCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer keysCancel()
-	for _, kind := range []string{"keyDown", "keyUp"} {
-		if err := debug.call(keysContext, "Input.dispatchKeyEvent", map[string]any{"type": kind, "key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27}, nil); err != nil {
-			t.Fatal(err)
+	waitChromeEvaluation(t, debug, `new URLSearchParams(location.search).get('link')==='`+primary+`'&&document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+primary+`'`)
+	// Direction buttons are real controls for the original LinkID, not another
+	// curve competing for the same pointer. Their change keeps the group DOM.
+	for _, id := range []string{reverse.ID, link.ID} {
+		button := chromeDo(t, debug, `(()=>{const button=document.querySelector('button[data-topology-direction="`+id+`"]');button.scrollIntoView({block:'nearest'});const r=button.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`).(map[string]any)
+		topologyMouseChrome(t, debug, "mouseMoved", button, 0)
+		topologyMouseChrome(t, debug, "mousePressed", button, 0)
+		topologyMouseChrome(t, debug, "mouseReleased", button, 0)
+		waitChromeEvaluation(t, debug, `new URLSearchParams(location.search).get('link')==='`+id+`'&&document.querySelector('button[data-topology-direction="`+id+`"]').getAttribute('aria-pressed')==='true'&&document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+primary+`'`)
+		if chromeDo(t, debug, `demoTopologyDetached===0&&document.querySelector('#topology svg')===demoTopologySVG&&demoTopologyEdges[0]===document.querySelector('#topology [data-topology-link]')&&demoTopologyEdges[0].dataset.topologyLink==='`+id+`'&&demoTopologyEdges[0].classList.contains('is-related')&&document.querySelectorAll('.topology-selected-observation [data-link-direction]').length===2`) != true {
+			t.Fatal("direction selection replaced the connection or lost bidirectional detail")
 		}
 	}
+	node := chromeDo(t, debug, `(()=>{const node=document.querySelector('#topology [data-node="demo-entry"] .node');node.scrollIntoView({block:'nearest'});const r=node.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`).(map[string]any)
+	topologyMouseChrome(t, debug, "mouseMoved", node, 0)
+	topologyMouseChrome(t, debug, "mousePressed", node, 0)
+	topologyMouseChrome(t, debug, "mouseReleased", node, 0)
+	waitChromeEvaluation(t, debug, `document.querySelector('#topology').dataset.locked==='demo-entry'`)
+	button := chromeDo(t, debug, `(()=>{const button=document.querySelector('button[data-topology-direction="`+reverse.ID+`"]');button.scrollIntoView({block:'nearest'});const r=button.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`).(map[string]any)
+	topologyMouseChrome(t, debug, "mouseMoved", button, 0)
+	topologyMouseChrome(t, debug, "mousePressed", button, 0)
+	topologyMouseChrome(t, debug, "mouseReleased", button, 0)
+	waitChromeEvaluation(t, debug, `document.querySelector('#topology').dataset.locked===''&&document.querySelector('#topology [data-topology-link]').classList.contains('is-inspected')&&document.activeElement.dataset.topologyDirection==='`+reverse.ID+`'`)
+	topologyEscapeChrome(t, debug)
+	waitChromeEvaluation(t, debug, `!new URLSearchParams(location.search).has('link')&&document.querySelector('#topology').dataset.locked===''`)
+	chromeDo(t, debug, `history.pushState({},'','/topology?link=`+reverse.ID+`');dispatchEvent(new PopStateEvent('popstate'));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('button[data-topology-direction="`+reverse.ID+`"]').getAttribute('aria-pressed')==='true'&&document.querySelector('#topology [data-topology-link]').dataset.topologyLink==='`+reverse.ID+`'`)
+	chromeDo(t, debug, `history.pushState({},'','/topology?link=`+link.ID+`');dispatchEvent(new PopStateEvent('popstate'));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('button[data-topology-direction="`+link.ID+`"]').getAttribute('aria-pressed')==='true'`)
+	chromeDo(t, debug, `demoTopologyObserver.disconnect();document.querySelector('[data-topology-filter] [name=q]').value='demo-absent-connection';document.querySelector('[data-topology-filter] [name=q]').dispatchEvent(new Event('change',{bubbles:true}));true`)
+	waitChromeEvaluation(t, debug, `!document.querySelector('#topology [data-topology-link="`+link.ID+`"]')&&document.querySelector('.topology-traffic-card').dataset.selectedLink===''&&new URLSearchParams(location.search).get('link')==='`+link.ID+`'`)
+	chromeDo(t, debug, `document.querySelector('[data-topology-filter] [name=q]').value='';document.querySelector('[data-topology-filter] [name=q]').dispatchEvent(new Event('change',{bubbles:true}));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#topology [data-topology-link="`+link.ID+`"]')&&document.querySelector('button[data-topology-direction="`+link.ID+`"]').getAttribute('aria-pressed')==='true'`)
+	chromeDo(t, debug, `document.querySelector('[data-topology-link="`+link.ID+`"]').focus();true`)
+	topologyEscapeChrome(t, debug)
 	waitChromeEvaluation(t, debug, `!new URLSearchParams(location.search).has('link')`)
 	holdOverviewHistory.Store(true)
 	chromeDo(t, debug, `history.pushState({},'','/');dispatchEvent(new PopStateEvent('popstate'));true`)
@@ -153,7 +218,7 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	}
 }
 
-func TestWebChromeTopologyParallelEdgesAndRouteHaveIndependentHits(t *testing.T) {
+func TestWebChromeTopologyConnectionsKeepDirectionAndIndependentHits(t *testing.T) {
 	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
 		t.Skip("set LOOM_WEB_CHROME_TEST=1 for real topology lane acceptance")
 	}
@@ -170,26 +235,44 @@ func TestWebChromeTopologyParallelEdgesAndRouteHaveIndependentHits(t *testing.T)
 		}
 		cancel()
 		result := chromeDo(t, debug, `(async()=>{
-	 const {topologyHTML,bindTopology}=await import('/assets/topology.js');
+	 const {topologyHTML,bindTopology,topologyConnections}=await import('/assets/topology.js');
 	 const nodes=Array.from({length:6},(_,i)=>({ID:'demo-node-'+i,Name:'Demo node '+i,Runtime:'running',Roles:['forward','internet_egress']}));
 	 const from=nodes[0].ID,to=nodes[1].ID;
 	 const links=[
-	  {ID:'demo-link-forward',From:from,To:to,Kind:'tunnel',Transport:'wireguard',State:'available'},
-	  {ID:'demo-link-reverse',From:to,To:from,Kind:'tunnel',Transport:'wireguard',State:'available'},
+	  {ID:'demo-link-forward',From:from,To:to,FromResourceID:'demo-native-a',ResourceID:'demo-native-b',Kind:'tunnel',Transport:'wireguard',State:'available'},
+	  {ID:'demo-link-reverse',From:to,To:from,FromResourceID:'demo-native-b',ResourceID:'demo-native-a',Kind:'tunnel',Transport:'wireguard',State:'unavailable'},
+	  {ID:'demo-link-other-resource',From:from,To:to,FromResourceID:'demo-other-a',ResourceID:'demo-other-b',Kind:'tunnel',Transport:'wireguard',State:'unknown'},
 	  {ResourceID:'demo-resource-wg',From:from,To:to,Kind:'first_hop',Transport:'wireguard',State:'available'},
 	  {ResourceID:'demo-resource-hy2',From:from,To:to,Kind:'first_hop',Transport:'hysteria2',State:'available'}
 	 ];
+	 const connection=topologyConnections(links).find(group=>group.links.some(link=>link.ID==='demo-link-forward'));
+	 if(connection.links.length!==2||topologyConnections(links).length!==4)return {error:'reciprocal original resources did not share exactly one connection'};
+	 for(const patch of [{FromResourceID:'demo-other-a'},{ResourceID:'demo-other-b'},{Kind:'first_hop'},{Transport:'hysteria2'},{FromResourceID:''}]){
+	  const distinct={...links[0],...patch,ID:'demo-link-distinct'};
+	  if(topologyConnections([links[0],links[1],distinct]).length!==2)return {error:'different resource, Kind or transport was folded into the shared WG connection',patch};
+	 }
+	 const missing=topologyConnections([links[1]])[0];
+	 if(missing.key!==connection.key||missing.links.length!==1||missing.links[0].ID!=='demo-link-reverse')return {error:'one-direction connection invented or lost a direction'};
+	 if(JSON.stringify(topologyConnections(links))!==JSON.stringify(topologyConnections([...links].reverse())))return {error:'connection identity depends on input order'};
+	 for(const state of ['unknown','available']){
+	  const values=[links[0],{...links[1],State:state}],doc=new DOMParser().parseFromString(topologyHTML({Nodes:nodes,Links:values}), 'text/html');
+	  if(doc.querySelectorAll('[data-direction-difference]').length!==(state==='unknown'?1:0))return {error:'direction difference was suppressed or invented',state};
+	 }
 	 const views=[
-	  {route:{Chain:[from,to],FirstTransport:'hysteria2',FirstResourceID:'demo-resource-hy2',LinkIDs:[]},key:'data-route-resource',id:'demo-resource-hy2'},
-	  {route:{Chain:[from,to],LinkIDs:['demo-link-forward']},key:'data-route-link',id:'demo-link-forward'}
+	  {routes:[{Chain:[from,to],FirstTransport:'hysteria2',FirstResourceID:'demo-resource-hy2',LinkIDs:[]}],resource:'demo-resource-hy2',id:'demo-resource-hy2'},
+	  {routes:[{Chain:[from,to],LinkIDs:['demo-link-forward']}],ids:['demo-link-forward'],id:'demo-link-forward',arrow:'end'},
+	  {routes:[{Chain:[to,from],LinkIDs:['demo-link-reverse']}],ids:['demo-link-reverse'],id:'demo-link-reverse',arrow:'start'},
+	  {routes:[{Chain:[from,to],LinkIDs:['demo-link-forward']},{Chain:[to,from],LinkIDs:['demo-link-reverse']}],ids:['demo-link-forward','demo-link-reverse'],id:'demo-both-directions',arrow:'both'}
 	 ];
 	 const results=[];
 	 for(const scenario of views){
 	  const app=document.querySelector('#app');app.className='network-page page-topology';
-	  app.innerHTML='<section class="card topology-stage"><div id="demo-topology">'+topologyHTML({Nodes:nodes,Links:links,SelectedLink:''},[scenario.route])+'</div></section>';
+	  app.innerHTML='<section class="card topology-stage"><div id="demo-topology">'+topologyHTML({Nodes:nodes,Links:links,SelectedLink:''},scenario.routes)+'</div></section>';
 	  const container=document.querySelector('#demo-topology'),svg=container.querySelector('svg');bindTopology(container);
 	  await document.fonts.ready;
 	  const edges=[...svg.querySelectorAll('.topology-edge')];
+	  if(edges.length!==4)return {error:'drawing still duplicates a reciprocal WG connection',scenario:scenario.id};
+	  if(svg.querySelectorAll('[data-direction-difference]').length!==1||getComputedStyle(svg.querySelector('[data-direction-difference]')).pointerEvents!=='none')return {error:'direction difference mark is missing or intercepts the connection',scenario:scenario.id};
 		  for(const edge of edges){
 		   const hit=getComputedStyle(edge.querySelector('.edge-hit'));
 		   if(hit.strokeWidth!=='18px'||hit.strokeDasharray!=='none'||hit.pointerEvents!=='stroke')return {error:'candidate hit area changed with visible stroke',scenario:scenario.id};
@@ -201,28 +284,36 @@ func TestWebChromeTopologyParallelEdgesAndRouteHaveIndependentHits(t *testing.T)
 		  }
 	  const points=edges.map(edge=>{const path=edge.querySelector('.edge-hit');return path.getPointAtLength(path.getTotalLength()/2).matrixTransform(path.getScreenCTM())});
 	  for(let i=0;i<points.length;i++)for(let j=i+1;j<points.length;j++){
-	   if(Math.hypot(points[i].x-points[j].x,points[i].y-points[j].y)<1)return {error:'parallel LinkIDs or first-hop transports overlap',scenario:scenario.id,a:i,b:j};
+	   if(Math.hypot(points[i].x-points[j].x,points[i].y-points[j].y)<1)return {error:'different resources or first-hop transports overlap',scenario:scenario.id,a:i,b:j};
 	  }
 	  for(let i=0;i<edges.length;i++){
 	   const point=points[i];
 	   if(document.elementFromPoint(point.x,point.y)?.closest('.topology-edge')!==edges[i])return {error:'edge cannot be hit independently',scenario:scenario.id,index:i};
 	  }
-	  const route=svg.querySelector('.topology-route['+scenario.key+'="'+scenario.id+'"]');
-	  if(!route)return {error:'selected route lost its exact original edge',scenario:scenario.id};
+	  const routes=[...svg.querySelectorAll('.topology-route')],route=routes[0];
+	  if(routes.length!==1||!route||scenario.resource&&route.dataset.routeResource!==scenario.resource||scenario.ids&&JSON.stringify(JSON.parse(route.dataset.routeLinks).sort())!==JSON.stringify([...scenario.ids].sort()))return {error:'actual directions did not retain one route layer with the exact original identities',scenario:scenario.id};
+	  if(scenario.arrow&&['start','end'].some(end=>route.hasAttribute('marker-'+end)!==(scenario.arrow==='both'||scenario.arrow===end)))return {error:'actual path arrow points in the wrong business direction',scenario:scenario.id};
 	  const midpoint=route.getPointAtLength(route.getTotalLength()/2).matrixTransform(route.getScreenCTM()),target=document.elementFromPoint(midpoint.x,midpoint.y),edge=target?.closest('.topology-edge');
-	  if(!edge||target.closest('.topology-route')||(edge.dataset.topologyLink||edge.dataset.resource)!==scenario.id)return {error:'route decoration intercepts the original edge',scenario:scenario.id};
+	  if(!edge||target.closest('.topology-route')||scenario.resource&&edge.dataset.resource!==scenario.resource||scenario.ids&&!scenario.ids.every(id=>JSON.parse(edge.dataset.topologyLinks).includes(id)))return {error:'route decoration intercepts the original connection',scenario:scenario.id};
 	  const visible=edge.querySelector('path:not(.edge-hit)'),style=getComputedStyle(visible);
 	  if(style.visibility!=='hidden'&&style.display!=='none'&&style.opacity!=='0'&&style.strokeOpacity!=='0')return {error:'selected dashed route still paints the underlying transport color',scenario:scenario.id};
 	  let clicked='';container.addEventListener('click',event=>{const edge=event.target.closest('.topology-edge');clicked=edge?.dataset.topologyLink||edge?.dataset.resource||''});
 	  target.dispatchEvent(new MouseEvent('click',{bubbles:true}));
-	  if(clicked!==scenario.id)return {error:'click did not select the actual edge under the route',scenario:scenario.id};
+	  if(clicked!==(edge.dataset.topologyLink||edge.dataset.resource))return {error:'click did not select the original identity under the route',scenario:scenario.id};
+	  const ordinary=edges.filter(edge=>!edge.classList.contains('has-route')),widths=ordinary.map(edge=>getComputedStyle(edge.querySelector('.edge-stroke')).strokeWidth);
+	  svg.querySelector('[data-node="'+from+'"]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));
+	  if(ordinary.some((edge,i)=>getComputedStyle(edge.querySelector('.edge-stroke')).strokeWidth!==widths[i]))return {error:'node hover thickened relay candidates',scenario:scenario.id};
+	  const oneDirection=new DOMParser().parseFromString(topologyHTML({Nodes:nodes,Links:links.filter(link=>link.ID!=='demo-link-forward'),SelectedLink:'demo-link-reverse'},[scenario.routes.find(route=>route.LinkIDs.includes('demo-link-reverse'))].filter(Boolean)),'text/html');
+	  const oneEdge=[...oneDirection.querySelectorAll('[data-topology-links]')].find(edge=>JSON.parse(edge.dataset.topologyLinks).includes('demo-link-reverse'));
+	  const original=[...edges].find(edge=>JSON.parse(edge.dataset.topologyLinks||'[]').includes('demo-link-reverse'));
+	  if(!oneEdge||JSON.parse(oneEdge.dataset.topologyLinks).length!==1||oneEdge.dataset.key!==original.dataset.key||oneEdge.querySelector('.edge-hit').getAttribute('d')!==original.querySelector('.edge-hit').getAttribute('d')||oneDirection.querySelector('[data-direction-difference]'))return {error:'removing one direction moved the shared connection or manufactured reverse data'};
 	  results.push({scenario:scenario.id,independentHits:edges.length});
 	 }
 	 return {passed:true,results};
 	})()`)
 		value, ok := result.(map[string]any)
 		if !ok || value["passed"] != true {
-			t.Fatalf("parallel topology edges or observed route are not independently usable at %d px: %#v", width, result)
+			t.Fatalf("relay connections or actual directional route are not independently usable at %d px: %#v", width, result)
 		}
 	}
 }

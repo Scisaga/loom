@@ -82,3 +82,34 @@ func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 		t.Fatal("an observation manufactured a withdrawn path")
 	}
 }
+
+func TestWebRelayProjectionPreservesBothOriginalResourceIdentities(t *testing.T) {
+	projection := relayProjectionFixture(t)
+	derived, err := DerivedNetworkLinks(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := buildWebSnapshot(projection, true, true, true)
+	if len(snapshot.Links) != len(derived) {
+		t.Fatal("drawing projection changed the directional candidate inventory")
+	}
+	for _, original := range derived {
+		var found bool
+		for _, link := range snapshot.Links {
+			if link.ID != original.ID {
+				continue
+			}
+			found = true
+			if link.From != original.FromNodeID || link.To != original.ToNodeID || link.FromResourceID != original.FromResourceID || link.ResourceID != original.ResourceID {
+				t.Fatal("UI connection grouping must use original endpoint resources", original.ID)
+			}
+			body, err := json.Marshal(link)
+			if err != nil || !strings.Contains(string(body), `"from_resource_id":"`+original.FromResourceID+`"`) || !strings.Contains(string(body), `"resource_id":"`+original.ResourceID+`"`) {
+				t.Fatal("Web wire projection omitted an original resource reference", err)
+			}
+		}
+		if !found {
+			t.Fatal("UI projection lost an original direction", original.ID)
+		}
+	}
+}

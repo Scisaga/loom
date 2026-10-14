@@ -104,10 +104,15 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-link-history="`+link.ID+`"] .link-hour').length===24`)
-	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="`+link.ID+`"]');return row.querySelectorAll('.link-hour.available').length===1&&row.querySelectorAll('.link-hour.unavailable').length===1&&row.querySelectorAll('.link-hour.missing').length===22&&row.textContent.includes('demo-entry → demo-exit')&&row.textContent.includes('not uptime')&&row.lastElementChild.textContent.includes('Unknown')&&row.querySelector('.link-hour.available').title.includes('demo-generation')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="`+link.ID+`"]');return row.querySelectorAll('.link-hour.available').length===1&&row.querySelectorAll('.link-hour.unavailable').length===1&&row.querySelectorAll('.link-hour.missing').length===22&&row.textContent.includes('Demo entry → Demo exit')&&row.textContent.includes('not uptime')&&row.lastElementChild.textContent.includes('Unknown')&&row.querySelector('.link-hour.available').title.includes('demo-generation')})()`) != true {
 		t.Fatal("Link row confused direction, traffic, absence or original sample state")
 	}
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="`+link.ID+`"]')?.textContent.includes('WG DNS RTT: 0 ms')&&document.querySelector('[data-link-spread="`+link.ID+`"]')?.textContent.includes('P95−P50: 0 ms')`)
+	// A one-way candidate is an inspectable connection, not an implicit reverse
+	// measurement. The original LinkID remains its deep-link direction.
+	chromeDo(t, debug, `history.pushState({},'','/topology?link=`+link.ID+`');dispatchEvent(new PopStateEvent('popstate'));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-missing-reverse]')?.textContent.includes('No relay candidate')&&document.querySelectorAll('.topology-direction').length===1&&document.querySelector('.topology-direction [data-link-rtt]').textContent==='0 ms'`)
+	chromeDo(t, debug, `history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));true`)
 	chromeDo(t, debug, `(()=>{document.querySelector('#topology [data-node="demo-entry"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));document.querySelector('[data-link-history-retry]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelector('#topology').dataset.locked==='demo-entry'`)
 	refuse.Store(true)
@@ -165,6 +170,14 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	}
 	chromeDo(t, debug, `(()=>{document.querySelector('[data-link-history-retry]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelectorAll('.link-hour.available').length===1`)
+	// A successful empty current window replaces the old visible samples. A
+	// read error and an empty authenticated result are different UI inputs.
+	clock.Store(now.Add(25 * time.Hour).UnixMilli())
+	if chromeDo(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=`+link.ID+`'),v=await r.json();return r.status===200&&v.link_id==='`+link.ID+`'&&v.buckets.length===24&&v.buckets.every(bucket=>!bucket.observation&&!bucket.ambiguous)})()`) != true {
+		t.Fatal("formal Link history did not return the empty requested window")
+	}
+	chromeDo(t, debug, `document.querySelector('[data-link-history-retry="`+link.ID+`"]').click();true`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour.missing').length===24&&document.querySelectorAll('.link-hour.available,.link-hour.unavailable').length===0&&document.querySelector('[data-link-spread="`+link.ID+`"]').textContent.includes('Unknown')`)
 	a.mu.Lock()
 	a.projection.DeviceAuthorizations = slices.DeleteFunc(a.projection.DeviceAuthorizations, func(device DeviceAuthorization) bool { return device.ID == "demo-exit" })
 	a.mu.Unlock()

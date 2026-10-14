@@ -24,7 +24,7 @@ func TestWebChromeTopologyLongNamesReadableAndInteractive(t *testing.T) {
 	  const before=[...topologyPositions(nodes)],after=[...topologyPositions([...nodes].reverse().map(n=>({...n,Direction:n.Direction?'':'reverse_only',Control:!n.Control})))];
 	  if(JSON.stringify(before)!==JSON.stringify(after))return {error:'rings depend on roles, direction or input order'};
 	  const id=compact?'overview-topology':'network';
-	  const view={Nodes:nodes,SelectedLink:'demo-link',Links:[{ID:'demo-link',From:nodes[0].ID,To:nodes[1].ID,Kind:'tunnel',State:'unknown',Transport:'wireguard',Metrics:['WG DNS RTT: Unknown','15m Δ P95−P50: Unknown']}]};
+	  const view={Nodes:nodes,SelectedLink:'demo-link',Links:[{ID:'demo-link',From:nodes[0].ID,To:nodes[1].ID,FromResourceID:'demo-native-a',ResourceID:'demo-native-b',Kind:'tunnel',State:'unknown',Transport:'wireguard',Metrics:['WG DNS RTT: Unknown','15m Δ P95−P50: Unknown']}]};
 	  const app=document.querySelector('#app');app.className='network-page '+(compact?'page-overview':'page-topology');
 	  app.innerHTML='<div class="'+(compact?'overview-primary':'topology-layout')+'"><section class="card '+(compact?'overview-topology-card':'topology-stage')+'"><div id="demo-topology">'+topologyHTML(view,[{Chain:[nodes[0].ID,nodes[1].ID]}],id)+'</div></section><aside></aside></div>';
 	  const container=document.querySelector('#demo-topology'),svg=container.querySelector('svg');

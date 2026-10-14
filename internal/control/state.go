@@ -59,17 +59,18 @@ type WebObservation struct {
 }
 
 type Link struct {
-	ID           string `json:"id,omitempty"`
-	ResourceID   string `json:"resource_id"`
-	SpecDigest   string `json:"spec_digest"`
-	From         string `json:"from"`
-	To           string `json:"to"`
-	Transport    string `json:"transport"`
-	Authorized   bool   `json:"authorized"`
-	Availability string `json:"availability"`
-	CurrentUntil int64  `json:"current_until,omitempty"`
-	RoundTripMS  *int64 `json:"round_trip_ms,omitempty"`
-	ObservedAt   int64  `json:"observed_at,omitempty"`
+	ID             string `json:"id,omitempty"`
+	FromResourceID string `json:"from_resource_id"`
+	ResourceID     string `json:"resource_id"`
+	SpecDigest     string `json:"spec_digest"`
+	From           string `json:"from"`
+	To             string `json:"to"`
+	Transport      string `json:"transport"`
+	Authorized     bool   `json:"authorized"`
+	Availability   string `json:"availability"`
+	CurrentUntil   int64  `json:"current_until,omitempty"`
+	RoundTripMS    *int64 `json:"round_trip_ms,omitempty"`
+	ObservedAt     int64  `json:"observed_at,omitempty"`
 }
 
 type Path struct {

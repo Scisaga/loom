@@ -186,7 +186,7 @@ func projectWebLinks(projection Projection) []Link {
 		if err != nil {
 			continue
 		}
-		result = append(result, Link{ID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, From: link.FromNodeID, To: link.ToNodeID, Transport: "wireguard", Authorized: true, Availability: "unknown"})
+		result = append(result, Link{ID: link.ID, FromResourceID: link.FromResourceID, ResourceID: link.ResourceID, SpecDigest: spec, From: link.FromNodeID, To: link.ToNodeID, Transport: "wireguard", Authorized: true, Availability: "unknown"})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
