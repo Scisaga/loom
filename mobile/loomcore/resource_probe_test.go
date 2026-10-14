@@ -127,7 +127,7 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 	current, _ := json.Marshal(map[string]string{route.Scope: route.ID})
 	evaluate := func(at time.Time, raw []byte) runtimeApplication {
 		t.Helper()
-		body, err := EvaluateAndroidRoutes(routesBody, nil, preference, current, "demo-other-underlay", at.UTC().Format(time.RFC3339), targetsBody, raw)
+		body, err := EvaluateAndroidRoutes(routesBody, nil, preference, current, "demo-other-underlay", at.UTC().Format(time.RFC3339), targetsBody, raw, nil)
 		var result runtimeApplication
 		if err != nil || json.Unmarshal(body, &result) != nil {
 			t.Fatal("Android pure bridge could not consume its existing cache", err)

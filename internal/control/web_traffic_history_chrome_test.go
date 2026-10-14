@@ -32,6 +32,12 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	link := webRelayLink(t, p, "demo-entry", "demo-exit")
+	reverse := webRelayLink(t, p, "demo-exit", "demo-entry")
+	linkSpec, err := LinkSpecDigest(view, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	digest, _ := DeviceViewDigest(view)
 	tag, peers, err := WireGuardCounterBindings(view)
 	if err != nil {
@@ -68,7 +74,8 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 		for j := range values {
 			values[j].TXBytes = U64(i) * 1048576
 		}
-		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: p.NetworkID, DeviceID: view.DeviceID, ReportSequence: U64(i + 1), ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: at.UnixMilli(), Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest, Resources: &resources}, WireGuardCounters: &WireGuardCounters{Interface: tag, Epoch: strings.Repeat("a", 32), ObservedAt: at.UnixMilli(), Peers: values}}, key)
+		observations := []Observation{{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: linkSpec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-underlay", Result: "unavailable", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(3000))}}
+		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: p.NetworkID, DeviceID: view.DeviceID, ReportSequence: U64(i + 1), ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: at.UnixMilli(), Selections: []ReportSelection{}, Observations: observations, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest, Resources: &resources}, WireGuardCounters: &WireGuardCounters{Interface: tag, Epoch: strings.Repeat("a", 32), ObservedAt: at.UnixMilli(), Peers: values}}, key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,33 +117,40 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	chromeDo(t, debug, `document.querySelector('[data-traffic-retry]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.wg-traffic-hour').length===48`)
 	chromeDo(t, debug, `history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="demo-link"] [data-traffic-rate="demo-entry"]')?.textContent.includes('0.139 Mbps')`)
-	if chromeDo(t, debug, `document.querySelector('[data-link-row="demo-link"]').textContent.includes('Shared peer')`) != true {
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="`+link.ID+`"] [data-traffic-rate="demo-entry"]')?.textContent.includes('0.139 Mbps')`)
+	if chromeDo(t, debug, `document.querySelector('[data-link-row="`+link.ID+`"]').textContent.includes('Shared WG peer')`) != true {
 		t.Fatal("shared Link counters look like exclusive service bytes")
 	}
-	chromeDo(t, debug, `document.querySelector('[data-topology-link="demo-link"]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card').dataset.selectedLink==='demo-link'`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="`+reverse.ID+`"] .link-total')?.textContent===document.querySelector('[data-link-row="`+link.ID+`"] .link-total')?.textContent`)
+	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="`+link.ID+`"]');return row.textContent.includes('unavailable')&&row.lastElementChild.title.includes('count this pair once')&&document.querySelector('.overview-health').textContent.includes('automatically derived relay candidates')&&document.querySelector('.topology-edge-card thead').textContent.includes('WG SENT')&&!document.querySelector('.topology-edge-card thead').textContent.includes('TRANSFER')})()`) != true {
+		t.Fatal("relay candidates, failed WG DNS and shared sent packet totals lost their independent scopes")
+	}
+	chromeDo(t, debug, `document.querySelector('[data-topology-link="`+link.ID+`"]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+link.ID+`'`)
 	if chromeDo(t, debug, `!new URLSearchParams(location.search).has('link')`) != true {
 		t.Fatal("hover preview changed the pinned selection")
 	}
 	chromeDo(t, debug, `document.querySelector('#topology').dispatchEvent(new PointerEvent('pointerleave'));true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card').dataset.selectedLink===''`)
-	chromeDo(t, debug, `document.querySelector('[data-topology-link="demo-link"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-selected-link="demo-link"].topology-traffic-card .wg-endpoint-hours')?.querySelectorAll('[data-traffic-endpoint]').length===48`)
-	if chromeDo(t, debug, `(()=>{const card=document.querySelector('.topology-traffic-card');return new URLSearchParams(location.search).get('link')==='demo-link'&&card.querySelectorAll('[data-traffic-endpoint="demo-exit"][data-traffic-value="unknown"]').length===24&&card.querySelectorAll('[data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]').length===1&&document.querySelector('.topology-metrics').textContent.includes('0.139 Mbps')})()`) != true {
+	chromeDo(t, debug, `document.querySelector('[data-topology-link="`+link.ID+`"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-selected-link="`+link.ID+`"].topology-traffic-card .wg-endpoint-hours')?.querySelectorAll('[data-traffic-endpoint]').length===48`)
+	if chromeDo(t, debug, `(()=>{const card=document.querySelector('.topology-traffic-card'),scope=document.querySelector('[data-link-probe-scope]');return scope.textContent.includes('WG DNS probe failed')&&card.querySelector('h2').textContent==='WG sent packets'&&card.textContent.includes('handshakes, keepalives')&&card.textContent.includes('count each peer pair once')&&card.textContent.includes('Sent bytes do not confirm delivery')})()`) != true {
+		t.Fatal("a failed WG DNS result was explained as delivered business traffic or an invented failure stage")
+	}
+	if chromeDo(t, debug, `(()=>{const card=document.querySelector('.topology-traffic-card');return new URLSearchParams(location.search).get('link')==='`+link.ID+`'&&card.querySelectorAll('[data-traffic-endpoint="demo-exit"][data-traffic-value="unknown"]').length===24&&card.querySelectorAll('[data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]').length===1&&document.querySelector('.topology-metrics').textContent.includes('0.139 Mbps')})()`) != true {
 		t.Fatal("selected Link mixed endpoint scopes or lost exact shared rate")
 	}
 	chromeDo(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-retry]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]')!==null`)
-	if chromeDo(t, debug, `(async()=>{const {trafficHistoryRequest,trafficSummary,trafficRates}=await import('/assets/traffic-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),scope='link:demo-link',request=trafficHistoryRequest(p,scope),data=await(await fetch(request.url)).json(),entry={key:request.key,version:request.version,data},initial=trafficSummary(p,scope,entry),device=p.devices.find(d=>d.id==='demo-entry');device.last_report_at=new Date(Date.parse(device.last_report_at)+1).toISOString();const pending=trafficSummary(p,scope,entry);p.links.find(l=>l.id==='demo-link').spec_digest='sha256:'+ 'f'.repeat(64);return trafficRates(initial,Date.now()).some(v=>v.text.includes('0.139 Mbps'))&&pending.known&&trafficRates(pending,Date.now()).every(v=>v.text.includes('Unknown'))&&trafficSummary(p,scope,entry).data===null})()`) != true {
+	if chromeDo(t, debug, `(async()=>{const {trafficHistoryRequest,trafficSummary,trafficRates}=await import('/assets/traffic-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),scope='link:`+link.ID+`',request=trafficHistoryRequest(p,scope),data=await(await fetch(request.url)).json(),entry={key:request.key,version:request.version,data},initial=trafficSummary(p,scope,entry),device=p.devices.find(d=>d.id==='demo-entry');device.last_report_at=new Date(Date.parse(device.last_report_at)+1).toISOString();const pending=trafficSummary(p,scope,entry);p.links.find(l=>l.id==='`+link.ID+`').spec_digest='sha256:'+ 'f'.repeat(64);return trafficRates(initial,Date.now()).some(v=>v.text.includes('0.139 Mbps'))&&pending.known&&trafficRates(pending,Date.now()).every(v=>v.text.includes('Unknown'))&&trafficSummary(p,scope,entry).data===null})()`) != true {
 		t.Fatal("refreshing a report must preserve scoped history without reusing a current rate or a replaced Link")
 	}
-	if chromeDo(t, debug, `(async()=>{const {routingHTML}=await import('/assets/routing.js'),{trafficRates}=await import('/assets/traffic-history.js');const p=await(await fetch('/api/control/ui/snapshot')).json();const doc=new DOMParser().parseFromString(routingHTML(p,new URLSearchParams({service:'demo-service',device:'demo-entry',candidate:p.paths.find(v=>v.device==='demo-entry'&&v.link_ids.includes('demo-link')).candidate_id}),Date.now()),'text/html');const hops=[...doc.querySelectorAll('.paths-hop b')].map(v=>v.textContent),first=doc.querySelector('.paths-edge'),at=Date.now();const rate=bytes=>trafficRates({data:{devices:[{device_id:'demo-entry',recent:{tx_bytes:bytes,covered_ms:1000,last_at:at}}]}},at)[0].text;return hops.length===3&&hops[0]===p.devices.find(d=>d.id==='demo-entry').name&&hops[1]===p.devices.find(d=>d.id==='demo-exit').name&&first.querySelector('[data-traffic-scope="link:demo-link"]')!==null&&rate('1').includes('<0.001 Mbps')&&rate('0').includes('0.000 Mbps')})()`) != true {
+	if chromeDo(t, debug, `(async()=>{const {routingHTML}=await import('/assets/routing.js'),{trafficRates}=await import('/assets/traffic-history.js');const p=await(await fetch('/api/control/ui/snapshot')).json();const doc=new DOMParser().parseFromString(routingHTML(p,new URLSearchParams({service:'demo-service',device:'demo-entry',candidate:p.paths.find(v=>v.device==='demo-entry'&&v.link_ids.includes('`+link.ID+`')).candidate_id}),Date.now()),'text/html');const hops=[...doc.querySelectorAll('.paths-hop b')].map(v=>v.textContent),first=doc.querySelector('.paths-edge'),at=Date.now();const rate=bytes=>trafficRates({data:{devices:[{device_id:'demo-entry',recent:{tx_bytes:bytes,covered_ms:1000,last_at:at}}]}},at)[0].text;return hops.length===3&&hops[0]===p.devices.find(d=>d.id==='demo-entry').name&&hops[1]===p.devices.find(d=>d.id==='demo-exit').name&&first.querySelector('[data-traffic-scope="link:`+link.ID+`"]')!==null&&rate('1').includes('<0.001 Mbps')&&rate('0').includes('0.000 Mbps')})()`) != true {
 		t.Fatal("hybrid route duplicated its source, misplaced the shared Link, or rounded traffic into measured zero")
 	}
-	chromeDo(t, debug, `window.demoRealNow=Date.now;Date.now=()=>window.demoRealNow()+181000;document.querySelector('[data-traffic-retry="link:demo-link"]').click();true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="demo-link"] [data-traffic-rate="demo-entry"]')?.textContent.includes('Unknown')`)
-	if chromeDo(t, debug, `document.querySelector('[data-link-row="demo-link"] [data-traffic-value="1048576"]')!==null`) != true {
+	chromeDo(t, debug, `window.demoRealNow=Date.now;Date.now=()=>window.demoRealNow()+181000;document.querySelector('[data-traffic-retry="link:`+link.ID+`"]').click();true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="`+link.ID+`"] [data-traffic-rate="demo-entry"]')?.textContent.includes('Unknown')`)
+	if chromeDo(t, debug, `document.querySelector('[data-link-row="`+link.ID+`"] [data-traffic-value="1048576"]')!==null`) != true {
 		t.Fatal("current rate expiry erased original traffic history")
 	}
 }

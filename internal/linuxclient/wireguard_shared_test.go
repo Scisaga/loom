@@ -68,13 +68,6 @@ func TestRealSharedWGProjectedConcurrentExits(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys[exitB.ID] = path
-	dns, _ := control.WireGuardAccessAddress(resource, "")
-	link := p.NetworkIntent.Links[0]
-	link.ID = "demo-link-b"
-	link.ToNodeID = exitB.ID
-	link.ResourceID = resource.ID
-	link.ProbeTarget = control.LinkProbeTarget{ResourceID: resource.ID, Host: dns.String(), Port: 53, Action: "wireguard_dns"}
-	p.NetworkIntent.Links = append(p.NetworkIntent.Links, link)
 	p.NetworkIntent.Policies[0].ExitScope.NodeIDs = []string{"demo-exit", "demo-exit-b"}
 	p.NetworkIntent.Services[0].Matchers = append(p.NetworkIntent.Services[0].Matchers, control.ServiceMatcher{Kind: "ip_prefix", Value: "2001:db8::80/128"})
 	sort.Slice(p.DeviceAuthorizations, func(i, j int) bool { return p.DeviceAuthorizations[i].ID < p.DeviceAuthorizations[j].ID })

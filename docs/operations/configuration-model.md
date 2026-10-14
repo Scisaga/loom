@@ -5,7 +5,7 @@
 仓库根 `.env` 保留，用来描述**这台管理工作站如何找到并部署现有节点**，并保留操作者明确要求的
 Gandi provider token。它是本机私有输入，
 不是控制面 SSOT、认证状态、daemon 运行状态、发布历史、验收证据或临时操作记录。节点稳定身份与职责的
-认证绑定、`ControlConfig` 成员关系、`EndpointGeneration`、`TransportResource`、显式 `NetworkLink`
+认证绑定、`ControlConfig` 成员关系、`EndpointGeneration`、`TransportResource`
 及其授权来自已验证的签名事实所确定的 `Projection`；本机监听与私钥由节点受保护的运行输入提供。
 `.env` 不能创建或修改这些事实。
 
@@ -80,7 +80,8 @@ YAML 只接受一个文档、规定字段与字符串/整数值；未知/重复�
 部署结果只进入受保护证据，不回写输入；失败不删除节点、不改变映射，也不把节点永久标为离线。
 
 Linux 节点从认证 `NetworkIntent` 内的 `TransportResource` 投影 WG、Hy2 或现有私有
-TLS tunnel 的共享传输资源；显式 `NetworkLink` 只描述获授权的中继邻接，不承担每个设备的首跳或管理连接。
+TLS tunnel 的共享传输资源；中继图从有效节点职责和资源自动派生，不配置节点对。
+Service/Policy 限定业务路径，实时测量决定当前选择；派生 Link 不承担每个设备的首跳或管理连接。
 资源 ID、公开端点和允许的下一跳是认证数据，不是本机 `.env` 值。
 本机仅保存资源执行所需的私钥、已有证书和启动成员验证所需的受保护定位输入。
 定位输入不授予成员资格或业务权限，必须在建立资源后同认证节点身份核对，也不能倒写 Projection。
@@ -597,14 +598,14 @@ WG 地址都不进入长期 `.env`：
 - bundle、custody/key ref 和一次性 request ID 由对应命令参数或受保护输入文件提供；事务开始后写入其
   正式 store，resume 读取同一事务；
 - control 成员资格与验证键只来自有效 `ControlConfig`；`TransportResource` 提供可复用的数据及私有服务承载，
-  `NetworkLink` 仅授权指定的中继邻接。control 差量同步、成员管理、设备配置与报告使用各自端到端身份认证，
+  中继 Link 仅由有效节点职责及资源自动派生，业务许可来自 Service/Policy。control 差量同步、成员管理、设备配置与报告使用各自端到端身份认证，
   可复用现有传输，不以创建 `NetworkLink` 为前提，也不各自维护邻居或新开公网端口。本机 listener 与引导定位
   由节点受保护的安装输入提供，不能由旧 report 配置或根 `.env` 反推成员和链路权威；
 - 首次受限 bootstrap 使用认证 `EndpointGeneration` 的地址、TLS/SPKI 和 capability 边界，
   不依赖设备尚未取得的共享资源；事务完成后的设备认证入口使用同一 generation 的设备认证模式，
   不重复消费 capability。数据入口失效时，设备仍可在端到端认证的私有服务上领取由当前签名事实和
   `DeviceAuthorization` 确定的修复 `DeviceView`、报告 unknown；它不接受旧协议或形成第二份权威。
-  设备配置与报告可在获授权的共享传输上承载，无需显式中继 `NetworkLink`。
+  设备配置与报告可在获授权的共享传输上承载，无需人工中继配置。
   `EndpointGeneration` 仍决定对应私有服务入口的身份和生命周期，而非各配一套端口；
 - 公网 DNS provider 与 ACME 自动签发/续期不属于当前核心范围；`.loom` 精确 overlay DNS 记录来自认证网络意图。
   `GANDI_PAT_TOKEN` 只为保留既有操作者配置而常驻；以后启用时仅由获授权的

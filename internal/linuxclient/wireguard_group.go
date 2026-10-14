@@ -6,8 +6,9 @@ import (
 	"sort"
 )
 
-// Links remain independent permissions; this only groups their execution on
-// one kernel interface. It neither creates a peer nor owns an existing device.
+// Derived business directions retain independent observations while sharing
+// one native management interface. Grouping does not grant Service permission
+// or acquire ownership of an existing host device.
 func groupWireGuardLinks(values []wireGuardExecutionLink) ([]wireGuardOwnedLink, error) {
 	ordered := append([]wireGuardExecutionLink{}, values...)
 	sort.Slice(ordered, func(i, j int) bool {
@@ -28,7 +29,7 @@ func groupWireGuardLinks(values []wireGuardExecutionLink) ([]wireGuardOwnedLink,
 				return nil, errors.New("WireGuard access peer has no exact private address and Hy2 port")
 			}
 		}
-		if value.Mode != "initiator" && value.Mode != "acceptor" || value.Mode == "acceptor" && (value.ListenPort < 1 || value.ListenPort > 65535) {
+		if value.Mode != "initiator" && value.Mode != "acceptor" || value.ListenPort < 0 || value.ListenPort > 65535 || value.Mode == "acceptor" && value.ListenPort == 0 {
 			return nil, errors.New("WireGuard peer direction or listener is invalid")
 		}
 		if len(groups) == 0 || groups[len(groups)-1].link.Interface != value.Interface {
@@ -36,7 +37,7 @@ func groupWireGuardLinks(values []wireGuardExecutionLink) ([]wireGuardOwnedLink,
 			addresses = map[string]bool{value.AllowedIP: true}
 			port = 0
 			accessAddress, accessPort = value.AccessAddress, value.AccessPort
-			if value.Mode == "acceptor" {
+			if value.ListenPort > 0 {
 				port = value.ListenPort
 			}
 			continue
@@ -61,11 +62,11 @@ func groupWireGuardLinks(values []wireGuardExecutionLink) ([]wireGuardOwnedLink,
 			}
 			continue
 		}
-		if addresses[value.AllowedIP] || value.Mode == "acceptor" && port != 0 && port != value.ListenPort {
+		if addresses[value.AllowedIP] || value.ListenPort > 0 && port != 0 && port != value.ListenPort {
 			return nil, errors.New("WireGuard interface has conflicting peer addresses or listener ports")
 		}
 		addresses[value.AllowedIP] = true
-		if value.Mode == "acceptor" {
+		if value.ListenPort > 0 {
 			port = value.ListenPort
 		}
 		group.peers = append(group.peers, value)
@@ -100,7 +101,7 @@ func (owned wireGuardOwnedLink) peerLinks() []wireGuardExecutionLink {
 
 func (owned wireGuardOwnedLink) listenPort() int {
 	for _, peer := range owned.peerLinks() {
-		if peer.Mode == "acceptor" {
+		if peer.ListenPort > 0 {
 			return peer.ListenPort
 		}
 	}

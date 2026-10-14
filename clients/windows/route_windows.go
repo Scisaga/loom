@@ -218,6 +218,8 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 				if status.NetworkGeneration != generation {
 					status.Observations, status.ResourceObservations = nil, nil
 				}
+				linkState := clientadapter.State{}
+				refreshWindowsLinkObservations(app.ctx, store, lkg, &linkState)
 				desired := map[string]string{}
 				for _, scope := range scopes {
 					current, readErr := selector.Read(app.ctx, scope)
@@ -225,7 +227,7 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 						return readErr
 					}
 					_, targets := windowsProbeTargets(lkg.View, scope)
-					choice, chooseErr := clientmodel.Select(byScope[scope], status.Observations, status.ResourceObservations, preference, current, generation, time.Now(), targets...)
+					choice, chooseErr := clientmodel.SelectWithLinks(byScope[scope], status.Observations, status.ResourceObservations, linkState.LinkObservations, preference, current, generation, time.Now(), targets...)
 					if errors.Is(chooseErr, clientmodel.ErrNoUsableCandidate) {
 						desired[scope] = clientadapter.BlockedSelection
 						continue

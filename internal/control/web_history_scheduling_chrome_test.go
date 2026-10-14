@@ -19,20 +19,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 		t.Skip("set LOOM_WEB_CHROME_TEST=1 for browser scheduling acceptance")
 	}
 	p := relayProjectionFixture(t)
-	reverse := p.NetworkIntent.Links[0]
-	reverse.ID = "demo-link-reverse"
-	reverse.FromNodeID, reverse.ToNodeID = reverse.ToNodeID, reverse.FromNodeID
-	reverse.FromResourceID, reverse.ResourceID = reverse.ResourceID, reverse.FromResourceID
-	for _, resource := range p.NetworkIntent.Resources {
-		if resource.ID == reverse.ResourceID {
-			address, err := WireGuardAccessAddress(resource, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			reverse.ProbeTarget.ResourceID, reverse.ProbeTarget.Host = resource.ID, address.String()
-		}
-	}
-	p.NetworkIntent.Links = append(p.NetworkIntent.Links, reverse)
+	reverse := webRelayLink(t, p, "demo-exit", "demo-entry")
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -108,7 +95,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 	}))
 	defer httpServer.Close()
 	defer close(stop)
-	debug := openCommandChrome(t, httpServer.URL+"/topology?link=demo-link-reverse")
+	debug := openCommandChrome(t, httpServer.URL+"/topology?link="+reverse.ID)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.topology-traffic-card [data-traffic-endpoint]').length===48&&document.querySelectorAll('[data-link-history] .link-hour').length===48`)
 	if trafficReads.Load() == 0 || completedLinkReads.Load() < 2 {
 		t.Fatal("new reports starved other history scopes or repeatedly cancelled in-flight reads")
@@ -116,7 +103,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 	queryMu.Lock()
 	first := linkQueries[0]
 	queryMu.Unlock()
-	if first != "demo-link-reverse" {
+	if first != reverse.ID {
 		t.Fatal("selected link RTT queued behind an unrelated link", first)
 	}
 	revoked.Store(true)

@@ -3,6 +3,7 @@ package io.github.scisaga.loom.route
 import android.content.Context
 import android.util.Log
 import io.github.scisaga.loom.enrollment.ManagedProfile
+import io.github.scisaga.loom.enrollment.ManagedProfileStore
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.security.EncryptedStore
@@ -106,6 +107,7 @@ internal fun serviceBusinessProbeInputs(
 
 /** Applies the shared pure selection and only publishes selector readback. */
 class RouteManager private constructor(context: Context) {
+    private val applicationContext = context.applicationContext
     private val protected = EncryptedStore(context.applicationContext)
     private val catalog = ProfileCatalog.get(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -122,6 +124,8 @@ class RouteManager private constructor(context: Context) {
                 ensureNetworkGeneration(profileId, runtime)
                 if (runtime.availableProfile?.recordID != profile.recordID) {
                     protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
+                    runtime.linkObservations = null
+                    runtime.linkObservationViewDigest = ""
                 }
                 runtime.availableProfile = profile
                 val current = if (runtime.runningProfile?.recordID == profile.recordID) runtime.actual else emptyMap()
@@ -217,6 +221,55 @@ class RouteManager private constructor(context: Context) {
                     it.getString("network_generation") == input.networkGeneration &&
                     it.currentAt(now)
             }
+        }
+    }
+
+    internal suspend fun refreshLinkObservations(profileId: String, profile: ManagedProfile) {
+        val identity = ManagedProfileStore(applicationContext, profileId)
+        val body = identity.state() ?: return
+        val response = runCatching { Loomcore.fetchAndroidLinkObservations(body) }.getOrElse {
+            Log.w("Loom", "中继观测读取不可用；保留原样本截止时间")
+            return
+        }
+        operation.withLock {
+            val runtime = runtime(profileId)
+            if (runtime.runningProfile?.recordID != profile.recordID || identity.acceptedViewDigest() != profile.viewDigest) return@withLock
+            val value = JSONObject(response.decodeToString())
+            check(value.getString("view_digest") == profile.viewDigest && value.getString("device_id") == profile.nodeID)
+            runtime.linkObservationViewDigest = profile.viewDigest
+            runtime.linkObservations = value.getJSONArray("observations").toString().encodeToByteArray()
+        }
+    }
+
+    internal suspend fun sampleAlternateBusiness(profileId: String, profile: ManagedProfile) {
+        val identity = ManagedProfileStore(applicationContext, profileId)
+        val state = identity.state() ?: return
+        val input = operation.withLock {
+            val runtime = runtime(profileId)
+            if (runtime.runningProfile?.recordID != profile.recordID || identity.acceptedViewDigest() != profile.viewDigest) return@withLock null
+            AlternateProbeInput(
+                generation = runtime.generation,
+                observations = observations(profileId).toString().encodeToByteArray(),
+                preference = protected.get(ProfileStorage.routePreference(profileId)) ?: ByteArray(0),
+                current = JSONObject(runtime.actual).toString().encodeToByteArray(),
+                resources = runCatching { Loomcore.androidCachedResourceObservations(
+                    runtime.resourceObservations ?: protected.get(ProfileStorage.resourceObservations(profileId)) ?: ByteArray(0),
+                    profile.resourceCacheIdentity, runtime.generation,
+                ) }.getOrDefault("[]".encodeToByteArray()),
+                links = if (runtime.linkObservationViewDigest == profile.viewDigest) runtime.linkObservations ?: "[]".encodeToByteArray() else "[]".encodeToByteArray(),
+            )
+        } ?: return
+        val sampled = runCatching { Loomcore.observeAndroidAlternateBusiness(
+            state, input.observations, input.preference, input.current, input.generation, input.resources, input.links,
+        ) }.getOrElse {
+            Log.w("Loom", "备选业务采样未完成；保留原业务样本")
+            return
+        }
+        operation.withLock {
+            val runtime = runtime(profileId)
+            if (runtime.runningProfile?.recordID != profile.recordID || runtime.generation != input.generation || identity.acceptedViewDigest() != profile.viewDigest) return@withLock
+            if (!observations(profileId).toString().encodeToByteArray().contentEquals(input.observations)) return@withLock
+            protected.put(ProfileStorage.observations(profileId), sampled)
         }
     }
 
@@ -331,6 +384,8 @@ class RouteManager private constructor(context: Context) {
         runtime.runningProfile = null
         runtime.application = null
         runtime.actual = linkedMapOf()
+        runtime.linkObservations = null
+        runtime.linkObservationViewDigest = ""
         protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
         runtime.mutableStatus.value = runtime.mutableStatus.value.copy(running = false, busy = false, currentPaths = emptyList(),
             businessEvidence = runtime.mutableStatus.value.businessEvidence.map { it.copy(current = false) }, observationDetail = "业务结果尚未产生")
@@ -377,6 +432,7 @@ class RouteManager private constructor(context: Context) {
                 .put("service_id", group.serviceID).put("targets", JSONArray(group.targets))
             }).toString().encodeToByteArray(),
             resources,
+            if (runtime.linkObservationViewDigest == profile.viewDigest) runtime.linkObservations ?: "[]".encodeToByteArray() else "[]".encodeToByteArray(),
         )
         val root = JSONObject(body.decodeToString())
         return AppliedRoute(
@@ -510,7 +566,18 @@ class RouteManager private constructor(context: Context) {
         @Volatile var actual = linkedMapOf<String, String>()
         @Volatile var application: AppliedRoute? = null
         var resourceObservations: ByteArray? = null
+        var linkObservations: ByteArray? = null
+        var linkObservationViewDigest: String = ""
     }
+
+    private data class AlternateProbeInput(
+        val generation: String,
+        val observations: ByteArray,
+        val preference: ByteArray,
+        val current: ByteArray,
+        val resources: ByteArray,
+        val links: ByteArray,
+    )
 
     companion object {
         @Volatile private var instance: RouteManager? = null

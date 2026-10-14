@@ -24,11 +24,22 @@ const (
 type Mode string
 
 type RouteCandidate struct {
-	ID        string             `json:"id"`
-	FinalExit string             `json:"final_exit"`
-	Chain     []string           `json:"chain"`
-	Scope     string             `json:"scope"`
-	FirstHop  *ResourceSampleRef `json:"first_hop,omitempty"`
+	ID         string             `json:"id"`
+	FinalExit  string             `json:"final_exit"`
+	Chain      []string           `json:"chain"`
+	Scope      string             `json:"scope"`
+	FirstHop   *ResourceSampleRef `json:"first_hop,omitempty"`
+	RelayLinks []LinkSampleRef    `json:"relay_links,omitempty"`
+}
+
+// LinkSampleRef binds a projected relay segment to the original reporter.
+type LinkSampleRef struct {
+	LinkID     string `json:"link_id"`
+	DeviceID   string `json:"device_id"`
+	ResourceID string `json:"resource_id"`
+	SpecDigest string `json:"spec_digest"`
+	Target     string `json:"target"`
+	Action     string `json:"action"`
 }
 
 // ResourceSampleRef is a public execution projection from the accepted View.
@@ -104,6 +115,13 @@ func (candidate RouteCandidate) Validate() error {
 		control.ValidateDigest(ref.SpecDigest) != nil || !validName(ref.Target) || ref.Action != "hysteria2_tls" && ref.Action != "wireguard_dns") {
 		return errors.New("candidate first-hop evidence reference is invalid")
 	}
+	seenLinks := map[string]bool{}
+	for _, ref := range candidate.RelayLinks {
+		if control.ValidateID(ref.LinkID) != nil || control.ValidateID(ref.DeviceID) != nil || control.ValidateID(ref.ResourceID) != nil || control.ValidateDigest(ref.SpecDigest) != nil || !validName(ref.Target) || ref.Action != "wireguard_dns" || seenLinks[ref.LinkID] {
+			return errors.New("candidate relay evidence reference is invalid")
+		}
+		seenLinks[ref.LinkID] = true
+	}
 
 	return nil
 }
@@ -159,6 +177,13 @@ var ErrNoUsableCandidate = errors.New("no authorized route candidate is usable")
 // strictly better comparable result.
 func Select(routes []RouteCandidate, observations []Observation, resources []control.Observation, preference Preference, current,
 	networkGeneration string, now time.Time, targets ...string) (Selection, error) {
+	return SelectWithLinks(routes, observations, resources, nil, preference, current, networkGeneration, now, targets...)
+}
+
+// SelectWithLinks consumes TLS-authenticated scoped remote report projections;
+// remote network generations belong to their source, never the local underlay.
+func SelectWithLinks(routes []RouteCandidate, observations []Observation, resources []control.Observation, links []control.DeviceLinkObservation, preference Preference, current,
+	networkGeneration string, now time.Time, targets ...string) (Selection, error) {
 	if err := preference.Validate(); err != nil || !validName(networkGeneration) {
 		return Selection{}, errors.New("selection input is invalid")
 	}
@@ -168,14 +193,32 @@ func Select(routes []RouteCandidate, observations []Observation, resources []con
 		}
 	}
 	resourceByID := map[string]control.Observation{}
+	localLinks := map[string]control.Observation{}
 	for _, sample := range resources {
-		if err := sample.Validate(); err != nil || sample.Level != "resource" {
+		if err := sample.Validate(); err != nil || sample.Level != "resource" && sample.Level != "link" {
 			return Selection{}, errors.New("first-hop sample is invalid")
+		}
+		if sample.Level == "link" {
+			if _, exists := localLinks[sample.LinkID]; exists {
+				return Selection{}, errors.New("local relay samples are duplicated")
+			}
+			localLinks[sample.LinkID] = sample
+			continue
 		}
 		if _, exists := resourceByID[sample.ResourceID]; exists {
 			return Selection{}, errors.New("first-hop samples are duplicated")
 		}
 		resourceByID[sample.ResourceID] = sample
+	}
+	linkByID := map[string]control.DeviceLinkObservation{}
+	for _, sample := range links {
+		if sample.Validate() != nil {
+			return Selection{}, errors.New("relay sample is invalid")
+		}
+		if _, found := linkByID[sample.Observation.LinkID]; found {
+			return Selection{}, errors.New("relay samples are duplicated")
+		}
+		linkByID[sample.Observation.LinkID] = sample
 	}
 	byID := map[string]string{}
 	failures := map[string]string{}
@@ -188,25 +231,51 @@ func Select(routes []RouteCandidate, observations []Observation, resources []con
 			return Selection{}, err
 		}
 		byID[candidate.ID], failures[candidate.ID], metrics[candidate.ID] = state, failure, metric
-		if candidate.FirstHop == nil {
-			continue
+		consume := func(hop control.Observation, until int64, complete bool) error {
+			if hop.ObservedAt > now.UnixMilli() {
+				return nil
+			}
+			recovered, err := businessSucceededAfter(observations, candidate, networkGeneration, targets, hop.ObservedAt, now)
+			if complete {
+				recovered, err = businessCompleteSucceededAfter(observations, candidate, networkGeneration, targets, hop.ObservedAt, now)
+			}
+			if err != nil {
+				return err
+			}
+			if hop.Result == "unavailable" && !recovered {
+				hopFailed[candidate.ID] = hopFailed[candidate.ID] || now.UnixMilli() < until
+				at := time.UnixMilli(hop.ObservedAt).UTC().Truncate(time.Second).Format(time.RFC3339)
+				if at > failures[candidate.ID] {
+					failures[candidate.ID] = at
+				}
+			}
+			hopAvailable[candidate.ID] = hopAvailable[candidate.ID] || hop.Result == "available" && now.UnixMilli() < until
+			return nil
 		}
-		hop, found := resourceByID[candidate.FirstHop.ResourceID]
-		if !found || !matchesFirstHop(candidate.FirstHop, hop, networkGeneration) || hop.ObservedAt > now.UnixMilli() {
-			continue
-		}
-		recovered, err := businessSucceededAfter(observations, candidate, networkGeneration, targets, hop.ObservedAt, now)
-		if err != nil {
-			return Selection{}, err
-		}
-		if hop.Result == "unavailable" && !recovered {
-			hopFailed[candidate.ID] = now.UnixMilli() < hop.ValidUntil
-			at := time.UnixMilli(hop.ObservedAt).UTC().Truncate(time.Second).Format(time.RFC3339)
-			if at > failures[candidate.ID] {
-				failures[candidate.ID] = at
+		if candidate.FirstHop != nil {
+			hop, found := resourceByID[candidate.FirstHop.ResourceID]
+			if found && matchesFirstHop(candidate.FirstHop, hop, networkGeneration) {
+				if err := consume(hop, hop.ValidUntil, false); err != nil {
+					return Selection{}, err
+				}
 			}
 		}
-		hopAvailable[candidate.ID] = hop.Result == "available" && now.UnixMilli() < hop.ValidUntil
+		for _, ref := range candidate.RelayLinks {
+			if hop, found := localLinks[ref.LinkID]; found && hop.NetworkGeneration == networkGeneration && hop.ResourceID == ref.ResourceID && hop.SpecDigest == ref.SpecDigest && hop.Target == ref.Target && hop.Action == ref.Action {
+				if err := consume(hop, hop.ValidUntil, true); err != nil {
+					return Selection{}, err
+				}
+				continue
+			}
+			sample, found := linkByID[ref.LinkID]
+			hop := sample.Observation
+			if !found || sample.DeviceID != ref.DeviceID || hop.ResourceID != ref.ResourceID || hop.SpecDigest != ref.SpecDigest || hop.Target != ref.Target || hop.Action != ref.Action {
+				continue
+			}
+			if err := consume(hop, sample.CurrentUntil, true); err != nil {
+				return Selection{}, err
+			}
+		}
 	}
 	eligible := make([]RouteCandidate, 0, len(routes))
 	seen := map[string]bool{}

@@ -16,9 +16,7 @@ func validateCurrentTransportPayload(payload MaterialPayload) error {
 			return errors.New("WireGuard access cannot depend on a Hy2 resource")
 		}
 	case NetworkLink:
-		if value.ProbeTarget.Action != "wireguard_dns" {
-			return errors.New("new Links require independent WireGuard execution")
-		}
+		return errors.New("relay Links are derived from authenticated nodes and resources; manual Link writes are retired")
 	}
 	return nil
 }

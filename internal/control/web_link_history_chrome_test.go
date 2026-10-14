@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,7 +35,7 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := view.Links[0]
+	link := webRelayLink(t, p, "demo-entry", "demo-exit")
 	spec, _ := LinkSpecDigest(view, link.ID)
 	digest, _ := DeviceViewDigest(view)
 	now := time.Now().UTC().Truncate(time.Millisecond)
@@ -102,11 +103,11 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 1600, "height": 1100, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
 		t.Fatal(err)
 	}
-	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-link-history="demo-link"] .link-hour').length===24`)
-	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="demo-link"]');return row.querySelectorAll('.link-hour.available').length===1&&row.querySelectorAll('.link-hour.unavailable').length===1&&row.querySelectorAll('.link-hour.missing').length===22&&row.textContent.includes('demo-entry → demo-exit')&&row.textContent.includes('not uptime')&&row.lastElementChild.textContent.includes('Unknown')&&row.querySelector('.link-hour.available').title.includes('demo-generation')})()`) != true {
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-link-history="`+link.ID+`"] .link-hour').length===24`)
+	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="`+link.ID+`"]');return row.querySelectorAll('.link-hour.available').length===1&&row.querySelectorAll('.link-hour.unavailable').length===1&&row.querySelectorAll('.link-hour.missing').length===22&&row.textContent.includes('demo-entry → demo-exit')&&row.textContent.includes('not uptime')&&row.lastElementChild.textContent.includes('Unknown')&&row.querySelector('.link-hour.available').title.includes('demo-generation')})()`) != true {
 		t.Fatal("Link row confused direction, traffic, absence or original sample state")
 	}
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="demo-link"]')?.textContent.includes('WG DNS RTT: 0 ms')&&document.querySelector('[data-link-spread="demo-link"]')?.textContent.includes('P95−P50: 0 ms')`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="`+link.ID+`"]')?.textContent.includes('WG DNS RTT: 0 ms')&&document.querySelector('[data-link-spread="`+link.ID+`"]')?.textContent.includes('P95−P50: 0 ms')`)
 	chromeDo(t, debug, `(()=>{document.querySelector('#topology [data-node="demo-entry"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));document.querySelector('[data-link-history-retry]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelector('#topology').dataset.locked==='demo-entry'`)
 	refuse.Store(true)
@@ -116,8 +117,10 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	chromeDo(t, debug, `(()=>{document.querySelector('[data-link-history-retry]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24`)
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-entry');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime summary')!==null`)
+	chromeDo(t, debug, `document.querySelector('#device-runtime summary').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-runtime-history] .runtime-hour').length===24`)
-	if chromeDo(t, debug, `(()=>{const cell=[...document.querySelectorAll('.device-status .step')].find(v=>v.textContent.includes('Agent version')),version=cell.querySelector('b'),range=document.createRange();range.selectNodeContents(version);return version.textContent==='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'&&[...range.getClientRects()].every(rect=>rect.right<=cell.getBoundingClientRect().right&&rect.left>=cell.getBoundingClientRect().left)})()`) != true {
+	if chromeDo(t, debug, `(()=>{const cell=document.querySelector('#device-runtime [data-component="agent"] td:nth-child(3)'),version=cell.querySelector('span.mono'),range=document.createRange();range.selectNodeContents(version);return version.textContent==='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'&&[...range.getClientRects()].every(rect=>rect.right<=cell.getBoundingClientRect().right&&rect.left>=cell.getBoundingClientRect().left)})()`) != true {
 		t.Fatal("full agent commit escaped its summary column")
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
@@ -140,14 +143,14 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 			t.Fatal(err)
 		}
 		if rtt == nil {
-			waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="demo-link"]')?.textContent.includes('Unknown')&&document.querySelector('[data-link-spread="demo-link"]')?.textContent.includes('Unknown')`)
+			waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="`+link.ID+`"]')?.textContent.includes('Unknown')&&document.querySelector('[data-link-spread="`+link.ID+`"]')?.textContent.includes('Unknown')`)
 		} else {
-			waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="demo-link"]')?.textContent.includes('40 ms')&&document.querySelector('[data-link-spread="demo-link"]')?.textContent.includes('40 ms')`)
+			waitChromeEvaluation(t, debug, `document.querySelector('[data-link-rtt="`+link.ID+`"]')?.textContent.includes('40 ms')&&document.querySelector('[data-link-spread="`+link.ID+`"]')?.textContent.includes('40 ms')`)
 		}
 	}
 	// A response may already contain the new report even though its request
 	// began under the previous marker. Only its actual scope and report bind it.
-	if chromeDo(t, debug, `(async()=>{const m=await import('/assets/link-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),link=p.links.find(v=>v.id==='demo-link'),data=await(await fetch('/api/control/ui/link-history?link=demo-link')).json(),history={key:m.linkHistoryKey(p,link),version:'demo-older-request-marker',data};if(!m.linkRoundTripMetrics(p,link,history,Date.now())[1].text.includes('40 ms'))return false;data.round_trips.report_sequence='1';history.version=m.linkHistoryVersion(p,link);return m.linkRoundTripMetrics(p,link,history,Date.now())[1].text.includes('Unknown')})()`) != true {
+	if chromeDo(t, debug, `(async()=>{const m=await import('/assets/link-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),link=p.links.find(v=>v.id==='`+link.ID+`'),data=await(await fetch('/api/control/ui/link-history?link=`+link.ID+`')).json(),history={key:m.linkHistoryKey(p,link),version:'demo-older-request-marker',data};if(!m.linkRoundTripMetrics(p,link,history,Date.now())[1].text.includes('40 ms'))return false;data.round_trips.report_sequence='1';history.version=m.linkHistoryVersion(p,link);return m.linkRoundTripMetrics(p,link,history,Date.now())[1].text.includes('Unknown')})()`) != true {
 		t.Fatal("request bookkeeping replaced actual report binding")
 	}
 	componentID, _ := ExpectedComponentID("demo-entry", "agent", "linux-amd64")
@@ -157,13 +160,13 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	if _, err := ProjectDeviceView(a.Snapshot(), "demo-entry"); err == nil {
 		t.Fatal("component fixture must reject full View generation without its release")
 	}
-	if chromeDo(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=demo-link');const value=await r.json();return r.status===200&&value.buckets.filter(v=>v.observation).length===2})()`) != true {
+	if chromeDo(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=`+link.ID+`');const value=await r.json();return r.status===200&&value.buckets.filter(v=>v.observation).length===2})()`) != true {
 		t.Fatal("component expectations erased original Link observations")
 	}
 	chromeDo(t, debug, `(()=>{document.querySelector('[data-link-history-retry]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelectorAll('.link-hour.available').length===1`)
 	a.mu.Lock()
-	a.projection.NetworkIntent.Links = []NetworkLink{}
+	a.projection.DeviceAuthorizations = slices.DeleteFunc(a.projection.DeviceAuthorizations, func(device DeviceAuthorization) bool { return device.ID == "demo-exit" })
 	a.mu.Unlock()
-	waitChromeEvaluation(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=demo-link');return r.status===404&&!document.querySelector('[data-link-history="demo-link"]')})()`)
+	waitChromeEvaluation(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=`+link.ID+`');return r.status===404&&!document.querySelector('[data-link-history="`+link.ID+`"]')})()`)
 }

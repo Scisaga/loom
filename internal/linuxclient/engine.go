@@ -6,6 +6,7 @@ import (
 
 	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
+	"loom/internal/control"
 )
 
 type ProbeResult = clientadapter.ProbeResult
@@ -27,9 +28,16 @@ func scopesFor(routes []clientmodel.RouteCandidate) ([]string, map[string][]clie
 // use the same executor as Windows and the same pure model as Android.
 func Activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state LocalState,
 	probes Probes, now func() time.Time) (Activation, error) {
+	return activateWithLinkSamples(ctx, selector, routes, state, nil, nil, probes, now)
+}
+
+func activateWithLinkSamples(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state LocalState,
+	local []control.Observation, remote []control.DeviceLinkObservation, probes Probes, now func() time.Time) (Activation, error) {
 	value, err := clientadapter.Activate(ctx, selector, routes, clientadapter.State{
 		Preference: state.Preference, NetworkGeneration: state.NetworkGeneration,
 		Observations: state.Observations, ResourceObservations: state.ResourceObservations,
+		LinkObservations:      remote,
+		LocalLinkObservations: local,
 	}, probes, now)
 	if value.State.NetworkGeneration == "" {
 		return Activation{}, err

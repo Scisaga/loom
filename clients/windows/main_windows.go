@@ -625,7 +625,12 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		return err
 	}
 	initiallySelected := windowsSelectedCandidates(activation)
-	activation, activationErr = activateWindowsServices(ctx, selector, lkg.View, routes, activation.State, true)
+	diagnosticContext, err := clientadapter.WithNativeDiagnostic(ctx, string(config), nil)
+	if err != nil {
+		return err
+	}
+	refreshWindowsLinkObservations(ctx, store, lkg, &activation.State)
+	activation, activationErr = activateWindowsServices(diagnosticContext, selector, lkg.View, routes, activation.State, true)
 	selectorReadAt = time.Now()
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -634,10 +639,6 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		return activationErr
 	}
 
-	diagnosticContext, err := clientadapter.WithNativeDiagnostic(ctx, string(config), nil)
-	if err != nil {
-		return err
-	}
 	observeWindowsFirstHops(diagnosticContext, root, *lkg, &activation, initiallySelected)
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -703,7 +704,8 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 				nextState.Observations = nil
 				nextState.ResourceObservations = nil
 			}
-			next, nextErr := activateWindowsServices(ctx, selector, lkg.View, routes, nextState, true)
+			refreshWindowsLinkObservations(ctx, store, lkg, &nextState)
+			next, nextErr := activateWindowsServices(diagnosticContext, selector, lkg.View, routes, nextState, true)
 			selectorReadAt = time.Now()
 			if ctx.Err() != nil {
 				return ctx.Err()

@@ -114,9 +114,9 @@ func sharedWireGuardEndpoint(view DeviceView, credentials map[string]string, sou
 			return nil, err
 		}
 		p.allowed[netip.PrefixFrom(address, address.BitLen()).String()] = true
-		if link.InitiatorNodeID == view.DeviceID {
-			p.value["address"], p.value["port"], p.value["persistent_keepalive_interval"] = remote.DialHost, remote.DialPort, 25
-		}
+		// Business direction is independent of UDP initiation. Both native
+		// peers use the other's certified endpoint and can establish a session.
+		p.value["address"], p.value["port"], p.value["persistent_keepalive_interval"] = remote.DialHost, remote.DialPort, 25
 	}
 	for _, binding := range view.WireGuardPeers {
 		resource := resources[binding.ResourceID]

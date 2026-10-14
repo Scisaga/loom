@@ -83,7 +83,7 @@ func Build(apk, aar []byte, generation control.U64, key ed25519.PrivateKey) (Man
 	if err != nil {
 		return zero, nil, nil, err
 	}
-	if metadata.SingBoxVersion != clientcomponent.DataPlaneVersion {
+	if metadata.SingBoxVersion != clientcomponent.AndroidDataPlaneVersion {
 		return zero, nil, nil, errors.New("Android publisher only writes the current reviewed data-plane artifact")
 	}
 	if metadata.AARSHA256 != fmt.Sprintf("%x", sha256.Sum256(aar)) {

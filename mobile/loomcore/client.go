@@ -308,6 +308,22 @@ func SyncAndroidDevice(body []byte) ([]byte, error) {
 	}
 	return deviceclient.EncodeIdentityState(store.state)
 }
+
+// FetchAndroidLinkObservations returns a disposable, authenticated projection
+// for this accepted View. It changes neither identity nor local report samples.
+func FetchAndroidLinkObservations(body []byte) ([]byte, error) {
+	state, err := decodeState(body)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(androidNetworkContext(), 3*time.Second)
+	defer cancel()
+	value, err := deviceclient.FetchLinkObservations(ctx, &androidIdentity{state: state})
+	if err != nil {
+		return nil, err
+	}
+	return control.CanonicalEncode(value)
+}
 func ReserveAndroidReportSequence(body []byte) ([]byte, error) {
 	state, err := decodeState(body)
 	if err != nil {

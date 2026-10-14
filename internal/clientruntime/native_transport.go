@@ -125,6 +125,20 @@ func validateNativeProbeRule(rule singBoxRule, tags map[string]string) error {
 	return nil
 }
 
+func validateCandidateProbeRule(rule singBoxRule, tags map[string]string) error {
+	if rule.Type != "logical" || rule.Mode != "and" || len(rule.Rules) != 2 {
+		return errors.New("invalid candidate diagnostic rule")
+	}
+	scope := rule.Rules[0]
+	if len(scope.AuthUser) != 1 || control.ValidateDigest(scope.AuthUser[0]) != nil || !reflect.DeepEqual(scope, singBoxRule{Inbound: []string{control.LinkProbeInbound}, AuthUser: scope.AuthUser}) || tags[scope.AuthUser[0]] != "direct" && tags[scope.AuthUser[0]] != "hysteria2" || rule.Outbound != "reject" && rule.Outbound != scope.AuthUser[0] {
+		return errors.New("invalid candidate diagnostic identity")
+	}
+	if !reflect.DeepEqual(rule, singBoxRule{Type: "logical", Mode: "and", Rules: rule.Rules, Outbound: rule.Outbound}) {
+		return errors.New("candidate diagnostic contains unrelated fields")
+	}
+	return validateServiceRule(rule.Rules[1], tags, false)
+}
+
 func validateWindowsDNS(c singBoxConfig, tags map[string]string) error {
 	if c.DNS == nil {
 		return nil

@@ -29,6 +29,18 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 	routes := make([]clientmodel.RouteCandidate, 0, len(view.Routes))
 	for _, route := range view.Routes {
 		candidate := clientmodel.RouteCandidate{ID: route.ID, FinalExit: route.FinalExit, Chain: append([]string{}, route.NodeChain...), Scope: route.Scope}
+		for _, id := range route.LinkIDs {
+			for _, link := range view.Links {
+				if link.ID != id {
+					continue
+				}
+				spec, err := control.LinkSpecDigest(view, id)
+				if err != nil {
+					return nil, clientmodel.RuntimeProfile{}, err
+				}
+				candidate.RelayLinks = append(candidate.RelayLinks, clientmodel.LinkSampleRef{LinkID: id, DeviceID: link.FromNodeID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, fmt.Sprint(link.ProbeTarget.Port)), Action: link.ProbeTarget.Action})
+			}
+		}
 		if probe, found := probes[route.ID]; found {
 			candidate.FirstHop = &clientmodel.ResourceSampleRef{ResourceID: probe.Resource.ID, SpecDigest: probe.SpecDigest, Target: probe.Target(), Action: probe.Action()}
 		}

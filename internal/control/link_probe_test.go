@@ -40,7 +40,12 @@ func TestLinkProbeUsesNativeSenderWithoutServiceOrHy2Credential(t *testing.T) {
 	if err := DecodeCanonical(body, &decoded, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 100000}); err != nil || !reflect.DeepEqual(decoded, to) {
 		t.Fatal("native receiver did not round trip", err)
 	}
-	p.NetworkIntent.Links = []NetworkLink{}
+	for i := range p.NetworkIntent.Resources {
+		if p.NetworkIntent.Resources[i].ID == "demo-exit-wg" {
+			p.NetworkIntent.Resources = append(p.NetworkIntent.Resources[:i], p.NetworkIntent.Resources[i+1:]...)
+			break
+		}
+	}
 	removed, err := ProjectDeviceView(p, "demo-entry")
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +65,12 @@ func TestNativeLinkObservationBindsSourceAndCurrentResourceSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := from.Links[0]
+	var link NetworkLink
+	for _, value := range from.Links {
+		if value.FromNodeID == from.DeviceID {
+			link = value
+		}
+	}
 	spec, err := LinkSpecDigest(from, link.ID)
 	if err != nil {
 		t.Fatal(err)

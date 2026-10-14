@@ -338,8 +338,12 @@ func cmdControlInspect(args []string) error {
 		return err
 	}
 	p := authority.Snapshot()
+	links, err := control.DerivedNetworkLinks(p)
+	if err != nil {
+		return err
+	}
 	// Never return the complete Projection: device authorizations contain RuntimeKey.
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "network_id": p.NetworkID, "genesis_id": node.GenesisID, "control_config_id": p.ControlConfigID, "members": p.Config.Members, "fact_frontier": p.Frontier, "targets": p.Targets, "pending_material_ids": p.PendingMaterialIDs, "invalid_materials": p.InvalidMaterials, "devices": len(p.DeviceAuthorizations), "endpoints": p.EndpointGenerations, "website_certificates": control.WebsiteCertificateReadbacks(*root, node.ControlID, p, time.Now()), "dns_records": p.NetworkIntent.DNSRecords, "public_trust": p.NetworkIntent.PublicTrust, "services": p.NetworkIntent.Services, "policies": p.NetworkIntent.Policies, "resources": p.NetworkIntent.Resources, "links": p.NetworkIntent.Links, "business_probe_targets": p.NetworkIntent.BusinessProbeTargets, "expected_components": p.NetworkIntent.ExpectedComponents})
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "network_id": p.NetworkID, "genesis_id": node.GenesisID, "control_config_id": p.ControlConfigID, "members": p.Config.Members, "fact_frontier": p.Frontier, "targets": p.Targets, "pending_material_ids": p.PendingMaterialIDs, "invalid_materials": p.InvalidMaterials, "devices": len(p.DeviceAuthorizations), "endpoints": p.EndpointGenerations, "website_certificates": control.WebsiteCertificateReadbacks(*root, node.ControlID, p, time.Now()), "dns_records": p.NetworkIntent.DNSRecords, "public_trust": p.NetworkIntent.PublicTrust, "services": p.NetworkIntent.Services, "policies": p.NetworkIntent.Policies, "resources": p.NetworkIntent.Resources, "links": links, "business_probe_targets": p.NetworkIntent.BusinessProbeTargets, "expected_components": p.NetworkIntent.ExpectedComponents})
 }
 
 func cmdControlWrite(args []string) error {

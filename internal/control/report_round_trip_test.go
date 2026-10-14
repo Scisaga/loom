@@ -14,7 +14,7 @@ func TestNativeRoundTripKeepsAbsentBytesAndBindsSuccessfulMeasurements(t *testin
 	key := testKey(t)
 	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
 	digest := "sha256:" + strings.Repeat("0", 64)
-	target := net.JoinHostPort(relayProjectionFixture(t).NetworkIntent.Links[0].ProbeTarget.Host, "53")
+	target := net.JoinHostPort(testDerivedLink(t, relayProjectionFixture(t), "demo-entry", "demo-exit").ProbeTarget.Host, "53")
 	sample := Observation{Level: "link", LinkID: "demo-link", ResourceID: "demo-wg", Target: target, Action: "wireguard_dns", SpecDigest: digest, NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: 1000, ValidUntil: 2000, DurationMS: new(int64(30))}
 	report := DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-entry", ReportSequence: 1, ViewDigest: digest, NetworkGeneration: sample.NetworkGeneration, ReportedAt: 1001, Selections: []ReportSelection{}, Observations: []Observation{sample}, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}}
 	original, err := SignDeviceReport(report, key)

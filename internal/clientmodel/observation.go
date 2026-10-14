@@ -39,6 +39,24 @@ func businessSucceededAfter(values []Observation, route RouteCandidate, generati
 	return false, nil
 }
 
+func businessCompleteSucceededAfter(values []Observation, route RouteCandidate, generation string, targets []string, at int64, now time.Time) (bool, error) {
+	if len(targets) == 0 {
+		return false, nil
+	}
+	threshold := time.UnixMilli(at).UTC().Truncate(time.Second)
+	for _, target := range targets {
+		sample, found, err := LatestObservation(values, route.ID, route.Scope, generation, target)
+		if err != nil {
+			return false, err
+		}
+		observed, _ := time.Parse(time.RFC3339, sample.ObservedAt)
+		if !found || sample.Result != "available" || !sample.CurrentAt(now) || observed.Before(threshold) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // Key identifies a disposable sample, not another authority or lifecycle.
 func (o Observation) Key() string {
 	return strings.Join([]string{o.CandidateID, o.Scope, o.Target, o.Action, o.NetworkGeneration}, "\x00")

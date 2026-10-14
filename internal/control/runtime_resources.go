@@ -177,8 +177,13 @@ func validateViewResources(view DeviceView) error {
 		if i > 0 && view.Links[i-1].ID >= link.ID {
 			return errors.New("view Links are not uniquely sorted")
 		}
-		if _, _, _, err := linkResources(link, resources); err != nil {
+		from, to, _, err := linkResources(link, resources)
+		if err != nil {
 			return err
+		}
+		derived, err := derivedNetworkLink(view.NetworkID, from, to)
+		if err != nil || !sameContractValue(link, derived) {
+			return errors.New("view Link differs from its deterministic resource projection")
 		}
 	}
 	policies := map[string]NetworkPolicy{}
@@ -251,18 +256,9 @@ func projectViewResources(projection Projection, view *DeviceView) (map[string]s
 		resources[resource.ID] = resource
 		allResources = append(allResources, resource)
 	}
-	links := []NetworkLink{}
-	for _, link := range projection.NetworkIntent.Links {
-		if err := validateCurrentTransportPayload(link); err != nil {
-			return nil, errors.New("current Links require explicit forward replacement before a new View can be issued")
-		}
-		if !containsString(devices[link.FromNodeID].Responsibilities, "forward") || (!containsString(devices[link.ToNodeID].Responsibilities, "forward") && !containsString(devices[link.ToNodeID].Responsibilities, "internet_egress")) {
-			continue
-		}
-		if _, _, _, err := linkResources(link, resources); err != nil {
-			continue
-		}
-		links = append(links, link)
+	links, err := DerivedNetworkLinks(projection)
+	if err != nil {
+		return nil, err
 	}
 	visibleResources := map[string]TransportResource{}
 	visibleLinks := map[string]NetworkLink{}

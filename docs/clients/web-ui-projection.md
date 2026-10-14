@@ -170,7 +170,7 @@ domain、签名 wire、persistent 和 daemon 的既有报告/路径字段不变�
 | `UIState` | 当前成员链、本 control 已验证的签发者前沿和冲突 | 网络锚、成员、已知前沿、局部可写性及传播状态；不显示不存在的全局 head |
 | 网站叶有效期 | serving web 入口的已验证叶证书 `NotAfter`、认证的远端运行回读与注入的当前 UTC 时间 | admin 显示每个入口的到期时间、剩余有效期、30 天提醒或 `unknown`；不改变签名入口阶段 |
 | `Device` | 当前设备授权与签名 View、presence/runtime 观测 | 四项职责、所选 Policy 及其所属 Service、当前运行状态与设备列表的 24 小时状态采样条 |
-| `Link` | `NetworkLink` 的 LinkID、资源及其独立 Observation | 同一节点对 WG/hy2 分行；延迟、实测速率与波动分别展示，旧规范摘要失效为 unknown |
+| `Link` | 从有效节点职责与 WG 资源派生的 LinkID、资源及独立 Observation | 正反业务方向分行，复用同一 peer；延迟、共享报文发送量与波动分别展示，旧规范摘要失效为 unknown |
 | 接口与链路流量 | 有效签名报告中同设备、LinkID、接口与 epoch 的相邻计数器增量 | Overview 的网络 TX、Topology 的所选 LinkID 两端 TX、设备列表与详情的 RX／TX 历史；缺少增量的小时留空 |
 | `Path` | Service 范围、首跳资源、有序 LinkID、最终出口及选择 | Direct、Auto、指定出口及真实可用性；不以一个 Service 探测代替另一个 |
 | `Service` | 有效 `NetworkIntent`、matcher、DNS 与局域网映射，以及设备授权派生的使用者列表 | 精确目标、授权范围、虚拟前缀及网关 |
@@ -211,11 +211,21 @@ domain、wire、persistent、runtime 均不变化；唯一变化为 UI 的纯布
 抢走下层 Link 的点击，也不能因新增度量文字而替换其命中元素。最小 Chrome 验证覆盖真实鼠标
 停留、跨虚线间隙移动、同节点对的独立连线、点击固定与清除，以及原节点锁定和实时历史更新。
 
+普通灰色中继线使用 1px 的浅灰笔画，表示从当前资源与节点资格自动派生的候选邻接；Service/Policy 限制可使用的路径，
+不能把线的存在或灰色实线当作实测可用。悬停、聚焦和选中只加深正在查看的候选，透明实线命中区始终
+保持 18px，不改变 SVG 身份与原选择行为。画布在原容器顶部定位，右侧详情变高不能使鼠标下的连线移动。灰线、蓝色实际选择及 WG DNS 的三态观测分别投影自己的输入；
+UI 不创建手工中继清单，也不从失败的单次 DNS 检查猜测握手、TCP 或回复校验中的具体失败阶段。
+这些映射只改变浏览器文字和视觉，domain、签名 wire、persistent 与原 Observation 均不增加值。
+
 WG 流量的原始字段与范围遵循[共享 WG 计数](../core/current-contract.md#共享-wg-的原始计数与流量派生)。
 页面明确标记 WG 报文字节，包含该 peer 共用的管理、接入与中继以及实现计入的握手/保活；不宣称
 已覆盖 Hy2、Direct 或唯一应用用量。同一 peer 对应正反两条 Link 时，两条显示同一共享范围，
 网络汇总按设备和 peer 只计一次 TX，不能把两条 Link 的图相加。当前速率只用最新运行实例，
 重启换 epoch 后旧区间保留为历史，不能填成新实例当前速率。
+Topology 的流量面板和传输列统一标为 WG 发送报文，明确包含握手、保活与加密传输开销，发送计数
+不能证明报文送达。WG DNS 的 unavailable 仍只表示对应执行 DNS 往返检查失败；失败期间的协议报文
+可以继续增加发送计数。正反两行在同一共享 peer 范围内须直接提示计数共用、只能按 peer 对累计一次。
+这里不把临时现场诊断写入页面，也不新增故障阶段、健康事实或业务流量权威。
 
 传输柱状图保留最近 24 小时的有效计数器增量。设备页分列 RX 与 TX；链路及网络汇总按发送端 TX
 累计，对端 RX 不再重复计入。计数下降、epoch 变化及超过三分钟的相邻报告间隔不产生增量，
@@ -287,7 +297,7 @@ wire、持久状态或操作者步骤，仅修正原 UI 派生查询的调度及
 Topology 的选中连线、详情与逐 LinkID 表格使用同一组测量，保留以下三个指标：
 
 - 延迟是该方向最近的有效真实 transport 内探测 RTT，标明报告设备和观测时间；ICMP 不能代替它。
-  当前显式 WG Link 使用原 DNS 探测在连接建立后的请求/响应往返，标为 WG DNS RTT，包含处理时间；
+  当前派生 WG 中继段使用原 DNS 探测在连接建立后的请求/响应往返，标为 WG DNS RTT，包含处理时间；
   不把完整连接/认证耗时、WG 握手耗时或 Service HTTPS 耗时显示成此值。
 - 带宽栏显示**实测速率**，不是线路容量。WG 使用同一发送端最近五分钟内有效计数器增量的
   `8 × Σ字节增量 / Σ有效观测秒数`，单位 Mbps；注明方向及实际覆盖秒数，不能用 24 小时总量除以五分钟。
@@ -325,11 +335,11 @@ RTT 来自原 Observation 的可选 `round_trip_ms`；旧报告缺席时保持 u
 旧规范或其他传输的历史也不能填入当前序列。
 
 链路小时历史沿私有管理入口 `GET /api/control/ui/link-history?link=<LinkID>` 读取。查询恰好指定
-一个当前有效 LinkID，发送端、接收端、资源和规范摘要均从当前认证 Link 与资源推导，不能由查询
-参数扩大范围。现行显式 Link 是原生 WG 中继；其历史只接受发送端签名的 `wireguard_dns` 原观测，
-不创造 Hy2 Link、不套用设备 runtime 或 Service 结果。删除链路、撤销端点或改变资源规范后，
+一个当前有效 LinkID，发送端、接收端、资源和规范摘要均从当前认证节点与资源的派生图推导，不能由查询
+参数扩大范围。现行派生段是原生 WG 中继；其历史只接受发送端签名的 `wireguard_dns` 原观测，
+不创造 Hy2 Link、不套用设备 runtime 或 Service 结果。撤销节点职责、端点或改变资源规范后，
 原范围不再作为该行的历史；其他 Service 或组件期望的变化不删除仍匹配的 Link 样本。
-端点资格与现行 Link 写入相同：发送端具有 forward；原生 WG 接收端具有 forward 或
+端点资格与同一自动图投影相同：发送端具有 forward；原生 WG 接收端具有 forward 或
 internet_egress。仅承担最终出网的接收端不能因缺少 forward 被拓扑和历史隐藏。
 Web snapshot 的 Link 行携带同一资源 ID 与原生规范摘要，用于范围变化时废弃派生查询结果；
 摘要由已有 Link 规范函数计算，不成为可写字段或另一个链路身份。
@@ -772,8 +782,8 @@ sequenceDiagram
   不提供此恢复入口；不得从 Invite 初值、旧报告或浏览器缓存猜测最后配置。操作重试及陈旧草稿遵守同一规则。
   control 的普通职责被撤销时，当前职责只显示仍由成员表授予的 control，历史普通职责只放在重新授权表单。
   原邀请的只读详情可在身份冲突时继续显示唯一原件和多数取消入口，但不重新交付邀请或恢复设备认证。
-- **Topology/Services**：可复用 WG、hy2、私有 TLS `TransportResource`；显式中继才配置
-  `NetworkLink`，增加节点不自动形成全互联。共享 HTTPS 探测目标按 Service 和设备授权过滤，
+- **Topology/Services**：可复用 WG、hy2、私有 TLS `TransportResource`；中继候选图从有效节点职责与
+  WG 资源自动派生，Service/Policy 限定实际可使用的路径，真实测量决定选择。共享 HTTPS 探测目标按 Service 和设备授权过滤，
   没有目标显示 `unknown`。
 - **DNS overlay**：仅编辑精确 `.loom` A/AAAA 记录，`control.loom` 为保留名，指向有效 control
   的私有 Web 入口。DNS 答案不授予管理或业务权限；不提供任意公网域名劫持编辑。

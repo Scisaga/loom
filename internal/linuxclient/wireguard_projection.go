@@ -39,11 +39,8 @@ func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardId
 		}
 		identity.WGPublicKey = publicKey
 		value := wireGuardExecutionLink{LinkID: local.ID, Interface: local.ListenerID, LocalAddress: netip.PrefixFrom(localAddress, localAddress.BitLen()).String(), PeerID: peer.OwnerNodeID,
-			PeerPublicKey: base64.StdEncoding.EncodeToString(peerKey), AllowedIP: netip.PrefixFrom(peerAddress, peerAddress.BitLen()).String(), Mode: "acceptor", ListenPort: local.DialPort}
-		if link.InitiatorNodeID == view.DeviceID {
-			value.Mode, value.ListenPort, value.PersistentKeepalive = "initiator", 0, 25
-			value.Endpoint = net.JoinHostPort(peer.DialHost, strconv.Itoa(peer.DialPort))
-		}
+			PeerPublicKey: base64.StdEncoding.EncodeToString(peerKey), AllowedIP: netip.PrefixFrom(peerAddress, peerAddress.BitLen()).String(), Mode: "initiator", ListenPort: local.DialPort,
+			PersistentKeepalive: 25, Endpoint: net.JoinHostPort(peer.DialHost, strconv.Itoa(peer.DialPort))}
 		result.WireGuard = append(result.WireGuard, value)
 	}
 	groups, err := groupWireGuardLinks(result.WireGuard)

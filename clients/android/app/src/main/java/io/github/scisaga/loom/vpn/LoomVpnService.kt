@@ -414,7 +414,14 @@ class LoomVpnService : VpnService(), PlatformInterface {
             while (isActive && reporterSession == sessionID) {
                 val status = VpnRuntime.status.value
                 if (status.phase != ConnectionPhase.CONNECTED) return@launch
-                activeManagedProfile?.let { startBusinessProbe(profileID, it) }
+                activeManagedProfile?.let { profile ->
+                    val routing = RouteManager.get(this@LoomVpnService)
+                    routing.refreshLinkObservations(profileID, profile)
+                    if (!isActive || reporterSession != sessionID) return@launch
+                    routing.sampleAlternateBusiness(profileID, profile)
+                    if (!isActive || reporterSession != sessionID) return@launch
+                    startBusinessProbe(profileID, profile)
+                }
                 // A failed sample can expire before the next report interval.
                 // Finish this round before reading selections and observations.
                 probeJob?.join()

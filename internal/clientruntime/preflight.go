@@ -285,7 +285,7 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 		}
 		expected[1].RouteAddress, expected[1].RouteExcludeAddress = capture, restricted
 	}
-	if len(c.Endpoints) > 0 {
+	{
 		if c.Experimental == nil || c.Experimental.ClashAPI == nil {
 			return errors.New("native runtime has no authenticated local API")
 		}
@@ -293,6 +293,9 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile) er
 		for _, outbound := range c.Outbounds {
 			if strings.HasPrefix(outbound.Tag, "wg-base.") {
 				users = append(users, singBoxUser{Username: strings.TrimPrefix(outbound.Tag, "wg-base."), Password: c.Experimental.ClashAPI.Secret})
+			}
+			if control.ValidateDigest(outbound.Tag) == nil && outbound.Type != "selector" {
+				users = append(users, singBoxUser{Username: outbound.Tag, Password: c.Experimental.ClashAPI.Secret})
 			}
 		}
 		sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
@@ -492,6 +495,12 @@ func validateWindowsAuthorization(c singBoxConfig) error {
 		return err
 	}
 	for _, r := range c.Route.Rules {
+		if r.Type == "logical" && len(r.Rules) == 2 && len(r.Rules[0].Inbound) == 1 && r.Rules[0].Inbound[0] == control.LinkProbeInbound {
+			if err := validateCandidateProbeRule(r, tags); err != nil {
+				return err
+			}
+			continue
+		}
 		if len(r.Inbound) == 1 && r.Inbound[0] == control.LinkProbeInbound {
 			if err := validateNativeProbeRule(r, tags); err != nil {
 				return err

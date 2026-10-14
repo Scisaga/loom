@@ -170,7 +170,11 @@ func projectWebLinks(projection Projection) []Link {
 		resources[resource.ID] = resource
 	}
 	result := []Link{}
-	for _, link := range projection.NetworkIntent.Links {
+	links, err := DerivedNetworkLinks(projection)
+	if err != nil {
+		return []Link{}
+	}
+	for _, link := range links {
 		if !senders[link.FromNodeID] || !receivers[link.ToNodeID] {
 			continue
 		}

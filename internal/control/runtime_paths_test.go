@@ -23,11 +23,7 @@ func relayProjectionFixture(t *testing.T) Projection {
 		addresses := []string{[]string{"198.51.100.1/32", "198.51.100.2/32"}[i]}
 		p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, TransportResource{ID: id + "-wg", Kind: "wireguard", OwnerNodeID: id, ListenerID: id + "-wg", DialHost: []string{"192.0.2.11", "192.0.2.10"}[i], DialPort: 51820, Authentication: ResourceAuthentication{PublicKey: &key, LocalAddresses: &addresses}})
 	}
-	target, err := WireGuardAccessAddress(p.NetworkIntent.Resources[len(p.NetworkIntent.Resources)-1], "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.NetworkIntent.Links = []NetworkLink{{ID: "demo-link", FromNodeID: entry.ID, ToNodeID: "demo-exit", FromResourceID: "demo-entry-wg", ResourceID: "demo-exit-wg", InitiatorNodeID: "demo-exit", Purpose: "relay", ProbeTarget: LinkProbeTarget{ResourceID: "demo-exit-wg", Host: target.String(), Port: 53, Action: "wireguard_dns"}}}
+	p.NetworkIntent.Links = []NetworkLink{}
 	p.NetworkIntent.Policies[0].EntryScope = PolicyScope{Mode: "any", NodeIDs: []string{}}
 	p.NetworkIntent.Policies[0].MaxHops = 2
 	sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
@@ -93,7 +89,6 @@ func TestRelayTerminatesHy2AndForwardsIndependentWireGuard(t *testing.T) {
 		}
 	}
 	for _, change := range []func(*Projection){
-		func(p *Projection) { p.NetworkIntent.Links = []NetworkLink{} },
 		func(p *Projection) { p.NetworkIntent.Policies[0].MaxHops = 1 },
 		func(p *Projection) { p.DeviceAuthorizations[2].Responsibilities = []string{"internet_egress"} },
 		func(p *Projection) {
@@ -131,7 +126,11 @@ func TestHybridStartsAtItsLinkWithoutLoopbackCredential(t *testing.T) {
 	if !reflect.DeepEqual(view.Routes[0].NodeChain, []string{"demo-entry", "demo-exit"}) || !strings.Contains(view.RuntimeProfile.Config, `"type":"wireguard"`) || strings.Contains(view.RuntimeProfile.Config, `"type":"hysteria2"`) {
 		t.Fatal("hybrid did not originate a native WG business segment")
 	}
-	bad := p.NetworkIntent.Links[0]
+	links, err := DerivedNetworkLinks(p)
+	if err != nil || len(links) == 0 {
+		t.Fatal("missing automatic relay segment", err)
+	}
+	bad := links[0]
 	bad.ProbeTarget.Host = "203.0.113.2"
 	resources := map[string]TransportResource{}
 	for _, r := range p.NetworkIntent.Resources {

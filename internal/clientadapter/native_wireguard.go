@@ -51,11 +51,14 @@ func WithNativeProbe(config, secret string) (string, error) {
 		if strings.HasPrefix(tag, "wg-base.") && outbound["type"] == "direct" {
 			ids = append(ids, strings.TrimPrefix(tag, "wg-base."))
 		}
+		if control.ValidateDigest(tag) == nil && outbound["type"] != "selector" {
+			ids = append(ids, tag)
+		}
 	}
 	sort.Strings(ids)
 	users := []any{}
 	for i, id := range ids {
-		if control.ValidateID(id) != nil || i > 0 && id == ids[i-1] {
+		if control.ValidateID(id) != nil && control.ValidateDigest(id) != nil || i > 0 && id == ids[i-1] {
 			return "", errors.New("invalid native diagnostic resource")
 		}
 		users = append(users, map[string]any{"username": id, "password": secret})

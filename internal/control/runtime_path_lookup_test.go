@@ -18,18 +18,14 @@ func TestNamedPathVerificationMatchesAuthorizedEnumeration(t *testing.T) {
 	addresses := []string{"198.51.100.3/32"}
 	middle := TransportResource{ID: "demo-middle-wg", Kind: "wireguard", OwnerNodeID: "demo-middle", ListenerID: "demo-middle-wg", DialHost: "192.0.2.12", DialPort: 51820, Authentication: ResourceAuthentication{PublicKey: &key, LocalAddresses: &addresses}}
 	p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, middle)
-	first := p.NetworkIntent.Links[0]
-	first.ID, first.ToNodeID, first.ResourceID = "demo-first-link", middle.OwnerNodeID, middle.ID
-	first.InitiatorNodeID = first.FromNodeID
-	dns, err := WireGuardAccessAddress(middle, "")
+	device := p.DeviceAuthorizations[2]
+	device.ID, device.Name = "demo-middle", "Demo middle"
+	p.DeviceAuthorizations = append(p.DeviceAuthorizations, device)
+	links, err := DerivedNetworkLinks(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.ProbeTarget.ResourceID, first.ProbeTarget.Host = middle.ID, dns.String()
-	last := p.NetworkIntent.Links[0]
-	last.ID, last.FromNodeID, last.FromResourceID = "demo-last-link", middle.OwnerNodeID, middle.ID
-	p.NetworkIntent.Links = append(p.NetworkIntent.Links, first, last)
-	view := DeviceView{Resources: p.NetworkIntent.Resources, Links: p.NetworkIntent.Links}
+	view := DeviceView{Resources: p.NetworkIntent.Resources, Links: links}
 	service, policy := p.NetworkIntent.Services[0], p.NetworkIntent.Policies[0]
 	policy.MaxHops = 3
 	policy.RelayScope = PolicyScope{Mode: "any", NodeIDs: []string{}}

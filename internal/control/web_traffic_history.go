@@ -196,7 +196,12 @@ func (server *Server) trafficHistory(w http.ResponseWriter, r *http.Request) {
 			if link.ID != value || !link.Authorized {
 				continue
 			}
-			for _, native := range p.NetworkIntent.Links {
+			links, err := DerivedNetworkLinks(p)
+			if err != nil {
+				http.Error(w, "current relay resources unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			for _, native := range links {
 				if native.ID != value {
 					continue
 				}

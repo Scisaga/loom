@@ -3,6 +3,7 @@ package linuxclient
 import (
 	"bytes"
 	"context"
+	"time"
 
 	"loom/internal/control"
 	"loom/internal/deviceclient"
@@ -13,6 +14,32 @@ import (
 type runtimeReportAttempt struct {
 	report control.DeviceReport
 	status Status
+}
+
+// Delivery is replaced as a whole and lives only in this running generation.
+// Failed reads clear the scope; they never extend an old sample's deadline.
+func refreshPrivateLinkObservations(ctx context.Context, store *deviceclient.Store, requests <-chan struct{}, results chan control.DeviceLinkObservations) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-requests:
+		}
+		lkg := store.LKG()
+		if lkg == nil {
+			return
+		}
+		pending, cancel := context.WithTimeout(ctx, 10*time.Second)
+		value, err := deviceclient.FetchLinkObservations(pending, store)
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			value = control.DeviceLinkObservations{Schema: 3, NetworkID: lkg.NetworkID, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, Observations: []control.DeviceLinkObservation{}}
+		}
+		offerLatest(results, value)
+	}
 }
 
 type runtimeReportResult struct {

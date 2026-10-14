@@ -159,6 +159,7 @@ func TestTrafficHistoryUsesOnlyOriginalAdjacentScopedCounters(t *testing.T) {
 
 func TestTrafficHistoryFormalScopesAndAuthentication(t *testing.T) {
 	p := relayProjectionFixture(t)
+	link := testDerivedLink(t, p, "demo-entry", "demo-exit")
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -172,7 +173,7 @@ func TestTrafficHistoryFormalScopesAndAuthentication(t *testing.T) {
 		query  string
 		status int
 	}{
-		{"device=demo-entry", 200}, {"link=demo-link", 200}, {"network=" + p.NetworkID, 200},
+		{"device=demo-entry", 200}, {"link=" + link.ID, 200}, {"network=" + p.NetworkID, 200},
 		{"device=demo-absent", 404}, {"link=demo-absent", 404}, {"network=demo-absent", 404},
 		{"", 400}, {"device=demo-entry&link=demo-link", 400}, {"device=demo-entry&device=demo-entry", 400}, {"peer=demo-entry", 400},
 	} {
@@ -196,7 +197,7 @@ func TestTrafficHistoryFormalScopesAndAuthentication(t *testing.T) {
 		}
 	}
 	server.Runtime.Authority.projection = p
-	for _, query := range []string{"device=demo-entry", "link=demo-link"} {
+	for _, query := range []string{"device=demo-entry", "link=" + link.ID} {
 		response := httptest.NewRecorder()
 		server.AdminHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/control/ui/traffic-history?"+query, nil))
 		if response.Code != http.StatusNotFound {

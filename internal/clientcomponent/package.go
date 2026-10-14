@@ -108,6 +108,7 @@ type Verified struct {
 // Windows keeps its authenticated current artifact until a Windows release.
 const DataPlaneVersion = "1.11.4-loom.12"
 const LinuxDataPlaneVersion = "1.11.4-loom.14"
+const AndroidDataPlaneVersion = "1.11.4-loom.14"
 const upstreamCommit = "eb07c7a79eeca943370eafea601e87da76c0e57e"
 const upstreamVersion = "v1.11.4"
 const upstreamURL = "https://proxy.golang.org/github.com/sagernet/sing-box/@v/v1.11.4.zip"

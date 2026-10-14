@@ -135,21 +135,7 @@ func TestWireGuardCounterBindingsKeepSharedPeerAndCurrentLinkScope(t *testing.T)
 
 func TestReciprocalLinksKeepOnePhysicalPeerCounter(t *testing.T) {
 	p := wireGuardAccessFixture(t)
-	reverse := p.NetworkIntent.Links[0]
-	reverse.ID = "demo-reverse"
-	reverse.FromNodeID, reverse.ToNodeID = reverse.ToNodeID, reverse.FromNodeID
-	reverse.FromResourceID, reverse.ResourceID = reverse.ResourceID, reverse.FromResourceID
-	for _, resource := range p.NetworkIntent.Resources {
-		if resource.ID == reverse.ResourceID {
-			address, err := WireGuardAccessAddress(resource, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			reverse.ProbeTarget.ResourceID = resource.ID
-			reverse.ProbeTarget.Host = address.String()
-		}
-	}
-	p.NetworkIntent.Links = append(p.NetworkIntent.Links, reverse)
+	p.NetworkIntent.Links = []NetworkLink{}
 	view, err := ProjectDeviceView(p, "demo-entry")
 	if err != nil {
 		t.Fatal(err)

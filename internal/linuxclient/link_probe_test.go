@@ -2,6 +2,9 @@ package linuxclient
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -29,17 +32,24 @@ func independentLinkView(t *testing.T) control.DeviceView {
 		resource.ID, resource.ListenerID = fmt.Sprintf("demo-wg-%d", i), fmt.Sprintf("demo-wg-%d", i)
 		resource.OwnerNodeID = fmt.Sprintf("demo-node-%d", i)
 		resource.Authentication.LocalAddresses = new([]string{fmt.Sprintf("192.0.2.%d/32", 52+i)})
-		dns, err := control.WireGuardAccessAddress(resource, "")
+		seed := sha256.Sum256([]byte(resource.OwnerNodeID))
+		private, err := ecdh.X25519().NewPrivateKey(seed[:])
 		if err != nil {
 			t.Fatal(err)
 		}
+		resource.Authentication.PublicKey = new(base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()))
 		view.Resources = append(view.Resources, resource)
-		view.Links = append(view.Links, control.NetworkLink{ID: fmt.Sprintf("demo-link-%d", i),
-			FromNodeID: view.DeviceID, ToNodeID: resource.OwnerNodeID, FromResourceID: "demo-entry-wg",
-			ResourceID: resource.ID, InitiatorNodeID: view.DeviceID, Purpose: "relay",
-			ProbeTarget: control.LinkProbeTarget{ResourceID: resource.ID, Host: dns.String(), Port: 53, Action: "wireguard_dns"}})
+		device := p.DeviceAuthorizations[2]
+		device.ID, device.Name = resource.OwnerNodeID, resource.OwnerNodeID
+		device.DevicePublicKey, device.RuntimeKey = *resource.Authentication.PublicKey, *resource.Authentication.PublicKey
+		p.DeviceAuthorizations = append(p.DeviceAuthorizations, device)
 	}
-	return view
+	p.NetworkIntent.Resources = view.Resources
+	current, err := control.ProjectDeviceView(p, view.DeviceID)
+	if err != nil || len(current.Links) != 5 {
+		t.Fatal("independent automatic links were not projected", err)
+	}
+	return current
 }
 
 func TestIndependentLinkProbesAreBoundedAndTimestampCompletedResults(t *testing.T) {

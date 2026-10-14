@@ -122,6 +122,10 @@ func (options Options) probeForService(view control.DeviceView, scope string) Pr
 // Each Service owns its probe and fallback. Testing one destination cannot
 // colour another Service's selection or consume another Service's permission.
 func activateServices(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, probe bool) (Activation, error) {
+	return activateServicesWithLinkSamples(ctx, options, view, selector, routes, state, nil, nil, probe)
+}
+
+func activateServicesWithLinkSamples(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, local []control.Observation, remote []control.DeviceLinkObservation, probe bool) (Activation, error) {
 	scopes, byScope, err := scopesFor(routes)
 	if err != nil {
 		return Activation{}, err
@@ -135,7 +139,7 @@ func activateServices(ctx context.Context, options Options, view control.DeviceV
 				probes[target] = nil
 			}
 		}
-		value, err := Activate(ctx, selector, byScope[scope], result.State, probes, options.Now)
+		value, err := activateWithLinkSamples(ctx, selector, byScope[scope], result.State, local, remote, probes, options.Now)
 		if value.State.Schema == 0 {
 			return Activation{}, err
 		}
@@ -764,11 +768,18 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	refreshRequests := make(chan struct{}, 1)
 	refreshNotices := make(chan string, 1)
 	privateFailures := make(chan error, 1)
+	linkRequests := make(chan struct{}, 1)
+	linkResults := make(chan control.DeviceLinkObservations, 1)
+	var remoteLinks []control.DeviceLinkObservation
 	reportRequests := make(chan *runtimeReportAttempt, 1)
 	reportResults := make(chan runtimeReportResult, 1)
 	var pendingReport *runtimeReportAttempt
 	var privateWorkers sync.WaitGroup
-	privateWorkers.Add(2)
+	privateWorkers.Add(3)
+	go func() {
+		defer privateWorkers.Done()
+		refreshPrivateLinkObservations(ctx, store, linkRequests, linkResults)
+	}()
 	go func() {
 		defer privateWorkers.Done()
 		refreshPrivateConfiguration(ctx, store, refreshRequests, refreshNotices, privateFailures, cancelGeneration)
@@ -791,6 +802,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 	}()
 	offerLatest(refreshRequests, struct{}{})
+	offerLatest(linkRequests, struct{}{})
 	update := func(periodic bool) error {
 		// Frontier/proof progress with the same View is durable authentication
 		// progress, not a reason to interrupt unchanged execution.
@@ -815,6 +827,43 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 		activation := Activation{State: local, Selections: []SelectionStatus{}}
+		select {
+		case delivery := <-linkResults:
+			if delivery.ValidateForView(lkg.View) == nil {
+				remoteLinks = append([]control.DeviceLinkObservation{}, delivery.Observations...)
+			} else {
+				remoteLinks = nil
+			}
+		default:
+		}
+		linkObservations, err := observeLinks(diagnosticContext, lkg.View, wg, generation, options.RefreshPoll, options.Now)
+		if err != nil {
+			return err
+		}
+		if hasAccess {
+			currentIDs := []string{}
+			scopes, _, err := scopesFor(routes)
+			if err != nil {
+				return err
+			}
+			for _, scope := range scopes {
+				selected, err := selector.Read(ctx, scope)
+				if err != nil {
+					return err
+				}
+				for _, route := range routes {
+					if route.ID == selected {
+						currentIDs = append(currentIDs, selected)
+						break
+					}
+				}
+			}
+			samples, err := clientadapter.ObserveFirstHops(diagnosticContext, lkg.View, currentIDs, local.ResourceObservations, generation, options.Now)
+			if err != nil {
+				return err
+			}
+			local.ResourceObservations = append([]control.Observation(nil), samples...)
+		}
 		if err := (*transaction).readbackNative(); err != nil {
 			return err
 		}
@@ -824,7 +873,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		if pid != 0 {
 			if hasAccess {
-				activation, err = activateServices(ctx, options, lkg.View, selector, routes, local, false)
+				activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, false)
 				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 					return err
 				}
@@ -849,7 +898,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			selected = append(selected, selection.CandidateID)
 		}
 		if len(routes) > 0 {
-			activation, err = activateServices(ctx, options, lkg.View, selector, routes, local, true)
+			activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, true)
 			if activation.State.Schema == 0 {
 				return err
 			}
@@ -867,10 +916,6 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return saveErr
 		}
 		activation.State = saved
-		linkObservations, err := observeLinks(diagnosticContext, lkg.View, wg, generation, options.RefreshPoll, options.Now)
-		if err != nil {
-			return err
-		}
 		var counters *control.WireGuardCounters
 		if readback.State == "running" {
 			counters, _ = clientadapter.ObserveWireGuardCounters(diagnosticContext, lkg.View, options.Now)
@@ -937,6 +982,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return errCertifiedViewChanged
 		}
 		offerLatest(refreshRequests, struct{}{})
+		offerLatest(linkRequests, struct{}{})
 		resolved, err := resolveWireGuardEndpoints(ctx, desiredWG, wg, lkg.View.DNSServers, nil)
 		if err != nil {
 			if ctx.Err() != nil {

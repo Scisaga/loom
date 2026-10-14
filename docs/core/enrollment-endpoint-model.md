@@ -480,9 +480,9 @@ control 可交付证书与 View。交付丢失只影响设备获知结果，不�
 ### `DeviceView`
 
 `DeviceView` 是面向**一个**已认证设备的私有投影，包含设备身份、职责、授权的 Service/Policy、
-Endpoint generation、可见的共享 `TransportResource` 与显式中继 `NetworkLink`、首跳资源、
+Endpoint generation、可见的共享 `TransportResource` 与自动派生中继段、首跳资源、
 业务探测目标、DNS overlay 与获授权的局域网虚拟前缀。它不包含其他设备的秘密或全网事件集，
-也不成为独立治理权威。首跳不要求 `NetworkLink`；只有显式中继路径携带有序 LinkID。
+也不成为独立治理权威。首跳不要求中继段；中继路径携带从有效节点职责与资源确定性派生的有序 LinkID。
 同一 LinkID 当前链路和资源的规范字节派生 `link_spec_digest`；规范改变使旧观测回到 `unknown`。
 
 交付 envelope 由当前有效 control 对完整 View 签名，附网络锚、从设备已固定成员表到当前成员表的
@@ -549,13 +549,13 @@ HTTPS 业务成功。report 逐字段字节、时间/有效期、接收端寿命
 独立 ALPN，bootstrap 模式验证完整 capability；已绑定设备使用设备 Ed25519 挑战签名及当前授权。
 claim、resume、DeviceView 与 report 仅在这些认证后的私有连接内承载。加入后设备自动尝试签发者的
 设备认证入口作首次管理、配置和报告入口；绑定、授权事实（如需）及成员证书（如需）传播到其他有效 control 后，也可以使用它们的
-相同认证服务。连接可以使用已有共享 WG、hy2 或私有 TLS 资源；没有专属 WG 接口或显式 `NetworkLink` 仍可领配置。
+相同认证服务。连接可以使用已有共享 WG、hy2 或私有 TLS 资源；没有专属 WG 接口或人工节点对配置仍可领配置。
 连接资源只提供承载，服务分别验证设备、control 成员和业务权限。所有已知数据入口失效时，
 已加入设备仍可经当前 `EndpointGeneration` 的设备认证模式领取修复 View 并报告 `unknown`；
 它不再次使用 Invite，也不开放新权限。该入口不可达时保持经验证 LKG 并记录本机不可达。
 
 普通 access 的共享首跳、Direct/Auto/指定最终出口候选由 View 和客户端模型投影；有序中继
-LinkID 只用于确实配置的中继邻接。forward 节点共享 LAN 时，View 仅向显式获授该局域网 Service 及其 Policy 的 access
+LinkID 只定位当前节点职责与资源派生的中继段，不构成另一授权。forward 节点共享 LAN 时，View 仅向显式获授该局域网 Service 及其 Policy 的 access
 下发虚拟前缀及固定网关候选；设备不能自行提交任意 CIDR。Linux 的 TUN、策略路由和 DNS 只在
 [宿主网络安全记录](../incidents/2026-09-21-host-network-takeover.md)规定的隔离边界内运行，
 不修改开发宿主初始 network namespace 或 LAN 路由器。
@@ -688,7 +688,7 @@ sequenceDiagram
    响应丢失不改变证书已验证方的完成投影，设备在取得证明前不本地运行；
    后继证书必须绑定 Invite/事务 ID 与设备公钥，未绑定的 control Invite 只以签发者连续事实序列中的
    终结事实释放 ID。
-5. 首次尚无 `NetworkLink` 仍能取得配置和共享数据入口；同一节点对 WG/hy2 LinkID 独立回读，
+5. 首次没有人工中继配置仍能取得配置和共享数据入口；同一节点对的自动 WG 正反段独立回读，
    规范变化使旧观测失效；无业务目标为 `unknown`。
 6. 轮换依次经历 prepared、并行 serving、draining、retired；公网 edge 只做字节转发，
    公网 Nginx 不出现设备专属路径；非承载 control 签发的入口事实被拒，`control.loom` 只解析到
@@ -709,7 +709,7 @@ sequenceDiagram
 
 - 旧 `CertifiedHead`、Raft/QC、stable→joint→stable 或历史材料解码作为现行加入前提；
 - 签发后再次要求管理员批准、由非签发者首次绑定或扫码授予超出 `access` 的职责；
-- `server` 业务角色、每加入一节点就新建 WG 接口或强制生成 `NetworkLink`；
+- `server` 业务角色、每加入一节点就新建专属 WG 接口或要求人工配置中继节点对；
 - capability、claim、receipt、approval、DeviceView 各自维护业务权威或第二个状态机；
 - 公网设备配置/报告路由、旧协议 fallback、从传输握手或 UI 绿灯推断业务可用；
 - 用外部 DNS provider、ACME、证书续期或宿主初始 netns 变更来“修复”加入失败。

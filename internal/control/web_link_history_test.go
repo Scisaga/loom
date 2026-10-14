@@ -29,7 +29,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := view.Links[0]
+	link := testDerivedLink(t, p, identity.ID, "demo-exit")
 	spec, _ := LinkSpecDigest(view, link.ID)
 	digest, _ := DeviceViewDigest(view)
 	now := time.Date(2026, 1, 2, 12, 30, 0, 0, time.UTC)
@@ -185,6 +185,7 @@ func TestWebLinkHistoryQueryCannotExpandEndpointPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	link := testDerivedLink(t, p, "demo-entry", "demo-exit")
 	a := &Authority{projection: p}
 	server := &Server{Runtime: &Runtime{Authority: a, Reports: store}}
 	check := func(query string, want int) {
@@ -195,7 +196,7 @@ func TestWebLinkHistoryQueryCannotExpandEndpointPermission(t *testing.T) {
 			t.Fatal(query, response.Code, response.Body.String())
 		}
 	}
-	check("link=demo-link", http.StatusOK)
+	check("link="+link.ID, http.StatusOK)
 	for _, query := range []string{"", "link=demo-link&link=demo-link", "link=demo-link&device=demo-exit", "link=%zz", "link="} {
 		check(query, http.StatusBadRequest)
 	}
@@ -207,20 +208,20 @@ func TestWebLinkHistoryQueryCannotExpandEndpointPermission(t *testing.T) {
 	if _, err := ProjectDeviceView(a.Snapshot(), "demo-entry"); err == nil {
 		t.Fatal("fixture must expose the missing release dependency of a full View")
 	}
-	check("link=demo-link", http.StatusOK)
+	check("link="+link.ID, http.StatusOK)
 	// Native WG may terminate at an Internet egress without a forwarding role.
 	a.projection.DeviceAuthorizations[1].Responsibilities = []string{"internet_egress"}
-	check("link=demo-link", http.StatusOK)
-	if links := projectWebLinks(a.Snapshot()); len(links) != 1 || links[0].ID != "demo-link" {
+	check("link="+link.ID, http.StatusOK)
+	if links := projectWebLinks(a.Snapshot()); len(links) != 1 || links[0].ID != link.ID {
 		t.Fatal("authorized Internet-only receiver disappeared from the topology")
 	}
 	for _, change := range []func(*Projection){
-		func(p *Projection) { p.NetworkIntent.Links = []NetworkLink{} },
+		func(p *Projection) { p.NetworkIntent.Resources = []TransportResource{} },
 		func(p *Projection) { p.DeviceAuthorizations[2].Responsibilities = []string{"internet_egress"} },
 		func(p *Projection) { p.DeviceAuthorizations[1].Responsibilities = []string{"access"} },
 	} {
 		a.projection = cloneAuthorityProjection(p)
 		change(&a.projection)
-		check("link=demo-link", http.StatusNotFound)
+		check("link="+link.ID, http.StatusNotFound)
 	}
 }

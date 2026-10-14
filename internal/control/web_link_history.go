@@ -58,7 +58,12 @@ func (server *Server) linkHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Link is outside current endpoint permissions", http.StatusNotFound)
 		return
 	}
-	for _, link := range projection.NetworkIntent.Links {
+	links, err := DerivedNetworkLinks(projection)
+	if err != nil {
+		http.Error(w, "current relay resources unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	for _, link := range links {
 		if link.ID != query.Get("link") {
 			continue
 		}

@@ -108,15 +108,23 @@ func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
 	}
 	var capture struct {
 		Inbounds []struct {
+			Type       string   `json:"type"`
+			Tag        string   `json:"tag"`
+			Listen     string   `json:"listen"`
+			Port       int      `json:"listen_port"`
 			Exclusions []string `json:"route_exclude_address"`
 		} `json:"inbounds"`
 		Route struct {
 			Protect bool `json:"auto_detect_interface"`
 		} `json:"route"`
 	}
-	if json.Unmarshal([]byte(profile.Config), &capture) != nil || !capture.Route.Protect || len(capture.Inbounds) != 1 ||
+	if json.Unmarshal([]byte(profile.Config), &capture) != nil || !capture.Route.Protect || len(capture.Inbounds) != 2 ||
 		len(capture.Inbounds[0].Exclusions) != 1 || capture.Inbounds[0].Exclusions[0] != state.LKG.View.Endpoints[0].Host+"/32" {
 		t.Fatal("Android captured its libbox or private management underlay")
+	}
+	if capture.Inbounds[0].Type != "tun" || capture.Inbounds[1].Type != "socks" || capture.Inbounds[1].Tag != control.LinkProbeInbound ||
+		capture.Inbounds[1].Listen != "127.0.0.1" || capture.Inbounds[1].Port != 61801 {
+		t.Fatal("alternate diagnostic widened capture or opened a non-local entry")
 	}
 	after, err := deviceclient.EncodeIdentityState(state)
 	if err != nil || !bytes.Equal(body, after) {

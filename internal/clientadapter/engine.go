@@ -11,10 +11,12 @@ import (
 )
 
 type State struct {
-	Preference           clientmodel.Preference
-	NetworkGeneration    string
-	Observations         []clientmodel.Observation
-	ResourceObservations []control.Observation
+	Preference            clientmodel.Preference
+	NetworkGeneration     string
+	Observations          []clientmodel.Observation
+	ResourceObservations  []control.Observation
+	LinkObservations      []control.DeviceLinkObservation
+	LocalLinkObservations []control.Observation
 }
 
 type SelectionStatus struct {
@@ -64,7 +66,7 @@ func Scopes(routes []clientmodel.RouteCandidate) ([]string, map[string][]clientm
 	return scopes, byScope, nil
 }
 
-func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.Observation, resources []control.Observation,
+func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.Observation, resources []control.Observation, links []control.DeviceLinkObservation,
 	preference clientmodel.Preference, current map[string]string, generation string, now time.Time, targets ...string) (map[string]string, error) {
 	scopes, byScope, err := Scopes(routes)
 	if err != nil {
@@ -72,7 +74,7 @@ func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.O
 	}
 	desired := make(map[string]string, len(scopes))
 	for _, scope := range scopes {
-		selection, err := clientmodel.Select(byScope[scope], observations, resources, preference, current[scope], generation, now, targets...)
+		selection, err := clientmodel.SelectWithLinks(byScope[scope], observations, resources, links, preference, current[scope], generation, now, targets...)
 		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 			desired[scope] = BlockedSelection
 			continue
@@ -182,7 +184,8 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 		return Activation{}, err
 	}
 	at := now().UTC()
-	desired, err := selectAll(routes, state.Observations, state.ResourceObservations, state.Preference, current, state.NetworkGeneration, at, targets...)
+	transportSamples := append(append([]control.Observation{}, state.ResourceObservations...), state.LocalLinkObservations...)
+	desired, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, current, state.NetworkGeneration, at, targets...)
 	if err != nil {
 		return Activation{}, err
 	}
@@ -235,9 +238,27 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 			return result(), err
 		}
 		if status != "unavailable" {
+			activeProbe := false
+			for _, probe := range probes {
+				activeProbe = activeProbe || probe != nil
+			}
+			if activeProbe {
+				state, err = SampleAlternateBusiness(ctx, routes, state, candidate, targets, now)
+				if err != nil {
+					return result(), err
+				}
+				improved, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, now().UTC(), targets...)
+				if err != nil {
+					return result(), err
+				}
+				readback, err = ApplySelections(ctx, selector, improved)
+				if err != nil {
+					return Activation{}, err
+				}
+			}
 			return result(), nil
 		}
-		fallback, err := selectAll(routes, state.Observations, state.ResourceObservations, state.Preference, readback, state.NetworkGeneration, at, targets...)
+		fallback, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, at, targets...)
 		if err != nil {
 			return result(), err
 		}

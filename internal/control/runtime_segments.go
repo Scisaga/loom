@@ -278,7 +278,30 @@ func (r *segmentedRuntime) access(services map[string]Service, policies map[stri
 
 func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 	document := map[string]any{"outbounds": r.outbounds, "route": map[string]any{"rules": r.rules, "final": "reject"}}
+	probeRules := []any{}
+	services := map[string]Service{}
+	for _, service := range r.view.Services {
+		services[service.ID] = service
+	}
+	selectedServices := map[string]bool{}
+	for _, policy := range r.view.Policies {
+		if containsString(r.view.PolicyIDs, policy.ID) {
+			selectedServices[policy.ServiceID] = true
+		}
+	}
+	for _, candidate := range r.view.Routes {
+		scope := map[string]any{"inbound": []string{LinkProbeInbound}, "auth_user": []string{candidate.ID}}
+		for _, service := range r.view.Services {
+			if service.ID == candidate.ServiceID || !selectedServices[service.ID] {
+				continue
+			}
+			probeRules = append(probeRules, map[string]any{"type": "logical", "mode": "and", "rules": []any{scope, serviceRule(service, r.view.DNSRecords...)}, "outbound": "reject"})
+		}
+		probeRules = append(probeRules, map[string]any{"type": "logical", "mode": "and", "rules": []any{scope, serviceRule(services[candidate.ServiceID], r.view.DNSRecords...)}, "outbound": candidate.ID})
+	}
 	if len(r.sources) == 0 && len(incomingDNS) == 0 {
+		probeRules = append(probeRules, map[string]any{"inbound": []string{LinkProbeInbound}, "outbound": "reject"})
+		document["route"].(map[string]any)["rules"] = append(probeRules, r.rules...)
 		return document, nil
 	}
 	servers := []any{map[string]any{"tag": "loom-runtime-deny-dns", "address": "rcode://refused"}}
@@ -324,7 +347,6 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 			return nil, err
 		}
 	}
-	probeRules := []any{}
 	for _, id := range ids {
 		resource := r.resources[id]
 		base, err := WireGuardAccessAddress(resource, senderPublic)

@@ -67,17 +67,7 @@ func nativeProjectionFixture(t *testing.T) (control.Projection, map[string]strin
 	resource.OwnerNodeID = "demo-entry"
 	p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, resource)
 	sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
-	var receiver control.TransportResource
-	for _, r := range p.NetworkIntent.Resources {
-		if r.ID == "demo-exit-wg" {
-			receiver = r
-		}
-	}
-	dns, err := control.WireGuardAccessAddress(receiver, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.NetworkIntent.Links = []control.NetworkLink{{ID: "demo-link", FromNodeID: "demo-entry", ToNodeID: "demo-exit", FromResourceID: "demo-entry-wg", ResourceID: receiver.ID, InitiatorNodeID: "demo-entry", Purpose: "relay", ProbeTarget: control.LinkProbeTarget{ResourceID: receiver.ID, Host: dns.String(), Port: 53, Action: "wireguard_dns"}}}
+	p.NetworkIntent.Links = []control.NetworkLink{}
 	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo-service.loom"}, {Kind: "ip_prefix", Value: "192.0.2.80/32"}}}}
 	p.NetworkIntent.DNSRecords = []control.DNSRecord{{ID: "demo-record", Name: "demo-service.loom", Addresses: []string{"192.0.2.80"}}}
 	any := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
@@ -171,13 +161,6 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	}
 	managementPeers := []string{"demo-entry"}
 	if len(shared) > 0 && shared[0] {
-		var receiver control.TransportResource
-		for _, r := range p.NetworkIntent.Resources {
-			if r.ID == "demo-exit-wg" {
-				receiver = r
-			}
-		}
-		dns, _ := control.WireGuardAccessAddress(receiver, "")
 		for index, id := range []string{"demo-other-a", "demo-other-b"} {
 			seed := sha256.Sum256([]byte(id))
 			key, _ := ecdh.X25519().NewPrivateKey(seed[:])
@@ -191,7 +174,6 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 			local := []string{fmt.Sprintf("192.0.2.%d/32", 53+index)}
 			resource := control.TransportResource{ID: id + "-wg", Kind: "wireguard", OwnerNodeID: id, ListenerID: id + "-wg", DialHost: fmt.Sprintf("192.0.2.%d", 13+index), DialPort: 51823 + index, Authentication: control.ResourceAuthentication{PublicKey: &public, LocalAddresses: &local}}
 			p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, resource)
-			p.NetworkIntent.Links = append(p.NetworkIntent.Links, control.NetworkLink{ID: id + "-link", FromNodeID: id, ToNodeID: "demo-exit", FromResourceID: resource.ID, ResourceID: receiver.ID, InitiatorNodeID: id, Purpose: "relay", ProbeTarget: control.LinkProbeTarget{ResourceID: receiver.ID, Host: dns.String(), Port: 53, Action: "wireguard_dns"}})
 			path := filepath.Join(t.TempDir(), "node.key")
 			if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(seed[:])), 0600); err != nil {
 				t.Fatal(err)
@@ -201,7 +183,6 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 		sort.Slice(p.DeviceAuthorizations, func(i, j int) bool { return p.DeviceAuthorizations[i].ID < p.DeviceAuthorizations[j].ID })
 		sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
-		sort.Slice(p.NetworkIntent.Links, func(i, j int) bool { return p.NetworkIntent.Links[i].ID < p.NetworkIntent.Links[j].ID })
 	}
 	scope := p.NetworkIntent.Services[0].Scope()
 

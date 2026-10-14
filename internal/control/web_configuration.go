@@ -151,6 +151,10 @@ func (a *Authority) configurationReview(controlID string, now time.Time) (WebCon
 	}
 	for _, target := range projection.Targets {
 		row := WebConfigurationRow{Target: target, Sources: []WebConfigurationSource{}, References: []WebConfigurationReference{}, Resolvable: target.Conflicted && !target.Deleted && resolvableTarget(target.TargetKind) && len(target.MaterialIDs) >= 2}
+		if target.TargetKind == "link" {
+			row.Resolvable = false
+			row.Reason = "Historical manual relay configuration. Current relay segments are derived from node responsibilities and transport resources."
+		}
 		for _, id := range target.MaterialIDs {
 			material, found := byID[id]
 			if id == genesisID {
@@ -175,7 +179,7 @@ func (a *Authority) configurationReview(controlID string, now time.Time) (WebCon
 			}
 			row.Sources = append(row.Sources, source)
 		}
-		if target.Conflicted && !row.Resolvable {
+		if target.Conflicted && !row.Resolvable && row.Reason == "" {
 			switch {
 			case !resolvableTarget(target.TargetKind):
 				row.Reason = "This object retains its issuer or owner lifecycle. Use the original enrollment or endpoint entry; bound control changes require member governance."

@@ -31,7 +31,13 @@ type runtimeSelection struct {
 
 // EvaluateAndroidRoutes applies one Preference to every authorized scope. It performs no I/O.
 func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, currentBody []byte,
-	generation, nowRFC3339 string, targetsBody, resourcesBody []byte) ([]byte, error) {
+	generation, nowRFC3339 string, targetsBody, resourcesBody, linksBody []byte) ([]byte, error) {
+	var links []control.DeviceLinkObservation
+	if len(linksBody) > 0 {
+		if err := decodeStrictJSON(linksBody, 4<<20, &links); err != nil {
+			return nil, err
+		}
+	}
 	var resources []control.Observation
 	if len(resourcesBody) > 0 {
 		if err := decodeStrictJSON(resourcesBody, clientadapter.ResourceObservationCacheLimit, &resources); err != nil {
@@ -120,7 +126,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 	}
 	sort.Strings(application.Exits)
 	for _, scope := range scopes {
-		selection, err := clientmodel.Select(byScope[scope], observations, resources, preference, current[scope], generation, now.UTC(), targetsByScope[scope]...)
+		selection, err := clientmodel.SelectWithLinks(byScope[scope], observations, resources, links, preference, current[scope], generation, now.UTC(), targetsByScope[scope]...)
 		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 			application.BlockedScopes = append(application.BlockedScopes, scope)
 			continue

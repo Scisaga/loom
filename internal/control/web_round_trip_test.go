@@ -26,7 +26,7 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := view.Links[0]
+	link := testDerivedLink(t, p, identity.ID, "demo-exit")
 	spec, _ := LinkSpecDigest(view, link.ID)
 	digest, _ := DeviceViewDigest(view)
 	now := time.Date(2026, 1, 2, 12, 30, 0, 0, time.UTC)

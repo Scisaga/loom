@@ -594,6 +594,7 @@ func (server *Server) DeviceHandler() http.Handler {
 	mux.HandleFunc("POST /enrollment/resume", server.resume)
 	mux.HandleFunc("POST /device/config", server.deviceConfig)
 	mux.HandleFunc("POST /device/report", server.deviceReport)
+	mux.HandleFunc("POST /device/link-observations", server.deviceLinkObservations)
 	mux.HandleFunc("POST /device/release", server.deviceRelease)
 	mux.HandleFunc("POST /device/release/download", server.deviceReleaseDownload)
 	mux.Handle("GET /device/control/proof", server.deviceMemberRead(http.HandlerFunc(server.internalControlProof)))
