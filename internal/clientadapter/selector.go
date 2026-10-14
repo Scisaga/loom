@@ -36,6 +36,9 @@ type HTTPSelector struct {
 	client *http.Client
 }
 
+// SelectorReadbackLimit bounds metadata that includes all authorized candidates.
+const SelectorReadbackLimit = 1 << 20
+
 func NewHTTPSelector(config string) (*HTTPSelector, error) {
 	var control profileControl
 	if err := json.Unmarshal([]byte(config), &control); err != nil {
@@ -73,7 +76,7 @@ func (selector *HTTPSelector) request(ctx context.Context, method, path string, 
 		return nil, err
 	}
 	defer response.Body.Close()
-	maximum := int64(4 << 10)
+	maximum := int64(SelectorReadbackLimit)
 	if path == "/connections/" {
 		maximum = 8 << 20
 	}

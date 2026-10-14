@@ -131,7 +131,7 @@ internal class SelectorClient(config: String) {
             method = method,
             path = path,
             body = body,
-            maximum = if (path == "/connections/") 8 * 1024 * 1024 else MAX_RESPONSE,
+            maximum = if (path == "/connections/") 8 * 1024 * 1024 else SELECTOR_READBACK_LIMIT,
         )
         check(response.status in 200..299) { "本地 selector API 返回 HTTP ${response.status}" }
         return response.body
@@ -140,7 +140,6 @@ internal class SelectorClient(config: String) {
     companion object {
         private const val LOOPBACK_HOST = "127.0.0.1"
         private const val LOOPBACK_PORT = 61800
-        private const val MAX_RESPONSE = 4 * 1024
         private const val MAX_SECRET = 4 * 1024
     }
 }
@@ -288,5 +287,8 @@ private fun readChunkedBody(input: InputStream, maximum: Int): ByteArray {
 }
 
 private const val SOCKET_TIMEOUT_MS = 3_000
+// A proxy reply contains every derived candidate ID, not just the current ID.
+// Keep the same bounded readback allowance as the shared native selector.
+internal const val SELECTOR_READBACK_LIMIT = 1024 * 1024
 private const val MAX_HEADER_LINE = 4 * 1024
 private const val MAX_HEADERS = 16 * 1024

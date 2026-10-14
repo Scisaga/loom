@@ -15,7 +15,7 @@ import (
 
 func TestAndroidSelectionConsumesRemoteRelayFailureAndOriginalExpiry(t *testing.T) {
 	at := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	ref := clientmodel.LinkSampleRef{LinkID: "demo-link", DeviceID: "demo-relay", ResourceID: "demo-resource", SpecDigest: "sha256:" + strings.Repeat("1", 64), Target: "[fd00::53]:53", Action: "wireguard_dns"}
+	ref := clientmodel.LinkSampleRef{LinkID: "demo-link", DeviceID: "demo-relay", ResourceID: "demo-resource", SpecDigest: "sha256:" + strings.Repeat("1", 64), Target: "[fdab::53]:53", Action: "wireguard_dns"}
 	routes := []clientmodel.RouteCandidate{{ID: "demo-relayed", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "service:demo-service", RelayLinks: []clientmodel.LinkSampleRef{ref}},
 		{ID: "demo-direct-exit", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service"}}
 	routesBody, _ := json.Marshal(routes)

@@ -401,7 +401,8 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 	return parallelByNode(ctx, bases, func(i int) error {
 		base := bases[i]
 		observe(Result{DistributionRoot: i + 1, Operation: "https"})
-		for j, entry := range entries {
+		verify := func(j int) error {
+			entry := entries[j]
 			method, operation := http.MethodGet, "https_artifact"
 			if retained[entry.Artifact] {
 				method, operation = http.MethodHead, "https_metadata"
@@ -425,7 +426,7 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 					return fmt.Errorf("HTTPS root %d artifact %d existing path metadata unconfirmed; pointers were not advanced by this invocation", i+1, j+1)
 				}
 				observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: operation, Verified: true})
-				continue
+				return nil
 			}
 			size, err := verifyArtifactBody(ctx, &copy, url, entry.Artifact, response, func(attempt int, size int64) {
 				observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: "https_artifact_resume", ReadBytes: size, Attempt: attempt})
@@ -434,6 +435,33 @@ func verifyHTTPS(ctx context.Context, client *http.Client, bases []string, set c
 				return fmt.Errorf("HTTPS root %d artifact %d body unconfirmed after %d of %d bytes: %w; pointers were not advanced by this invocation", i+1, j+1, size, entry.Artifact.Size, err)
 			}
 			observe(Result{DistributionRoot: i + 1, Artifact: j + 1, Operation: "https_artifact", ReadBytes: size, Verified: true})
+			return nil
+		}
+		// Entries are immutable independent reads. Keep every started result and
+		// wait for all bodies to close before the publication can advance.
+		jobs := make(chan int, len(entries))
+		for j := range entries {
+			jobs <- j
+		}
+		close(jobs)
+		errorsByArtifact := make([]error, len(entries))
+		var workers sync.WaitGroup
+		for range min(4, len(entries)) {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				for j := range jobs {
+					err := ctx.Err()
+					if err == nil {
+						err = verify(j)
+					}
+					errorsByArtifact[j] = err
+				}
+			}()
+		}
+		workers.Wait()
+		if err := errors.Join(errorsByArtifact...); err != nil {
+			return err
 		}
 		observe(Result{DistributionRoot: i + 1, Operation: "https", Verified: true})
 		return nil

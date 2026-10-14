@@ -73,7 +73,7 @@ func (selector *HTTPSelector) request(ctx context.Context, method, path string, 
 		return nil, err
 	}
 	defer response.Body.Close()
-	maximum := int64(4 << 10)
+	maximum := int64(clientadapter.SelectorReadbackLimit)
 	if path == "/connections/" {
 		maximum = 8 << 20
 	}
