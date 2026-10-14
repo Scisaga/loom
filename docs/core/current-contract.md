@@ -233,7 +233,8 @@ daemon 校验依赖后生成签名事实并持久化，
 | `device.join` / device | 完整 DeviceAuthorization；只由 Invite issuer 签发，直接依赖绑定事实；事务完成从此事实投影，不再签 complete |
 | `device.put` / device | 完整 DeviceAuthorization；任一有效 control 可改普通职责/PolicyIDs，身份、公钥、平台和原加入绑定不变 |
 | `device.revoke`、`device.delete` / device | `{"id":ID}`；revoke 后须显式后继重新授予，delete 留永久墓碑；涉及 control 的整体删除不能走此入口 |
-| `resource.put`、`endpoint.put` / 对应种类 | 下述完整值；入口只由承载 control 签发；本机私钥路径不进入 payload |
+| `resource.put` / resource | 下述完整资源值；任一有效 control 可签发，依赖已审阅的资源前值与承载节点授权；本机私钥路径不进入 payload |
+| `endpoint.put` / endpoint | 下述完整入口值；只由承载 control 签发；本机私钥路径不进入 payload |
 | `resource.delete`、历史 `link.delete` / 对应种类 | `{"id":ID}`；共享资源删除收口全部引用，link.delete 只前向撤销历史人工配置，不删除当前派生边 |
 | `probe_target.put` / probe_target | `id:ID,url:HTTPS_URL`；仍是已有共享目标池的元素，不拥有独立探测组生命周期 |
 | `probe_target.delete` / probe_target | `{"id":ID}`；不改变设备权限 |
