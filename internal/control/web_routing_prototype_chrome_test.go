@@ -1,6 +1,7 @@
 package control
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,12 +32,12 @@ func TestWebChromeLivePathsPrototypeScopeAndLayout(t *testing.T) {
 	 devices[1].evidence.measurements=[{...devices[0].evidence.measurements[0],candidate_id:paths[1].candidate_id,spec_digest:paths[1].spec_digest,result:'unavailable'}];
 	 const snapshot={services:[service,other],policies:[policy(service.id),policy(other.id)],devices,paths,links:[{id:'demo-link',spec_digest:'demo-link-spec'}],targets:[{target_kind:'service',target_id:'demo-suspended',conflicted:true,deleted:false}]},params=new URLSearchParams({service:service.id});
 	 const summary=routingSummary(routingContext(snapshot,params,now).records,snapshot),doc=new DOMParser().parseFromString(routingHTML(snapshot,params,now),'text/html');
-	 if(summary.groups.length!==2||summary.groups.find(g=>g.path.final_exit!=='direct')?.count!==2||summary.unconfirmed!==1||summary.failed!==1||summary.unknown!==2||!doc.querySelector('[data-service=demo-suspended]')||doc.querySelector('.paths-layout .card')||doc.querySelectorAll('[data-paths-device]').length!==4||!doc.querySelector('[data-routing-total]').textContent.includes('4 devices')||!doc.querySelector('[data-routing-total]').textContent.includes('5 access records'))return false;
+	 if(summary.groups.length!==2||summary.groups.find(g=>g.path.final_exit!=='direct')?.count!==2||summary.unconfirmed!==1||summary.failed!==1||summary.unknown!==2||!doc.querySelector('[data-service=demo-suspended]')||doc.querySelectorAll('[data-paths-device]').length!==4||!doc.querySelector('[data-routing-total]').textContent.includes('4 devices')||!doc.querySelector('[data-routing-total]').textContent.includes('5 access records'))return false;
 	 const wgGroup=summary.groups.find(g=>g.count===2),filtered=new DOMParser().parseFromString(routingHTML(snapshot,new URLSearchParams({service:service.id,filter:'route:'+wgGroup.key}),now),'text/html');if(filtered.querySelectorAll('[data-paths-device]').length!==2)return false;
 	 paths[1].first_transport='hysteria2';if(routingSummary(routingContext(snapshot,params,now).records,snapshot).groups.length!==3)return false;
 	 paths[1].first_transport='wireguard';paths[1].chain=['demo-exit'];paths[1].link_ids=[];if(routingSummary(routingContext(snapshot,params,now).records,snapshot).groups.length!==3)return false;
 	 const detail=new DOMParser().parseFromString(routingHTML(snapshot,new URLSearchParams({service:service.id,device:devices[0].id,q:'device',filter:'failed'}),now),'text/html');
-	 if(detail.querySelector('.paths-detail.card')||detail.querySelectorAll('.paths-identity>div').length!==4||!detail.querySelector('.paths-hop .icon')||!detail.querySelector('[data-end-to-end]').textContent.includes('0 ms')||!detail.querySelector('[data-paths-runtime]').textContent.includes('unknown')||new URL(detail.querySelector('[data-paths-back]').href,'https://example.test').searchParams.get('filter')!=='failed')return false;
+	 if(detail.querySelectorAll('.paths-identity>div').length!==4||!detail.querySelector('.paths-hop .icon')||!detail.querySelector('[data-end-to-end]').textContent.includes('0 ms')||!detail.querySelector('[data-paths-runtime]').textContent.includes('unknown')||new URL(detail.querySelector('[data-paths-back]').href,'https://example.test').searchParams.get('filter')!=='failed')return false;
 	 window.demoRoutingScope=structuredClone(snapshot);devices[0].evidence.current_until=now-1;const expired=routingContext(snapshot,new URLSearchParams({service:service.id,device:devices[0].id}),now).detail;if(expired.current||expired.targetState!=='unknown')return false;
 	 return true;
 	})()`) != true {
@@ -48,5 +49,20 @@ func TestWebChromeLivePathsPrototypeScopeAndLayout(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{const box=document.querySelector('.paths-route').getBoundingClientRect(),nodes=[...document.querySelectorAll('.paths-node-icon')].map(n=>n.getBoundingClientRect());return document.querySelectorAll('.paths-route [style]').length===0&&[...document.querySelectorAll('.paths-edge-metrics')].every(n=>{const r=n.getBoundingClientRect();return r.top>=box.top&&r.bottom<=Math.min(...nodes.map(v=>v.top))})&&document.documentElement.scrollWidth<=innerWidth})()`) != true {
 		t.Fatal("long Link metrics were clipped or overlapped the route nodes")
 	}
-
+	for _, width := range []int{1440, 390} {
+		accessConfigurationChromeViewport(t, debug, width)
+		for _, detail := range []bool{false, true} {
+			if chromeDo(t, debug, `(async()=>{const {routingHTML}=await import('/assets/routing.js'),params=new URLSearchParams({service:'demo-media'});if(`+map[bool]string{true: "true", false: "false"}[detail]+`)params.set('device','demo-a');document.querySelector('#app').innerHTML=routingHTML(window.demoRoutingScope,params,Date.now());await document.fonts.ready;return true})()`) != true {
+				t.Fatal("Live paths panel could not render", width, detail)
+			}
+			name := "live-paths"
+			if detail {
+				name += "-detail"
+			}
+			accessConfigurationChromeScreenshot(t, debug, fmt.Sprintf("%s-%d", name, width))
+			if chromeDo(t, debug, `(()=>{const container=document.querySelector('.paths-detail,.paths-devices'),fields=[...container.querySelectorAll('input,select,button')].filter(field=>field.getClientRects().length),tables=[...container.querySelectorAll('.table-wrap')];return document.documentElement.scrollWidth<=innerWidth+1&&fields.every(field=>{const r=field.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1})&&tables.every(w=>w.scrollWidth<=w.clientWidth+1||['auto','scroll'].includes(getComputedStyle(w).overflowX))})()`) != true {
+				t.Fatal("Live paths content exceeded its panel viewport", width, detail)
+			}
+		}
+	}
 }

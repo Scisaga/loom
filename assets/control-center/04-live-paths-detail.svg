@@ -108,10 +108,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -127,6 +127,7 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
@@ -143,9 +144,9 @@
   </a>
   </g>
   <g data-ui="path-context" data-scene="current" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">android-phone</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -159,19 +160,19 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
   <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
-  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
   <a data-ui="navigation" data-route="/services/demo-video?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </a>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">Current route</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Selected by android-phone · 8s ago</text>
-  <circle cx="29" cy="388" r="4" fill="#2AA875" stroke="none"/>
-  <text class="ui body green" x="43" y="393" text-anchor="start">Target succeeded · HTTPS 200 · media.example/health</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">Current route</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Selected by android-phone · 8s ago</text>
+  <circle cx="53" cy="388" r="4" fill="#2AA875" stroke="none"/>
+  <text class="ui body green" x="67" y="393" text-anchor="start">Target succeeded · HTTPS 200 · media.example/health</text>
   <a data-ui="navigation" data-route="/topology?link=demo-link-wg&amp;device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="03-topology.svg">
-  <text class="ui small green" x="1562" y="393" text-anchor="end">Open topology →</text>
+  <text class="ui small green" x="1538" y="393" text-anchor="end">Open topology →</text>
   </a>
   <g data-ui="current-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
   <g data-ui="path-segment">
@@ -218,55 +219,55 @@
   </g>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
-  <text class="ui metric" x="24" y="625" text-anchor="start">126 ms</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui metric" x="48" y="625" text-anchor="start">126 ms</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">Measured on android-phone · 8s ago</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-video&amp;policy=demo-policy">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="current">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-current-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-current-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-current-tab-history-default" class="path-tab path-tab-history" href="#paths-current-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-all">
   <a id="paths-current-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-current-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-current-tab-history-media-all" class="path-tab path-tab-history" href="#paths-current-history-from-media-all" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-wg">
   <a id="paths-current-tab-candidates-media-wg" class="path-tab path-tab-candidates" href="#paths-current-candidates-from-media-wg" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-current-tab-history-media-wg" class="path-tab path-tab-history" href="#paths-current-history-from-media-wg" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">4 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-current-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
@@ -466,10 +467,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -485,6 +486,7 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
@@ -506,9 +508,9 @@
   </a>
   </g>
   <g data-ui="path-context" data-scene="failed" data-device="demo-laptop" data-service="demo-video" data-policy="demo-policy">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">workstation</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">workstation</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -522,19 +524,19 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
   <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
-  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
   <a data-ui="navigation" data-route="/services/demo-video?device=demo-laptop&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </a>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">Current route · target failed</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Selected by workstation · 10s ago</text>
-  <circle cx="29" cy="388" r="4" fill="#C87171" stroke="none"/>
-  <text class="ui body red" x="43" y="393" text-anchor="start">Target failed · HTTPS 503 · media.example/health</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">Current route · target failed</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Selected by workstation · 10s ago</text>
+  <circle cx="53" cy="388" r="4" fill="#C87171" stroke="none"/>
+  <text class="ui body red" x="67" y="393" text-anchor="start">Target failed · HTTPS 503 · media.example/health</text>
   <g data-ui="navigation" data-route="/topology?link=demo-link-wg&amp;device=demo-laptop&amp;service=demo-video&amp;policy=demo-policy">
-  <text class="ui small green" x="1562" y="393" text-anchor="end">Open topology →</text>
+  <text class="ui small green" x="1538" y="393" text-anchor="end">Open topology →</text>
   </g>
   <g data-ui="current-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
   <g data-ui="path-segment">
@@ -581,67 +583,67 @@
   </g>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
-  <text class="ui body red" x="24" y="625" text-anchor="start">HTTPS 503</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body red" x="48" y="625" text-anchor="start">HTTPS 503</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">Measured on workstation · 10s ago</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <a data-ui="navigation" data-route="/devices/demo-laptop?section=overview&amp;service=demo-video&amp;policy=demo-policy" href="02-nodes-detail.svg#detail-ssh-joined-overview">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="failed">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-failed-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-failed-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-failed-tab-history-default" class="path-tab path-tab-history" href="#paths-failed-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-all">
   <a id="paths-failed-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-failed-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-failed-tab-history-media-all" class="path-tab path-tab-history" href="#paths-failed-history-from-media-all" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-failed">
   <a id="paths-failed-tab-candidates-media-failed" class="path-tab path-tab-candidates" href="#paths-failed-candidates-from-media-failed" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-failed-tab-history-media-failed" class="path-tab path-tab-history" href="#paths-failed-history-from-media-failed" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-wg">
   <a id="paths-failed-tab-candidates-media-wg" class="path-tab path-tab-candidates" href="#paths-failed-candidates-from-media-wg" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-failed-tab-history-media-wg" class="path-tab path-tab-history" href="#paths-failed-history-from-media-wg" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">4 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-failed-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
@@ -711,10 +713,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -730,6 +732,7 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
@@ -751,9 +754,9 @@
   </a>
   </g>
   <g data-ui="path-context" data-scene="direct" data-device="demo-access-g" data-service="demo-video" data-policy="demo-direct-policy">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">new-phone</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">new-phone</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -767,17 +770,17 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
   <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
   <g data-ui="path-policy-summary" data-policy="demo-direct-policy">
-  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct only · no entry, transit or internet exit nodes</text>
   <a data-ui="navigation" data-route="/services/demo-video?device=demo-access-g&amp;service=demo-video&amp;policy=demo-direct-policy" href="05-services.svg">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </a>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">Current route · target result unknown</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Selected by new-phone · 15s ago</text>
-  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
-  <text class="ui body amber" x="43" y="393" text-anchor="start">Direct selection confirmed · no business result for media.example/health</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">Current route · target result unknown</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Selected by new-phone · 15s ago</text>
+  <circle cx="53" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="67" y="393" text-anchor="start">Direct selection confirmed · no business result for media.example/health</text>
   <g data-ui="current-service-route" data-candidate="demo-media-direct" data-policy="demo-direct-policy">
   <g data-ui="path-segment"><path d="M163 475H1351" class="selected"/>
   <text class="ui tiny blue" x="758" y="435" text-anchor="middle">Direct · no managed nodes</text>
@@ -793,67 +796,67 @@
   <text class="ui tiny muted" x="1382" y="543" text-anchor="middle">HTTPS target</text>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
-  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body amber" x="48" y="625" text-anchor="start">Unknown</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">No target observation received</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <a data-ui="navigation" data-route="/devices/demo-access-g?section=overview&amp;service=demo-video&amp;policy=demo-direct-policy" href="02-nodes-detail.svg#detail-qr-joined-overview">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="direct">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-direct-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-direct-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-direct-tab-history-default" class="path-tab path-tab-history" href="#paths-direct-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-all">
   <a id="paths-direct-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-direct-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-direct-tab-history-media-all" class="path-tab path-tab-history" href="#paths-direct-history-from-media-all" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-unknown">
   <a id="paths-direct-tab-candidates-media-unknown" class="path-tab path-tab-candidates" href="#paths-direct-candidates-from-media-unknown" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-direct-tab-history-media-unknown" class="path-tab path-tab-history" href="#paths-direct-history-from-media-unknown" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-direct">
   <a id="paths-direct-tab-candidates-media-direct" class="path-tab path-tab-candidates" href="#paths-direct-candidates-from-media-direct" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-direct-tab-history-media-direct" class="path-tab path-tab-history" href="#paths-direct-history-from-media-direct" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">1 authorized candidate · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">1 authorized candidate · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-direct-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
@@ -896,10 +899,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -915,6 +918,7 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
@@ -936,9 +940,9 @@
   </a>
   </g>
   <g data-ui="path-context" data-scene="pending" data-device="demo-forward-c" data-service="demo-video" data-policy="demo-direct-policy">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">relay-west</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">relay-west</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -952,18 +956,18 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="demo-direct-policy">
-  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct only · no entry, transit or internet exit nodes</text>
   <a data-ui="navigation" data-route="/services/demo-video?device=demo-forward-c&amp;service=demo-video&amp;policy=demo-direct-policy" href="05-services.svg">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </a>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">Waiting for device confirmation</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Policy assignment saved on control-a</text>
-  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
-  <text class="ui body amber" x="43" y="393" text-anchor="start">Policy updated to direct-access · current route and target result unknown</text>
-  <text class="ui small muted" x="1562" y="393" text-anchor="end">Previous route · media-access · not current</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">Waiting for device confirmation</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Policy assignment saved on control-a</text>
+  <circle cx="53" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="67" y="393" text-anchor="start">Policy updated to direct-access · current route and target result unknown</text>
+  <text class="ui small muted" x="1538" y="393" text-anchor="end">Previous route · media-access · not current</text>
   <g data-ui="historical-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
   <g data-ui="path-segment">
   <title>Previous route only; no current measurement</title>
@@ -1009,67 +1013,67 @@
   </g>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
-  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body amber" x="48" y="625" text-anchor="start">Unknown</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <a data-ui="navigation" data-route="/devices/demo-forward-c?section=overview&amp;service=demo-video&amp;policy=demo-direct-policy" href="02-nodes-detail.svg">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="pending">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-pending-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-pending-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-pending-tab-history-default" class="path-tab path-tab-history" href="#paths-pending-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-all">
   <a id="paths-pending-tab-candidates-media-all" class="path-tab path-tab-candidates" href="#paths-pending-candidates-from-media-all" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-pending-tab-history-media-all" class="path-tab path-tab-history" href="#paths-pending-history-from-media-all" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-unknown">
   <a id="paths-pending-tab-candidates-media-unknown" class="path-tab path-tab-candidates" href="#paths-pending-candidates-from-media-unknown" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-pending-tab-history-media-unknown" class="path-tab path-tab-history" href="#paths-pending-history-from-media-unknown" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-media-unconfirmed">
   <a id="paths-pending-tab-candidates-media-unconfirmed" class="path-tab path-tab-candidates" href="#paths-pending-candidates-from-media-unconfirmed" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-pending-tab-history-media-unconfirmed" class="path-tab path-tab-history" href="#paths-pending-history-from-media-unconfirmed" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">1 authorized candidate · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">1 authorized candidate · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-pending-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
@@ -1110,10 +1114,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -1129,15 +1133,16 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
   </g>
   <g data-ui="path-context" data-scene="expired" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">android-phone</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -1151,18 +1156,18 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
-  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
   <a data-ui="navigation" data-route="/services/demo-video?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </a>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">Current route unknown</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Last selection report · 12m ago</text>
-  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
-  <text class="ui body amber" x="43" y="393" text-anchor="start">Device selection report expired · no fresh target result</text>
-  <text class="ui small muted" x="1562" y="393" text-anchor="end">Previous route · media-access · not current</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">Current route unknown</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Last selection report · 12m ago</text>
+  <circle cx="53" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="67" y="393" text-anchor="start">Device selection report expired · no fresh target result</text>
+  <text class="ui small muted" x="1538" y="393" text-anchor="end">Previous route · media-access · not current</text>
   <g data-ui="historical-service-route" data-candidate="demo-media-relay-wg" data-policy="demo-policy">
   <g data-ui="path-segment">
   <title>Previous route only; no current measurement</title>
@@ -1208,31 +1213,31 @@
   </g>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">END-TO-END HTTPS</text>
-  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">END-TO-END HTTPS</text>
+  <text class="ui body amber" x="48" y="625" text-anchor="start">Unknown</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-video&amp;policy=demo-policy">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="expired">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-expired-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-expired-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-expired-tab-history-default" class="path-tab path-tab-history" href="#paths-expired-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">4 authorized candidates · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">4 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-expired-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
@@ -1417,10 +1422,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -1436,15 +1441,16 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-video" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-video&amp;filter=all" href="04-live-paths.svg">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← media devices</text>
   </a>
   </g>
   <g data-ui="path-context" data-scene="denied" data-device="demo-phone-f" data-service="demo-video" data-policy="demo-policy">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">android-phone</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -1458,17 +1464,17 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
-  <text class="ui body red" x="24" y="294" text-anchor="start">Access denied</text>
+  <text class="ui body red" x="48" y="294" text-anchor="start">Access denied</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">All paths and target probes are denied</text>
   <a data-ui="navigation" data-route="/services/demo-video?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="05-services.svg">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </a>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">Access denied by policy</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Device application remains unknown</text>
-  <circle cx="29" cy="388" r="4" fill="#C87171" stroke="none"/>
-  <text class="ui body red" x="43" y="393" text-anchor="start">media-access now denies this service · no authorized routes or target probes</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">Access denied by policy</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Device application remains unknown</text>
+  <circle cx="53" cy="388" r="4" fill="#C87171" stroke="none"/>
+  <text class="ui body red" x="67" y="393" text-anchor="start">media-access now denies this service · no authorized routes or target probes</text>
   <use href="#icon-lock" x="47" y="456" width="30" height="30" class="nav-icon"/>
   <text class="ui section" x="102" y="473" text-anchor="start">Access is blocked by the current policy.</text>
   <text class="ui small muted" x="102" y="504" text-anchor="start">Earlier successful checks do not establish current permission. Direct is not a fallback.</text>
@@ -1476,31 +1482,31 @@
   <text class="ui small green" x="102" y="536" text-anchor="start">Review media-access →</text>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">TARGET RESULT</text>
-  <text class="ui body amber" x="24" y="625" text-anchor="start">Not authorized</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">TARGET RESULT</text>
+  <text class="ui body amber" x="48" y="625" text-anchor="start">Not authorized</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">media.example/health</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-video&amp;policy=demo-policy">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="denied">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-denied-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-denied-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-denied-tab-history-default" class="path-tab path-tab-history" href="#paths-denied-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">0 authorized candidates · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">0 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-denied-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
@@ -1530,10 +1536,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -1549,15 +1555,16 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-private" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-private&amp;filter=all" href="04-live-paths.svg#paths-service-private">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← private-app devices</text>
   </a>
   </g>
   <g data-ui="path-context" data-scene="unassigned" data-device="demo-phone-f" data-service="demo-private" data-policy="">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">android-phone</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">android-phone</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -1569,17 +1576,17 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="">
-  <text class="ui body red" x="24" y="294" text-anchor="start">Not authorized</text>
+  <text class="ui body red" x="48" y="294" text-anchor="start">Not authorized</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Assign an access policy on this device to use private-app</text>
   <g data-ui="navigation" data-route="/services/demo-private?device=demo-phone-f&amp;service=demo-private&amp;policy=">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </g>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">No access policy for this service</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Requested service is not authorized</text>
-  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
-  <text class="ui body amber" x="43" y="393" text-anchor="start">private-app is not assigned to android-phone</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">No access policy for this service</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Requested service is not authorized</text>
+  <circle cx="53" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="67" y="393" text-anchor="start">private-app is not assigned to android-phone</text>
   <use href="#icon-lock" x="47" y="456" width="30" height="30" class="nav-icon"/>
   <text class="ui section" x="102" y="473" text-anchor="start">Choose a policy on the device to grant access.</text>
   <text class="ui small muted" x="102" y="504" text-anchor="start">Earlier successful checks do not establish current permission. Direct is not a fallback.</text>
@@ -1587,31 +1594,31 @@
   <text class="ui small green" x="102" y="536" text-anchor="start">Edit this device's policies →</text>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">TARGET RESULT</text>
-  <text class="ui body amber" x="24" y="625" text-anchor="start">Not authorized</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">TARGET RESULT</text>
+  <text class="ui body amber" x="48" y="625" text-anchor="start">Not authorized</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">private.example</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">Earlier samples cannot confirm the current result</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <g data-ui="navigation" data-route="/devices/demo-phone-f?section=overview&amp;service=demo-private&amp;policy=">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </g>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="unassigned">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-unassigned-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-unassigned-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-unassigned-tab-history-default" class="path-tab path-tab-history" href="#paths-unassigned-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">0 authorized candidates · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">0 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-unassigned-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">
@@ -1641,10 +1648,10 @@
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-active"/>
   <text class="ui nav" x="573" y="34" text-anchor="start">Live paths</text>
   <line x1="552" y1="57" x2="640" y2="57" stroke="#2AA875" stroke-width="2"/>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -1660,6 +1667,7 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK / PATHS</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Path detail</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Inspect this device's route, policy and observations for a specific target.</text>
+  <rect data-ui="workspace-surface" data-surface="content" x="24" y="184" width="1538" height="1016" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <g class="path-origin-navigation path-origin-default" data-ui="path-return" data-service="demo-office" data-filter="all">
   <a data-ui="navigation" data-route="/routing?service=demo-office&amp;filter=all" href="04-live-paths.svg#paths-service-office">
   <text class="ui small green" x="1562" y="97" text-anchor="end">← office-network devices</text>
@@ -1681,9 +1689,9 @@
   </a>
   </g>
   <g data-ui="path-context" data-scene="lan" data-device="demo-laptop" data-service="demo-office" data-policy="demo-lan-policy">
-  <text class="ui eyebrow muted" x="24" y="205" text-anchor="start">DEVICE</text>
+  <text class="ui eyebrow muted" x="48" y="205" text-anchor="start">DEVICE</text>
   <g data-ui="path-device-context">
-  <text class="ui section" x="24" y="244" text-anchor="start">workstation</text>
+  <text class="ui section" x="48" y="244" text-anchor="start">workstation</text>
   </g>
   <text class="ui eyebrow muted" x="358" y="205" text-anchor="start">SERVICE</text>
   <g data-ui="path-service-context">
@@ -1697,19 +1705,19 @@
   <text class="ui section" x="1100" y="244" text-anchor="start">To fixed gateway</text>
   <text class="ui small muted" x="1280" y="244" text-anchor="start">Within allowed routes</text>
   <g data-ui="path-policy-summary" data-policy="demo-lan-policy">
-  <text class="ui body green" x="24" y="294" text-anchor="start">Access allowed</text>
+  <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Fixed gateway: relay-west · entry: unrestricted · transit: unrestricted</text>
   <a data-ui="navigation" data-route="/services/demo-office?device=demo-laptop&amp;service=demo-office&amp;policy=demo-lan-policy" href="05-services-lan.svg">
-  <text class="ui small green" x="1562" y="294" text-anchor="end">Service details →</text>
+  <text class="ui small green" x="1538" y="294" text-anchor="end">Service details →</text>
   </a>
   </g>
   <line class="rule" x1="24" y1="320" x2="1562" y2="320"/>
-  <text class="ui section" x="24" y="355" text-anchor="start">Current route unknown</text>
-  <text class="ui small muted" x="1562" y="355" text-anchor="end">Specific target · 198.51.100.42</text>
-  <circle cx="29" cy="388" r="4" fill="#D2A45B" stroke="none"/>
-  <text class="ui body amber" x="43" y="393" text-anchor="start">No device selection report · dashed path is an allowed candidate preview</text>
+  <text class="ui section" x="48" y="355" text-anchor="start">Current route unknown</text>
+  <text class="ui small muted" x="1538" y="355" text-anchor="end">Specific target · 198.51.100.42</text>
+  <circle cx="53" cy="388" r="4" fill="#D2A45B" stroke="none"/>
+  <text class="ui body amber" x="67" y="393" text-anchor="start">No device selection report · dashed path is an allowed candidate preview</text>
   <g data-ui="navigation" data-route="/topology?link=demo-link-a-c&amp;device=demo-laptop&amp;service=demo-office&amp;policy=demo-lan-policy">
-  <text class="ui small green" x="1562" y="393" text-anchor="end">Open topology →</text>
+  <text class="ui small green" x="1538" y="393" text-anchor="end">Open topology →</text>
   </g>
   <g data-ui="allowed-route-preview" data-candidate="demo-office-relay-wg" data-policy="demo-lan-policy">
   <g data-ui="path-segment">
@@ -1756,67 +1764,67 @@
   </g>
   </g>
   <line class="rule" x1="24" y1="567" x2="1562" y2="567"/>
-  <text class="ui eyebrow muted" x="24" y="594" text-anchor="start">TARGET RESULT</text>
-  <text class="ui body amber" x="24" y="625" text-anchor="start">Unknown</text>
+  <text class="ui eyebrow muted" x="48" y="594" text-anchor="start">TARGET RESULT</text>
+  <text class="ui body amber" x="48" y="625" text-anchor="start">Unknown</text>
   <text class="ui body mono" x="218" y="594" text-anchor="start">198.51.100.42</text>
   <text class="ui small muted" x="218" y="622" text-anchor="start">No applicable HTTPS target or actual business sample</text>
   <text class="ui eyebrow muted" x="960" y="594" text-anchor="start">DEVICE RUNTIME</text>
   <text class="ui body amber" x="960" y="625" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1057" y="625" text-anchor="start">No fresh runtime report</text>
   <a data-ui="navigation" data-route="/devices/demo-laptop?section=overview&amp;service=demo-office&amp;policy=demo-lan-policy" href="02-nodes-detail.svg#detail-ssh-joined-overview">
-  <text class="ui small green" x="1562" y="625" text-anchor="end">View device →</text>
+  <text class="ui small green" x="1538" y="625" text-anchor="end">View device →</text>
   </a>
   <line class="rule" x1="24" y1="650" x2="1562" y2="650"/>
   <g data-ui="path-tabs" data-scene="lan">
   <g class="path-origin-navigation path-origin-default">
   <a id="paths-lan-tab-candidates-default" class="path-tab path-tab-candidates" href="#paths-lan-candidates" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-lan-tab-history-default" class="path-tab path-tab-history" href="#paths-lan-history" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-office-all">
   <a id="paths-lan-tab-candidates-office-all" class="path-tab path-tab-candidates" href="#paths-lan-candidates-from-office-all" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-lan-tab-history-office-all" class="path-tab path-tab-history" href="#paths-lan-history-from-office-all" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-office-unknown">
   <a id="paths-lan-tab-candidates-office-unknown" class="path-tab path-tab-candidates" href="#paths-lan-candidates-from-office-unknown" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-lan-tab-history-office-unknown" class="path-tab path-tab-history" href="#paths-lan-history-from-office-unknown" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
   <g class="path-origin-navigation path-origin-office-unconfirmed">
   <a id="paths-lan-tab-candidates-office-unconfirmed" class="path-tab path-tab-candidates" href="#paths-lan-candidates-from-office-unconfirmed" data-ui="path-tab" data-tab="candidates">
-  <rect x="24" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="28" y="691" text-anchor="start">Candidate routes</text>
-  <line class="path-tab-mark" x1="24" y1="706" x2="166" y2="706" stroke-width="2"/>
+  <rect x="48" y="667" width="142" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="52" y="691" text-anchor="start">Candidate routes</text>
+  <line class="path-tab-mark" x1="48" y1="706" x2="190" y2="706" stroke-width="2"/>
   </a>
   <a id="paths-lan-tab-history-office-unconfirmed" class="path-tab path-tab-history" href="#paths-lan-history-from-office-unconfirmed" data-ui="path-tab" data-tab="history">
-  <rect x="201" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body path-tab-label" x="205" y="691" text-anchor="start">History</text>
-  <line class="path-tab-mark" x1="201" y1="706" x2="270" y2="706" stroke-width="2"/>
+  <rect x="225" y="667" width="69" height="38" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body path-tab-label" x="229" y="691" text-anchor="start">History</text>
+  <line class="path-tab-mark" x1="225" y1="706" x2="294" y2="706" stroke-width="2"/>
   </a>
   </g>
-  <text class="ui small muted" x="1562" y="691" text-anchor="end">2 authorized candidates · read only</text>
+  <text class="ui small muted" x="1538" y="691" text-anchor="end">2 authorized candidates · read only</text>
   </g>
   <line class="rule" x1="24" y1="708" x2="1562" y2="708"/>
   <g id="paths-lan-panel-candidates" class="path-panel path-panel-candidates" data-ui="path-panel" data-tab="candidates">

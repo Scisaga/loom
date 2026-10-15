@@ -411,11 +411,16 @@ main {max-width:1586px;padding:28px 24px 24px}
 }
 
 
-.paths-heading {position:relative;margin-bottom:28px}
+/* Catalogs and their workspace share a restrained surface; rows remain a list. */
+.paths-services,.intent-catalog,.administration-sidebar {min-width:0;padding:20px;border:1px solid var(--line);border-radius:10px;background:#f6f8f6}
+.paths-devices,.paths-detail,.intent-editor,.administration-content {min-width:0;padding:24px;border:1px solid var(--line);border-radius:10px;background:white}
+@media(max-width:760px) {
+ .paths-services,.intent-catalog,.administration-sidebar,.paths-devices,.paths-detail,.intent-editor,.administration-content {padding:16px}
+}
+
+.paths-heading {position:relative;margin-bottom:24px}
 .paths-heading [data-routing-total] {position:absolute;right:0;top:0;font-size:12px}
-.paths-layout {display:grid;grid-template-columns:310px minmax(0,1fr);gap:28px;margin-top:28px;align-items:start}
-.paths-services,.paths-devices,.paths-detail {min-width:0}
-.paths-services {padding-right:24px;border-right:1px solid var(--line);min-height:690px}
+.paths-layout {display:grid;grid-template-columns:310px minmax(0,1fr);gap:24px;margin-top:24px;align-items:start}
 .paths-services .sectionhead {margin-bottom:20px}
 .paths-search {margin:16px 0 20px;max-width:300px}
 .paths-search label {display:flex;align-items:center;position:relative;gap:8px;color:var(--dim)}
@@ -423,17 +428,18 @@ main {max-width:1586px;padding:28px 24px 24px}
 .paths-search input {min-width:0;width:100%;padding:9px 12px 9px 34px;background:#f7f9f8;border:1px solid var(--line);font-size:12px;height:39px}
 .paths-search-submit {position:absolute;width:1px;height:1px;padding:0;border:0;overflow:hidden;clip-path:inset(50%)}
 .paths-search-submit:focus-visible {position:static;width:auto;height:auto;padding:8px;clip-path:none}
-.paths-service {display:flex;flex-direction:column;gap:7px;padding:16px 20px;border-bottom:1px solid var(--line);color:var(--fg)!important;overflow-wrap:anywhere}
+.paths-service {display:flex;flex-direction:column;gap:7px;padding:14px 12px;border-left:3px solid transparent;border-bottom:1px solid var(--line);color:var(--fg)!important;overflow-wrap:anywhere}
 .paths-service-title {display:flex;align-items:center;justify-content:space-between;gap:12px}
 .paths-service-title b {font-weight:500}
 .paths-service small {font-size:12px;color:var(--dim)}
 .paths-service small.bad {color:var(--bad)}
 .paths-service small.unknown,.paths-detail .unknown {color:var(--warn)}
-.paths-service.selected {background:#eaf3ee;border-left:3px solid var(--ok);padding-left:17px}
-.paths-device-heading {padding-bottom:9px;border-bottom:1px solid var(--line)}
+.paths-service.selected {background:#eaf3ee;border-left-color:var(--ok)}
+.paths-service:last-child {border-bottom:0}
+.paths-device-heading {padding-bottom:20px;border-bottom:1px solid var(--line)}
 .paths-device-heading h2 {font-size:23px}
 .paths-device-heading p {margin:8px 0 0}
-.paths-device-search {display:flex;align-items:center;justify-content:space-between;gap:24px}
+.paths-device-search {display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .paths-device-search .paths-search {width:300px;margin-bottom:12px}
 .paths-filters {display:flex;align-items:stretch;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:0}
 .paths-filters a {display:flex;align-items:center;padding:14px 8px;max-width:100%;overflow-wrap:anywhere;color:var(--dim);font-size:12px;border-bottom:2px solid transparent}
@@ -452,20 +458,21 @@ main {max-width:1586px;padding:28px 24px 24px}
 .paths-result-head .unknown {color:var(--warn)}
 .paths-detail {position:relative}
 .paths-back {position:absolute;right:0;top:-112px;color:var(--ok);font-size:12px}
-.paths-identity {display:grid;grid-template-columns:1fr 1fr 1.2fr 1.5fr;gap:32px;padding:0 0 24px}
+.paths-identity {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.5fr);gap:24px;padding:0 0 24px}
 .paths-identity>div {min-width:0;overflow-wrap:anywhere}
 .paths-identity .label,.paths-readbacks .label {font-weight:700;letter-spacing:.1em;margin-bottom:16px}
 .paths-identity b {font-size:18px}
 .paths-identity small {font-size:12px;color:var(--dim);margin-left:14px}
 .paths-identity>div>a {display:inline-block;font-size:13px;color:var(--ok);margin-top:5px}
 .paths-identity b a {color:var(--fg)}
-.paths-policy {display:flex;align-items:baseline;gap:32px;border-bottom:1px solid var(--line);padding:6px 0 20px;margin:0}
+.paths-policy {display:flex;align-items:baseline;gap:24px;border-bottom:1px solid var(--line);padding:0 0 24px;margin:0}
 .paths-policy>span:nth-child(2) {font-size:12px;color:var(--dim);flex:1;overflow-wrap:anywhere}
 .paths-policy>a {white-space:nowrap;font-size:12px;color:var(--ok)}
-.paths-current {padding:16px 0 0}
+.paths-current {padding:24px 0 0}
 .paths-current .sectionhead h2 {font-size:18px}
 .paths-current .sectionhead>span {font-size:12px;max-width:65%;text-align:right}
-.paths-target-state {display:flex;align-items:baseline;gap:8px;margin-top:18px;overflow-wrap:anywhere}
+.paths-target-state {display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:18px;overflow-wrap:anywhere}
+.paths-target-state>.mono {min-width:0;overflow-wrap:anywhere}
 .paths-target-state>a {margin-left:auto;white-space:nowrap;font-size:12px;color:var(--ok)}
 .paths-route {display:grid;grid-template-rows:auto auto;grid-auto-columns:minmax(120px,1fr);align-items:start;column-gap:0;row-gap:16px;padding:28px 28px 0;overflow-x:auto;min-height:180px}
 .paths-route.nodes-2 {grid-template-columns:repeat(1,120px minmax(90px,1fr)) 120px}
@@ -516,7 +523,7 @@ main {max-width:1586px;padding:28px 24px 24px}
 .paths-sample.unavailable {background:#b74e4e;border:1px solid #b74e4e}
 .paths-hour small {color:var(--dim);font-size:10px}
 @media(max-width:1100px){.paths-layout{grid-template-columns:240px minmax(0,1fr);gap:24px}.paths-devices th,.paths-devices td{padding:16px 12px}.paths-readbacks{grid-template-columns:170px minmax(0,1fr) minmax(180px,.6fr)}.paths-readbacks>a{grid-column:3}.paths-identity{gap:20px}.paths-heading [data-routing-total]{position:static;display:block;margin-top:10px}.paths-policy{flex-wrap:wrap;gap:12px}}
-@media(max-width:760px){.paths-layout{grid-template-columns:1fr}.paths-services{border-right:0;padding-right:0;min-height:0}.paths-identity{grid-template-columns:1fr 1fr}.paths-back{position:static;text-align:right;margin-bottom:18px}.paths-readbacks{grid-template-columns:1fr 1fr}.paths-readbacks>a{grid-column:auto}.paths-history{gap:3px}.paths-history-select .button{overflow-wrap:anywhere;max-width:100%}.paths-route{padding-left:0;padding-right:0}.paths-tabs>span{display:none}}
+@media(max-width:760px){.paths-layout{grid-template-columns:1fr;gap:16px}.paths-identity{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 16px}.paths-back{position:static;text-align:right;margin-bottom:18px}.paths-readbacks{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 16px}.paths-readbacks>div{min-width:0;overflow-wrap:anywhere}.paths-readbacks>a{grid-column:auto}.paths-current .sectionhead{flex-wrap:wrap}.paths-current .sectionhead>span{max-width:100%;text-align:left;margin-left:0}.paths-device-heading .sectionhead{flex-wrap:wrap}.paths-device-heading .sectionhead>span{margin-left:0}.paths-device-search .paths-search{width:100%;max-width:100%;margin-bottom:0}.paths-device-search>span{margin-bottom:16px}.paths-devices table,.paths-tab-content table{min-width:640px}.paths-history{gap:3px}.paths-history-select .button{overflow-wrap:anywhere;max-width:100%}.paths-route{padding-left:0;padding-right:0}.paths-tabs>span{display:none}}
 
 /* Each cell is one reported sample, never an hour of inferred uptime. */
 .runtime-hours,.link-hours{display:flex;gap:3px;min-width:180px;max-width:280px;margin:7px 0 4px}
@@ -553,26 +560,25 @@ main {max-width:1586px;padding:28px 24px 24px}
 #configuration-state textarea{width:100%;box-sizing:border-box;font:inherit}
 #configuration-state form{margin-top:16px}
 
-.administration-layout {display:grid;grid-template-columns:272px minmax(0,1fr);gap:32px;margin-top:48px;align-items:start}
-.administration-sidebar {border-right:1px solid var(--line);padding-right:20px;min-height:720px}
-.administration-sidebar nav {display:grid;gap:10px;overflow:visible}
-.administration-sidebar nav a {display:block;padding:12px 16px;border:0;border-left:3px solid transparent;border-radius:4px;white-space:normal;color:var(--dim)}
+.administration-layout {display:grid;grid-template-columns:272px minmax(0,1fr);gap:24px;margin-top:24px;align-items:start}
+.administration-sidebar nav {display:grid;gap:10px;height:auto;overflow:visible}
+.administration-sidebar nav a {display:block;padding:12px 12px;border:0;border-left:3px solid transparent;border-radius:4px;white-space:normal;overflow-wrap:anywhere;color:var(--dim)}
 .administration-sidebar nav a span {display:block;font-size:14px}
 .administration-sidebar nav a small {display:block;font-size:12px;margin-top:3px}
 .administration-sidebar nav a[aria-current=page] {background:#edf5f0;border-left-color:var(--ok);font-weight:400;color:var(--fg)}
-.administration-connection {border-top:1px solid var(--line);padding:20px 16px;margin-top:36px;font-size:12px;line-height:1.8}
+.administration-connection {border-top:1px solid var(--line);padding:20px 12px 0;margin-top:20px;font-size:12px;line-height:1.8;overflow-wrap:anywhere}
 .administration-connection .label {font-weight:700;letter-spacing:.1em;font-size:11px}
 .administration-connection p {margin:8px 0 2px}
 .administration-connection p:last-child {margin-top:22px;color:var(--dim)}
-.administration-content {min-width:0}
-.administration-content>.card {border:0;background:transparent;padding:0;margin:0 0 32px;border-radius:0;box-shadow:none}
+.administration-content>.card {border:0;background:transparent;padding:0;margin:0;border-radius:0;box-shadow:none}
+.administration-content>section+section,.administration-content>section+section.card {border-top:1px solid var(--line);padding-top:24px;margin-top:24px}
 .administration-content h2 {font-size:23px;margin-bottom:7px}
 .administration-content h3 {font-size:18px;margin:20px 0 8px}
 .administration-content p {font-size:13px;line-height:1.7}
 .administration-section-head {display:flex;align-items:start;justify-content:space-between;gap:20px;margin-bottom:24px}
 .administration-section-head p {margin:0;font-size:13px}
 .administration-section-head .primary {background:#239b68;border-color:#239b68;min-width:180px}
-.administration-summary {display:flex;justify-content:space-between;gap:20px;margin:30px 0 20px;font-size:13px}
+.administration-summary {display:flex;justify-content:space-between;gap:20px;margin:24px 0 20px;font-size:13px}
 .administration-content table {table-layout:fixed;width:100%}
 .administration-content th {text-transform:uppercase;font-weight:650;letter-spacing:.08em;font-size:11px;padding:14px 16px;white-space:normal}
 .administration-content td {white-space:normal;overflow-wrap:anywhere;padding:18px 16px;vertical-align:middle;min-height:80px;font-size:13px}
@@ -583,28 +589,34 @@ main {max-width:1586px;padding:28px 24px 24px}
 .administration-expanded h3 {margin-top:0}
 .administration-expanded .actions {gap:18px;margin:20px 0}
 .administration-expanded .actions button {min-width:180px}
-.administration-help {margin-top:32px;padding:20px;border-top:1px solid var(--line)}
+.administration-help {margin-top:24px;padding:20px 0 0;border-top:1px solid var(--line)}
 .administration-help p {margin:8px 0}
 .administration-help a {display:inline-block;margin-top:14px}
 .administration-add {margin-top:24px}
 .administration-content form {max-width:880px}
+.administration-content input,.administration-content select,.administration-content button,.administration-content .button {max-width:100%}
 .administration-content .configuration-source {border:0;border-top:1px solid var(--line);border-radius:0;background:transparent;padding:16px 0}
 .administration-content .configuration-sources {gap:20px}
 .administration-content .configuration-value {overflow-wrap:anywhere}
 .administration-content #configuration-sources {margin-top:24px;padding-top:18px;border-top:1px solid var(--line)}
 .administration-content #configuration-sources>summary {cursor:pointer;color:var(--info)}
 @media(max-width:960px){.administration-layout{grid-template-columns:220px minmax(0,1fr);gap:24px}.administration-summary{flex-wrap:wrap}}
-@media(max-width:700px){.administration-layout{grid-template-columns:1fr;margin-top:28px}.administration-sidebar{border-right:0;min-height:0;padding:0}.administration-sidebar nav{grid-template-columns:1fr 1fr}.administration-connection{display:none}.administration-section-head{flex-wrap:wrap}}
+@media(max-width:700px){.administration-layout{grid-template-columns:1fr;gap:16px}.administration-sidebar nav{grid-template-columns:repeat(2,minmax(0,1fr))}.administration-connection{display:none}.administration-section-head{flex-wrap:wrap}.administration-content table{min-width:560px}.administration-expanded form{width:calc(100vw - 92px);max-width:100%}}
 
-.configuration-toolbar {display:flex;align-items:center;gap:16px;margin:24px 0}
-.configuration-toolbar input {width:44%;max-width:500px;background:#f8faf8}
+.configuration-toolbar {display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:24px 0}
+.configuration-toolbar input {flex:1 1 240px;width:44%;max-width:500px;background:#f8faf8}
 .administration-content #configuration-state>details {border:0;border-top:1px solid var(--line);border-radius:0;margin:0;padding:0}
 .administration-content #configuration-state>details>summary {display:grid;grid-template-columns:1.1fr 1fr 1.7fr;gap:24px;align-items:center;min-height:80px;padding:16px;list-style:none;font-weight:400}
+.administration-content #configuration-state>details>summary>* {min-width:0;overflow-wrap:anywhere}
 .administration-content #configuration-state>details>summary b {font:400 13px var(--font-mono)}
 .administration-content #configuration-state>details>summary small {display:block;margin-top:5px;color:var(--dim);font:400 12px system-ui}
 .administration-content #configuration-state>details[open] {background:#f9faf9}
 .administration-content #configuration-state>details>div,.administration-content #configuration-state>details>section,.administration-content #configuration-state>details>form {margin:0 20px 20px}
 .administration-content #configuration-state>details>button {margin:0 20px 20px}
+@media(max-width:700px) {
+ .administration-content #configuration-state>details>summary {grid-template-columns:1fr;gap:8px;padding:16px 0}
+ .administration-content #configuration-state>details>div,.administration-content #configuration-state>details>section,.administration-content #configuration-state>details>form {margin-left:0;margin-right:0}
+}
 
 .releases-heading {margin-bottom:28px}
 .release-tabs {margin:28px 0 22px}
@@ -689,28 +701,28 @@ main {max-width:1586px;padding:28px 24px 24px}
 .service-save>:last-child {margin-left:0}
 .service-save .primary {background:#248f66;border-color:#248f66;min-width:210px}
 
-/* Access configuration shares one navigation and keeps editors open to the page. */
+/* Access configuration keeps one catalog and one editor surface. */
 .intent-tabs,.service-tabs {display:flex;align-items:stretch;gap:38px;border-bottom:1px solid var(--line);margin:28px 0 26px;padding:0;overflow-x:auto;scrollbar-width:thin;font-size:12px}
 .intent-tabs a,.service-tabs a {display:flex;align-items:center;flex:0 0 auto;min-height:42px;padding:10px 0;border-bottom:2px solid transparent;color:var(--dim)}
 .intent-tabs a.selected,.service-tabs a.selected {color:var(--fg);border-bottom-color:var(--ok);font-weight:600}
 .page-services>.heading .primary {background:#248f66;border-color:#248f66;min-width:180px}
-.services-layout {display:grid;grid-template-columns:280px minmax(0,1fr);gap:40px;align-items:start}
-.intent-catalog,.service-catalog {min-width:0;border-right:1px solid var(--line);padding:0 24px 0 0;margin:0;min-height:650px}
+.services-layout {display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px;align-items:start}
+.intent-catalog,.service-catalog {margin:0}
 .service-catalog .sectionhead {margin-bottom:16px}
 .service-catalog>input[type=search],.policy-service-filter {width:100%;min-height:39px;margin:0 0 18px;background:#f7f9f8;font-size:12px}
 .policy-service-filter {margin-top:-6px}
 .policy-service-filter select {width:100%;background:#f7f9f8;font-size:12px}
-.service-item {display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:16px 15px;border-left:3px solid transparent;border-bottom:1px solid var(--line);color:var(--fg)!important;overflow-wrap:anywhere}
+.service-item {display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px 12px;border-left:3px solid transparent;border-bottom:1px solid var(--line);color:var(--fg)!important;overflow-wrap:anywhere}
 .service-item.selected {background:#edf3fc;border-left-color:var(--route)}
+.service-item:last-child {border-bottom:0}
 .service-item b {font-weight:500}
 .service-item small {font-size:12px;color:var(--dim);margin:0;text-align:left;line-height:1.5}
 .service-item small.bad {color:var(--bad)}
 .service-item small.warn {color:var(--warn)}
 .service-item .tiny {font-size:11px}
-.catalog-help {padding-top:28px;color:var(--dim);font-size:12px}
+.catalog-help {padding-top:20px;color:var(--dim);font-size:12px}
 .catalog-help p {margin:7px 0;line-height:1.7}
 .catalog-help a {display:inline-block;margin-top:14px;color:var(--ok)}
-.intent-editor,.service-editor {min-width:0;padding:0}
 .service-editor>.sectionhead {align-items:baseline;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:24px}
 .service-editor>.sectionhead>h2 {font-size:18px;overflow-wrap:anywhere}
 .service-editor>.sectionhead>span {overflow-wrap:anywhere}
@@ -778,7 +790,7 @@ main {max-width:1586px;padding:28px 24px 24px}
 .probe-filters label {width:min(592px,100%)}
 .dns-filters input,.probe-filters input {width:100%;height:40px;background:#f7f9f8;font-size:12px}
 .dns-filters>small,.probe-filters>small,.dns-filters>.dim,.probe-filters>.dim {margin-left:auto;font-size:12px}
-.network-page .dns-records,.network-page .probe-pool {padding:0;overflow:hidden}
+.network-page .dns-records,.network-page .probe-pool {padding:0;overflow:hidden;border-color:var(--line);border-radius:10px;background:white}
 .dns-records .panel-heading,.probe-pool .panel-heading {min-height:48px;height:auto;padding:14px 20px;gap:16px;flex-wrap:wrap}
 .dns-records table,.probe-pool table {table-layout:fixed}
 .network-page .dns-records th,.network-page .probe-pool th {padding:16px 22px;font-weight:600;font-size:11px;letter-spacing:.06em;white-space:normal}
@@ -814,9 +826,9 @@ main {max-width:1586px;padding:28px 24px 24px}
 .probe-pool td button[data-delete-kind] {border:0;background:transparent;color:var(--bad);padding:0;font-size:12px;line-height:1.6}
 .probe-pool td a.button,.dns-records td a.button {border:0;background:transparent;padding:0;justify-content:flex-start}
 .probe-editor .intent-danger {margin-bottom:0;padding-bottom:0}
+.page-probes>.intent-section {border-top:0;padding-top:24px}
 @media(max-width:1100px) {
- .services-layout {grid-template-columns:240px minmax(0,1fr);gap:28px}
- .service-catalog {padding-right:20px}
+ .services-layout {grid-template-columns:240px minmax(0,1fr);gap:24px}
  .policy-scope {grid-template-columns:1fr;gap:8px}
  .scope-modes {gap:20px}
  .policy-fixed-service {grid-template-columns:130px minmax(0,1fr) auto}
@@ -831,8 +843,7 @@ main {max-width:1586px;padding:28px 24px 24px}
  .page-services>.heading {flex-direction:column;align-items:stretch;gap:16px}
  .page-services>.heading>.primary {align-self:flex-start;max-width:100%}
  .intent-tabs,.service-tabs {gap:26px;margin-top:24px}
- .services-layout {grid-template-columns:1fr;gap:28px}
- .intent-catalog,.service-catalog {border-right:0;padding-right:0;min-height:0}
+ .services-layout {grid-template-columns:1fr;gap:16px}
  .service-item {padding-top:12px;padding-bottom:12px}
  .catalog-help {padding-top:16px}
  .service-identity,.dns-editor-fields,.probe-editor-fields {grid-template-columns:1fr;gap:0}

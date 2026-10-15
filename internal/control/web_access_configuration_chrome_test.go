@@ -50,7 +50,7 @@ func accessConfigurationChromeScreenshot(t *testing.T, debug *chromeDevTools, na
 	if err := os.WriteFile(path, content, 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("Access configuration screenshot:", path)
+	t.Log("Page screenshot:", path)
 }
 
 func TestWebChromeAccessConfigurationNavigationFiltersAndResponsiveEditors(t *testing.T) {
@@ -129,6 +129,11 @@ func TestWebChromeAccessConfigurationNavigationFiltersAndResponsiveEditors(t *te
 		{"policies", "/policies?policy=demo-policy", "#policy-form"},
 		{"dns", "/services?tab=dns&record=demo-console-record", "#dns-record-form"},
 		{"probes", "/services?tab=probes&target=demo-service-health", "#probe-target-form"},
+		{"live-paths", "/routing?service=demo-service", ".paths-devices"},
+		{"administration-controls", "/ssot?section=controls", ".administration-content"},
+		{"administration-administrators", "/ssot?section=administrators&add=1", ".administration-content"},
+		{"administration-certificates", "/ssot?section=certificates", ".administration-content"},
+		{"administration-configuration", "/ssot?section=configuration", ".administration-content"},
 	}
 	for _, width := range []int{1440, 390} {
 		accessConfigurationChromeViewport(t, debug, width)
@@ -136,10 +141,10 @@ func TestWebChromeAccessConfigurationNavigationFiltersAndResponsiveEditors(t *te
 			chromeDo(t, debug, fmt.Sprintf(`history.pushState({},'',%q);dispatchEvent(new PopStateEvent('popstate'));true`, view.href))
 			waitChromeEvaluation(t, debug, fmt.Sprintf(`document.querySelector(%q)`, view.selector))
 			accessConfigurationChromeScreenshot(t, debug, fmt.Sprintf("%s-%d", view.name, width))
-			geometry := chromeDo(t, debug, fmt.Sprintf(`(async()=>{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const form=document.querySelector(%q),fields=[...form.querySelectorAll('input:not([type=hidden]),select,textarea,button[type=submit]')].filter(field=>field.getClientRects().length&&getComputedStyle(field).visibility!=='hidden'),outside=fields.filter(field=>{const r=field.getBoundingClientRect();return r.left<0||r.right>innerWidth+1}).map(field=>({name:field.name||field.type,left:field.getBoundingClientRect().left,right:field.getBoundingClientRect().right})),tables=[...document.querySelectorAll('.table-wrap')].map(wrap=>({width:wrap.clientWidth,scroll:wrap.scrollWidth,overflow:getComputedStyle(wrap).overflowX}));return {passed:document.documentElement.scrollWidth<=innerWidth+1&&outside.length===0&&tables.every(wrap=>wrap.scroll<=wrap.width+1||['auto','scroll'].includes(wrap.overflow)),viewport:innerWidth,document:document.documentElement.scrollWidth,outside,tables}})()`, view.selector))
+			geometry := chromeDo(t, debug, fmt.Sprintf(`(async()=>{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const form=document.querySelector(%q),fields=[...form.querySelectorAll('input:not([type=hidden]),select,textarea,button[type=submit]')].filter(field=>field.getClientRects().length&&getComputedStyle(field).visibility!=='hidden'),outside=fields.filter(field=>{const r=field.getBoundingClientRect();return r.left<0||r.right>innerWidth+1}).map(field=>({name:field.name||field.type,left:field.getBoundingClientRect().left,right:field.getBoundingClientRect().right})),tables=[...document.querySelectorAll('.table-wrap')].map(wrap=>({width:wrap.clientWidth,scroll:wrap.scrollWidth,overflow:getComputedStyle(wrap).overflowX}));const sidebar=document.querySelector('.administration-sidebar'),menuOutside=sidebar?[...sidebar.querySelectorAll('nav a')].filter(link=>{const r=link.getBoundingClientRect(),b=sidebar.getBoundingClientRect();return r.top<b.top||r.bottom>b.bottom||r.left<b.left||r.right>b.right}).map(link=>link.textContent):[];return {passed:document.documentElement.scrollWidth<=innerWidth+1&&outside.length===0&&menuOutside.length===0&&tables.every(wrap=>wrap.scroll<=wrap.width+1||['auto','scroll'].includes(wrap.overflow)),viewport:innerWidth,document:document.documentElement.scrollWidth,outside,menuOutside,tables}})()`, view.selector))
 			result, ok := geometry.(map[string]any)
 			if !ok || result["passed"] != true {
-				t.Fatalf("access editor overflows at %s/%d: %#v", view.name, width, geometry)
+				t.Fatalf("page content overflows at %s/%d: %#v", view.name, width, geometry)
 			}
 		}
 	}

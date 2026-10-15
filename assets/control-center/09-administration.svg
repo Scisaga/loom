@@ -62,10 +62,10 @@
   <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="573" y="34" text-anchor="start">Live paths</text>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="702" y="34" text-anchor="start">Services</text>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav muted" x="702" y="34" text-anchor="start">Access configuration</text>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -82,28 +82,29 @@
   <text class="ui eyebrow green" x="24" y="97" text-anchor="start">CONTROL / MANAGEMENT</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Administration</text>
   <text class="ui body muted" x="24" y="162" text-anchor="start">Manage control nodes, administrator access, certificates and configuration.</text>
+  <rect data-ui="workspace-surface" data-surface="navigation" x="24" y="190" width="256" height="548" rx="10" fill="#F7F9F7" stroke="#E2E6E3"/>
+  <rect data-ui="workspace-surface" data-surface="content" x="304" y="190" width="1258" height="770" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
   <a href="09-administration.svg" data-ui="administration-navigation" data-section="controls" aria-current="page">
-  <rect x="24" y="214" width="252" height="65" rx="4" fill="#EDF5EF" stroke="none"/>
-  <rect x="24" y="224" width="3" height="45" rx="0" fill="#248F64" stroke="none"/>
-  <text class="ui body" x="42" y="241" text-anchor="start">Control nodes</text>
-  <text class="ui small muted" x="42" y="263" text-anchor="start">Membership and sync</text>
+  <rect x="25" y="214" width="254" height="65" rx="0" fill="#EDF5EF" stroke="none"/>
+  <rect x="25" y="224" width="3" height="45" rx="0" fill="#248F64" stroke="none"/>
+  <text class="ui body" x="44" y="241" text-anchor="start">Control nodes</text>
+  <text class="ui small muted" x="44" y="263" text-anchor="start">Membership and sync</text>
   </a>
   <a href="09-administration-administrators.svg" data-ui="administration-navigation" data-section="administrators" aria-current="false">
-  <rect x="24" y="290" width="252" height="65" rx="4" fill="transparent" stroke="none"/>
-  <text class="ui body muted" x="42" y="317" text-anchor="start">Administrators</text>
-  <text class="ui small muted" x="42" y="339" text-anchor="start">Browser access</text>
+  <rect x="25" y="290" width="254" height="65" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="44" y="317" text-anchor="start">Administrators</text>
+  <text class="ui small muted" x="44" y="339" text-anchor="start">Browser access</text>
   </a>
   <a href="09-administration-certificates.svg" data-ui="administration-navigation" data-section="certificates" aria-current="false">
-  <rect x="24" y="366" width="252" height="65" rx="4" fill="transparent" stroke="none"/>
-  <text class="ui body muted" x="42" y="393" text-anchor="start">Web certificates</text>
-  <text class="ui small muted" x="42" y="415" text-anchor="start">HTTPS identity</text>
+  <rect x="25" y="366" width="254" height="65" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="44" y="393" text-anchor="start">Web certificates</text>
+  <text class="ui small muted" x="44" y="415" text-anchor="start">HTTPS identity</text>
   </a>
   <a href="09-administration-configuration.svg" data-ui="administration-navigation" data-section="configuration" aria-current="false">
-  <rect x="24" y="442" width="252" height="65" rx="4" fill="transparent" stroke="none"/>
-  <text class="ui body muted" x="42" y="469" text-anchor="start">Configuration state</text>
-  <text class="ui small muted" x="42" y="491" text-anchor="start">Effective values and conflicts</text>
+  <rect x="25" y="442" width="254" height="65" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="44" y="469" text-anchor="start">Configuration state</text>
+  <text class="ui small muted" x="44" y="491" text-anchor="start">Effective values and conflicts</text>
   </a>
-  <line class="rule" x1="296" y1="214" x2="296" y2="960"/>
   <line class="rule" x1="42" y1="550" x2="258" y2="550"/>
   <text class="ui eyebrow muted" x="42" y="582" text-anchor="start">CURRENT CONNECTION</text>
   <text class="ui body mono" x="42" y="613" text-anchor="start">control-a</text>

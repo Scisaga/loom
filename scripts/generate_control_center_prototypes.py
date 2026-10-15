@@ -467,10 +467,11 @@ class Canvas:
         self.add(f'<svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="{transform}"><path d="{compound}" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>')
         self.txt(65, 36, "LOOM", "section")
         intent = active in {"services", "policies"}
+        access_navigation = intent or active in {"live-paths", "administration"}
         for label, key, x, icon in NAV:
-            if intent and key == "policies":
+            if access_navigation and key == "policies":
                 continue
-            if intent and key == "services":
+            if access_navigation and key == "services":
                 label = "Access configuration"
                 self.add('<a href="05-services.svg" data-ui="intent-entry">')
             selected = active == key or (intent and key == "services") or (active.startswith("releases-") and key == "releases") or (active == "deployments" and key == "releases")
@@ -482,7 +483,7 @@ class Canvas:
                 self.add(f'<line x1="{x}" y1="57" x2="{x + 18 + len(label) * 7}" y2="57" stroke="#2AA875" stroke-width="2"/>')
             if key == "administration":
                 self.add('</a>')
-            if intent and key == "services":
+            if access_navigation and key == "services":
                 self.add('</a>')
         self.icon("icon-node", 1285, 22, 14)
         self.txt(1307, 34, "demo-control-a", "small muted")
@@ -562,6 +563,15 @@ def intent_tabs(c: Canvas, selected: str, y: int = 219) -> None:
         c.add('</a>')
     c.line(24, y + 13, 1562, y + 13)
     c.add('<style>.intent-selected{stroke:#248F64;stroke-width:2}[data-ui="intent-tab"]:focus-visible text{text-decoration:underline}</style>')
+
+
+def workspace_surface(c: Canvas, x: int, y: int, w: int, h: int, *, sidebar: bool = False, before: int | None = None) -> None:
+    """One container for a navigation rail or complete workspace content."""
+    surface = f'<rect data-ui="workspace-surface" data-surface="{"navigation" if sidebar else "content"}" x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="{"#F7F9F7" if sidebar else "#FFFFFF"}" stroke="#E2E6E3"/>'
+    if before is None:
+        c.add(surface)
+    else:
+        c.parts.insert(before, surface)
 
 
 def network_graph(c: Canvas, x: int, y: int, w: int, h: int, *, large: bool = False, selected_metrics: str = "") -> None:
@@ -1209,6 +1219,7 @@ def path_detail_fragment(scene: str, tab: str, origin: tuple[str, str] | None = 
 def live_path_view(scene: str) -> Canvas:
     c = Canvas("live-paths", "Path detail", "Inspect this device's route, policy and observations for a specific target.", "network / paths", "live-paths", height=1224, show_status=False)
     c.role = "group"
+    workspace_surface(c, 24, 184, 1538, 1016)
     context = dict(PATH_CONTEXT)
     context.update(name=context["device"], roles="access")
     record = next((r for r in PATH_ASSIGNMENTS if r["scene"] == scene), None)
@@ -1238,7 +1249,7 @@ def live_path_view(scene: str) -> Canvas:
         flow_link(c, 1562, 97, "← " + context["service"] + " devices", f"/routing?service={service}&filter={group}", anchor="end", href=target)
         c.add('</g>')
     c.add(f'<g data-ui="path-context" data-scene="{scene}" data-device="{device}" data-service="{service}" data-policy="{policy}">')
-    for x, label, value in ((24, "DEVICE", context["name"]), (358, "SERVICE", service)):
+    for x, label, value in ((48, "DEVICE", context["name"]), (358, "SERVICE", service)):
         c.txt(x, 205, label, "eyebrow muted")
         c.add(f'<g data-ui="path-{label.lower()}-context">')
         c.txt(x, 244, value, "section")
@@ -1254,10 +1265,10 @@ def live_path_view(scene: str) -> Canvas:
     c.txt(1100, 244, "To fixed gateway" if scene == "lan" else "Auto" if reported else "Unknown", "section")
     c.txt(1280 if scene == "lan" else 1175 if reported else 1210, 244, "Within allowed routes" if scene == "lan" else "Reported by device" if reported else "No current report", "small muted")
     c.add(f'<g data-ui="path-policy-summary" data-policy="{policy}">')
-    c.txt(24, 294, "Access denied" if scene == "denied" else "Not authorized" if scene == "unassigned" else "Access allowed", "body red" if scene in ("denied", "unassigned") else "body green")
+    c.txt(48, 294, "Access denied" if scene == "denied" else "Not authorized" if scene == "unassigned" else "Access allowed", "body red" if scene in ("denied", "unassigned") else "body green")
     summary = "All paths and target probes are denied" if scene == "denied" else "Assign an access policy on this device to use private-app" if scene == "unassigned" else "Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit" if scene in ("current", "expired", "failed") else "Direct only · no entry, transit or internet exit nodes" if scene in ("pending", "direct") else "Fixed gateway: relay-west · entry: unrestricted · transit: unrestricted"
     c.txt(171, 294, summary, "small muted")
-    flow_link(c, 1562, 294, "Service details →", f"/services/{service}?{scope}", anchor="end", href="05-services-lan.svg" if scene == "lan" else "05-services.svg" if service == "demo-video" else "")
+    flow_link(c, 1538, 294, "Service details →", f"/services/{service}?{scope}", anchor="end", href="05-services-lan.svg" if scene == "lan" else "05-services.svg" if service == "demo-video" else "")
     c.add('</g>')
     c.line(24, 320, 1562, 320)
 
@@ -1271,14 +1282,14 @@ def live_path_view(scene: str) -> Canvas:
         "unassigned": ("No access policy for this service", "private-app is not assigned to android-phone", "amber", "Requested service is not authorized"),
         "lan": ("Current route unknown", "No device selection report · dashed path is an allowed candidate preview", "amber", "Specific target · 198.51.100.42"),
     }[scene]
-    c.txt(24, 355, title, "section")
-    c.txt(1562, 355, note, "small muted", "end")
-    c.circle(29, 388, 4, {"green": "#2AA875", "amber": "#D2A45B", "red": "#C87171"}[tone])
-    c.txt(43, 393, status, "body " + tone)
+    c.txt(48, 355, title, "section")
+    c.txt(1538, 355, note, "small muted", "end")
+    c.circle(53, 388, 4, {"green": "#2AA875", "amber": "#D2A45B", "red": "#C87171"}[tone])
+    c.txt(67, 393, status, "body " + tone)
     if scene in ("current", "failed", "lan"):
-        flow_link(c, 1562, 393, "Open topology →", "/topology?link=" + ("demo-link-a-c" if scene == "lan" else "demo-link-wg") + "&" + scope, anchor="end", href="03-topology.svg" if scene == "current" else "")
+        flow_link(c, 1538, 393, "Open topology →", "/topology?link=" + ("demo-link-a-c" if scene == "lan" else "demo-link-wg") + "&" + scope, anchor="end", href="03-topology.svg" if scene == "current" else "")
     elif scene in ("pending", "expired"):
-        c.txt(1562, 393, "Previous route · media-access · not current", "small muted", "end")
+        c.txt(1538, 393, "Previous route · media-access · not current", "small muted", "end")
     if scene in ("denied", "unassigned"):
         c.icon("icon-lock", 47, 456, 30)
         c.txt(102, 473, "Access is blocked by the current policy." if scene == "denied" else "Choose a policy on the device to grant access.", "section")
@@ -1287,22 +1298,22 @@ def live_path_view(scene: str) -> Canvas:
     else:
         live_path_diagram(c, scene, context)
     c.line(24, 567, 1562, 567)
-    c.txt(24, 594, "TARGET RESULT" if scene in ("lan", "denied", "unassigned") else "END-TO-END HTTPS", "eyebrow muted")
-    c.txt(24, 625, f"{PATH_BUSINESS_SAMPLES[-1][1]} ms" if scene == "current" else "HTTPS 503" if scene == "failed" else "Not authorized" if scene in ("denied", "unassigned") else "Unknown", "metric" if scene == "current" else "body red" if scene == "failed" else "body amber")
+    c.txt(48, 594, "TARGET RESULT" if scene in ("lan", "denied", "unassigned") else "END-TO-END HTTPS", "eyebrow muted")
+    c.txt(48, 625, f"{PATH_BUSINESS_SAMPLES[-1][1]} ms" if scene == "current" else "HTTPS 503" if scene == "failed" else "Not authorized" if scene in ("denied", "unassigned") else "Unknown", "metric" if scene == "current" else "body red" if scene == "failed" else "body amber")
     c.txt(218, 594, context["probe"] if scene != "lan" and service == "demo-video" else context["target"], "body mono")
     c.txt(218, 622, f'Measured on {device} · {context["business_age"]}' if scene in ("current", "failed") else "No target observation received" if scene == "direct" else "No applicable HTTPS target or actual business sample" if scene == "lan" else "Earlier samples cannot confirm the current result", "small muted")
     c.txt(960, 594, "DEVICE RUNTIME", "eyebrow muted")
     c.txt(960, 625, "Unknown", "body amber")
     c.txt(1057, 625, "No fresh runtime report", "small muted")
     device_href = "02-nodes-detail.svg#detail-ssh-joined-overview" if scene in ("lan", "failed") else "02-nodes-detail.svg#detail-qr-joined-overview" if scene == "direct" else "02-nodes-detail.svg" if scene == "pending" else ""
-    flow_link(c, 1562, 625, "View device →", f"/devices/{device}?section=overview&service={service}&policy={policy}", anchor="end", href=device_href)
+    flow_link(c, 1538, 625, "View device →", f"/devices/{device}?section=overview&service={service}&policy={policy}", anchor="end", href=device_href)
     c.line(24, 650, 1562, 650)
 
     c.add(f'<g data-ui="path-tabs" data-scene="{scene}">')
     for origin in origins:
         navigation = "-".join(origin) if origin else "default"
         c.add(f'<g class="path-origin-navigation path-origin-{navigation}">')
-        for x, key, label, width in ((24, "candidates", "Candidate routes", 142), (201, "history", "History", 69)):
+        for x, key, label, width in ((48, "candidates", "Candidate routes", 142), (225, "history", "History", 69)):
             c.add(f'<a id="paths-{scene}-tab-{key}-{navigation}" class="path-tab path-tab-{key}" href="#{path_detail_fragment(scene, key, origin)}" data-ui="path-tab" data-tab="{key}">')
             c.rect(x, 667, width, 38, "transparent", "none", 0)
             c.txt(x + 4, 691, label, "body path-tab-label")
@@ -1311,7 +1322,7 @@ def live_path_view(scene: str) -> Canvas:
         c.add('</g>')
     counts = {"current": 4, "failed": 4, "direct": 1, "expired": 4, "pending": 1, "lan": 2, "denied": 0, "unassigned": 0}
     count = counts[scene]
-    c.txt(1562, 691, f'{count} authorized candidate{"s" if count != 1 else ""} · read only', "small muted", "end")
+    c.txt(1538, 691, f'{count} authorized candidate{"s" if count != 1 else ""} · read only', "small muted", "end")
     c.add('</g>')
     c.line(24, 708, 1562, 708)
     for key, draw in (("candidates", live_path_candidates), ("history", live_path_history)):
@@ -1326,11 +1337,11 @@ def path_device_rows(c: Canvas, members: tuple[dict, ...], y: int, *, origin: tu
     for x, heading in ((386, "DEVICE"), (590, "POLICY"), (805, "CURRENT ROUTE"), (1140, "TARGET / UPDATED")):
         c.txt(x, y, heading, "eyebrow muted")
     top = y + 18
-    c.line(362, top, 1562, top)
+    c.line(342, top, 1562, top)
     for record in members:
         device, service, policy = (record[key] for key in ("device", "service", "policy"))
         c.add(f'<a data-ui="path-device-row" data-device="{device}" data-service="{service}" data-policy="{policy}" data-scene="{record["scene"]}" href="#{path_detail_fragment(record["scene"], "candidates", origin)}">')
-        c.rect(363, top + 1, 1198, 82, "transparent", "none", 0)
+        c.rect(343, top + 1, 1218, 82, "transparent", "none", 0)
         c.txt(386, top + 31, record["name"], "body mono")
         c.txt(386, top + 55, "Open path details →", "small green")
         c.txt(590, top + 31, policy, "body mono")
@@ -1343,23 +1354,23 @@ def path_device_rows(c: Canvas, members: tuple[dict, ...], y: int, *, origin: tu
         c.txt(1140, top + 55, record["reason"], "small muted")
         c.txt(1540, top + 31, record["age"], "small muted", "end")
         c.add('</a>')
-        c.line(362, top + 84, 1562, top + 84, kind="table-rule")
+        c.line(342, top + 84, 1562, top + 84, kind="table-rule")
         top += 84
     return top
 
 
 def path_service_navigation(c: Canvas, selected: str) -> None:
     c.add('<g data-ui="path-services-list" role="navigation" aria-label="Services">')
-    c.txt(24, 211, "Services", "section")
-    c.txt(310, 211, "Devices", "small muted", "end")
-    search_control(c, 24, 237, 286, "Find a service")
+    c.txt(44, 211, "Services", "section")
+    c.txt(306, 211, "Devices", "small muted", "end")
+    search_control(c, 44, 237, 262, "Find a service")
     for index, (key, service, subtitle) in enumerate(PATH_SUMMARY_SERVICES):
         top = 294 + index * 126
         members = path_members(service)
         c.add(f'<a data-ui="path-service-select" data-service="{service}" data-devices="{"unknown" if key == "work" else len(members)}" aria-current="{str(key == selected).lower()}" href="#paths-service-{key}">')
-        c.rect(24, top + 1, 286, 124, "#EDF5F0" if key == selected else "transparent", "none", 0)
+        c.rect(25, top + 1, 300, 124, "#EDF5F0" if key == selected else "transparent", "none", 0)
         if key == selected:
-            c.rect(24, top + 1, 3, 124, "#248F64", "none", 0)
+            c.rect(25, top + 1, 3, 124, "#248F64", "none", 0)
         c.txt(44, top + 30, service, "body")
         c.txt(294, top + 30, "Unknown" if key == "work" else str(len(members)), "small amber" if key == "work" else "body", "end")
         c.txt(44, top + 54, "LAN · relay-west" if key == "office" else "Service suspended" if key == "work" else "Internet", "small muted")
@@ -1374,7 +1385,7 @@ def path_service_navigation(c: Canvas, selected: str) -> None:
             c.txt(44, top + 78, "Conflicting changes" if key == "work" else "No devices assigned", "small amber" if key == "work" else "small muted")
             c.txt(44, top + 102, "Projection suspended" if key == "work" else "No authorized observations", "tiny muted")
         c.add('</a>')
-        c.line(24, top + 126, 310, top + 126)
+        c.line(24, top + 126, 326, top + 126)
     c.add('</g>')
 
 
@@ -1382,27 +1393,31 @@ def live_paths_workspace(key: str, group: str = "all") -> Canvas:
     _, service, subtitle = next(row for row in PATH_SUMMARY_SERVICES if row[0] == key)
     all_members = path_members(service)
     members = path_members(service, group)
-    c = Canvas("live-paths", "Live paths", "Choose a service to see its devices. Open a device for path details.", "network / paths", "live-paths", height=944, show_status=False)
+    c = Canvas("live-paths", "Live paths", "Choose a service to see its devices. Open a device for path details.", "network / paths", "live-paths", height=864, show_status=False)
     c.role = "group"
     devices = {r["device"] for r in PATH_ASSIGNMENTS}
     c.txt(1562, 97, f'{len(PATH_SUMMARY_SERVICES)} services · {len(devices)} devices in active services · {len(PATH_ASSIGNMENTS)} access records', "small muted", "end")
+    surfaces = len(c.parts)
+    workspace_surface(c, 24, 190, 302, 646, sidebar=True)
+    c.add('<g transform="translate(0 12)">')
     path_service_navigation(c, key)
-    c.line(334, 198, 334, 888)
     c.add(f'<g data-ui="path-devices-list" data-service="{service}" data-filter="{group}">')
-    c.txt(362, 211, service, "metric")
+    c.txt(366, 211, service, "metric")
     policies = {r["policy"] for r in all_members}
-    c.txt(1562, 211, "Assignment count unknown" if key == "work" else f'{len(all_members)} device{"s" if len(all_members) != 1 else ""} · {len(policies)} polic{"ies" if len(policies) != 1 else "y"}', "body", "end")
-    c.txt(362, 244, subtitle, "body muted")
-    c.line(362, 258, 1562, 258)
+    c.txt(1538, 211, "Assignment count unknown" if key == "work" else f'{len(all_members)} device{"s" if len(all_members) != 1 else ""} · {len(policies)} polic{"ies" if len(policies) != 1 else "y"}', "body", "end")
+    c.txt(366, 244, subtitle, "body muted")
+    c.line(342, 258, 1562, 258)
     if not all_members:
         c.txt(386, 318, "Service suspended" if key == "work" else "No devices assigned", "section")
         c.txt(386, 356, "Two conflicting service changes prevent a current route projection." if key == "work" else "This service has no device policy assignments, so there are no access paths to inspect.", "body muted")
         flow_link(c, 386, 399, "Review configuration conflict →" if key == "work" else "Manage service →", "/administration/configuration?target=demo-work" if key == "work" else "/services/demo-private", href="09-administration-configuration.svg#compare" if key == "work" else "")
         c.add('</g>')
+        c.add('</g>')
+        workspace_surface(c, 342, 190, 1220, 248, before=surfaces)
         return c
-    search_control(c, 362, 276, 300, "Find a device")
+    search_control(c, 366, 276, 300, "Find a device")
     label = "Target failures" if group == "failed" else "Unknown target results" if group == "unknown" else "All devices" if group == "all" else PATH_GROUPS[group]["label"]
-    c.txt(1562, 302, f"{label} · {len(members)} of {len(all_members)} devices", "small muted", "end")
+    c.txt(1538, 302, f"{label} · {len(members)} of {len(all_members)} devices", "small muted", "end")
     filters = ((75, "all", "All"), (90, "failed", "Failed"), (124, "unknown", "Unknown"),
                (330, "wg", "WG · control-a → internet-exit"), (106, "direct", "Direct"),
                (230, "unconfirmed", "No confirmed route"))
@@ -1424,8 +1439,10 @@ def live_paths_workspace(key: str, group: str = "all") -> Canvas:
     if not members:
         c.txt(386, bottom + 36, "No devices match this filter.", "body muted")
     else:
-        c.txt(362, bottom + 37, "Target results apply to the observed target only. Missing device reports remain unknown.", "small muted")
+        c.txt(366, bottom + 37, "Target results apply to the observed target only. Missing device reports remain unknown.", "small muted")
     c.add('</g>')
+    c.add('</g>')
+    workspace_surface(c, 342, 190, 1220, bottom - 116, before=surfaces)
     return c
 
 
@@ -1639,13 +1656,13 @@ def policy_picker(c: Canvas, y: int, policy_ids: tuple[str, ...], *, device: str
 
 
 def catalog_rail(c: Canvas, y: int, title: str, search: str, entries: tuple[tuple[str, str, str], ...], *, selected: str = "", service_filter: bool = False) -> None:
-    """A flat object list; only the selected row gets a background."""
+    """One navigation surface with flat rows and a single selected background."""
     c.add('<g data-ui="catalog-list">')
-    c.txt(24, y, title, "section")
+    c.txt(44, y, title, "section")
     c.txt(304, y, str(len(entries)), "small muted", "end")
-    search_control(c, 24, y + 20, 280, search)
+    search_control(c, 44, y + 20, 260, search)
     if service_filter:
-        flow_input(c, 24, y + 76, 280, "All services", dropdown=True)
+        flow_input(c, 44, y + 76, 260, "All services", dropdown=True)
     destinations = {
         "demo-video": "05-services.svg", "demo-office": "05-services-lan.svg",
         "demo-work": "09-administration-configuration.svg#compare",
@@ -1658,12 +1675,12 @@ def catalog_rail(c: Canvas, y: int, title: str, search: str, entries: tuple[tupl
             c.add(f'<a href="{destinations[name]}" data-ui="catalog-navigation">')
         c.add(f'<g data-ui="catalog-item" data-object="{name}" aria-selected="{str(active).lower()}">')
         if active:
-            c.rect(24, top, 280, 92, "#EDF4FB", "none", 4)
-        c.rect(24, top, 3, 92, "#4D78D1" if active else "transparent", "none", 0)
-        c.txt(42, top + 28, name, "body")
-        c.txt(42, top + 52, detail, "small muted")
-        c.txt(42, top + 74, state, "small amber" if "Suspended" in state else "tiny muted")
-        c.line(24, top + 92, 304, top + 92)
+            c.rect(25, top, 298, 92, "#EDF4FB", "none", 0)
+        c.rect(25, top, 3, 92, "#4D78D1" if active else "transparent", "none", 0)
+        c.txt(44, top + 28, name, "body")
+        c.txt(44, top + 52, detail, "small muted")
+        c.txt(44, top + 74, state, "small amber" if "Suspended" in state else "tiny muted")
+        c.line(24, top + 92, 324, top + 92)
         c.add('</g>')
         if name in destinations:
             c.add('</a>')
@@ -1674,17 +1691,18 @@ def services(*, lan: bool = False) -> Canvas:
     c = Canvas("services-lan" if lan else "services", "Services", "Define what devices may access. Policies provide the access rules.", "access configuration", "services", height=1240, show_status=False)
     intent_tabs(c, "Services")
     c.button(1382, 106, 180, "+ Add service", True)
+    surfaces = len(c.parts)
+    workspace_surface(c, 24, 250, 300, 612, sidebar=True)
     catalog_rail(c, 278, "Services", "Search name or destination", (
         ("demo-video", "Internet · 2 target rules", "1 device · 2 policies"),
         ("demo-work", "Internet · 2 conflicting changes", "Suspended · review conflict →"),
         ("demo-private", "Internet · private.example", "No device assignments"),
         ("demo-office", "Shared LAN · relay-west", "198.51.100.0/24 · 1 policy"),
     ), selected="demo-office" if lan else "demo-video")
-    c.txt(24, 776, "Create a policy, then assign it", "small muted")
-    c.txt(24, 798, "to the devices that need this service.", "small muted")
-    flow_link(c, 24, 834, "Manage policies →", "/policies", href="06-policies.svg")
-    c.line(328, 258, 328, 1208)
-    left, right, width = 368, 1562, 1194
+    c.txt(44, 776, "Create a policy, then assign it", "small muted")
+    c.txt(44, 798, "to devices that need this service.", "small muted")
+    flow_link(c, 44, 834, "Manage policies →", "/policies", href="06-policies.svg")
+    left, right, width = 372, 1538, 1166
     service = "demo-office" if lan else "demo-video"
     c.add(f'<g data-ui="service-editor" data-service="{service}">')
     c.txt(left, 278, "Office network" if lan else "Media traffic", "section")
@@ -1755,6 +1773,7 @@ def services(*, lan: bool = False) -> Canvas:
     c.txt(left + 146, bottom + 36, "Withdraws access through its policies. Devices do not switch services.", "small muted")
     c.add('</g>')
     c.fit_height(bottom + 72)
+    workspace_surface(c, 348, 250, 1214, c.height - 274, before=surfaces)
     return c
 
 
@@ -1811,6 +1830,7 @@ def services_dns() -> Canvas:
     c.add('</g>')
     c.line(24, 748, 1562, 748, kind="table-rule")
 
+    c.rect(25, 749, 1536, 618, "#F7F9F7", "none", 0)
     c.add('<g data-ui="dns-record-editor" data-name="demo-app.loom">')
     c.txt(47, 792, "Edit custom record", "section")
     c.txt(1538, 792, "Unsaved draft", "small muted", "end")
@@ -1891,7 +1911,9 @@ def probe_targets() -> Canvas:
         search_control(c, 24, 261, 592, "Search target ID, URL or matching service")
         c.txt(1562, 287, f"{len(rows)} shared targets · includes unused targets", "small muted", "end")
         bottom = 446 + len(rows) * 76
-        c.card(24, 326, 1538, bottom - 326, "Shared HTTPS pool", "Matching services do not grant access")
+        top = bottom
+        panel_bottom = top + (340 if scene in ("new", "edit") else 278 if scene == "delete" else 216 if scene in ("created", "saved", "deleted") else 112)
+        c.card(24, 326, 1538, panel_bottom - 326, "Shared HTTPS pool", "Matching services do not grant access")
         for x, label in ((48, "TARGET ID"), (330, "HTTPS URL"), (940, "MATCHING SERVICES"), (1390, "ACTIONS")):
             c.txt(x, 403, label, "eyebrow muted")
         c.line(24, 420, 1562, 420, kind="table-rule")
@@ -1919,7 +1941,7 @@ def probe_targets() -> Canvas:
             c.line(24, top + 76, 1562, top + 76, kind="table-rule")
             c.add('</g>')
 
-        top = bottom + 28
+        top = bottom
         if scene in ("new", "edit"):
             editing = scene == "edit"
             row = next((item for item in all_targets if item[0] == target_key), None)
@@ -1928,7 +1950,10 @@ def probe_targets() -> Canvas:
             draft_url = current_url.removesuffix("/health") + "/ready" if editing else "https://media.example/backup-health"
             match = "media" if not row else (row[3] or "No matching service")
             c.add(f'<g data-ui="probe-target-editor" data-target="{identity}" data-current="{current_url}" data-draft="{draft_url}">')
-            c.card(24, top, 1538, 340, "Edit probe target" if editing else "Add probe target", "Draft · not saved")
+            c.rect(25, top + 1, 1536, 330, "#F7F9F7", "none", 0)
+            c.txt(48, top + 32, "Edit probe target" if editing else "Add probe target", "section")
+            c.txt(1538, top + 31, "Draft · not saved", "small muted", "end")
+            c.line(24, top + 48, 1562, top + 48)
             c.txt(48, top + 83, "CURRENT URL" if editing else "NEW TARGET", "eyebrow muted")
             c.txt(330, top + 83, current_url if editing else "Not in the shared pool yet", "body mono" if editing else "body muted")
             c.txt(48, top + 127, "Target ID · read only" if editing else "Target ID", "body")
@@ -1953,7 +1978,10 @@ def probe_targets() -> Canvas:
         elif scene == "delete":
             row = next(item for item in all_targets if item[0] == target_key)
             c.add(f'<g data-ui="probe-target-delete-confirmation" data-target="{row[1]}">')
-            c.card(24, top, 1538, 278, "Delete probe target", "Review shared pool change")
+            c.rect(25, top + 1, 1536, 268, "#F7F9F7", "none", 0)
+            c.txt(48, top + 32, "Delete probe target", "section")
+            c.txt(1538, top + 31, "Review shared pool change", "small muted", "end")
+            c.line(24, top + 48, 1562, top + 48)
             c.txt(48, top + 86, row[1], "body mono")
             c.txt(380, top + 86, row[2], "body mono")
             c.txt(48, top + 128, "Future probes will stop using this target after the change reaches the device.", "body")
@@ -1966,14 +1994,14 @@ def probe_targets() -> Canvas:
         else:
             if scene in ("created", "saved", "deleted"):
                 message = {"created": "Target added to the shared pool", "saved": "Target URL saved", "deleted": "Target removed from the shared pool"}[scene]
-                c.note(24, top, 1538, (message, "Device application and probe results are read separately."), "green")
+                c.note(48, top, 1490, (message, "Device application and probe results are read separately."), "green")
                 top += 104
-            c.txt(24, top + 24, "Probe results", "section")
-            c.txt(24, top + 55, "Inspect results for a device, service and candidate in Live paths.", "body muted")
-            c.txt(24, top + 83, "An unused or unmatched target stays available here. Saving never grants device access.", "small muted")
-            flow_link(c, 1562, top + 24, "View Live paths →", "/routing", anchor="end", href="04-live-paths.svg")
+            c.txt(48, top + 24, "Probe results", "section")
+            c.txt(48, top + 55, "Inspect results for a device, service and candidate in Live paths.", "body muted")
+            c.txt(48, top + 83, "An unused or unmatched target stays available here. Saving never grants device access.", "small muted")
+            flow_link(c, 1538, top + 24, "View Live paths →", "/routing", anchor="end", href="04-live-paths.svg")
             if scene in ("created", "saved", "deleted"):
-                flow_link(c, 1562, top + 83, "Return to pool overview", "/services?tab=probes", anchor="end", href="#probes-overview")
+                flow_link(c, 1538, top + 83, "Return to pool overview", "/services?tab=probes", anchor="end", href="#probes-overview")
         c.add('</g>')
     c.add('<style><![CDATA[' + "\n".join(css) + ']]></style>')
     c.fit_height(1160)
@@ -2504,7 +2532,7 @@ def operations() -> Canvas:
 def policy_range(c: Canvas, y: int, label: str, field: str, *, mode: str = "any",
                  nodes: tuple[str, ...] = (), picker_options: tuple[tuple[str, str], ...] = ()) -> int:
     c.add(f'<g data-ui="policy-range" data-field="{field}" data-mode="{mode}" data-options="any only none">')
-    c.txt(368, y + 25, label, "body")
+    c.txt(372, y + 25, label, "body")
     c.add(f'<g data-ui="policy-range-mode" role="radiogroup" aria-label="{escape(label)}">')
     for x, value, title in ((740, "any", "Unrestricted"), (946, "only", "Selected nodes"), (1170, "none", "None")):
         selected = mode == value
@@ -2518,24 +2546,24 @@ def policy_range(c: Canvas, y: int, label: str, field: str, *, mode: str = "any"
     if mode == "only":
         top = y + 41
         c.add(f'<g data-ui="policy-node-picker" aria-expanded="{str(bool(picker_options)).lower()}">')
-        top += tag_selector(c, 732, top, 830, tuple((node, node) for node in nodes), field=field, placeholder="Search nodes…")
+        top += tag_selector(c, 732, top, 806, tuple((node, node) for node in nodes), field=field, placeholder="Search nodes…")
         if picker_options:
             top += 6
             c.add(f'<g data-ui="policy-node-options" role="listbox" aria-label="{escape(label)}" aria-multiselectable="true" data-close-on-select="false">')
-            c.rect(732, top, 830, 34 + len(picker_options) * 42, "#FFFFFF", "#D8E0DA", 5)
+            c.rect(732, top, 806, 34 + len(picker_options) * 42, "#FFFFFF", "#D8E0DA", 5)
             c.txt(763, top + 22, "ELIGIBLE NODES", "eyebrow muted")
-            c.txt(1544, top + 22, f"{len(nodes)} selected · select one or more", "small muted", "end")
+            c.txt(1518, top + 22, f"{len(nodes)} selected · select one or more", "small muted", "end")
             for index, (node, description) in enumerate(picker_options):
                 row_y = top + 34 + index * 42
                 selected = node in nodes
                 c.add(f'<g data-ui="policy-node-option" role="option" data-value="{node}" aria-selected="{str(selected).lower()}">')
                 if selected:
-                    c.rect(750, row_y, 822, 40, "#F0F7F3", "none", 3)
+                    c.rect(750, row_y, 778, 40, "#F0F7F3", "none", 3)
                 c.rect(764, row_y + 11, 17, 17, "#248F64" if selected else "#FFFFFF", "#248F64" if selected else "#BCC8C0", 3)
                 if selected:
                     c.txt(773, row_y + 24, "✓", "small white", "middle")
                 c.txt(793, row_y + 25, node, "body")
-                c.txt(1544, row_y + 25, description, "small muted", "end")
+                c.txt(1518, row_y + 25, description, "small muted", "end")
                 c.add('</g>')
             top += 34 + len(picker_options) * 42
             c.add('</g>')
@@ -2562,16 +2590,18 @@ def policies(*, lan: bool = False, new: bool = False) -> Canvas:
     c.add('<a href="06-policies-new.svg" data-ui="new-policy">')
     c.button(1382, 106, 180, "+ New policy", True)
     c.add('</a>')
+    surfaces = len(c.parts)
+    workspace_surface(c, 24, 250, 300, 606, sidebar=True)
     catalog_rail(c, 278, "Policies", "Search policy or service", (
         ("demo-policy", "media · allow", "Direct or internet-exit · 1 device"),
         ("demo-direct-policy", "media · allow", "Direct only · no devices"),
         ("demo-lan-policy", "office-network · allow", "Fixed gateway · no devices"),
     ), selected="new-draft" if new else policy, service_filter=True)
-    c.txt(24, 744, "Each device selects one policy", "small muted")
-    c.txt(24, 766, "per service. Shared edits affect", "small muted")
-    c.txt(24, 788, "every device using the policy.", "small muted")
-    flow_link(c, 24, 826, "Assign from device details →", "/devices/demo-forward-c", href="02-nodes-detail.svg#detail-access")
-    left, right, width = 368, 1562, 1194
+    c.txt(44, 744, "Each device selects one policy", "small muted")
+    c.txt(44, 766, "per service. Shared edits affect", "small muted")
+    c.txt(44, 788, "every device using the policy.", "small muted")
+    flow_link(c, 44, 826, "Assign from device details →", "/devices/demo-forward-c", href="02-nodes-detail.svg#detail-access")
+    left, right, width = 372, 1538, 1166
     c.add(f'<g data-ui="policy-editor" data-policy="{policy}" data-service="{service}" data-state="{"new-draft" if new else "shared-edit"}">')
     c.txt(left, 278, "New policy" if new else "Office LAN access" if lan else "Media access", "section")
     c.txt(right, 278, "New draft" if new else "Policy ID · " + policy, "small mono muted", "end")
@@ -2579,7 +2609,7 @@ def policies(*, lan: bool = False, new: bool = False) -> Canvas:
     c.txt(left, 347, "Service", "body")
     c.add(f'<g data-ui="policy-service" data-service="{service}" aria-readonly="{str(not new).lower()}">')
     if new:
-        flow_input(c, 732, 322, 830, service, dropdown=True)
+        flow_input(c, 732, 322, 806, service, dropdown=True)
     else:
         c.txt(732, 347, service, "body")
         flow_link(c, right, 347, "View service →", f"/services?service={service}", anchor="end", href="05-services-lan.svg" if lan else "05-services.svg")
@@ -2589,7 +2619,7 @@ def policies(*, lan: bool = False, new: bool = False) -> Canvas:
     if new:
         flow_input(c, left, 440, 350, policy)
         c.txt(744, 425, "Display name", "body")
-        flow_input(c, 744, 440, 818, "Private access")
+        flow_input(c, 744, 440, 794, "Private access")
     else:
         flow_input(c, left, 440, width, "Office LAN access" if lan else "Media access")
     c.line(left, 511, right, 511)
@@ -2666,8 +2696,8 @@ def policies(*, lan: bool = False, new: bool = False) -> Canvas:
         c.txt(left + 152, y + 213, "Withdraws its access. Devices do not switch to another policy.", "small muted")
         bottom = y + 250
     c.add('</g>')
-    c.line(328, 258, 328, bottom - 20)
     c.fit_height(bottom)
+    workspace_surface(c, 348, 250, 1214, c.height - 274, before=surfaces)
     return c
 
 
@@ -3349,18 +3379,19 @@ def administration_page(section: str, states: tuple[str, ...], draw) -> Canvas:
                "Manage control nodes, administrator access, certificates and configuration.",
                "control / management", "administration", height=selected[4], show_status=False)
     c.role = "group"
+    workspace_surface(c, 24, 190, 256, 548, sidebar=True)
+    workspace_surface(c, 304, 190, 1258, c.height - 214)
     for index, (key, title, caption, filename, _) in enumerate(ADMINISTRATION_SECTIONS):
         y = 214 + index * 76
         c.add(f'<a href="{filename}" data-ui="administration-navigation" data-section="{key}" aria-current="{"page" if key == section else "false"}">')
         if key == section:
-            c.rect(24, y, 252, 65, "#EDF5EF", "none", 4)
-            c.rect(24, y + 10, 3, 45, "#248F64", "none", 0)
+            c.rect(25, y, 254, 65, "#EDF5EF", "none", 0)
+            c.rect(25, y + 10, 3, 45, "#248F64", "none", 0)
         else:
-            c.rect(24, y, 252, 65, "transparent", "none", 4)
-        c.txt(42, y + 27, title, "body" if key == section else "body muted")
-        c.txt(42, y + 49, caption, "small muted")
+            c.rect(25, y, 254, 65, "transparent", "none", 0)
+        c.txt(44, y + 27, title, "body" if key == section else "body muted")
+        c.txt(44, y + 49, caption, "small muted")
         c.add('</a>')
-    c.line(296, 214, 296, c.height - 24)
     c.line(42, 550, 258, 550)
     c.txt(42, 582, "CURRENT CONNECTION", "eyebrow muted")
     c.txt(42, 613, "demo-control-a", "body mono")

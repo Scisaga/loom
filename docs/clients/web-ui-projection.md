@@ -404,8 +404,9 @@ Topology 展示受管节点和共享链路，Live paths 回答“设备访问服
 
 实现映射与原型固定：`routing.js` 只从当前 `WebProjection.services/policies/devices/paths`、
 服务 `TargetState` 和已认证报告派生显示；冲突服务保留可见的暂停目录项，不能用旧配置补出路线。
-列表是开放式服务侧栏和设备表，详情是四列设备/服务/策略/设备模式、横向策略摘要、图标节点路线及
-共用的候选/历史区域，不使用外层卡片或大块策略字段表。查询参数只保存服务、设备、搜索、互斥筛选、
+列表的服务侧栏与设备内容各使用轻边面板，详情在同一内容面板内展示四列设备/服务/策略/设备模式、
+横向策略摘要、图标节点路线及共用的候选/历史区域。内部按现有业务分组使用留白与分隔线，
+单个设备行、路径和策略字段保持行式排列。查询参数只保存服务、设备、搜索、互斥筛选、
 候选及目标的浏览上下文，不进入 wire/persistent，也不产生选路操作。路径分布的显示键由当前共享
 首跳资源及传输、去除源自身后的有序受管节点、LinkID 与其当前规范摘要、最终出口派生；Direct
 单独分组，未确认选择单独计数。全页设备总数对各服务的分配取稳定设备 ID 并集，访问记录数
@@ -529,8 +530,9 @@ Web 服务端以受保护安装信任输入中的发布验签公钥核验签名 
 
 Access configuration 将 Services、Policies、Private DNS、Probe targets 作为四个同级视图，
 顶栏不再重复提供 Services 与 Policies。正式 `/services`、`/policies` URL 保留，DNS 与探测池分别使用
-`/services?tab=dns`、`/services?tab=probes`，不新增配置权威。Services/Policies 的目录与编辑区按 `05/06` 开放排列，名称和摘要均
-左对齐。目录搜索、所选对象及新建/复制只是
+`/services?tab=dns`、`/services?tab=probes`，不新增配置权威。Services/Policies 的目录与编辑区按 `05/06`
+分别使用浅底目录面板与白底内容面板，名称和摘要均左对齐；内部表单和已保存关联读回沿用原业务分组，
+共享一组轻分隔。Private DNS 与 Probe targets 保留单个表格面板和原位编辑。目录搜索、所选对象及新建/复制只是
 浏览输入；冲突对象保留暂停项和 Configuration state 入口，不用旧值生成可写表单，未知
 直达 ID 不打开其他对象。Service matcher 的可增删行只格式化既有 kind/value 列表，suffix
 显示前导点而规范值不含它；最终仍由同一严格 matcher 解析器与 operation 保存。
@@ -1072,6 +1074,10 @@ request ID 或因果基线。并发冲突在原编辑区域保留草稿和冲突
 certificates、Configuration state 四个同级视图；`section` 和已有对象 fragment 只选择展示，
 没有独立权威、wire、持久、运行时生命周期。数据继续使用同一成员链、普通事实、公开证书诊断
 和可丢弃的配置审阅结果；缺少 peer receipt 或证书材料时保持 unknown。
+
+四视图共用轻边目录面板与白底内容面板，业务列表、展开项与原位操作仍在其中排列。与 Live paths、
+Access configuration 统一边框、圆角及内边距，窄屏将目录移至内容上方；行与字段不再嵌套成独立卡片。
+面板只是现有 UI 的排版，不增加领域、wire、持久或运行时状态。
 
 对象查询、原位展开、公开文件授权、续签请求/签回/激活/实际浏览器验证和显式冲突解决使用原操作。
 管理员只上传公开授权文件，P12/密码/私钥仍从受保护本机手工取回。配置搜索只筛选本次已经读到的

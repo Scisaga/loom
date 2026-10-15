@@ -131,7 +131,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="460" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -186,11 +186,11 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
-  <text class="ui section" x="24" y="726" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="757" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="785" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <text class="ui section" x="48" y="698" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="729" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="757" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="726" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="698" text-anchor="end">View Live paths →</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-new" class="probe-pool-scene" data-ui="probe-pool" data-scene="new">
@@ -198,7 +198,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="688" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -254,33 +254,33 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
   <g data-ui="probe-target-editor" data-target="demo-media-backup" data-current="" data-draft="https://media.example/backup-health">
-  <rect data-ui="panel" x="24" y="702" width="1538" height="340" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="734" text-anchor="start">Add probe target</text>
-  <text class="ui small muted" x="1544" y="733" text-anchor="end">Draft · not saved</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="750" x2="1562" y2="750"/>
-  <text class="ui eyebrow muted" x="48" y="785" text-anchor="start">NEW TARGET</text>
-  <text class="ui body muted" x="330" y="785" text-anchor="start">Not in the shared pool yet</text>
-  <text class="ui body" x="48" y="829" text-anchor="start">Target ID</text>
-  <text class="ui body" x="380" y="829" text-anchor="start">HTTPS URL · draft</text>
+  <rect x="25" y="675" width="1536" height="330" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="706" text-anchor="start">Add probe target</text>
+  <text class="ui small muted" x="1538" y="705" text-anchor="end">Draft · not saved</text>
+  <line class="rule" x1="24" y1="722" x2="1562" y2="722"/>
+  <text class="ui eyebrow muted" x="48" y="757" text-anchor="start">NEW TARGET</text>
+  <text class="ui body muted" x="330" y="757" text-anchor="start">Not in the shared pool yet</text>
+  <text class="ui body" x="48" y="801" text-anchor="start">Target ID</text>
+  <text class="ui body" x="380" y="801" text-anchor="start">HTTPS URL · draft</text>
   <g data-ui="input">
-  <rect x="48" y="844" width="308" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="62" y="871" text-anchor="start">demo-media-backup</text>
+  <rect x="48" y="816" width="308" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="62" y="843" text-anchor="start">demo-media-backup</text>
   </g>
   <g data-ui="input">
-  <rect x="380" y="844" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="394" y="871" text-anchor="start">https://media.example/backup-health</text>
+  <rect x="380" y="816" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="394" y="843" text-anchor="start">https://media.example/backup-health</text>
   </g>
-  <text class="ui small muted" x="48" y="916" text-anchor="start">Matching services</text>
-  <text class="ui body" x="248" y="916" text-anchor="start">media</text>
-  <text class="ui small muted" x="48" y="942" text-anchor="start">Adding a target does not grant device access.</text>
-  <line class="rule" x1="48" y1="962" x2="1538" y2="962"/>
+  <text class="ui small muted" x="48" y="888" text-anchor="start">Matching services</text>
+  <text class="ui body" x="248" y="888" text-anchor="start">media</text>
+  <text class="ui small muted" x="48" y="914" text-anchor="start">Adding a target does not grant device access.</text>
+  <line class="rule" x1="48" y1="934" x2="1538" y2="934"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="1007" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="979" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-created" data-ui="probe-target-action">
   <g data-ui="button">
-  <rect x="1318" y="980" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1428" y="1005" text-anchor="middle">Add target</text>
+  <rect x="1318" y="952" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1428" y="977" text-anchor="middle">Add target</text>
   </g>
   </a>
   </g>
@@ -290,7 +290,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">4 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="424" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="640" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -361,17 +361,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="724" x2="1562" y2="724"/>
   </g>
-  <rect x="24" y="778" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="801" text-anchor="start">Target added to the shared pool</text>
-  <text class="ui small" x="38" y="820" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="906" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="937" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="965" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="750" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="773" text-anchor="start">Target added to the shared pool</text>
+  <text class="ui small" x="62" y="792" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="878" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="909" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="937" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="906" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="878" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="965" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="937" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-edit" class="probe-pool-scene" data-ui="probe-pool" data-scene="edit">
@@ -379,7 +379,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="688" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -437,34 +437,34 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
   <g data-ui="probe-target-editor" data-target="demo-media-health" data-current="https://media.example/health" data-draft="https://media.example/ready">
-  <rect data-ui="panel" x="24" y="702" width="1538" height="340" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="734" text-anchor="start">Edit probe target</text>
-  <text class="ui small muted" x="1544" y="733" text-anchor="end">Draft · not saved</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="750" x2="1562" y2="750"/>
-  <text class="ui eyebrow muted" x="48" y="785" text-anchor="start">CURRENT URL</text>
-  <text class="ui body mono" x="330" y="785" text-anchor="start">https://media.example/health</text>
-  <text class="ui body" x="48" y="829" text-anchor="start">Target ID · read only</text>
-  <text class="ui body" x="380" y="829" text-anchor="start">HTTPS URL · draft</text>
+  <rect x="25" y="675" width="1536" height="330" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="706" text-anchor="start">Edit probe target</text>
+  <text class="ui small muted" x="1538" y="705" text-anchor="end">Draft · not saved</text>
+  <line class="rule" x1="24" y1="722" x2="1562" y2="722"/>
+  <text class="ui eyebrow muted" x="48" y="757" text-anchor="start">CURRENT URL</text>
+  <text class="ui body mono" x="330" y="757" text-anchor="start">https://media.example/health</text>
+  <text class="ui body" x="48" y="801" text-anchor="start">Target ID · read only</text>
+  <text class="ui body" x="380" y="801" text-anchor="start">HTTPS URL · draft</text>
   <g data-ui="probe-target-stable-id" aria-readonly="true">
-  <rect x="48" y="844" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
-  <text class="ui body mono muted" x="62" y="871" text-anchor="start">demo-media-health</text>
-  <use href="#icon-lock" x="326" y="857" width="14" height="14" class="nav-icon"/>
+  <rect x="48" y="816" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
+  <text class="ui body mono muted" x="62" y="843" text-anchor="start">demo-media-health</text>
+  <use href="#icon-lock" x="326" y="829" width="14" height="14" class="nav-icon"/>
   </g>
   <g data-ui="input">
-  <rect x="380" y="844" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="394" y="871" text-anchor="start">https://media.example/ready</text>
+  <rect x="380" y="816" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="394" y="843" text-anchor="start">https://media.example/ready</text>
   </g>
-  <text class="ui small muted" x="48" y="916" text-anchor="start">Matching services</text>
-  <text class="ui body" x="248" y="916" text-anchor="start">media</text>
-  <text class="ui small muted" x="48" y="942" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
-  <line class="rule" x1="48" y1="962" x2="1538" y2="962"/>
+  <text class="ui small muted" x="48" y="888" text-anchor="start">Matching services</text>
+  <text class="ui body" x="248" y="888" text-anchor="start">media</text>
+  <text class="ui small muted" x="48" y="914" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
+  <line class="rule" x1="48" y1="934" x2="1538" y2="934"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="1007" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="979" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-saved" data-ui="probe-target-action">
   <g data-ui="button">
-  <rect x="1318" y="980" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1428" y="1005" text-anchor="middle">Save target</text>
+  <rect x="1318" y="952" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1428" y="977" text-anchor="middle">Save target</text>
   </g>
   </a>
   </g>
@@ -474,7 +474,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="626" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -532,21 +532,21 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
   <g data-ui="probe-target-delete-confirmation" data-target="demo-media-health">
-  <rect data-ui="panel" x="24" y="702" width="1538" height="278" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="734" text-anchor="start">Delete probe target</text>
-  <text class="ui small muted" x="1544" y="733" text-anchor="end">Review shared pool change</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="750" x2="1562" y2="750"/>
-  <text class="ui body mono" x="48" y="788" text-anchor="start">demo-media-health</text>
-  <text class="ui body mono" x="380" y="788" text-anchor="start">https://media.example/health</text>
-  <text class="ui body" x="48" y="830" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
-  <text class="ui small muted" x="48" y="860" text-anchor="start">Service destinations and selected policies keep their current values.</text>
-  <line class="rule" x1="48" y1="894" x2="1538" y2="894"/>
+  <rect x="25" y="675" width="1536" height="268" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="706" text-anchor="start">Delete probe target</text>
+  <text class="ui small muted" x="1538" y="705" text-anchor="end">Review shared pool change</text>
+  <line class="rule" x1="24" y1="722" x2="1562" y2="722"/>
+  <text class="ui body mono" x="48" y="760" text-anchor="start">demo-media-health</text>
+  <text class="ui body mono" x="380" y="760" text-anchor="start">https://media.example/health</text>
+  <text class="ui body" x="48" y="802" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
+  <text class="ui small muted" x="48" y="832" text-anchor="start">Service destinations and selected policies keep their current values.</text>
+  <line class="rule" x1="48" y1="866" x2="1538" y2="866"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="939" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="911" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-deleted-media" data-ui="probe-target-action">
-  <rect x="1318" y="912" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
-  <text class="ui body white" x="1428" y="939" text-anchor="middle">Delete target</text>
+  <rect x="1318" y="884" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
+  <text class="ui body white" x="1428" y="911" text-anchor="middle">Delete target</text>
   </a>
   </g>
   </g>
@@ -555,7 +555,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="564" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -612,17 +612,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
-  <rect x="24" y="702" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="725" text-anchor="start">Target URL saved</text>
-  <text class="ui small" x="38" y="744" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="830" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="861" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="889" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="674" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="697" text-anchor="start">Target URL saved</text>
+  <text class="ui small" x="62" y="716" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="802" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="833" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="861" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="830" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="802" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="889" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="861" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-deleted-media" class="probe-pool-scene" data-ui="probe-pool" data-scene="deleted">
@@ -630,7 +630,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">2 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="272" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="488" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -669,17 +669,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="572" x2="1562" y2="572"/>
   </g>
-  <rect x="24" y="626" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="649" text-anchor="start">Target removed from the shared pool</text>
-  <text class="ui small" x="38" y="668" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="754" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="785" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="813" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="598" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="621" text-anchor="start">Target removed from the shared pool</text>
+  <text class="ui small" x="62" y="640" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="726" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="757" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="785" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="754" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="726" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="813" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="785" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-edit-private" class="probe-pool-scene" data-ui="probe-pool" data-scene="edit">
@@ -687,7 +687,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="688" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -745,34 +745,34 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
   <g data-ui="probe-target-editor" data-target="demo-private-health" data-current="https://private.example/health" data-draft="https://private.example/ready">
-  <rect data-ui="panel" x="24" y="702" width="1538" height="340" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="734" text-anchor="start">Edit probe target</text>
-  <text class="ui small muted" x="1544" y="733" text-anchor="end">Draft · not saved</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="750" x2="1562" y2="750"/>
-  <text class="ui eyebrow muted" x="48" y="785" text-anchor="start">CURRENT URL</text>
-  <text class="ui body mono" x="330" y="785" text-anchor="start">https://private.example/health</text>
-  <text class="ui body" x="48" y="829" text-anchor="start">Target ID · read only</text>
-  <text class="ui body" x="380" y="829" text-anchor="start">HTTPS URL · draft</text>
+  <rect x="25" y="675" width="1536" height="330" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="706" text-anchor="start">Edit probe target</text>
+  <text class="ui small muted" x="1538" y="705" text-anchor="end">Draft · not saved</text>
+  <line class="rule" x1="24" y1="722" x2="1562" y2="722"/>
+  <text class="ui eyebrow muted" x="48" y="757" text-anchor="start">CURRENT URL</text>
+  <text class="ui body mono" x="330" y="757" text-anchor="start">https://private.example/health</text>
+  <text class="ui body" x="48" y="801" text-anchor="start">Target ID · read only</text>
+  <text class="ui body" x="380" y="801" text-anchor="start">HTTPS URL · draft</text>
   <g data-ui="probe-target-stable-id" aria-readonly="true">
-  <rect x="48" y="844" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
-  <text class="ui body mono muted" x="62" y="871" text-anchor="start">private-app-health</text>
-  <use href="#icon-lock" x="326" y="857" width="14" height="14" class="nav-icon"/>
+  <rect x="48" y="816" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
+  <text class="ui body mono muted" x="62" y="843" text-anchor="start">private-app-health</text>
+  <use href="#icon-lock" x="326" y="829" width="14" height="14" class="nav-icon"/>
   </g>
   <g data-ui="input">
-  <rect x="380" y="844" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="394" y="871" text-anchor="start">https://private.example/ready</text>
+  <rect x="380" y="816" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="394" y="843" text-anchor="start">https://private.example/ready</text>
   </g>
-  <text class="ui small muted" x="48" y="916" text-anchor="start">Matching services</text>
-  <text class="ui body" x="248" y="916" text-anchor="start">private-app</text>
-  <text class="ui small muted" x="48" y="942" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
-  <line class="rule" x1="48" y1="962" x2="1538" y2="962"/>
+  <text class="ui small muted" x="48" y="888" text-anchor="start">Matching services</text>
+  <text class="ui body" x="248" y="888" text-anchor="start">private-app</text>
+  <text class="ui small muted" x="48" y="914" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
+  <line class="rule" x1="48" y1="934" x2="1538" y2="934"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="1007" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="979" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-saved-private" data-ui="probe-target-action">
   <g data-ui="button">
-  <rect x="1318" y="980" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1428" y="1005" text-anchor="middle">Save target</text>
+  <rect x="1318" y="952" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1428" y="977" text-anchor="middle">Save target</text>
   </g>
   </a>
   </g>
@@ -782,7 +782,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="626" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -840,21 +840,21 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
   <g data-ui="probe-target-delete-confirmation" data-target="demo-private-health">
-  <rect data-ui="panel" x="24" y="702" width="1538" height="278" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="734" text-anchor="start">Delete probe target</text>
-  <text class="ui small muted" x="1544" y="733" text-anchor="end">Review shared pool change</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="750" x2="1562" y2="750"/>
-  <text class="ui body mono" x="48" y="788" text-anchor="start">private-app-health</text>
-  <text class="ui body mono" x="380" y="788" text-anchor="start">https://private.example/health</text>
-  <text class="ui body" x="48" y="830" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
-  <text class="ui small muted" x="48" y="860" text-anchor="start">Service destinations and selected policies keep their current values.</text>
-  <line class="rule" x1="48" y1="894" x2="1538" y2="894"/>
+  <rect x="25" y="675" width="1536" height="268" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="706" text-anchor="start">Delete probe target</text>
+  <text class="ui small muted" x="1538" y="705" text-anchor="end">Review shared pool change</text>
+  <line class="rule" x1="24" y1="722" x2="1562" y2="722"/>
+  <text class="ui body mono" x="48" y="760" text-anchor="start">private-app-health</text>
+  <text class="ui body mono" x="380" y="760" text-anchor="start">https://private.example/health</text>
+  <text class="ui body" x="48" y="802" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
+  <text class="ui small muted" x="48" y="832" text-anchor="start">Service destinations and selected policies keep their current values.</text>
+  <line class="rule" x1="48" y1="866" x2="1538" y2="866"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="939" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="911" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-deleted-private" data-ui="probe-target-action">
-  <rect x="1318" y="912" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
-  <text class="ui body white" x="1428" y="939" text-anchor="middle">Delete target</text>
+  <rect x="1318" y="884" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
+  <text class="ui body white" x="1428" y="911" text-anchor="middle">Delete target</text>
   </a>
   </g>
   </g>
@@ -863,7 +863,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="564" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -920,17 +920,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
-  <rect x="24" y="702" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="725" text-anchor="start">Target URL saved</text>
-  <text class="ui small" x="38" y="744" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="830" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="861" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="889" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="674" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="697" text-anchor="start">Target URL saved</text>
+  <text class="ui small" x="62" y="716" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="802" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="833" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="861" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="830" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="802" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="889" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="861" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-deleted-private" class="probe-pool-scene" data-ui="probe-pool" data-scene="deleted">
@@ -938,7 +938,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">2 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="272" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="488" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -977,17 +977,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="572" x2="1562" y2="572"/>
   </g>
-  <rect x="24" y="626" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="649" text-anchor="start">Target removed from the shared pool</text>
-  <text class="ui small" x="38" y="668" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="754" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="785" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="813" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="598" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="621" text-anchor="start">Target removed from the shared pool</text>
+  <text class="ui small" x="62" y="640" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="726" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="757" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="785" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="754" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="726" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="813" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="785" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-edit-unmatched" class="probe-pool-scene" data-ui="probe-pool" data-scene="edit">
@@ -995,7 +995,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="688" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1053,34 +1053,34 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
   <g data-ui="probe-target-editor" data-target="demo-unmatched-health" data-current="https://unmatched.example/health" data-draft="https://unmatched.example/ready">
-  <rect data-ui="panel" x="24" y="702" width="1538" height="340" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="734" text-anchor="start">Edit probe target</text>
-  <text class="ui small muted" x="1544" y="733" text-anchor="end">Draft · not saved</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="750" x2="1562" y2="750"/>
-  <text class="ui eyebrow muted" x="48" y="785" text-anchor="start">CURRENT URL</text>
-  <text class="ui body mono" x="330" y="785" text-anchor="start">https://unmatched.example/health</text>
-  <text class="ui body" x="48" y="829" text-anchor="start">Target ID · read only</text>
-  <text class="ui body" x="380" y="829" text-anchor="start">HTTPS URL · draft</text>
+  <rect x="25" y="675" width="1536" height="330" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="706" text-anchor="start">Edit probe target</text>
+  <text class="ui small muted" x="1538" y="705" text-anchor="end">Draft · not saved</text>
+  <line class="rule" x1="24" y1="722" x2="1562" y2="722"/>
+  <text class="ui eyebrow muted" x="48" y="757" text-anchor="start">CURRENT URL</text>
+  <text class="ui body mono" x="330" y="757" text-anchor="start">https://unmatched.example/health</text>
+  <text class="ui body" x="48" y="801" text-anchor="start">Target ID · read only</text>
+  <text class="ui body" x="380" y="801" text-anchor="start">HTTPS URL · draft</text>
   <g data-ui="probe-target-stable-id" aria-readonly="true">
-  <rect x="48" y="844" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
-  <text class="ui body mono muted" x="62" y="871" text-anchor="start">demo-unmatched-health</text>
-  <use href="#icon-lock" x="326" y="857" width="14" height="14" class="nav-icon"/>
+  <rect x="48" y="816" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
+  <text class="ui body mono muted" x="62" y="843" text-anchor="start">demo-unmatched-health</text>
+  <use href="#icon-lock" x="326" y="829" width="14" height="14" class="nav-icon"/>
   </g>
   <g data-ui="input">
-  <rect x="380" y="844" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="394" y="871" text-anchor="start">https://unmatched.example/ready</text>
+  <rect x="380" y="816" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="394" y="843" text-anchor="start">https://unmatched.example/ready</text>
   </g>
-  <text class="ui small muted" x="48" y="916" text-anchor="start">Matching services</text>
-  <text class="ui body muted" x="248" y="916" text-anchor="start">No matching service</text>
-  <text class="ui small muted" x="48" y="942" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
-  <line class="rule" x1="48" y1="962" x2="1538" y2="962"/>
+  <text class="ui small muted" x="48" y="888" text-anchor="start">Matching services</text>
+  <text class="ui body muted" x="248" y="888" text-anchor="start">No matching service</text>
+  <text class="ui small muted" x="48" y="914" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
+  <line class="rule" x1="48" y1="934" x2="1538" y2="934"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="1007" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="979" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-saved-unmatched" data-ui="probe-target-action">
   <g data-ui="button">
-  <rect x="1318" y="980" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1428" y="1005" text-anchor="middle">Save target</text>
+  <rect x="1318" y="952" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1428" y="977" text-anchor="middle">Save target</text>
   </g>
   </a>
   </g>
@@ -1090,7 +1090,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="626" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1148,21 +1148,21 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
   <g data-ui="probe-target-delete-confirmation" data-target="demo-unmatched-health">
-  <rect data-ui="panel" x="24" y="702" width="1538" height="278" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="734" text-anchor="start">Delete probe target</text>
-  <text class="ui small muted" x="1544" y="733" text-anchor="end">Review shared pool change</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="750" x2="1562" y2="750"/>
-  <text class="ui body mono" x="48" y="788" text-anchor="start">demo-unmatched-health</text>
-  <text class="ui body mono" x="380" y="788" text-anchor="start">https://unmatched.example/health</text>
-  <text class="ui body" x="48" y="830" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
-  <text class="ui small muted" x="48" y="860" text-anchor="start">Service destinations and selected policies keep their current values.</text>
-  <line class="rule" x1="48" y1="894" x2="1538" y2="894"/>
+  <rect x="25" y="675" width="1536" height="268" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="706" text-anchor="start">Delete probe target</text>
+  <text class="ui small muted" x="1538" y="705" text-anchor="end">Review shared pool change</text>
+  <line class="rule" x1="24" y1="722" x2="1562" y2="722"/>
+  <text class="ui body mono" x="48" y="760" text-anchor="start">demo-unmatched-health</text>
+  <text class="ui body mono" x="380" y="760" text-anchor="start">https://unmatched.example/health</text>
+  <text class="ui body" x="48" y="802" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
+  <text class="ui small muted" x="48" y="832" text-anchor="start">Service destinations and selected policies keep their current values.</text>
+  <line class="rule" x1="48" y1="866" x2="1538" y2="866"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="939" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="911" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-deleted" data-ui="probe-target-action">
-  <rect x="1318" y="912" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
-  <text class="ui body white" x="1428" y="939" text-anchor="middle">Delete target</text>
+  <rect x="1318" y="884" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
+  <text class="ui body white" x="1428" y="911" text-anchor="middle">Delete target</text>
   </a>
   </g>
   </g>
@@ -1171,7 +1171,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="564" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1228,17 +1228,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
-  <rect x="24" y="702" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="725" text-anchor="start">Target URL saved</text>
-  <text class="ui small" x="38" y="744" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="830" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="861" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="889" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="674" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="697" text-anchor="start">Target URL saved</text>
+  <text class="ui small" x="62" y="716" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="802" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="833" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="861" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="830" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="802" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="889" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="861" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-deleted" class="probe-pool-scene" data-ui="probe-pool" data-scene="deleted">
@@ -1246,7 +1246,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">2 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="272" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="488" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1287,17 +1287,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="572" x2="1562" y2="572"/>
   </g>
-  <rect x="24" y="626" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="649" text-anchor="start">Target removed from the shared pool</text>
-  <text class="ui small" x="38" y="668" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="754" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="785" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="813" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="598" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="621" text-anchor="start">Target removed from the shared pool</text>
+  <text class="ui small" x="62" y="640" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="726" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="757" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="785" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="754" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="726" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="813" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="785" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-edit-backup" class="probe-pool-scene" data-ui="probe-pool" data-scene="edit">
@@ -1305,7 +1305,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">4 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="424" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="764" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1379,34 +1379,34 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="724" x2="1562" y2="724"/>
   </g>
   <g data-ui="probe-target-editor" data-target="demo-media-backup" data-current="https://media.example/backup-health" data-draft="https://media.example/backup-health/ready">
-  <rect data-ui="panel" x="24" y="778" width="1538" height="340" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="810" text-anchor="start">Edit probe target</text>
-  <text class="ui small muted" x="1544" y="809" text-anchor="end">Draft · not saved</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="826" x2="1562" y2="826"/>
-  <text class="ui eyebrow muted" x="48" y="861" text-anchor="start">CURRENT URL</text>
-  <text class="ui body mono" x="330" y="861" text-anchor="start">https://media.example/backup-health</text>
-  <text class="ui body" x="48" y="905" text-anchor="start">Target ID · read only</text>
-  <text class="ui body" x="380" y="905" text-anchor="start">HTTPS URL · draft</text>
+  <rect x="25" y="751" width="1536" height="330" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="782" text-anchor="start">Edit probe target</text>
+  <text class="ui small muted" x="1538" y="781" text-anchor="end">Draft · not saved</text>
+  <line class="rule" x1="24" y1="798" x2="1562" y2="798"/>
+  <text class="ui eyebrow muted" x="48" y="833" text-anchor="start">CURRENT URL</text>
+  <text class="ui body mono" x="330" y="833" text-anchor="start">https://media.example/backup-health</text>
+  <text class="ui body" x="48" y="877" text-anchor="start">Target ID · read only</text>
+  <text class="ui body" x="380" y="877" text-anchor="start">HTTPS URL · draft</text>
   <g data-ui="probe-target-stable-id" aria-readonly="true">
-  <rect x="48" y="920" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
-  <text class="ui body mono muted" x="62" y="947" text-anchor="start">demo-media-backup</text>
-  <use href="#icon-lock" x="326" y="933" width="14" height="14" class="nav-icon"/>
+  <rect x="48" y="892" width="308" height="42" rx="5" fill="#F4F6F4" stroke="#D8E0DA"/>
+  <text class="ui body mono muted" x="62" y="919" text-anchor="start">demo-media-backup</text>
+  <use href="#icon-lock" x="326" y="905" width="14" height="14" class="nav-icon"/>
   </g>
   <g data-ui="input">
-  <rect x="380" y="920" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="394" y="947" text-anchor="start">https://media.example/backup-health/ready</text>
+  <rect x="380" y="892" width="1158" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="394" y="919" text-anchor="start">https://media.example/backup-health/ready</text>
   </g>
-  <text class="ui small muted" x="48" y="992" text-anchor="start">Matching services</text>
-  <text class="ui body" x="248" y="992" text-anchor="start">media</text>
-  <text class="ui small muted" x="48" y="1018" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
-  <line class="rule" x1="48" y1="1038" x2="1538" y2="1038"/>
+  <text class="ui small muted" x="48" y="964" text-anchor="start">Matching services</text>
+  <text class="ui body" x="248" y="964" text-anchor="start">media</text>
+  <text class="ui small muted" x="48" y="990" text-anchor="start">Saving updates this shared target. Device access still follows its selected policy.</text>
+  <line class="rule" x1="48" y1="1010" x2="1538" y2="1010"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="1083" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="1055" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-saved-backup" data-ui="probe-target-action">
   <g data-ui="button">
-  <rect x="1318" y="1056" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1428" y="1081" text-anchor="middle">Save target</text>
+  <rect x="1318" y="1028" width="220" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui small white" x="1428" y="1053" text-anchor="middle">Save target</text>
   </g>
   </a>
   </g>
@@ -1416,7 +1416,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">4 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="424" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="702" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1490,21 +1490,21 @@
   <line data-ui="table-rule" class="rule" x1="24" y1="724" x2="1562" y2="724"/>
   </g>
   <g data-ui="probe-target-delete-confirmation" data-target="demo-media-backup">
-  <rect data-ui="panel" x="24" y="778" width="1538" height="278" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
-  <text class="ui section" x="44" y="810" text-anchor="start">Delete probe target</text>
-  <text class="ui small muted" x="1544" y="809" text-anchor="end">Review shared pool change</text>
-  <line data-ui="panel-header" class="rule" x1="24" y1="826" x2="1562" y2="826"/>
-  <text class="ui body mono" x="48" y="864" text-anchor="start">demo-media-backup</text>
-  <text class="ui body mono" x="380" y="864" text-anchor="start">https://media.example/backup-health</text>
-  <text class="ui body" x="48" y="906" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
-  <text class="ui small muted" x="48" y="936" text-anchor="start">Service destinations and selected policies keep their current values.</text>
-  <line class="rule" x1="48" y1="970" x2="1538" y2="970"/>
+  <rect x="25" y="751" width="1536" height="268" rx="0" fill="#F7F9F7" stroke="none"/>
+  <text class="ui section" x="48" y="782" text-anchor="start">Delete probe target</text>
+  <text class="ui small muted" x="1538" y="781" text-anchor="end">Review shared pool change</text>
+  <line class="rule" x1="24" y1="798" x2="1562" y2="798"/>
+  <text class="ui body mono" x="48" y="836" text-anchor="start">demo-media-backup</text>
+  <text class="ui body mono" x="380" y="836" text-anchor="start">https://media.example/backup-health</text>
+  <text class="ui body" x="48" y="878" text-anchor="start">Future probes will stop using this target after the change reaches the device.</text>
+  <text class="ui small muted" x="48" y="908" text-anchor="start">Service destinations and selected policies keep their current values.</text>
+  <line class="rule" x1="48" y1="942" x2="1538" y2="942"/>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1280" y="1015" text-anchor="end">Cancel</text>
+  <text class="ui small green" x="1280" y="987" text-anchor="end">Cancel</text>
   </a>
   <a href="#probes-deleted-backup" data-ui="probe-target-action">
-  <rect x="1318" y="988" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
-  <text class="ui body white" x="1428" y="1015" text-anchor="middle">Delete target</text>
+  <rect x="1318" y="960" width="220" height="42" rx="6" fill="#B44B45" stroke="#B44B45"/>
+  <text class="ui body white" x="1428" y="987" text-anchor="middle">Delete target</text>
   </a>
   </g>
   </g>
@@ -1513,7 +1513,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">4 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="424" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="640" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1586,17 +1586,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="724" x2="1562" y2="724"/>
   </g>
-  <rect x="24" y="778" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="801" text-anchor="start">Target URL saved</text>
-  <text class="ui small" x="38" y="820" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="906" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="937" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="965" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="750" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="773" text-anchor="start">Target URL saved</text>
+  <text class="ui small" x="62" y="792" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="878" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="909" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="937" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="906" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="878" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="965" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="937" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <g id="probe-pool-scene-probes-deleted-backup" class="probe-pool-scene" data-ui="probe-pool" data-scene="deleted">
@@ -1604,7 +1604,7 @@
   <use href="#icon-search" x="35" y="272" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="285" text-anchor="start">Search target ID, URL or matching service</text>
   <text class="ui small muted" x="1562" y="287" text-anchor="end">3 shared targets · includes unused targets</text>
-  <rect data-ui="panel" x="24" y="326" width="1538" height="348" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
+  <rect data-ui="panel" x="24" y="326" width="1538" height="564" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="358" text-anchor="start">Shared HTTPS pool</text>
   <text class="ui small muted" x="1544" y="357" text-anchor="end">Matching services do not grant access</text>
   <line data-ui="panel-header" class="rule" x1="24" y1="374" x2="1562" y2="374"/>
@@ -1659,17 +1659,17 @@
   </a>
   <line data-ui="table-rule" class="rule" x1="24" y1="648" x2="1562" y2="648"/>
   </g>
-  <rect x="24" y="702" width="1538" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
-  <text class="ui small" x="38" y="725" text-anchor="start">Target removed from the shared pool</text>
-  <text class="ui small" x="38" y="744" text-anchor="start">Device application and probe results are read separately.</text>
-  <text class="ui section" x="24" y="830" text-anchor="start">Probe results</text>
-  <text class="ui body muted" x="24" y="861" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
-  <text class="ui small muted" x="24" y="889" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
+  <rect x="48" y="674" width="1490" height="62" rx="6" fill="#EEF8F2" stroke="#CBE6D3"/>
+  <text class="ui small" x="62" y="697" text-anchor="start">Target removed from the shared pool</text>
+  <text class="ui small" x="62" y="716" text-anchor="start">Device application and probe results are read separately.</text>
+  <text class="ui section" x="48" y="802" text-anchor="start">Probe results</text>
+  <text class="ui body muted" x="48" y="833" text-anchor="start">Inspect results for a device, service and candidate in Live paths.</text>
+  <text class="ui small muted" x="48" y="861" text-anchor="start">An unused or unmatched target stays available here. Saving never grants device access.</text>
   <a data-ui="navigation" data-route="/routing" href="04-live-paths.svg">
-  <text class="ui small green" x="1562" y="830" text-anchor="end">View Live paths →</text>
+  <text class="ui small green" x="1538" y="802" text-anchor="end">View Live paths →</text>
   </a>
   <a data-ui="navigation" data-route="/services?tab=probes" href="#probes-overview">
-  <text class="ui small green" x="1562" y="889" text-anchor="end">Return to pool overview</text>
+  <text class="ui small green" x="1538" y="861" text-anchor="end">Return to pool overview</text>
   </a>
   </g>
   <style><![CDATA[.probe-pool-scene { display:none; }

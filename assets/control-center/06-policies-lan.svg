@@ -107,69 +107,71 @@
   <text class="ui small white" x="1472" y="127" text-anchor="middle">+ New policy</text>
   </g>
   </a>
+  <rect data-ui="workspace-surface" data-surface="content" x="348" y="250" width="1214" height="1302" rx="10" fill="#FFFFFF" stroke="#E2E6E3"/>
+  <rect data-ui="workspace-surface" data-surface="navigation" x="24" y="250" width="300" height="606" rx="10" fill="#F7F9F7" stroke="#E2E6E3"/>
   <g data-ui="catalog-list">
-  <text class="ui section" x="24" y="278" text-anchor="start">Policies</text>
+  <text class="ui section" x="44" y="278" text-anchor="start">Policies</text>
   <text class="ui small muted" x="304" y="278" text-anchor="end">3</text>
-  <rect x="24" y="298" width="280" height="38" rx="5" fill="#F8FAF8" stroke="#E1E7E2"/>
-  <use href="#icon-search" x="35" y="309" width="15" height="15" class="nav-icon"/>
-  <text class="ui small muted" x="59" y="322" text-anchor="start">Search policy or service</text>
+  <rect x="44" y="298" width="260" height="38" rx="5" fill="#F8FAF8" stroke="#E1E7E2"/>
+  <use href="#icon-search" x="55" y="309" width="15" height="15" class="nav-icon"/>
+  <text class="ui small muted" x="79" y="322" text-anchor="start">Search policy or service</text>
   <g data-ui="input">
-  <rect x="24" y="354" width="280" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="38" y="381" text-anchor="start">All services</text>
+  <rect x="44" y="354" width="260" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="58" y="381" text-anchor="start">All services</text>
   <use href="#icon-chevron" x="275" y="367" width="16" height="16" class="nav-icon"/>
   </g>
   <a href="06-policies.svg" data-ui="catalog-navigation">
   <g data-ui="catalog-item" data-object="demo-policy" aria-selected="false">
-  <rect x="24" y="414" width="3" height="92" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body" x="42" y="442" text-anchor="start">media-access</text>
-  <text class="ui small muted" x="42" y="466" text-anchor="start">media · allow</text>
-  <text class="ui tiny muted" x="42" y="488" text-anchor="start">Direct or internet-exit · 1 device</text>
-  <line class="rule" x1="24" y1="506" x2="304" y2="506"/>
+  <rect x="25" y="414" width="3" height="92" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body" x="44" y="442" text-anchor="start">media-access</text>
+  <text class="ui small muted" x="44" y="466" text-anchor="start">media · allow</text>
+  <text class="ui tiny muted" x="44" y="488" text-anchor="start">Direct or internet-exit · 1 device</text>
+  <line class="rule" x1="24" y1="506" x2="324" y2="506"/>
   </g>
   </a>
   <g data-ui="catalog-item" data-object="demo-direct-policy" aria-selected="false">
-  <rect x="24" y="506" width="3" height="92" rx="0" fill="transparent" stroke="none"/>
-  <text class="ui body" x="42" y="534" text-anchor="start">direct-access</text>
-  <text class="ui small muted" x="42" y="558" text-anchor="start">media · allow</text>
-  <text class="ui tiny muted" x="42" y="580" text-anchor="start">Direct only · no devices</text>
-  <line class="rule" x1="24" y1="598" x2="304" y2="598"/>
+  <rect x="25" y="506" width="3" height="92" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body" x="44" y="534" text-anchor="start">direct-access</text>
+  <text class="ui small muted" x="44" y="558" text-anchor="start">media · allow</text>
+  <text class="ui tiny muted" x="44" y="580" text-anchor="start">Direct only · no devices</text>
+  <line class="rule" x1="24" y1="598" x2="324" y2="598"/>
   </g>
   <a href="06-policies-lan.svg" data-ui="catalog-navigation">
   <g data-ui="catalog-item" data-object="demo-lan-policy" aria-selected="true">
-  <rect x="24" y="598" width="280" height="92" rx="4" fill="#EDF4FB" stroke="none"/>
-  <rect x="24" y="598" width="3" height="92" rx="0" fill="#4D78D1" stroke="none"/>
-  <text class="ui body" x="42" y="626" text-anchor="start">office-lan</text>
-  <text class="ui small muted" x="42" y="650" text-anchor="start">office-network · allow</text>
-  <text class="ui tiny muted" x="42" y="672" text-anchor="start">Fixed gateway · no devices</text>
-  <line class="rule" x1="24" y1="690" x2="304" y2="690"/>
+  <rect x="25" y="598" width="298" height="92" rx="0" fill="#EDF4FB" stroke="none"/>
+  <rect x="25" y="598" width="3" height="92" rx="0" fill="#4D78D1" stroke="none"/>
+  <text class="ui body" x="44" y="626" text-anchor="start">office-lan</text>
+  <text class="ui small muted" x="44" y="650" text-anchor="start">office-network · allow</text>
+  <text class="ui tiny muted" x="44" y="672" text-anchor="start">Fixed gateway · no devices</text>
+  <line class="rule" x1="24" y1="690" x2="324" y2="690"/>
   </g>
   </a>
   </g>
-  <text class="ui small muted" x="24" y="744" text-anchor="start">Each device selects one policy</text>
-  <text class="ui small muted" x="24" y="766" text-anchor="start">per service. Shared edits affect</text>
-  <text class="ui small muted" x="24" y="788" text-anchor="start">every device using the policy.</text>
+  <text class="ui small muted" x="44" y="744" text-anchor="start">Each device selects one policy</text>
+  <text class="ui small muted" x="44" y="766" text-anchor="start">per service. Shared edits affect</text>
+  <text class="ui small muted" x="44" y="788" text-anchor="start">every device using the policy.</text>
   <a data-ui="navigation" data-route="/devices/demo-forward-c" href="02-nodes-detail.svg#detail-access">
-  <text class="ui small green" x="24" y="826" text-anchor="start">Assign from device details →</text>
+  <text class="ui small green" x="44" y="826" text-anchor="start">Assign from device details →</text>
   </a>
   <g data-ui="policy-editor" data-policy="demo-lan-policy" data-service="demo-office" data-state="shared-edit">
-  <text class="ui section" x="368" y="278" text-anchor="start">Office LAN access</text>
-  <text class="ui small mono muted" x="1562" y="278" text-anchor="end">Policy ID · office-lan</text>
-  <line class="rule" x1="368" y1="306" x2="1562" y2="306"/>
-  <text class="ui body" x="368" y="347" text-anchor="start">Service</text>
+  <text class="ui section" x="372" y="278" text-anchor="start">Office LAN access</text>
+  <text class="ui small mono muted" x="1538" y="278" text-anchor="end">Policy ID · office-lan</text>
+  <line class="rule" x1="372" y1="306" x2="1538" y2="306"/>
+  <text class="ui body" x="372" y="347" text-anchor="start">Service</text>
   <g data-ui="policy-service" data-service="demo-office" aria-readonly="true">
   <text class="ui body" x="732" y="347" text-anchor="start">office-network</text>
   <a data-ui="navigation" data-route="/services?service=demo-office" href="05-services-lan.svg">
-  <text class="ui small green" x="1562" y="347" text-anchor="end">View service →</text>
+  <text class="ui small green" x="1538" y="347" text-anchor="end">View service →</text>
   </a>
-  <text class="ui small mono muted" x="368" y="384" text-anchor="start">198.51.100.0/24 · gateway relay-west</text>
+  <text class="ui small mono muted" x="372" y="384" text-anchor="start">198.51.100.0/24 · gateway relay-west</text>
   </g>
-  <text class="ui body" x="368" y="425" text-anchor="start">Display name</text>
+  <text class="ui body" x="372" y="425" text-anchor="start">Display name</text>
   <g data-ui="input">
-  <rect x="368" y="440" width="1194" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="382" y="467" text-anchor="start">Office LAN access</text>
+  <rect x="372" y="440" width="1166" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="386" y="467" text-anchor="start">Office LAN access</text>
   </g>
-  <line class="rule" x1="368" y1="511" x2="1562" y2="511"/>
-  <text class="ui section" x="368" y="550" text-anchor="start">Access to this service</text>
+  <line class="rule" x1="372" y1="511" x2="1538" y2="511"/>
+  <text class="ui section" x="372" y="550" text-anchor="start">Access to this service</text>
   <g data-ui="policy-effect" data-value="allow" role="radiogroup">
   <g role="radio" data-value="allow" aria-checked="true">
   <circle cx="1240" cy="544" r="8" fill="#FFFFFF" stroke="#248F64"/>
@@ -181,15 +183,15 @@
   <text class="ui body" x="1432" y="550" text-anchor="start">Deny</text>
   </g>
   </g>
-  <text class="ui small muted" x="368" y="582" text-anchor="start">Deny blocks service access while keeping the policy assigned and its path rules saved.</text>
+  <text class="ui small muted" x="372" y="582" text-anchor="start">Deny blocks service access while keeping the policy assigned and its path rules saved.</text>
   <g data-ui="fixed-lan-gateway" data-node="demo-forward-c" aria-readonly="true">
-  <text class="ui body" x="368" y="635" text-anchor="start">Destination gateway</text>
+  <text class="ui body" x="372" y="635" text-anchor="start">Destination gateway</text>
   <text class="ui body mono" x="732" y="635" text-anchor="start">relay-west · fixed by office-network</text>
   </g>
-  <text class="ui section" x="368" y="687" text-anchor="start">Paths through Loom</text>
-  <text class="ui small muted" x="1562" y="687" text-anchor="end"></text>
+  <text class="ui section" x="372" y="687" text-anchor="start">Paths through Loom</text>
+  <text class="ui small muted" x="1538" y="687" text-anchor="end"></text>
   <g data-ui="policy-range" data-field="data-entries" data-mode="only" data-options="any only none">
-  <text class="ui body" x="368" y="737" text-anchor="start">Entry · first managed node</text>
+  <text class="ui body" x="372" y="737" text-anchor="start">Entry · first managed node</text>
   <g data-ui="policy-range-mode" role="radiogroup" aria-label="Entry · first managed node">
   <g role="radio" data-value="any" aria-checked="false">
   <circle cx="740" cy="732" r="8" fill="#FFFFFF" stroke="#BCC8C0"/>
@@ -207,7 +209,7 @@
   </g>
   <g data-ui="policy-node-picker" aria-expanded="true">
   <g data-ui="tag-selector" data-field="data-entries" aria-multiselectable="true">
-  <rect x="732" y="753" width="830" height="44" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <rect x="732" y="753" width="806" height="44" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
   <g data-ui="selected-tag" data-value="demo-control-a">
   <rect x="742" y="762" width="97" height="26" rx="4" fill="#EEF3F0" stroke="none"/>
   <text class="ui small" x="751" y="779" text-anchor="start">control-a</text>
@@ -215,30 +217,30 @@
   <text class="ui body muted" x="827" y="779" text-anchor="middle">×</text>
   </g></g>
   <text class="ui small muted" x="849" y="780" text-anchor="start">Search nodes…</text>
-  <use href="#icon-chevron" x="1538" y="768" width="16" height="16" class="nav-icon"/>
+  <use href="#icon-chevron" x="1514" y="768" width="16" height="16" class="nav-icon"/>
   </g>
   <g data-ui="policy-node-options" role="listbox" aria-label="Entry · first managed node" aria-multiselectable="true" data-close-on-select="false">
-  <rect x="732" y="803" width="830" height="118" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <rect x="732" y="803" width="806" height="118" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
   <text class="ui eyebrow muted" x="763" y="825" text-anchor="start">ELIGIBLE NODES</text>
-  <text class="ui small muted" x="1544" y="825" text-anchor="end">1 selected · select one or more</text>
+  <text class="ui small muted" x="1518" y="825" text-anchor="end">1 selected · select one or more</text>
   <g data-ui="policy-node-option" role="option" data-value="demo-control-a" aria-selected="true">
-  <rect x="750" y="837" width="822" height="40" rx="3" fill="#F0F7F3" stroke="none"/>
+  <rect x="750" y="837" width="778" height="40" rx="3" fill="#F0F7F3" stroke="none"/>
   <rect x="764" y="848" width="17" height="17" rx="3" fill="#248F64" stroke="#248F64"/>
   <text class="ui small white" x="773" y="861" text-anchor="middle">✓</text>
   <text class="ui body" x="793" y="862" text-anchor="start">control-a</text>
-  <text class="ui small muted" x="1544" y="862" text-anchor="end">control + forward</text>
+  <text class="ui small muted" x="1518" y="862" text-anchor="end">control + forward</text>
   </g>
   <g data-ui="policy-node-option" role="option" data-value="demo-egress-e" aria-selected="false">
   <rect x="764" y="890" width="17" height="17" rx="3" fill="#FFFFFF" stroke="#BCC8C0"/>
   <text class="ui body" x="793" y="904" text-anchor="start">internet-exit</text>
-  <text class="ui small muted" x="1544" y="904" text-anchor="end">internet_egress</text>
+  <text class="ui small muted" x="1518" y="904" text-anchor="end">internet_egress</text>
   </g>
   </g>
   </g>
   <text class="ui small muted" x="732" y="946" text-anchor="start">Select at least one node. Selection order does not define a route.</text>
   </g>
   <g data-ui="policy-range" data-field="forwarding-nodes" data-mode="any" data-options="any only none">
-  <text class="ui body" x="368" y="1009" text-anchor="start">Intermediate forwarding nodes</text>
+  <text class="ui body" x="372" y="1009" text-anchor="start">Intermediate forwarding nodes</text>
   <g data-ui="policy-range-mode" role="radiogroup" aria-label="Intermediate forwarding nodes">
   <g role="radio" data-value="any" aria-checked="true">
   <circle cx="740" cy="1004" r="8" fill="#FFFFFF" stroke="#248F64"/>
@@ -256,34 +258,33 @@
   </g>
   <text class="ui small muted" x="732" y="1037" text-anchor="start">All current and future eligible nodes.</text>
   </g>
-  <text class="ui body" x="368" y="1069" text-anchor="start">Final destination</text>
+  <text class="ui body" x="372" y="1069" text-anchor="start">Final destination</text>
   <text class="ui body muted" x="732" y="1069" text-anchor="start">Fixed LAN gateway · relay-west</text>
   <g data-ui="advanced-policy-rules" aria-expanded="false">
-  <line class="rule" x1="368" y1="1114" x2="1562" y2="1114"/>
-  <text class="ui body" x="368" y="1151" text-anchor="start">› Advanced restrictions</text>
-  <text class="ui small muted" x="1562" y="1151" text-anchor="end">No additional node limit</text>
+  <line class="rule" x1="372" y1="1114" x2="1538" y2="1114"/>
+  <text class="ui body" x="372" y="1151" text-anchor="start">› Advanced restrictions</text>
+  <text class="ui small muted" x="1538" y="1151" text-anchor="end">No additional node limit</text>
   </g>
-  <line class="rule" x1="368" y1="1186" x2="1562" y2="1186"/>
-  <text class="ui section" x="368" y="1222" text-anchor="start">Access summary · draft</text>
-  <text class="ui body mono" x="368" y="1258" text-anchor="start">Entry control-a → transit unrestricted → fixed LAN gateway relay-west</text>
-  <text class="ui small muted" x="368" y="1289" text-anchor="start">Only the entry restriction is an unsaved change. The LAN destination stays 198.51.100.0/24.</text>
+  <line class="rule" x1="372" y1="1186" x2="1538" y2="1186"/>
+  <text class="ui section" x="372" y="1222" text-anchor="start">Access summary · draft</text>
+  <text class="ui body mono" x="372" y="1258" text-anchor="start">Entry control-a → transit unrestricted → fixed LAN gateway relay-west</text>
+  <text class="ui small muted" x="372" y="1289" text-anchor="start">Only the entry restriction is an unsaved change. The LAN destination stays 198.51.100.0/24.</text>
   <g data-ui="policy-assignments" data-policy="demo-lan-policy">
-  <text class="ui small muted" x="368" y="1346" text-anchor="start">Shared change affects 0 devices · 0 active invitations</text>
+  <text class="ui small muted" x="372" y="1346" text-anchor="start">Shared change affects 0 devices · 0 active invitations</text>
   </g>
   <g data-ui="form-actions">
-  <line class="rule" x1="368" y1="1370" x2="1562" y2="1370"/>
-  <text class="ui small muted" x="368" y="1419" text-anchor="start">All references use these rules</text>
-  <text class="ui body muted" x="1324" y="1419" text-anchor="end">Discard</text>
-  <rect x="1352" y="1392" width="210" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui body white" x="1457" y="1419" text-anchor="middle">Save shared policy</text>
+  <line class="rule" x1="372" y1="1370" x2="1538" y2="1370"/>
+  <text class="ui small muted" x="372" y="1419" text-anchor="start">All references use these rules</text>
+  <text class="ui body muted" x="1300" y="1419" text-anchor="end">Discard</text>
+  <rect x="1328" y="1392" width="210" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui body white" x="1433" y="1419" text-anchor="middle">Save shared policy</text>
   </g>
-  <text class="ui small muted" x="368" y="1472" text-anchor="start">To change one device, assign another policy or save a copy.</text>
+  <text class="ui small muted" x="372" y="1472" text-anchor="start">To change one device, assign another policy or save a copy.</text>
   <g data-ui="navigation" data-route="/policies?copy=demo-lan-policy">
-  <text class="ui small green" x="1562" y="1472" text-anchor="end">Copy policy →</text>
+  <text class="ui small green" x="1538" y="1472" text-anchor="end">Copy policy →</text>
   </g>
-  <line class="rule" x1="368" y1="1504" x2="1562" y2="1504"/>
-  <text class="ui body red" x="368" y="1539" text-anchor="start">Delete policy</text>
-  <text class="ui small muted" x="520" y="1539" text-anchor="start">Withdraws its access. Devices do not switch to another policy.</text>
+  <line class="rule" x1="372" y1="1504" x2="1538" y2="1504"/>
+  <text class="ui body red" x="372" y="1539" text-anchor="start">Delete policy</text>
+  <text class="ui small muted" x="524" y="1539" text-anchor="start">Withdraws its access. Devices do not switch to another policy.</text>
   </g>
-  <line class="rule" x1="328" y1="258" x2="328" y2="1556"/>
 </svg>
