@@ -5,7 +5,6 @@ import (
 	"encoding"
 	"encoding/json"
 	"errors"
-	"io"
 	"reflect"
 	"sort"
 	"strconv"
@@ -29,17 +28,30 @@ var contractValidatorType = reflect.TypeFor[interface{ Validate() error }]()
 // retain their domain order. A value's Validate method, when present, runs
 // before encoding; the codec never sorts a domain set to repair invalid input.
 // Types whose Validate method exists only on a pointer are unsupported.
-// Static type inspection is shared only within this value walk; each concrete
-// value still runs its validator and cycle/null/collection checks.
+// The wrapper creates one codec; a query may instead reuse a codec's static type
+// plans in sequence. Every concrete value still runs its validator and
+// cycle/null/collection checks.
 func CanonicalEncode(value any) ([]byte, error) {
-	if err := inspectContractValue(reflect.ValueOf(value), map[contractVisit]bool{}, map[reflect.Type]bool{}); err != nil {
+	return newContractCodec().encode(value)
+}
+
+// A codec owns only finite static Go type metadata. It may be reused in sequence
+// during one query, and is discarded with that query; it is not concurrent-safe.
+// It keeps no input bytes, decoded values, concrete validation results, or
+// authorization.
+type contractCodec struct {
+	types map[reflect.Type]*contractTypePlan
+}
+
+func newContractCodec() *contractCodec {
+	return &contractCodec{types: map[reflect.Type]*contractTypePlan{}}
+}
+
+func (codec *contractCodec) encode(value any) ([]byte, error) {
+	if err := codec.inspect(reflect.ValueOf(value), map[contractVisit]bool{}); err != nil {
 		return nil, err
 	}
-	parsed, err := contractJSONValue(reflect.ValueOf(value))
-	if err != nil {
-		return nil, err
-	}
-	return appendContractJSON(nil, parsed), nil
+	return codec.append(nil, reflect.ValueOf(value))
 }
 
 // DecodeCanonical accepts only exact, typed contract bytes. The output is not
@@ -47,11 +59,15 @@ func CanonicalEncode(value any) ([]byte, error) {
 // specify the exact permitted field set. Optional fields use omitempty; all
 // other fields must occur, even when their value is false, zero, or an empty set.
 func DecodeCanonical(body []byte, out any, limits ContractDecodeLimits) error {
+	return newContractCodec().decode(body, out, limits)
+}
+
+func (codec *contractCodec) decode(body []byte, out any, limits ContractDecodeLimits) error {
 	target := reflect.ValueOf(out)
 	if !target.IsValid() || target.Kind() != reflect.Pointer || target.IsNil() {
 		return errors.New("contract decode requires a non-nil output pointer")
 	}
-	if err := inspectContractType(target.Type().Elem(), map[reflect.Type]bool{}); err != nil {
+	if err := codec.inspectType(target.Type().Elem()); err != nil {
 		return err
 	}
 	parsed, err := parseContractJSON(body, limits)
@@ -59,10 +75,10 @@ func DecodeCanonical(body []byte, out any, limits ContractDecodeLimits) error {
 		return err
 	}
 	next := reflect.New(target.Type().Elem())
-	if err := assignContractJSON(parsed, next.Elem()); err != nil {
+	if err := codec.assign(parsed, next.Elem()); err != nil {
 		return err
 	}
-	want, err := CanonicalEncode(next.Elem().Interface())
+	want, err := codec.encode(next.Elem().Interface())
 	if err != nil {
 		return err
 	}
@@ -73,31 +89,50 @@ func DecodeCanonical(body []byte, out any, limits ContractDecodeLimits) error {
 	return nil
 }
 
-func inspectContractType(value reflect.Type, seen map[reflect.Type]bool) error {
-	if value == reflect.TypeFor[Material]() || value == reflect.TypeFor[Operation]() {
-		return nil
+func (codec *contractCodec) inspectType(value reflect.Type) error {
+	plan := codec.typePlan(value)
+	if plan.schemaChecked {
+		return plan.schemaErr
 	}
-	if value == contractU64Type || value == reflect.PointerTo(contractU64Type) || seen[value] {
+	seen := map[reflect.Type]bool{}
+	err := codec.inspectTypeIn(value, seen)
+	if err != nil {
+		// A recursive type may have been seen before an invalid descendant.
+		// Only a completely successful walk can certify all visited types.
+		plan.schemaChecked, plan.schemaErr = true, err
+		return err
+	}
+	for kind := range seen {
+		codec.types[kind].schemaChecked = true
+	}
+	return nil
+}
+
+func (codec *contractCodec) inspectTypeIn(value reflect.Type, seen map[reflect.Type]bool) error {
+	plan := codec.typePlan(value)
+	if plan.schemaChecked {
+		return plan.schemaErr
+	}
+	if seen[value] {
 		return nil
 	}
 	seen[value] = true
-	if contractPointerOnlyValidator(value) {
-		return errors.New("contract validation requires a value receiver")
+	if value == reflect.TypeFor[Material]() || value == reflect.TypeFor[Operation]() ||
+		value == contractU64Type || value == reflect.PointerTo(contractU64Type) {
+		return nil
 	}
-	if contractCustomMethods(value) {
-		return errors.New("custom contract codecs are not permitted")
+	if plan.methodErr != nil {
+		return plan.methodErr
 	}
 	switch value.Kind() {
 	case reflect.Pointer, reflect.Slice, reflect.Array:
-		return inspectContractType(value.Elem(), seen)
+		return codec.inspectTypeIn(value.Elem(), seen)
 	case reflect.Struct:
-		for index := range value.NumField() {
-			field := value.Field(index)
-			name, options, hasOptions := strings.Cut(field.Tag.Get("json"), ",")
-			if field.PkgPath != "" || name == "-" || field.Anonymous || !contractJSONKey(name) || hasOptions && options != "omitempty" {
-				return errors.New("contract fields require explicit ASCII JSON names")
-			}
-			if err := inspectContractType(field.Type, seen); err != nil {
+		if plan.fieldsErr != nil {
+			return plan.fieldsErr
+		}
+		for _, field := range plan.fields {
+			if err := codec.inspectTypeIn(field.kind, seen); err != nil {
 				return err
 			}
 		}
@@ -134,7 +169,7 @@ func contractPointerOnlyValidator(value reflect.Type) bool {
 	return !value.Implements(contractValidatorType) && reflect.PointerTo(value).Implements(contractValidatorType)
 }
 
-func inspectContractValue(value reflect.Value, active map[contractVisit]bool, checked map[reflect.Type]bool) error {
+func (codec *contractCodec) inspect(value reflect.Value, active map[contractVisit]bool) error {
 	if !value.IsValid() {
 		return errors.New("contract null is not permitted")
 	}
@@ -145,18 +180,14 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool, ch
 		return value.Interface().(Operation).Validate()
 	}
 	if value.Type() == reflect.TypeFor[ConflictResolution]() {
-		return inspectContractValue(reflect.ValueOf(value.Interface().(ConflictResolution).contractObject()), active, checked)
+		return codec.inspect(reflect.ValueOf(value.Interface().(ConflictResolution).contractObject()), active)
 	}
 	if value.Type() == contractU64Type || value.Type() == reflect.PointerTo(contractU64Type) {
 		return nil
 	}
-	if !checked[value.Type()] {
-		if contractPointerOnlyValidator(value.Type()) {
-			return errors.New("contract validation requires a value receiver")
-		}
-		if contractCustomMethods(value.Type()) {
-			return errors.New("custom contract codecs are not permitted")
-		}
+	plan := codec.typePlan(value.Type())
+	if plan.methodErr != nil {
+		return plan.methodErr
 	}
 	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Map || value.Kind() == reflect.Slice {
 		visit := contractVisit{kind: value.Type(), pointer: value.Pointer()}
@@ -172,15 +203,15 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool, ch
 	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
 		if value.IsNil() {
 			// An optional pointer may be omitted. A required null is rejected by
-			// parseContractJSON after this inspection.
+			// append after this inspection.
 			if value.Kind() == reflect.Pointer {
-				return inspectContractType(value.Type().Elem(), checked)
+				return codec.inspectType(value.Type().Elem())
 			}
 			return nil
 		}
-		return inspectContractValue(value.Elem(), active, checked)
+		return codec.inspect(value.Elem(), active)
 	}
-	if value.CanInterface() {
+	if plan.validator && value.CanInterface() {
 		if validator, ok := value.Interface().(interface{ Validate() error }); ok {
 			if err := validator.Validate(); err != nil {
 				return err
@@ -193,25 +224,18 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool, ch
 			return errors.New("contract string is not UTF-8")
 		}
 	case reflect.Struct:
-		if err := inspectContractType(value.Type(), checked); err != nil {
+		if err := codec.inspectType(value.Type()); err != nil {
 			return err
 		}
-		seen := map[string]bool{}
-		for index := range value.NumField() {
-			field := value.Type().Field(index)
-			name, options, hasOptions := strings.Cut(field.Tag.Get("json"), ",")
-			if field.PkgPath != "" || name == "-" || field.Anonymous || !contractJSONKey(name) || seen[name] || hasOptions && options != "omitempty" {
-				return errors.New("contract fields require unique explicit ASCII JSON names")
-			}
-			seen[name] = true
-			fieldValue := value.Field(index)
-			if options == "omitempty" && (fieldValue.Kind() == reflect.Slice || fieldValue.Kind() == reflect.Map) && fieldValue.Len() == 0 {
+		for _, field := range plan.fields {
+			fieldValue := value.Field(field.index)
+			if field.optional && (fieldValue.Kind() == reflect.Slice || fieldValue.Kind() == reflect.Map) && fieldValue.Len() == 0 {
 				if fieldValue.IsNil() {
 					continue
 				}
 				return errors.New("omitting an empty contract collection would lose its domain value")
 			}
-			if err := inspectContractValue(fieldValue, active, checked); err != nil {
+			if err := codec.inspect(fieldValue, active); err != nil {
 				return err
 			}
 		}
@@ -219,15 +243,15 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool, ch
 		if value.IsNil() || value.Type().Key().Kind() != reflect.String {
 			return errors.New("contract objects require non-nil string-keyed maps")
 		}
-		if contractCustomMethods(value.Type().Key()) {
-			return errors.New("custom contract key codecs are not permitted")
+		if plan.mapKeyErr != nil {
+			return plan.mapKeyErr
 		}
 		iter := value.MapRange()
 		for iter.Next() {
 			if !contractJSONKey(iter.Key().String()) {
 				return errors.New("contract object key is not ASCII")
 			}
-			if err := inspectContractValue(iter.Value(), active, checked); err != nil {
+			if err := codec.inspect(iter.Value(), active); err != nil {
 				return err
 			}
 		}
@@ -241,7 +265,7 @@ func inspectContractValue(value reflect.Value, active map[contractVisit]bool, ch
 			return errors.New("contract byte strings require an explicit scalar encoding")
 		}
 		for index := range value.Len() {
-			if err := inspectContractValue(value.Index(index), active, checked); err != nil {
+			if err := codec.inspect(value.Index(index), active); err != nil {
 				return err
 			}
 		}
@@ -338,9 +362,13 @@ func contractEmptyValue(value reflect.Value) bool {
 }
 
 func assignContractJSON(source any, destination reflect.Value) error {
+	return newContractCodec().assign(source, destination)
+}
+
+func (codec *contractCodec) assign(source any, destination reflect.Value) error {
 	if destination.Kind() == reflect.Pointer {
 		next := reflect.New(destination.Type().Elem())
-		if err := assignContractJSON(source, next.Elem()); err != nil {
+		if err := codec.assign(source, next.Elem()); err != nil {
 			return err
 		}
 		destination.Set(next)
@@ -388,27 +416,24 @@ func assignContractJSON(source any, destination reflect.Value) error {
 		if !ok {
 			return errors.New("contract value must be an object")
 		}
-		known := map[string]bool{}
-		for index := range destination.NumField() {
-			field := destination.Type().Field(index)
-			name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
-			if known[name] {
-				return errors.New("duplicate contract field definition")
-			}
-			known[name] = true
-			child, found := object[name]
+		plan := codec.typePlan(destination.Type())
+		if plan.fieldsErr != nil {
+			return plan.fieldsErr
+		}
+		for _, field := range plan.fields {
+			child, found := object[field.name]
 			if !found {
-				if options == "omitempty" {
+				if field.optional {
 					continue
 				}
 				return errors.New("required contract field is missing")
 			}
-			if err := assignContractJSON(child, destination.Field(index)); err != nil {
+			if err := codec.assign(child, destination.Field(field.index)); err != nil {
 				return err
 			}
 		}
 		for name := range object {
-			if !known[name] {
+			if _, known := plan.byName[name]; !known {
 				return errors.New("unknown contract field")
 			}
 		}
@@ -425,7 +450,7 @@ func assignContractJSON(source any, destination reflect.Value) error {
 			destination.Set(reflect.MakeSlice(destination.Type(), len(array), len(array)))
 		}
 		for index, child := range array {
-			if err := assignContractJSON(child, destination.Index(index)); err != nil {
+			if err := codec.assign(child, destination.Index(index)); err != nil {
 				return err
 			}
 		}
@@ -481,91 +506,6 @@ func contractJSONKey(value string) bool {
 		}
 	}
 	return true
-}
-
-func parseContractJSON(body []byte, limits ContractDecodeLimits) (any, error) {
-	if limits.MaxBytes <= 0 || limits.MaxDepth <= 0 || limits.MaxItems <= 0 || len(body) > limits.MaxBytes {
-		return nil, errors.New("contract input exceeds entry-point bounds")
-	}
-	if !utf8.Valid(body) {
-		return nil, errors.New("contract input is not UTF-8")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	items := 0
-	var read func(int) (any, error)
-	read = func(depth int) (any, error) {
-		items++
-		if depth > limits.MaxDepth || items > limits.MaxItems {
-			return nil, errors.New("contract input exceeds entry-point bounds")
-		}
-		token, err := decoder.Token()
-		if err != nil {
-			return nil, errors.New("contract JSON is invalid")
-		}
-		switch token := token.(type) {
-		case json.Delim:
-			switch token {
-			case '{':
-				object := map[string]any{}
-				for decoder.More() {
-					keyToken, err := decoder.Token()
-					key, ok := keyToken.(string)
-					if err != nil || !ok || !contractJSONKey(key) {
-						return nil, errors.New("contract object key is invalid")
-					}
-					if _, exists := object[key]; exists {
-						return nil, errors.New("contract JSON has duplicate keys")
-					}
-					child, err := read(depth + 1)
-					if err != nil {
-						return nil, err
-					}
-					object[key] = child
-				}
-				if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
-					return nil, errors.New("contract object is incomplete")
-				}
-				return object, nil
-			case '[':
-				array := []any{}
-				for decoder.More() {
-					child, err := read(depth + 1)
-					if err != nil {
-						return nil, err
-					}
-					array = append(array, child)
-				}
-				if token, err := decoder.Token(); err != nil || token != json.Delim(']') {
-					return nil, errors.New("contract array is incomplete")
-				}
-				return array, nil
-			}
-		case json.Number:
-			value := string(token)
-			unsigned := strings.TrimPrefix(value, "-")
-			if unsigned == "" || unsigned == "0" && value != "0" || len(unsigned) > 1 && unsigned[0] == '0' {
-				return nil, errors.New("contract integer is not canonical")
-			}
-			for index := range len(unsigned) {
-				if unsigned[index] < '0' || unsigned[index] > '9' {
-					return nil, errors.New("contract integer is not canonical")
-				}
-			}
-			return token, nil
-		case string, bool:
-			return token, nil
-		}
-		return nil, errors.New("contract null or JSON value is not permitted")
-	}
-	value, err := read(1)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("contract JSON has trailing content")
-	}
-	return value, nil
 }
 
 func appendContractJSON(body []byte, value any) []byte {

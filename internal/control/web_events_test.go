@@ -98,6 +98,86 @@ func TestWebEventsCachedPredecessorStillReadsActualOriginal(t *testing.T) {
 	}
 }
 
+func TestWebEventsIndependentDeviceHistoryAndCorruption(t *testing.T) {
+	server, now := eventTestServer(t)
+	store := server.Runtime.Reports
+	keys := map[string][]string{}
+	var last DeviceReport
+	for device := range 4 {
+		id := fmt.Sprintf("demo-device-%d", device)
+		key := testKey(t)
+		public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+		keys[id] = []string{public}
+		for sequence := 1; sequence <= 2; sequence++ {
+			state := "running"
+			if sequence == 2 {
+				state = "stopped"
+			}
+			received := now.Add(time.Duration(sequence-3)*time.Minute + time.Duration(device)*time.Nanosecond)
+			report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: id, ReportSequence: U64(sequence), ReportedAt: received.UnixMilli(),
+				ViewDigest: "sha256:" + strings.Repeat("a", 64), NetworkGeneration: "demo-network", Selections: []ReportSelection{}, Observations: []Observation{},
+				Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: state, AppliedViewDigest: "sha256:" + strings.Repeat("a", 64)}}
+			report, err := SignDeviceReport(report, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.now = func() time.Time { return received }
+			if err := store.Put(report, public); err != nil {
+				t.Fatal(err)
+			}
+			last = report
+		}
+	}
+	query := func() ([]WebEvent, error) {
+		values, _, err := store.runtimeEvents(context.Background(), server.Config.NetworkID, keys, now.Add(-time.Hour), now)
+		return values, err
+	}
+	values, err := query()
+	if err != nil || len(values) != 8 {
+		t.Fatal("independent device histories lost a baseline or change", len(values), err)
+	}
+	for _, value := range values {
+		if value.Source != value.Subject || keys[value.Source] == nil || value.From != "" && (value.From != "running" || value.To != "stopped") {
+			t.Fatal("one device inherited another device's predecessor", value)
+		}
+	}
+	store.cache.clear()
+	again, err := query()
+	if err != nil || !reflect.DeepEqual(values, again) {
+		t.Fatal("independent stream scheduling or cache loss changed history", err)
+	}
+	if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		raw, _ := CanonicalEncode(last)
+		return tx.Bucket(observationBucket).Put(referenceOf(last).key(ReleaseDigest(raw)), []byte("corrupt"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if values, err := query(); err == nil || values != nil {
+		t.Fatal("a corrupt device history returned a partial successful query")
+	}
+}
+
+func TestWebEventsRuntimePredecessorFollowsSequenceAcrossReceptionOrder(t *testing.T) {
+	server, now := eventTestServer(t)
+	eventTestReport(t, server, 1, "running", now.Add(-5*time.Minute))
+	second := eventTestReport(t, server, 2, "stopped", now.Add(-2*time.Minute))
+	third := eventTestReport(t, server, 3, "running", now.Add(-4*time.Minute))
+	eventTestReport(t, server, 4, "running", now.Add(-3*time.Minute))
+	values := url.Values{"from": {now.Add(-4 * time.Minute).Format(time.RFC3339Nano)}, "until": {now.Format(time.RFC3339Nano)}, "kind": {"runtime"}}
+	before := testObservationBytes(t, server.Runtime.Reports)
+	result := eventTestQuery(t, server, values)
+	secondRaw, _ := CanonicalEncode(second)
+	thirdRaw, _ := CanonicalEncode(third)
+	if result.Total != 2 || len(result.Events) != 2 || result.Events[0].ID != ReleaseDigest(secondRaw) || result.Events[1].ID != ReleaseDigest(thirdRaw) ||
+		result.Events[0].From != "running" || result.Events[0].To != "stopped" || result.Events[1].From != "stopped" || result.Events[1].To != "running" {
+		t.Fatal("reception order replaced exact sequence predecessors or made an unchanged report an event")
+	}
+	server.Runtime.Reports.cache.clear()
+	if cold := eventTestQuery(t, server, values); !reflect.DeepEqual(result, cold) || !bytes.Equal(before, testObservationBytes(t, server.Runtime.Reports)) {
+		t.Fatal("discarding the cache changed reception history or original bytes")
+	}
+}
+
 func TestEventRuntimeProjectionKeepsExactBytesKeyAndDisposableCache(t *testing.T) {
 	server, now := eventTestServer(t)
 	report := eventTestReport(t, server, 1, "running", now.Add(-time.Minute))
@@ -121,10 +201,10 @@ func TestEventRuntimeProjectionKeepsExactBytesKeyAndDisposableCache(t *testing.T
 	if _, _, err := server.Runtime.Reports.originalRuntime(raw, otherKey); err == nil {
 		t.Fatal("a cached runtime accepted a different public key")
 	}
-	if _, runtime, err := verifyEventRuntime(server.Runtime.Reports, raw, []string{otherKey, key}); err != nil || runtime.State != "running" {
+	if _, runtime, err := server.Runtime.Reports.originalRuntimeKeys(raw, []string{otherKey, key}); err != nil || runtime.State != "running" {
 		t.Fatal("the distinct control key hid an accepted cached device signature", err)
 	}
-	if _, _, err := verifyEventRuntime(server.Runtime.Reports, raw, []string{otherKey}); err == nil {
+	if _, _, err := server.Runtime.Reports.originalRuntimeKeys(raw, []string{otherKey}); err == nil {
 		t.Fatal("runtime cache supplied an identity outside the query's historical key set")
 	}
 	changed := report
@@ -136,7 +216,7 @@ func TestEventRuntimeProjectionKeepsExactBytesKeyAndDisposableCache(t *testing.T
 	values := url.Values{"from": {now.Add(-90 * time.Second).Format(time.RFC3339Nano)}, "until": {now.Format(time.RFC3339Nano)}}
 	before := eventTestQuery(t, server, values)
 	server.Runtime.Reports.cache.clear()
-	coldReference, coldRuntime, err := verifyEventRuntime(server.Runtime.Reports, raw, []string{otherKey, key})
+	coldReference, coldRuntime, err := server.Runtime.Reports.originalRuntimeKeys(raw, []string{otherKey, key})
 	if err != nil || coldRuntime.State != "running" || !bytes.Equal(coldReference.key(ReleaseDigest(raw)), ref.key(ReleaseDigest(raw))) {
 		t.Fatal("cold multi-key verification changed canonical identity or runtime", err)
 	}

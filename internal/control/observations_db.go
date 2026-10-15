@@ -51,7 +51,10 @@ func (ref reportReference) key(id string) []byte {
 	return append(key, digest...)
 }
 func decodeStoredReport(raw []byte, report *DeviceReport) error {
-	return DecodeCanonical(raw, report, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20})
+	return decodeStoredReportWithCodec(raw, report, newContractCodec())
+}
+func decodeStoredReportWithCodec(raw []byte, report *DeviceReport, codec *contractCodec) error {
+	return codec.decode(raw, report, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20})
 }
 func reportRecord(key, raw []byte) (string, reportReference, error) {
 	var report DeviceReport

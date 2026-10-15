@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"container/list"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -36,21 +37,34 @@ func (cache *reportCache) clear() {
 	cache.bytes = 0
 }
 func (store *ObservationStore) decodedReport(raw []byte) (DeviceReport, error) {
-	id := ReleaseDigest(raw)
+	return store.decodedReportWithID(raw, ReleaseDigest(raw))
+}
+
+// Return a value that passed complete canonical and static value validation.
+// DecodeCanonical runs DeviceReport.Validate and all nested validators before
+// a digest enters this cache. id comes from these freshly read bytes.
+func (store *ObservationStore) decodedReportWithID(raw []byte, id string) (DeviceReport, error) {
+	return store.decodedReportWithCodec(raw, id, nil)
+}
+
+func (store *ObservationStore) decodedReportWithCodec(raw []byte, id string, codec *contractCodec) (DeviceReport, error) {
 	cache := &store.cache
 	cache.mu.Lock()
 	if element := cache.items[id]; element != nil {
 		cache.lru.MoveToFront(element)
 		cache.mu.Unlock()
-		// The digest names the same bytes that already passed strict canonical
-		// decoding. Reparse the value without repeating the canonical proof.
+		// The digest names the same bytes and already validated value. Reparse
+		// without repeating their canonical or static validation proof.
 		var report DeviceReport
 		err := json.Unmarshal(raw, &report)
 		return report, err
 	}
 	cache.mu.Unlock()
 	var report DeviceReport
-	if err := decodeStoredReport(raw, &report); err != nil {
+	if codec == nil {
+		codec = newContractCodec()
+	}
+	if err := decodeStoredReportWithCodec(raw, &report, codec); err != nil {
 		return report, err
 	}
 	// Keep only immutable validation results, never entire report bodies.
@@ -74,11 +88,11 @@ func (store *ObservationStore) decodedReport(raw []byte) (DeviceReport, error) {
 	return report, nil
 }
 func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceReport, error) {
-	report, err := store.decodedReport(raw)
+	id := ReleaseDigest(raw)
+	report, err := store.decodedReportWithID(raw, id)
 	if err != nil {
 		return report, err
 	}
-	id := ReleaseDigest(raw)
 	cache := &store.cache
 	cache.mu.Lock()
 	if element := cache.items[id]; element != nil && key != "" && element.Value.(*reportCacheEntry).verifiedKey == key {
@@ -121,12 +135,26 @@ func (store *ObservationStore) rememberVerifiedRuntime(id, key string, report De
 // The input remains freshly read original bytes. This projection never renews
 // an observation or supplies authorization; callers still check its position.
 func (store *ObservationStore) originalRuntime(raw []byte, key string) (reportReference, RuntimeReadback, error) {
-	id := ReleaseDigest(raw)
+	return store.originalRuntimeKeys(raw, []string{key})
+}
+
+// Historical identity alternatives share one canonical report and signature
+// message; no failed key causes another full decode or message construction.
+func (store *ObservationStore) originalRuntimeKeys(raw []byte, keys []string) (reportReference, RuntimeReadback, error) {
+	return store.originalRuntimeKeysWithID(raw, ReleaseDigest(raw), keys)
+}
+
+// Reuse only a digest freshly computed for this read, never a storage-key hint.
+func (store *ObservationStore) originalRuntimeKeysWithID(raw []byte, id string, keys []string) (reportReference, RuntimeReadback, error) {
+	return store.originalRuntimeKeysWithCodec(raw, id, keys, nil)
+}
+
+func (store *ObservationStore) originalRuntimeKeysWithCodec(raw []byte, id string, keys []string, codec *contractCodec) (reportReference, RuntimeReadback, error) {
 	cache := &store.cache
 	cache.mu.Lock()
 	if element := cache.items[id]; element != nil {
 		value := element.Value.(*reportCacheEntry)
-		if key != "" && value.verifiedKey == key && value.runtime.State != "" {
+		if value.verifiedKey != "" && containsString(keys, value.verifiedKey) && value.runtime.State != "" {
 			cache.lru.MoveToFront(element)
 			position, runtime := value.position, value.runtime
 			cache.mu.Unlock()
@@ -134,24 +162,11 @@ func (store *ObservationStore) originalRuntime(raw []byte, key string) (reportRe
 		}
 	}
 	cache.mu.Unlock()
-	report, err := store.verifiedReport(raw, key)
+	report, err := store.decodedReportWithCodec(raw, id, codec)
 	if err != nil {
 		return reportReference{}, RuntimeReadback{}, err
 	}
-	return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, nil
-}
-
-// Historical identity alternatives share one canonical report and signature
-// message; no failed key causes another full decode or message construction.
-func (store *ObservationStore) originalRuntimeKeys(raw []byte, keys []string) (reportReference, RuntimeReadback, error) {
-	report, err := store.decodedReport(raw)
-	if err != nil {
-		return reportReference{}, RuntimeReadback{}, err
-	}
-	if err := report.Validate(); err != nil {
-		return reportReference{}, RuntimeReadback{}, err
-	}
-	message, err := signedContractBytes(reportDomain, report.unsigned())
+	message, err := reportMessageFromCanonical(raw, report.Signature)
 	if err != nil {
 		return reportReference{}, RuntimeReadback{}, err
 	}
@@ -162,9 +177,59 @@ func (store *ObservationStore) originalRuntimeKeys(raw []byte, keys []string) (r
 			continue
 		}
 		if ed25519.Verify(ed25519.PublicKey(public), message, signature) {
-			store.rememberVerifiedRuntime(ReleaseDigest(raw), key, report)
+			store.rememberVerifiedRuntime(id, key, report)
 			return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, nil
 		}
 	}
 	return reportReference{}, RuntimeReadback{}, errors.New("no historical identity verifies report")
+}
+
+// Only for an original that already passed strict canonical decoding and
+// DeviceReport.Validate. Removing its own signature preserves every other
+// canonical byte, including optional fields, without encoding the report again.
+func reportMessageFromCanonical(raw []byte, signature string) ([]byte, error) {
+	const field = `"signature":`
+	depth, quoted, escaped := 0, false, false
+	for i, c := range raw {
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				quoted = false
+			}
+			continue
+		}
+		switch c {
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+		case '"':
+			if depth == 1 && i > 0 && (raw[i-1] == '{' || raw[i-1] == ',') && bytes.HasPrefix(raw[i:], []byte(field)) {
+				value := i + len(field)
+				end := value + len(signature) + 2
+				if end >= len(raw) || raw[value] != '"' || raw[end-1] != '"' || !bytes.Equal(raw[value+1:end-1], []byte(signature)) {
+					return nil, errors.New("canonical report signature field differs")
+				}
+				start := i
+				if raw[end] == ',' {
+					end++
+				} else if raw[end] == '}' {
+					if start > 1 {
+						start--
+					}
+				} else {
+					return nil, errors.New("canonical report signature boundary differs")
+				}
+				message := make([]byte, 0, len(reportDomain)+len(raw)-(end-start))
+				message = append(message, reportDomain...)
+				message = append(message, raw[:start]...)
+				return append(message, raw[end:]...), nil
+			}
+			quoted = true
+		}
+	}
+	return nil, errors.New("canonical report has no top-level signature")
 }

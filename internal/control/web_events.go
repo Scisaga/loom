@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -480,7 +481,7 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 		at       time.Time
 		previous []byte
 	}
-	locations := []original{}
+	locations := map[string][]original{}
 	var since time.Time
 	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		metadata := tx.Bucket(reportReceptionBucket)
@@ -573,84 +574,126 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 					continue
 				}
 			}
-			locations = append(locations, original{key, at, previous})
+			locations[ref.DeviceID] = append(locations[ref.DeviceID], original{key, at, previous})
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, since, err
 	}
-	result := []WebEvent{}
-	for _, location := range locations {
-		var raw, prior []byte
-		err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-			raw = bytes.Clone(tx.Bucket(observationBucket).Get(location.key))
-			if raw == nil {
-				return errors.New("received original disappeared")
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	project := func(locations []original, codec *contractCodec) ([]WebEvent, error) {
+		result := []WebEvent{}
+		type verifiedRuntime struct {
+			key     []byte
+			runtime RuntimeReadback
+		}
+		// Reuse only the immediately preceding original already read and verified
+		// in this query. Reception order need not match sequence order: any other
+		// predecessor still comes freshly from the database below.
+		last := map[string]verifiedRuntime{}
+		for _, location := range locations {
+			_, ref, err := locateReportKey(location.key)
+			if err != nil {
+				return nil, err
 			}
+			preceding, found := last[ref.DeviceID]
+			reusePrevious := location.previous != nil && found && bytes.Equal(preceding.key, location.previous)
+			var raw, prior []byte
+			err = store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
+				raw = bytes.Clone(tx.Bucket(observationBucket).Get(location.key))
+				if raw == nil {
+					return errors.New("received original disappeared")
+				}
+				if location.previous != nil && !reusePrevious {
+					prior = bytes.Clone(tx.Bucket(observationBucket).Get(location.previous))
+					if prior == nil {
+						return errors.New("previous original disappeared")
+					}
+				}
+				return ctx.Err()
+			})
+			if err != nil {
+				return nil, err
+			}
+			id := ReleaseDigest(raw)
+			reference, runtime, err := store.originalRuntimeKeysWithCodec(raw, id, keys[ref.DeviceID], codec)
+			if err != nil || !bytes.Equal(reference.key(id), location.key) {
+				return nil, errors.New("received report does not verify")
+			}
+			last[reference.DeviceID] = verifiedRuntime{location.key, runtime}
+			previousState := ""
+			detail := "Authenticated runtime baseline: " + runtime.State + "."
 			if location.previous != nil {
-				prior = bytes.Clone(tx.Bucket(observationBucket).Get(location.previous))
-				if prior == nil {
-					return errors.New("previous original disappeared")
+				previous := preceding.runtime
+				if !reusePrevious {
+					priorID := ReleaseDigest(prior)
+					var priorReference reportReference
+					priorReference, previous, err = store.originalRuntimeKeysWithCodec(prior, priorID, keys[reference.DeviceID], codec)
+					if err != nil || !bytes.Equal(priorReference.key(priorID), location.previous) {
+						return nil, errors.New("previous runtime report does not verify")
+					}
+				}
+				if previous.State == runtime.State && previous.AppliedViewDigest == runtime.AppliedViewDigest && previous.ErrorCode == runtime.ErrorCode {
+					continue
+				}
+				previousState = previous.State
+				detail = fmt.Sprintf("Authenticated runtime change: %s → %s.", previous.State, runtime.State)
+				if previousState == runtime.State {
+					changed := []string{}
+					if previous.AppliedViewDigest != runtime.AppliedViewDigest {
+						changed = append(changed, "applied View")
+					}
+					if previous.ErrorCode != runtime.ErrorCode {
+						changed = append(changed, "runtime error")
+					}
+					detail = fmt.Sprintf("Authenticated %s changed; runtime remains %s.", strings.Join(changed, " and "), runtime.State)
 				}
 			}
-			return ctx.Err()
-		})
-		if err != nil {
-			return nil, since, err
+			result = append(result, WebEvent{ID: id, At: location.at.Format(time.RFC3339Nano), Kind: "runtime", Source: reference.DeviceID, Subject: reference.DeviceID, ObjectKind: "device", From: previousState, To: runtime.State, Detail: detail})
 		}
-		_, ref, err := locateReportKey(location.key)
-		if err != nil {
-			return nil, since, err
-		}
-		reference, runtime, err := verifyEventRuntime(store, raw, keys[ref.DeviceID])
-		id := ReleaseDigest(raw)
-		if err != nil || !bytes.Equal(reference.key(id), location.key) {
-			return nil, since, errors.New("received report does not verify")
-		}
-		previousState := ""
-		detail := "Authenticated runtime baseline: " + runtime.State + "."
-		if prior != nil {
-			priorReference, previous, err := verifyEventRuntime(store, prior, keys[reference.DeviceID])
-			if err != nil || !bytes.Equal(priorReference.key(ReleaseDigest(prior)), location.previous) {
-				return nil, since, errors.New("previous runtime report does not verify")
-			}
-			if previous.State == runtime.State && previous.AppliedViewDigest == runtime.AppliedViewDigest && previous.ErrorCode == runtime.ErrorCode {
-				continue
-			}
-			previousState = previous.State
-			detail = fmt.Sprintf("Authenticated runtime change: %s → %s.", previous.State, runtime.State)
-			if previousState == runtime.State {
-				changed := []string{}
-				if previous.AppliedViewDigest != runtime.AppliedViewDigest {
-					changed = append(changed, "applied View")
+		return result, ctx.Err()
+	}
+
+	devices := make([]string, 0, len(locations))
+	for device := range locations {
+		devices = append(devices, device)
+	}
+	sort.Strings(devices)
+	projected := make([][]WebEvent, len(devices))
+	var workers sync.WaitGroup
+	var failed sync.Once
+	var firstError error
+	// Two independent device streams bound temporary decoded bodies and keep
+	// a long query from serializing all signature work onto one CPU. Each
+	// worker owns only static codec metadata, never a report or result cache.
+	parallel := min(2, len(devices))
+	for worker := range parallel {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			codec := newContractCodec()
+			for index := worker; index < len(devices); index += parallel {
+				if ctx.Err() != nil {
+					return
 				}
-				if previous.ErrorCode != runtime.ErrorCode {
-					changed = append(changed, "runtime error")
+				values, err := project(locations[devices[index]], codec)
+				if err != nil {
+					failed.Do(func() { firstError = err; cancel() })
+					return
 				}
-				detail = fmt.Sprintf("Authenticated %s changed; runtime remains %s.", strings.Join(changed, " and "), runtime.State)
+				projected[index] = values
 			}
-		}
-		result = append(result, WebEvent{ID: id, At: location.at.Format(time.RFC3339Nano), Kind: "runtime", Source: reference.DeviceID, Subject: reference.DeviceID, ObjectKind: "device", From: previousState, To: runtime.State, Detail: detail})
+		}()
+	}
+	workers.Wait()
+	if firstError != nil {
+		return nil, since, firstError
+	}
+	result := []WebEvent{}
+	for _, values := range projected {
+		result = append(result, values...)
 	}
 	return result, since, ctx.Err()
-}
-
-func verifyEventRuntime(store *ObservationStore, raw []byte, keys []string) (reportReference, RuntimeReadback, error) {
-	// A node's control signing key and device key are distinct. An earlier
-	// nonmatching historical key must not force revalidation before a known
-	// exact-byte signature whose key is still in this query's accepted set.
-	store.cache.mu.Lock()
-	verifiedKey := ""
-	if element := store.cache.items[ReleaseDigest(raw)]; element != nil {
-		value := element.Value.(*reportCacheEntry)
-		if value.verifiedKey != "" && containsString(keys, value.verifiedKey) {
-			verifiedKey = value.verifiedKey
-		}
-	}
-	store.cache.mu.Unlock()
-	if verifiedKey != "" {
-		return store.originalRuntime(raw, verifiedKey)
-	}
-	return store.originalRuntimeKeys(raw, keys)
 }

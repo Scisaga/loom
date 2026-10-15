@@ -42,6 +42,59 @@ func TestContractTypeReuseStillChecksEveryValue(t *testing.T) {
 	}
 }
 
+func TestContractCodecReuseKeepsValueAndFieldValidation(t *testing.T) {
+	codec := newContractCodec()
+	value := contractRepeatedCheckedValue{Name: "demo-first"}
+	body, err := codec.encode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		var decoded contractRepeatedCheckedValue
+		if err := codec.decode(body, &decoded, contractTestLimits); err != nil || decoded != value {
+			t.Fatal("reusing static metadata changed a valid value", err)
+		}
+		for _, raw := range []string{`{"name":"demo-rejected"}`, `{"name":"demo-first","unknown":0}`, `{}`} {
+			before := decoded
+			if err := codec.decode([]byte(raw), &decoded, contractTestLimits); err == nil || decoded != before {
+				t.Fatal("reused metadata skipped a value/field rejection or changed the output", err)
+			}
+		}
+		for _, invalid := range []contractRepeatedCheckedValue{{"demo-rejected"}, {string([]byte{0xff})}} {
+			if _, err := codec.encode(invalid); err == nil {
+				t.Fatal("reused type metadata skipped concrete validation")
+			}
+		}
+	}
+}
+
+type contractRecursivePlanRoot struct {
+	Branches []contractRecursivePlanBranch `json:"branches,omitempty"`
+	Invalid  float64                       `json:"invalid"`
+}
+
+type contractRecursivePlanBranch struct {
+	Roots []contractRecursivePlanRoot `json:"roots,omitempty"`
+}
+
+func TestContractCodecFailedRecursiveTypeDoesNotCertifyDescendants(t *testing.T) {
+	codec := newContractCodec()
+	for range 2 {
+		// The branch reaches the active root before its later invalid field.
+		// A partial recursive walk cannot certify that branch for another call.
+		if _, err := codec.encode(contractRecursivePlanRoot{}); err == nil {
+			t.Fatal("accepted an unsupported recursive schema")
+		}
+		if _, err := codec.encode(contractRecursivePlanBranch{}); err == nil {
+			t.Fatal("a failed schema walk certified an invalid descendant")
+		}
+		var branch contractRecursivePlanBranch
+		if err := codec.decode([]byte(`{}`), &branch, contractTestLimits); err == nil {
+			t.Fatal("reusing a partial schema allowed an invalid decode")
+		}
+	}
+}
+
 var contractTestLimits = ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 12, MaxItems: 64}
 
 type contractUnexpectedEncoder struct {
