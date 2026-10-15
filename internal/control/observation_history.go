@@ -187,6 +187,13 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				return errors.New("pinned report differs from its original location")
 			}
 			if position.fork {
+				// Report-window consumers must see both the real highest and
+				// in-window forks, including forks with unequal original times.
+				if len(window) != 0 && window[0].kind == reportTime {
+					if err := visit(highest, ref, nil); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			// Skipping an out-of-window sequence must break repeated counter samples too.

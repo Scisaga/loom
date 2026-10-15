@@ -116,6 +116,8 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 			}
 		}
 	}()
+	stopWGRecovery := server.startWGPortRecovery(ctx)
+	defer stopWGRecovery()
 	expiry := time.NewTimer(0)
 	defer expiry.Stop()
 	for {
