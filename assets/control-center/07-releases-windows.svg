@@ -88,11 +88,12 @@
   <line x1="245" y1="231" x2="301" y2="231" stroke="#2AA875" stroke-width="2"/>
   <text class="ui body muted" x="355" y="219" text-anchor="start">Device versions</text>
   <line class="rule" x1="24" y1="232" x2="1562" y2="232"/>
+  <style>.release-digest{font-size:11px;font-weight:400;fill:#79837d;user-select:text}.release-catalog-digest{font-size:10px}</style>
   <text class="ui section" x="24" y="275" text-anchor="start">Catalog 42</text>
   <circle cx="208" cy="270" r="4" fill="#2AA875" stroke="none"/>
   <text class="ui body green" x="222" y="275" text-anchor="start">Publisher signature verified</text>
   <text class="ui body green" x="1562" y="275" text-anchor="end">3 exact files verified</text>
-  <text class="ui small muted" x="24" y="304" text-anchor="start">sha256:7e… · verified with the publisher key from protected installation</text>
+  <text class="ui small muted" x="24" y="304"><tspan class="mono release-digest release-catalog-digest">sha256:7e…</tspan> · verified with the publisher key from protected installation</text>
   <text class="ui small muted" x="1562" y="304" text-anchor="end">Current pointer selects this catalog only</text>
   <rect data-ui="panel" x="24" y="334" width="1538" height="498" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="366" text-anchor="start">Windows files</text>
@@ -107,7 +108,7 @@
   <rect x="25" y="432" width="1536" height="80" rx="0" fill="#EDF4FB" stroke="none"/>
   <rect x="25" y="432" width="3" height="80" rx="0" fill="#4D78D1" stroke="none"/>
   <text class="ui body mono" x="47" y="463" text-anchor="start">loom-windows</text>
-  <text class="ui small mono muted" x="47" y="489" text-anchor="start">1.2.0 · Windows · sha256:88…</text>
+  <text class="ui small mono muted" x="47" y="489">1.2.0 · Windows · <tspan class="release-digest">sha256:88…</tspan></text>
   <text class="ui small green" x="690" y="463" text-anchor="end">Hide details ⌃</text>
   <text class="ui body" x="770" y="463" text-anchor="start">Enrolled device</text>
   <text class="ui small muted" x="770" y="489" text-anchor="start">Authenticated distribution only</text>
@@ -137,7 +138,7 @@
   </g>
   <g data-ui="release-file" data-component="demo-windows-installer" aria-selected="false">
   <text class="ui body mono" x="47" y="661" text-anchor="start">loom-installer</text>
-  <text class="ui small mono muted" x="47" y="687" text-anchor="start">1.2.0 · Windows · sha256:53…</text>
+  <text class="ui small mono muted" x="47" y="687">1.2.0 · Windows · <tspan class="release-digest">sha256:53…</tspan></text>
   <text class="ui small green" x="690" y="661" text-anchor="end">Details ⌄</text>
   <text class="ui body" x="770" y="661" text-anchor="start">Generic public</text>
   <text class="ui small muted" x="770" y="687" text-anchor="start">Public distribution permitted</text>
@@ -157,7 +158,7 @@
   </g>
   <g data-ui="release-file" data-component="demo-windows-portable" aria-selected="false">
   <text class="ui body mono" x="47" y="741" text-anchor="start">loom-portable</text>
-  <text class="ui small mono muted" x="47" y="767" text-anchor="start">1.2.0 · Windows · sha256:71…</text>
+  <text class="ui small mono muted" x="47" y="767">1.2.0 · Windows · <tspan class="release-digest">sha256:71…</tspan></text>
   <text class="ui small green" x="690" y="741" text-anchor="end">Details ⌄</text>
   <text class="ui body" x="770" y="741" text-anchor="start">Generic public</text>
   <text class="ui small muted" x="770" y="767" text-anchor="start">Public distribution permitted</text>

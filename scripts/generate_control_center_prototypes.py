@@ -2053,11 +2053,12 @@ RELEASE_FILES = {
 
 
 def release_catalog_context(c: Canvas, files: int) -> None:
+    c.add('<style>.release-digest{font-size:11px;font-weight:400;fill:#79837d;user-select:text}.release-catalog-digest{font-size:10px}</style>')
     c.txt(24, 275, "Catalog demo-42", "section")
     c.circle(208, 270, 4, "#2AA875")
     c.txt(222, 275, "Publisher signature verified", "body green")
     c.txt(1562, 275, f"{files} exact files verified", "body green", "end")
-    c.txt(24, 304, "sha256:7e… · verified with the publisher key from protected installation", "small muted")
+    c.add('<text class="ui small muted" x="24" y="304"><tspan class="mono release-digest release-catalog-digest">sha256:7e…</tspan> · verified with the publisher key from protected installation</text>')
     c.txt(1562, 304, "Current pointer selects this catalog only", "small muted", "end")
 
 
@@ -2095,9 +2096,9 @@ def deployments() -> Canvas:
             c.rect(25, top, 3, 88, "#D2A45B", "none", 0)
         c.txt(47, top + 34, device, "body mono")
         c.txt(47, top + 60, f"{platform.title()} · {component}", "small muted")
-        c.txt(562, top + 34, desired, "body mono")
+        c.txt(562, top + 34, desired, "mono release-digest")
         c.txt(803, top + 34, "→", "body muted")
-        c.txt(855, top + 34, reported, "body amber" if reported == "unknown" else "body mono")
+        c.txt(855, top + 34, reported, "body amber" if reported == "unknown" else "mono release-digest")
         c.txt(562, top + 60, "Assigned target", "small muted")
         c.txt(855, top + 60, "Reported by device", "small muted")
         c.txt(1160, top + 34, {"Matching": "Matches target", "Different": "Differs from target", "Unknown": "Unknown"}[state], "body " + tone)
@@ -2398,7 +2399,7 @@ def release_platform(platform: str) -> Canvas:
             c.rect(25, top, 1536, 80, "#EDF4FB", "none", 0)
             c.rect(25, top, 3, 80, "#4D78D1", "none", 0)
         c.txt(47, top + 31, component, "body mono")
-        c.txt(47, top + 57, f"{version} · {title} · {digest}", "small mono muted")
+        c.add(f'<text class="ui small mono muted" x="47" y="{top + 57}">{escape(display_text(f"{version} · {title} · "))}<tspan class="release-digest">{escape(digest)}</tspan></text>')
         c.txt(690, top + 31, "Hide details ⌃" if i == 0 else "Details ⌄", "small green", "end")
         c.txt(770, top + 31, audience, "body")
         c.txt(770, top + 57, "Public distribution permitted" if audience == "Generic public" else "Authenticated distribution only", "small muted")
@@ -2448,9 +2449,9 @@ def release_platform(platform: str) -> Canvas:
     c.txt(1538, 939, "View device versions →", "body green", "end")
     for x, label in ((47, "DESIRED FILE"), (564, "REPORTED APPLIED"), (1120, "COMPARISON")):
         c.txt(x, 989, label, "eyebrow muted")
-    c.txt(47, 1022, examples[0][2], "section mono")
+    c.txt(47, 1022, examples[0][2], "mono release-digest")
     c.txt(47, 1048, "Signed intent · selected component and platform", "small muted")
-    c.txt(564, 1022, examples[0][2] if matching else "unknown", "section mono" if matching else "section amber")
+    c.txt(564, 1022, examples[0][2] if matching else "unknown", "mono release-digest" if matching else "section amber")
     c.txt(564, 1048, "Fresh device report · scope matches" if matching else "No fresh report for this component and platform", "small muted")
     c.txt(1120, 1022, "Matching" if matching else "Unknown", "section green" if matching else "section amber")
     c.txt(1120, 1048, "Exact desired file is reported applied" if matching else "Application is not confirmed", "small muted")

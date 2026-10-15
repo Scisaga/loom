@@ -88,11 +88,12 @@
   <text class="ui body muted" x="245" y="219" text-anchor="start">Windows</text>
   <text class="ui body muted" x="355" y="219" text-anchor="start">Device versions</text>
   <line class="rule" x1="24" y1="232" x2="1562" y2="232"/>
+  <style>.release-digest{font-size:11px;font-weight:400;fill:#79837d;user-select:text}.release-catalog-digest{font-size:10px}</style>
   <text class="ui section" x="24" y="275" text-anchor="start">Catalog 42</text>
   <circle cx="208" cy="270" r="4" fill="#2AA875" stroke="none"/>
   <text class="ui body green" x="222" y="275" text-anchor="start">Publisher signature verified</text>
   <text class="ui body green" x="1562" y="275" text-anchor="end">3 exact files verified</text>
-  <text class="ui small muted" x="24" y="304" text-anchor="start">sha256:7e… · verified with the publisher key from protected installation</text>
+  <text class="ui small muted" x="24" y="304"><tspan class="mono release-digest release-catalog-digest">sha256:7e…</tspan> · verified with the publisher key from protected installation</text>
   <text class="ui small muted" x="1562" y="304" text-anchor="end">Current pointer selects this catalog only</text>
   <rect data-ui="panel" x="24" y="334" width="1538" height="498" rx="8" fill="#FFFFFF" stroke="#E2E8E3"/>
   <text class="ui section" x="44" y="366" text-anchor="start">Android files</text>
@@ -107,7 +108,7 @@
   <rect x="25" y="432" width="1536" height="80" rx="0" fill="#EDF4FB" stroke="none"/>
   <rect x="25" y="432" width="3" height="80" rx="0" fill="#4D78D1" stroke="none"/>
   <text class="ui body mono" x="47" y="463" text-anchor="start">loom-android</text>
-  <text class="ui small mono muted" x="47" y="489" text-anchor="start">1.2.0 · Android · sha256:a3…</text>
+  <text class="ui small mono muted" x="47" y="489">1.2.0 · Android · <tspan class="release-digest">sha256:a3…</tspan></text>
   <text class="ui small green" x="690" y="463" text-anchor="end">Hide details ⌃</text>
   <text class="ui body" x="770" y="463" text-anchor="start">Enrolled device</text>
   <text class="ui small muted" x="770" y="489" text-anchor="start">Authenticated distribution only</text>
@@ -137,7 +138,7 @@
   </g>
   <g data-ui="release-file" data-component="demo-android-apk" aria-selected="false">
   <text class="ui body mono" x="47" y="661" text-anchor="start">loom.apk</text>
-  <text class="ui small mono muted" x="47" y="687" text-anchor="start">1.2.0 · Android · sha256:9c…</text>
+  <text class="ui small mono muted" x="47" y="687">1.2.0 · Android · <tspan class="release-digest">sha256:9c…</tspan></text>
   <text class="ui small green" x="690" y="661" text-anchor="end">Details ⌄</text>
   <text class="ui body" x="770" y="661" text-anchor="start">Generic public</text>
   <text class="ui small muted" x="770" y="687" text-anchor="start">Public distribution permitted</text>
@@ -157,7 +158,7 @@
   </g>
   <g data-ui="release-file" data-component="demo-android-symbols" aria-selected="false">
   <text class="ui body mono" x="47" y="741" text-anchor="start">android-symbols</text>
-  <text class="ui small mono muted" x="47" y="767" text-anchor="start">1.2.0 · Android · sha256:0f…</text>
+  <text class="ui small mono muted" x="47" y="767">1.2.0 · Android · <tspan class="release-digest">sha256:0f…</tspan></text>
   <text class="ui small green" x="690" y="741" text-anchor="end">Details ⌄</text>
   <text class="ui body" x="770" y="741" text-anchor="start">Restricted</text>
   <text class="ui small muted" x="770" y="767" text-anchor="start">Authenticated distribution only</text>
@@ -190,7 +191,7 @@
   <text class="ui eyebrow muted" x="47" y="989" text-anchor="start">DESIRED FILE</text>
   <text class="ui eyebrow muted" x="564" y="989" text-anchor="start">REPORTED APPLIED</text>
   <text class="ui eyebrow muted" x="1120" y="989" text-anchor="start">COMPARISON</text>
-  <text class="ui section mono" x="47" y="1022" text-anchor="start">sha256:a3…</text>
+  <text class="ui mono release-digest" x="47" y="1022" text-anchor="start">sha256:a3…</text>
   <text class="ui small muted" x="47" y="1048" text-anchor="start">Signed intent · selected component and platform</text>
   <text class="ui section amber" x="564" y="1022" text-anchor="start">unknown</text>
   <text class="ui small muted" x="564" y="1048" text-anchor="start">No fresh report for this component and platform</text>

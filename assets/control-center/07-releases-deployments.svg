@@ -88,11 +88,12 @@
   <text class="ui body" x="355" y="219" text-anchor="start">Device versions</text>
   <line x1="355" y1="231" x2="475" y2="231" stroke="#2AA875" stroke-width="2"/>
   <line class="rule" x1="24" y1="232" x2="1562" y2="232"/>
+  <style>.release-digest{font-size:11px;font-weight:400;fill:#79837d;user-select:text}.release-catalog-digest{font-size:10px}</style>
   <text class="ui section" x="24" y="275" text-anchor="start">Catalog 42</text>
   <circle cx="208" cy="270" r="4" fill="#2AA875" stroke="none"/>
   <text class="ui body green" x="222" y="275" text-anchor="start">Publisher signature verified</text>
   <text class="ui body green" x="1562" y="275" text-anchor="end">9 exact files verified</text>
-  <text class="ui small muted" x="24" y="304" text-anchor="start">sha256:7e… · verified with the publisher key from protected installation</text>
+  <text class="ui small muted" x="24" y="304"><tspan class="mono release-digest release-catalog-digest">sha256:7e…</tspan> · verified with the publisher key from protected installation</text>
   <text class="ui small muted" x="1562" y="304" text-anchor="end">Current pointer selects this catalog only</text>
   <line class="rule" x1="24" y1="326" x2="1562" y2="326"/>
   <text class="ui metric green" x="24" y="366" text-anchor="start">1</text>
@@ -127,9 +128,9 @@
   <g data-ui="deployment-row" data-device="demo-forward-c" data-result="matching">
   <text class="ui body mono" x="47" y="584" text-anchor="start">relay-west</text>
   <text class="ui small muted" x="47" y="610" text-anchor="start">Linux · loom-agent</text>
-  <text class="ui body mono" x="562" y="584" text-anchor="start">sha256:6b…</text>
+  <text class="ui mono release-digest" x="562" y="584" text-anchor="start">sha256:6b…</text>
   <text class="ui body muted" x="803" y="584" text-anchor="start">→</text>
-  <text class="ui body mono" x="855" y="584" text-anchor="start">sha256:6b…</text>
+  <text class="ui mono release-digest" x="855" y="584" text-anchor="start">sha256:6b…</text>
   <text class="ui small muted" x="562" y="610" text-anchor="start">Assigned target</text>
   <text class="ui small muted" x="855" y="610" text-anchor="start">Reported by device</text>
   <text class="ui body green" x="1160" y="584" text-anchor="start">Matches target</text>
@@ -140,7 +141,7 @@
   <g data-ui="deployment-row" data-device="demo-phone-f" data-result="unknown">
   <text class="ui body mono" x="47" y="672" text-anchor="start">android-phone</text>
   <text class="ui small muted" x="47" y="698" text-anchor="start">Android · loom-android</text>
-  <text class="ui body mono" x="562" y="672" text-anchor="start">sha256:a3…</text>
+  <text class="ui mono release-digest" x="562" y="672" text-anchor="start">sha256:a3…</text>
   <text class="ui body muted" x="803" y="672" text-anchor="start">→</text>
   <text class="ui body amber" x="855" y="672" text-anchor="start">unknown</text>
   <text class="ui small muted" x="562" y="698" text-anchor="start">Assigned target</text>
@@ -155,9 +156,9 @@
   <rect x="25" y="726" width="3" height="88" rx="0" fill="#D2A45B" stroke="none"/>
   <text class="ui body mono" x="47" y="760" text-anchor="start">internet-exit</text>
   <text class="ui small muted" x="47" y="786" text-anchor="start">Linux · loom-agent</text>
-  <text class="ui body mono" x="562" y="760" text-anchor="start">sha256:6b…</text>
+  <text class="ui mono release-digest" x="562" y="760" text-anchor="start">sha256:6b…</text>
   <text class="ui body muted" x="803" y="760" text-anchor="start">→</text>
-  <text class="ui body mono" x="855" y="760" text-anchor="start">sha256:51…</text>
+  <text class="ui mono release-digest" x="855" y="760" text-anchor="start">sha256:51…</text>
   <text class="ui small muted" x="562" y="786" text-anchor="start">Assigned target</text>
   <text class="ui small muted" x="855" y="786" text-anchor="start">Reported by device</text>
   <text class="ui body amber" x="1160" y="760" text-anchor="start">Differs from target</text>
@@ -178,7 +179,7 @@
   <g data-ui="deployment-row" data-device="demo-control-a" data-result="unknown">
   <text class="ui body mono" x="47" y="990" text-anchor="start">control-a</text>
   <text class="ui small muted" x="47" y="1016" text-anchor="start">Linux · loom-agent</text>
-  <text class="ui body mono" x="562" y="990" text-anchor="start">sha256:6b…</text>
+  <text class="ui mono release-digest" x="562" y="990" text-anchor="start">sha256:6b…</text>
   <text class="ui body muted" x="803" y="990" text-anchor="start">→</text>
   <text class="ui body amber" x="855" y="990" text-anchor="start">unknown</text>
   <text class="ui small muted" x="562" y="1016" text-anchor="start">Assigned target</text>
@@ -191,7 +192,7 @@
   <g data-ui="deployment-row" data-device="demo-forward-b" data-result="unknown">
   <text class="ui body mono" x="47" y="1078" text-anchor="start">relay-east</text>
   <text class="ui small muted" x="47" y="1104" text-anchor="start">Linux · loom-agent</text>
-  <text class="ui body mono" x="562" y="1078" text-anchor="start">sha256:6b…</text>
+  <text class="ui mono release-digest" x="562" y="1078" text-anchor="start">sha256:6b…</text>
   <text class="ui body muted" x="803" y="1078" text-anchor="start">→</text>
   <text class="ui body amber" x="855" y="1078" text-anchor="start">unknown</text>
   <text class="ui small muted" x="562" y="1104" text-anchor="start">Assigned target</text>

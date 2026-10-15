@@ -636,7 +636,7 @@ main {max-width:1586px;padding:28px 24px 24px}
 .release-file-row>div {min-width:0;overflow-wrap:anywhere}
 .release-file-row small {display:block;color:var(--dim);font-size:12px;margin-top:6px}
 .release-file-row .mono {font-size:12px}
-.release-file-row>div:first-child>.mono {font-size:14px}
+.release-file-row>div:first-child>.release-filename {font-size:14px}
 .release-details-link {float:right;color:var(--ok)!important;font-size:12px;margin-left:16px}
 .release-file-row.selected {background:#edf3fc;border-left:3px solid var(--route);padding-left:19px}
 .release-download {display:flex;flex-direction:column;align-items:stretch;gap:5px}
@@ -695,6 +695,8 @@ main {max-width:1586px;padding:28px 24px 24px}
 .version-details-coordinates>div {min-width:0;overflow-wrap:anywhere}
 .version-details-coordinates b {display:block;font-weight:400}
 .version-details-coordinates small {display:block;color:var(--dim);margin-top:6px}
+.network-page .release-digest,.release-application-row b.release-digest {font-size:11px;font-weight:400;color:#79837d}
+.release-catalog .release-digest {font-size:10px}
 @media(max-width:760px){.version-details-coordinates{grid-template-columns:1fr}}
 .service-save {display:flex;align-items:center;justify-content:flex-end;gap:16px;margin-top:28px;border-top:1px solid var(--line);padding:24px 0}
 .service-save button:not(:last-child) {margin-left:auto}
