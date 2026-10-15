@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,6 +77,291 @@ func eventTestValues(q WebEventQuery) url.Values {
 	return url.Values{"from": {q.From}, "until": {q.Until}, "kind": {q.Kind}, "source": {q.Source}, "object": {q.Subject}, "q": {q.Search}, "interval": {fmt.Sprint(q.Interval)}, "result": {q.ResultDigest}}
 }
 
+type eventTestLocation struct{ key, value []byte }
+
+// Supplying every reception locator recovers the previous query algorithm:
+// the unchanged selector and projector still visit every received report.
+// This fixture-only oracle saves and restores both forward and reverse keys.
+func eventTestFullReceptionOracle(t *testing.T, server *Server, values url.Values) WebEvents {
+	t.Helper()
+	store := server.Runtime.Reports
+	var saved []eventTestLocation
+	err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		index := tx.Bucket(reportIndexBucket)
+		candidates := index.Bucket(reportEventIndexBucket)
+		if err := candidates.ForEach(func(key, value []byte) error {
+			saved = append(saved, eventTestLocation{bytes.Clone(key), bytes.Clone(value)})
+			return nil
+		}); err != nil {
+			return err
+		}
+		if err := index.DeleteBucket(reportEventIndexBucket); err != nil {
+			return err
+		}
+		candidates, err := index.CreateBucket(reportEventIndexBucket)
+		if err != nil {
+			return err
+		}
+		prefix := receptionIndexPrefix(server.Config.NetworkID)
+		cursor := index.Cursor()
+		for key, value := cursor.Seek(prefix); key != nil && bytes.HasPrefix(key, prefix); key, value = cursor.Next() {
+			if err := candidates.Put(key, value); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+			index := tx.Bucket(reportIndexBucket)
+			if err := index.DeleteBucket(reportEventIndexBucket); err != nil {
+				return err
+			}
+			candidates, err := index.CreateBucket(reportEventIndexBucket)
+			if err != nil {
+				return err
+			}
+			for _, location := range saved {
+				if err := candidates.Put(location.key, location.value); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	return eventTestQuery(t, server, values)
+}
+
+func eventTestRebuildCandidates(t *testing.T, store *ObservationStore) {
+	t.Helper()
+	if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		if err := tx.Bucket(reportIndexBucket).DeleteBucket(reportEventIndexBucket); err != nil {
+			return err
+		}
+		return ensureReportEventIndex(context.Background(), tx)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type eventTestRuntimeSample struct {
+	sequence int
+	second   int
+	state    string
+	digest   string
+	error    string
+	legacy   bool
+}
+
+func eventTestCandidateReport(t *testing.T, server *Server, at time.Time, sample eventTestRuntimeSample) {
+	t.Helper()
+	key, err := server.Config.PrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _ := server.Config.PublicKey()
+	encodedKey := base64.RawURLEncoding.EncodeToString(public)
+	digest := sample.digest
+	if digest == "" {
+		digest = "a"
+	}
+	received := at.Add(time.Duration(sample.second) * time.Second)
+	report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: server.Config.NodeID,
+		ReportSequence: U64(sample.sequence), ReportedAt: received.UnixMilli(), ViewDigest: "sha256:" + strings.Repeat("a", 64),
+		NetworkGeneration: "demo-network", Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{},
+		Runtime: RuntimeReadback{State: sample.state, AppliedViewDigest: "sha256:" + strings.Repeat(digest, 64), ErrorCode: sample.error}}
+	report, err = SignDeviceReport(report, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := server.Runtime.Reports
+	store.now = func() time.Time { return received }
+	// Historical merge is the normal admission path for valid delayed originals.
+	owner := reportOwner{report.NetworkID, report.DeviceID}
+	if err := store.mergeReports(context.Background(), []DeviceReport{report}, map[reportOwner]string{owner: encodedKey}, true); err != nil && !errors.Is(err, ErrReportEquivocation) {
+		t.Fatal(err)
+	}
+	if sample.legacy {
+		// Model an original predating local reception annotations. No query may
+		// manufacture an event time for it; it still counts as a predecessor/fork.
+		raw, _ := CanonicalEncode(report)
+		physical := referenceOf(report).key(ReleaseDigest(raw))
+		if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+			location := append(receptionIndexPrefix(report.NetworkID), tx.Bucket(reportReceptionBucket).Get(physical)...)
+			if err := tx.Bucket(reportIndexBucket).Delete(append(location, physical...)); err != nil {
+				return err
+			}
+			return tx.Bucket(reportReceptionBucket).Delete(physical)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		eventTestRebuildCandidates(t, store)
+	}
+}
+
+type eventTestWindow struct{ from, until, total int }
+
+func eventTestCandidateWindows(t *testing.T, server *Server, at time.Time, windows []eventTestWindow) {
+	t.Helper()
+	store := server.Runtime.Reports
+	before := testObservationBytes(t, store)
+	var annotations []eventTestLocation
+	if err := store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+		return tx.Bucket(reportReceptionBucket).ForEach(func(key, value []byte) error {
+			annotations = append(annotations, eventTestLocation{bytes.Clone(key), bytes.Clone(value)})
+			return nil
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expected := make([]WebEvents, len(windows))
+	queries := make([]url.Values, len(windows))
+	for i, window := range windows {
+		values := url.Values{"from": {at.Add(time.Duration(window.from) * time.Second).Format(time.RFC3339Nano)}, "until": {at.Add(time.Duration(window.until) * time.Second).Format(time.RFC3339Nano)}, "kind": {"runtime"}}
+		queries[i] = values
+		store.cache.clear()
+		actual := eventTestQuery(t, server, values)
+		if actual.Total != window.total {
+			t.Fatalf("window [%d,%d): got %d events, want %d", window.from, window.until, actual.Total, window.total)
+		}
+		oracle := eventTestFullReceptionOracle(t, server, values)
+		if !reflect.DeepEqual(actual, oracle) {
+			t.Fatalf("window [%d,%d): candidate query changed the complete reception projection", window.from, window.until)
+		}
+		if warm := eventTestQuery(t, server, values); !reflect.DeepEqual(actual, warm) {
+			t.Fatal("warm candidate query changed the complete result")
+		}
+		expected[i] = actual
+	}
+	eventTestRebuildCandidates(t, store)
+	store.cache.clear()
+	for i, values := range queries {
+		if rebuilt := eventTestQuery(t, server, values); !reflect.DeepEqual(expected[i], rebuilt) {
+			t.Fatal("rebuilding candidate locations changed the complete result")
+		}
+	}
+	if !bytes.Equal(before, testObservationBytes(t, store)) {
+		t.Fatal("query or locator rebuild changed signed original bytes")
+	}
+	if err := store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+		var after []eventTestLocation
+		if err := tx.Bucket(reportReceptionBucket).ForEach(func(key, value []byte) error {
+			after = append(after, eventTestLocation{bytes.Clone(key), bytes.Clone(value)})
+			return nil
+		}); err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(annotations, after) {
+			return errors.New("query or locator rebuild changed reception annotations")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWebEventsCandidateLocationsMatchFullReceptionProjection(t *testing.T) {
+	type stage struct {
+		reports    []eventTestRuntimeSample
+		windows    []eventTestWindow
+		newHistory bool
+	}
+	tests := []struct {
+		name   string
+		stages []stage
+	}{
+		{"chronological-three-runtime-fields", []stage{{
+			reports: []eventTestRuntimeSample{{sequence: 1, second: 10, state: "running"}, {sequence: 2, second: 20, state: "running"}, {sequence: 3, second: 30, state: "stopped"}, {sequence: 4, second: 40, state: "stopped", digest: "b"}, {sequence: 5, second: 50, state: "stopped", digest: "b", error: "demo-failure"}},
+			windows: []eventTestWindow{{0, 60, 4}, {30, 50, 2}, {20, 30, 0}},
+		}}},
+		{"out-of-order-and-gap", []stage{{
+			reports: []eventTestRuntimeSample{{sequence: 1, second: 10, state: "running"}, {sequence: 3, second: 20, state: "running"}, {sequence: 2, second: 30, state: "stopped"}, {sequence: 5, second: 40, state: "stopped"}},
+			windows: []eventTestWindow{{0, 25, 1}, {15, 35, 2}, {0, 45, 3}},
+		}}},
+		{"late-fork-and-reception-tie", []stage{{
+			reports: []eventTestRuntimeSample{{sequence: 1, second: 10, state: "running"}, {sequence: 2, second: 20, state: "stopped"}, {sequence: 2, second: 30, state: "running"}, {sequence: 3, second: 40, state: "running"}, {sequence: 4, second: 50, state: "stopped"}, {sequence: 4, second: 50, state: "running"}},
+			windows: []eventTestWindow{{0, 20, 1}, {0, 30, 2}, {0, 31, 1}, {0, 60, 1}},
+		}}},
+		{"clock-rollback-and-touching-intervals", []stage{{
+			reports: []eventTestRuntimeSample{{sequence: 1, second: 100, state: "running"}, {sequence: 2, second: 50, state: "running"}, {sequence: 1, second: 40, state: "stopped"}},
+			windows: []eventTestWindow{{0, 60, 2}, {0, 100, 2}, {0, 101, 0}},
+		}, {
+			// Current q2 is unique for (20,30], but q1 only for (30,40].
+			// Their sole shared endpoint cannot authorize a transition.
+			reports:    []eventTestRuntimeSample{{sequence: 1, second: 30, state: "running"}, {sequence: 1, second: 40, state: "stopped"}, {sequence: 2, second: 20, state: "stopped"}, {sequence: 2, second: 30, state: "running"}},
+			windows:    []eventTestWindow{{0, 30, 0}, {0, 35, 1}, {0, 101, 0}},
+			newHistory: true,
+		}}},
+		{"legacy-predecessors-and-forks", []stage{{
+			reports: []eventTestRuntimeSample{{sequence: 1, second: 10, state: "running", legacy: true}, {sequence: 2, second: 20, state: "stopped"}, {sequence: 3, second: 30, state: "running", legacy: true}, {sequence: 4, second: 40, state: "stopped"}},
+			windows: []eventTestWindow{{0, 25, 1}, {0, 45, 2}},
+		}, {
+			reports: []eventTestRuntimeSample{{sequence: 1, second: 30, state: "stopped"}, {sequence: 3, second: 35, state: "stopped", legacy: true}},
+			windows: []eventTestWindow{{0, 25, 1}, {0, 30, 1}, {0, 45, 0}},
+		}}},
+		{"late-earlier-sequence-replaces-baseline", []stage{{
+			reports: []eventTestRuntimeSample{{sequence: 5, second: 10, state: "running"}},
+			windows: []eventTestWindow{{0, 20, 1}},
+		}, {
+			reports: []eventTestRuntimeSample{{sequence: 2, second: 30, state: "stopped"}},
+			windows: []eventTestWindow{{0, 20, 0}, {0, 40, 1}},
+		}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server, now := eventTestServer(t)
+			at := now.Add(-10 * time.Minute)
+			for _, stage := range test.stages {
+				if stage.newHistory {
+					server, now = eventTestServer(t)
+					at = now.Add(-10 * time.Minute)
+				}
+				for _, sample := range stage.reports {
+					eventTestCandidateReport(t, server, at, sample)
+				}
+				eventTestCandidateWindows(t, server, at, stage.windows)
+			}
+		})
+	}
+}
+
+func TestWebEventsCandidateLocationsRequireBucketAndEmptyValues(t *testing.T) {
+	for _, invalid := range []string{"missing", "nonempty-value", "independent-sequence"} {
+		t.Run(invalid, func(t *testing.T) {
+			server, now := eventTestServer(t)
+			eventTestReport(t, server, 1, "running", now.Add(-time.Minute))
+			if err := server.Runtime.Reports.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+				index := tx.Bucket(reportIndexBucket)
+				if invalid == "missing" {
+					return index.DeleteBucket(reportEventIndexBucket)
+				}
+				candidates := index.Bucket(reportEventIndexBucket)
+				if invalid == "independent-sequence" {
+					return candidates.SetSequence(1)
+				}
+				prefix := receptionIndexPrefix(server.Config.NetworkID)
+				key, _ := candidates.Cursor().Seek(prefix)
+				if !bytes.HasPrefix(key, prefix) {
+					return errors.New("baseline candidate is absent")
+				}
+				return candidates.Put(key, []byte("invalid"))
+			}); err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			server.events(response, httptest.NewRequest(http.MethodGet, "/api/control/ui/events?kind=runtime", nil))
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatal("missing or invalid candidate locations became a successful empty result")
+			}
+		})
+	}
+}
+
 func TestWebEventsCachedPredecessorStillReadsActualOriginal(t *testing.T) {
 	server, now := eventTestServer(t)
 	prior := eventTestReport(t, server, 1, "running", now.Add(-2*time.Minute))
@@ -95,6 +381,92 @@ func TestWebEventsCachedPredecessorStillReadsActualOriginal(t *testing.T) {
 	server.events(response, httptest.NewRequest(http.MethodGet, "/api/control/ui/events?"+values.Encode(), nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatal("cached signature replaced a damaged predecessor original")
+	}
+}
+
+func TestWebEventsWarmCacheStillChecksActualReportPosition(t *testing.T) {
+	for _, replacePrior := range []bool{false, true} {
+		t.Run(fmt.Sprintf("outside-window-prior-%t", replacePrior), func(t *testing.T) {
+			server, now := eventTestServer(t)
+			prior := eventTestReport(t, server, 1, "running", now.Add(-2*time.Minute))
+			current := eventTestReport(t, server, 2, "stopped", now.Add(-time.Minute))
+			values := url.Values{"from": {now.Add(-90 * time.Second).Format(time.RFC3339Nano)}, "until": {now.Format(time.RFC3339Nano)}, "kind": {"runtime"}}
+			cold := eventTestQuery(t, server, values)
+			if warm := eventTestQuery(t, server, values); cold.Total != 1 || !reflect.DeepEqual(cold, warm) {
+				t.Fatal("cold and warm report projections differ")
+			}
+			physical, replacement := current, prior
+			if replacePrior {
+				physical, replacement = prior, current
+			}
+			physicalRaw, _ := CanonicalEncode(physical)
+			replacementRaw, _ := CanonicalEncode(replacement)
+			if err := server.Runtime.Reports.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+				return tx.Bucket(observationBucket).Put(referenceOf(physical).key(ReleaseDigest(physicalRaw)), replacementRaw)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			server.events(response, httptest.NewRequest(http.MethodGet, "/api/control/ui/events?"+values.Encode(), nil))
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatal("an actual body matching another cached report authenticated the wrong physical position")
+			}
+		})
+	}
+}
+
+func TestWebEventsRuntimeCacheKeyMembershipAndConcurrentClear(t *testing.T) {
+	server, now := eventTestServer(t)
+	eventTestReport(t, server, 1, "running", now.Add(-2*time.Minute))
+	eventTestReport(t, server, 2, "stopped", now.Add(-time.Minute))
+	public, _ := server.Config.PublicKey()
+	correct := base64.RawURLEncoding.EncodeToString(public)
+	wrong := base64.RawURLEncoding.EncodeToString(testKey(t).Public().(ed25519.PublicKey))
+	store := server.Runtime.Reports
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	query := func(key string) ([]WebEvent, error) {
+		values, _, err := store.runtimeEvents(ctx, server.Config.NetworkID, map[string][]string{server.Config.NodeID: {key}}, now.Add(-90*time.Second), now)
+		return values, err
+	}
+	expected, err := query(correct)
+	if err != nil || len(expected) != 1 {
+		t.Fatal("valid history did not establish the outside-window predecessor", err)
+	}
+	for _, cold := range []bool{false, true} {
+		if cold {
+			store.cache.clear()
+		}
+		if values, err := query(wrong); err == nil || values != nil {
+			t.Fatal("a transaction cache lookup supplied an identity outside the query's key set")
+		}
+	}
+	var workers sync.WaitGroup
+	failures := make(chan error, 4)
+	for range 4 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for range 10 {
+				values, err := query(correct)
+				if err != nil || !reflect.DeepEqual(expected, values) {
+					failures <- errors.New("concurrent transaction lookup and clear changed the verified result")
+					return
+				}
+			}
+		}()
+	}
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		for range 50 {
+			store.cache.clear()
+		}
+	}()
+	workers.Wait()
+	close(failures)
+	for failure := range failures {
+		t.Fatal(failure)
 	}
 }
 
@@ -347,7 +719,10 @@ func TestWebEventsCompleteWindowPaginationExportAndRestart(t *testing.T) {
 		if err := ensureReportIndexes(tx); err != nil {
 			return err
 		}
-		return ensureReportReceptions(tx, now)
+		if err := ensureReportReceptions(tx, now); err != nil {
+			return err
+		}
+		return ensureReportEventIndex(context.Background(), tx)
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -494,14 +494,22 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 		if err != nil {
 			return err
 		}
+		index := tx.Bucket(reportIndexBucket)
+		if index == nil {
+			return errors.New("runtime event candidate locations missing")
+		}
+		candidates := index.Bucket(reportEventIndexBucket)
+		if candidates == nil || candidates.Sequence() != 0 {
+			return errors.New("runtime event candidate locations missing or have an independent sequence")
+		}
 		prefix := receptionIndexPrefix(network)
-		cursor := tx.Bucket(reportIndexBucket).Cursor()
+		cursor := candidates.Cursor()
 		start := binary.BigEndian.AppendUint64(bytes.Clone(prefix), uint64(from.UnixNano()))
-		for index, _ := cursor.Seek(start); index != nil && bytes.HasPrefix(index, prefix); index, _ = cursor.Next() {
+		for index, value := cursor.Seek(start); index != nil && bytes.HasPrefix(index, prefix); index, value = cursor.Next() {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if len(index) < len(prefix)+8 {
+			if len(index) < len(prefix)+8 || len(value) != 0 {
 				return errors.New("invalid reception location")
 			}
 			at, err := receptionTime(index[len(prefix) : len(prefix)+8])
@@ -608,15 +616,31 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 			preceding, found := last[ref.DeviceID]
 			reusePrevious := location.previous != nil && found && bytes.Equal(preceding.key, location.previous)
 			var raw, prior []byte
+			var id, priorID, verifiedKey, priorKey string
+			var reference, priorReference reportReference
+			var runtime, previous RuntimeReadback
+			var cached, priorCached bool
 			err = store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-				raw = bytes.Clone(tx.Bucket(observationBucket).Get(location.key))
-				if raw == nil {
+				actual := tx.Bucket(observationBucket).Get(location.key)
+				if actual == nil {
 					return errors.New("received original disappeared")
 				}
+				// Hash the actual transaction bytes before a cache lookup. Only a
+				// miss needs an owned body for full validation outside the transaction.
+				id = ReleaseDigest(actual)
+				reference, runtime, verifiedKey, cached = store.cachedOriginalRuntime(id, deviceKeys)
+				if !cached {
+					raw = bytes.Clone(actual)
+				}
 				if location.previous != nil && !reusePrevious {
-					prior = bytes.Clone(tx.Bucket(observationBucket).Get(location.previous))
-					if prior == nil {
+					actual = tx.Bucket(observationBucket).Get(location.previous)
+					if actual == nil {
 						return errors.New("previous original disappeared")
+					}
+					priorID = ReleaseDigest(actual)
+					priorReference, previous, priorKey, priorCached = store.cachedOriginalRuntime(priorID, deviceKeys)
+					if !priorCached {
+						prior = bytes.Clone(actual)
 					}
 				}
 				return ctx.Err()
@@ -624,8 +648,9 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 			if err != nil {
 				return nil, err
 			}
-			id := ReleaseDigest(raw)
-			reference, runtime, verifiedKey, err := store.originalRuntimeKeysWithCodecAndKey(raw, id, deviceKeys, codec)
+			if !cached {
+				reference, runtime, verifiedKey, err = store.originalRuntimeKeysWithCodecAndKey(raw, id, deviceKeys, codec)
+			}
 			if err != nil || !bytes.Equal(reference.key(id), location.key) {
 				return nil, errors.New("received report does not verify")
 			}
@@ -634,15 +659,16 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 			previousState := ""
 			detail := "Authenticated runtime baseline: " + runtime.State + "."
 			if location.previous != nil {
-				previous := preceding.runtime
-				if !reusePrevious {
-					priorID := ReleaseDigest(prior)
-					var priorReference reportReference
-					priorReference, previous, verifiedKey, err = store.originalRuntimeKeysWithCodecAndKey(prior, priorID, deviceKeys, codec)
+				if reusePrevious {
+					previous = preceding.runtime
+				} else {
+					if !priorCached {
+						priorReference, previous, priorKey, err = store.originalRuntimeKeysWithCodecAndKey(prior, priorID, deviceKeys, codec)
+					}
 					if err != nil || !bytes.Equal(priorReference.key(priorID), location.previous) {
 						return nil, errors.New("previous runtime report does not verify")
 					}
-					preferHistoricalReportKey(deviceKeys, verifiedKey)
+					preferHistoricalReportKey(deviceKeys, priorKey)
 				}
 				if previous.State == runtime.State && previous.AppliedViewDigest == runtime.AppliedViewDigest && previous.ErrorCode == runtime.ErrorCode {
 					continue

@@ -98,6 +98,22 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 			err = store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error { return ensureReportReceptions(tx, time.Now()) })
 		}
 	}
+	if err == nil {
+		ready := false
+		err = store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+			child := tx.Bucket(reportIndexBucket).Bucket(reportEventIndexBucket)
+			ready = child != nil
+			if ready && child.Sequence() != 0 {
+				return errors.New("event candidate locations have an independent sequence")
+			}
+			return nil
+		})
+		if err == nil && !ready {
+			err = store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+				return ensureReportEventIndex(context.Background(), tx)
+			})
+		}
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -150,13 +166,24 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 	})
 	fork := false
 	err := store.withDatabase(ctx, true, func(tx *bolt.Tx) error {
+		if index := tx.Bucket(reportIndexBucket); index == nil || index.Bucket(reportEventIndexBucket) == nil {
+			return errors.New("event candidate locations unavailable")
+		}
 		touched := map[storedReportRange]bool{}
+		changed := map[reportPosition]bool{}
+		changedOwners := map[reportOwner]bool{}
 		bucket := tx.Bucket(observationBucket)
 		high := map[reportOwner]U64{}
+		low := map[reportOwner]U64{}
 		known := map[reportPosition]map[string]bool{}
 		// Only the durable highest position and incoming positions determine
 		// replay, idempotence and equivocation. Read every fork at those positions.
 		for _, owner := range owners {
+			earliest, err := lowestReportPosition(bucket, owner)
+			if err != nil {
+				return err
+			}
+			low[owner] = earliest
 			highest, err := highestReportPosition(bucket, owner)
 			if err != nil {
 				return err
@@ -230,7 +257,22 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 			if err := receiveReport(tx, key, at); err != nil {
 				return err
 			}
+			changed[position], changedOwners[owner] = true, true
+			if position.sequence != ^U64(0) {
+				changed[reportPosition{owner, position.sequence + 1}] = true
+			}
 			touched[storedReportRange{report.NetworkID, reportScope{report.DeviceID, reportRangeStart(report.ReportSequence)}}] = true
+		}
+		for owner := range changedOwners {
+			earliest, err := lowestReportPosition(bucket, owner)
+			if err != nil {
+				return err
+			}
+			changed[reportPosition{owner, low[owner]}] = true
+			changed[reportPosition{owner, earliest}] = true
+		}
+		if err := updateReportEventPositions(ctx, tx, changed); err != nil {
+			return err
 		}
 		for group := range touched {
 			if err := updateReportRange(tx, group); err != nil {

@@ -107,7 +107,13 @@ func testSetObservationReports(t *testing.T, source any, reports []DeviceReport)
 				return err
 			}
 		}
-		return ensureReportIndexes(tx)
+		if err := ensureReportIndexes(tx); err != nil {
+			return err
+		}
+		if tx.Bucket(reportReceptionBucket) != nil {
+			return ensureReportEventIndex(context.Background(), tx)
+		}
+		return nil
 	}
 	var err error
 	switch value := source.(type) {

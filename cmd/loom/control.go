@@ -51,7 +51,7 @@ func cmdConfig(args []string) error {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: loom control <init|join|serve|relay|edge|inspect|migrate-reports|endpoint-inputs|website|admin|write|member|prepare-key>")
+		return errors.New("用法: loom control <init|join|serve|relay|edge|inspect|migrate-reports|prepare-report-index|endpoint-inputs|website|admin|write|member|prepare-key>")
 	}
 	switch args[0] {
 	case "admin":
@@ -70,6 +70,8 @@ func cmdControl(args []string) error {
 		return cmdControlExportDeviceView(args[1:])
 	case "migrate-reports":
 		return cmdControlMigrateReports(args[1:])
+	case "prepare-report-index":
+		return cmdControlPrepareReportIndex(args[1:])
 	case "endpoint-inputs":
 		return cmdControlEndpointInputs(args[1:])
 	case "website":
@@ -86,6 +88,30 @@ func cmdControl(args []string) error {
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
 }
+func cmdControlPrepareReportIndex(args []string) error {
+	fs := flag.NewFlagSet("control prepare-report-index", flag.ContinueOnError)
+	root := fs.String("state-dir", "/var/lib/loom-control", "现行控制目录")
+	socket := fs.String("admin-socket", "", "已停止 control 的实际管理 socket，默认由 state-dir 定位")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("prepare-report-index 不接受位置参数；先停止对应 control")
+	}
+	if *socket == "" {
+		*socket = filepath.Join(*root, "admin.sock")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	if err := control.PrepareReportIndex(ctx, *root, *socket); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(os.Stdout, "report indexes ready")
+	return err
+}
+
 func cmdControlMigrateReports(args []string) error {
 	fs := flag.NewFlagSet("control migrate-reports", flag.ContinueOnError)
 	root := fs.String("state-dir", "/var/lib/loom-control", "现行控制目录")

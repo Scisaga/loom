@@ -253,19 +253,9 @@ func (store *ObservationStore) originalRuntimeKeysWithCodec(raw []byte, id strin
 // The successful key is a query-local ordering hint, never an additional
 // identity. Cache hits and cold verification both require it in this key set.
 func (store *ObservationStore) originalRuntimeKeysWithCodecAndKey(raw []byte, id string, keys []string, codec *contractCodec) (reportReference, RuntimeReadback, string, error) {
-	cache := &store.cache
-	cache.mu.Lock()
-	if element := cache.items[id]; element != nil {
-		value := element.Value.(*reportCacheEntry)
-		if value.identity != nil && value.runtime != nil && containsString(keys, value.identity.value.verifiedKey) {
-			cache.lru.MoveToFront(element)
-			identity, runtime, sequence := value.identity.value, value.runtime.value, value.sequence
-			cache.mu.Unlock()
-			return reportReference{NetworkID: identity.owner.network, DeviceID: identity.owner.device, ReportSequence: sequence},
-				RuntimeReadback{State: runtime.state, AppliedViewDigest: runtime.appliedViewDigest, ErrorCode: runtime.errorCode}, identity.verifiedKey, nil
-		}
+	if reference, runtime, key, found := store.cachedOriginalRuntime(id, keys); found {
+		return reference, runtime, key, nil
 	}
-	cache.mu.Unlock()
 	report, err := store.decodedReportWithCodec(raw, id, codec)
 	if err != nil {
 		return reportReference{}, RuntimeReadback{}, "", err
@@ -286,6 +276,28 @@ func (store *ObservationStore) originalRuntimeKeysWithCodecAndKey(raw []byte, id
 		}
 	}
 	return reportReference{}, RuntimeReadback{}, "", errors.New("no historical identity verifies report")
+}
+
+// The caller freshly hashed the actual original bytes. This lookup retains only
+// immutable scalar copies, never transaction bytes, and never enters a database.
+// It may run in a short database read transaction: cache.mu is released before
+// returning, and no cache-locked path acquires a database transaction.
+func (store *ObservationStore) cachedOriginalRuntime(id string, keys []string) (reportReference, RuntimeReadback, string, bool) {
+	cache := &store.cache
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	element := cache.items[id]
+	if element == nil {
+		return reportReference{}, RuntimeReadback{}, "", false
+	}
+	value := element.Value.(*reportCacheEntry)
+	if value.identity == nil || value.runtime == nil || !containsString(keys, value.identity.value.verifiedKey) {
+		return reportReference{}, RuntimeReadback{}, "", false
+	}
+	cache.lru.MoveToFront(element)
+	identity, runtime := value.identity.value, value.runtime.value
+	return reportReference{NetworkID: identity.owner.network, DeviceID: identity.owner.device, ReportSequence: value.sequence},
+		RuntimeReadback{State: runtime.state, AppliedViewDigest: runtime.appliedViewDigest, ErrorCode: runtime.errorCode}, identity.verifiedKey, true
 }
 
 // Only reorder an existing key in a caller-owned query copy. The accepted set
