@@ -182,10 +182,12 @@ Overview 与 Topology 保留双圈构图：设备位于两条同心椭圆上，�
 
 ### 文件命名与导航分组
 
-文件按顶部一级导航从左到右使用两位组号 `01` 至 `09`：主页面用 `<组号>-<导航名>.svg`，
-子页面和状态稿用 `<组号>-<导航名>-<场景>.svg`，同组页面共用序号。无管理导航的私有入口使用
-`10-entry-guest.svg`，排在菜单页面之后。所有文件仍放在同一个目录；文件名只表达导航归属，
-不改变页面内容、业务路由或职责组合。
+文件沿用两位资源组号 `01` 至 `09`：主页面用 `<组号>-<导航名>.svg`，
+子页面和状态稿用 `<组号>-<导航名>-<场景>.svg`。本轮访问配置相关原型的顶栏将 Services、Policies 合并为
+Access configuration，内部固定为 Services、Policies、Private DNS、Probe targets 四个同级视图；
+保留 `05`、`06` 文件名以维持已有原型链接。无管理导航的私有入口仍为 `10-entry-guest.svg`。
+正式界面沿同一访问配置分组实现，保留 `/services`、`/policies` URL 和既有权威对象；
+部署及实际入口回读仍以实施状态为准。
 
 | 一级导航 | 文件名 | 覆盖场景 |
 |---|---|---|
@@ -193,8 +195,7 @@ Overview 与 Topology 保留双圈构图：设备位于两条同心椭圆上，�
 | Nodes | `02-nodes.svg`、`02-nodes-*.svg` | 设备列表；三种添加草稿；`add-ssh-result`、`add-script-delivery`、`add-qr-delivery`；统一 `detail` 内的待加入、成员签名及完成状态；`access-edit` / `access-result`；`rejoin`、`lan-mapping` |
 | Topology | `03-topology.svg` | 拓扑 |
 | Live paths | `04-live-paths.svg`、`04-live-paths-detail.svg` | 两层：左侧服务与右侧设备同页 → 设备路径详情；服务切换和设备筛选均不离开主页面 |
-| Services | `05-services.svg`、`05-services-lan.svg`、`05-services-dns.svg` | 互联网服务、局域网服务与精确私有 DNS |
-| Policies | `06-policies.svg`、`06-policies-new.svg`、`06-policies-lan.svg` | 互联网/LAN 策略管理与创建 |
+| Access configuration | `05-services.svg`、`05-services-lan.svg`、`06-policies.svg`、`06-policies-new.svg`、`06-policies-lan.svg`、`05-services-dns.svg`、`05-services-probes.svg` | 服务、访问策略、私有 DNS、共享 HTTPS 探测目标四个同级视图 |
 | Releases | `07-releases-*.svg` | Linux、Android、Windows 与部署回读 |
 | Events | `08-events.svg` | 事件 |
 | Administration | `09-administration.svg`、`09-administration-administrators.svg`、`09-administration-certificates.svg`、`09-administration-configuration.svg` | 同级的控制节点、管理员、网站证书、当前配置；操作与结果都在原视图展开 |
@@ -207,11 +208,14 @@ Service、定义允许/拒绝及路径规则；节点只选择 Policy。同服�
 策略里的“不限”表示所有合格节点，未选策略则没有该服务权限。创建、复制和共享编辑都进入 Policies；
 节点添加/权限编辑/重新添加仅用策略多选标签和只读摘要，不再套服务页签或规则编辑器。
 Services 展示所属策略，Policies 展示所属服务和引用节点，避免操作者在两处重复绑定。
+共享 HTTPS 探测池独立管理，未使用、未匹配服务或没有观测的目标仍可见；Services 只读显示按
+已保存目标与各设备有效 Policy 过滤的结果，实际观测仍进入 Live paths 的设备/服务/候选范围。
 `02-nodes-access-result.svg` 仍为指定设备的保存反馈，不是通用 operation 台。
 
 添加设备先多选职责，纯 access 仅二维码，含其他职责仅 SSH/sh。角色可修改，平台由目标执行识别并在
-claim 绑定。access 选择策略时标签同时显示服务；没有 access 不显示该区域。策略页的入口、出口及
-中间转发并列展示“不限 / 指定节点 / 不允许”，限定节点时用可搜索的 tag selector，清空限定标签不是自动不限。
+claim 绑定。access 选择策略时标签同时显示服务；没有 access 不显示该区域。策略页按入口 → 中间转发 →
+最终出口排列，Direct 独立；各节点范围并列展示“不限 / 指定节点 / 不允许”，限定节点时用可搜索的
+tag selector，清空限定标签不是自动不限。
 `06-policies-lan.svg` 展示入口改为指定节点的未保存草稿，包含已选标签及展开的复选列表；勾选后保持
 列表展开，支持连续多选，标签顺序不代表路径顺序。保存前不改变其他页面读取的既有不限规则。
 LAN 策略终点只读固定为服务网关，不显示互联网出口或 Direct。
@@ -405,7 +409,7 @@ LAN 场景选中已加入的 `demo-laptop` 与 `demo-office / demo-lan-policy`�
 候选和图表中保留。部署回读留在设备详情及 Releases。当前 SPA 的 `/routing` 已恢复该两层布局、实际路径归组、逐设备 Service/Policy、目标与业务历史；
 三个正式浏览器及原度量回读见[交付对账](../delivery-audit.md)，原型不作为远端即时状态。
 
-Services、DNS、Policies 及 `07` 至 `09` 的管理稿沿用这种组织方式。服务和策略目录分别保留
+Access configuration 的四个视图及 `07` 至 `09` 的管理稿沿用这种组织方式。服务和策略目录分别保留
 四个与三个对象，选中有效对象时编辑草稿，使用者列表从设备授权派生；字段旁不另建 Policy 绑定。
 新增的 LAN 服务详情选中同一个 office-network，展示网关 relay-west 和虚拟到本地的地址映射，
 没有增加第五个 Service。节点详情中的 LAN 区域按网关过滤同一目录，创建入口仍签发 Service。
@@ -413,7 +417,19 @@ Services、DNS、Policies 及 `07` 至 `09` 的管理稿沿用这种组织方式
 共享保存影响引用，复制另存不改原对象。LAN 状态选中既有 office-lan，终点仍是 relay-west。
 新建状态以 private-app 的 demo-private-access 为未保存草稿：allow、普通 Direct 和路径不限作为
 新建默认。草稿不增加目录已保存的三条策略，也不自动分配给任何设备。
-DNS 将保留名的两个入口答案归入一行，普通记录的编辑在原位展开，解析观测仍为 unknown。
+Services 右侧按配置、共享影响与保存、关联策略、只读授权匹配探测目标排列；关联回读基于已保存配置，
+不因编辑草稿而被当作新规则已生效。DNS 将保留名的两个入口答案归入一行，来源和只读性跟随记录，
+名称总数与自定义记录数分开；普通记录在原位编辑，保留多 A/AAAA 地址，解析观测仍为 unknown。
+Probe targets 使用独立共享池列表与新增、编辑、删除确认状态，使用情况只是只读投影；不从设备路径
+反推目标池完整性，也不以池内存在或匹配关系生成可用观测。
+
+本轮访问配置目标稿共七张，使用 `role="document"` 保留浏览器中的链接导航；其他原型和正式页面不在
+本次布局修订范围。DNS 合成场景改为 3 个名称、1 个系统名、2 条自定义记录、5 个答案：`control.loom`
+含两个 IPv4 入口，`demo-printer.loom` 仍关联 office-network 且只有 IPv4，独立的 `demo-app.loom`
+同时有 IPv4/IPv6 并默认展开编辑。新增双栈场景只检验多答案表达，不改写原生产记录或历史验收。
+策略使用 Paths through Loom 标题组织入口、中间转发与最终出口，Direct 仍是独立许可。
+本轮审阅覆盖四视图往返、完整目录与分组、共享影响、DNS 多答案、未使用/未匹配探测目标及其操作场景；
+生成文件和固定场景演示不表示正式写入、运行消费或部署已经完成。
 
 发布目录固定为 generation 42，共九个已验签精确文件，每平台三个；三张图的选中文件均未声明最低
 兼容版本。每行补齐 `Download` / `Copy link`，APK、Windows 安装包与 portable 的按钮直接标明下载对象，
@@ -455,6 +471,8 @@ Configuration state；普通同对象显式解决已完成正常浏览器、签�
 | Live paths | [服务与设备](../../assets/control-center/04-live-paths.svg) · [路径详情](../../assets/control-center/04-live-paths-detail.svg) | 两层；左侧服务导航、右侧设备表；详情含候选/历史页签及 LAN 范围 |
 | Services | [互联网服务](../../assets/control-center/05-services.svg) · [局域网服务](../../assets/control-center/05-services-lan.svg) | 统一目录；互联网目标或 LAN 网关及地址映射；从设备授权回读使用者，无全局 Policy 选择器 |
 | Policies | [互联网策略](../../assets/control-center/06-policies.svg) · [新建](../../assets/control-center/06-policies-new.svg) · [LAN 策略](../../assets/control-center/06-policies-lan.svg) | 策略固定所属服务；允许/拒绝、范围模式及引用节点明确；完整编辑与复制在此完成 |
+| Private DNS | [私有名称与编辑](../../assets/control-center/05-services-dns.svg) | 系统与自定义来源、名称与自定义计数、多 A/AAAA 答案；保留名只读 |
+| Probe targets | [共享 HTTPS 目标池](../../assets/control-center/05-services-probes.svg) | 独立查看、新增、编辑与删除；未使用或未匹配目标保留，授权匹配与真实观测分别回读 |
 | Device versions | [device versions](../../assets/control-center/07-releases-deployments.svg) | 按设备对照期望与实报摘要；不一致行原位展开，未知逐行说明原因 |
 | Events | [events](../../assets/control-center/08-events.svg) | 单行筛选、72h / 10min 类型堆叠柱状图、三列历史；展开事件说明当时影响，再链接当前对象状态 |
 | Administration | [控制节点](../../assets/control-center/09-administration.svg) · [管理员](../../assets/control-center/09-administration-administrators.svg) · [网站证书](../../assets/control-center/09-administration-certificates.svg) · [配置状态](../../assets/control-center/09-administration-configuration.svg) | 四项左侧导航；成员与同步分离，管理员公开叶授权，网站证书手工续签，原位解决配置冲突 |
@@ -501,13 +519,18 @@ Administration 的四个文件对应四个同级内容视图，均使用相同�
 - [设备权限编辑](../../assets/control-center/02-nodes-access-edit.svg)：只增加、移除或替换策略，服务自动推导；保存或取消；页面将当前授权与未提交草稿分开。
 - [重新添加 access](../../assets/control-center/02-nodes-rejoin.svg)：审阅旧身份删除、新 ID 邀请和重新授予的服务/策略；暂时离线与同事务 resume 不使用此入口。
 
-- [精确 DNS 编辑](../../assets/control-center/05-services-dns.svg)：Services 的 DNS 标签，两个名称共三个答案；
-  `control.loom` 合并显示两个 serving 入口且只读，普通记录在选中行下展开名称、A/AAAA 类型、答案及所属 LAN。
+- [精确 DNS 编辑](../../assets/control-center/05-services-dns.svg)：Access configuration 的 Private DNS 视图，3 个名称共 5 个答案；
+  `control.loom` 合并显示两个 serving 入口且只读，printer 保留 LAN IPv4，独立 app 记录默认展开双栈编辑。
+- 共享探测池：[默认列表](../../assets/control-center/05-services-probes.svg#probes-overview)、
+  [新增](../../assets/control-center/05-services-probes.svg#probes-new)、
+  [编辑 media 目标](../../assets/control-center/05-services-probes.svg#probes-edit)、
+  [删除未匹配目标](../../assets/control-center/05-services-probes.svg#probes-delete)。浏览器打开同一 SVG 切换原位内容；
+  作为图片嵌入时显示默认列表，不执行探测、事实写入或删除。
 - [局域网服务创建](../../assets/control-center/02-nodes-lan-mapping.svg)：设备详情中预选网关的创建表单，只选择网关已认证
   报告的前缀，展示自动分配的等长虚拟前缀和固定网关；创建后进入统一 Services 目录。随后为该 Service 创建 Policy，
   再给访问节点分配策略；映射不绑定全局唯一策略。
 
-以上共 32 张路由页面及补充状态稿，均为可编辑矢量。Live paths 只保留两张稿，对应主页面与设备路径详情；
+以上共 33 张路由页面及补充状态稿，均为可编辑矢量。Live paths 只保留两张稿，对应主页面与设备路径详情；
 交付/加入分支及策略创建/编辑也是既有入口的状态，
 不增加独立产品导航或权威状态。生成器写入正式 SVG 后须逐图渲染核对，并再次运行
 比较文件摘要；只预览临时渲染图不能算更新了 README 引用的原型。程序解析、边界检查和仓库测试通过仅代表
@@ -532,7 +555,7 @@ Add Device 的三种媒介共用 880 px 宽的居中纵向表单，标题与字�
 这种页面选择只是 UI 展示，不新增领域、wire、持久或运行时状态。
 
 其余流程沿用相同方式：权限编辑、重新添加、添加交付、SSH 执行结果、操作反馈、LAN
-服务创建和无 admin 私有入口使用纵向内容；Services、Policies、DNS 的目录/记录查询部分保留，
+服务创建和无 admin 私有入口使用纵向内容；Services、Policies、Private DNS、Probe targets 的目录/记录查询部分保留，
 编辑区使用无外框的表单。只读身份不伪装成可编辑输入，删除操作与主保存按钮分开，当前事实、
 未提交草稿及待回读结果保留各自语义。流程页不强制等高，不以另一张说明卡填补留白。
 列表和监测页面保留面板式布局。Nodes 在每行并列状态采样条与 RX／TX 小柱图；Topology 增加选中链路
@@ -542,8 +565,10 @@ Live paths 只有两层：服务导航与设备表在同一主页面，切换服
 详情只读显示已携带的设备/服务，当前路线下以候选/历史页签共用内容区；页签、返回主页面及浏览器前进/后退
 保留来源 Service 与筛选。直接打开详情而无来源时，返回该 Service 的全部设备。来源 fragment 只保存导航上下文，
 不决定授权、路径或健康。服务列表与设备清单使用开放分隔线，不嵌套面板；历史图和逐段度量保留。
-Services 与 Policies 的目录去掉逐项卡片外框，主编辑区保持开放，删除操作独立放在底部。
-DNS、Device versions、Events 和 Administration 合并成对象列表与原位展开内容；
+Services 与 Policies 使用约 300 px 的开放目录，每项名称与摘要均左对齐；选中背景覆盖完整行，主编辑区
+保持开放。Service 按“配置 → 共享影响与保存 → 关联策略 → 探测回读”归组；Policy 把访问决定、
+独立 Direct、入口 → 中继 → 最终出口和高级限制分开，LAN 终点只读固定网关。删除与主保存分开。
+Private DNS、Probe targets、Device versions、Events 和 Administration 使用对象列表与原位展开内容；
 筛选只出现一次，状态、依据和关联入口跟随对应对象，不再旁置通用规则卡。
 Releases 以验签摘要、三列文件列表、设备应用结果组织，取消把验签与应用混合的步骤进度。
 展开区域使用同一列表的留白或浅底色，不再嵌套面板；Overview 保留现有布局。
@@ -562,7 +587,8 @@ Releases 以验签摘要、三列文件列表、设备应用结果组织，取�
 Overview 为 `1586×1140`，Nodes 为 `1586×1120`，Topology 为 `1586×1680`；流程稿宽 1586、高度随内容变化，
 一次粘贴脚本交付稿高 1112，为完整命令、历史风险提示与后续入口分别保留空间。
 Live paths 的服务与设备合并页高 944、路径详情高 1224，宽均为 1586；同页服务切换、筛选和详情页签共用对应文件。
-Services、Policies 的编辑状态高度随内容变化，DNS 高 1110；Linux / Android Releases
+Services 高 1208、LAN Service 高 1184；Policies 高 1504、新建高 1344、LAN Policy 高 1576；
+Private DNS 高 1400，Probe targets 高 1160；Linux / Android Releases
 高 1150，Windows 无目标场景高 1060，Device versions 高 1240；Events 高 1552；Administration 的
 控制节点高 984、管理员高 1160、网站证书高 1192、配置状态高 1224。同页结果共用对应视图高度。
 页面宽度均为 1586，不为凑齐统一高度添加无关面板。

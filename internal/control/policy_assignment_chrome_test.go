@@ -173,7 +173,7 @@ func TestWebChromeNewPolicyReturnsToOriginalInvitation(t *testing.T) {
 		t.Fatal("invitation lost its saved Policy or gained device authorization")
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/policies?policy=demo-new-policy');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-policy-impact]')?.textContent.includes('0 authorized device(s) · 1 pending invitation(s)')`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-policy-impact]')?.textContent.includes('0 authorized device(s) · 1 active invitation(s)')`)
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/services?service=demo-service');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	if chromeDo(t, debug, `document.querySelector('[data-policy-impact]').textContent.includes('demo-new-device')&&document.querySelector('a[href="/policies?new=1&service=demo-service"]')!==null`) != true {
 		t.Fatal("Service omitted its Policy's pending invitation or creation context")

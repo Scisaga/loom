@@ -358,7 +358,7 @@ PAGE_STATUS = {
 class Canvas:
     def __init__(self, name: str, title: str, subtitle: str, section: str, active: str, *, height: int = 992, content_x: int = 24, show_status: bool = True):
         self.name = name
-        self.role = "img"
+        self.role = "document" if active in {"services", "policies"} else "img"
         self.height = height
         self.parts: list[str] = []
         self.add(f'<rect width="1586" height="{height}" fill="#FCFDFC"/>')
@@ -466,8 +466,14 @@ class Canvas:
         self.line(0, 57, 1586, 57)
         self.add(f'<svg x="18" y="8" width="39" height="39" viewBox="127 112 1000 1000"><g transform="{transform}"><path d="{compound}" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/></g></svg>')
         self.txt(65, 36, "LOOM", "section")
+        intent = active in {"services", "policies"}
         for label, key, x, icon in NAV:
-            selected = active == key or (active.startswith("releases-") and key == "releases") or (active == "deployments" and key == "releases")
+            if intent and key == "policies":
+                continue
+            if intent and key == "services":
+                label = "Access configuration"
+                self.add('<a href="05-services.svg" data-ui="intent-entry">')
+            selected = active == key or (intent and key == "services") or (active.startswith("releases-") and key == "releases") or (active == "deployments" and key == "releases")
             if key == "administration":
                 self.add('<a href="09-administration.svg" data-ui="administration-entry">')
             self.add(f'<use href="#{icon}" x="{x}" y="20" width="15" height="15" class="{"nav-active" if selected else "nav-icon"}"/>')
@@ -475,6 +481,8 @@ class Canvas:
             if selected:
                 self.add(f'<line x1="{x}" y1="57" x2="{x + 18 + len(label) * 7}" y2="57" stroke="#2AA875" stroke-width="2"/>')
             if key == "administration":
+                self.add('</a>')
+            if intent and key == "services":
                 self.add('</a>')
         self.icon("icon-node", 1285, 22, 14)
         self.txt(1307, 34, "demo-control-a", "small muted")
@@ -535,6 +543,25 @@ def tabs(c: Canvas, items: tuple[str, ...], selected: str, y: int = 305) -> None
             c.add(f'<line x1="{x}" y1="{y+12}" x2="{x+len(item)*8}" y2="{y+12}" stroke="#2AA875" stroke-width="2"/>')
         x += max(110, len(item) * 9 + 30)
     c.line(24, y + 13, 1562, y + 13)
+
+
+def intent_tabs(c: Canvas, selected: str, y: int = 219) -> None:
+    """One set of working links for the four access-configuration views."""
+    for x, width, label, target in (
+        (24, 100, "Services", "05-services.svg"),
+        (152, 100, "Policies", "06-policies.svg"),
+        (280, 126, "Private DNS", "05-services-dns.svg"),
+        (434, 140, "Probe targets", "05-services-probes.svg"),
+    ):
+        active = label == selected
+        c.add(f'<a href="{target}" data-ui="intent-tab" aria-current="{"page" if active else "false"}">')
+        c.rect(x - 4, y - 27, width, 40, "transparent", "none", 0)
+        c.txt(x, y, label, "body" if active else "body muted")
+        if active:
+            c.line(x, y + 12, x + len(label) * 8, y + 12, cls="intent-selected")
+        c.add('</a>')
+    c.line(24, y + 13, 1562, y + 13)
+    c.add('<style>.intent-selected{stroke:#248F64;stroke-width:2}[data-ui="intent-tab"]:focus-visible text{text-decoration:underline}</style>')
 
 
 def network_graph(c: Canvas, x: int, y: int, w: int, h: int, *, large: bool = False, selected_metrics: str = "") -> None:
@@ -1611,182 +1638,345 @@ def policy_picker(c: Canvas, y: int, policy_ids: tuple[str, ...], *, device: str
     return top
 
 
-def catalog_rail(c: Canvas, y: int, title: str, search: str, entries: tuple[tuple[str, str, str], ...], *, selected: str = "") -> None:
+def catalog_rail(c: Canvas, y: int, title: str, search: str, entries: tuple[tuple[str, str, str], ...], *, selected: str = "", service_filter: bool = False) -> None:
     """A flat object list; only the selected row gets a background."""
     c.add('<g data-ui="catalog-list">')
     c.txt(24, y, title, "section")
-    c.txt(360, y, str(len(entries)), "small muted", "end")
-    search_control(c, 24, y + 20, 336, search)
+    c.txt(304, y, str(len(entries)), "small muted", "end")
+    search_control(c, 24, y + 20, 280, search)
+    if service_filter:
+        flow_input(c, 24, y + 76, 280, "All services", dropdown=True)
+    destinations = {
+        "demo-video": "05-services.svg", "demo-office": "05-services-lan.svg",
+        "demo-work": "09-administration-configuration.svg#compare",
+        "demo-policy": "06-policies.svg", "demo-lan-policy": "06-policies-lan.svg",
+    }
     for i, (name, detail, state) in enumerate(entries):
-        top = y + 76 + i * 92
+        top = y + (136 if service_filter else 76) + i * 92
         active = name == selected if selected else i == 0
+        if name in destinations:
+            c.add(f'<a href="{destinations[name]}" data-ui="catalog-navigation">')
         c.add(f'<g data-ui="catalog-item" data-object="{name}" aria-selected="{str(active).lower()}">')
         if active:
-            c.rect(24, top, 336, 92, "#EDF4FB", "none", 4)
-            c.rect(24, top + 10, 3, 72, "#4D78D1", "none", 0)
-        c.txt(42, top + 28, name, "body mono")
+            c.rect(24, top, 280, 92, "#EDF4FB", "none", 4)
+        c.rect(24, top, 3, 92, "#4D78D1" if active else "transparent", "none", 0)
+        c.txt(42, top + 28, name, "body")
         c.txt(42, top + 52, detail, "small muted")
-        if name == "demo-work":
-            c.add('<a href="09-administration-configuration.svg#compare" data-ui="configuration-conflict-link">')
         c.txt(42, top + 74, state, "small amber" if "Suspended" in state else "tiny muted")
-        if name == "demo-work":
-            c.add('</a>')
-        c.txt(344, top + 30, "›", "body muted", "end")
-        c.line(24, top + 92, 360, top + 92)
+        c.line(24, top + 92, 304, top + 92)
         c.add('</g>')
+        if name in destinations:
+            c.add('</a>')
     c.add('</g>')
 
 
 def services(*, lan: bool = False) -> Canvas:
-    c = Canvas("services-lan" if lan else "services", "Services", "Define internet destinations or a shared LAN. Policies decide how devices may access each service.", "network intent", "services", height=1140, show_status=False)
-    tabs(c, ("Services", "Exact .loom DNS", "Probe targets"), "Services", 219)
-    c.button(1382, 106, 180, "+ Add service ▾", True)
-    catalog_rail(c, 278, "All services", "Search name or destination", (
-        ("demo-video", "media.example + 1 suffix", "Internet · used by 1 device"),
-        ("demo-work", "2 conflicting changes", "Suspended · review conflict →"),
-        ("demo-private", "private.example", "Internet · no device assignments"),
-        ("demo-office", "198.51.100.0/24 · demo-forward-c", "Shared LAN · no device assignments"),
+    c = Canvas("services-lan" if lan else "services", "Services", "Define what devices may access. Policies provide the access rules.", "access configuration", "services", height=1240, show_status=False)
+    intent_tabs(c, "Services")
+    c.button(1382, 106, 180, "+ Add service", True)
+    catalog_rail(c, 278, "Services", "Search name or destination", (
+        ("demo-video", "Internet · 2 target rules", "1 device · 2 policies"),
+        ("demo-work", "Internet · 2 conflicting changes", "Suspended · review conflict →"),
+        ("demo-private", "Internet · private.example", "No device assignments"),
+        ("demo-office", "Shared LAN · relay-west", "198.51.100.0/24 · 1 policy"),
     ), selected="demo-office" if lan else "demo-video")
-    c.txt(24, 767, "Create policies for a service.", "small muted")
-    c.txt(24, 790, "Then assign policies to devices.", "small muted")
-    flow_link(c, 24, 832, "Manage access policies →", "/policies")
-    c.line(396, 258, 396, 1112)
-
-    left, right, width = 446, 1514, 1068
-    c.txt(left, 278, "Service details", "section")
-    c.txt(right, 278, "Service ID · " + ("demo-office" if lan else "demo-video"), "small mono muted", "end")
-    c.circle(left + 4, 304, 4, "#2AA875")
-    c.txt(left + 18, 309, "Effective · LAN service" if lan else "Effective · internet destinations", "small green")
-    c.txt(right, 309, "Editing draft", "small muted", "end")
-    c.txt(left, 354, "Display name", "body")
-    flow_input(c, left, 369, width, "Office network" if lan else "Media traffic")
+    c.txt(24, 776, "Create a policy, then assign it", "small muted")
+    c.txt(24, 798, "to the devices that need this service.", "small muted")
+    flow_link(c, 24, 834, "Manage policies →", "/policies", href="06-policies.svg")
+    c.line(328, 258, 328, 1208)
+    left, right, width = 368, 1562, 1194
+    service = "demo-office" if lan else "demo-video"
+    c.add(f'<g data-ui="service-editor" data-service="{service}">')
+    c.txt(left, 278, "Office network" if lan else "Media traffic", "section")
+    c.txt(right, 278, "Service ID · " + service, "small mono muted", "end")
+    c.txt(left, 306, "Shared LAN · fixed gateway" if lan else "Internet · domain and address rules", "small muted")
+    c.line(left, 326, right, 326)
+    c.txt(left, 361, "Display name", "body")
+    flow_input(c, left, 375, width, "Office network" if lan else "Media traffic")
     if lan:
         c.add('<g data-ui="lan-service-detail" data-service="demo-office" data-gateway="demo-forward-c">')
-        c.txt(left, 457, "Network provided by this service", "section")
-        c.txt(left, 500, "GATEWAY NODE", "eyebrow muted")
-        c.txt(left, 531, "demo-forward-c", "body mono")
-        c.txt(740, 531, "forward · fixed gateway for this service", "small muted")
-        c.txt(right, 531, "Open gateway →", "small green", "end")
-        c.txt(left, 581, "ADDRESS USED BY ACCESS DEVICES", "eyebrow muted")
-        c.txt(1080, 581, "NETWORK BEHIND THE GATEWAY", "eyebrow muted")
-        c.txt(left, 615, "198.51.100.0/24", "section mono")
-        c.txt(1008, 615, "→", "body muted")
-        c.txt(1080, 615, "192.0.2.0/24", "section mono")
-        c.txt(left, 646, "Virtual prefix · assigned when the service was created", "small muted")
-        c.txt(1080, 646, "Reported LAN prefix", "small muted")
-        c.txt(left, 688, "Example · 198.51.100.42 → demo-forward-c → 192.0.2.42", "body mono")
-        c.txt(left, 716, "Access rules choose how to reach this gateway. The destination stays this local network.", "small muted")
-        c.line(left, 744, right, 744)
-        c.txt(left, 778, "Policies for this service", "section")
-        flow_link(c, right, 778, "+ New policy", "/policies?new=1&service=demo-office", anchor="end")
-        c.add('<g data-ui="service-policy" data-service="demo-office" data-policy="demo-lan-policy">')
-        flow_link(c, left, 813, "office-lan →", "/policies/demo-lan-policy")
-        c.txt(right, 813, "No devices assigned", "small muted", "end")
+        c.txt(left, 468, "Shared network", "section")
+        c.txt(left, 507, "GATEWAY", "eyebrow muted")
+        c.txt(left, 537, "demo-forward-c", "body mono")
+        flow_link(c, right, 537, "View gateway →", "/devices/demo-forward-c", anchor="end", href="02-nodes-detail.svg#detail-forwarding")
+        c.txt(left, 589, "ADDRESS USED BY DEVICES", "eyebrow muted")
+        c.txt(1040, 589, "NETWORK BEHIND THE GATEWAY", "eyebrow muted")
+        c.txt(left, 623, "198.51.100.0/24", "section mono")
+        c.txt(930, 623, "→", "body muted")
+        c.txt(1040, 623, "192.0.2.0/24", "section mono")
+        c.txt(left, 657, "Example: 198.51.100.42 → relay-west → 192.0.2.42", "small mono muted")
         c.add('</g>')
-        c.line(left, 841, right, 841)
-        c.txt(left, 875, "Related private name", "body")
-        c.txt(left, 909, "demo-printer.loom → 198.51.100.42", "body mono")
-        c.txt(right, 909, "View DNS record →", "small green", "end")
-        c.txt(left, 944, "Business observation · unknown · no matching HTTPS target", "small muted")
-        flow_actions(c, 976, "Save service name", x=left, w=width, secondary="Discard", meta="LAN service · fixed gateway")
-        c.line(left, 1065, right, 1065)
-        c.txt(left, 1099, "Delete LAN service", "body red")
-        c.txt(left + 179, 1099, "Withdraws its mapping, access routes and related DNS projection.", "small muted")
+    else:
+        c.add('<g data-ui="service-destinations">')
+        c.txt(left, 468, "Destinations", "section")
+        c.txt(right, 468, "2 target rules", "small muted", "end")
+        c.txt(left, 504, "DOMAIN OR ADDRESS", "eyebrow muted")
+        c.txt(1242, 504, "MATCH", "eyebrow muted")
+        for y, destination, match_type in ((522, "media.example", "Exact"), (578, ".cdn.media.example", "Suffix")):
+            flow_input(c, left, y, 850, destination)
+            flow_input(c, 1242, y, 208, match_type, dropdown=True)
+            c.txt(right, y + 27, "Remove", "small muted", "end")
+        c.txt(left, 653, "+ Add destination", "body green")
+        c.txt(right, 653, "Suffix example: .cdn.media.example", "small muted", "end")
         c.add('</g>')
-        return c
-    c.txt(left, 457, "Destinations", "section")
-    c.txt(right, 457, "2 matchers", "small muted", "end")
-    c.txt(left, 490, "HOSTNAME OR SUFFIX", "eyebrow muted")
-    c.txt(1118, 490, "MATCH", "eyebrow muted")
-    for y, destination, match_type in ((508, "media.example", "Exact"), (564, ".cdn.media.example", "Suffix")):
-        flow_input(c, left, y, 650, destination)
-        flow_input(c, 1118, y, 252, match_type, dropdown=True)
-        c.txt(right, y + 27, "Remove", "small muted", "end")
-    c.txt(left, 638, "+ Add matcher", "body green")
-    c.txt(right, 638, "A suffix starts with a dot, such as .cdn.media.example", "small muted", "end")
-    c.line(left, 665, right, 665)
-    c.txt(left, 699, "Matching probe target", "body")
-    c.txt(left, 730, "https://media.example/health", "body mono")
-    c.txt(right, 730, "View probe pool →", "small green", "end")
-    c.txt(left, 755, "From the shared pool, filtered by destinations and each device's access.", "small muted")
-    c.line(left, 782, right, 782)
-    c.txt(left, 816, "Policies for this service", "section")
-    flow_link(c, right, 816, "+ New policy", "/policies?new=1&service=demo-video", anchor="end")
-    c.txt(left, 852, "POLICY", "eyebrow muted")
-    c.txt(1000, 852, "USED BY", "eyebrow muted")
-    c.line(left, 868, right, 868)
-    for yy, policy, usage in ((900, "demo-policy", "demo-phone-f · 1 device"), (961, "demo-direct-policy", "No devices assigned")):
-        c.add(f'<g data-ui="service-policy" data-service="demo-video" data-policy="{policy}">')
-        flow_link(c, left, yy, policy + " →", f"/policies/{policy}")
-        c.txt(1000, yy, usage, "body muted")
-        c.line(left, yy + 24, right, yy + 24)
+    c.add('<g data-ui="service-change-impact">')
+    c.txt(left, 704, "Saving affects 1 policy · 0 assigned devices · 0 active invitations" if lan else "Saving affects 2 policies · 1 assigned device · 0 active invitations", "small muted")
+    flow_actions(c, 725, "Save service", x=left, w=width, secondary="Discard", meta="Service definition", primary_w=180)
+    c.add('</g>')
+    c.add(f'<g data-ui="service-policies" data-service="{service}">')
+    c.txt(left, 842, "Related policies", "section")
+    flow_link(c, right, 842, "+ New policy", f"/policies?new=1&service={service}", anchor="end")
+    c.line(left, 862, right, 862)
+    rows = (("demo-lan-policy", "Fixed LAN gateway", "0 devices", "06-policies-lan.svg"),) if lan else (
+        ("demo-policy", "Direct or internet-exit", "1 device", "06-policies.svg"),
+        ("demo-direct-policy", "Direct only", "0 devices", ""),
+    )
+    for index, (policy, rule, usage, target) in enumerate(rows):
+        y = 898 + index * 56
+        c.add(f'<g data-ui="service-policy" data-policy="{policy}" data-service="{service}">')
+        flow_link(c, left, y, policy + " →", f"/policies?policy={policy}", href=target)
+        c.txt(818, y, rule, "body muted")
+        c.txt(right, y, usage, "small muted", "end")
+        c.line(left, y + 20, right, y + 20)
         c.add('</g>')
-    c.txt(left, 1017, "Destination changes affect every policy and device using this service.", "small muted")
-    flow_actions(c, 1044, "Save destinations", x=left, w=width, secondary="Discard", meta="Service definition only")
-    c.line(left, 1133, right, 1133)
-    c.txt(left, 1167, "Delete service", "body red")
-    c.txt(left + 152, 1167, "Removes access through its policies. Devices do not switch to another service.", "small muted")
-    c.fit_height(1208)
+    c.add('</g>')
+    detail_y = 990 if not lan else 934
+    c.add('<g data-ui="service-probe-readback" aria-readonly="true">')
+    c.txt(left, detail_y + 35, "Matching probe targets", "section")
+    flow_link(c, right, detail_y + 35, "Manage shared probe pool →", "/services?tab=probes", anchor="end", href="05-services-probes.svg")
+    c.txt(left, detail_y + 70, "No matching HTTPS target · business observation unknown" if lan else "https://media.example/health", "body muted" if lan else "body mono")
+    c.txt(left, detail_y + 98, "No device is assigned to this LAN service." if lan else "Current authorized device views · editing destinations does not change this readback until saved.", "small muted")
+    if lan:
+        flow_link(c, left, detail_y + 132, "Related DNS: demo-printer.loom → 198.51.100.42", "/services?tab=dns", href="05-services-dns.svg")
+    c.add('</g>')
+    bottom = detail_y + (174 if lan else 140)
+    c.line(left, bottom, right, bottom)
+    c.txt(left, bottom + 36, "Delete service", "body red")
+    c.txt(left + 146, bottom + 36, "Withdraws access through its policies. Devices do not switch services.", "small muted")
+    c.add('</g>')
+    c.fit_height(bottom + 72)
     return c
 
 
 def services_dns() -> Canvas:
-    c = Canvas("services-dns", "Private DNS", "Choose a private name to inspect its answers or edit an explicit record.", "services / dns", "services", height=1110, show_status=False)
-    tabs(c, ("Services", "Exact .loom DNS", "Probe targets"), "Exact .loom DNS", 219)
+    c = Canvas(
+        "services-dns", "Private DNS",
+        "Manage private names and their addresses. Service access is granted separately.",
+        "access configuration", "services", height=1400, show_status=False,
+    )
+    intent_tabs(c, "Private DNS")
     c.button(1382, 106, 180, "+ Add record", True)
-    search_control(c, 24, 253, 448, "Search a private name or address")
-    c.txt(1562, 278, "demo-network · 2 names · 3 answers", "small muted", "end")
-    c.card(24, 308, 1538, 778, "Private records", "current signed values · one editor open")
-    for x, label in ((47, "EXACT NAME"), (580, "ANSWER / SOURCE"), (1260, "RECORD ACTION")):
-        c.txt(x, 388, label, "eyebrow muted")
-    c.line(24, 402, 1562, 402, kind="table-rule")
-    c.add('<g data-ui="reserved-dns-record" data-name="control.loom" aria-readonly="true">')
-    c.icon("icon-lock", 47, 426)
-    c.txt(73, 440, "control.loom", "body mono")
-    c.txt(47, 474, "Derived from serving private Web entries", "small muted")
-    for y, answer, source in ((439, "192.0.2.10", "demo-control-a"), (477, "192.0.2.11", "demo-control-b")):
-        c.txt(580, y, "A", "small muted")
-        c.txt(615, y, answer, "body mono")
-        c.txt(865, y, source, "small mono muted")
-    c.txt(1260, 440, "Reserved · read only", "body muted")
-    c.txt(1260, 474, "View Web entries →", "small green")
-    c.add('</g>')
-    c.line(24, 506, 1562, 506, kind="table-rule")
-    c.rect(25, 507, 1536, 79, "#EDF4FB", "none", 0)
-    c.rect(25, 507, 3, 79, "#4D78D1", "none", 0)
-    c.txt(47, 538, "demo-printer.loom", "body mono")
-    c.txt(47, 563, "Explicit record · effective", "small green")
-    c.txt(580, 538, "A", "small muted")
-    c.txt(615, 538, "198.51.100.42", "body mono")
-    c.txt(865, 538, "Mapped LAN · demo-forward-c", "small muted")
-    c.txt(580, 563, "Current answer", "small muted")
-    c.txt(1260, 538, "Editing record", "body")
-    c.txt(1260, 563, "Hide editor ⌃", "small green")
-    c.line(24, 586, 1562, 586, kind="table-rule")
+    search_control(c, 24, 265, 520, "Search a private name or address")
+    c.txt(1562, 290, "3 names · 1 system · 2 custom · 5 answers", "small muted", "end")
+    c.card(24, 333, 1538, 1035, "Private names", "Sources and editing permissions")
+    for x, label in ((47, "NAME"), (580, "ADDRESSES"), (1040, "SOURCE"), (1360, "ACTION")):
+        c.txt(x, 414, label, "eyebrow muted")
+    c.line(24, 432, 1562, 432, kind="table-rule")
 
-    c.add('<g data-ui="dns-record-editor" data-name="demo-printer.loom">')
-    c.txt(66, 625, "Edit explicit record", "section")
-    c.txt(1518, 625, "Draft · current answer remains active until saved", "small muted", "end")
-    for x, label in ((66, "Exact private name"), (582, "Record type"), (804, "IPv4 answer")):
-        c.txt(x, 670, label, "body")
-    flow_input(c, 66, 685, 492, "demo-printer.loom")
-    flow_input(c, 582, 685, 198, "A · IPv4", dropdown=True)
-    flow_input(c, 804, 685, 714, "198.51.100.42")
-    c.txt(66, 758, "Exact .loom names only · A / AAAA · control.loom is reserved", "small muted")
-    c.line(66, 786, 1518, 786)
-    c.txt(66, 820, "CURRENT ANSWER LEADS TO", "eyebrow muted")
-    c.txt(1020, 820, "DNS OBSERVATION", "eyebrow muted")
-    c.txt(66, 852, "demo-office", "body mono")
-    c.txt(322, 852, "198.51.100.0/24 · gateway demo-forward-c", "body muted")
-    c.txt(1020, 852, "unknown", "body amber")
-    c.txt(1122, 852, "No current resolution measurement", "small muted")
-    c.txt(66, 884, "Grant this service and a policy in each device's access settings.", "small muted")
-    c.txt(1518, 884, "View LAN service →", "small green", "end")
-    flow_actions(c, 925, "Save record", x=66, w=1452, primary_w=180, meta="Changes name resolution only")
+    c.add('<g data-ui="reserved-dns-record" data-name="control.loom" aria-readonly="true">')
+    c.icon("icon-lock", 47, 463)
+    c.txt(73, 477, "control.loom", "body mono")
+    c.txt(47, 510, "Serving private Web entries", "small muted")
+    for y, address, node in ((477, "192.0.2.10", "demo-control-a"), (510, "192.0.2.11", "demo-control-b")):
+        c.txt(580, y, address, "body mono")
+        c.txt(800, y, node, "small muted")
+    c.txt(1040, 477, "System generated", "body")
+    c.txt(1040, 510, "Reserved · read only", "small muted")
+    flow_link(c, 1360, 477, "View Web entries →", "/ssot?section=certificates", href="09-administration-certificates.svg")
     c.add('</g>')
-    c.line(24, 1016, 1562, 1016, kind="panel-section")
-    c.txt(47, 1044, "After saving: check local acceptance and peer propagation. DNS and service reachability need their own observations.", "small muted")
-    c.txt(47, 1068, "Wildcard names and public-domain overrides are not supported.", "tiny muted")
+    c.line(24, 539, 1562, 539, kind="table-rule")
+
+    c.add('<g data-ui="dns-custom-record" data-name="demo-printer.loom" data-service="demo-office">')
+    c.txt(47, 576, "demo-printer.loom", "body mono")
+    c.txt(47, 610, "LAN service · office-network", "small muted")
+    c.txt(580, 576, "198.51.100.42", "body mono")
+    c.txt(1040, 576, "Custom record", "body")
+    c.txt(1040, 610, "1 IPv4", "small muted")
+    c.txt(1360, 576, "Edit", "small green")
+    flow_link(c, 1360, 610, "View LAN service →", "/services?service=demo-office", href="05-services-lan.svg")
+    c.add('</g>')
+    c.line(24, 636, 1562, 636, kind="table-rule")
+
+    c.rect(25, 637, 1536, 110, "#EDF4FB", "none", 0)
+    c.rect(25, 637, 3, 110, "#4D78D1", "none", 0)
+    c.add('<g data-ui="dns-custom-record" data-name="demo-app.loom" aria-selected="true">')
+    c.txt(47, 675, "demo-app.loom", "body mono")
+    c.txt(47, 709, "Independent record", "small muted")
+    c.txt(580, 675, "192.0.2.42", "body mono")
+    c.txt(580, 709, "2001:db8::42", "body mono")
+    c.txt(1040, 675, "Custom record", "body")
+    c.txt(1040, 709, "1 IPv4 + 1 IPv6", "small muted")
+    c.txt(1360, 675, "Editing", "body")
+    c.txt(1360, 709, "Hide editor ⌃", "small green")
+    c.add('</g>')
+    c.line(24, 748, 1562, 748, kind="table-rule")
+
+    c.add('<g data-ui="dns-record-editor" data-name="demo-app.loom">')
+    c.txt(47, 792, "Edit custom record", "section")
+    c.txt(1538, 792, "Unsaved draft", "small muted", "end")
+    c.txt(47, 840, "Exact private name", "body")
+    flow_input(c, 47, 855, 710, "demo-app.loom")
+    c.txt(790, 840, "Related LAN service", "body")
+    flow_input(c, 790, 855, 748, "Independent record", dropdown=True)
+    c.txt(47, 942, "Addresses", "body")
+    c.add('<g data-ui="dns-addresses" data-values="192.0.2.42 2001:db8::42">')
+    c.rect(47, 959, 1491, 91, "#FFFFFF", "#D8E0DA", 5)
+    c.txt(61, 989, "192.0.2.42", "body mono")
+    c.txt(61, 1020, "2001:db8::42", "body mono")
+    c.add('</g>')
+    c.txt(47, 1079, "One IPv4 or IPv6 address per line. Exact .loom names only; control.loom is reserved.", "small muted")
+    flow_actions(c, 1106, "Save record", x=47, w=1491, primary_w=180, secondary="Discard", meta="Changes name resolution")
+    c.line(47, 1204, 1538, 1204)
+    c.txt(47, 1239, "Resolution observation", "body")
+    c.txt(342, 1239, "Unknown · no current measurement", "body muted")
+    c.txt(47, 1274, "Resolving a name does not grant access to its address.", "small muted")
+    c.line(47, 1301, 1538, 1301)
+    c.txt(47, 1336, "Delete custom record", "body red")
+    c.add('</g>')
+    return c
+
+
+def probe_targets() -> Canvas:
+    """Shared HTTPS pool, with editable SVG scenes for its normal actions."""
+    c = Canvas(
+        "services-probes", "Probe targets",
+        "Manage shared HTTPS targets. Each device uses only the targets allowed by its service and policy.",
+        "access configuration", "services", height=1120, show_status=False,
+    )
+    intent_tabs(c, "Probe targets")
+    c.add('<a href="#probes-new" data-ui="probe-target-create">')
+    c.button(1370, 106, 192, "+ Add probe target", True)
+    c.add('</a>')
+
+    fixtures = (
+        ("media", "demo-media-health", "https://media.example/health", "media", "1 device uses this service"),
+        ("private", "demo-private-health", "https://private.example/health", "private-app", "No devices use this service"),
+        ("unmatched", "demo-unmatched-health", "https://unmatched.example/health", "", "Kept in the shared pool"),
+    )
+    created_target = ("backup", "demo-media-backup", "https://media.example/backup-health", "media", "1 device uses this service")
+    all_targets = (*fixtures, created_target)
+    edit_fragments = {key: "probes-edit" if key == "media" else "probes-edit-" + key for key, *_ in all_targets}
+    delete_fragments = {key: "probes-delete" if key == "unmatched" else "probes-delete-" + key for key, *_ in all_targets}
+    scenes = {"probes-overview": ("overview", ""), "probes-new": ("new", ""), "probes-created": ("created", "")}
+    for key, *_ in all_targets:
+        scenes[edit_fragments[key]] = ("edit", key)
+        scenes[delete_fragments[key]] = ("delete", key)
+        scenes["probes-saved" if key == "media" else "probes-saved-" + key] = ("saved", key)
+        scenes["probes-deleted" if key == "unmatched" else "probes-deleted-" + key] = ("deleted", key)
+
+    css = [
+        ".probe-pool-scene { display:none; }",
+        "#probe-pool-scene-probes-overview { display:inline; }",
+        "svg:has(.probe-pool-target:target) #probe-pool-scene-probes-overview { display:none; }",
+        "a { cursor:pointer; }",
+    ]
+    for fragment in scenes:
+        c.add(f'<g id="{fragment}" class="probe-pool-target"/>')
+        css.append(f"svg:has(#{fragment}:target) #probe-pool-scene-{fragment} {{ display:inline; }}")
+
+    def action(x: int, y: int, width: int, label: str, fragment: str, *, primary: bool = False, destructive: bool = False) -> None:
+        c.add(f'<a href="#{fragment}" data-ui="probe-target-action">')
+        if destructive:
+            c.rect(x, y, width, 42, "#B44B45", "#B44B45", 6)
+            c.txt(x + width // 2, y + 27, label, "body white", "middle")
+        else:
+            c.button(x, y, width, label, primary, height=42)
+        c.add('</a>')
+
+    for fragment, (scene, target_key) in scenes.items():
+        c.add(f'<g id="probe-pool-scene-{fragment}" class="probe-pool-scene" data-ui="probe-pool" data-scene="{scene}">')
+        rows = [row for row in fixtures if not (scene == "deleted" and row[0] == target_key)]
+        if scene == "created" or target_key == "backup" and scene != "deleted":
+            rows.append(created_target)
+        search_control(c, 24, 261, 592, "Search target ID, URL or matching service")
+        c.txt(1562, 287, f"{len(rows)} shared targets · includes unused targets", "small muted", "end")
+        bottom = 446 + len(rows) * 76
+        c.card(24, 326, 1538, bottom - 326, "Shared HTTPS pool", "Matching services do not grant access")
+        for x, label in ((48, "TARGET ID"), (330, "HTTPS URL"), (940, "MATCHING SERVICES"), (1390, "ACTIONS")):
+            c.txt(x, 403, label, "eyebrow muted")
+        c.line(24, 420, 1562, 420, kind="table-rule")
+        for index, (key, identity, url, service, usage) in enumerate(rows):
+            top = 420 + index * 76
+            if scene == "saved" and key == target_key:
+                url = url.removesuffix("/health") + "/ready"
+            selected = key == target_key and scene in ("edit", "delete", "saved")
+            if selected:
+                c.rect(25, top + 1, 1536, 74, "#EDF4FB", "none", 0)
+                c.rect(25, top + 8, 3, 60, "#4D78D1", "none", 0)
+            c.add(f'<g data-ui="probe-target-row" data-target="{identity}" data-service="{service}">')
+            c.txt(48, top + 29, identity, "body mono")
+            c.txt(48, top + 55, "Shared target", "small muted")
+            c.txt(330, top + 29, url, "body mono")
+            if service:
+                flow_link(c, 940, top + 29, service + " →", "/services/" + ("demo-video" if key in ("media", "backup") else "demo-private"), href="05-services.svg" if key in ("media", "backup") else "")
+            else:
+                c.txt(940, top + 29, "No matching service", "body muted")
+            c.txt(940, top + 55, usage, "small muted")
+            flow_link(c, 1390, top + 29, "Edit", "/services?tab=probes&target=" + identity, href="#" + edit_fragments[key])
+            c.add(f'<a href="#{delete_fragments[key]}" data-ui="probe-target-delete" data-target="{identity}">')
+            c.txt(1538, top + 29, "Delete", "small red", "end")
+            c.add('</a>')
+            c.line(24, top + 76, 1562, top + 76, kind="table-rule")
+            c.add('</g>')
+
+        top = bottom + 28
+        if scene in ("new", "edit"):
+            editing = scene == "edit"
+            row = next((item for item in all_targets if item[0] == target_key), None)
+            identity = row[1] if row else "demo-media-backup"
+            current_url = row[2] if row else ""
+            draft_url = current_url.removesuffix("/health") + "/ready" if editing else "https://media.example/backup-health"
+            match = "media" if not row else (row[3] or "No matching service")
+            c.add(f'<g data-ui="probe-target-editor" data-target="{identity}" data-current="{current_url}" data-draft="{draft_url}">')
+            c.card(24, top, 1538, 340, "Edit probe target" if editing else "Add probe target", "Draft · not saved")
+            c.txt(48, top + 83, "CURRENT URL" if editing else "NEW TARGET", "eyebrow muted")
+            c.txt(330, top + 83, current_url if editing else "Not in the shared pool yet", "body mono" if editing else "body muted")
+            c.txt(48, top + 127, "Target ID · read only" if editing else "Target ID", "body")
+            c.txt(380, top + 127, "HTTPS URL · draft", "body")
+            if editing:
+                c.add('<g data-ui="probe-target-stable-id" aria-readonly="true">')
+                c.rect(48, top + 142, 308, 42, "#F4F6F4", "#D8E0DA", 5)
+                c.txt(62, top + 169, identity, "body mono muted")
+                c.icon("icon-lock", 326, top + 155, 14)
+                c.add('</g>')
+            else:
+                flow_input(c, 48, top + 142, 308, identity)
+            flow_input(c, 380, top + 142, 1158, draft_url)
+            c.txt(48, top + 214, "Matching services", "small muted")
+            c.txt(248, top + 214, match, "body" if match != "No matching service" else "body muted")
+            c.txt(48, top + 240, "Saving updates this shared target. Device access still follows its selected policy." if editing else "Adding a target does not grant device access.", "small muted")
+            c.line(48, top + 260, 1538, top + 260)
+            flow_link(c, 1280, top + 305, "Cancel", "/services?tab=probes", anchor="end", href="#probes-overview")
+            saved = "probes-saved" if target_key == "media" else "probes-saved-" + target_key
+            action(1318, top + 278, 220, "Save target" if editing else "Add target", saved if editing else "probes-created", primary=True)
+            c.add('</g>')
+        elif scene == "delete":
+            row = next(item for item in all_targets if item[0] == target_key)
+            c.add(f'<g data-ui="probe-target-delete-confirmation" data-target="{row[1]}">')
+            c.card(24, top, 1538, 278, "Delete probe target", "Review shared pool change")
+            c.txt(48, top + 86, row[1], "body mono")
+            c.txt(380, top + 86, row[2], "body mono")
+            c.txt(48, top + 128, "Future probes will stop using this target after the change reaches the device.", "body")
+            c.txt(48, top + 158, "Service destinations and selected policies keep their current values.", "small muted")
+            c.line(48, top + 192, 1538, top + 192)
+            flow_link(c, 1280, top + 237, "Cancel", "/services?tab=probes", anchor="end", href="#probes-overview")
+            deleted = "probes-deleted" if target_key == "unmatched" else "probes-deleted-" + target_key
+            action(1318, top + 210, 220, "Delete target", deleted, destructive=True)
+            c.add('</g>')
+        else:
+            if scene in ("created", "saved", "deleted"):
+                message = {"created": "Target added to the shared pool", "saved": "Target URL saved", "deleted": "Target removed from the shared pool"}[scene]
+                c.note(24, top, 1538, (message, "Device application and probe results are read separately."), "green")
+                top += 104
+            c.txt(24, top + 24, "Probe results", "section")
+            c.txt(24, top + 55, "Inspect results for a device, service and candidate in Live paths.", "body muted")
+            c.txt(24, top + 83, "An unused or unmatched target stays available here. Saving never grants device access.", "small muted")
+            flow_link(c, 1562, top + 24, "View Live paths →", "/routing", anchor="end", href="04-live-paths.svg")
+            if scene in ("created", "saved", "deleted"):
+                flow_link(c, 1562, top + 83, "Return to pool overview", "/services?tab=probes", anchor="end", href="#probes-overview")
+        c.add('</g>')
+    c.add('<style><![CDATA[' + "\n".join(css) + ']]></style>')
+    c.fit_height(1160)
     return c
 
 
@@ -2314,9 +2504,9 @@ def operations() -> Canvas:
 def policy_range(c: Canvas, y: int, label: str, field: str, *, mode: str = "any",
                  nodes: tuple[str, ...] = (), picker_options: tuple[tuple[str, str], ...] = ()) -> int:
     c.add(f'<g data-ui="policy-range" data-field="{field}" data-mode="{mode}" data-options="any only none">')
-    c.txt(446, y + 25, label, "body")
+    c.txt(368, y + 25, label, "body")
     c.add(f'<g data-ui="policy-range-mode" role="radiogroup" aria-label="{escape(label)}">')
-    for x, value, title in ((754, "any", "Unrestricted"), (934, "only", "Selected nodes"), (1138, "none", "None")):
+    for x, value, title in ((740, "any", "Unrestricted"), (946, "only", "Selected nodes"), (1170, "none", "None")):
         selected = mode == value
         c.add(f'<g role="radio" data-value="{value}" aria-checked="{str(selected).lower()}">')
         c.circle(x, y + 20, 8, "#FFFFFF", "#248F64" if selected else "#BCC8C0")
@@ -2328,35 +2518,35 @@ def policy_range(c: Canvas, y: int, label: str, field: str, *, mode: str = "any"
     if mode == "only":
         top = y + 41
         c.add(f'<g data-ui="policy-node-picker" aria-expanded="{str(bool(picker_options)).lower()}">')
-        top += tag_selector(c, 746, top, 768, tuple((node, node) for node in nodes), field=field, placeholder="Search nodes…")
+        top += tag_selector(c, 732, top, 830, tuple((node, node) for node in nodes), field=field, placeholder="Search nodes…")
         if picker_options:
             top += 6
             c.add(f'<g data-ui="policy-node-options" role="listbox" aria-label="{escape(label)}" aria-multiselectable="true" data-close-on-select="false">')
-            c.rect(746, top, 768, 34 + len(picker_options) * 42, "#FFFFFF", "#D8E0DA", 5)
+            c.rect(732, top, 830, 34 + len(picker_options) * 42, "#FFFFFF", "#D8E0DA", 5)
             c.txt(763, top + 22, "ELIGIBLE NODES", "eyebrow muted")
-            c.txt(1496, top + 22, f"{len(nodes)} selected · select one or more", "small muted", "end")
+            c.txt(1544, top + 22, f"{len(nodes)} selected · select one or more", "small muted", "end")
             for index, (node, description) in enumerate(picker_options):
                 row_y = top + 34 + index * 42
                 selected = node in nodes
                 c.add(f'<g data-ui="policy-node-option" role="option" data-value="{node}" aria-selected="{str(selected).lower()}">')
                 if selected:
-                    c.rect(750, row_y, 760, 40, "#F0F7F3", "none", 3)
+                    c.rect(750, row_y, 822, 40, "#F0F7F3", "none", 3)
                 c.rect(764, row_y + 11, 17, 17, "#248F64" if selected else "#FFFFFF", "#248F64" if selected else "#BCC8C0", 3)
                 if selected:
                     c.txt(773, row_y + 24, "✓", "small white", "middle")
                 c.txt(793, row_y + 25, node, "body")
-                c.txt(1496, row_y + 25, description, "small muted", "end")
+                c.txt(1544, row_y + 25, description, "small muted", "end")
                 c.add('</g>')
             top += 34 + len(picker_options) * 42
             c.add('</g>')
         c.add('</g>')
-        c.txt(746, top + 25, "Select at least one node. Selection order does not define a route.", "small muted")
+        c.txt(732, top + 25, "Select at least one node. Selection order does not define a route.", "small muted")
         bottom = top + 25
     else:
         hint = "All current and future eligible nodes." if mode == "any" else (
             "No intermediate nodes; a one-hop path may still be allowed." if field == "forwarding-nodes"
             else "No managed paths." if field == "data-entries" else "No managed internet exits.")
-        c.txt(746, y + 53, hint, "small muted")
+        c.txt(732, y + 53, hint, "small muted")
         bottom = y + 53
     c.add('</g>')
     return bottom + 26
@@ -2366,121 +2556,117 @@ def policies(*, lan: bool = False, new: bool = False) -> Canvas:
     policy = "demo-private-access" if new else "demo-lan-policy" if lan else "demo-policy"
     service = "demo-private" if new else POLICY_FIXTURES[policy]["service"]
     c = Canvas("policies-new" if new else "policies-lan" if lan else "policies", "Access policies",
-               "A policy defines access to one service. Assign the same policy to any devices that need these rules.",
-               "network intent", "policies", height=1400, show_status=False)
-    c.add('<g data-ui="navigation" data-route="/policies?new=1">')
+               "Choose how a service may be accessed. Devices select a policy to receive access.",
+               "access configuration", "policies", height=1500, show_status=False)
+    intent_tabs(c, "Policies")
+    c.add('<a href="06-policies-new.svg" data-ui="new-policy">')
     c.button(1382, 106, 180, "+ New policy", True)
-    c.add('</g>')
-    catalog_rail(c, 228, "Saved policies", "Search policy or service", (
-        ("demo-policy", "demo-video · internet", "1 device · Direct or internet-exit"),
-        ("demo-direct-policy", "demo-video · internet", "0 devices · Direct only"),
-        ("demo-lan-policy", "demo-office · shared LAN", "0 devices · fixed gateway"),
-    ), selected="new-draft" if new else policy)
-    c.txt(24, 628, "One service can have several policies.", "small muted")
-    c.txt(24, 655, "Each device chooses one per service.", "small muted")
-    c.txt(24, 697, "Assign policies from device details →", "small green")
-    left, right, width = 446, 1514, 1068
+    c.add('</a>')
+    catalog_rail(c, 278, "Policies", "Search policy or service", (
+        ("demo-policy", "media · allow", "Direct or internet-exit · 1 device"),
+        ("demo-direct-policy", "media · allow", "Direct only · no devices"),
+        ("demo-lan-policy", "office-network · allow", "Fixed gateway · no devices"),
+    ), selected="new-draft" if new else policy, service_filter=True)
+    c.txt(24, 744, "Each device selects one policy", "small muted")
+    c.txt(24, 766, "per service. Shared edits affect", "small muted")
+    c.txt(24, 788, "every device using the policy.", "small muted")
+    flow_link(c, 24, 826, "Assign from device details →", "/devices/demo-forward-c", href="02-nodes-detail.svg#detail-access")
+    left, right, width = 368, 1562, 1194
     c.add(f'<g data-ui="policy-editor" data-policy="{policy}" data-service="{service}" data-state="{"new-draft" if new else "shared-edit"}">')
-    c.txt(left, 228, "New policy" if new else policy, "section" if new else "section mono")
-    if new:
-        c.txt(right, 228, "Unsaved · no device access granted", "small muted", "end")
-    else:
-        if lan:
-            c.txt(820, 228, "Unsaved changes · entry nodes", "small amber")
-        flow_link(c, right, 228, "Copy as new policy →", f"/policies?copy={policy}", anchor="end")
-    c.txt(left, 273, "Service", "body")
+    c.txt(left, 278, "New policy" if new else "Office LAN access" if lan else "Media access", "section")
+    c.txt(right, 278, "New draft" if new else "Policy ID · " + policy, "small mono muted", "end")
+    c.line(left, 306, right, 306)
+    c.txt(left, 347, "Service", "body")
     c.add(f'<g data-ui="policy-service" data-service="{service}" aria-readonly="{str(not new).lower()}">')
     if new:
-        flow_input(c, 746, 249, 768, service, dropdown=True)
+        flow_input(c, 732, 322, 830, service, dropdown=True)
     else:
-        c.txt(746, 273, service, "body mono")
-        flow_link(c, right, 273, "View service →", f"/services/{service}", anchor="end")
-    c.txt(left, 312, SERVICE_FIXTURES[service]["target"], "small mono muted")
-    c.txt(right, 340, "Fixed after creation" if new else "Service cannot be changed", "small muted", "end")
+        c.txt(732, 347, service, "body")
+        flow_link(c, right, 347, "View service →", f"/services?service={service}", anchor="end", href="05-services-lan.svg" if lan else "05-services.svg")
+    c.txt(left, 384, SERVICE_FIXTURES[service]["target"], "small mono muted")
     c.add('</g>')
-    c.txt(left, 375, "Policy name", "body")
-    flow_input(c, left, 390, width, "Private access" if new else "Office LAN access" if lan else "Media access")
-    c.line(left, 459, right, 459)
-    c.txt(left, 496, "Access to this service", "section")
+    c.txt(left, 425, "Policy ID" if new else "Display name", "body")
+    if new:
+        flow_input(c, left, 440, 350, policy)
+        c.txt(744, 425, "Display name", "body")
+        flow_input(c, 744, 440, 818, "Private access")
+    else:
+        flow_input(c, left, 440, width, "Office LAN access" if lan else "Media access")
+    c.line(left, 511, right, 511)
+    c.txt(left, 550, "Access to this service", "section")
     c.add('<g data-ui="policy-effect" data-value="allow" role="radiogroup">')
-    for x, label, value in ((830, "Allow", "allow"), (965, "Deny", "deny")):
+    for x, label, value in ((1240, "Allow", "allow"), (1410, "Deny", "deny")):
         c.add(f'<g role="radio" data-value="{value}" aria-checked="{str(value == "allow").lower()}">')
-        c.circle(x, 490, 8, "#FFFFFF", "#248F64" if value == "allow" else "#BCC8C0")
+        c.circle(x, 544, 8, "#FFFFFF", "#248F64" if value == "allow" else "#BCC8C0")
         if value == "allow":
-            c.circle(x, 490, 4, "#248F64")
-        c.txt(x + 22, 496, label, "body")
+            c.circle(x, 544, 4, "#248F64")
+        c.txt(x + 22, 550, label, "body")
         c.add('</g>')
     c.add('</g>')
-    c.txt(left, 528, "Deny keeps the policy assigned but blocks access to this service.", "small muted")
+    c.txt(left, 582, "Deny blocks service access while keeping the policy assigned and its path rules saved.", "small muted")
     if lan:
         c.add('<g data-ui="fixed-lan-gateway" data-node="demo-forward-c" aria-readonly="true">')
-        c.txt(left, 579, "Destination gateway", "body")
-        c.txt(746, 579, "demo-forward-c · fixed by office-network", "body mono")
+        c.txt(left, 635, "Destination gateway", "body")
+        c.txt(732, 635, "demo-forward-c · fixed by office-network", "body mono")
         c.add('</g>')
-        y = 614
     else:
         c.add('<g data-ui="allow-direct" aria-checked="true">')
-        c.rect(left, 561, 18, 18, "#248F64", "#248F64", 3)
-        c.txt(left + 9, 575, "✓", "small white", "middle")
-        c.txt(left + 29, 575, "Allow Direct · device connects to the destination itself", "body")
+        c.rect(left, 617, 18, 18, "#248F64", "#248F64", 3)
+        c.txt(left + 9, 631, "✓", "small white", "middle")
+        c.txt(left + 29, 631, "Allow Direct", "body")
+        c.txt(732, 631, "Device connects to the destination itself", "body muted")
         c.add('</g>')
-        c.txt(left, 606, "To require a managed internet exit, turn off Direct.", "small muted")
-        y = 635
-    y = policy_range(c, y, "Entry nodes · first hop", "data-entries", mode="only" if lan else "any",
+    c.txt(left, 687, "Paths through Loom", "section")
+    c.txt(right, 687, "" if lan else "To require a managed exit, turn off Direct.", "small muted", "end")
+    y = policy_range(c, 712, "Entry · first managed node", "data-entries", mode="only" if lan else "any",
                      nodes=("demo-control-a",) if lan else (),
                      picker_options=(("demo-control-a", "control + forward"),
                                      ("demo-egress-e", "internet_egress")) if lan else ())
+    y = policy_range(c, y + 12, "Intermediate forwarding nodes", "forwarding-nodes")
     if not lan:
-        y = policy_range(c, y, "Internet exits · final hop", "internet-exits", mode="any" if new else "only",
+        y = policy_range(c, y + 12, "Internet exit · final managed node", "internet-exits", mode="any" if new else "only",
                          nodes=() if new else ("demo-egress-e",))
-    y = policy_range(c, y, "Intermediate forwarding nodes", "forwarding-nodes")
-    c.txt(left, y + 2, "No entry nodes = no LAN path. No transit nodes may still allow one hop to the gateway." if lan else
-          "No entry nodes = no managed path. No transit nodes may still allow one hop. Direct is separate.", "small muted")
-    if not lan:
-        c.add('<g data-ui="advanced-policy-rules" aria-expanded="false">')
-        c.txt(left, y + 45, "› Device-limited local egress", "body")
-        c.txt(right, y + 45, "None · no eligible hybrid exit", "small muted", "end")
-        c.add('</g>')
-        y += 75
     else:
-        y += 33
+        c.txt(left, y + 6, "Final destination", "body")
+        c.txt(732, y + 6, "Fixed LAN gateway · relay-west", "body muted")
+        y += 45
+    c.add('<g data-ui="advanced-policy-rules" aria-expanded="false">')
+    c.line(left, y + 6, right, y + 6)
+    c.txt(left, y + 43, "› Advanced restrictions", "body")
+    c.txt(right, y + 43, "No additional node limit" if lan else "No additional node limit · no local egress devices", "small muted", "end")
+    c.add('</g>')
+    y += 78
     c.line(left, y, right, y)
-    c.txt(left, y + 36, "Allowed access · draft" if lan else "Allowed access", "section")
+    c.txt(left, y + 36, "Access summary · draft" if lan or new else "Access summary", "section")
     if lan:
-        c.txt(left, y + 71, "Entry: control-a · Transit: unrestricted · LAN gateway: relay-west", "body mono")
-        c.txt(left, y + 101, "The device chooses a permitted path to 198.51.100.0/24. The LAN gateway stays fixed.", "small muted")
+        c.txt(left, y + 72, "Entry control-a → transit unrestricted → fixed LAN gateway relay-west", "body mono")
+        c.txt(left, y + 103, "Only the entry restriction is an unsaved change. The LAN destination stays 198.51.100.0/24.", "small muted")
     elif new:
-        c.txt(left, y + 71, "Direct, or any eligible entry → transit → internet exit → private.example", "body mono")
-        c.txt(left, y + 101, "No path restrictions set. This policy grants access only after a device selects it.", "small muted")
+        c.txt(left, y + 72, "Direct, or any eligible entry → transit → internet exit → private.example", "body mono")
+        c.txt(left, y + 103, "No path restrictions. Creating the policy does not assign it to any device.", "small muted")
     else:
-        c.txt(left, y + 71, "Direct, or eligible entry / transit nodes → internet-exit → media.example", "body mono")
-        c.txt(left, y + 101, "Direct and one hop through internet-exit are allowed. Actual availability is shown in Live paths.", "small muted")
-    y += 130
-    c.line(left, y, right, y)
+        c.txt(left, y + 72, "Direct, or eligible entry → transit → internet-exit → media.example", "body mono")
+        c.txt(left, y + 103, "Direct and one-hop managed routes are both allowed. Availability is shown in Live paths.", "small muted")
+    y += 140
     if new:
-        c.txt(left, y + 35, "After saving", "body")
-        c.txt(left, y + 66, "Select this policy when adding a device or editing its access. Creating it assigns no devices.", "small muted")
-        flow_actions(c, y + 98, "Create policy", x=left, w=width, meta="New policy · private-app")
-        bottom = y + 190
+        c.txt(left, y + 20, "After saving, select this policy when adding a device or editing its access.", "small muted")
+        flow_actions(c, y + 44, "Create policy", x=left, w=width, secondary="Cancel", meta="No device assignment", primary_w=180)
+        bottom = y + 150
     else:
         c.add(f'<g data-ui="policy-assignments" data-policy="{policy}">')
-        c.txt(left, y + 35, "Used by", "section")
-        c.txt(right, y + 35, "0 devices · 0 active invitations" if lan else "1 device · 0 active invitations", "small muted", "end")
-        if lan:
-            c.txt(left, y + 71, "No devices assigned. Select office-lan from a device's access policies.", "body muted")
-        else:
-            c.add('<g data-ui="policy-assignment" data-device="demo-phone-f" data-policy="demo-policy" data-service="demo-video">')
-            flow_link(c, left, y + 71, "android-phone →", "/devices/demo-phone-f")
-            c.txt(746, y + 71, "Android · access · media", "body")
-            c.add('</g>')
-        c.txt(left, y + 106, "Saving updates every reference. To change one device, assign another policy or save a copy.", "small muted")
+        c.txt(left, y + 20, "Shared change affects 0 devices · 0 active invitations" if lan else "Shared change affects 1 device · 0 active invitations", "small muted")
+        if not lan:
+            flow_link(c, right, y + 20, "View android-phone →", "/devices/demo-phone-f", anchor="end")
         c.add('</g>')
-        flow_actions(c, y + 133, "Save shared policy", x=left, w=width, secondary="Discard", meta="Changes this policy's rules")
-        c.txt(left, y + 241, "Delete policy", "body red")
-        c.txt(left + 152, y + 241, "Removes its access. Devices do not switch to another policy automatically.", "small muted")
-        bottom = y + 279
+        flow_actions(c, y + 44, "Save shared policy", x=left, w=width, secondary="Discard", meta="All references use these rules", primary_w=210)
+        c.txt(left, y + 146, "To change one device, assign another policy or save a copy.", "small muted")
+        flow_link(c, right, y + 146, "Copy policy →", f"/policies?copy={policy}", anchor="end")
+        c.line(left, y + 178, right, y + 178)
+        c.txt(left, y + 213, "Delete policy", "body red")
+        c.txt(left + 152, y + 213, "Withdraws its access. Devices do not switch to another policy.", "small muted")
+        bottom = y + 250
     c.add('</g>')
-    c.line(396, 208, 396, bottom - 20)
+    c.line(328, 258, 328, bottom - 20)
     c.fit_height(bottom)
     return c
 
@@ -3646,6 +3832,7 @@ PAGES = {
     "05-services": services,
     "05-services-lan": lambda: services(lan=True),
     "05-services-dns": services_dns,
+    "05-services-probes": probe_targets,
     "06-policies": policies,
     "06-policies-new": lambda: policies(new=True),
     "06-policies-lan": lambda: policies(lan=True),

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1586" height="1208" viewBox="0 0 1586 1208" role="img" aria-labelledby="svg-title svg-desc">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1586" height="1208" viewBox="0 0 1586 1208" role="document" aria-labelledby="svg-title svg-desc">
   <title id="svg-title">services — Loom control center</title>
   <desc id="svg-desc">Loom control center: services.</desc>
   <defs>
@@ -62,11 +62,11 @@
   <text class="ui nav muted" x="459" y="34" text-anchor="start">Topology</text>
   <use href="#icon-path" x="552" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="573" y="34" text-anchor="start">Live paths</text>
+  <a href="05-services.svg" data-ui="intent-entry">
   <use href="#icon-service" x="681" y="20" width="15" height="15" class="nav-active"/>
-  <text class="ui nav" x="702" y="34" text-anchor="start">Services</text>
-  <line x1="681" y1="57" x2="755" y2="57" stroke="#2AA875" stroke-width="2"/>
-  <use href="#icon-service" x="789" y="20" width="15" height="15" class="nav-icon"/>
-  <text class="ui nav muted" x="810" y="34" text-anchor="start">Policies</text>
+  <text class="ui nav" x="702" y="34" text-anchor="start">Access configuration</text>
+  <line x1="681" y1="57" x2="839" y2="57" stroke="#2AA875" stroke-width="2"/>
+  </a>
   <use href="#icon-release" x="894" y="20" width="15" height="15" class="nav-icon"/>
   <text class="ui nav muted" x="915" y="34" text-anchor="start">Releases</text>
   <use href="#icon-events" x="1002" y="20" width="15" height="15" class="nav-icon"/>
@@ -79,135 +79,161 @@
   <text class="ui small muted" x="1307" y="34" text-anchor="start">control-a</text>
   <use href="#icon-lock" x="1450" y="20" width="14" height="14" class="nav-icon"/>
   <text class="ui small muted" x="1470" y="34" text-anchor="start">Admin view</text>
-  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">NETWORK INTENT</text>
+  <text class="ui eyebrow green" x="24" y="97" text-anchor="start">ACCESS CONFIGURATION</text>
   <text class="ui title" x="24" y="134" text-anchor="start">Services</text>
-  <text class="ui body muted" x="24" y="162" text-anchor="start">Define internet destinations or a shared LAN. Policies decide how devices may access each service.</text>
-  <text class="ui body" x="25" y="219" text-anchor="start">Services</text>
-  <line x1="25" y1="231" x2="89" y2="231" stroke="#2AA875" stroke-width="2"/>
-  <text class="ui body muted" x="135" y="219" text-anchor="start">Exact .loom DNS</text>
-  <text class="ui body muted" x="300" y="219" text-anchor="start">Probe targets</text>
+  <text class="ui body muted" x="24" y="162" text-anchor="start">Define what devices may access. Policies provide the access rules.</text>
+  <a href="05-services.svg" data-ui="intent-tab" aria-current="page">
+  <rect x="20" y="192" width="100" height="40" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body" x="24" y="219" text-anchor="start">Services</text>
+  <line class="intent-selected" x1="24" y1="231" x2="88" y2="231"/>
+  </a>
+  <a href="06-policies.svg" data-ui="intent-tab" aria-current="false">
+  <rect x="148" y="192" width="100" height="40" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="152" y="219" text-anchor="start">Policies</text>
+  </a>
+  <a href="05-services-dns.svg" data-ui="intent-tab" aria-current="false">
+  <rect x="276" y="192" width="126" height="40" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="280" y="219" text-anchor="start">Private DNS</text>
+  </a>
+  <a href="05-services-probes.svg" data-ui="intent-tab" aria-current="false">
+  <rect x="430" y="192" width="140" height="40" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body muted" x="434" y="219" text-anchor="start">Probe targets</text>
+  </a>
   <line class="rule" x1="24" y1="232" x2="1562" y2="232"/>
+  <style>.intent-selected{stroke:#248F64;stroke-width:2}[data-ui="intent-tab"]:focus-visible text{text-decoration:underline}</style>
   <g data-ui="button">
   <rect x="1382" y="106" width="180" height="34" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui small white" x="1472" y="127" text-anchor="middle">+ Add service ▾</text>
+  <text class="ui small white" x="1472" y="127" text-anchor="middle">+ Add service</text>
   </g>
   <g data-ui="catalog-list">
-  <text class="ui section" x="24" y="278" text-anchor="start">All services</text>
-  <text class="ui small muted" x="360" y="278" text-anchor="end">4</text>
-  <rect x="24" y="298" width="336" height="38" rx="5" fill="#F8FAF8" stroke="#E1E7E2"/>
+  <text class="ui section" x="24" y="278" text-anchor="start">Services</text>
+  <text class="ui small muted" x="304" y="278" text-anchor="end">4</text>
+  <rect x="24" y="298" width="280" height="38" rx="5" fill="#F8FAF8" stroke="#E1E7E2"/>
   <use href="#icon-search" x="35" y="309" width="15" height="15" class="nav-icon"/>
   <text class="ui small muted" x="59" y="322" text-anchor="start">Search name or destination</text>
+  <a href="05-services.svg" data-ui="catalog-navigation">
   <g data-ui="catalog-item" data-object="demo-video" aria-selected="true">
-  <rect x="24" y="354" width="336" height="92" rx="4" fill="#EDF4FB" stroke="none"/>
-  <rect x="24" y="364" width="3" height="72" rx="0" fill="#4D78D1" stroke="none"/>
-  <text class="ui body mono" x="42" y="382" text-anchor="start">media</text>
-  <text class="ui small muted" x="42" y="406" text-anchor="start">media.example + 1 suffix</text>
-  <text class="ui tiny muted" x="42" y="428" text-anchor="start">Internet · used by 1 device</text>
-  <text class="ui body muted" x="344" y="384" text-anchor="end">›</text>
-  <line class="rule" x1="24" y1="446" x2="360" y2="446"/>
+  <rect x="24" y="354" width="280" height="92" rx="4" fill="#EDF4FB" stroke="none"/>
+  <rect x="24" y="354" width="3" height="92" rx="0" fill="#4D78D1" stroke="none"/>
+  <text class="ui body" x="42" y="382" text-anchor="start">media</text>
+  <text class="ui small muted" x="42" y="406" text-anchor="start">Internet · 2 target rules</text>
+  <text class="ui tiny muted" x="42" y="428" text-anchor="start">1 device · 2 policies</text>
+  <line class="rule" x1="24" y1="446" x2="304" y2="446"/>
   </g>
-  <g data-ui="catalog-item" data-object="demo-work" aria-selected="false">
-  <text class="ui body mono" x="42" y="474" text-anchor="start">work-apps</text>
-  <text class="ui small muted" x="42" y="498" text-anchor="start">2 conflicting changes</text>
-  <a href="09-administration-configuration.svg#compare" data-ui="configuration-conflict-link">
-  <text class="ui small amber" x="42" y="520" text-anchor="start">Suspended · review conflict →</text>
   </a>
-  <text class="ui body muted" x="344" y="476" text-anchor="end">›</text>
-  <line class="rule" x1="24" y1="538" x2="360" y2="538"/>
+  <a href="09-administration-configuration.svg#compare" data-ui="catalog-navigation">
+  <g data-ui="catalog-item" data-object="demo-work" aria-selected="false">
+  <rect x="24" y="446" width="3" height="92" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body" x="42" y="474" text-anchor="start">work-apps</text>
+  <text class="ui small muted" x="42" y="498" text-anchor="start">Internet · 2 conflicting changes</text>
+  <text class="ui small amber" x="42" y="520" text-anchor="start">Suspended · review conflict →</text>
+  <line class="rule" x1="24" y1="538" x2="304" y2="538"/>
   </g>
+  </a>
   <g data-ui="catalog-item" data-object="demo-private" aria-selected="false">
-  <text class="ui body mono" x="42" y="566" text-anchor="start">private-app</text>
-  <text class="ui small muted" x="42" y="590" text-anchor="start">private.example</text>
-  <text class="ui tiny muted" x="42" y="612" text-anchor="start">Internet · no device assignments</text>
-  <text class="ui body muted" x="344" y="568" text-anchor="end">›</text>
-  <line class="rule" x1="24" y1="630" x2="360" y2="630"/>
+  <rect x="24" y="538" width="3" height="92" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body" x="42" y="566" text-anchor="start">private-app</text>
+  <text class="ui small muted" x="42" y="590" text-anchor="start">Internet · private.example</text>
+  <text class="ui tiny muted" x="42" y="612" text-anchor="start">No device assignments</text>
+  <line class="rule" x1="24" y1="630" x2="304" y2="630"/>
   </g>
+  <a href="05-services-lan.svg" data-ui="catalog-navigation">
   <g data-ui="catalog-item" data-object="demo-office" aria-selected="false">
-  <text class="ui body mono" x="42" y="658" text-anchor="start">office-network</text>
-  <text class="ui small muted" x="42" y="682" text-anchor="start">198.51.100.0/24 · relay-west</text>
-  <text class="ui tiny muted" x="42" y="704" text-anchor="start">Shared LAN · no device assignments</text>
-  <text class="ui body muted" x="344" y="660" text-anchor="end">›</text>
-  <line class="rule" x1="24" y1="722" x2="360" y2="722"/>
+  <rect x="24" y="630" width="3" height="92" rx="0" fill="transparent" stroke="none"/>
+  <text class="ui body" x="42" y="658" text-anchor="start">office-network</text>
+  <text class="ui small muted" x="42" y="682" text-anchor="start">Shared LAN · relay-west</text>
+  <text class="ui tiny muted" x="42" y="704" text-anchor="start">198.51.100.0/24 · 1 policy</text>
+  <line class="rule" x1="24" y1="722" x2="304" y2="722"/>
   </g>
+  </a>
   </g>
-  <text class="ui small muted" x="24" y="767" text-anchor="start">Create policies for a service.</text>
-  <text class="ui small muted" x="24" y="790" text-anchor="start">Then assign policies to devices.</text>
-  <g data-ui="navigation" data-route="/policies">
-  <text class="ui small green" x="24" y="832" text-anchor="start">Manage access policies →</text>
-  </g>
-  <line class="rule" x1="396" y1="258" x2="396" y2="1112"/>
-  <text class="ui section" x="446" y="278" text-anchor="start">Service details</text>
-  <text class="ui small mono muted" x="1514" y="278" text-anchor="end">Service ID · media</text>
-  <circle cx="450" cy="304" r="4" fill="#2AA875" stroke="none"/>
-  <text class="ui small green" x="464" y="309" text-anchor="start">Effective · internet destinations</text>
-  <text class="ui small muted" x="1514" y="309" text-anchor="end">Editing draft</text>
-  <text class="ui body" x="446" y="354" text-anchor="start">Display name</text>
+  <text class="ui small muted" x="24" y="776" text-anchor="start">Create a policy, then assign it</text>
+  <text class="ui small muted" x="24" y="798" text-anchor="start">to the devices that need this service.</text>
+  <a data-ui="navigation" data-route="/policies" href="06-policies.svg">
+  <text class="ui small green" x="24" y="834" text-anchor="start">Manage policies →</text>
+  </a>
+  <line class="rule" x1="328" y1="258" x2="328" y2="1208"/>
+  <g data-ui="service-editor" data-service="demo-video">
+  <text class="ui section" x="368" y="278" text-anchor="start">Media traffic</text>
+  <text class="ui small mono muted" x="1562" y="278" text-anchor="end">Service ID · media</text>
+  <text class="ui small muted" x="368" y="306" text-anchor="start">Internet · domain and address rules</text>
+  <line class="rule" x1="368" y1="326" x2="1562" y2="326"/>
+  <text class="ui body" x="368" y="361" text-anchor="start">Display name</text>
   <g data-ui="input">
-  <rect x="446" y="369" width="1068" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="460" y="396" text-anchor="start">Media traffic</text>
+  <rect x="368" y="375" width="1194" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="382" y="402" text-anchor="start">Media traffic</text>
   </g>
-  <text class="ui section" x="446" y="457" text-anchor="start">Destinations</text>
-  <text class="ui small muted" x="1514" y="457" text-anchor="end">2 matchers</text>
-  <text class="ui eyebrow muted" x="446" y="490" text-anchor="start">HOSTNAME OR SUFFIX</text>
-  <text class="ui eyebrow muted" x="1118" y="490" text-anchor="start">MATCH</text>
+  <g data-ui="service-destinations">
+  <text class="ui section" x="368" y="468" text-anchor="start">Destinations</text>
+  <text class="ui small muted" x="1562" y="468" text-anchor="end">2 target rules</text>
+  <text class="ui eyebrow muted" x="368" y="504" text-anchor="start">DOMAIN OR ADDRESS</text>
+  <text class="ui eyebrow muted" x="1242" y="504" text-anchor="start">MATCH</text>
   <g data-ui="input">
-  <rect x="446" y="508" width="650" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="460" y="535" text-anchor="start">media.example</text>
-  </g>
-  <g data-ui="input">
-  <rect x="1118" y="508" width="252" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="1132" y="535" text-anchor="start">Exact</text>
-  <use href="#icon-chevron" x="1341" y="521" width="16" height="16" class="nav-icon"/>
-  </g>
-  <text class="ui small muted" x="1514" y="535" text-anchor="end">Remove</text>
-  <g data-ui="input">
-  <rect x="446" y="564" width="650" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="460" y="591" text-anchor="start">.cdn.media.example</text>
+  <rect x="368" y="522" width="850" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="382" y="549" text-anchor="start">media.example</text>
   </g>
   <g data-ui="input">
-  <rect x="1118" y="564" width="252" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
-  <text class="ui body" x="1132" y="591" text-anchor="start">Suffix</text>
-  <use href="#icon-chevron" x="1341" y="577" width="16" height="16" class="nav-icon"/>
+  <rect x="1242" y="522" width="208" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="1256" y="549" text-anchor="start">Exact</text>
+  <use href="#icon-chevron" x="1421" y="535" width="16" height="16" class="nav-icon"/>
   </g>
-  <text class="ui small muted" x="1514" y="591" text-anchor="end">Remove</text>
-  <text class="ui body green" x="446" y="638" text-anchor="start">+ Add matcher</text>
-  <text class="ui small muted" x="1514" y="638" text-anchor="end">A suffix starts with a dot, such as .cdn.media.example</text>
-  <line class="rule" x1="446" y1="665" x2="1514" y2="665"/>
-  <text class="ui body" x="446" y="699" text-anchor="start">Matching probe target</text>
-  <text class="ui body mono" x="446" y="730" text-anchor="start">https://media.example/health</text>
-  <text class="ui small green" x="1514" y="730" text-anchor="end">View probe pool →</text>
-  <text class="ui small muted" x="446" y="755" text-anchor="start">From the shared pool, filtered by destinations and each device's access.</text>
-  <line class="rule" x1="446" y1="782" x2="1514" y2="782"/>
-  <text class="ui section" x="446" y="816" text-anchor="start">Policies for this service</text>
-  <g data-ui="navigation" data-route="/policies?new=1&amp;service=demo-video">
-  <text class="ui small green" x="1514" y="816" text-anchor="end">+ New policy</text>
+  <text class="ui small muted" x="1562" y="549" text-anchor="end">Remove</text>
+  <g data-ui="input">
+  <rect x="368" y="578" width="850" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="382" y="605" text-anchor="start">.cdn.media.example</text>
   </g>
-  <text class="ui eyebrow muted" x="446" y="852" text-anchor="start">POLICY</text>
-  <text class="ui eyebrow muted" x="1000" y="852" text-anchor="start">USED BY</text>
-  <line class="rule" x1="446" y1="868" x2="1514" y2="868"/>
-  <g data-ui="service-policy" data-service="demo-video" data-policy="demo-policy">
-  <g data-ui="navigation" data-route="/policies/demo-policy">
-  <text class="ui small green" x="446" y="900" text-anchor="start">media-access →</text>
+  <g data-ui="input">
+  <rect x="1242" y="578" width="208" height="42" rx="5" fill="#FFFFFF" stroke="#D8E0DA"/>
+  <text class="ui body" x="1256" y="605" text-anchor="start">Suffix</text>
+  <use href="#icon-chevron" x="1421" y="591" width="16" height="16" class="nav-icon"/>
   </g>
-  <text class="ui body muted" x="1000" y="900" text-anchor="start">android-phone · 1 device</text>
-  <line class="rule" x1="446" y1="924" x2="1514" y2="924"/>
+  <text class="ui small muted" x="1562" y="605" text-anchor="end">Remove</text>
+  <text class="ui body green" x="368" y="653" text-anchor="start">+ Add destination</text>
+  <text class="ui small muted" x="1562" y="653" text-anchor="end">Suffix example: .cdn.media.example</text>
   </g>
-  <g data-ui="service-policy" data-service="demo-video" data-policy="demo-direct-policy">
-  <g data-ui="navigation" data-route="/policies/demo-direct-policy">
-  <text class="ui small green" x="446" y="961" text-anchor="start">direct-access →</text>
-  </g>
-  <text class="ui body muted" x="1000" y="961" text-anchor="start">No devices assigned</text>
-  <line class="rule" x1="446" y1="985" x2="1514" y2="985"/>
-  </g>
-  <text class="ui small muted" x="446" y="1017" text-anchor="start">Destination changes affect every policy and device using this service.</text>
+  <g data-ui="service-change-impact">
+  <text class="ui small muted" x="368" y="704" text-anchor="start">Saving affects 2 policies · 1 assigned device · 0 active invitations</text>
   <g data-ui="form-actions">
-  <line class="rule" x1="446" y1="1044" x2="1514" y2="1044"/>
-  <text class="ui small muted" x="446" y="1093" text-anchor="start">Service definition only</text>
-  <text class="ui body muted" x="1268" y="1093" text-anchor="end">Discard</text>
-  <rect x="1296" y="1066" width="218" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
-  <text class="ui body white" x="1405" y="1093" text-anchor="middle">Save destinations</text>
+  <line class="rule" x1="368" y1="725" x2="1562" y2="725"/>
+  <text class="ui small muted" x="368" y="774" text-anchor="start">Service definition</text>
+  <text class="ui body muted" x="1354" y="774" text-anchor="end">Discard</text>
+  <rect x="1382" y="747" width="180" height="42" rx="6" fill="#248F64" stroke="#248F64"/>
+  <text class="ui body white" x="1472" y="774" text-anchor="middle">Save service</text>
   </g>
-  <line class="rule" x1="446" y1="1133" x2="1514" y2="1133"/>
-  <text class="ui body red" x="446" y="1167" text-anchor="start">Delete service</text>
-  <text class="ui small muted" x="598" y="1167" text-anchor="start">Removes access through its policies. Devices do not switch to another service.</text>
+  </g>
+  <g data-ui="service-policies" data-service="demo-video">
+  <text class="ui section" x="368" y="842" text-anchor="start">Related policies</text>
+  <g data-ui="navigation" data-route="/policies?new=1&amp;service=demo-video">
+  <text class="ui small green" x="1562" y="842" text-anchor="end">+ New policy</text>
+  </g>
+  <line class="rule" x1="368" y1="862" x2="1562" y2="862"/>
+  <g data-ui="service-policy" data-policy="demo-policy" data-service="demo-video">
+  <a data-ui="navigation" data-route="/policies?policy=demo-policy" href="06-policies.svg">
+  <text class="ui small green" x="368" y="898" text-anchor="start">media-access →</text>
+  </a>
+  <text class="ui body muted" x="818" y="898" text-anchor="start">Direct or internet-exit</text>
+  <text class="ui small muted" x="1562" y="898" text-anchor="end">1 device</text>
+  <line class="rule" x1="368" y1="918" x2="1562" y2="918"/>
+  </g>
+  <g data-ui="service-policy" data-policy="demo-direct-policy" data-service="demo-video">
+  <g data-ui="navigation" data-route="/policies?policy=demo-direct-policy">
+  <text class="ui small green" x="368" y="954" text-anchor="start">direct-access →</text>
+  </g>
+  <text class="ui body muted" x="818" y="954" text-anchor="start">Direct only</text>
+  <text class="ui small muted" x="1562" y="954" text-anchor="end">0 devices</text>
+  <line class="rule" x1="368" y1="974" x2="1562" y2="974"/>
+  </g>
+  </g>
+  <g data-ui="service-probe-readback" aria-readonly="true">
+  <text class="ui section" x="368" y="1025" text-anchor="start">Matching probe targets</text>
+  <a data-ui="navigation" data-route="/services?tab=probes" href="05-services-probes.svg">
+  <text class="ui small green" x="1562" y="1025" text-anchor="end">Manage shared probe pool →</text>
+  </a>
+  <text class="ui body mono" x="368" y="1060" text-anchor="start">https://media.example/health</text>
+  <text class="ui small muted" x="368" y="1088" text-anchor="start">Current authorized device views · editing destinations does not change this readback until saved.</text>
+  </g>
+  <line class="rule" x1="368" y1="1130" x2="1562" y2="1130"/>
+  <text class="ui body red" x="368" y="1166" text-anchor="start">Delete service</text>
+  <text class="ui small muted" x="514" y="1166" text-anchor="start">Withdraws access through its policies. Devices do not switch services.</text>
+  </g>
 </svg>

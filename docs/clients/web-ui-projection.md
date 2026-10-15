@@ -527,7 +527,10 @@ Web 服务端以受保护安装信任输入中的发布验签公钥核验签名 
 目录刷新不替换正在编辑的选择；清除只撤销该期望。详情和 Device versions 的对照均使用现行事实引用，
 材料缺失或冲突明确显示不可用，不显示“未设置”或旧的成功比较。
 
-Services/Policies 的目录与编辑区按 `05/06` 开放排列。目录搜索、所选对象及新建/复制只是
+Access configuration 将 Services、Policies、Private DNS、Probe targets 作为四个同级视图，
+顶栏不再重复提供 Services 与 Policies。正式 `/services`、`/policies` URL 保留，DNS 与探测池分别使用
+`/services?tab=dns`、`/services?tab=probes`，不新增配置权威。Services/Policies 的目录与编辑区按 `05/06` 开放排列，名称和摘要均
+左对齐。目录搜索、所选对象及新建/复制只是
 浏览输入；冲突对象保留暂停项和 Configuration state 入口，不用旧值生成可写表单，未知
 直达 ID 不打开其他对象。Service matcher 的可增删行只格式化既有 kind/value 列表，suffix
 显示前导点而规范值不含它；最终仍由同一严格 matcher 解析器与 operation 保存。
@@ -553,19 +556,32 @@ Policy/DNS 写入及持久/运行消费、共享/复制的原草稿与依赖、�
 
 ### 服务、发布与管理记录的阅读顺序
 
-Services、DNS、Policies、三平台 Releases、Device versions、Events 与 Administration
+Services、Policies、Private DNS、Probe targets、三平台 Releases、Device versions、Events 与 Administration
 沿用实时路径的组织方式：先选范围，再看对象和结果，异常在所属记录下展开。说明放在相关输入或
 操作旁，不以独立规则卡、重复筛选器或全局步骤进度挤占主体。原型表达目标交互，不表示当前 SPA
 已实现；这些改动只调整 `WebProjection` 的展示，不增加领域、wire、持久或运行时状态。
 
-- Services 与 Policies 先选对象，再在同页编辑。Service 编辑目标并只读列出相关策略；
-  Policy 创建时选择唯一 Service，保存后所属服务只读，规则与引用节点可在同页查看。
+- Services 与 Policies 先选对象，再在同页编辑。Service 依次展示基本信息与目标范围、共享影响与保存、
+  关联策略、只读授权匹配探测目标；后两者基于已保存配置，不能将旧结果显示成编辑草稿已生效。
+  Policy 创建时选择唯一 Service，保存后所属服务只读；访问决定、独立 Direct、入口 → 中间转发 →
+  最终出口按业务顺序排列，受管路径标题为 Paths through Loom；高级限制仍可展开，已配置值进入摘要。
+  LAN 终点只读固定服务网关。
   节点页面仅选择 Policy，服务和规则摘要由选择派生。共享保存明确影响全部引用节点及有效邀请；
   只改单节点时选择另一策略或复制后替换。范围“不限”与“仅所选节点”必须可辨认，空标签不表示不限。
   冲突对象先展示暂停原因及解决入口，不以编辑旧值绕过冲突。
-- DNS 使用精确名称、答案/来源、可编辑性三列。`control.loom` 的两个入口答案归入同名记录展示，
-  仍保留各自承载节点；它不是可写记录。选中普通记录后原位展开编辑区，并列当前生效值与草稿、
-  所属 LAN 服务和解析观测；保存后的本地接受、传播、DNS 及业务观测各自回读。
+- Private DNS 使用精确名称、地址、来源和操作四列，区分系统生成与自定义，名称总数与自定义记录数
+  分开计数。`control.loom` 的多个入口答案归入同名记录展示，仍保留各自承载节点；它不是可写记录。
+  选中普通记录后原位展开编辑区，并列当前生效值与草稿、全部 A/AAAA 答案、所属 LAN 服务和解析观测；
+  保存后的本地接受、传播、DNS 及业务观测各自回读。
+- Probe targets 独立查看和维护完整共享 HTTPS 目标池，使用同一 `probe_target.put/delete` 提交稳定 ID 与 URL。
+  没有设备使用、没有匹配服务或没有观测不影响查看、编辑与删除；使用情况仅为只读摘要。
+  新增/编辑与当前事实分开，删除先显示目标和影响并确认；超时保留原请求重试，冲突保留草稿重新审阅。
+  Service 详情只读显示按该 Service 与各设备有效 Policy 过滤的目标，链接回目标池；Live paths 按设备、
+  Service、候选和实际目标查看观测。池内存在、匹配或保存成功均不表示已经探测或业务可用。
+  管理快照的 `business_probe_targets` 从有效 `NetworkIntent.BusinessProbeTargets` 完整投影，项为
+  `id,url,matched_service_ids`；匹配 ID 由服务端复用正式 Service matcher 和无同名冲突的 DNS 值计算，
+  只表示目标范围匹配。新增/修改只提交规范 `id,url`，不回传匹配 ID、不修改设备策略。
+  未使用项照常可维护；目标冲突原位暂停，未知或已删除的直达 ID 不打开其他对象。新建不能覆盖已知 ID。
 - 三平台发布页依次展示验签目录摘要、三个精确制品、选中制品的设备应用结果。版本与摘要归入文件列，
   受众与分发范围归入同一列，核验结果单列，文件详情原位展开。目录验签不能点亮部署结果；Linux 的匹配、Android
   的缺失回报、Windows 的无部署目标分别表达。最低版本约束未声明时不适用。
@@ -821,6 +837,7 @@ sequenceDiagram
 |---|---|---|---|
 | Services `/services` | 名称、种类、目标 matcher；LAN 选择网关已报告前缀 | 该 Service 的网络意图事实；不保存全局 Policy 字段 | 目标、固定网关、所属策略及经策略引用的节点；创建策略可预选本 Service |
 | Policies `/policies` | 创建时选择 Service、名称、允许/拒绝及路径限制；编辑时 Service 只读 | 一个 Policy 事实，规则修改影响所有引用节点及有效邀请 | 所属 Service、完整规则、引用节点和邀请；新建/复制/共享保存/删除分别有明确动作 |
+| Probe targets `/services?tab=probes` | 查看共享池；新增时填稳定 ID 与 HTTPS URL，已有 ID 只读 | 既有 `probe_target.put/delete`；修改目标池不扩大 Service 或 Policy 权限 | 目标原值与范围匹配分别回读，未使用项保留；实际探测仍看 Live paths |
 | 添加设备 `/devices?new=1` | 职责、交付方式、名称及所需目标；含 access 时只多选 Policy | 签发固定 PolicyIDs 的 Invite；平台由目标识别 | 派生服务/规则摘要，随后回读邀请、授权与实际应用 |
 | 设备详情 `/devices/{id}` | 查看本次添加；已加入后增加、移除或替换所选策略 | 未加入时只投影已有 Invite；策略修改仅更新该设备 PolicyIDs | 从待加入到已加入共用入口；执行、绑定、授权、成员签名、配置与运行分别回读 |
 | 添加交付 `/devices/invites/{id}` | SSH 执行结果，或复制本次安装命令/取得二维码 | 复用 Invite 生命周期；只有纯 access 可有 QR | 目标与本次交付明确，直接进入同一 DeviceID 的详情查看后续结果 |
