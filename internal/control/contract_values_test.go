@@ -2,11 +2,60 @@ package control
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"math"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestDigestValidationPreservesCanonicalHex(t *testing.T) {
+	// Compare every single-byte substitution with the established hex round
+	// trip, including uppercase, control bytes, and invalid UTF-8.
+	value := []byte("sha256:" + strings.Repeat("a", 64))
+	for index := range value {
+		original := value[index]
+		for replacement := range 256 {
+			value[index] = byte(replacement)
+			text := string(value)
+			decoded, err := hex.DecodeString(text[len("sha256:"):])
+			want := strings.HasPrefix(text, "sha256:") && err == nil && hex.EncodeToString(decoded) == text[len("sha256:"):]
+			if got := ValidateDigest(text) == nil; got != want {
+				t.Fatalf("digest acceptance changed at byte %d, value %d", index, replacement)
+			}
+		}
+		value[index] = original
+	}
+}
+
+func TestObservationTuplePreservesDelimitedOrder(t *testing.T) {
+	ordered := func(value Observation) string {
+		return strings.Join([]string{value.NetworkGeneration, value.Level, value.ServiceID, value.CandidateID, value.ResourceID, value.LinkID, value.Target, value.Action, value.SpecDigest}, "\x00")
+	}
+	fields := func(values [9]string) Observation {
+		return Observation{NetworkGeneration: values[0], Level: values[1], ServiceID: values[2], CandidateID: values[3], ResourceID: values[4], LinkID: values[5], Target: values[6], Action: values[7], SpecDigest: values[8]}
+	}
+	// Empty fields, prefixes, and multi-byte text exercise the delimiter
+	// boundary that must retain exactly the original signed collection order.
+	for _, prefix := range []string{"", "demo", "中文"} {
+		for index := range 9 {
+			for _, left := range []string{"", "a", "aa", "b", "中文"} {
+				for _, right := range []string{"", "a", "aa", "b", "中文"} {
+					var a, b [9]string
+					for before := 0; before < index; before++ {
+						a[before], b[before] = prefix, prefix
+					}
+					a[index], b[index] = left, right
+					a[8], b[8] = "z"+a[8], "a"+b[8]
+					l, r := fields(a), fields(b)
+					if compareObservationOrder(l, r) != strings.Compare(ordered(l), ordered(r)) {
+						t.Fatalf("observation order changed at field %d", index)
+					}
+				}
+			}
+		}
+	}
+}
 
 func TestContractScalarBoundaries(t *testing.T) {
 	for _, test := range []struct {

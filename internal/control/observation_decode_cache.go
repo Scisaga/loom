@@ -13,29 +13,113 @@ import (
 
 const reportCacheBytes = 16 << 20
 
+// Conservative charges include allocator rounding, entry/list/map slots, ID
+// backing storage and retained Swiss-map split slack. Pool map/value overhead is charged
+// separately from the shared strings, never once per referring report.
+const reportCacheEntryCost = 352
+const reportCachePoolCost = 256
+const reportCacheBaseCost = 1024
+
 type reportCacheEntry struct {
-	id          string
+	id       string
+	sequence U64
+	identity *reportCacheIdentity
+	runtime  *reportCacheRuntime
+	cost     int
+}
+
+type reportCacheIdentityKey struct {
+	owner       reportOwner
 	verifiedKey string
-	cost        int
-	position    reportPosition
-	runtime     RuntimeReadback
+}
+
+type reportCacheIdentity struct {
+	value reportCacheIdentityKey
+	refs  int
+	cost  int
+}
+
+type reportCacheRuntimeKey struct {
+	state, appliedViewDigest, errorCode string
+}
+
+type reportCacheRuntime struct {
+	value reportCacheRuntimeKey
+	refs  int
+	cost  int
 }
 
 // Immutable canonical-validation and signature results only. Dynamic authorization is never cached.
+// Shared identity/runtime scalars have exactly the referring LRU entries' lifetime.
 type reportCache struct {
-	mu    sync.Mutex
-	items map[string]*list.Element
-	lru   list.List
-	bytes int
+	mu         sync.Mutex
+	items      map[string]*list.Element
+	identities map[reportCacheIdentityKey]*reportCacheIdentity
+	runtimes   map[reportCacheRuntimeKey]*reportCacheRuntime
+	lru        list.List
+	bytes      int
 }
 
 func (cache *reportCache) clear() {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	cache.items = nil
+	cache.items, cache.identities, cache.runtimes = nil, nil, nil
 	cache.lru.Init()
 	cache.bytes = 0
 }
+
+func reportCacheStringCost(value string) int {
+	return (len(value) + 15) &^ 15
+}
+
+func (cache *reportCache) rememberCanonical(id string) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.items == nil {
+		cache.items = map[string]*list.Element{}
+		cache.identities = map[reportCacheIdentityKey]*reportCacheIdentity{}
+		cache.runtimes = map[reportCacheRuntimeKey]*reportCacheRuntime{}
+		cache.bytes = reportCacheBaseCost
+	}
+	if cache.items[id] != nil {
+		return
+	}
+	for cache.bytes+reportCacheEntryCost > reportCacheBytes {
+		cache.evict()
+	}
+	cache.items[id] = cache.lru.PushFront(&reportCacheEntry{id: id, cost: reportCacheEntryCost})
+	cache.bytes += reportCacheEntryCost
+}
+
+// All pool mutations and evictions run under cache.mu.
+func (cache *reportCache) release(value *reportCacheEntry) {
+	if identity := value.identity; identity != nil {
+		identity.refs--
+		if identity.refs == 0 {
+			delete(cache.identities, identity.value)
+			cache.bytes -= identity.cost
+		}
+		value.identity = nil
+	}
+	if runtime := value.runtime; runtime != nil {
+		runtime.refs--
+		if runtime.refs == 0 {
+			delete(cache.runtimes, runtime.value)
+			cache.bytes -= runtime.cost
+		}
+		value.runtime = nil
+	}
+}
+
+func (cache *reportCache) evict() {
+	old := cache.lru.Back()
+	value := old.Value.(*reportCacheEntry)
+	cache.release(value)
+	cache.bytes -= value.cost
+	delete(cache.items, value.id)
+	cache.lru.Remove(old)
+}
+
 func (store *ObservationStore) decodedReport(raw []byte) (DeviceReport, error) {
 	return store.decodedReportWithID(raw, ReleaseDigest(raw))
 }
@@ -68,23 +152,7 @@ func (store *ObservationStore) decodedReportWithCodec(raw []byte, id string, cod
 		return report, err
 	}
 	// Keep only immutable validation results, never entire report bodies.
-	const cost = 512
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if cache.items == nil {
-		cache.items = map[string]*list.Element{}
-	}
-	if cache.items[id] == nil {
-		for cache.bytes+cost > reportCacheBytes || len(cache.items) >= reportCacheBytes/cost {
-			old := cache.lru.Back()
-			value := old.Value.(*reportCacheEntry)
-			cache.bytes -= value.cost
-			delete(cache.items, value.id)
-			cache.lru.Remove(old)
-		}
-		cache.items[id] = cache.lru.PushFront(&reportCacheEntry{id: id, cost: cost})
-		cache.bytes += cost
-	}
+	cache.rememberCanonical(id)
 	return report, nil
 }
 func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceReport, error) {
@@ -95,9 +163,12 @@ func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceRep
 	}
 	cache := &store.cache
 	cache.mu.Lock()
-	if element := cache.items[id]; element != nil && key != "" && element.Value.(*reportCacheEntry).verifiedKey == key {
-		cache.mu.Unlock()
-		return report, nil
+	if element := cache.items[id]; element != nil && key != "" {
+		value := element.Value.(*reportCacheEntry)
+		if value.identity != nil && value.identity.value.verifiedKey == key {
+			cache.mu.Unlock()
+			return report, nil
+		}
 	}
 	cache.mu.Unlock()
 	if err := report.Verify(key); err != nil {
@@ -110,26 +181,51 @@ func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceRep
 func (store *ObservationStore) rememberVerifiedRuntime(id, key string, report DeviceReport) {
 	cache := &store.cache
 	cache.mu.Lock()
-	if element := cache.items[id]; element != nil {
-		value := element.Value.(*reportCacheEntry)
-		// Keep only the immutable identity position and scalar runtime fields.
-		// Listener arrays and all business observations stay in the original.
-		cost := 512 + len(report.NetworkID) + len(report.DeviceID) + len(key) + len(report.Runtime.State) + len(report.Runtime.AppliedViewDigest) + len(report.Runtime.ErrorCode)
-		cache.bytes -= value.cost
-		value.cost, value.verifiedKey = cost, strings.Clone(key)
-		value.position = reportPosition{reportOwner{strings.Clone(report.NetworkID), strings.Clone(report.DeviceID)}, report.ReportSequence}
-		value.runtime = RuntimeReadback{State: strings.Clone(report.Runtime.State), AppliedViewDigest: strings.Clone(report.Runtime.AppliedViewDigest), ErrorCode: strings.Clone(report.Runtime.ErrorCode)}
-		cache.bytes += cost
-		cache.lru.MoveToFront(element)
-		for cache.bytes > reportCacheBytes {
-			old := cache.lru.Back()
-			entry := old.Value.(*reportCacheEntry)
-			cache.bytes -= entry.cost
-			delete(cache.items, entry.id)
-			cache.lru.Remove(old)
-		}
+	defer cache.mu.Unlock()
+	element := cache.items[id]
+	if element == nil {
+		return
 	}
-	cache.mu.Unlock()
+	value := element.Value.(*reportCacheEntry)
+	identityKey := reportCacheIdentityKey{reportOwner{report.NetworkID, report.DeviceID}, key}
+	runtimeKey := reportCacheRuntimeKey{report.Runtime.State, report.Runtime.AppliedViewDigest, report.Runtime.ErrorCode}
+	cache.lru.MoveToFront(element)
+	if value.identity != nil && value.runtime != nil && value.identity.value == identityKey && value.runtime.value == runtimeKey {
+		return
+	}
+	cache.release(value)
+	identityCost := reportCachePoolCost + reportCacheStringCost(report.NetworkID) + reportCacheStringCost(report.DeviceID) + reportCacheStringCost(key)
+	runtimeCost := reportCachePoolCost + reportCacheStringCost(report.Runtime.State) + reportCacheStringCost(report.Runtime.AppliedViewDigest) + reportCacheStringCost(report.Runtime.ErrorCode)
+	for {
+		extra := 0
+		if cache.identities[identityKey] == nil {
+			extra += identityCost
+		}
+		if cache.runtimes[runtimeKey] == nil {
+			extra += runtimeCost
+		}
+		if cache.bytes+extra <= reportCacheBytes {
+			break
+		}
+		cache.evict()
+	}
+	identity := cache.identities[identityKey]
+	if identity == nil {
+		owned := reportCacheIdentityKey{reportOwner{strings.Clone(report.NetworkID), strings.Clone(report.DeviceID)}, strings.Clone(key)}
+		identity = &reportCacheIdentity{value: owned, cost: identityCost}
+		cache.identities[owned] = identity
+		cache.bytes += identityCost
+	}
+	runtime := cache.runtimes[runtimeKey]
+	if runtime == nil {
+		owned := reportCacheRuntimeKey{strings.Clone(report.Runtime.State), strings.Clone(report.Runtime.AppliedViewDigest), strings.Clone(report.Runtime.ErrorCode)}
+		runtime = &reportCacheRuntime{value: owned, cost: runtimeCost}
+		cache.runtimes[owned] = runtime
+		cache.bytes += runtimeCost
+	}
+	identity.refs++
+	runtime.refs++
+	value.identity, value.runtime, value.sequence = identity, runtime, report.ReportSequence
 }
 
 // The input remains freshly read original bytes. This projection never renews
@@ -150,25 +246,33 @@ func (store *ObservationStore) originalRuntimeKeysWithID(raw []byte, id string, 
 }
 
 func (store *ObservationStore) originalRuntimeKeysWithCodec(raw []byte, id string, keys []string, codec *contractCodec) (reportReference, RuntimeReadback, error) {
+	reference, runtime, _, err := store.originalRuntimeKeysWithCodecAndKey(raw, id, keys, codec)
+	return reference, runtime, err
+}
+
+// The successful key is a query-local ordering hint, never an additional
+// identity. Cache hits and cold verification both require it in this key set.
+func (store *ObservationStore) originalRuntimeKeysWithCodecAndKey(raw []byte, id string, keys []string, codec *contractCodec) (reportReference, RuntimeReadback, string, error) {
 	cache := &store.cache
 	cache.mu.Lock()
 	if element := cache.items[id]; element != nil {
 		value := element.Value.(*reportCacheEntry)
-		if value.verifiedKey != "" && containsString(keys, value.verifiedKey) && value.runtime.State != "" {
+		if value.identity != nil && value.runtime != nil && containsString(keys, value.identity.value.verifiedKey) {
 			cache.lru.MoveToFront(element)
-			position, runtime := value.position, value.runtime
+			identity, runtime, sequence := value.identity.value, value.runtime.value, value.sequence
 			cache.mu.Unlock()
-			return reportReference{NetworkID: position.owner.network, DeviceID: position.owner.device, ReportSequence: position.sequence}, runtime, nil
+			return reportReference{NetworkID: identity.owner.network, DeviceID: identity.owner.device, ReportSequence: sequence},
+				RuntimeReadback{State: runtime.state, AppliedViewDigest: runtime.appliedViewDigest, ErrorCode: runtime.errorCode}, identity.verifiedKey, nil
 		}
 	}
 	cache.mu.Unlock()
 	report, err := store.decodedReportWithCodec(raw, id, codec)
 	if err != nil {
-		return reportReference{}, RuntimeReadback{}, err
+		return reportReference{}, RuntimeReadback{}, "", err
 	}
 	message, err := reportMessageFromCanonical(raw, report.Signature)
 	if err != nil {
-		return reportReference{}, RuntimeReadback{}, err
+		return reportReference{}, RuntimeReadback{}, "", err
 	}
 	signature, _ := base64.RawURLEncoding.DecodeString(report.Signature)
 	for _, key := range keys {
@@ -178,10 +282,22 @@ func (store *ObservationStore) originalRuntimeKeysWithCodec(raw []byte, id strin
 		}
 		if ed25519.Verify(ed25519.PublicKey(public), message, signature) {
 			store.rememberVerifiedRuntime(id, key, report)
-			return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, nil
+			return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, key, nil
 		}
 	}
-	return reportReference{}, RuntimeReadback{}, errors.New("no historical identity verifies report")
+	return reportReference{}, RuntimeReadback{}, "", errors.New("no historical identity verifies report")
+}
+
+// Only reorder an existing key in a caller-owned query copy. The accepted set
+// and the order of every other historical key stay unchanged.
+func preferHistoricalReportKey(keys []string, verified string) {
+	for i, key := range keys {
+		if key == verified {
+			copy(keys[1:i+1], keys[:i])
+			keys[0] = verified
+			return
+		}
+	}
 }
 
 // Only for an original that already passed strict canonical decoding and

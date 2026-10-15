@@ -102,12 +102,14 @@ func TestWebEventsIndependentDeviceHistoryAndCorruption(t *testing.T) {
 	server, now := eventTestServer(t)
 	store := server.Runtime.Reports
 	keys := map[string][]string{}
+	other := testKey(t)
+	otherKey := base64.RawURLEncoding.EncodeToString(other.Public().(ed25519.PublicKey))
 	var last DeviceReport
 	for device := range 4 {
 		id := fmt.Sprintf("demo-device-%d", device)
 		key := testKey(t)
 		public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
-		keys[id] = []string{public}
+		keys[id] = []string{otherKey, public}
 		for sequence := 1; sequence <= 2; sequence++ {
 			state := "running"
 			if sequence == 2 {
@@ -136,6 +138,11 @@ func TestWebEventsIndependentDeviceHistoryAndCorruption(t *testing.T) {
 	if err != nil || len(values) != 8 {
 		t.Fatal("independent device histories lost a baseline or change", len(values), err)
 	}
+	for _, historical := range keys {
+		if len(historical) != 2 || historical[0] != otherKey {
+			t.Fatal("query ordering mutated a shared historical identity slice")
+		}
+	}
 	for _, value := range values {
 		if value.Source != value.Subject || keys[value.Source] == nil || value.From != "" && (value.From != "running" || value.To != "stopped") {
 			t.Fatal("one device inherited another device's predecessor", value)
@@ -154,6 +161,27 @@ func TestWebEventsIndependentDeviceHistoryAndCorruption(t *testing.T) {
 	}
 	if values, err := query(); err == nil || values != nil {
 		t.Fatal("a corrupt device history returned a partial successful query")
+	}
+}
+
+func TestWebEventsLongSingleDeviceHistoryKeepsPredecessors(t *testing.T) {
+	server, now := eventTestServer(t)
+	for sequence := 1; sequence <= 600; sequence++ {
+		state := "running"
+		if sequence >= 513 {
+			state = "stopped"
+		}
+		eventTestReport(t, server, sequence, state, now.Add(-time.Hour+time.Duration(sequence)*time.Second))
+	}
+	query := url.Values{"from": {now.Add(-2 * time.Hour).Format(time.RFC3339Nano)}, "until": {now.Format(time.RFC3339Nano)}, "kind": {"runtime"}}
+	server.Runtime.Reports.cache.clear()
+	result := eventTestQuery(t, server, query)
+	if result.Total != 2 || len(result.Events) != 2 || result.Events[0].From != "running" || result.Events[0].To != "stopped" || result.Events[1].From != "" || result.Events[1].To != "running" {
+		t.Fatal("a long single-device history lost its exact predecessor or invented changes", result.Events)
+	}
+	server.Runtime.Reports.cache.clear()
+	if again := eventTestQuery(t, server, query); !reflect.DeepEqual(result, again) {
+		t.Fatal("parallel scheduling changed the complete single-device history")
 	}
 }
 

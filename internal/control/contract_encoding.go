@@ -48,10 +48,14 @@ func newContractCodec() *contractCodec {
 }
 
 func (codec *contractCodec) encode(value any) ([]byte, error) {
+	return codec.encodeCapacity(value, 0)
+}
+
+func (codec *contractCodec) encodeCapacity(value any, capacity int) ([]byte, error) {
 	if err := codec.inspect(reflect.ValueOf(value), map[contractVisit]bool{}); err != nil {
 		return nil, err
 	}
-	return codec.append(nil, reflect.ValueOf(value))
+	return codec.append(make([]byte, 0, capacity), reflect.ValueOf(value))
 }
 
 // DecodeCanonical accepts only exact, typed contract bytes. The output is not
@@ -70,15 +74,11 @@ func (codec *contractCodec) decode(body []byte, out any, limits ContractDecodeLi
 	if err := codec.inspectType(target.Type().Elem()); err != nil {
 		return err
 	}
-	parsed, err := parseContractJSON(body, limits)
-	if err != nil {
-		return err
-	}
 	next := reflect.New(target.Type().Elem())
-	if err := codec.assign(parsed, next.Elem()); err != nil {
+	if err := parseContractJSONInto(body, next.Elem(), codec, limits); err != nil {
 		return err
 	}
-	want, err := codec.encode(next.Elem().Interface())
+	want, err := codec.encodeCapacity(next.Elem().Interface(), len(body))
 	if err != nil {
 		return err
 	}
@@ -549,16 +549,21 @@ func appendContractJSON(body []byte, value any) []byte {
 func appendContractString(body []byte, value string) []byte {
 	const hex = "0123456789abcdef"
 	body = append(body, '"')
+	start := 0
 	for index := range len(value) {
 		character := value[index]
 		switch {
 		case character == '"' || character == '\\':
+			body = append(body, value[start:index]...)
 			body = append(body, '\\', character)
 		case character < 0x20:
+			body = append(body, value[start:index]...)
 			body = append(body, '\\', 'u', '0', '0', hex[character>>4], hex[character&15])
 		default:
-			body = append(body, character)
+			continue
 		}
+		start = index + 1
 	}
+	body = append(body, value[start:]...)
 	return append(body, '"')
 }

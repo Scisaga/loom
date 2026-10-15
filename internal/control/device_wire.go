@@ -311,8 +311,18 @@ func (observation Observation) Validate() error {
 	return nil
 }
 
-func observationOrder(value Observation) string {
-	return strings.Join([]string{value.NetworkGeneration, value.Level, value.ServiceID, value.CandidateID, value.ResourceID, value.LinkID, value.Target, value.Action, value.SpecDigest}, "\x00")
+// Valid observations contain no NUL in these fields, so tuple order is exactly
+// the signed report's existing NUL-delimited order without joining two strings
+// for every adjacent comparison.
+func compareObservationOrder(left, right Observation) int {
+	a := [...]string{left.NetworkGeneration, left.Level, left.ServiceID, left.CandidateID, left.ResourceID, left.LinkID, left.Target, left.Action, left.SpecDigest}
+	b := [...]string{right.NetworkGeneration, right.Level, right.ServiceID, right.CandidateID, right.ResourceID, right.LinkID, right.Target, right.Action, right.SpecDigest}
+	for index := range a {
+		if order := strings.Compare(a[index], b[index]); order != 0 {
+			return order
+		}
+	}
+	return 0
 }
 
 type DeviceReport struct {
@@ -373,7 +383,7 @@ func (report DeviceReport) validateFields() error {
 		}
 	}
 	for index, observation := range report.Observations {
-		if observation.Validate() != nil || observation.NetworkGeneration != report.NetworkGeneration || index > 0 && observationOrder(report.Observations[index-1]) >= observationOrder(observation) {
+		if observation.Validate() != nil || observation.NetworkGeneration != report.NetworkGeneration || index > 0 && compareObservationOrder(report.Observations[index-1], observation) >= 0 {
 			return errors.New("report observations are invalid or not uniquely sorted")
 		}
 	}

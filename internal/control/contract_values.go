@@ -2,7 +2,6 @@ package control
 
 import (
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/netip"
@@ -63,10 +62,11 @@ func ValidateDigest(value string) error {
 	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
 		return errors.New("contract digest is invalid")
 	}
-	encoded := strings.TrimPrefix(value, "sha256:")
-	decoded, err := hex.DecodeString(encoded)
-	if err != nil || hex.EncodeToString(decoded) != encoded {
-		return errors.New("contract digest is not canonical")
+	for index := len("sha256:"); index < len(value); index++ {
+		character := value[index]
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+			return errors.New("contract digest is not canonical")
+		}
 	}
 	return nil
 }

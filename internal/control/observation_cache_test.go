@@ -143,6 +143,54 @@ func TestEventRuntimeMessagePreservesSignedCanonicalFields(t *testing.T) {
 	}
 }
 
+func TestEventRuntimePreferredKeyKeepsHistoricalAcceptance(t *testing.T) {
+	first, second, other := testKey(t), testKey(t), testKey(t)
+	public := func(key ed25519.PrivateKey) string {
+		return base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	}
+	firstKey, secondKey, otherKey := public(first), public(second), public(other)
+	keys := []string{otherKey, firstKey, secondKey}
+	preferred := append([]string(nil), keys...)
+	store := &ObservationStore{}
+	codec := newContractCodec()
+	var firstRaw []byte
+	for i, key := range []ed25519.PrivateKey{first, second, first} {
+		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ReportSequence: U64(i + 1),
+			ViewDigest: "sha256:" + strings.Repeat("0", 64), NetworkGeneration: "demo-underlay", ReportedAt: int64(i + 1),
+			Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "stopped"}}, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := CanonicalEncode(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			firstRaw = raw
+		}
+		_, _, verified, err := store.originalRuntimeKeysWithCodecAndKey(raw, ReleaseDigest(raw), preferred, codec)
+		if err != nil || verified != public(key) {
+			t.Fatal("a previously preferred different key changed cold signature verification", err)
+		}
+		preferHistoricalReportKey(preferred, verified)
+		if preferred[0] != verified || keys[0] != otherKey || keys[1] != firstKey || keys[2] != secondKey {
+			t.Fatal("query key ordering changed the shared historical key slice")
+		}
+	}
+	_, _, verified, err := store.originalRuntimeKeysWithCodecAndKey(firstRaw, ReleaseDigest(firstRaw), preferred, codec)
+	if err != nil || verified != firstKey {
+		t.Fatal("cached verification did not return its exact accepted key", err)
+	}
+	for _, cold := range []bool{false, true} {
+		if cold {
+			store.cache.clear()
+		}
+		if _, _, verified, err := store.originalRuntimeKeysWithCodecAndKey(firstRaw, ReleaseDigest(firstRaw), []string{secondKey, otherKey}, codec); err == nil || verified != "" {
+			t.Fatal("a successful key hint supplied a removed historical identity")
+		}
+	}
+}
+
 func TestCanonicalReportMessageRemovesOnlyItsTopLevelSignature(t *testing.T) {
 	for _, item := range []struct{ raw, unsigned string }{
 		{`{"signature":"top","z":{"signature":"nested"}}`, `{"z":{"signature":"nested"}}`},

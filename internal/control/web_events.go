@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -593,10 +594,16 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 		// in this query. Reception order need not match sequence order: any other
 		// predecessor still comes freshly from the database below.
 		last := map[string]verifiedRuntime{}
+		historicalKeys := map[string][]string{}
 		for _, location := range locations {
 			_, ref, err := locateReportKey(location.key)
 			if err != nil {
 				return nil, err
+			}
+			deviceKeys, copied := historicalKeys[ref.DeviceID]
+			if !copied {
+				deviceKeys = append([]string(nil), keys[ref.DeviceID]...)
+				historicalKeys[ref.DeviceID] = deviceKeys
 			}
 			preceding, found := last[ref.DeviceID]
 			reusePrevious := location.previous != nil && found && bytes.Equal(preceding.key, location.previous)
@@ -618,10 +625,11 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 				return nil, err
 			}
 			id := ReleaseDigest(raw)
-			reference, runtime, err := store.originalRuntimeKeysWithCodec(raw, id, keys[ref.DeviceID], codec)
+			reference, runtime, verifiedKey, err := store.originalRuntimeKeysWithCodecAndKey(raw, id, deviceKeys, codec)
 			if err != nil || !bytes.Equal(reference.key(id), location.key) {
 				return nil, errors.New("received report does not verify")
 			}
+			preferHistoricalReportKey(deviceKeys, verifiedKey)
 			last[reference.DeviceID] = verifiedRuntime{location.key, runtime}
 			previousState := ""
 			detail := "Authenticated runtime baseline: " + runtime.State + "."
@@ -630,10 +638,11 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 				if !reusePrevious {
 					priorID := ReleaseDigest(prior)
 					var priorReference reportReference
-					priorReference, previous, err = store.originalRuntimeKeysWithCodec(prior, priorID, keys[reference.DeviceID], codec)
+					priorReference, previous, verifiedKey, err = store.originalRuntimeKeysWithCodecAndKey(prior, priorID, deviceKeys, codec)
 					if err != nil || !bytes.Equal(priorReference.key(priorID), location.previous) {
 						return nil, errors.New("previous runtime report does not verify")
 					}
+					preferHistoricalReportKey(deviceKeys, verifiedKey)
 				}
 				if previous.State == runtime.State && previous.AppliedViewDigest == runtime.AppliedViewDigest && previous.ErrorCode == runtime.ErrorCode {
 					continue
@@ -661,24 +670,44 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 		devices = append(devices, device)
 	}
 	sort.Strings(devices)
-	projected := make([][]WebEvent, len(devices))
+	// These batches contain only existing location references, never report
+	// bodies. A batch's first predecessor is read afresh by project above.
+	var batches [][]original
+	for _, device := range devices {
+		remaining := locations[device]
+		for len(remaining) > 0 {
+			size := min(512, len(remaining))
+			batches = append(batches, remaining[:size])
+			remaining = remaining[size:]
+		}
+	}
+	projected := make([][]WebEvent, len(batches))
 	var workers sync.WaitGroup
 	var failed sync.Once
+	var dispatch sync.Mutex
+	next := 0
 	var firstError error
-	// Two independent device streams bound temporary decoded bodies and keep
-	// a long query from serializing all signature work onto one CPU. Each
+	// Four workers bound temporary decoded bodies even when one device owns
+	// most of the history, without increasing the verification cache. Each
 	// worker owns only static codec metadata, never a report or result cache.
-	parallel := min(2, len(devices))
-	for worker := range parallel {
+	parallel := min(4, runtime.GOMAXPROCS(0), len(batches))
+	for range parallel {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			codec := newContractCodec()
-			for index := worker; index < len(devices); index += parallel {
+			for {
 				if ctx.Err() != nil {
 					return
 				}
-				values, err := project(locations[devices[index]], codec)
+				dispatch.Lock()
+				index := next
+				next++
+				dispatch.Unlock()
+				if index >= len(batches) {
+					return
+				}
+				values, err := project(batches[index], codec)
 				if err != nil {
 					failed.Do(func() { firstError = err; cancel() })
 					return
@@ -690,6 +719,9 @@ func (store *ObservationStore) runtimeEvents(ctx context.Context, network string
 	workers.Wait()
 	if firstError != nil {
 		return nil, since, firstError
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, since, err
 	}
 	result := []WebEvent{}
 	for _, values := range projected {

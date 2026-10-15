@@ -102,7 +102,7 @@ func TestWebChromeRuntimeAndDifferentServiceResultsRemainSeparate(t *testing.T) 
 	}
 	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
 	sort.Slice(report.Observations, func(i, j int) bool {
-		return observationOrder(report.Observations[i]) < observationOrder(report.Observations[j])
+		return compareObservationOrder(report.Observations[i], report.Observations[j]) < 0
 	})
 	report, err = SignDeviceReport(report, fixture.keys[0])
 	if err != nil || verifyCurrentReport(report, projection) != nil {
