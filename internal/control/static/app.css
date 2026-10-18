@@ -672,7 +672,6 @@ fieldset {
 .events-range label {display:flex;flex-direction:column;gap:6px;flex:1;color:var(--dim);font-size:12px}
 .events-range small {color:var(--dim);font-size:12px;max-width:200px}
 .event-history {margin:20px 0 14px}
-.event-history h2 {font-size:18px}
 .event-chart-scroll {overflow-x:auto;padding:18px 0 0}
 .event-chart {display:block;width:100%;min-width:900px;height:190px}
 .event-chart-axis {display:flex;justify-content:space-between;font-size:11px;color:var(--dim);padding:8px 0 0 44px}
