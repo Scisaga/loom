@@ -59,7 +59,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(projection())
 			return
 		case "/api/control/ui/live":
-			connection, err := websocket.Accept(w, r, nil)
+			connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"loom.control.ui"}})
 			if err != nil {
 				return
 			}
@@ -67,7 +67,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 			ticker := time.NewTicker(100 * time.Millisecond)
 			defer ticker.Stop()
 			for {
-				if wsjson.Write(r.Context(), connection, projection()) != nil {
+				if wsjson.Write(r.Context(), connection, map[string]any{"schema": 3, "snapshot": projection()}) != nil {
 					return
 				}
 				select {

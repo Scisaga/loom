@@ -163,7 +163,7 @@ func testCollectReports(t *testing.T, store *ObservationStore) *testReportCollec
 				return err
 			}
 			result.reports[id] = ref
-			group := storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence)}}
+			group := storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence), reportLeafHeight}}
 			result.groups[group] = append(result.groups[group], id)
 			return nil
 		})

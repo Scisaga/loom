@@ -189,7 +189,7 @@ func TestAdminGrantVerifiedTLSWriteRevocationAndRestart(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	ws, _, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(h.URL, "https")+"/api/control/ui/live", &websocket.DialOptions{HTTPClient: client})
+	ws, _, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(h.URL, "https")+"/api/control/ui/live", &websocket.DialOptions{HTTPClient: client, Subprotocols: []string{"loom.control.ui"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestAdminGrantVerifiedTLSWriteRevocationAndRestart(t *testing.T) {
 		t.Fatal("expired administrator WebSocket remained authorized", err)
 	}
 	clock.Store(time.Now().UnixMilli())
-	ws2, _, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(h.URL, "https")+"/api/control/ui/live", &websocket.DialOptions{HTTPClient: client})
+	ws2, _, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(h.URL, "https")+"/api/control/ui/live", &websocket.DialOptions{HTTPClient: client, Subprotocols: []string{"loom.control.ui"}})
 	if err != nil {
 		t.Fatal(err)
 	}

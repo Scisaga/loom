@@ -48,7 +48,7 @@ func TestQuietWebSocketStopsReadingAfterBrowserDisconnect(t *testing.T) {
 			defer client.CloseIdleConnections()
 			request, stop := context.WithTimeout(ctx, 8*time.Second)
 			defer stop()
-			ws, _, err := websocket.Dial(request, "wss"+strings.TrimPrefix(h.URL, "https")+"/api/control/ui/live", &websocket.DialOptions{HTTPClient: client})
+			ws, _, err := websocket.Dial(request, "wss"+strings.TrimPrefix(h.URL, "https")+"/api/control/ui/live", &websocket.DialOptions{HTTPClient: client, Subprotocols: []string{"loom.control.ui"}})
 			if err != nil {
 				t.Fatal(err)
 			}

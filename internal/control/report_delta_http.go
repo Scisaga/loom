@@ -32,15 +32,12 @@ func (server *Server) internalReportIDs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	projection := server.Runtime.Authority.Snapshot()
-	value := reportIDs{3, projection.NetworkID, []reportRangeIDs{}}
-	for _, scope := range request.Ranges {
-		ids, err := server.Runtime.Reports.reportIDs(r.Context(), projection, scope)
-		if err != nil {
-			http.Error(w, "report range unavailable", http.StatusForbidden)
-			return
-		}
-		value.Ranges = append(value.Ranges, reportRangeIDs{scope.DeviceID, scope.FirstSequence, ids})
+	value, err := server.Runtime.Reports.expandReportTree(r.Context(), projection, request.Ranges)
+	if err != nil {
+		http.Error(w, "report tree unavailable", http.StatusForbidden)
+		return
 	}
+
 	writeReportIndex(w, value)
 }
 func writeReportIndex(w http.ResponseWriter, value any) {

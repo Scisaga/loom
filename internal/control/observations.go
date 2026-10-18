@@ -114,6 +114,16 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 			})
 		}
 	}
+	if err == nil {
+		ready := false
+		err = store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+			ready = tx.Bucket(reportIndexBucket).Bucket(reportTreeBucket) != nil
+			return nil
+		})
+		if err == nil && !ready {
+			err = store.withDatabase(context.Background(), true, ensureReportTreeIndex)
+		}
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -261,7 +271,7 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 			if position.sequence != ^U64(0) {
 				changed[reportPosition{owner, position.sequence + 1}] = true
 			}
-			touched[storedReportRange{report.NetworkID, reportScope{report.DeviceID, reportRangeStart(report.ReportSequence)}}] = true
+			touched[storedReportRange{report.NetworkID, reportScope{report.DeviceID, reportRangeStart(report.ReportSequence), reportLeafHeight}}] = true
 		}
 		for owner := range changedOwners {
 			earliest, err := lowestReportPosition(bucket, owner)

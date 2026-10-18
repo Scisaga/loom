@@ -24,6 +24,8 @@ import (
 type reportTransferCapture struct {
 	mu          sync.Mutex
 	calls       int
+	indexBytes  int
+	indexCalls  int
 	failCall    int
 	sent        map[string]int
 	forgedID    string
@@ -64,7 +66,8 @@ func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) h
 					return
 				}
 				ids, _ := CanonicalEncode([]string{forgedID})
-				value.Ranges = []reportRangeSummary{{forgedScope.DeviceID, forgedScope.FirstSequence, ReleaseDigest(ids)}}
+				value.Ranges = []reportRangeSummary{summaryOf(reportScope{forgedScope.DeviceID, 1, 64}, ReleaseDigest(ids))}
+				value.Heads = []reportRangeSummary{summaryOf(forgedScope, ReleaseDigest(ids))}
 				encoded, _ = CanonicalEncode(value)
 			} else {
 				var value reportIDs
@@ -73,11 +76,25 @@ func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) h
 					http.Error(w, "demo decode failed", 500)
 					return
 				}
-				value.Ranges = []reportRangeIDs{{forgedScope.DeviceID, forgedScope.FirstSequence, []string{forgedID}}}
+				value.Ranges = []reportRangeIDs{{forgedScope.DeviceID, forgedScope.FirstSequence, reportLeafHeight, []reportRangeSummary{}, []string{forgedID}}}
 				encoded, _ = CanonicalEncode(value)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(encoded)
+			return
+		}
+		if r.URL.Path == "/internal/report-ranges" || r.URL.Path == "/internal/report-ids" {
+			recorded := httptest.NewRecorder()
+			next.ServeHTTP(recorded, r)
+			capture.mu.Lock()
+			capture.indexBytes += recorded.Body.Len() + int(max(0, r.ContentLength))
+			capture.indexCalls++
+			capture.mu.Unlock()
+			for key, values := range recorded.Header() {
+				w.Header()[key] = values
+			}
+			w.WriteHeader(recorded.Code)
+			_, _ = w.Write(recorded.Body.Bytes())
 			return
 		}
 		if r.URL.Path != "/internal/reports" {
@@ -343,14 +360,21 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 		t.Error("some original reports never crossed the member channel", len(capture.sent))
 	}
 	calls := capture.calls
+	indexBefore, callsBefore := capture.indexBytes, capture.indexCalls
 	capture.mu.Unlock()
 	if err := syncPeer(1, 0); err != nil {
 		t.Fatal(err)
 	}
 	capture.mu.Lock()
 	if capture.calls != calls {
-		t.Error("equal range digests caused another report body transfer")
+		t.Error("equal tree roots caused another report body transfer")
 	}
+	idleBytes, idleCalls := capture.indexBytes-indexBefore, capture.indexCalls-callsBefore
+	if idleCalls != 1 || idleBytes > 2048 {
+		t.Error("unchanged history retransmitted a directory", idleBytes, idleCalls)
+	}
+	t.Log("unchanged two-device history index bytes", idleBytes)
+
 	capture.mu.Unlock()
 	readHistory := func(node int) []byte {
 		t.Helper()
@@ -375,6 +399,27 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 			t.Fatal("expired original sample was lost instead of shown as scoped history")
 		}
 	}
+	capture.mu.Lock()
+	indexBefore, callsBefore = capture.indexBytes, capture.indexCalls
+	calls = capture.calls
+	capture.mu.Unlock()
+	latest = reportFor(latest.ReportSequence+1, "running")
+	post(0, latest, http.StatusOK)
+	if err := syncPeer(1, 0); err != nil {
+		t.Fatal("new report failed after tree convergence", err)
+	}
+	capture.mu.Lock()
+	changedBytes := capture.indexBytes - indexBefore
+	changedCalls := capture.indexCalls - callsBefore
+	changedBodies := capture.calls - calls
+	capture.mu.Unlock()
+	if changedBytes > 8192 || changedCalls > 8 || changedBodies != 1 {
+		t.Error("one new report retransmitted history metadata", changedBytes, changedCalls, changedBodies)
+	}
+	if !bytes.Equal(readHistory(0), readHistory(1)) {
+		t.Fatal("new report did not preserve exact convergence")
+	}
+	t.Log("one new report index bytes", changedBytes, "requests", changedCalls)
 	post(1, reportFor(1, "stopped"), http.StatusConflict)
 	if err := syncPeer(0, 1); err != nil {
 		t.Fatal("old signed fork did not propagate", err)
@@ -396,7 +441,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 			t.Fatal("member entry accepted ambiguous range query")
 		}
 	}
-	for _, request := range []reportRangesRequest{{3, []reportScope{{invite.DeviceID, 2}}}, {3, []reportScope{{invite.DeviceID, 1}, {invite.DeviceID, 1}}}} {
+	for _, request := range []reportRangesRequest{{3, []reportScope{{invite.DeviceID, 2, reportLeafHeight}}}, {3, []reportScope{{invite.DeviceID, 1, reportLeafHeight}, {invite.DeviceID, 1, reportLeafHeight}}}} {
 		body, err := json.Marshal(request)
 		if err != nil {
 			t.Fatal(err)
@@ -419,7 +464,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	post(0, outside, http.StatusOK)
 	raw, _ := CanonicalEncode(outside)
 	capture.mu.Lock()
-	capture.forgedID, capture.forgedScope = ReleaseDigest(raw), reportScope{invite.DeviceID, 1}
+	capture.forgedID, capture.forgedScope = ReleaseDigest(raw), reportScope{invite.DeviceID, 1, reportLeafHeight}
 	capture.mu.Unlock()
 	beforeForgedIndex := readHistory(1)
 	if err := syncPeer(1, 0); err == nil || !bytes.Equal(beforeForgedIndex, readHistory(1)) {
@@ -491,7 +536,7 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 			t.Fatal("noncanonical or unknown report request was accepted")
 		}
 	}
-	priority := reportRangeIDs{invite.DeviceID, 1, []string{"sha256:" + strings.Repeat("f", 64), "sha256:" + strings.Repeat("0", 64)}}
+	priority := reportRangeIDs{invite.DeviceID, 1, reportLeafHeight, []reportRangeSummary{}, []string{"sha256:" + strings.Repeat("f", 64), "sha256:" + strings.Repeat("0", 64)}}
 	body, err = CanonicalEncode(priority)
 	var restored reportRangeIDs
 	if err != nil || DecodeCanonical(body, &restored, ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 16, MaxItems: 128}) != nil || !reflect.DeepEqual(priority, restored) {
@@ -501,7 +546,7 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 		t.Fatal("transfer priority relaxed the canonical original-body request order")
 	}
 	for _, ids := range [][]string{nil, {priority.ReportIDs[0], priority.ReportIDs[0]}, {"invalid"}} {
-		if (reportRangeIDs{invite.DeviceID, 1, ids}).Validate() == nil {
+		if (reportRangeIDs{invite.DeviceID, 1, reportLeafHeight, []reportRangeSummary{}, ids}).Validate() == nil {
 			t.Fatal("invalid or duplicated transfer priority IDs were accepted")
 		}
 	}
@@ -509,7 +554,7 @@ func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := reportScope{invite.DeviceID, 1}
+	scope := reportScope{invite.DeviceID, 1, reportLeafHeight}
 	group := storedReportRange{projection.NetworkID, scope}
 	beforeIDs := append([]string{}, index.groups[group]...)
 	beforeDigest := index.digests[group]

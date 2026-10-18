@@ -21,10 +21,6 @@ func reportIDKey(id string) []byte {
 	digest, _ := hex.DecodeString(strings.TrimPrefix(id, "sha256:"))
 	return append([]byte{'i'}, digest...)
 }
-func reportRangeKey(group storedReportRange) []byte {
-	key := append([]byte{'r'}, reportOwnerPrefix(reportOwner{group.network, group.scope.DeviceID})...)
-	return binary.BigEndian.AppendUint64(key, uint64(group.scope.FirstSequence))
-}
 func reportLinkTimePrefix(owner reportOwner, link, spec string) []byte {
 	return append(reportTimePrefix(owner, linkTime), []byte(link+"\x00"+spec+"\x00")...)
 }
@@ -97,26 +93,13 @@ func rangeIDs(tx *bolt.Tx, group storedReportRange) ([]string, error) {
 	}
 	return ids, nil
 }
-func updateReportRange(tx *bolt.Tx, group storedReportRange) error {
-	ids, err := rangeIDs(tx, group)
-	if err != nil {
-		return err
-	}
-	sort.Strings(ids)
-	raw, err := CanonicalEncode(ids)
-	if err != nil {
-		return err
-	}
-	return tx.Bucket(reportIndexBucket).Put(reportRangeKey(group), []byte(ReleaseDigest(raw)))
-}
 func ensureReportIndexes(tx *bolt.Tx) error {
 	if tx.Bucket(reportIndexBucket) != nil {
-		return nil
+		return ensureReportTreeIndex(tx)
 	}
 	if _, err := tx.CreateBucket(reportIndexBucket); err != nil {
 		return err
 	}
-	groups := map[storedReportRange]bool{}
 	// bbolt splits nodes at commit. Inserting a large unsorted initial index
 	// repeatedly shifts one growing leaf; sort locations before the first spill.
 	type location struct{ key, value []byte }
@@ -137,7 +120,6 @@ func ensureReportIndexes(tx *bolt.Tx) error {
 		if err := reportIndexEntries(key, report, collect); err != nil {
 			return err
 		}
-		groups[storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence)}}] = true
 		return nil
 	})
 	if err != nil {
@@ -150,52 +132,7 @@ func ensureReportIndexes(tx *bolt.Tx) error {
 			return err
 		}
 	}
-	for group := range groups {
-		if err := updateReportRange(tx, group); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-func (store *ObservationStore) reportRanges(ctx context.Context, projection Projection) (reportRanges, error) {
-	result := reportRanges{3, projection.NetworkID, []reportRangeSummary{}}
-	prefix := []byte("r" + projection.NetworkID + "\x00")
-	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		cursor := tx.Bucket(reportIndexBucket).Cursor()
-		for key, raw := cursor.Seek(prefix); key != nil && bytes.HasPrefix(key, prefix); key, raw = cursor.Next() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			remaining := key[len(prefix):]
-			end := bytes.IndexByte(remaining, 0)
-			if end < 0 || len(remaining) != end+1+8 {
-				return errors.New("invalid report range location")
-			}
-			device := string(remaining[:end])
-			first := U64(binary.BigEndian.Uint64(remaining[end+1:]))
-			item := reportRangeSummary{device, first, string(raw)}
-			if err := item.Validate(); err != nil {
-				return err
-			}
-			if _, allowed := identityFor(projection, device); allowed {
-				result.Ranges = append(result.Ranges, item)
-			}
-		}
-		return nil
-	})
-	return result, err
-}
-func (store *ObservationStore) reportIDs(ctx context.Context, projection Projection, scope reportScope) ([]string, error) {
-	if _, ok := identityFor(projection, scope.DeviceID); !ok || scope.Validate() != nil {
-		return nil, errors.New("report range is outside current authorization")
-	}
-	var ids []string
-	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
-		var err error
-		ids, err = rangeIDs(tx, storedReportRange{projection.NetworkID, scope})
-		return err
-	})
-	return ids, err
+	return ensureReportTreeIndex(tx)
 }
 
 // Membership in the local original collection is a transport hint, not verification.

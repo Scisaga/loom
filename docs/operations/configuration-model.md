@@ -309,7 +309,7 @@ LocalDeploymentConfig.deploy_hosts
 
 Linux client 与 control 可复用同一已验证程序；control 的本机 Authority 与 Unix 管理入口独立于 client
 运行状态，unit 不以 client 状态检查作为启动前提。
-只修改 control 页面且没有改变任何协议、持久或 client 临时格式时，可沿原服务入口将 control 的
+只修改 control 页面或成员间可重建的差量交换、派生索引，且没有改变设备客户端的协议、持久或临时格式时，可沿原服务入口将 control 的
 ExecStart 精确指向另一个已验签、验摘要的不可变程序，仅重启 control。client 的程序指针、实际
 进程、期望组件和公开客户端目录保持；不能把独立 control 部署伪报为客户端已更新。程序仍放在
 原内容地址发布目录，service 的原 ExecStart 就是执行引用，不增加配置键、发布权威或长期 fallback。

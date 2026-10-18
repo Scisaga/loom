@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/subtle"
@@ -26,7 +25,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 )
 
 //go:embed static/*
@@ -379,7 +377,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	}
 	snapshot := buildWebSnapshotUsing(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), viewFor, releases...)
 	server.memberSnapshot(&snapshot)
-	snapshot.EndpointCertificates = EndpointCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
+	snapshot.EndpointCertificates = webEndpointCertificates(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
 	server.websiteSnapshot(&snapshot, r, projection)
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Runtime.Reports != nil {
@@ -415,7 +413,11 @@ func (server *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, value)
 }
 func (server *Server) live(w http.ResponseWriter, r *http.Request) {
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+	if r.Header.Get("Sec-WebSocket-Protocol") != "loom.control.ui" {
+		http.Error(w, "reload the management page for the current live projection", http.StatusBadRequest)
+		return
+	}
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"loom.control.ui"}, CompressionMode: websocket.CompressionNoContextTakeover})
 	if err != nil {
 		return
 	}
@@ -443,12 +445,17 @@ func (server *Server) live(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		if !bytes.Equal(body, previous) {
-			if err := wsjson.Write(r.Context(), connection, value); err != nil {
+		message, err := encodeWebLive(previous, body)
+		if err != nil {
+			return
+		}
+		if message != nil {
+			if err := connection.Write(r.Context(), websocket.MessageText, message); err != nil {
 				return
 			}
 			previous = body
 		}
+
 		select {
 		case <-r.Context().Done():
 			return
@@ -485,7 +492,7 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot := buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)
 	server.memberSnapshot(&snapshot)
-	snapshot.EndpointCertificates = EndpointCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
+	snapshot.EndpointCertificates = webEndpointCertificates(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
 	server.websiteSnapshot(&snapshot, r, result.Projection)
 	snapshot.PolicyInvites = projectWebPolicyInvites(result.Projection, server.now())
 	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": snapshot}

@@ -7,7 +7,8 @@ import (
 	"sort"
 )
 
-const reportRangeSize U64 = 1024
+const reportLeafHeight = 4
+const reportRangeSize U64 = 1 << reportLeafHeight
 const reportBatchBytes = 16 << 20
 const reportBatchCount = 1024
 const reportScopeCount = 8
@@ -19,6 +20,7 @@ const reportTransferCount = 64
 type reportScope struct {
 	DeviceID      string `json:"device_id"`
 	FirstSequence U64    `json:"first_sequence"`
+	Height        int    `json:"height"`
 }
 
 func reportRangeStart(sequence U64) U64 {
@@ -28,45 +30,60 @@ func reportRangeStart(sequence U64) U64 {
 	return 1 + (sequence-1)/reportRangeSize*reportRangeSize
 }
 func validReportRange(device string, first U64) bool {
-	return ValidateID(device) == nil && first != 0 && reportRangeStart(first) == first
+	return (reportScope{device, first, reportLeafHeight}).Validate() == nil
 }
 func (v reportScope) Validate() error {
-	if !validReportRange(v.DeviceID, v.FirstSequence) {
-		return errors.New("invalid report range")
+	if ValidateID(v.DeviceID) != nil || v.FirstSequence == 0 || v.Height < reportLeafHeight || v.Height > 64 || v.Height == 64 && v.FirstSequence != 1 || v.Height < 64 && (uint64(v.FirstSequence)-1)&((uint64(1)<<v.Height)-1) != 0 {
+		return errors.New("invalid report tree scope")
 	}
 	return nil
 }
 func scopeBefore(a, b reportScope) bool {
-	return a.DeviceID < b.DeviceID || a.DeviceID == b.DeviceID && a.FirstSequence < b.FirstSequence
+	return a.DeviceID < b.DeviceID || a.DeviceID == b.DeviceID && (a.FirstSequence < b.FirstSequence || a.FirstSequence == b.FirstSequence && a.Height > b.Height)
+}
+func (v reportScope) contains(other reportScope) bool {
+	return v.DeviceID == other.DeviceID && other.Height < v.Height && (v.Height == 64 || (uint64(v.FirstSequence)-1)>>v.Height == (uint64(other.FirstSequence)-1)>>v.Height)
+}
+func (v reportScope) halves() [2]reportScope {
+	h := v.Height - 1
+	return [2]reportScope{{v.DeviceID, v.FirstSequence, h}, {v.DeviceID, v.FirstSequence + U64(1)<<h, h}}
 }
 
 type reportRangeSummary struct {
 	DeviceID      string `json:"device_id"`
 	FirstSequence U64    `json:"first_sequence"`
+	Height        int    `json:"height"`
 	Digest        string `json:"digest"`
 }
 
-func (v reportRangeSummary) scope() reportScope { return reportScope{v.DeviceID, v.FirstSequence} }
+func (v reportRangeSummary) scope() reportScope {
+	return reportScope{v.DeviceID, v.FirstSequence, v.Height}
+}
 func (v reportRangeSummary) Validate() error {
 	if v.scope().Validate() != nil || ValidateDigest(v.Digest) != nil {
-		return errors.New("invalid report range summary")
+		return errors.New("invalid report tree summary")
 	}
 	return nil
+}
+func summaryOf(scope reportScope, digest string) reportRangeSummary {
+	return reportRangeSummary{scope.DeviceID, scope.FirstSequence, scope.Height, digest}
 }
 
 type reportRanges struct {
 	Schema    int                  `json:"schema"`
 	NetworkID string               `json:"network_id"`
 	Ranges    []reportRangeSummary `json:"ranges"`
+	Heads     []reportRangeSummary `json:"heads"`
 }
 
 func (v reportRanges) Validate() error {
-	if v.Schema != 3 || ValidateID(v.NetworkID) != nil || v.Ranges == nil {
-		return errors.New("invalid report range index")
+	if v.Schema != 3 || ValidateID(v.NetworkID) != nil || v.Ranges == nil || v.Heads == nil || len(v.Ranges) != len(v.Heads) {
+		return errors.New("invalid report tree roots")
 	}
 	for i, item := range v.Ranges {
-		if item.Validate() != nil || i > 0 && !scopeBefore(v.Ranges[i-1].scope(), item.scope()) {
-			return errors.New("report ranges are not valid and uniquely sorted")
+		head := v.Heads[i]
+		if item.Validate() != nil || item.Height != 64 || head.Validate() != nil || head.Height != reportLeafHeight || item.DeviceID != head.DeviceID || i > 0 && v.Ranges[i-1].DeviceID >= item.DeviceID {
+			return errors.New("invalid or unsorted report tree roots/heads")
 		}
 	}
 	return nil
@@ -79,23 +96,27 @@ type reportRangesRequest struct {
 
 func (v reportRangesRequest) Validate() error {
 	if v.Schema != 3 || len(v.Ranges) == 0 || len(v.Ranges) > reportScopeCount {
-		return errors.New("invalid report range request")
+		return errors.New("invalid report tree request")
 	}
 	for i, s := range v.Ranges {
 		if s.Validate() != nil || i > 0 && !scopeBefore(v.Ranges[i-1], s) {
-			return errors.New("report scopes are not valid and uniquely sorted")
+			return errors.New("invalid or unsorted report tree scopes")
 		}
 	}
 	return nil
 }
 
 type reportRangeIDs struct {
-	DeviceID      string   `json:"device_id"`
-	FirstSequence U64      `json:"first_sequence"`
-	ReportIDs     []string `json:"report_ids"`
+	DeviceID      string               `json:"device_id"`
+	FirstSequence U64                  `json:"first_sequence"`
+	Height        int                  `json:"height"`
+	Children      []reportRangeSummary `json:"children"`
+	ReportIDs     []string             `json:"report_ids"`
 }
 
-func (v reportRangeIDs) scope() reportScope { return reportScope{v.DeviceID, v.FirstSequence} }
+func (v reportRangeIDs) scope() reportScope {
+	return reportScope{v.DeviceID, v.FirstSequence, v.Height}
+}
 func validateReportIDs(ids []string) error {
 	if ids == nil {
 		return errors.New("missing report IDs")
@@ -108,18 +129,30 @@ func validateReportIDs(ids []string) error {
 	return nil
 }
 func (v reportRangeIDs) Validate() error {
-	if v.scope().Validate() != nil {
-		return errors.New("invalid report ID scope")
+	scope := v.scope()
+	if scope.Validate() != nil || v.Children == nil || v.ReportIDs == nil || len(v.Children) > 2 {
+		return errors.New("invalid report tree expansion")
 	}
-	if v.ReportIDs == nil {
-		return errors.New("missing report IDs")
+	if scope.Height == reportLeafHeight && len(v.Children) != 0 || scope.Height > reportLeafHeight && len(v.ReportIDs) != 0 {
+		return errors.New("report leaf and branch differ")
 	}
 	seen := map[string]bool{}
 	for _, id := range v.ReportIDs {
 		if ValidateDigest(id) != nil || seen[id] {
-			return errors.New("report priority IDs are invalid or repeated")
+			return errors.New("invalid or repeated report IDs")
 		}
 		seen[id] = true
+	}
+	prior := -1
+	for _, child := range v.Children {
+		if child.Validate() != nil || !scope.contains(child.scope()) {
+			return errors.New("report child is outside its parent")
+		}
+		half := int(((uint64(child.FirstSequence) - 1) >> (scope.Height - 1)) & 1)
+		if half <= prior {
+			return errors.New("report children are repeated or unsorted")
+		}
+		prior = half
 	}
 	return nil
 }
@@ -132,16 +165,16 @@ type reportIDs struct {
 
 func (v reportIDs) Validate() error {
 	if v.Schema != 3 || ValidateID(v.NetworkID) != nil || len(v.Ranges) == 0 || len(v.Ranges) > reportScopeCount {
-		return errors.New("invalid report ID index")
+		return errors.New("invalid report tree expansion response")
 	}
 	seen := map[string]bool{}
 	for i, item := range v.Ranges {
 		if item.Validate() != nil || i > 0 && !scopeBefore(v.Ranges[i-1].scope(), item.scope()) {
-			return errors.New("report ID scopes are not valid and uniquely sorted")
+			return errors.New("invalid or unsorted report expansions")
 		}
 		for _, id := range item.ReportIDs {
 			if seen[id] {
-				return errors.New("one report ID occurs in different scopes")
+				return errors.New("one report ID occurs in different leaves")
 			}
 			seen[id] = true
 		}
@@ -210,47 +243,49 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 		return errors.New("local report history unavailable")
 	}
 	projection := runtime.Authority.Snapshot()
-	localRanges, err := runtime.Reports.reportRanges(ctx, projection)
-	if err != nil {
-		return err
-	}
-	digests := map[reportScope]string{}
-	for _, item := range localRanges.Ranges {
-		digests[item.scope()] = item.Digest
-	}
 	var remote reportRanges
 	if err := runtime.peerReportJSON(ctx, member, http.MethodGet, "/internal/report-ranges", nil, &remote, maxControlInputBytes); err != nil {
 		return err
 	}
 	if remote.NetworkID != projection.NetworkID {
-		return errors.New("peer report index belongs to another network")
+		return errors.New("peer report tree belongs to another network")
 	}
-	latest := map[string]U64{}
-	for _, item := range remote.Ranges {
-		latest[item.DeviceID] = item.FirstSequence
+	// The latest leaves are independent of historical traversal, including a
+	// newly opened leaf. All other pending nodes remain disposable local hints.
+	pending := append(append([]reportRangeSummary{}, remote.Heads...), remote.Ranges...)
+	queued := map[reportScope]bool{}
+	visited := map[reportScope]bool{}
+	for _, item := range pending {
+		queued[item.scope()] = true
 	}
-	heads, older := []reportScope{}, []reportScope{}
-	var failures error
-	for _, item := range remote.Ranges {
-		if _, ok := identityFor(projection, item.DeviceID); !ok {
-			failures = errors.Join(failures, errors.New("peer report range is outside current authorization"))
-			continue
-		}
-		if digests[item.scope()] == item.Digest {
-			continue
-		}
-		if item.FirstSequence == latest[item.DeviceID] {
-			heads = append(heads, item.scope())
-		} else {
-			older = append(older, item.scope())
-		}
-	}
-	pending := append(heads, older...)
-	for len(pending) > 0 {
+	wanted := map[string]reportScope{}
+	for len(pending) > 0 && len(wanted) < reportTransferCount {
 		if err := ctx.Err(); err != nil {
-			return errors.Join(failures, err)
+			return err
 		}
-		selected := pending[:min(len(pending), reportScopeCount)]
+		selected := []reportScope{}
+		for len(pending) > 0 && len(selected) < reportScopeCount {
+			item := pending[0]
+			pending = pending[1:]
+			scope := item.scope()
+			if visited[scope] {
+				continue
+			}
+			visited[scope] = true
+			if _, ok := identityFor(projection, scope.DeviceID); !ok {
+				return errors.New("peer report tree is outside current authorization")
+			}
+			digest, err := runtime.Reports.reportTreeDigest(ctx, projection.NetworkID, scope)
+			if err != nil {
+				return err
+			}
+			if digest != item.Digest {
+				selected = append(selected, scope)
+			}
+		}
+		if len(selected) == 0 {
+			continue
+		}
 		request := reportRangesRequest{3, append([]reportScope{}, selected...)}
 		sort.Slice(request.Ranges, func(i, j int) bool { return scopeBefore(request.Ranges[i], request.Ranges[j]) })
 		body, err := CanonicalEncode(request)
@@ -259,27 +294,26 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 		}
 		var ids reportIDs
 		if err := runtime.peerReportJSON(ctx, member, http.MethodPost, "/internal/report-ids", body, &ids, maxControlInputBytes); err != nil {
-			return errors.Join(failures, err)
+			return err
 		}
 		if ids.NetworkID != projection.NetworkID || len(ids.Ranges) != len(request.Ranges) {
-			return errors.New("peer report IDs differ from requested scope")
+			return errors.New("peer report tree differs from requested scope")
 		}
 		byScope := map[reportScope][]string{}
+		children := []reportRangeSummary{}
+		allIDs := []string{}
 		for i, value := range ids.Ranges {
 			if value.scope() != request.Ranges[i] {
-				return errors.New("peer report IDs differ from requested scope")
+				return errors.New("peer report tree differs from requested scope")
 			}
 			byScope[value.scope()] = value.ReportIDs
-		}
-		allIDs := []string{}
-		for _, values := range byScope {
-			allIDs = append(allIDs, values...)
+			allIDs = append(allIDs, value.ReportIDs...)
+			children = append(children, value.Children...)
 		}
 		known, err := runtime.Reports.knownReports(ctx, allIDs)
 		if err != nil {
 			return err
 		}
-		wanted := map[string]reportScope{}
 		for position := 0; len(wanted) < reportTransferCount; position++ {
 			remaining := false
 			for _, scope := range selected {
@@ -289,14 +323,14 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 				}
 				remaining = true
 				id := values[position]
-				if report, known := known[id]; known {
+				if report, ok := known[id]; ok {
 					if report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
-						return errors.New("known report differs from peer ID scope")
+						return errors.New("known report differs from peer leaf")
 					}
 					continue
 				}
-				if prior, duplicate := wanted[id]; duplicate && prior != scope {
-					return errors.New("peer assigned one report ID to different scopes")
+				if prior, ok := wanted[id]; ok && prior != scope {
+					return errors.New("peer assigned one report to different leaves")
 				}
 				wanted[id] = scope
 				if len(wanted) == reportTransferCount {
@@ -307,36 +341,43 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 				break
 			}
 		}
-		if len(wanted) == 0 {
-			pending = pending[len(selected):]
-			continue
-		}
-		ordered := sortedReportIDs(wanted)
-		body, err = CanonicalEncode(reportBatchRequest{3, ordered})
-		if err != nil {
-			return err
-		}
-		var batch reportBatch
-		if err := runtime.peerReportJSON(ctx, member, http.MethodPost, "/internal/reports", body, &batch, reportBatchBytes); err != nil {
-			return errors.Join(failures, err)
-		}
-		if len(batch.Reports) > len(ordered) {
-			return errors.New("peer supplied unrequested reports")
-		}
-		for i, report := range batch.Reports {
-			raw, err := CanonicalEncode(report)
-			scope := wanted[ordered[i]]
-			if err != nil || ReleaseDigest(raw) != ordered[i] || report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
-				return errors.New("peer report differs from requested content or scope")
+		sort.Slice(children, func(i, j int) bool {
+			a, b := children[i].scope(), children[j].scope()
+			return a.DeviceID < b.DeviceID || a.DeviceID == b.DeviceID && (a.FirstSequence > b.FirstSequence || a.FirstSequence == b.FirstSequence && a.Height < b.Height)
+		})
+		next := []reportRangeSummary{}
+		for _, child := range children {
+			if !queued[child.scope()] {
+				queued[child.scope()] = true
+				next = append(next, child)
 			}
 		}
-		if err := runtime.Reports.mergeReportHistory(ctx, batch.Reports, runtime.Authority.Snapshot()); err != nil && !errors.Is(err, ErrReportEquivocation) {
-			return errors.Join(failures, err)
-		}
-		// Yield after one durable batch. The next member attempt compares a
-		// fresh directory, so reports arriving during historical catch-up do
-		// not wait for this directory's remaining backlog or whole deadline.
-		return failures
+		pending = append(next, pending...)
 	}
-	return failures
+	if len(wanted) == 0 {
+		return nil
+	}
+	ordered := sortedReportIDs(wanted)
+	body, err := CanonicalEncode(reportBatchRequest{3, ordered})
+	if err != nil {
+		return err
+	}
+	var batch reportBatch
+	if err := runtime.peerReportJSON(ctx, member, http.MethodPost, "/internal/reports", body, &batch, reportBatchBytes); err != nil {
+		return err
+	}
+	if len(batch.Reports) > len(ordered) {
+		return errors.New("peer supplied unrequested reports")
+	}
+	for i, report := range batch.Reports {
+		raw, err := CanonicalEncode(report)
+		scope := wanted[ordered[i]]
+		if err != nil || ReleaseDigest(raw) != ordered[i] || report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
+			return errors.New("peer report differs from requested content or leaf")
+		}
+	}
+	if err := runtime.Reports.mergeReportHistory(ctx, batch.Reports, runtime.Authority.Snapshot()); err != nil && !errors.Is(err, ErrReportEquivocation) {
+		return err
+	}
+	return nil
 }
