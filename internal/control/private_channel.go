@@ -48,13 +48,15 @@ func parsePrivateChannelAddress(address string, local bool) bool {
 		return false
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || ip.Zone() != "" || ip.String() != host {
+	if err != nil {
+		if local || !contractDNSName(host) || net.JoinHostPort(host, port) != address {
+			return false
+		}
+	} else if ip.Zone() != "" || ip.String() != host {
 		return false
-	}
-	if local && !ip.IsPrivate() && !ip.IsLoopback() {
+	} else if local && !ip.IsPrivate() && !ip.IsLoopback() {
 		return false
-	}
-	if !local && !ip.IsPrivate() && !ip.IsLoopback() && (ip.Is4In6() || !ip.IsGlobalUnicast()) {
+	} else if !local && !ip.IsPrivate() && !ip.IsLoopback() && (ip.Is4In6() || !ip.IsGlobalUnicast()) {
 		return false
 	}
 	n, err := strconv.Atoi(port)
@@ -96,19 +98,20 @@ func LoadPrivateChannelConfig(path string) (PrivateChannelConfig, error) {
 }
 
 type PrivateChannel struct {
-	config      PrivateChannelConfig
-	tlsConfig   *tls.Config
-	peerTLS     *tls.Config
-	control     *connectionListener
-	listeners   map[string]net.Listener
-	connections map[*privateConnection]struct{}
-	transportM  sync.Mutex
-	workers     sync.WaitGroup
-	done        chan struct{}
-	closeOnce   sync.Once
-	authorityM  sync.RWMutex
-	authority   *Authority
-	relayOnly   bool
+	config       PrivateChannelConfig
+	tlsConfig    *tls.Config
+	peerTLS      *tls.Config
+	control      *connectionListener
+	listeners    map[string]net.Listener
+	connections  map[*privateConnection]struct{}
+	transportM   sync.Mutex
+	workers      sync.WaitGroup
+	done         chan struct{}
+	closeOnce    sync.Once
+	authorityM   sync.RWMutex
+	authority    *Authority
+	relayOnly    bool
+	underlayDial func(context.Context, string, string) (net.Conn, error)
 }
 
 func OpenPrivateChannel(config PrivateChannelConfig, node NodeConfig) (*PrivateChannel, error) {
@@ -319,8 +322,9 @@ func (channel *PrivateChannel) relayPrivate(connection *tls.Conn) {
 	}
 	var targetConnection net.Conn
 	for _, endpoint := range channel.endpoints(target) {
-		dialer := &net.Dialer{Timeout: 5 * time.Second}
-		candidate, err := dialer.Dial("tcp", endpoint)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		candidate, err := channel.dialPrivateEndpoint(ctx, endpoint, channel.dialPrivateTCP)
+		cancel()
 		if err == nil {
 			targetConnection = candidate
 			break
@@ -559,7 +563,13 @@ func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endp
 	if channel.peerTLS == nil {
 		return nil, errors.New("private member TLS unavailable")
 	}
-	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", endpoint)
+	return channel.dialPrivateEndpoint(ctx, endpoint, func(ctx context.Context, address string) (net.Conn, error) {
+		return channel.dialMemberAddress(ctx, target, endpoint, address, protocol, relayProtocol, relayNode, proofOnly)
+	})
+}
+
+func (channel *PrivateChannel) dialMemberAddress(ctx context.Context, target, endpoint, address, protocol, relayProtocol, relayNode string, proofOnly bool) (net.Conn, error) {
+	raw, err := channel.dialPrivateTCP(ctx, address)
 	if err != nil {
 		return nil, err
 	}

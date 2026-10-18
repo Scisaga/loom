@@ -212,12 +212,18 @@ listener 与原公开入口证据，保持独立管理，在同机按依赖顺�
 
 私有成员传输的本机输入固定为 `schema=3,node,listen,peers`；listen 是排序的私有 IP:port 集合，
 peers 是按稳定 node 排序的 `{node,addresses}` 集合，每组地址同样排序。peer 拨号值也可为操作者
-已经提供的规范公网单播 IP:port；listener 仍仅允许原私有或 loopback 地址。公网坐标不授予权限，
+已经提供的规范公网单播 IP:port 或 DNS host:port；listener 仍仅允许原私有或 loopback 地址。公网坐标不授予权限，
 必须经同一目标成员 mTLS 验证；拒绝非规范 IP、zone、未指定和多播坐标。这些坐标只用于尝试连接，
 TLS 之后仍须按当前成员表验证目标 control 身份与公钥；输入不能产生成员资格。它不从旧 report 配置导入。
 当前成员承载中继时，外层 TLS 同样验证该中继成员的 CA、ControlID 与当前公钥，内层 TLS 验证最终
 目标成员；公网 IP 只是拨号坐标，不要求它出现在私网叶的 SAN。独立非成员中继仍使用既有名称校验，
 不能因输入了一条 peer 地址就取得成员资格或放宽认证。
+域名保留原始规范名称，禁止将一次 DNS 结果固化成长期输入。每次直接成员拨号及中继目标拨号，均从
+当前 Authority 中与本机 node 精确对应的 DeviceAuthorization 读取认证 `DNSServers`，按同一受限解析
+规则取得本次临时地址；不读客户端运行状态，不消费发布集合，不用 hosts、宿主 resolver 或代理兜底。
+授权缺失、歧义或未提供 DNS 时仅该域名候选失败，Unix 管理及字面 IP 候选仍可使用；无 Authority 的
+独立中继同样拒绝域名候选。解析位于每条连接尝试内部，与原请求共用期限，不能串行预解析而阻塞字面
+IP 路径。内外层 TLS 仍验证原名称或当前成员身份，不以解析出的 IP 替换身份。
 
 本机 Authority、报告库及受保护 Unix 管理入口的启动不依赖客户端 running、WG 地址存在或所有网络
 listener 成功。control 的 unit 不以 client status 成功作为启动前提。严格的本机身份、规范输入与权威

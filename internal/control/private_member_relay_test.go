@@ -37,6 +37,8 @@ func TestMemberRelayAuthenticatesIdentityAcrossUnderlayAddressChange(t *testing.
 	}
 	addresses[2] = listener.Addr().String()
 	listener.Close()
+	dns := newPrivateDNSFixture(t)
+	dns.set("192.0.2.53", "127.0.0.1")
 	channels := make([]*PrivateChannel, 3)
 	for i := range nodes {
 		files, _, leaf := testTransportIdentity(t, root, nodes[i].ControlID, int64(100+i), f.keys[i], ca, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth})
@@ -48,7 +50,8 @@ func TestMemberRelayAuthenticatesIdentityAcrossUnderlayAddressChange(t *testing.
 		if i == 1 {
 			peers = append(peers, PrivatePeer{Node: nodes[2].NodeID, Addresses: []string{addresses[2]}})
 		} else if i == 2 {
-			peers = append(peers, PrivatePeer{Node: nodes[0].NodeID, Addresses: []string{addresses[0]}})
+			_, port, _ := net.SplitHostPort(addresses[0])
+			peers = append(peers, PrivatePeer{Node: nodes[0].NodeID, Addresses: []string{net.JoinHostPort("demo.example", port)}})
 		}
 		channel, err := OpenPrivateChannel(PrivateChannelConfig{Schema: 3, Node: nodes[i].NodeID, Listen: []string{addresses[i]}, Peers: peers}, nodes[i])
 		if err != nil {
@@ -56,6 +59,10 @@ func TestMemberRelayAuthenticatesIdentityAcrossUnderlayAddressChange(t *testing.
 		}
 		channels[i] = channel
 		channel.AttachAuthority(authorities[i])
+		if i == 2 {
+			channel.underlayDial = dns.dial
+			setPrivateDNSProjection(authorities[i], nodes[i].NodeID, []string{"192.0.2.53"})
+		}
 		t.Cleanup(func() { channel.Close() })
 	}
 	runtime, err := OpenRuntime(authorities[0].root, channels[0])
@@ -80,6 +87,15 @@ func TestMemberRelayAuthenticatesIdentityAcrossUnderlayAddressChange(t *testing.
 	}
 	if _, err := authorities[1].Material(accepted.MaterialID); err != nil {
 		t.Fatal("relayed original did not reach the receiving authority", err)
+	}
+	queries, _ := dns.observations()
+	if len(queries) == 0 {
+		t.Fatal("member relay target bypassed its current authorized resolver", queries)
+	}
+	for _, address := range queries {
+		if address != "192.0.2.53:53" {
+			t.Fatal("member relay target used an unauthorized resolver", address)
+		}
 	}
 
 	// A CA-issued leaf with the right ControlID still needs the current key.

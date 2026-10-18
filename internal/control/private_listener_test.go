@@ -22,7 +22,7 @@ func TestLocalAdministrationSurvivesUnavailablePrivateTransport(t *testing.T) {
 	if _, err := InitializeAuthority(root, config, genesis); err != nil {
 		t.Fatal(err)
 	}
-	private := PrivateChannelConfig{Schema: 3, Node: config.NodeID, Listen: []string{testLoopbackAddress(t)}, Peers: []PrivatePeer{}}
+	private := PrivateChannelConfig{Schema: 3, Node: config.NodeID, Listen: []string{testLoopbackAddress(t)}, Peers: []PrivatePeer{{Node: "demo-peer", Addresses: []string{"demo.example:443"}}}}
 	runtime, err := openRuntime(root, func(node NodeConfig) (*PrivateChannel, error) {
 		return openPrivateChannel(private, node, func(string, string) (net.Listener, error) { return nil, syscall.EADDRNOTAVAIL }, time.Millisecond*10)
 	})
@@ -180,19 +180,29 @@ func TestPrivateListenerRecoveryAndPurposeIsolation(t *testing.T) {
 func TestPrivatePeerUnderlayAddressValidation(t *testing.T) {
 	linkLocal := make(net.IP, net.IPv6len)
 	linkLocal[0], linkLocal[1], linkLocal[15] = 0xfe, 0x80, 1
-	for _, address := range []string{"192.0.2.1:443", "[2001:db8::1]:443", "10.0.0.1:443", "127.0.0.1:443"} {
+	for _, address := range []string{"192.0.2.1:443", "[2001:db8::1]:443", "10.0.0.1:443", "127.0.0.1:443", "demo.example:443"} {
 		config := PrivateChannelConfig{Schema: 3, Node: "demo-local", Listen: []string{"127.0.0.1:443"}, Peers: []PrivatePeer{{Node: "demo-peer", Addresses: []string{address}}}}
 		if err := config.Validate(); err != nil {
 			t.Fatal("canonical unicast peer input rejected", address, err)
 		}
-		if address == "192.0.2.1:443" || address == "[2001:db8::1]:443" {
+		if address == "192.0.2.1:443" || address == "[2001:db8::1]:443" || address == "demo.example:443" {
 			config.Listen = []string{address}
 			if config.Validate() == nil {
 				t.Fatal("public address became an allowed listener")
 			}
 		}
+		config.Listen = []string{"127.0.0.1:443"}
+		body, err := CanonicalEncode(config)
+		var roundtrip PrivateChannelConfig
+		if err != nil || DecodeCanonical(body, &roundtrip, ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 16, MaxItems: 1024}) != nil {
+			t.Fatal("private inputs did not retain canonical roundtrip", err)
+		}
+		encoded, err := CanonicalEncode(roundtrip)
+		if err != nil || !bytes.Equal(body, encoded) {
+			t.Fatal("private input bytes changed after canonical roundtrip", err)
+		}
 	}
-	for _, address := range []string{"0.0.0.0:443", "[::]:443", net.JoinHostPort(net.IPv4(224, 0, 0, 1).String(), "443"), net.JoinHostPort(net.IPv6linklocalallnodes.String(), "443"), net.JoinHostPort(linkLocal.String()+"%demo-zone", "443"), "[2001:0db8::1]:443", "192.0.2.1:0443", "demo.example:443", "[::ffff:192.0.2.1]:443", "192.0.2.1:0"} {
+	for _, address := range []string{"0.0.0.0:443", "[::]:443", net.JoinHostPort(net.IPv4(224, 0, 0, 1).String(), "443"), net.JoinHostPort(net.IPv6linklocalallnodes.String(), "443"), net.JoinHostPort(linkLocal.String()+"%demo-zone", "443"), "[2001:0db8::1]:443", "192.0.2.1:0443", "Demo.example:443", "demo.example.:443", "[demo.example]:443", "192.00.2.1:443", "demo_example:443", "[::ffff:192.0.2.1]:443", "192.0.2.1:0"} {
 		config := PrivateChannelConfig{Schema: 3, Node: "demo-local", Listen: []string{"127.0.0.1:443"}, Peers: []PrivatePeer{{Node: "demo-peer", Addresses: []string{address}}}}
 		if config.Validate() == nil {
 			t.Fatal("noncanonical or non-unicast peer input accepted", address)
