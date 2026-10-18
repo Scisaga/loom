@@ -75,9 +75,12 @@ func observeLinksWithProbe(ctx context.Context, view control.DeviceView, generat
 	}()
 	result := []control.Observation{}
 	var invalid error
+	// Overlap the next local refresh without extending the receiver's maximum
+	// freshness window. Upload and member replication consume that overlap.
+	lifetime := 2 * min(interval, 15*time.Second)
 	for value := range values {
 		at := now()
-		value.ObservedAt, value.ValidUntil = at.UnixMilli(), at.Add(interval).UnixMilli()
+		value.ObservedAt, value.ValidUntil = at.UnixMilli(), at.Add(lifetime).UnixMilli()
 		if err := value.Validate(); err != nil {
 			invalid = err
 			continue

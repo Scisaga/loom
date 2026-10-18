@@ -169,3 +169,45 @@ func TestCanceledLinkProbesExitWithoutInventingFailures(t *testing.T) {
 		t.Fatal("canceled probes did not exit")
 	}
 }
+
+func TestLinkProbeRefreshOverlapPreservesFreshnessBound(t *testing.T) {
+	view := independentLinkView(t)
+	options := Options{}
+	options.defaults()
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	observe := func(at time.Time, interval time.Duration) []control.Observation {
+		t.Helper()
+		values, err := observeLinksWithProbe(context.Background(), view, "demo-network", interval,
+			func() time.Time { return at }, func(context.Context, string, control.TransportResource) (time.Duration, error) { return 0, nil })
+		if err != nil || len(values) != len(view.Links) {
+			t.Fatal("link refresh did not complete", err)
+		}
+		return values
+	}
+	first := observe(at, options.RefreshPoll)
+	original, err := control.CanonicalEncode(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := observe(at.Add(options.RefreshPoll), options.RefreshPoll)
+	// Twelve seconds represent ordinary upload plus member-copy delay. The
+	// next independently measured round must arrive before the old one expires.
+	arrived := at.Add(options.RefreshPoll + 12*time.Second).UnixMilli()
+	for i := range first {
+		if first[i].ValidUntil != at.Add(30*time.Second).UnixMilli() || arrived >= first[i].ValidUntil ||
+			second[i].ObservedAt != at.Add(options.RefreshPoll).UnixMilli() || second[i].ValidUntil <= first[i].ValidUntil {
+			t.Fatal("normal report delivery has no overlap within the original freshness bound")
+		}
+	}
+	unchanged, err := control.CanonicalEncode(first)
+	if err != nil || string(unchanged) != string(original) {
+		t.Fatal("a later round changed the original samples", err)
+	}
+	// A custom slow diagnostic poll cannot create observations outside the
+	// existing receiving contract either.
+	for _, sample := range observe(at, time.Hour) {
+		if sample.ValidUntil != at.Add(30*time.Second).UnixMilli() {
+			t.Fatal("a slow refresh extended the maximum sample lifetime")
+		}
+	}
+}

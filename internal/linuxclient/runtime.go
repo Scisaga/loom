@@ -70,7 +70,7 @@ func (options *Options) defaults() {
 	}
 	options.defaultProbe = options.Probe == nil
 	if options.RefreshPoll <= 0 {
-		options.RefreshPoll = 30 * time.Second
+		options.RefreshPoll = 15 * time.Second
 	}
 	if options.WireGuard == "" {
 		options.WireGuard = "/usr/bin/wg"
