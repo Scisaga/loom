@@ -80,7 +80,7 @@ func (server *Server) reconcileWGPorts(ctx context.Context) error {
 			continue
 		}
 		head, err := server.wgPortRecoveryHead(p, resource.ID)
-		if err != nil || head.IssuerControlID != server.Config.ControlID {
+		if err != nil {
 			continue
 		}
 		changes, err := server.Runtime.Authority.wgPortRecoveryChanges(resource.ID, now)

@@ -1,27 +1,25 @@
 [Unit]
-Description=Loom private v2 control authority
+Description=Loom private control authority
 Documentation=file:/opt/loom/docs/core/control-model.md
 After=network-online.target
 Wants=network-online.target
-Conflicts=loom-bootstrap-v2.service loom-client-v2-report.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/libexec/loom-control-minimal control serve -state-dir /var/lib/loom-minimal -network-config /etc/loom/report/v2/config.json -release-root /var/lib/loom/client-dist/releases -release-key /etc/loom/trust/platform.pub
-Restart=on-failure
-RestartSec=3s
+ExecStart=/usr/local/lib/loom-client/current/loom control serve -state-dir /var/lib/loom-control -private-inputs /etc/loom/schema3/private-inputs.json
+Restart=no
 TimeoutStopSec=20s
 UMask=0077
 RuntimeDirectory=loom-control
 RuntimeDirectoryMode=0700
-StateDirectory=loom-minimal loom
+StateDirectory=loom-control loom
 StateDirectoryMode=0700
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/loom-minimal /var/lib/loom
-ReadOnlyPaths=/var/lib/loom/client-dist/releases /etc/loom/trust/platform.pub /etc/loom/report/v2/config.json
+ReadWritePaths=/var/lib/loom-control /var/lib/loom
+ReadOnlyPaths=/etc/loom/schema3
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

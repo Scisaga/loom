@@ -10,34 +10,34 @@ import (
 // WebSnapshot is a redacted projection for the existing control UI. It is never
 // accepted as an operation or used to restore authority.
 type WebSnapshot struct {
-	Members               []WebControlMember           `json:"members"`
-	LocalNodeID           string                       `json:"local_node_id"`
-	WebsiteCertificates   []WebsiteCertificateReadback `json:"website_certificates"`
-	WebEndpoints          []EndpointGeneration         `json:"web_endpoints"`
-	WebsiteGenerations    []EndpointGeneration         `json:"website_generations"`
-	WebsiteRequests       []WebsiteRequestSummary      `json:"website_requests"`
-	WebsiteConnection     *EndpointGeneration          `json:"website_connection,omitempty"`
-	PublicTrust           []PublicTrust                `json:"public_trust"`
-	DNSRecords            []DNSRecord                  `json:"dns_records"`
-	Schema                int                          `json:"schema"`
-	NetworkID             string                       `json:"network_id"`
-	ControlConfigID       string                       `json:"control_config_id"`
-	FactFrontier          []FactFrontier               `json:"fact_frontier"`
-	Targets               []TargetState                `json:"targets"`
-	Capabilities          WebCapabilities              `json:"capabilities"`
-	UIState               WebUIState                   `json:"ui_state"`
-	Devices               []Device                     `json:"devices"`
-	Links                 []Link                       `json:"links"`
-	Paths                 []Path                       `json:"paths"`
-	Policies              []NetworkPolicy              `json:"policies"`
-	PolicyInvites         []WebPolicyInvite            `json:"policy_invites"`
-	Services              []Service                    `json:"services"`
-	BusinessProbeTargets  []WebBusinessProbeTarget     `json:"business_probe_targets"`
-	LocalNetworkConflicts []string                     `json:"local_network_conflicts"`
-	Releases              []Release                    `json:"releases"`
-	Publisher             *PublisherStatus             `json:"publisher,omitempty"`
-	Deployments           []Deployment                 `json:"deployments"`
-	Administrators        []WebAdministrator           `json:"administrators"`
+	Members               []WebControlMember            `json:"members"`
+	LocalNodeID           string                        `json:"local_node_id"`
+	EndpointCertificates  []EndpointCertificateReadback `json:"endpoint_certificates"`
+	WebEndpoints          []EndpointGeneration          `json:"web_endpoints"`
+	WebsiteGenerations    []EndpointGeneration          `json:"website_generations"`
+	WebsiteRequests       []WebsiteRequestSummary       `json:"website_requests"`
+	WebsiteConnection     *EndpointGeneration           `json:"website_connection,omitempty"`
+	PublicTrust           []PublicTrust                 `json:"public_trust"`
+	DNSRecords            []DNSRecord                   `json:"dns_records"`
+	Schema                int                           `json:"schema"`
+	NetworkID             string                        `json:"network_id"`
+	ControlConfigID       string                        `json:"control_config_id"`
+	FactFrontier          []FactFrontier                `json:"fact_frontier"`
+	Targets               []TargetState                 `json:"targets"`
+	Capabilities          WebCapabilities               `json:"capabilities"`
+	UIState               WebUIState                    `json:"ui_state"`
+	Devices               []Device                      `json:"devices"`
+	Links                 []Link                        `json:"links"`
+	Paths                 []Path                        `json:"paths"`
+	Policies              []NetworkPolicy               `json:"policies"`
+	PolicyInvites         []WebPolicyInvite             `json:"policy_invites"`
+	Services              []Service                     `json:"services"`
+	BusinessProbeTargets  []WebBusinessProbeTarget      `json:"business_probe_targets"`
+	LocalNetworkConflicts []string                      `json:"local_network_conflicts"`
+	Releases              []Release                     `json:"releases"`
+	Publisher             *PublisherStatus              `json:"publisher,omitempty"`
+	Deployments           []Deployment                  `json:"deployments"`
+	Administrators        []WebAdministrator            `json:"administrators"`
 }
 
 type WebControlMember struct {
@@ -157,8 +157,8 @@ func buildWebSnapshotUsing(projection Projection, admin, local, writable bool, v
 		warnings = append(warnings, WebWarning{Code: "missing_dependencies", Message: "Some authenticated facts await their dependencies; affected targets are unavailable."})
 	}
 	return WebSnapshot{Schema: 3, NetworkID: projection.NetworkID, ControlConfigID: projection.ControlConfigID, Members: members,
-		WebsiteCertificates: []WebsiteCertificateReadback{},
-		FactFrontier:        append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
+		EndpointCertificates: []EndpointCertificateReadback{},
+		FactFrontier:         append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},
 		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPathsUsing(projection, viewFor), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
 		PolicyInvites:        []WebPolicyInvite{},

@@ -15,6 +15,8 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,7 +32,7 @@ type deviceTunnelChallenge struct {
 	Nonce  string `json:"nonce"`
 }
 
-func testDeviceTunnel(t *testing.T, publicKey string) (control.EndpointGeneration, string) {
+func testDeviceTunnel(t *testing.T, publicKey string, handlers ...http.HandlerFunc) (control.EndpointGeneration, string) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -130,7 +132,24 @@ func testDeviceTunnel(t *testing.T, publicKey string) (control.EndpointGeneratio
 				}{3, "ready"}) != nil {
 					return
 				}
-				_, _ = io.Copy(connection, reader)
+				if len(handlers) == 0 {
+					_, _ = io.Copy(connection, reader)
+					return
+				}
+				request, err := http.ReadRequest(reader)
+				if err != nil {
+					return
+				}
+				defer request.Body.Close()
+				response := httptest.NewRecorder()
+				handlers[0](response, request)
+				result := response.Result()
+				defer result.Body.Close()
+				if result.Header.Get("Content-Length") == "" {
+					result.ContentLength = int64(response.Body.Len())
+				}
+				result.Close = true
+				_ = result.Write(connection)
 			}()
 		}
 	}()
@@ -143,7 +162,7 @@ func testDeviceTunnel(t *testing.T, publicKey string) (control.EndpointGeneratio
 	return endpoint, listener.Addr().String()
 }
 
-func TestDeviceConnectionBypassesFirstBlackHoleAndPreservesAuthenticatedWinner(t *testing.T) {
+func TestDeviceRequestBypassesFirstBlackHoleAndCompletesAuthenticatedBusiness(t *testing.T) {
 	invite, makeView := schema3Fixture(t, "linux")
 	store, err := OpenForPlatform(filepath.Join(t.TempDir(), "identity"), invite, "linux")
 	if err != nil {
@@ -176,21 +195,22 @@ func TestDeviceConnectionBypassesFirstBlackHoleAndPreservesAuthenticatedWinner(t
 		}
 		return (&net.Dialer{}).DialContext(ctx, "tcp", address)
 	})
-	connection, err := deviceConnection(ctx, store)
+	result, err := requestDevice(ctx, store, store.LKG(), 2, deviceRequestTimeout, func(_ context.Context, connection net.Conn) (string, error) {
+		if _, err := connection.Write([]byte("demo-business")); err != nil {
+			return "", err
+		}
+		body := make([]byte, len("demo-business"))
+		_, err := io.ReadFull(connection, body)
+		return string(body), err
+	})
 	if err != nil {
 		t.Fatal("first black hole consumed the healthy member's budget", err)
 	}
-	defer connection.Close()
 	if connection := losing.Load(); connection == nil || !connection.closed.Load() {
 		t.Fatal("losing TLS handshake was not closed before returning")
 	}
-	_ = connection.SetDeadline(time.Now().Add(time.Second))
-	if _, err := connection.Write([]byte("demo-business")); err != nil {
-		t.Fatal(err)
-	}
-	result := make([]byte, len("demo-business"))
-	if _, err := io.ReadFull(connection, result); err != nil || string(result) != "demo-business" || store.LKG().ViewDigest != view.ViewDigest {
-		t.Fatal("winner was closed by attempt cancellation or changed accepted authority", err)
+	if result != "demo-business" || store.LKG().ViewDigest != view.ViewDigest {
+		t.Fatal("business did not complete or changed accepted authority")
 	}
 }
 
@@ -202,41 +222,4 @@ type trackedDeviceConnection struct {
 func (connection *trackedDeviceConnection) Close() error {
 	connection.closed.Store(true)
 	return connection.Conn.Close()
-}
-
-func TestDeviceEndpointCancellationClosesLateSuccessAndBoundsConcurrency(t *testing.T) {
-	endpoints := []control.EndpointGeneration{{ID: "demo-a"}, {ID: "demo-b"}, {ID: "demo-c"}}
-	ctx, cancel := context.WithCancel(context.Background())
-	started := make(chan struct{}, 2)
-	var active, maximum atomic.Int32
-	var connections sync.Map
-	returned := make(chan error, 1)
-	go func() {
-		_, err := connectDeviceEndpoints(ctx, endpoints, "demo-device", nil, func(ctx context.Context, _ control.EndpointGeneration, _ control.TunnelHello, _ ed25519.PrivateKey) (net.Conn, error) {
-			count := active.Add(1)
-			defer active.Add(-1)
-			for prior := maximum.Load(); count > prior && !maximum.CompareAndSwap(prior, count); prior = maximum.Load() {
-			}
-			started <- struct{}{}
-			<-ctx.Done()
-			client, server := net.Pipe()
-			server.Close()
-			connection := &trackedDeviceConnection{Conn: client}
-			connections.Store(connection, true)
-			return connection, nil
-		})
-		returned <- err
-	}()
-	<-started
-	<-started
-	cancel()
-	if err := <-returned; !errors.Is(err, context.Canceled) || active.Load() != 0 || maximum.Load() != 2 {
-		t.Fatal("cancellation left attempts or exceeded its concurrency bound", err)
-	}
-	connections.Range(func(key, _ any) bool {
-		if !key.(*trackedDeviceConnection).closed.Load() {
-			t.Error("late successful connection was orphaned")
-		}
-		return true
-	})
 }

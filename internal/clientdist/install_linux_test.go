@@ -2,6 +2,7 @@ package clientdist
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,7 +130,7 @@ func TestReplacedProgramsPreserveSignedEvidence(t *testing.T) {
 		}
 	}
 	for range 2 {
-		if err := removeReplacedPrograms(root, manifest); err != nil {
+		if err := removeReplacedProgramsWithReferences(root, manifest, func(context.Context) ([]programReference, error) { return nil, nil }); err != nil {
 			t.Fatal(err)
 		}
 	}

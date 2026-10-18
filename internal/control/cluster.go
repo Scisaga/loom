@@ -29,6 +29,16 @@ type Runtime struct {
 }
 
 func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
+	return openRuntime(root, func(NodeConfig) (*PrivateChannel, error) { return channel, nil })
+}
+
+// OpenRuntimeWithPrivateChannel verifies the local authority and opens its
+// report owner before constructing optional network execution adapters.
+func OpenRuntimeWithPrivateChannel(root string, config PrivateChannelConfig) (*Runtime, error) {
+	return openRuntime(root, func(node NodeConfig) (*PrivateChannel, error) { return OpenPrivateChannel(config, node) })
+}
+
+func openRuntime(root string, openChannel func(NodeConfig) (*PrivateChannel, error)) (*Runtime, error) {
 	config, err := LoadNodeConfig(root)
 	if err != nil {
 		return nil, err
@@ -43,6 +53,10 @@ func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {
 	reports, err := OpenObservationStore(root)
 	if err != nil {
 		return nil, err
+	}
+	channel, err := openChannel(config)
+	if err != nil {
+		return nil, errors.Join(err, reports.Close())
 	}
 	runtime := &Runtime{Config: config, Authority: a, Reports: reports, Channel: channel, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	if channel != nil {

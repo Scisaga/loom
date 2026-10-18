@@ -203,9 +203,32 @@ draining 停止新会话，到签名截止期关闭剩余会话；运行时不�
 只转发 TCP 密文字节；目标必须是既有私有地址。坐标是本次 adapter 的显式执行输入，不生成
 certified head、edge plan 或新的完成状态，edge 不持有设备及 control 签名密钥。
 
+复用已经提供的网站 TCP 映射时，同一 edge 的可选 `-website-target` 与 `-member-target` 只定位
+原网站及成员 mTLS 的私有 TCP listener。它按[私有入口与运行时](../core/enrollment-endpoint-model.md#私有入口与运行时)
+规定的有界 ClientHello ALPN 透明分流，全部已读字节原样重放，不接受任意目标、HTTP 路径反代或
+从 peer 请求传来的坐标。未给 website target 时仍是原单目标转发。部署先保存精确 unit/网站
+listener 与原公开入口证据，保持独立管理，在同机按依赖顺序切换；失败只前向恢复本次明确拥有的
+监听配置。原 Nginx 继续仅提供 fake website 与公开制品，不承载私有 HTTP handler。
+
 私有成员传输的本机输入固定为 `schema=3,node,listen,peers`；listen 是排序的私有 IP:port 集合，
-peers 是按稳定 node 排序的 `{node,addresses}` 集合，每组地址同样排序。这些坐标只用于尝试连接，
+peers 是按稳定 node 排序的 `{node,addresses}` 集合，每组地址同样排序。peer 拨号值也可为操作者
+已经提供的规范公网单播 IP:port；listener 仍仅允许原私有或 loopback 地址。公网坐标不授予权限，
+必须经同一目标成员 mTLS 验证；拒绝非规范 IP、zone、未指定和多播坐标。这些坐标只用于尝试连接，
 TLS 之后仍须按当前成员表验证目标 control 身份与公钥；输入不能产生成员资格。它不从旧 report 配置导入。
+当前成员承载中继时，外层 TLS 同样验证该中继成员的 CA、ControlID 与当前公钥，内层 TLS 验证最终
+目标成员；公网 IP 只是拨号坐标，不要求它出现在私网叶的 SAN。独立非成员中继仍使用既有名称校验，
+不能因输入了一条 peer 地址就取得成员资格或放宽认证。
+
+本机 Authority、报告库及受保护 Unix 管理入口的启动不依赖客户端 running、WG 地址存在或所有网络
+listener 成功。control 的 unit 不以 client status 成功作为启动前提。严格的本机身份、规范输入与权威
+原件校验仍是前提；网络执行材料只影响对应的可删除运行投影。browser 与 member TLS 分别验证、分别
+失败关闭；一个用途缺材料不授予另一用途权限，也不阻断本机管理。每个已配置地址独立绑定，失败
+按固定有界间隔重试，已有成功 listener 继续服务；禁止 freebind、临时宿主路由或放宽认证。停止时
+取消并等待重新绑定、监听及连接退出，只清理本进程明确持有的对象。
+
+正常链为原身份打开权威、本机管理可读写、各网络用途独立验证并监听、地址恢复后重新绑定、真实
+成员/管理员认证回读。最小验证覆盖一个地址缺失或占用、一个 TLS 用途无效时本机管理仍可用，另一
+有效用途仍严格认证，地址恢复、停止/重开及未授权拒绝。运行中能管理不能抵扣此冷启动验收。
 
 设领域配置为 D，规范 dotenv 引用值为 E，规范部署 YAML 为 Y，各自目录为锚点：
 
@@ -278,7 +301,8 @@ LocalDeploymentConfig.deploy_hosts
 6. planner 产生一个可脱敏回读的 `DeployPlan`；只有获得本次发布授权后才执行。
 7. executor 发布同一制品并记录每个目标的真实结果；证据、LKG 和 UI 从结果投影，不回写 `.env`。
 
-Linux client 与 control 可复用同一已验证程序；control unit 的启动前检查通过 client 的已安装路径读取状态。
+Linux client 与 control 可复用同一已验证程序；control 的本机 Authority 与 Unix 管理入口独立于 client
+运行状态，unit 不以 client 状态检查作为启动前提。
 只修改 control 页面且没有改变任何协议、持久或 client 临时格式时，可沿原服务入口将 control 的
 ExecStart 精确指向另一个已验签、验摘要的不可变程序，仅重启 control。client 的程序指针、实际
 进程、期望组件和公开客户端目录保持；不能把独立 control 部署伪报为客户端已更新。程序仍放在
@@ -287,6 +311,13 @@ ExecStart 精确指向另一个已验签、验摘要的不可变程序，仅重�
 切换前保留原 unit 与身份、认证进度和宿主基线，按独立成员并行、保留管理入口的顺序执行；
 切换后核对真实进程摘要、正常认证页面和原事实恢复。失败仅停止本次 control 服务，原身份与
 认证进度不回退；删除旧程序前仍须确认没有 client、配套进程或 unit 引用。
+该检查覆盖运行进程的实际 executable 文件身份与全部受管已安装/已加载 unit 的 Exec* 执行引用，
+包括 inactive/disabled unit 及符号链接的真实目标；不能仅按 MainPID 或当前客户端指针推断无引用。
+先完整核对本次所有候选，再删除确证无引用的程序；仍引用则保留，读取失败、未知属性、无法解释的
+动态执行路径均保留并明确报告清理未完成。检查只有可重建的本次执行输入，不保存第二份引用库。
+新运行已接受或激活后，清理未完成不能回退 current、身份或认证进度。最小验证覆盖进程文件身份、
+停服 unit 的链接引用、无引用删除与未知读取不删，原 manifest/signature 始终保留。
+无变化更新检查在验明当前包与执行指针后重新核对旧程序引用，清理后来已无引用的旧程序，不重装或重启服务。
 若本次修订改变了 `/run` 下可删除状态投影的字段，须先沿正常 service 入口启动同制品 client，
 由它从原身份和 LKG 重建当前状态，再启动 control。不能让新检查器读取仍由旧进程写入的临时格式，
 也不能手改临时状态、放宽 decoder 或增加旧格式 fallback 使检查通过。此顺序不迁移认证原件、

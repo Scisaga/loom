@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"loom/internal/control"
+	"net"
 )
 
 // FetchLinkObservations reads only current recipient-scoped samples. It never
@@ -13,18 +14,15 @@ func FetchLinkObservations(ctx context.Context, store IdentityStore) (control.De
 	if lkg == nil {
 		return control.DeviceLinkObservations{}, errors.New("device has no accepted View")
 	}
-	connection, err := deviceConnection(ctx, store)
-	if err != nil {
-		return control.DeviceLinkObservations{}, err
-	}
-	defer connection.Close()
-	var result control.DeviceLinkObservations
-	if _, err = postJSON(ctx, connection, "/device/link-observations", control.DeviceLinkObservationRequest{Schema: 3, ViewDigest: lkg.ViewDigest}, &result); err != nil {
-		return control.DeviceLinkObservations{}, err
-	}
-	current := store.LKG()
-	if current == nil || current.ViewDigest != lkg.ViewDigest {
-		return control.DeviceLinkObservations{}, errors.New("device View changed during observation fetch")
-	}
-	return result, result.ValidateForView(current.View)
+	return requestDevice(ctx, store, lkg, 2, deviceRequestTimeout, func(attempt context.Context, connection net.Conn) (control.DeviceLinkObservations, error) {
+		var result control.DeviceLinkObservations
+		if _, err := postJSON(attempt, connection, "/device/link-observations", control.DeviceLinkObservationRequest{Schema: 3, ViewDigest: lkg.ViewDigest}, &result); err != nil {
+			return control.DeviceLinkObservations{}, err
+		}
+		current := store.LKG()
+		if current == nil || current.ViewDigest != lkg.ViewDigest {
+			return control.DeviceLinkObservations{}, errors.New("device View changed during observation fetch")
+		}
+		return result, result.ValidateForView(current.View)
+	})
 }

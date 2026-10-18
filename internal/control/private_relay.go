@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"time"
 )
 
 const relayIdentitySchema = 3
@@ -80,15 +81,8 @@ func OpenPrivateRelay(config PrivateChannelConfig, identity RelayIdentity) (*Pri
 		return nil, err
 	}
 	channel := &PrivateChannel{config: config, tlsConfig: tlsConfig, peerTLS: tlsConfig.Clone(),
-		control: newConnectionListener(), done: make(chan struct{}), relayOnly: true}
-	for _, address := range config.Listen {
-		listener, listenErr := net.Listen("tcp", address)
-		if listenErr != nil {
-			channel.Close()
-			return nil, listenErr
-		}
-		channel.listeners = append(channel.listeners, listener)
-		go channel.accept(listener)
-	}
+		control: newConnectionListener(), done: make(chan struct{}), relayOnly: true,
+		listeners: map[string]net.Listener{}, connections: map[*privateConnection]struct{}{}}
+	channel.startPrivateListeners(net.Listen, 5*time.Second)
 	return channel, nil
 }

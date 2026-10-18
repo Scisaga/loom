@@ -25,6 +25,16 @@ export function nodeRuntimeCounts(devices,now){
   return counts;
 }
 
+// Public certificate dates only diagnose the received authenticated material;
+// they cannot establish a listener's readiness or network reachability.
+export function endpointCertificateAt(value,now){
+  if(!['valid','renewal_due','not_yet_valid','expired'].includes(value.status))return value;
+  const starts=[value.leaf_not_before,value.root_not_before].filter(Boolean).map(Date.parse),ends=[value.leaf_not_after,value.root_not_after].filter(Boolean).map(Date.parse);
+  if(!starts.length||!ends.length||[...starts,...ends].some(v=>!Number.isFinite(v)))return {...value,status:'unknown',reason:'certificate_invalid'};
+  const start=Math.max(...starts),end=Math.min(...ends),status=now<start?'not_yet_valid':now>=end?'expired':end-now<=30*86400000?'renewal_due':'valid';
+  return {...value,status,remaining_seconds:Math.trunc((end-now)/1000)};
+}
+
 // Only reduce the received display projection. Original reported fields remain
 // intact, and a later local clock reading can never revive an excluded sample.
 export function expireEvidence(snapshot,now){
@@ -38,7 +48,7 @@ export function expireEvidence(snapshot,now){
   const byID=new Map(devices.map(device=>[device.id,device]));
   const bounded=(value,owner,qualifies)=>reportIsCurrent(byID.get(owner)?.evidence,now)&&value.current_until>now&&qualifies(list(byID.get(owner)?.evidence?.measurements))?value:{...value,availability:'unknown',current_until:0};
   const valid=sample=>sample.current_until>now;
-  return {...snapshot,devices,paths:list(snapshot.paths).map(value=>bounded(value,value.device,samples=>list(value.targets).every(target=>samples.some(sample=>valid(sample)&&sample.level==='service'&&sample.service_id===value.service_id&&sample.candidate_id===value.candidate_id&&sample.spec_digest===value.spec_digest&&sample.target===target&&sample.result===value.availability)))),links:list(snapshot.links).map(value=>bounded(value,value.from,samples=>samples.some(sample=>valid(sample)&&sample.level==='link'&&sample.link_id===value.id&&sample.result===value.availability)))};
+  return {...snapshot,endpoint_certificates:list(snapshot.endpoint_certificates).map(value=>endpointCertificateAt(value,now)),devices,paths:list(snapshot.paths).map(value=>bounded(value,value.device,samples=>list(value.targets).every(target=>samples.some(sample=>valid(sample)&&sample.level==='service'&&sample.service_id===value.service_id&&sample.candidate_id===value.candidate_id&&sample.spec_digest===value.spec_digest&&sample.target===target&&sample.result===value.availability)))),links:list(snapshot.links).map(value=>bounded(value,value.from,samples=>samples.some(sample=>valid(sample)&&sample.level==='link'&&sample.link_id===value.id&&sample.result===value.availability)))};
 }
 
 export function nextEvidenceExpiry(snapshot,now){
@@ -46,6 +56,12 @@ export function nextEvidenceExpiry(snapshot,now){
   for(const device of list(snapshot.devices)){
     ends.push(device.evidence?.current_until);
     for(const sample of list(device.evidence?.measurements))ends.push(sample.current_until);
+  }
+  for(const value of list(snapshot.endpoint_certificates)){
+    if(value.status==='unknown')continue;
+    const starts=[value.leaf_not_before,value.root_not_before].filter(Boolean).map(Date.parse),last=[value.leaf_not_after,value.root_not_after].filter(Boolean).map(Date.parse),end=Math.min(...last);
+    if(now>=end)continue;
+    ends.push(...starts,end-30*86400000,end,end-Math.floor((end-now)/86400000)*86400000+1);
   }
   return ends.filter(value=>Number.isSafeInteger(value)&&value>now).reduce((left,right)=>left===0?right:Math.min(left,right),0);
 }

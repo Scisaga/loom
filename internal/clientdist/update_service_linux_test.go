@@ -100,6 +100,9 @@ func TestUpdateUnitComparisonRejectsChangesAndReplacement(t *testing.T) {
 			if err := os.WriteFile(next, []byte("demo owned unit"), 0644); err != nil {
 				return err
 			}
+			if err := os.Chmod(next, 0644); err != nil {
+				return err
+			}
 			return os.Rename(next, p)
 		}},
 		{"different mode", func(p string) error { return os.Chmod(p, 0666) }},
@@ -108,6 +111,9 @@ func TestUpdateUnitComparisonRejectsChangesAndReplacement(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "demo.service")
 			body := []byte("demo owned unit")
 			if err := os.WriteFile(path, body, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, 0644); err != nil {
 				t.Fatal(err)
 			}
 			entry, err := os.Lstat(path)

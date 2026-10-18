@@ -33,6 +33,9 @@ func TestStreamingCanonicalComparisonPreservesExactArchive(t *testing.T) {
 		if err := os.WriteFile(filePath, body, packageExpectedMode(name)); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.Chmod(filePath, packageExpectedMode(name)); err != nil {
+			t.Fatal(err)
+		}
 		value, err := openPackageInput(filePath, name, false)
 		if err != nil {
 			t.Fatal(err)
@@ -96,6 +99,9 @@ func TestStreamingInstalledSnapshotCannotConsumeChangedOrReplacedBytes(t *testin
 	if err := os.WriteFile(filePath, original, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(filePath, 0755); err != nil {
+		t.Fatal(err)
+	}
 	value, err := openPackageInput(filePath, "loom", false)
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +125,9 @@ func TestStreamingInstalledSnapshotCannotConsumeChangedOrReplacedBytes(t *testin
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filePath, original, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filePath, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := value.stable(); err == nil {

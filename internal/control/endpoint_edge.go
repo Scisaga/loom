@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -12,6 +13,8 @@ import (
 type EndpointEdgeRuntime struct {
 	listener net.Listener
 	target   string
+	website  string
+	member   string
 	done     chan struct{}
 	once     sync.Once
 	context  context.Context
@@ -26,8 +29,16 @@ type EndpointEdgeRuntime struct {
 // OpenEndpointEdge consumes explicit operator-owned TCP coordinates and only
 // copies opaque bytes. TLS and every authorization decision remain at control.
 func OpenEndpointEdge(listen, target string) (*EndpointEdgeRuntime, error) {
+	return OpenSharedEndpointEdge(listen, target, "", "")
+}
+
+// OpenSharedEndpointEdge optionally shares an existing public website mapping.
+// It reads a bounded ClientHello only to choose an opaque TCP destination. The
+// original bytes, TLS handshake and all authorization stay at the destination.
+func OpenSharedEndpointEdge(listen, target, website, member string) (*EndpointEdgeRuntime, error) {
 	host, port, err := net.SplitHostPort(listen)
-	if err != nil || net.ParseIP(host) == nil || port == "" || !privateAddress(target) {
+	if err != nil || net.ParseIP(host) == nil || port == "" || !privateAddress(target) ||
+		website != "" && !privateAddress(website) || member != "" && (website == "" || !privateAddress(member)) {
 		return nil, errors.New("endpoint edge requires an IP listener and private target")
 	}
 	listener, err := net.Listen("tcp", listen)
@@ -35,7 +46,7 @@ func OpenEndpointEdge(listen, target string) (*EndpointEdgeRuntime, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	runtime := &EndpointEdgeRuntime{listener: listener, target: target, done: make(chan struct{}), context: ctx, cancel: cancel, conns: make(map[net.Conn]struct{})}
+	runtime := &EndpointEdgeRuntime{listener: listener, target: target, website: website, member: member, done: make(chan struct{}), context: ctx, cancel: cancel, conns: make(map[net.Conn]struct{})}
 	go runtime.accept()
 	return runtime, nil
 }
@@ -63,8 +74,38 @@ func (runtime *EndpointEdgeRuntime) accept() {
 func (runtime *EndpointEdgeRuntime) forward(incoming net.Conn) {
 	defer runtime.workers.Done()
 	defer runtime.release(incoming)
+	destination := runtime.target
+	var prefix []byte
+	if runtime.website != "" {
+		_ = incoming.SetReadDeadline(time.Now().Add(5 * time.Second))
+		protocols, original, err := readEdgeClientHello(incoming)
+		if err != nil {
+			return
+		}
+		prefix = original
+		var device, member bool
+		for _, protocol := range protocols {
+			device = device || protocol == tunnelALPN
+			member = member || protocol == controlALPN || protocol == controlRelayALPN
+		}
+		if device && member {
+			return
+		}
+		switch {
+		case device:
+			destination = runtime.target
+		case member:
+			if runtime.member == "" {
+				return
+			}
+			destination = runtime.member
+		default:
+			destination = runtime.website
+		}
+		_ = incoming.SetReadDeadline(time.Time{})
+	}
 	dialer := net.Dialer{Timeout: 10 * time.Second}
-	target, err := dialer.DialContext(runtime.context, "tcp", runtime.target)
+	target, err := dialer.DialContext(runtime.context, "tcp", destination)
 	if err != nil {
 		return
 	}
@@ -81,13 +122,14 @@ func (runtime *EndpointEdgeRuntime) forward(incoming net.Conn) {
 	_ = target.SetDeadline(time.Time{})
 	finished := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(target, incoming)
+		_, _ = io.Copy(target, io.MultiReader(bytes.NewReader(prefix), incoming))
 		if tcp, ok := target.(*net.TCPConn); ok {
 			_ = tcp.CloseWrite()
 		}
 		close(finished)
 	}()
 	_, _ = io.Copy(incoming, target)
+	_ = target.Close()
 	_ = incoming.Close()
 	<-finished
 }

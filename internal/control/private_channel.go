@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -38,12 +39,22 @@ type PrivatePeer struct {
 }
 
 func privateAddress(address string) bool {
+	return parsePrivateChannelAddress(address, true)
+}
+
+func parsePrivateChannelAddress(address string, local bool) bool {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return false
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || ip.Zone() != "" || ip.String() != host || !ip.IsPrivate() && !ip.IsLoopback() {
+	if err != nil || ip.Zone() != "" || ip.String() != host {
+		return false
+	}
+	if local && !ip.IsPrivate() && !ip.IsLoopback() {
+		return false
+	}
+	if !local && !ip.IsPrivate() && !ip.IsLoopback() && (ip.Is4In6() || !ip.IsGlobalUnicast()) {
 		return false
 	}
 	n, err := strconv.Atoi(port)
@@ -53,22 +64,22 @@ func (config PrivateChannelConfig) Validate() error {
 	if config.Schema != 3 || ValidateID(config.Node) != nil || len(config.Listen) == 0 || config.Peers == nil {
 		return errors.New("private channel inputs are incomplete")
 	}
-	check := func(addresses []string) bool {
+	check := func(addresses []string, local bool) bool {
 		if len(addresses) == 0 {
 			return false
 		}
 		for i, address := range addresses {
-			if !privateAddress(address) || i > 0 && addresses[i-1] >= address {
+			if !parsePrivateChannelAddress(address, local) || i > 0 && addresses[i-1] >= address {
 				return false
 			}
 		}
 		return true
 	}
-	if !check(config.Listen) {
+	if !check(config.Listen, true) {
 		return errors.New("private listeners must be uniquely sorted canonical private IP addresses")
 	}
 	for i, peer := range config.Peers {
-		if ValidateID(peer.Node) != nil || peer.Node == config.Node || !check(peer.Addresses) || i > 0 && config.Peers[i-1].Node >= peer.Node {
+		if ValidateID(peer.Node) != nil || peer.Node == config.Node || !check(peer.Addresses, false) || i > 0 && config.Peers[i-1].Node >= peer.Node {
 			return errors.New("private peer inputs are invalid or not uniquely sorted")
 		}
 	}
@@ -85,19 +96,26 @@ func LoadPrivateChannelConfig(path string) (PrivateChannelConfig, error) {
 }
 
 type PrivateChannel struct {
-	config     PrivateChannelConfig
-	tlsConfig  *tls.Config
-	peerTLS    *tls.Config
-	control    *connectionListener
-	listeners  []net.Listener
-	done       chan struct{}
-	closeOnce  sync.Once
-	authorityM sync.RWMutex
-	authority  *Authority
-	relayOnly  bool
+	config      PrivateChannelConfig
+	tlsConfig   *tls.Config
+	peerTLS     *tls.Config
+	control     *connectionListener
+	listeners   map[string]net.Listener
+	connections map[*privateConnection]struct{}
+	transportM  sync.Mutex
+	workers     sync.WaitGroup
+	done        chan struct{}
+	closeOnce   sync.Once
+	authorityM  sync.RWMutex
+	authority   *Authority
+	relayOnly   bool
 }
 
 func OpenPrivateChannel(config PrivateChannelConfig, node NodeConfig) (*PrivateChannel, error) {
+	return openPrivateChannel(config, node, net.Listen, 5*time.Second)
+}
+
+func openPrivateChannel(config PrivateChannelConfig, node NodeConfig, listen func(string, string) (net.Listener, error), retry time.Duration) (*PrivateChannel, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -107,35 +125,34 @@ func OpenPrivateChannel(config PrivateChannelConfig, node NodeConfig) (*PrivateC
 	if node.NodeID != config.Node {
 		return nil, errors.New("control identity does not match private channel node")
 	}
-	tlsConfig, err := browserTLSConfig(node)
-	if err != nil {
-		return nil, err
+	browserConfig, browserErr := browserTLSConfig(node)
+	peerConfig, peerErr := peerTLSConfig(node)
+	if browserErr != nil {
+		log.Print("control: private browser TLS unavailable; local administration remains available")
 	}
-	peerConfig, err := peerTLSConfig(node)
-	if err != nil {
-		return nil, err
+	if peerErr != nil {
+		log.Print("control: private member TLS unavailable; local administration remains available")
+	} else {
+		peerConfig.NextProtos = []string{controlALPN, controlRelayALPN}
 	}
-	tlsConfig.NextProtos = []string{controlALPN, controlRelayALPN, "http/1.1"}
-	peerConfig.NextProtos = []string{controlALPN, controlRelayALPN}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
 	tlsConfig.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		for _, protocol := range hello.SupportedProtos {
 			if protocol == controlALPN || protocol == controlRelayALPN {
+				if peerConfig == nil {
+					return nil, errors.New("private member TLS unavailable")
+				}
 				return peerConfig, nil
 			}
 		}
-		return nil, nil
+		if browserConfig == nil {
+			return nil, errors.New("private browser TLS unavailable")
+		}
+		return browserConfig, nil
 	}
 	channel := &PrivateChannel{config: config, tlsConfig: tlsConfig, peerTLS: peerConfig, control: newConnectionListener(),
-		done: make(chan struct{})}
-	for _, address := range config.Listen {
-		listener, listenErr := net.Listen("tcp", address)
-		if listenErr != nil {
-			channel.Close()
-			return nil, fmt.Errorf("listen on existing private channel %s: %w", address, listenErr)
-		}
-		channel.listeners = append(channel.listeners, listener)
-		go channel.accept(listener)
-	}
+		done: make(chan struct{}), listeners: map[string]net.Listener{}, connections: map[*privateConnection]struct{}{}}
+	channel.startPrivateListeners(listen, retry)
 	return channel, nil
 }
 
@@ -153,7 +170,7 @@ func (channel *PrivateChannel) authorizeMemberFor(certificates []*x509.Certifica
 	channel.authorityM.RLock()
 	authority := channel.authority
 	channel.authorityM.RUnlock()
-	if authority == nil || len(certificates) == 0 {
+	if authority == nil || channel.peerTLS == nil || len(certificates) == 0 {
 		return false
 	}
 	certificate := certificates[0]
@@ -201,7 +218,15 @@ func (channel *PrivateChannel) accept(listener net.Listener) {
 				return
 			}
 		}
-		go channel.classify(connection)
+		tracked := channel.trackPrivateConnection(connection)
+		if tracked == nil {
+			return
+		}
+		channel.workers.Add(1)
+		go func() {
+			defer channel.workers.Done()
+			channel.classify(tracked)
+		}()
 	}
 }
 
@@ -305,6 +330,10 @@ func (channel *PrivateChannel) relayPrivate(connection *tls.Conn) {
 		_, _ = connection.Write([]byte{1})
 		return
 	}
+	targetConnection = channel.trackPrivateConnection(targetConnection)
+	if targetConnection == nil {
+		return
+	}
 	defer targetConnection.Close()
 	if _, err := connection.Write([]byte{0}); err != nil {
 		return
@@ -314,7 +343,7 @@ func (channel *PrivateChannel) relayPrivate(connection *tls.Conn) {
 	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(targetConnection, connection)
-		if tcp, ok := targetConnection.(*net.TCPConn); ok {
+		if tcp, ok := targetConnection.(interface{ CloseWrite() error }); ok {
 			_ = tcp.CloseWrite()
 		}
 		close(done)
@@ -378,11 +407,21 @@ func (channel *PrivateChannel) Close() error {
 	channel.closeOnce.Do(func() {
 		close(channel.done)
 		channel.control.Close()
+		channel.transportM.Lock()
 		for _, listener := range channel.listeners {
-			if err := listener.Close(); result == nil {
+			if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) && result == nil {
 				result = err
 			}
 		}
+		connections := make([]*privateConnection, 0, len(channel.connections))
+		for connection := range channel.connections {
+			connections = append(connections, connection)
+		}
+		channel.transportM.Unlock()
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+		channel.workers.Wait()
 	})
 	return result
 }
@@ -465,8 +504,8 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 		return nil, err
 	}
 	type route struct {
-		endpoint string
-		relay    bool
+		endpoint  string
+		relayNode string
 	}
 	var routes []route
 	for _, endpoint := range channel.endpoints(target) {
@@ -475,7 +514,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 	for _, peer := range channel.config.Peers {
 		if peer.Node != target {
 			for _, endpoint := range peer.Addresses {
-				routes = append(routes, route{endpoint: endpoint, relay: true})
+				routes = append(routes, route{endpoint: endpoint, relayNode: peer.Node})
 			}
 		}
 	}
@@ -489,7 +528,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 	results := make(chan result)
 	for _, candidate := range routes {
 		go func(candidate route) {
-			connection, err := channel.dialMemberRoute(ctx, target, candidate.endpoint, protocol, relayProtocol, candidate.relay, proofOnly)
+			connection, err := channel.dialMemberRoute(ctx, target, candidate.endpoint, protocol, relayProtocol, candidate.relayNode, proofOnly)
 			select {
 			case results <- result{connection, err}:
 			case <-ctx.Done():
@@ -516,10 +555,17 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 
 // All establishment steps share one deadline and cancellation, including the
 // relay's target response. The losing attempts cannot outlive the request.
-func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endpoint, protocol, relayProtocol string, relay, proofOnly bool) (net.Conn, error) {
+func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endpoint, protocol, relayProtocol, relayNode string, proofOnly bool) (net.Conn, error) {
+	if channel.peerTLS == nil {
+		return nil, errors.New("private member TLS unavailable")
+	}
 	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", endpoint)
 	if err != nil {
 		return nil, err
+	}
+	raw = channel.trackPrivateConnection(raw)
+	if raw == nil {
+		return nil, net.ErrClosed
 	}
 	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
 	success := false
@@ -533,11 +579,17 @@ func (channel *PrivateChannel) dialMemberRoute(ctx context.Context, target, endp
 		_ = raw.SetDeadline(deadline)
 	}
 	var transport net.Conn = raw
-	if relay {
+	if relayNode != "" {
 		host, _, _ := net.SplitHostPort(endpoint)
 		config := channel.peerTLS.Clone()
 		config.ServerName = host
 		config.NextProtos = []string{relayProtocol}
+		if _, currentMember := channel.memberForNode(relayNode); currentMember {
+			// Member identity is independent of its supplied underlay coordinate.
+			// The outer hop always needs the current relay key, including when
+			// the inner request is only retrieving a historical control proof.
+			config = channel.relayTargetTLS(relayNode, relayProtocol, false)
+		}
 		outer := tls.Client(raw, config)
 		if err := outer.HandshakeContext(ctx); err != nil {
 			return nil, err

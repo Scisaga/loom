@@ -931,6 +931,12 @@ device challenge 为 `schema=3,nonce`，nonce 为 32 随机字节的无填充 ba
 claim/resume；device 每次请求仍检查当前设备授权。SPKI 摘要为 `sha256:` 加 X.509
 RawSubjectPublicKeyInfo 的 SHA-256 小写 hex，证书摘要同格式但哈希完整叶证书 DER，均不加 JSON 或签名域。
 客户端同时验证这两个摘要、名称、serverAuth 用途和有效期；仅握手成功不能制造运行健康。
+多个已认证入口沿[私有入口与运行时](enrollment-endpoint-model.md#私有入口与运行时)作独立有界的
+完整业务尝试。HTTP、规范值、签名、设备绑定与已见前沿均通过后才取得一个结果；失败候选不写
+LKG，不因先握手成功取消尚可完成业务的入口。报告只预留一次序列并重用同一已签原件；配置及
+加入后 resume 的持久接受仍沿原唯一 SaveLKG。新 control 原件收集也须在同一候选收齐完整证明、
+事实和冲突后验证重放，不能拼接多个失败候选的半套内容。首次 claim 仍固定 Invite 签发者。
+这些调度与诊断修订不改变任何已签帧、事实、View、Report 字段或现网原件。
 
 DeviceView envelope 字段为 `schema=3,network_id,genesis_digest,issuer_control_id,issuer_key_id,control_proof,`
 `fact_frontier,view,view_digest,signature`；以 `loom-device-view-v3\0` 对除自身签名外的全部字段签名。

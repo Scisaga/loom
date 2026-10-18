@@ -133,7 +133,13 @@ func Update(ctx context.Context, options UpdateOptions) (resultErr error) {
 		return errors.New("accepted Device configuration unavailable")
 	}
 	lkg := store.LKG()
-	delivery, err := deviceclient.Release(ctx, store, "linux-"+runtime.GOARCH)
+	delivery, err := deviceclient.Release(ctx, store, "linux-"+runtime.GOARCH, func(delivery control.DeviceReleaseDelivery) error {
+		manifest, _, err := verifyDelivery(delivery, public, lkg.View)
+		if err != nil {
+			return err
+		}
+		return packageMatchesExpected(manifest, current, lkg.View)
+	})
 	if err != nil {
 		return err
 	}
@@ -164,6 +170,9 @@ func Update(ctx context.Context, options UpdateOptions) (resultErr error) {
 		if err != nil || actual != currentPath {
 			return errors.New("accepted package pointer changed during update inspection")
 		}
+		if err := removeSupersededPrograms(public, verified.Manifest, currentPath); err != nil {
+			return fmt.Errorf("current runtime remains active; superseded program cleanup remains incomplete: %w", err)
+		}
 		fmt.Fprintln(options.Log, "Current verified package satisfies the accepted expectation; no installation performed.")
 		return nil
 	}
@@ -190,7 +199,7 @@ func Update(ctx context.Context, options UpdateOptions) (resultErr error) {
 	}
 	defer func() { resultErr = errors.Join(resultErr, archive.Close()) }()
 	hash := sha256.New()
-	if err := deviceclient.DownloadReleaseTo(ctx, store, request, int64(entry.Artifact.Size), io.MultiWriter(archive, hash)); err != nil {
+	if err := deviceclient.DownloadReleaseTo(ctx, store, request, int64(entry.Artifact.Size), temporary, io.MultiWriter(archive, hash)); err != nil {
 		return err
 	}
 	if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != entry.Artifact.Digest {

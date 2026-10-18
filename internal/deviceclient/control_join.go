@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 
 	"loom/internal/control"
@@ -16,29 +17,42 @@ func FetchMemberAuthority(ctx context.Context, store IdentityStore) (control.Con
 	if lkg == nil || store.Platform() != "linux" {
 		return control.ControlProof{}, nil, errors.New("member initialization requires its accepted Linux identity")
 	}
+	type originals struct {
+		proof     control.ControlProof
+		materials []control.Material
+	}
+	// Each candidate supplies one complete, independently verified collection.
+	// Mixing partial collections could conceal a stale or inconsistent source.
+	value, err := tryDeviceEndpoints(withCertifiedDNS(ctx, lkg.View.DNSServers), servingDeviceEndpoints(lkg), 2, 0,
+		func(attempt context.Context, endpoint control.EndpointGeneration) (originals, error) {
+			proof, materials, err := fetchMemberAuthorityFrom(attempt, store, lkg, endpoint)
+			return originals{proof, materials}, err
+		})
+	return value.proof, value.materials, err
+}
+
+func fetchMemberAuthorityFrom(ctx context.Context, store IdentityStore, lkg *control.DeviceViewEnvelope, endpoint control.EndpointGeneration) (control.ControlProof, []control.Material, error) {
 	fetch := func(ctx context.Context, path string) ([]byte, error) {
-		conn, err := deviceConnection(ctx, store)
-		if err != nil {
-			return nil, err
-		}
-		defer conn.Close()
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://loom.private/device/control"+path, nil)
-		if err != nil {
-			return nil, err
-		}
-		response, err := tunnelHTTPClient(conn).Do(request)
-		if err != nil {
-			return nil, err
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			return nil, errors.New("current member original-fact authentication rejected")
-		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
-		if err != nil || len(body) > 8<<20 {
-			return nil, errors.New("member original exceeds bounded response")
-		}
-		return body, nil
+		return requestDeviceEndpoints(ctx, []control.EndpointGeneration{endpoint}, lkg.View.DeviceID, store.PrivateKey(), 1, deviceRequestTimeout, control.DialEndpoint,
+			func(attempt context.Context, conn net.Conn) ([]byte, error) {
+				request, err := http.NewRequestWithContext(attempt, http.MethodGet, "http://loom.private/device/control"+path, nil)
+				if err != nil {
+					return nil, err
+				}
+				response, err := tunnelHTTPClient(conn).Do(request)
+				if err != nil {
+					return nil, err
+				}
+				defer response.Body.Close()
+				if response.StatusCode != http.StatusOK {
+					return nil, errors.New("current member original-fact authentication rejected")
+				}
+				body, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
+				if err != nil || len(body) > 8<<20 {
+					return nil, errors.New("member original exceeds bounded response")
+				}
+				return body, nil
+			})
 	}
 	readProof := func() (control.ControlProof, error) {
 		body, err := fetch(ctx, "/proof")

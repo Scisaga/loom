@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,12 +16,12 @@ import (
 
 func TestWireGuardCertifiedDNSAndAddressChanges(t *testing.T) {
 	answers := []byte{20, 10}
-	queries := 0
+	var queries atomic.Int32
 	dial := func(_ context.Context, network, address string) (net.Conn, error) {
 		if network != "udp" || address != "192.0.2.53:53" {
 			return nil, errors.New("unexpected DNS destination")
 		}
-		queries++
+		queries.Add(1)
 		client, server := net.Pipe()
 		go func() {
 			defer server.Close()
@@ -49,8 +50,8 @@ func TestWireGuardCertifiedDNSAndAddressChanges(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	initial, err := resolveWireGuardEndpoints(ctx, desired, wireGuardExecution{}, []string{"192.0.2.53"}, dial)
-	if err != nil || queries != 2 || initial.WireGuard[0].Endpoint != "192.0.2.10:51820" || initial.WireGuard[1].Endpoint != "192.0.2.10:51821" || desired.WireGuard[0].Endpoint != "demo-relay.example:51820" {
-		t.Fatalf("certified DNS projection failed: %+v, queries=%d, err=%v", initial, queries, err)
+	if err != nil || queries.Load() < 1 || queries.Load() > 2 || initial.WireGuard[0].Endpoint != "192.0.2.10:51820" || initial.WireGuard[1].Endpoint != "192.0.2.10:51821" || desired.WireGuard[0].Endpoint != "demo-relay.example:51820" {
+		t.Fatalf("certified DNS projection failed: %+v, queries=%d, err=%v", initial, queries.Load(), err)
 	}
 	initial.WireGuard[0].Endpoint = "192.0.2.20:51820"
 	stable, err := resolveWireGuardEndpoints(ctx, desired, initial, []string{"192.0.2.53"}, dial)

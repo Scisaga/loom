@@ -379,7 +379,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	}
 	snapshot := buildWebSnapshotUsing(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), viewFor, releases...)
 	server.memberSnapshot(&snapshot)
-	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
+	snapshot.EndpointCertificates = EndpointCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
 	server.websiteSnapshot(&snapshot, r, projection)
 	snapshot.PolicyInvites = projectWebPolicyInvites(projection, server.now())
 	if server.Runtime.Reports != nil {
@@ -485,7 +485,7 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot := buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)
 	server.memberSnapshot(&snapshot)
-	snapshot.WebsiteCertificates = WebsiteCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
+	snapshot.EndpointCertificates = EndpointCertificateReadbacks(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
 	server.websiteSnapshot(&snapshot, r, result.Projection)
 	snapshot.PolicyInvites = projectWebPolicyInvites(result.Projection, server.now())
 	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": snapshot}

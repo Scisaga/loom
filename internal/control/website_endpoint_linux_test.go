@@ -47,7 +47,7 @@ func TestWebsiteEndpointCSRRootWithdrawalAndSharedSNI(t *testing.T) {
 	}
 	ca, _ := trust.certificate()
 	template := &x509.Certificate{SerialNumber: big.NewInt(92), Subject: pkix.Name{CommonName: "demo-website"},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), BasicConstraintsValid: true,
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(48 * time.Hour), BasicConstraintsValid: true,
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: []string{"control.loom"}}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca, csr.PublicKey, signingKey)
 	if err != nil {
@@ -97,15 +97,18 @@ func TestWebsiteEndpointCSRRootWithdrawalAndSharedSNI(t *testing.T) {
 		{"renewal", root, node.ControlID, "renewal_due", "", now},
 		{"not-yet-valid", root, node.ControlID, "not_yet_valid", "", leaf.NotBefore.Add(-time.Second)},
 		{"expired", root, node.ControlID, "expired", "", leaf.NotAfter},
+		{"root-expired", root, node.ControlID, "expired", "", ca.NotAfter},
 		{"missing", t.TempDir(), node.ControlID, "unknown", "material_unavailable", now},
 		{"remote-owner", root, "demo-other-control", "unknown", "inspect_owning_control", now},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			rows := WebsiteCertificateReadbacks(test.directory, test.owner, projection, test.at)
+			websiteProjection := projection
+			websiteProjection.EndpointGenerations = []EndpointGeneration{endpoint}
+			rows := EndpointCertificateReadbacks(test.directory, test.owner, websiteProjection, test.at)
 			if len(rows) != 1 || rows[0].Status != test.status || rows[0].Reason != test.reason {
 				t.Fatalf("certificate readback = %+v", rows)
 			}
-			if test.reason == "" && (rows[0].LeafNotAfter != leaf.NotAfter.UTC().Format(time.RFC3339) || rows[0].RemainingSeconds == nil || *rows[0].RemainingSeconds != int64(leaf.NotAfter.Sub(test.at)/time.Second)) {
+			if test.reason == "" && (rows[0].LeafNotAfter != leaf.NotAfter.UTC().Format(time.RFC3339) || rows[0].RootNotAfter != ca.NotAfter.UTC().Format(time.RFC3339) || rows[0].RemainingSeconds == nil || *rows[0].RemainingSeconds != int64(ca.NotAfter.Sub(test.at)/time.Second)) {
 				t.Fatal("readback did not use verified certificate lifetime and injected clock")
 			}
 		})

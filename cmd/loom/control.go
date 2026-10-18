@@ -245,25 +245,24 @@ func cmdControlServe(args []string) (retErr error) {
 	if err := control.ActivatePreparedControlKey(context.Background(), *root); err != nil {
 		return err
 	}
-	node, err := control.LoadNodeConfig(*root)
-	if err != nil {
-		return err
-	}
-	var channel *control.PrivateChannel
+	var runtime *control.Runtime
+	var err error
 	if *privatePath != "" {
-		private, err := control.LoadPrivateChannelConfig(*privatePath)
+		var private control.PrivateChannelConfig
+		private, err = control.LoadPrivateChannelConfig(*privatePath)
 		if err != nil {
 			return err
 		}
-		channel, err = control.OpenPrivateChannel(private, node)
-		if err != nil {
-			return err
-		}
-		defer func() { retErr = errors.Join(retErr, channel.Close()) }()
+		runtime, err = control.OpenRuntimeWithPrivateChannel(*root, private)
+	} else {
+		runtime, err = control.OpenRuntime(*root, nil)
 	}
-	runtime, err := control.OpenRuntime(*root, channel)
 	if err != nil {
 		return err
+	}
+	channel := runtime.Channel
+	if channel != nil {
+		defer func() { retErr = errors.Join(retErr, channel.Close()) }()
 	}
 	defer func() { retErr = errors.Join(retErr, runtime.Close()) }()
 	admin := *socket
@@ -272,7 +271,7 @@ func cmdControlServe(args []string) (retErr error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return (&control.Server{Runtime: runtime, Channel: channel, Config: node, AdminSocket: admin, Releases: releases, SSH: ssh}).Serve(ctx)
+	return (&control.Server{Runtime: runtime, Channel: channel, Config: runtime.Config, AdminSocket: admin, Releases: releases, SSH: ssh}).Serve(ctx)
 }
 func cmdControlRelay(args []string) (retErr error) {
 	fs := flag.NewFlagSet("control relay", flag.ContinueOnError)
@@ -306,13 +305,15 @@ func cmdControlEdge(args []string) (retErr error) {
 	fs := flag.NewFlagSet("control edge", flag.ContinueOnError)
 	listen := fs.String("listen", "", "操作者提供的本机 TCP 监听地址")
 	target := fs.String("target", "", "既有 control 私有 TCP 目标地址")
+	website := fs.String("website-target", "", "可选既有网站私有 TCP 目标；按 ClientHello ALPN 原样分流")
+	member := fs.String("member-target", "", "共享网站入口时的既有成员 mTLS 私有 TCP 目标")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || *listen == "" || *target == "" {
 		return errors.New("control edge 需要 listen 和 target")
 	}
-	edge, err := control.OpenEndpointEdge(*listen, *target)
+	edge, err := control.OpenSharedEndpointEdge(*listen, *target, *website, *member)
 	if err != nil {
 		return err
 	}
@@ -369,7 +370,7 @@ func cmdControlInspect(args []string) error {
 		return err
 	}
 	// Never return the complete Projection: device authorizations contain RuntimeKey.
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "network_id": p.NetworkID, "genesis_id": node.GenesisID, "control_config_id": p.ControlConfigID, "members": p.Config.Members, "fact_frontier": p.Frontier, "targets": p.Targets, "pending_material_ids": p.PendingMaterialIDs, "invalid_materials": p.InvalidMaterials, "devices": len(p.DeviceAuthorizations), "endpoints": p.EndpointGenerations, "website_certificates": control.WebsiteCertificateReadbacks(*root, node.ControlID, p, time.Now()), "dns_records": p.NetworkIntent.DNSRecords, "public_trust": p.NetworkIntent.PublicTrust, "services": p.NetworkIntent.Services, "policies": p.NetworkIntent.Policies, "resources": p.NetworkIntent.Resources, "links": links, "business_probe_targets": p.NetworkIntent.BusinessProbeTargets, "expected_components": p.NetworkIntent.ExpectedComponents})
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": 3, "network_id": p.NetworkID, "genesis_id": node.GenesisID, "control_config_id": p.ControlConfigID, "members": p.Config.Members, "fact_frontier": p.Frontier, "targets": p.Targets, "pending_material_ids": p.PendingMaterialIDs, "invalid_materials": p.InvalidMaterials, "devices": len(p.DeviceAuthorizations), "endpoints": p.EndpointGenerations, "endpoint_certificates": control.EndpointCertificateReadbacks(*root, node.ControlID, p, time.Now()), "dns_records": p.NetworkIntent.DNSRecords, "public_trust": p.NetworkIntent.PublicTrust, "services": p.NetworkIntent.Services, "policies": p.NetworkIntent.Policies, "resources": p.NetworkIntent.Resources, "links": links, "business_probe_targets": p.NetworkIntent.BusinessProbeTargets, "expected_components": p.NetworkIntent.ExpectedComponents})
 }
 
 func cmdControlWrite(args []string) error {

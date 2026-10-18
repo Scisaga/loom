@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -44,6 +43,10 @@ func postJSON(ctx context.Context, connection net.Conn, path string, requestValu
 	if err != nil {
 		return 0, err
 	}
+	return postCanonicalJSON(ctx, connection, path, body, responseValue)
+}
+
+func postCanonicalJSON(ctx context.Context, connection net.Conn, path string, body []byte, responseValue any) (int, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://loom.private"+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
@@ -114,24 +117,36 @@ func enroll(ctx context.Context, store IdentityStore, resume bool) (control.Enro
 	}
 	// Once joined, resume uses device authentication. Bootstrap remains the
 	// original issuer's frozen endpoint and is never redirected to another peer.
-	var connection net.Conn
+	readResponse := func(attempt context.Context, connection net.Conn) (control.EnrollmentResponse, error) {
+		var response control.EnrollmentResponse
+		if _, err := postJSON(attempt, connection, path, signed, &response); err != nil {
+			return response, err
+		}
+		if response.TransactionID != payload.ID {
+			return response, errors.New("enrollment response belongs to another transaction")
+		}
+		if response.DeviceView != nil {
+			if err := validateFetchedView(store, *response.DeviceView); err != nil {
+				return response, err
+			}
+		}
+		return response, nil
+	}
+	var response control.EnrollmentResponse
 	if resume && store.LKG() != nil {
-		connection, err = deviceConnection(ctx, store)
+		response, err = requestDevice(ctx, store, store.LKG(), 2, deviceRequestTimeout, readResponse)
 	} else {
 		endpoint := payload.Endpoint
 		hello := control.TunnelHello{Schema: 3, Mode: "bootstrap", EndpointID: endpoint.ID, Generation: endpoint.Generation, Invite: &invite}
-		connection, err = control.DialEndpoint(withCertifiedDNS(ctx, payload.DNSServers), endpoint, hello, nil)
+		connection, dialErr := control.DialEndpoint(withCertifiedDNS(ctx, payload.DNSServers), endpoint, hello, nil)
+		if dialErr != nil {
+			return control.EnrollmentResponse{}, dialErr
+		}
+		defer connection.Close()
+		response, err = readResponse(ctx, connection)
 	}
 	if err != nil {
 		return control.EnrollmentResponse{}, err
-	}
-	defer connection.Close()
-	var response control.EnrollmentResponse
-	if _, err := postJSON(ctx, connection, path, signed, &response); err != nil {
-		return control.EnrollmentResponse{}, err
-	}
-	if response.TransactionID != payload.ID {
-		return control.EnrollmentResponse{}, errors.New("enrollment response belongs to another transaction")
 	}
 	if response.DeviceView != nil {
 		if err := store.SaveLKG(*response.DeviceView); err != nil {
@@ -139,107 +154,6 @@ func enroll(ctx context.Context, store IdentityStore, resume bool) (control.Enro
 		}
 	}
 	return response, nil
-}
-func deviceConnection(ctx context.Context, store IdentityStore) (net.Conn, error) {
-	lkg := store.LKG()
-	if lkg == nil {
-		return nil, errors.New("device has no accepted LKG")
-	}
-	ctx = withCertifiedDNS(ctx, lkg.View.DNSServers)
-	endpoints := []control.EndpointGeneration{}
-	for _, endpoint := range endpointOrder(lkg.View.Endpoints) {
-		if endpoint.State == "serving" {
-			endpoints = append(endpoints, endpoint)
-		}
-	}
-	if len(endpoints) == 0 {
-		return nil, errors.New("device LKG has no serving endpoint")
-	}
-	return connectDeviceEndpoints(ctx, endpoints, lkg.View.DeviceID, store.PrivateKey(), control.DialEndpoint)
-}
-
-// Every authenticated endpoint gets its own bounded attempt. A black hole in
-// the first entry cannot consume the budget of the next entry. Two in-flight
-// attempts are sufficient for fallback without opening every member at once.
-func connectDeviceEndpoints(ctx context.Context, endpoints []control.EndpointGeneration, deviceID string, private ed25519.PrivateKey,
-	dial func(context.Context, control.EndpointGeneration, control.TunnelHello, ed25519.PrivateKey) (net.Conn, error)) (net.Conn, error) {
-	const parallel = 2
-	const attemptTimeout = 5 * time.Second
-	type result struct {
-		index      int
-		connection net.Conn
-		err        error
-	}
-	activeContext, cancel := context.WithCancel(ctx)
-	var workers sync.WaitGroup
-	defer func() { cancel(); workers.Wait() }()
-	results := make(chan result, parallel)
-	started, active := 0, 0
-	failures := make([]error, len(endpoints))
-	start := func(index int) {
-		active++
-		started++
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			attempt, finish := context.WithTimeout(activeContext, attemptTimeout)
-			endpoint := endpoints[index]
-			hello := control.TunnelHello{Schema: 3, Mode: "device", EndpointID: endpoint.ID, Generation: endpoint.Generation, DeviceID: deviceID}
-			connection, err := dial(attempt, endpoint, hello, private)
-			finish()
-			results <- result{index, connection, err}
-		}()
-	}
-	// Cancellation always waits for started attempts. A losing or late success
-	// owns a real connection and must close it before the caller continues.
-	drain := func() {
-		cancel()
-		for active > 0 {
-			value := <-results
-			active--
-			if value.connection != nil {
-				_ = value.connection.Close()
-			}
-		}
-		workers.Wait()
-	}
-	for started < len(endpoints) && active < parallel && ctx.Err() == nil {
-		start(started)
-	}
-	for active > 0 {
-		select {
-		case <-ctx.Done():
-			drain()
-			return nil, ctx.Err()
-		case value := <-results:
-			active--
-			if value.err == nil && value.connection != nil {
-				drain()
-				if err := ctx.Err(); err != nil {
-					_ = value.connection.Close()
-					return nil, err
-				}
-				return value.connection, nil
-			}
-			if value.connection != nil {
-				_ = value.connection.Close()
-			}
-			if value.err == nil {
-				value.err = errors.New("device endpoint returned no connection")
-			}
-			failures[value.index] = value.err
-			if started < len(endpoints) && ctx.Err() == nil {
-				start(started)
-			}
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if len(endpoints) == 0 {
-		return nil, errors.New("device LKG has no serving endpoint")
-	}
-	return nil, errors.Join(failures...)
 }
 
 // Callers verify their Invite or LKG before supplying its DNS addresses. The
@@ -355,27 +269,28 @@ func EndpointRouteExclusions(ctx context.Context, endpoints []control.EndpointGe
 // Fetch verifies authentication without applying a runtime. SaveLKG is the
 // durable acceptance boundary; execution and probes happen only afterward.
 func Fetch(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
-	connection, err := deviceConnection(ctx, store)
-	if err != nil {
-		return control.DeviceViewEnvelope{}, err
-	}
-	defer connection.Close()
-	var envelope control.DeviceViewEnvelope
-	if _, err := postJSON(ctx, connection, "/device/config", struct{}{}, &envelope); err != nil {
-		return control.DeviceViewEnvelope{}, err
-	}
+	return requestDevice(ctx, store, store.LKG(), 2, deviceRequestTimeout, func(attempt context.Context, connection net.Conn) (control.DeviceViewEnvelope, error) {
+		var envelope control.DeviceViewEnvelope
+		if _, err := postJSON(attempt, connection, "/device/config", struct{}{}, &envelope); err != nil {
+			return control.DeviceViewEnvelope{}, err
+		}
+		return envelope, validateFetchedView(store, envelope)
+	})
+}
+
+func validateFetchedView(store IdentityStore, envelope control.DeviceViewEnvelope) error {
 	if err := control.VerifyDeviceViewEnvelope(envelope, store.Invite()); err != nil {
-		return control.DeviceViewEnvelope{}, err
+		return err
 	}
 	if envelope.View.DevicePublicKey != store.PublicKey() || envelope.View.Platform != store.Platform() {
-		return control.DeviceViewEnvelope{}, errors.New("device view identity changed")
+		return errors.New("device view identity changed")
 	}
 	if previous := store.LKG(); previous != nil {
 		if err := control.CheckDeviceViewAdvance(envelope, *previous, previous.FactFrontier); err != nil {
-			return control.DeviceViewEnvelope{}, err
+			return err
 		}
 	}
-	return envelope, nil
+	return nil
 }
 func Sync(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
 	envelope, err := Fetch(ctx, store)
@@ -436,17 +351,19 @@ func PostSignedReport(ctx context.Context, store IdentityStore, report control.D
 	if err := report.Verify(store.PublicKey()); err != nil {
 		return err
 	}
-	connection, err := deviceConnection(ctx, store)
+	body, err := control.CanonicalEncode(report)
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
-	var response control.DeviceReportResponse
-	if _, err := postJSON(ctx, connection, "/device/report", report, &response); err != nil {
-		return err
-	}
-	if response.ReportSequence != report.ReportSequence {
-		return errors.New("device report acknowledgement sequence mismatch")
-	}
-	return nil
+	_, err = requestDevice(ctx, store, lkg, 2, deviceRequestTimeout, func(attempt context.Context, connection net.Conn) (struct{}, error) {
+		var response control.DeviceReportResponse
+		if _, err := postCanonicalJSON(attempt, connection, "/device/report", body, &response); err != nil {
+			return struct{}{}, err
+		}
+		if response.ReportSequence != report.ReportSequence {
+			return struct{}{}, errors.New("device report acknowledgement sequence mismatch")
+		}
+		return struct{}{}, nil
+	})
+	return err
 }

@@ -704,8 +704,12 @@ func checkManagedUnit(ctx context.Context, body, candidate []byte, currentPath s
 }
 
 func removeReplacedPrograms(directory string, previous Manifest) error {
+	return removeReplacedProgramsWithReferences(directory, previous, installedProgramReferences)
+}
+
+func removeReplacedProgramsWithReferences(directory string, previous Manifest, readReferences func(context.Context) ([]programReference, error)) error {
+	var candidates []Component
 	for _, component := range []Component{previous.Loom, previous.SingBox} {
-		path := filepath.Join(directory, component.Path)
 		err := verifyInstalledProgram(context.Background(), directory, component)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -713,7 +717,37 @@ func removeReplacedPrograms(directory string, previous Manifest) error {
 		if err != nil {
 			return errors.New("replaced executable ownership or bytes differ; retained for inspection")
 		}
-		if err = os.Remove(path); err != nil {
+		candidates = append(candidates, component)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	references, err := readReferences(ctx)
+	if err != nil {
+		return errors.New("executable references could not be verified; replaced programs retained")
+	}
+	var removable []Component
+	for _, component := range candidates {
+		path := filepath.Join(directory, component.Path)
+		referenced, err := referencesProgram(path, references)
+		if err != nil {
+			return errors.New("executable reference identity could not be verified; replaced programs retained")
+		}
+		if referenced {
+			continue
+		}
+		removable = append(removable, component)
+	}
+	for _, component := range removable {
+		path := filepath.Join(directory, component.Path)
+		// Recheck ownership and bytes after reading external references. Cleanup
+		// never grants permission to remove a replaced or otherwise unknown file.
+		if err := verifyInstalledProgram(ctx, directory, component); err != nil {
+			return errors.New("replaced executable changed during reference checks; retained")
+		}
+		if err := os.Remove(path); err != nil {
 			return err
 		}
 	}

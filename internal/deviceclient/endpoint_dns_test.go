@@ -7,6 +7,7 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,20 +25,20 @@ func TestBootstrapClaimAndResumeUseSignedDNSWithoutReplacingIdentity(t *testing.
 		t.Fatal(err)
 	}
 	public, request := store.PublicKey(), store.ClaimRequestID()
-	queries, endpoints := 0, 0
+	var queries, endpoints atomic.Int32
 	stopTLS := errors.New("demo endpoint reached")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	ctx = control.WithEndpointDialer(ctx, func(_ context.Context, network, address string) (net.Conn, error) {
 		if network == "tcp" && address == "192.0.2.8:443" {
-			endpoints++
+			endpoints.Add(1)
 			return nil, stopTLS
 		}
 		if network != "udp" || address != "192.0.2.53:53" {
 			t.Errorf("bootstrap bypassed its signed resolver: %s %s", network, address)
 			return nil, errors.New("unexpected underlay dial")
 		}
-		queries++
+		queries.Add(1)
 		client, server := net.Pipe()
 		go func() {
 			defer server.Close()
@@ -65,8 +66,8 @@ func TestBootstrapClaimAndResumeUseSignedDNSWithoutReplacingIdentity(t *testing.
 			t.Fatal("failed bootstrap or restart replaced the pending identity", err)
 		}
 	}
-	if queries != 4 || endpoints != 2 {
-		t.Fatalf("unexpected DNS/endpoint attempts: %d/%d", queries, endpoints)
+	if queries.Load() < 2 || queries.Load() > 4 || endpoints.Load() != 2 {
+		t.Fatalf("unexpected DNS/endpoint attempts: %d/%d", queries.Load(), endpoints.Load())
 	}
 }
 

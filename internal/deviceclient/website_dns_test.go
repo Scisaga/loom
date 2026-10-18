@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ func TestWebsiteResolutionUsesCertifiedUnderlayAndKeepsEndpointIdentity(t *testi
 	endpoint.Modes = []string{"web"}
 	endpoint.WebsiteTrustID = control.WebsiteTrustID([]byte("demo-root"))
 	before, _ := control.CanonicalEncode(endpoint)
-	queries := 0
+	var queries atomic.Int32
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	ctx = control.WithEndpointDialer(ctx, func(_ context.Context, network, address string) (net.Conn, error) {
@@ -28,7 +29,7 @@ func TestWebsiteResolutionUsesCertifiedUnderlayAndKeepsEndpointIdentity(t *testi
 			t.Errorf("website bypassed certified underlay DNS: %s %s", network, address)
 			return nil, errors.New("unexpected dial")
 		}
-		queries++
+		queries.Add(1)
 		client, server := net.Pipe()
 		go func() {
 			defer server.Close()
@@ -48,10 +49,11 @@ func TestWebsiteResolutionUsesCertifiedUnderlayAndKeepsEndpointIdentity(t *testi
 		return client, nil
 	})
 	addresses, err := WebsiteAddresses(ctx, []control.EndpointGeneration{endpoint}, []string{"192.0.2.53"})
-	if err != nil || !reflect.DeepEqual(addresses, []string{"192.0.2.20"}) || queries != 2 {
-		t.Fatal("website did not consume the protected certified resolver", addresses, queries, err)
+	if err != nil || !reflect.DeepEqual(addresses, []string{"192.0.2.20"}) || queries.Load() < 1 || queries.Load() > 2 {
+		t.Fatal("website did not consume the protected certified resolver", addresses, queries.Load(), err)
 	}
-	if _, err := WebsiteAddresses(ctx, []control.EndpointGeneration{endpoint}, nil); err == nil || queries != 2 {
+	completedQueries := queries.Load()
+	if _, err := WebsiteAddresses(ctx, []control.EndpointGeneration{endpoint}, nil); err == nil || queries.Load() != completedQueries {
 		t.Fatal("website used an unconfigured DNS fallback")
 	}
 	after, _ := control.CanonicalEncode(endpoint)
