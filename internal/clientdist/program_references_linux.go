@@ -181,7 +181,7 @@ func serviceProgramReferences(ctx context.Context, unit string, run referenceRun
 func decodeExecutionReferences(body []byte) ([]programReference, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	var references []programReference
-	for range executionProperties {
+	for _, propertyName := range executionProperties {
 		var property struct {
 			Type string            `json:"type"`
 			Data []json.RawMessage `json:"data"`
@@ -200,7 +200,14 @@ func decodeExecutionReferences(body []byte) ([]programReference, error) {
 				return nil, errors.New("managed unit execution path is ambiguous")
 			}
 			references = append(references, programReference{path: executable})
-			for _, argument := range arguments {
+			// The signed client unit reloads its already running process. This
+			// exact PID argument cannot name another executable. All other
+			// substitutions remain unknown execution references.
+			clientReload := propertyName == "ExecReload" && executable == "/bin/kill" && len(arguments) == 3 && arguments[0] == "/bin/kill" && arguments[1] == "-HUP" && arguments[2] == "$MAINPID"
+			for index, argument := range arguments {
+				if clientReload && index == 2 {
+					continue
+				}
 				if strings.ContainsAny(argument, "%$") {
 					return nil, errors.New("managed unit execution arguments have unresolved substitutions")
 				}

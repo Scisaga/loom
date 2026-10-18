@@ -123,10 +123,15 @@ func TestManagedUnitReferencesIncludeDisabledAndInactive(t *testing.T) {
 
 func executionFixture(t *testing.T, path string, arguments []string) []byte {
 	t.Helper()
+	return executionPropertyFixture(t, "ExecStart", path, arguments)
+}
+
+func executionPropertyFixture(t *testing.T, name, path string, arguments []string) []byte {
+	t.Helper()
 	var body bytes.Buffer
 	for _, property := range executionProperties {
 		rows := [][]any{}
-		if property == "ExecStart" {
+		if property == name {
 			rows = append(rows, []any{path, arguments, false, 0, 0, 0, 0, 0, 0, 0})
 		}
 		if err := json.NewEncoder(&body).Encode(map[string]any{"type": "a(sasbttttuii)", "data": rows}); err != nil {
@@ -134,6 +139,42 @@ func executionFixture(t *testing.T, path string, arguments []string) []byte {
 		}
 	}
 	return body.Bytes()
+}
+
+func TestManagedReloadReferencesAllowOnlyExactClientPID(t *testing.T) {
+	for _, test := range []struct {
+		name, property, executable string
+		arguments                  []string
+		accepted                   bool
+	}{
+		{"client-reload", "ExecReload", "/bin/kill", []string{"/bin/kill", "-HUP", "$MAINPID"}, true},
+		{"start", "ExecStart", "/bin/kill", []string{"/bin/kill", "-HUP", "$MAINPID"}, false},
+		{"another-program", "ExecReload", "/opt/demo/loom", []string{"/opt/demo/loom", "-HUP", "$MAINPID"}, false},
+		{"another-kill-path", "ExecReload", "/usr/bin/kill", []string{"/usr/bin/kill", "-HUP", "$MAINPID"}, false},
+		{"another-signal", "ExecReload", "/bin/kill", []string{"/bin/kill", "-TERM", "$MAINPID"}, false},
+		{"another-argv-zero", "ExecReload", "/bin/kill", []string{"kill", "-HUP", "$MAINPID"}, false},
+		{"another-argument", "ExecReload", "/bin/kill", []string{"/bin/kill", "-HUP", "$MAINPID", "/opt/demo/loom"}, false},
+		{"another-variable", "ExecReload", "/bin/kill", []string{"/bin/kill", "-HUP", "$OTHERPID"}, false},
+		{"embedded-variable", "ExecReload", "/bin/kill", []string{"/bin/kill", "-HUP", "${MAINPID}"}, false},
+		{"specifier", "ExecReload", "/bin/kill", []string{"/bin/kill", "-HUP", "%i"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			references, err := decodeExecutionReferences(executionPropertyFixture(t, test.property, test.executable, test.arguments))
+			if (err == nil) != test.accepted {
+				t.Fatalf("accepted=%v, want %v: %v", err == nil, test.accepted, err)
+			}
+			if test.accepted {
+				if len(references) == 0 {
+					t.Fatal("reload executable reference was lost")
+				}
+				for _, reference := range references {
+					if reference.path != "/bin/kill" {
+						t.Fatal("PID substitution became a program reference")
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestProcessReferenceReadUsesInodeAndRejectsUnknown(t *testing.T) {

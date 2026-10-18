@@ -41,10 +41,13 @@ A/AAAA 只交付地址，不携带端口；使用非默认端口时在 URL 中�
 在 prepared 阶段以候选地址和 SNI `control.loom` 预检 TLS 与 Web；新代 serving 后再从目标浏览器回读，
 成功才让旧代退出。根不变时无需重导入；若续签未完成且旧叶已过期，
 页面入口 TLS 失败关闭，管理员从受保护的本机状态或 CLI 得到到期诊断，不能点击证书警告继续访问。
-admin 页面与本机 `control inspect` 对每个已知 serving web 入口显示叶证书的到期 UTC 时间和剩余有效期，
-进入 30 天窗口时显著提醒续签；本机 CLI 在 Web TLS 过期后仍可诊断。页面长开跨阈值时更新提示。
-其他 control 的有效期须由认证运行回读提供，缺失或陈旧时显示 `unknown`。提示仅对 admin 可见，
-不进入普通 access 入口页，也不改变 `Material`、`EndpointGeneration` 或 DNS。
+admin 页面与本机 `control inspect` 只消费唯一 `endpoint_certificates` 集合，覆盖每个已知 serving
+bootstrap、device 和 web 入口，显示承载者、用途、叶证书的到期 UTC 时间和剩余有效期。带
+`website_trust_id` 的 web 另以已授权根与叶的共同有效期为界。进入 30 天窗口时显著提醒续签；
+本机 CLI 在 Web TLS 过期后仍可诊断，页面长开跨阈值时更新提示。本机仅验证已签名摘要、名称与用途
+对应的公开证书，不读取私钥证明有效期，也不据此声称 listener 就绪或网络可达。
+非本机承载的入口当前显示 `unknown` 并指明承载者，不增加跨成员证书诊断 handler，不复制叶私钥。
+提示仅对 admin 可见，不进入普通 access 入口页，也不改变 `Material`、`EndpointGeneration` 或 DNS。
 未建立该信任时 TLS 失败关闭；不能从待访问网站、DNS 答案或证书警告页临时接受根。客户端按真实连接结果选择可达入口；DNS 解析只提供地址，
 不证明健康、成员资格或管理权限。该名称不作为公开互联网域名使用，
 公网 Nginx 永远不能反代页面或管理 API。目标 `.loom` 网站根排除所有 IP，且目标网站叶只含
@@ -168,7 +171,7 @@ domain、签名 wire、persistent 和 daemon 的既有报告/路径字段不变�
 | 页面值 | 唯一输入 | 显示重点 |
 |---|---|---|
 | `UIState` | 当前成员链、本 control 已验证的签发者前沿和冲突 | 网络锚、成员、已知前沿、局部可写性及传播状态；不显示不存在的全局 head |
-| 网站叶有效期 | serving web 入口的已验证叶证书 `NotAfter`、认证的远端运行回读与注入的当前 UTC 时间 | admin 显示每个入口的到期时间、剩余有效期、30 天提醒或 `unknown`；不改变签名入口阶段 |
+| 入口叶有效期 | serving `EndpointGeneration` 的已认证叶 DER/SPKI、本机公开证书、适用的网站根授权与注入的当前 UTC 时间 | 唯一 `endpoint_certificates` 显示用途、到期时间、剩余有效期、30 天提醒；非本机承载或无法验证材料显示 `unknown` 并指明承载者，不改变签名入口阶段 |
 | `Device` | 当前设备授权与签名 View、presence/runtime 观测 | 四项职责、所选 Policy 及其所属 Service、当前运行状态与设备列表的 24 小时状态采样条 |
 | `Link` | 从有效节点职责与 WG 资源派生的 LinkID、资源及独立 Observation | 同一 WG 资源对的正反段在主图合为一条连接，详情分别测量；共享 peer 计数只显示一次，旧规范摘要失效为 unknown |
 | 接口与链路流量 | 有效签名报告中同设备、LinkID、接口与 epoch 的相邻计数器增量 | Overview 的网络 TX、Topology 的所选 LinkID 两端 TX、设备列表与详情的 RX／TX 历史；缺少增量的小时留空 |
@@ -707,7 +710,7 @@ Services、Policies、Private DNS、Probe targets、三平台 Releases、Device 
 ### Administration 的对象与操作
 
 一级导航第九项为 **Administration**。左侧固定四项 `Control nodes`、`Administrators`、
-`Web certificates`、`Configuration state`，右侧显示对应对象列表和行内操作。每项只有一个内容视图；
+`Endpoint certificates`、`Configuration state`，右侧显示对应对象列表和行内操作。每项只有一个内容视图；
 导入、替换、撤权、冲突解决及结果均在同一视图展开，原型用同一 SVG 的 fragment 表示固定场景，
 不增加业务页面层级、持久流程记录或新的权威。页面上的状态来自以下已有输入：
 
@@ -715,7 +718,7 @@ Services、Policies、Private DNS、Probe targets、三平台 Releases、Device 
 |---|---|---|
 | Control nodes | 已验证的 `ControlConfig` 成员链；已有 Invite/绑定/成员签名证据 | 成员资格与同步回读分别显示；待加入节点不计入有效成员。节点运行与加入详情复用 Nodes |
 | Administrators | 普通 `Material` 中已验链的精确管理员受信叶子加入/撤销；公开证书元数据 | 授权本地生效、其他 control 接受情况、实际浏览器登录分别回读；P12 和密码不进入 Web |
-| Web certificates | `NetworkIntent` 的公开网站根；既有 `EndpointGeneration` 与本机受保护证书引用 | 当前入口证书及认证远端回读；CSR/签回文件是交付物，预检、切换、正式浏览器验证不是一个状态 |
+| Endpoint certificates | 既有 serving `EndpointGeneration` 与承载 control 的公开证书；`NetworkIntent` 的公开网站根只约束对应 web 入口 | bootstrap/device/web 共用有效期诊断，非本机承载明确 `unknown`；网站 CSR/签回文件仍是交付物，预检、切换、正式浏览器验证不是一个状态 |
 | Configuration state | 已验证的普通 `Material`、成员链及其 `Projection` | 按对象显示本地当前结果；来源详情只展示脱敏差异、事实引用及每个签发者的独立序号，不输出秘密载荷 |
 
 这些 UI 值都是单向投影，不能据按钮点击、文件选择或页面访问倒写成功。新增操作仍进入已有管理
@@ -733,14 +736,16 @@ operation 或所属 control 的本机证书处理入口；原型不定义新的�
   [管理员交付模型](../operations/admin-access.md#首证补发和撤权的目标操作链)；已有生产验收见交付对账，绘图不能代替实际结果。
   正常替换先验证新身份的登录、管理写入和回读，再另行撤销旧叶；丢失或泄露时可独立撤销旧叶。
   撤销确认绑定精确叶，清楚显示本地会话终止及各 control 接收范围，不声称全网即时断开。
-- **Web certificates**：显示承载 control、名称、到期 UTC、剩余时间、公开指纹及回读来源。
-  已认证管理入口可提供当前公开叶、证书链和网站信任根的下载；下载不含私钥、不修改受信名单，
+- **Endpoint certificates**：以同一列表显示 serving 入口 ID、generation、承载 control、用途、到期 UTC、
+  剩余时间及有效期状态；非本机承载或缺材料如实显示 `unknown`，不推断健康。网站操作保留原入口阶段、
+  当前网站连接的证书摘要及公开材料下载，与其他用途的有效期诊断分开表达。
+  已认证的网站管理入口可提供当前公开叶、证书链和网站信任根的下载；下载不含私钥、不修改受信名单，
   首次浏览器信任仍从独立受保护渠道建立。CSR 下载须携带节点/入口绑定与成员证明，不只给裸 CSR。
   续签在当前入口下展开：由承载 control 生成本机密钥与绑定 CSR，下载交给离线签发者，导入签回链，
   校验名称/用途/链/有效期/私钥匹配，以新入口预检后切换，最后回读正式浏览器结果再让旧入口退休。
   每步由真实回读推进；导入失败保留文件错误和旧入口，切换后浏览器验证失败只关闭新入口，
   原证书仍有效时继续用旧入口。根不变不要求重新安装；根更换不混入普通续签。
-  远端缺失或陈旧显示 `unknown`，不计算剩余时间。Web TLS 过期后从仍有效的其他入口或受保护本机
+  非本机承载或无法验证公开材料显示 `unknown`，不计算剩余时间。Web TLS 过期后从仍有效的其他入口或受保护本机
   CLI 诊断，不画成“点击警告继续”的恢复方式，也不推断 SSH 回环证书已满足正式 `.loom` 约束。
 - **Configuration state**：列表先显示对象、当前结果、业务影响和操作；冲突筛选是同页视图。
   冲突展开两份修改的实际差异、全部事实引用及影响范围。采用任一修改后填入可编辑的最终值草稿；
