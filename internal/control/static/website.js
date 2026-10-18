@@ -1,3 +1,4 @@
+import {headingIcon} from './icons.js';
 import {canonical,targetDependencies} from './model.js';
 
 const rows = value => Array.isArray(value) ? value : [];
@@ -45,7 +46,7 @@ export function websiteManagementHTML(projection,{esc,table,draftAttributes,canO
    <p>The verified certificate and these execution inputs are immutable for this generation. Review the addresses before preparing.</p>
    <div class="service-save"><span role="alert"></span><button class="primary" type="submit">Validate and prepare entry</button></div></form>`:''}</details>`;
  }).join('');
- return `<section class="card" id="website-management"><h2>Website certificate operations</h2>${proof}${observed}${table(['ENTRY / OWNER','STAGE',''],entriesHTML)}${requestRows}${writable?`<details><summary>Prepare a new website entry</summary><form data-website-form="request" ${draftAttributes()}><div class="field"><label>New entry ID</label><input name="endpoint_id" required></div><div class="service-save"><span role="alert"></span><button type="submit">Generate bound signing request</button></div></form></details>`:''}<p>Website roots sign offline. A prepared entry is not available to ordinary clients. Keep the previous valid entry until the new entry has been verified in the browser.</p></section>`;
+ return `<section class="card" id="website-management"><h2>${headingIcon('certificate')}Website certificate operations</h2>${proof}${observed}${table(['ENTRY / OWNER','STAGE',''],entriesHTML)}${requestRows}${writable?`<details><summary>Prepare a new website entry</summary><form data-website-form="request" ${draftAttributes()}><div class="field"><label>New entry ID</label><input name="endpoint_id" required></div><div class="service-save"><span role="alert"></span><button type="submit">Generate bound signing request</button></div></form></details>`:''}<p>Website roots sign offline. A prepared entry is not available to ordinary clients. Keep the previous valid entry until the new entry has been verified in the browser.</p></section>`;
 }
 
 export async function submitWebsiteForm(element,{api,operate,refresh,toast,projection}) {

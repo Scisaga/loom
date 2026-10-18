@@ -18,6 +18,7 @@ main {max-width:1586px;padding:28px 24px 24px}
 .network-page h1 {font-size:29px;line-height:1.25;letter-spacing:-.4px;margin:2px 0 4px}
 .network-page h2 {font-size:16px;line-height:1.4;margin:0;font-weight:400}
 .network-page h3 {margin:0;font-size:14px;font-weight:400}
+.heading-icon {width:16px;height:16px;margin-right:8px;color:var(--dim);vertical-align:-2px}
 .eyebrow {color:var(--ok);font-size:12px;letter-spacing:.11em;font-weight:750}
 .network-heading p {margin:4px 0 0}
 .dim {color:var(--dim)}

@@ -2,4 +2,11 @@ const shapes={overview:'<rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect
 shapes.search='<circle cx="6.8" cy="6.8" r="4.3"/><path d="m10 10 3.5 3.5"/>';
 shapes.phone='<rect x="4" y="1.5" width="8" height="13" rx="1.8"/><path d="M6.5 3.5h3M7 12.5h2"/>';
 shapes.globe='<circle cx="8" cy="8" r="6.2"/><ellipse cx="8" cy="8" rx="2.8" ry="6.2"/><path d="M1.8 8h12.4"/>';
-export function icon(name){return `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shapes[name]||shapes.releases}</svg>`}
+shapes.traffic='<path d="M4.5 13V3m-3 3 3-3 3 3M11.5 3v10m-3-3 3 3 3-3"/>';
+shapes.dns='<rect x="1.5" y="1.5" width="13" height="4" rx="1"/><path d="M8 5.5v4M3 9.5h10M3 9.5v3M13 9.5v3"/><circle cx="3" cy="13.5" r="1"/><circle cx="13" cy="13.5" r="1"/>';
+shapes.users='<circle cx="5.5" cy="5" r="2.5"/><path d="M1.5 14v-2a4 4 0 0 1 8 0v2M10 2.7a2.5 2.5 0 0 1 0 4.6M11 9a4 4 0 0 1 3.5 4v1"/>';
+shapes.certificate='<rect x="2.5" y="1.5" width="11" height="10" rx="1.5"/><path d="M5 4h6M5 6.5h3"/><circle cx="8" cy="10" r="2.5"/><path d="M6.5 12v2.5L8 13.5l1.5 1V12"/>';
+shapes.sync='<path d="M13.5 6a5.7 5.7 0 0 0-9.7-2L2 6m0-4v4h4M2.5 10a5.7 5.7 0 0 0 9.7 2l1.8-2m0 4v-4h-4"/>';
+function svg(name,className){return `<svg class="${className}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${shapes[name]||shapes.releases}</svg>`}
+export function icon(name){return svg(name,'icon')}
+export function headingIcon(name){return svg(name,'icon heading-icon')}
