@@ -63,13 +63,21 @@ func TestReportTreeSparseForksAndRebuildPreserveOriginals(t *testing.T) {
 		t.Fatal(err)
 	}
 	retiredKey := append([]byte{'r'}, reportOwnerPrefix(reportOwner{p.NetworkID, invite.DeviceID})...)
-	retiredKey = binary.BigEndian.AppendUint64(retiredKey, 1)
+	retiredKeys := [][]byte{}
+	for _, first := range []uint64{1, 1025, 2049} {
+		retiredKeys = append(retiredKeys, binary.BigEndian.AppendUint64(bytes.Clone(retiredKey), first))
+	}
 	if err := withReportDatabase(context.Background(), store.path, true, func(tx *bolt.Tx) error {
 		index := tx.Bucket(reportIndexBucket)
 		if err := index.DeleteBucket(reportTreeBucket); err != nil {
 			return err
 		}
-		return index.Put(retiredKey, []byte(roots.Ranges[0].Digest))
+		for _, key := range retiredKeys {
+			if err := index.Put(key, []byte(roots.Ranges[0].Digest)); err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -86,13 +94,49 @@ func TestReportTreeSparseForksAndRebuildPreserveOriginals(t *testing.T) {
 	}
 	if err := rebuilt.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
 		index := tx.Bucket(reportIndexBucket)
-		if index.Get(retiredKey) != nil || index.Get(receptionIndexedKey) == nil {
+		for _, key := range retiredKeys {
+			if index.Get(key) != nil {
+				return errors.New("adjacent retired range survived")
+			}
+		}
+		if index.Get(receptionIndexedKey) == nil {
 			return errors.New("retired range cleanup touched reception index")
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	} // A previous interrupted rollout may already have the new tree while
+	// still retaining derived old range locations. Clean them on reopen too.
+	if err := rebuilt.Close(); err != nil {
+		t.Fatal(err)
 	}
+	if err := withReportDatabase(context.Background(), store.path, true, func(tx *bolt.Tx) error {
+		for _, key := range retiredKeys {
+			if err := tx.Bucket(reportIndexBucket).Put(key, []byte(roots.Ranges[0].Digest)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := testOpenObservationStore(t, filepath.Dir(store.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeTree, all(again)) || !bytes.Equal(before, testObservationBytes(t, again)) {
+		t.Fatal("existing-tree cleanup changed originals")
+	}
+	if err := again.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+		keys, err := retiredReportRangeKeys(tx.Bucket(reportIndexBucket))
+		if err == nil && len(keys) > 0 {
+			return errors.New("existing tree retained old ranges")
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 }
 func TestReportTreeRejectsAmbiguousScopesAndChildren(t *testing.T) {
 	digest := ReleaseDigest([]byte("demo-value"))

@@ -117,7 +117,16 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 	if err == nil {
 		ready := false
 		err = store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
-			ready = tx.Bucket(reportIndexBucket).Bucket(reportTreeBucket) != nil
+			index := tx.Bucket(reportIndexBucket)
+			tree := index.Bucket(reportTreeBucket)
+			if tree != nil && tree.Sequence() != 0 {
+				return errors.New("report tree has an independent sequence")
+			}
+			keys, err := retiredReportRangeKeys(index)
+			if err != nil {
+				return err
+			}
+			ready = tree != nil && len(keys) == 0
 			return nil
 		})
 		if err == nil && !ready {

@@ -94,35 +94,34 @@ func ensureReportTreeIndex(tx *bolt.Tx) error {
 		if tree.Sequence() != 0 {
 			return errors.New("report tree has an independent sequence")
 		}
-		return nil
+		return retireReportRanges(index)
 	}
 	tree, err := index.CreateBucket(reportTreeBucket)
 	if err != nil {
 		return err
 	}
-	groups := map[storedReportRange]bool{}
-	err = tx.Bucket(observationBucket).ForEach(func(key, raw []byte) error {
-		id, ref, err := locateReportKey(key)
-		if err == nil && ReleaseDigest(raw) != id {
-			return errors.New("report tree rebuild found changed original bytes")
+	// The existing content-ID locations were built from verified originals
+	// and commit with them. Read their compact keys, rather than faulting every
+	// historical payload into memory merely to construct another derived index.
+	groups := map[storedReportRange][]string{}
+	cursor := index.Cursor()
+	for key, location := cursor.Seek([]byte{'i'}); key != nil && key[0] == 'i'; key, location = cursor.Next() {
+		id, ref, err := locateReportKey(location)
+		if err != nil || !bytes.Equal(key, reportIDKey(id)) {
+			return errors.New("invalid original report ID location")
 		}
-		if err != nil {
-			return err
-		}
-		groups[storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence), reportLeafHeight}}] = true
-		return nil
-	})
-	if err != nil {
-		return err
+		group := storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence), reportLeafHeight}}
+		groups[group] = append(groups[group], id)
 	}
 	// Build each node once and sort initial locations before bbolt's first spill.
 	level := map[storedReportRange]string{}
-	for group := range groups {
-		digest, err := reportLeafDigest(tx, group)
+	for group, ids := range groups {
+		sort.Strings(ids)
+		body, err := CanonicalEncode(ids)
 		if err != nil {
 			return err
 		}
-		level[group] = digest
+		level[group] = ReleaseDigest(body)
 	}
 	type entry struct{ key, value []byte }
 	entries := []entry{}
@@ -151,7 +150,13 @@ func ensureReportTreeIndex(tx *bolt.Tx) error {
 			return err
 		}
 	}
-	// Retire only the previous derived range keys in this same transaction.
+	return retireReportRanges(index)
+}
+
+// Collect before deleting: deleting at a cursor then calling Next skips the
+// adjacent in-memory entry. Never remove unrelated reception metadata.
+func retiredReportRangeKeys(index *bolt.Bucket) ([][]byte, error) {
+	keys := [][]byte{}
 	cursor := index.Cursor()
 	for key, raw := cursor.Seek([]byte{'r'}); key != nil && key[0] == 'r'; key, raw = cursor.Next() {
 		if raw == nil {
@@ -168,15 +173,25 @@ func ensureReportTreeIndex(tx *bolt.Tx) error {
 			continue
 		}
 		if ValidateID(string(tail[:networkEnd])) != nil || ValidateID(string(owner[:deviceEnd])) != nil || ValidateDigest(string(raw)) != nil {
-			return errors.New("invalid retired report range index")
+			return nil, errors.New("invalid retired report range index")
 		}
-		if err := cursor.Delete(); err != nil {
+		keys = append(keys, bytes.Clone(key))
+	}
+	return keys, nil
+}
+func retireReportRanges(index *bolt.Bucket) error {
+	keys, err := retiredReportRangeKeys(index)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := index.Delete(key); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
+
 func (store *ObservationStore) reportTreeDigest(ctx context.Context, network string, scope reportScope) (string, error) {
 	if ValidateID(network) != nil || scope.Validate() != nil {
 		return "", errors.New("invalid report tree lookup")
