@@ -17,6 +17,10 @@ const reportScopeCount = 8
 // one reconciliation round for verification and the durable report transaction.
 const reportTransferCount = 64
 
+// Once any original is missing, yield index work before a sparse history can
+// consume the whole member attempt merely trying to fill the body batch.
+const reportIndexRounds = 8
+
 type reportScope struct {
 	DeviceID      string `json:"device_id"`
 	FirstSequence U64    `json:"first_sequence"`
@@ -259,7 +263,8 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 		queued[item.scope()] = true
 	}
 	wanted := map[string]reportScope{}
-	for len(pending) > 0 && len(wanted) < reportTransferCount {
+	expansions := 0
+	for len(pending) > 0 && len(wanted) < reportTransferCount && (len(wanted) == 0 || expansions < reportIndexRounds) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -293,6 +298,7 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 			return err
 		}
 		var ids reportIDs
+		expansions++
 		if err := runtime.peerReportJSON(ctx, member, http.MethodPost, "/internal/report-ids", body, &ids, maxControlInputBytes); err != nil {
 			return err
 		}

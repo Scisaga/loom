@@ -474,6 +474,65 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if err := syncPeer(1, 0); err == nil || !bytes.Equal(beforeForgedIndex, readHistory(1)) {
 		t.Fatal("a valid signed report entered the wrong range claimed by its peer index")
 	}
+	// A right-heavy sparse tree must not keep a newly found latest report in
+	// memory while traversing its entire history just to fill a 64-item batch.
+	capture.mu.Lock()
+	capture.forgedID = ""
+	capture.delay = 100 * time.Millisecond
+	indexBefore = capture.indexCalls
+	capture.mu.Unlock()
+	sparse := []DeviceReport{}
+	base := reportFor(1, "stopped")
+	base.Selections = []ReportSelection{}
+	base.Observations = []Observation{}
+	for shift := uint(4); shift <= 64; shift++ {
+		next := base
+		next.ReportSequence = ^U64(0)
+		if shift < 64 {
+			next.ReportSequence -= U64(1) << shift
+		}
+		next.Signature = ""
+		next, err = SignDeviceReport(next, deviceKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sparse = append(sparse, next)
+	}
+	if err := peers[0].server.Runtime.Reports.mergeReportHistory(context.Background(), sparse, peers[0].server.Runtime.Authority.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	beforeSparse := len(testCollectReports(t, peers[1].server.Runtime.Reports).reports)
+	if err := syncPeer(1, 0); err != nil {
+		t.Fatal("sparse history prevented a bounded commit", err)
+	}
+	capture.mu.Lock()
+	sparseCalls := capture.indexCalls - indexBefore
+	capture.delay = 0
+	capture.mu.Unlock()
+	afterSparse := len(testCollectReports(t, peers[1].server.Runtime.Reports).reports)
+	if sparseCalls > reportIndexRounds+1 || afterSparse <= beforeSparse || afterSparse-beforeSparse >= len(sparse) {
+		t.Fatal("sparse history did not yield a smaller durable batch", sparseCalls, afterSparse-beforeSparse)
+	}
+	got := peers[1].server.Runtime.Reports.All()
+	if len(got) != 2 || got[0].ReportSequence != ^U64(0) {
+		t.Fatal("historical index work hid the latest report")
+	}
+	sourceCount := len(testCollectReports(t, peers[0].server.Runtime.Reports).reports)
+	received := afterSparse
+	for attempt := 0; attempt < len(sparse)+2 && received < sourceCount; attempt++ {
+		if err := syncPeer(1, 0); err != nil {
+			t.Fatal(err)
+		}
+		next := len(testCollectReports(t, peers[1].server.Runtime.Reports).reports)
+		if next <= received {
+			t.Fatal("sparse retry made no durable progress", attempt, received, next)
+		}
+		received = next
+	}
+	if !bytes.Equal(readHistory(0), readHistory(1)) {
+		t.Fatal("bounded sparse retries did not converge to the exact originals")
+	}
+
 }
 
 func TestReportHistoryMergeRejectsUntrustedBatchWithoutChangingOriginals(t *testing.T) {
