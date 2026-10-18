@@ -2,6 +2,7 @@ package clientrelease
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
@@ -65,7 +66,7 @@ func TestSignedProjectionAuthenticatesCoordinatesWithoutArtifactsOrPackageLock(t
 		t.Fatal("signed runtime coordinates unavailable", err)
 	}
 	// The same formal ReleaseSource must not claim the missing bytes are downloadable.
-	if _, err := source.Open(id, entry.Artifact); err == nil {
+	if _, err := source.Open(context.Background(), id, entry.Artifact); err == nil {
 		t.Fatal("missing artifact was downloadable")
 	}
 	if _, err := store.Read(); err == nil {
@@ -190,7 +191,7 @@ func TestReviewedSignedProjectionMatchesFullInspectionAndRejectsBrokenDownloads(
 	if _, err := target.Read(); err == nil {
 		t.Fatal("full consumer accepted damaged bytes")
 	}
-	if _, err := projection.Open(full.ID, full.Packages[0].Entry.Artifact); err == nil {
+	if _, err := projection.Open(context.Background(), full.ID, full.Packages[0].Entry.Artifact); err == nil {
 		t.Fatal("projection download bypassed actual byte validation")
 	}
 	for _, pkg := range full.Packages {

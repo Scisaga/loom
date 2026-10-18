@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientdist"
@@ -270,7 +271,10 @@ func Inspect(name string, body []byte, key ed25519.PublicKey) (control.ReleasePa
 	return result, nil
 }
 
-func (store *Store) Open(catalogID string, artifact control.ReleaseArtifact) (io.ReadCloser, error) {
+func (store *Store) Open(ctx context.Context, catalogID string, artifact control.ReleaseArtifact) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	root, err := os.OpenRoot(store.root)
 	if err != nil {
 		return nil, err
@@ -290,24 +294,59 @@ func (store *Store) Open(catalogID string, artifact control.ReleaseArtifact) (io
 	if selected == nil {
 		return nil, errors.New("artifact is not in the verified current catalog")
 	}
-	input, err := store.captureArtifact(context.Background(), root, artifact)
+	input, err := store.captureArtifact(ctx, root, artifact)
 	if err != nil {
 		return nil, err
 	}
-	store.mu.Lock()
+	return store.openCaptured(ctx, input, *selected, store.inspectCaptured)
+}
+
+// Waiting for an existing cold parse must not retain an abandoned request's
+// capture. No goroutine is left behind waiting on the cache mutex.
+func (store *Store) lockPackageCache(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if store.mu.TryLock() {
+			return nil
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (store *Store) openCaptured(ctx context.Context, input *capturedArtifact, selected control.ReleasePackage, inspect func(context.Context, *capturedArtifact, control.ReleasePackage) (control.ReleasePackage, error)) (_ io.ReadCloser, resultErr error) {
+	failed := true
+	defer func() {
+		if failed {
+			resultErr = errors.Join(resultErr, input.Close())
+		}
+	}()
+	if err := store.lockPackageCache(ctx); err != nil {
+		return nil, err
+	}
+	defer store.mu.Unlock()
 	parsed, cached := store.packages[packageCacheKey(selected.Entry)]
-	store.mu.Unlock()
+	var err error
 	if !cached {
-		parsed, err = store.inspectCaptured(context.Background(), input, *selected)
+		parsed, err = inspect(ctx, input, selected)
 	}
 	if err == nil && (parsed.Entry != selected.Entry || !bytes.Equal(parsed.ManifestBody, selected.ManifestBody) || !bytes.Equal(parsed.Signature, selected.Signature)) {
 		err = errors.New("release package differs from its original signed coordinates")
 	}
-	if err != nil {
-		return nil, errors.Join(err, input.Close())
+	if err == nil {
+		err = ctx.Err()
 	}
-	store.mu.Lock()
+	if err != nil {
+		return nil, err
+	}
 	store.packages[packageCacheKey(selected.Entry)] = parsed
-	store.mu.Unlock()
+	failed = false
 	return input, nil
 }

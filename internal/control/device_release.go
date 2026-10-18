@@ -130,7 +130,7 @@ func (server *Server) deviceReleaseDownload(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "exact expected release unavailable", http.StatusConflict)
 		return
 	}
-	reader, err := server.Releases.Open(set.ID, pkg.Entry.Artifact)
+	reader, err := server.Releases.Open(r.Context(), set.ID, pkg.Entry.Artifact)
 	if err != nil {
 		http.Error(w, "verified release body unavailable", http.StatusServiceUnavailable)
 		return

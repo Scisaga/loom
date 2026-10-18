@@ -75,7 +75,7 @@ func (server *Server) releaseDownload(w http.ResponseWriter, r *http.Request) {
 		var body []byte
 		switch r.PathValue("file") {
 		case "download":
-			reader, err := server.Releases.Open(catalogID, file)
+			reader, err := server.Releases.Open(r.Context(), catalogID, file)
 			if err != nil {
 				http.Error(w, "verified artifact unavailable", http.StatusServiceUnavailable)
 				return

@@ -90,25 +90,68 @@ func processProgramReferences(root string) ([]programReference, error) {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, errors.New("a process executable is unreadable")
 		}
-		// An exited process, zombie or kernel thread has no user executable.
+		// A reaped process or a proven kernel thread has no user executable.
+		// A dead group leader alone does not prove its other threads exited.
 		status, readErr := os.ReadFile(filepath.Join(process, "status"))
 		if errors.Is(readErr, os.ErrNotExist) {
 			continue
 		}
-		if readErr != nil || !processWithoutExecutable(status) {
+		if readErr != nil || !processWithoutExecutable(process, status) {
 			return nil, errors.New("a process executable identity is unknown")
 		}
 	}
 	return references, nil
 }
 
-func processWithoutExecutable(status []byte) bool {
+func processWithoutExecutable(process string, status []byte) bool {
+	state, threads := "", ""
 	for _, line := range strings.Split(string(status), "\n") {
-		if line == "Kthread:\t1" || strings.HasPrefix(line, "State:\tZ") || strings.HasPrefix(line, "State:\tX") {
+		if line == "Kthread:\t1" {
 			return true
 		}
+		if strings.HasPrefix(line, "State:\t") {
+			fields := strings.Fields(strings.TrimPrefix(line, "State:\t"))
+			if len(fields) > 0 {
+				state = fields[0]
+			}
+		}
+		if strings.HasPrefix(line, "Threads:\t") {
+			threads = strings.TrimPrefix(line, "Threads:\t")
+		}
 	}
-	return false
+	stat, err := os.ReadFile(filepath.Join(process, "stat"))
+	if err != nil {
+		return false
+	}
+	// comm is parenthesized and may itself contain spaces and parentheses.
+	// Fields after its final closing parenthesis start at field 3 (state).
+	body := string(stat)
+	end := strings.LastIndex(body, ") ")
+	if !strings.HasPrefix(body, filepath.Base(process)+" (") || end < len(filepath.Base(process))+2 {
+		return false
+	}
+	fields := strings.Fields(body[end+2:])
+	if len(fields) < 20 || len(fields[0]) != 1 {
+		return false
+	}
+	flags, err := strconv.ParseUint(fields[6], 10, 32) // field 9, task->flags
+	if err != nil || strconv.FormatUint(flags, 10) != fields[6] {
+		return false
+	}
+	// Linux include/linux/sched.h exports PF_KTHREAD in task->flags. Older
+	// kernels expose it in stat even when status has no Kthread field.
+	const kernelThread = 0x00200000
+	if flags&kernelThread != 0 {
+		return true
+	}
+	if state != "Z" && state != "X" || fields[0] != state || threads != "1" || fields[17] != "1" {
+		return false
+	}
+	// /proc/PID/exe can disappear after pthread_exit in the main thread
+	// while sibling user threads still run. Retain unknown groups rather
+	// than infer their executable from a pathname or leader state.
+	tasks, err := os.ReadDir(filepath.Join(process, "task"))
+	return err == nil && len(tasks) == 1 && tasks[0].IsDir() && tasks[0].Name() == filepath.Base(process)
 }
 
 type referenceRunner func(context.Context, string, ...string) ([]byte, error)

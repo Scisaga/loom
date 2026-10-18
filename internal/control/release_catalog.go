@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -61,7 +62,7 @@ type ReleaseSet struct {
 type ReleaseSource interface {
 	Read() (ReleaseSet, error)
 	ReadCatalog(string) (ReleaseSet, error)
-	Open(string, ReleaseArtifact) (io.ReadCloser, error)
+	Open(context.Context, string, ReleaseArtifact) (io.ReadCloser, error)
 }
 
 func (current ReleaseCurrent) Validate() error {

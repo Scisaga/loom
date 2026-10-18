@@ -2,6 +2,7 @@ package clientrelease
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"io"
 	"io/fs"
@@ -58,7 +59,7 @@ func TestReviewedStoreRechecksBytesAndRebuildsCache(t *testing.T) {
 		t.Fatal("real signed store unreadable", err)
 	}
 	for _, pkg := range initial.Packages {
-		reader, err := store.Open(initial.ID, pkg.Entry.Artifact)
+		reader, err := store.Open(context.Background(), initial.ID, pkg.Entry.Artifact)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +105,7 @@ func TestReviewedStoreRechecksBytesAndRebuildsCache(t *testing.T) {
 		if _, err := store.Read(); err == nil {
 			t.Fatal("cached source accepted changed signed bytes", relative)
 		}
-		if _, err := store.Open(initial.ID, entry.Artifact); err == nil {
+		if _, err := store.Open(context.Background(), initial.ID, entry.Artifact); err == nil {
 			t.Fatal("cached download accepted damaged source", relative)
 		}
 		if err := os.WriteFile(path, original, 0o600); err != nil {

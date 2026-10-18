@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -183,7 +185,7 @@ func TestProcessReferenceReadUsesInodeAndRejectsUnknown(t *testing.T) {
 	if err := os.WriteFile(program, []byte("demo"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"1", "2", "3"} {
+	for _, name := range []string{"1", "2", "3", "4"} {
 		if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -191,10 +193,21 @@ func TestProcessReferenceReadUsesInodeAndRejectsUnknown(t *testing.T) {
 	if err := os.Symlink(program, filepath.Join(root, "1", "exe")); err != nil {
 		t.Fatal(err)
 	}
-	for name, status := range map[string]string{"2": "Kthread:\t1\n", "3": "State:\tZ (zombie)\n"} {
+	for name, status := range map[string]string{"2": "Kthread:\t1\n", "3": "State:\tZ (zombie)\nThreads:\t1\n", "4": "State:\tS (sleeping)\nThreads:\t1\n"} {
 		if err := os.WriteFile(filepath.Join(root, name, "status"), []byte(status), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	for name, stat := range map[string][]byte{
+		"3": processStatFixture("3", "demo", "Z", "0", "1"),
+		"4": processStatFixture("4", "demo) worker", "S", "2097152", "1"),
+	} {
+		if err := os.WriteFile(filepath.Join(root, name, "stat"), stat, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "3", "task", "3"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	references, err := processProgramReferences(root)
 	if err != nil || len(references) != 1 {
@@ -208,5 +221,114 @@ func TestProcessReferenceReadUsesInodeAndRejectsUnknown(t *testing.T) {
 	}
 	if _, err := processProgramReferences(root); err == nil {
 		t.Fatal("unknown live process executable was ignored")
+	}
+}
+
+func processStatFixture(pid, comm, state, flags, threads string) []byte {
+	fields := []string{state, "0", "0", "0", "0", "-1", flags, "0", "0", "0", "0", "0", "0", "0", "0", "20", "0", threads, "0", "1"}
+	return []byte(pid + " (" + comm + ") " + strings.Join(fields, " ") + "\n")
+}
+
+func TestProcessReferenceReadRetainsUnknownExecutableGroups(t *testing.T) {
+	for _, test := range []struct {
+		name, status string
+		stat         []byte
+		tasks        []string
+	}{
+		{"user-named-kernel-thread", "Name:\tkthreadd\nState:\tS (sleeping)\nPPid:\t0\nThreads:\t1\n", processStatFixture("2", "kthreadd", "S", "4194304", "1"), []string{"2"}},
+		{"zombie-leader-live-group", "State:\tZ (zombie)\nThreads:\t2\n", processStatFixture("2", "demo", "Z", "0", "2"), []string{"2", "3"}},
+		{"dead-leader-live-group", "State:\tX (dead)\nThreads:\t2\n", processStatFixture("2", "demo", "X", "0", "2"), []string{"2", "3"}},
+		{"malformed-flags", "State:\tS (sleeping)\n", processStatFixture("2", "demo", "S", "invalid", "1"), nil},
+		{"truncated-stat", "State:\tS (sleeping)\n", []byte("2 (demo) S 0 0 0 0 -1 2097152\n"), nil},
+		{"different-pid", "State:\tS (sleeping)\n", processStatFixture("3", "demo", "S", "2097152", "1"), nil},
+		{"missing-task-evidence", "State:\tZ (zombie)\nThreads:\t1\n", processStatFixture("2", "demo", "Z", "0", "1"), nil},
+		{"unexpected-task", "State:\tZ (zombie)\nThreads:\t1\n", processStatFixture("2", "demo", "Z", "0", "1"), []string{"3"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			process := filepath.Join(root, "2")
+			if err := os.Mkdir(process, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string][]byte{"status": []byte(test.status), "stat": test.stat} {
+				if err := os.WriteFile(filepath.Join(process, name), body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, tid := range test.tasks {
+				if err := os.MkdirAll(filepath.Join(process, "task", tid), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := processProgramReferences(root); err == nil {
+				t.Fatal("unknown user executable group was ignored")
+			}
+		})
+	}
+}
+
+func TestProcessReferenceReadRejectsPermissionDenied(t *testing.T) {
+	const fixtureEnvironment = "LOOM_TEST_PROCESS_REFERENCE_ROOT"
+	if root := os.Getenv(fixtureEnvironment); root != "" {
+		if _, err := os.Stat(filepath.Join(root, "2", "exe")); !errors.Is(err, os.ErrPermission) {
+			t.Fatal("fixture executable was not permission denied", err)
+		}
+		if _, err := processProgramReferences(root); err == nil {
+			t.Fatal("permission-denied executable was ignored")
+		}
+		return
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("requires a distinct unprivileged process")
+	}
+	// This permission test needs a directory reachable by another UID,
+	// independently of a private TMPDIR used by the surrounding test run.
+	root, err := os.MkdirTemp("/tmp", "loom-process-reference-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	if err := os.Mkdir(filepath.Join(root, "2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, filepath.Join(root, "2")} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "private"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(root, "private", "demo-program")
+	if err := os.WriteFile(program, []byte("demo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(program, filepath.Join(root, "2", "exe")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "2", "status"), []byte("Kthread:\t1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "2", "status"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Go's temporary build directory is private to the test user. Give the
+	// unprivileged child an executable copy inside this disposable fixture.
+	binary, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "demo-reference-test")
+	if err := os.WriteFile(child, binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(child, "-test.run=^TestProcessReferenceReadRejectsPermissionDenied$")
+	command.Env = []string{fixtureEnvironment + "=" + root}
+	command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534, NoSetGroups: true}}
+	if body, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("unprivileged reference read failed: %v\n%s", err, body)
 	}
 }

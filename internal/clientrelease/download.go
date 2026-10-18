@@ -54,6 +54,9 @@ func (reader captureReader) Read(body []byte) (int, error) {
 }
 
 func (store *Store) captureArtifact(ctx context.Context, root *os.Root, artifact control.ReleaseArtifact) (_ *capturedArtifact, resultErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if artifact.Validate() != nil || artifact.Size == 0 || artifact.Size > maxPackageBytes {
 		return nil, errors.New("release capture coordinates are invalid")
 	}
@@ -90,12 +93,18 @@ func (store *Store) captureArtifact(ctx context.Context, root *os.Root, artifact
 	if n != int64(artifact.Size) || fmt.Sprintf("sha256:%x", hash.Sum(nil)) != artifact.Digest {
 		return nil, errors.New("release package differs from its signed digest or size")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	input.reader = io.NewSectionReader(file, 0, n)
 	failed = false
 	return input, nil
 }
 
 func (store *Store) inspectCaptured(ctx context.Context, input *capturedArtifact, pkg control.ReleasePackage) (control.ReleasePackage, error) {
+	if err := ctx.Err(); err != nil {
+		return control.ReleasePackage{}, err
+	}
 	if pkg.Entry.ComponentID == "linux-client-bootstrap" {
 		verified, err := clientdist.VerifyArchiveFile(ctx, input.file, store.key, store.workRoot)
 		if err != nil {
@@ -109,9 +118,13 @@ func (store *Store) inspectCaptured(ctx context.Context, input *capturedArtifact
 	}
 	// Other platform package validators retain their original archive contracts.
 	// Only the selected artifact is parsed; the returned download is still disk-backed.
-	body, err := io.ReadAll(io.NewSectionReader(input.file, 0, int64(pkg.Entry.Artifact.Size)))
+	body, err := io.ReadAll(captureReader{ctx, io.NewSectionReader(input.file, 0, int64(pkg.Entry.Artifact.Size))})
 	if err != nil {
 		return control.ReleasePackage{}, err
 	}
-	return InspectInput(pkg.Entry.Artifact.Name, Input{Body: body, Manifest: pkg.ManifestBody, Signature: pkg.Signature}, store.key)
+	parsed, err := InspectInput(pkg.Entry.Artifact.Name, Input{Body: body, Manifest: pkg.ManifestBody, Signature: pkg.Signature}, store.key)
+	if err == nil {
+		err = ctx.Err()
+	}
+	return parsed, err
 }

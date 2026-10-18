@@ -3,6 +3,7 @@ package control
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ type demoReleaseSource struct {
 	set  ReleaseSet
 	body []byte
 	err  error
+	open func(context.Context) error
 }
 
 // Coordinate-only handler tests have no network connection to time out.
@@ -81,8 +83,8 @@ func (reader delayedReleaseReader) Read(body []byte) (int, error) {
 
 type delayedReleaseSource struct{ *demoReleaseSource }
 
-func (source delayedReleaseSource) Open(id string, artifact ReleaseArtifact) (io.ReadCloser, error) {
-	reader, err := source.demoReleaseSource.Open(id, artifact)
+func (source delayedReleaseSource) Open(ctx context.Context, id string, artifact ReleaseArtifact) (io.ReadCloser, error) {
+	reader, err := source.demoReleaseSource.Open(ctx, id, artifact)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +122,12 @@ func (s *demoReleaseSource) ReadCatalog(id string) (ReleaseSet, error) {
 	}
 	return s.Read()
 }
-func (s *demoReleaseSource) Open(id string, artifact ReleaseArtifact) (io.ReadCloser, error) {
+func (s *demoReleaseSource) Open(ctx context.Context, id string, artifact ReleaseArtifact) (io.ReadCloser, error) {
+	if s.open != nil {
+		if err := s.open(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := s.ReadCatalog(id); err != nil {
 		return nil, err
 	}
@@ -128,6 +135,51 @@ func (s *demoReleaseSource) Open(id string, artifact ReleaseArtifact) (io.ReadCl
 		return nil, errors.New("artifact missing")
 	}
 	return io.NopCloser(bytes.NewReader(s.body)), nil
+}
+
+func TestReleaseDownloadCancelsSourceWithHTTPRequest(t *testing.T) {
+	catalog := demoReleaseCatalog()
+	pkg := ReleasePackage{Entry: catalog.Entries[0]}
+	started, stopped := make(chan struct{}), make(chan struct{})
+	source := &demoReleaseSource{set: ReleaseSet{ID: ReleaseDigest([]byte("demo catalog")), Catalog: catalog, Packages: []ReleasePackage{pkg}}, open: func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return ctx.Err()
+	}}
+	server := &Server{Releases: source}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/control/releases/{catalog}/{artifact}/{file}", server.releaseDownload)
+	endpoint := httptest.NewServer(mux)
+	defer endpoint.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.URL+releaseDownloadBase(source.set.ID, pkg.Entry.Artifact.Digest)+"download", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		response, err := endpoint.Client().Do(request)
+		if response != nil {
+			response.Body.Close()
+		}
+		finished <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not reach artifact verification")
+	}
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("abandoned HTTP request retained artifact preparation")
+	}
+	if err := <-finished; !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled download unexpectedly succeeded", err)
+	}
 }
 
 func TestReleaseDownloadsUseVerifiedCoordinatesAndFailClosed(t *testing.T) {

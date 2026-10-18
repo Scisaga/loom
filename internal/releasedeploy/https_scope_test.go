@@ -24,7 +24,7 @@ func (source demoCatalogSource) ReadCatalog(id string) (control.ReleaseSet, erro
 	}
 	return set, nil
 }
-func (source demoCatalogSource) Open(string, control.ReleaseArtifact) (io.ReadCloser, error) {
+func (source demoCatalogSource) Open(context.Context, string, control.ReleaseArtifact) (io.ReadCloser, error) {
 	return nil, errors.New("metadata comparison must not open an artifact")
 }
 

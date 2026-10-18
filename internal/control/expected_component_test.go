@@ -25,7 +25,7 @@ func (s *retainedReleaseSource) ReadCatalog(id string) (ReleaseSet, error) {
 	}
 	return ReleaseSet{}, errors.New("demo unavailable release")
 }
-func (*retainedReleaseSource) Open(string, ReleaseArtifact) (io.ReadCloser, error) {
+func (*retainedReleaseSource) Open(context.Context, string, ReleaseArtifact) (io.ReadCloser, error) {
 	return nil, errors.New("demo download not exercised")
 }
 

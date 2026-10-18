@@ -1,6 +1,7 @@
 package clientrelease
 
 import (
+	"context"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
@@ -43,8 +44,8 @@ func (source projectionSource) ReadCatalog(id string) (control.ReleaseSet, error
 	return source.store.readSignedCatalog(root, id)
 }
 
-func (source projectionSource) Open(id string, artifact control.ReleaseArtifact) (io.ReadCloser, error) {
-	return source.store.Open(id, artifact)
+func (source projectionSource) Open(ctx context.Context, id string, artifact control.ReleaseArtifact) (io.ReadCloser, error) {
+	return source.store.Open(ctx, id, artifact)
 }
 
 func currentCatalog(root *os.Root) (string, error) {

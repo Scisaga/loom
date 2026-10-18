@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -30,6 +31,47 @@ import (
 type deviceTunnelChallenge struct {
 	Schema int    `json:"schema"`
 	Nonce  string `json:"nonce"`
+}
+
+// Most tunnel fixtures record a complete response. Explicit Flush also supports
+// actual streaming, so download deadline tests exercise bytes on the connection.
+type deviceTunnelResponse struct {
+	*httptest.ResponseRecorder
+	connection net.Conn
+	flushed    bool
+	err        error
+}
+
+func (response *deviceTunnelResponse) Write(body []byte) (int, error) {
+	if response.err != nil {
+		return 0, response.err
+	}
+	if response.flushed {
+		return response.connection.Write(body)
+	}
+	return response.ResponseRecorder.Write(body)
+}
+
+func (response *deviceTunnelResponse) Flush() {
+	if response.flushed {
+		return
+	}
+	response.flushed = true
+	writer := bufio.NewWriter(response.connection)
+	_, response.err = fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\n", response.Code, http.StatusText(response.Code))
+	response.Header().Set("Connection", "close")
+	if response.err == nil {
+		response.err = response.Header().Write(writer)
+	}
+	if response.err == nil {
+		_, response.err = writer.WriteString("\r\n")
+	}
+	if response.err == nil {
+		_, response.err = writer.Write(response.Body.Bytes())
+	}
+	if response.err == nil {
+		response.err = writer.Flush()
+	}
 }
 
 func testDeviceTunnel(t *testing.T, publicKey string, handlers ...http.HandlerFunc) (control.EndpointGeneration, string) {
@@ -141,8 +183,11 @@ func testDeviceTunnel(t *testing.T, publicKey string, handlers ...http.HandlerFu
 					return
 				}
 				defer request.Body.Close()
-				response := httptest.NewRecorder()
+				response := &deviceTunnelResponse{ResponseRecorder: httptest.NewRecorder(), connection: connection}
 				handlers[0](response, request)
+				if response.flushed {
+					return
+				}
 				result := response.Result()
 				defer result.Body.Close()
 				if result.Header.Get("Content-Length") == "" {

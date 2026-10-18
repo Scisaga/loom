@@ -20,6 +20,19 @@ import (
 var streamingLinuxArchive = flag.String("linux-package-archive", "", "explicit original signed Linux package for streaming integration")
 var streamingLinuxPublic = flag.String("linux-package-public-key", "", "independent public key for the original streaming fixture")
 
+type cancelArchiveComparisonReader struct {
+	io.Reader
+	cancel context.CancelFunc
+}
+
+func (reader cancelArchiveComparisonReader) Read(body []byte) (int, error) {
+	n, err := reader.Reader.Read(body)
+	if n > 0 {
+		reader.cancel()
+	}
+	return n, err
+}
+
 func TestStreamingCanonicalComparisonPreservesExactArchive(t *testing.T) {
 	root := t.TempDir()
 	input := &packageInput{root: root, files: map[string]*packageFileInput{}}
@@ -72,6 +85,14 @@ func TestStreamingCanonicalComparisonPreservesExactArchive(t *testing.T) {
 	cancel()
 	if err := comparePackageArchive(ctx, input, "amd64", bytes.NewReader(archive)); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancelled comparison continued", err)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	if err := comparePackageArchive(ctx, input, "amd64", cancelArchiveComparisonReader{bytes.NewReader(archive), cancel}); !errors.Is(err, context.Canceled) {
+		t.Fatal("canonical re-encoding ignored cancellation after starting", err)
+	}
+	if err := comparePackageArchive(context.Background(), input, "amd64", bytes.NewReader(archive)); err != nil {
+		t.Fatal("cancelled comparison changed the original retry input", err)
 	}
 }
 

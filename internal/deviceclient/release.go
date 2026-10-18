@@ -10,10 +10,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"loom/internal/control"
 )
+
+const releaseHeaderTimeout = 30 * time.Second
 
 // Release reads only immutable delivery material for an already persisted LKG.
 // The updater never writes the daemon's identity, LKG, or report sequence.
@@ -42,8 +45,15 @@ func Release(ctx context.Context, store IdentityStore, platform string, validate
 // DownloadReleaseTo streams the exact signed-length body to caller-owned
 // protected storage. It never changes the device's identity or accepted View.
 func DownloadReleaseTo(ctx context.Context, store IdentityStore, request control.DeviceReleaseDownload, size int64, workspace string, destination io.Writer) (resultErr error) {
+	return downloadReleaseTo(ctx, store, request, size, workspace, destination, releaseHeaderTimeout, deviceRequestTimeout)
+}
+
+func downloadReleaseTo(ctx context.Context, store IdentityStore, request control.DeviceReleaseDownload, size int64, workspace string, destination io.Writer, headerTimeout, idleTimeout time.Duration) (resultErr error) {
 	if destination == nil || request.Validate() != nil || size <= 0 || size > 256<<20 || !validStatePath(workspace) {
 		return errors.New("release download bounds are invalid")
+	}
+	if headerTimeout <= 0 || idleTimeout <= 0 {
+		return errors.New("release download I/O deadlines are invalid")
 	}
 	lkg := store.LKG()
 	if lkg == nil || lkg.ViewDigest != request.ViewDigest {
@@ -55,48 +65,78 @@ func DownloadReleaseTo(ctx context.Context, store IdentityStore, request control
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
 		return errors.New("release download requires its protected disk workspace")
 	}
-	staged, err := os.CreateTemp(workspace, "download-")
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, staged.Close(), os.Remove(staged.Name())) }()
 	body, err := control.CanonicalEncode(request)
 	if err != nil {
 		return err
 	}
-	// Download candidates are sequential and never write to caller storage. A
-	// live transfer keeps its caller's original total budget; only stalled I/O
-	// is bounded independently so another authenticated candidate can be tried.
-	_, err = requestDevice(ctx, store, lkg, 1, 0, func(attempt context.Context, connection net.Conn) (struct{}, error) {
-		if err := staged.Truncate(0); err != nil {
-			return struct{}{}, err
+	// A slow but progressing transfer must leave another authenticated candidate
+	// an opportunity to finish. Each of the at most two active candidates owns
+	// separate protected storage and cannot write to caller storage.
+	var completedMu sync.Mutex
+	var completed []*os.File
+	defer func() {
+		for _, staged := range completed {
+			resultErr = errors.Join(resultErr, staged.Close(), os.Remove(staged.Name()))
 		}
-		if _, err := staged.Seek(0, io.SeekStart); err != nil {
-			return struct{}{}, err
+	}()
+	// Reserve a share of the caller's total budget for every wave of two. Two
+	// live slow bodies must not prevent later accepted endpoints being tried.
+	var candidateTimeout time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		waves := (len(servingDeviceEndpoints(lkg)) + 1) / 2
+		if waves > 0 {
+			candidateTimeout = time.Until(deadline) / time.Duration(waves)
+			if candidateTimeout <= 0 {
+				return context.DeadlineExceeded
+			}
 		}
+	}
+	staged, err := requestDevice(ctx, store, lkg, 2, candidateTimeout, func(attempt context.Context, connection net.Conn) (_ *os.File, candidateErr error) {
+		candidate, err := os.CreateTemp(workspace, "download-")
+		if err != nil {
+			return nil, err
+		}
+		complete := false
+		defer func() {
+			if !complete {
+				candidateErr = errors.Join(candidateErr, candidate.Close(), os.Remove(candidate.Name()))
+			}
+		}()
 		httpRequest, err := http.NewRequestWithContext(attempt, http.MethodPost, "http://loom.private/device/release/download", bytes.NewReader(body))
 		if err != nil {
-			return struct{}{}, err
+			return nil, err
 		}
 		httpRequest.Header.Set("Content-Type", "application/json")
-		client := tunnelHTTPClient(&releaseIdleConnection{Conn: connection, timeout: deviceRequestTimeout})
+		idle := &releaseIdleConnection{Conn: connection, timeout: idleTimeout, readTimeout: headerTimeout}
+		client := tunnelHTTPClient(idle)
 		client.Timeout = 0
+		// Preparing the first verified archive may exceed a body idle window.
+		// Bound the complete header wait even when partial headers arrive, while
+		// preserving the caller's original total budget for a progressing body.
+		client.Transport.(*http.Transport).ResponseHeaderTimeout = headerTimeout
 		response, err := client.Do(httpRequest)
 		if err != nil {
-			return struct{}{}, err
+			return nil, err
 		}
 		defer response.Body.Close()
+		if err := idle.setReadTimeout(idleTimeout); err != nil {
+			return nil, err
+		}
 		hash := sha256.New()
-		if err := copyReleaseBody(attempt, response, size, io.MultiWriter(staged, hash)); err != nil {
-			return struct{}{}, err
+		if err := copyReleaseBody(attempt, response, size, io.MultiWriter(candidate, hash)); err != nil {
+			return nil, err
 		}
 		if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != request.ArtifactDigest {
-			return struct{}{}, errors.New("release body differs from signed digest")
+			return nil, errors.New("release body differs from signed digest")
 		}
 		if current := store.LKG(); current == nil || current.ViewDigest != request.ViewDigest {
-			return struct{}{}, errors.New("device View changed during release download")
+			return nil, errors.New("device View changed during release download")
 		}
-		return struct{}{}, nil
+		completedMu.Lock()
+		completed = append(completed, candidate)
+		completedMu.Unlock()
+		complete = true
+		return candidate, nil
 	})
 	if err != nil {
 		return err
@@ -109,14 +149,33 @@ func DownloadReleaseTo(ctx context.Context, store IdentityStore, request control
 
 type releaseIdleConnection struct {
 	net.Conn
-	timeout time.Duration
+	timeout     time.Duration
+	readMu      sync.Mutex
+	readTimeout time.Duration
 }
 
 func (connection *releaseIdleConnection) Read(body []byte) (int, error) {
-	if err := connection.SetReadDeadline(time.Now().Add(connection.timeout)); err != nil {
+	connection.readMu.Lock()
+	timeout := connection.readTimeout
+	if timeout == 0 {
+		timeout = connection.timeout
+	}
+	err := connection.Conn.SetReadDeadline(time.Now().Add(timeout))
+	connection.readMu.Unlock()
+	if err != nil {
 		return 0, err
 	}
 	return connection.Conn.Read(body)
+}
+
+// net/http may already be waiting for body bytes when Do returns headers.
+// Update that pending read as well as future reads under the same lock, so an
+// in-flight header read cannot later restore its longer deadline.
+func (connection *releaseIdleConnection) setReadTimeout(timeout time.Duration) error {
+	connection.readMu.Lock()
+	defer connection.readMu.Unlock()
+	connection.readTimeout = timeout
+	return connection.Conn.SetReadDeadline(time.Now().Add(timeout))
 }
 
 func (connection *releaseIdleConnection) Write(body []byte) (int, error) {

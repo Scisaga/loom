@@ -4,19 +4,27 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type deviceReleaseFixtureSource struct {
 	*retainedReleaseSource
 	body   []byte
 	opened string
+	open   func(context.Context) error
 }
 
-func (source *deviceReleaseFixtureSource) Open(id string, artifact ReleaseArtifact) (io.ReadCloser, error) {
+func (source *deviceReleaseFixtureSource) Open(ctx context.Context, id string, artifact ReleaseArtifact) (io.ReadCloser, error) {
+	if source.open != nil {
+		if err := source.open(ctx); err != nil {
+			return nil, err
+		}
+	}
 	source.opened = id
 	return io.NopCloser(bytes.NewReader(source.body)), nil
 }
@@ -73,6 +81,44 @@ func TestDeviceReleaseUsesExactExpectationAndAcceptedView(t *testing.T) {
 	if actual.StatusCode != http.StatusOK || readErr != nil || !bytes.Equal(body, source.body) || source.opened != value.CatalogDigest {
 		t.Fatal("exact expected download failed")
 	}
+	// Once authentication and exact expectation checks succeed, abandoning the
+	// actual device request must also stop its package preparation.
+	started, stopped := make(chan struct{}), make(chan struct{})
+	source.open = func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cancelled, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.URL+"/device/release/download", bytes.NewReader(downloadBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		response, err := endpoint.Client().Do(cancelled)
+		if response != nil {
+			response.Body.Close()
+		}
+		finished <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("device download did not reach package preparation")
+	}
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("device request cancellation retained package preparation")
+	}
+	if err := <-finished; !errors.Is(err, context.Canceled) {
+		t.Fatal("cancelled device download unexpectedly succeeded", err)
+	}
+	source.open = nil
 	for _, test := range []struct {
 		name   string
 		change func(*DeviceReleaseRequest, *tunnelIdentity)
