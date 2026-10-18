@@ -1,6 +1,11 @@
 package control
 
-import "net/http"
+import (
+	"compress/gzip"
+	"net/http"
+	"strconv"
+	"strings"
+)
 
 func (server *Server) internalReportRanges(w http.ResponseWriter, r *http.Request) {
 	if server.Runtime.Reports == nil {
@@ -16,7 +21,7 @@ func (server *Server) internalReportRanges(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "report index unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeReportIndex(w, value)
+	writeReportIndex(w, r, value)
 }
 func (server *Server) internalReportIDs(w http.ResponseWriter, r *http.Request) {
 	if server.Runtime.Reports == nil {
@@ -38,16 +43,15 @@ func (server *Server) internalReportIDs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeReportIndex(w, value)
+	writeReportIndex(w, r, value)
 }
-func writeReportIndex(w http.ResponseWriter, value any) {
+func writeReportIndex(w http.ResponseWriter, r *http.Request, value any) {
 	body, err := CanonicalEncode(value)
 	if err != nil || len(body) > maxControlInputBytes {
 		http.Error(w, "report index exceeds its read boundary", http.StatusServiceUnavailable)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(body)
+	writeReportBody(w, r, body)
 }
 func (server *Server) internalReports(w http.ResponseWriter, r *http.Request) {
 	if server.Runtime.Reports == nil {
@@ -93,6 +97,45 @@ func (server *Server) internalReports(w http.ResponseWriter, r *http.Request) {
 		body = append(body, raw...)
 	}
 	body = append(body, `],"schema":3}`...)
+	writeReportBody(w, r, body)
+}
+
+func acceptsReportGzip(header string) bool {
+	for _, offer := range strings.Split(strings.ToLower(header), ",") {
+		parts := strings.Split(offer, ";")
+		if strings.TrimSpace(parts[0]) != "gzip" {
+			continue
+		}
+		allowed := true
+		for _, parameter := range parts[1:] {
+			key, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+			if !ok || strings.TrimSpace(key) != "q" {
+				allowed = false
+				break
+			}
+			q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil || !(q > 0 && q <= 1) {
+				allowed = false
+				break
+			}
+		}
+		if allowed {
+			return true
+		}
+	}
+	return false
+}
+func writeReportBody(w http.ResponseWriter, r *http.Request, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
+	if len(body) >= 1024 {
+		w.Header().Add("Vary", "Accept-Encoding")
+		if acceptsReportGzip(r.Header.Get("Accept-Encoding")) {
+			w.Header().Set("Content-Encoding", "gzip")
+			writer := gzip.NewWriter(w)
+			_, _ = writer.Write(body)
+			_ = writer.Close()
+			return
+		}
+	}
 	_, _ = w.Write(body)
 }

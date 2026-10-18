@@ -2,6 +2,7 @@ package control
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -470,6 +471,9 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if path == "/internal/report-ranges" || path == "/internal/report-ids" || path == "/internal/reports" {
+		request.Header.Set("Accept-Encoding", "gzip")
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
@@ -488,12 +492,41 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("private member request failed: HTTP %d", response.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, (64<<20)+1))
+	limit := 64 << 20
+	if path == "/internal/reports" {
+		limit = reportBatchBytes
+	}
+	return readPeerResponseBody(response, limit)
+
+}
+
+// Limit the encoded stream as well as its decoded canonical body. HTTP's
+// automatic inflater is disabled so empty or malformed gzip members cannot
+// evade the existing byte budget while producing little decoded output.
+func readPeerResponseBody(response *http.Response, limit int) ([]byte, error) {
+	if response.ContentLength > int64(limit) {
+		return nil, errors.New("peer encoded response exceeds its resource bound")
+	}
+	wire := &io.LimitedReader{R: response.Body, N: int64(limit) + 1}
+	var reader io.Reader = wire
+	switch response.Header.Get("Content-Encoding") {
+	case "", "identity":
+	case "gzip":
+		decoded, err := gzip.NewReader(wire)
+		if err != nil {
+			return nil, err
+		}
+		defer decoded.Close()
+		reader = decoded
+	default:
+		return nil, errors.New("unsupported peer response encoding")
+	}
+	raw, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) > 64<<20 {
-		return nil, errors.New("peer response exceeds the current reader resource bound")
+	if wire.N == 0 || len(raw) > limit {
+		return nil, errors.New("peer response exceeds its resource bound")
 	}
 	return raw, nil
 }

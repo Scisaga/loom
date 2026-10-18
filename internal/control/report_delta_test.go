@@ -2,12 +2,14 @@ package control
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +62,7 @@ func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) h
 			var encoded []byte
 			if r.URL.Path == "/internal/report-ranges" {
 				var value reportRanges
-				if err := DecodeCanonical(recorded.Body.Bytes(), &value, ContractDecodeLimits{MaxBytes: maxControlInputBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
+				if err := DecodeCanonical(capturedReportBody(t, recorded), &value, ContractDecodeLimits{MaxBytes: maxControlInputBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
 					t.Error(err)
 					http.Error(w, "demo decode failed", 500)
 					return
@@ -71,7 +73,7 @@ func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) h
 				encoded, _ = CanonicalEncode(value)
 			} else {
 				var value reportIDs
-				if err := DecodeCanonical(recorded.Body.Bytes(), &value, ContractDecodeLimits{MaxBytes: maxControlInputBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
+				if err := DecodeCanonical(capturedReportBody(t, recorded), &value, ContractDecodeLimits{MaxBytes: maxControlInputBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
 					t.Error(err)
 					http.Error(w, "demo decode failed", 500)
 					return
@@ -106,14 +108,16 @@ func (capture *reportTransferCapture) handler(t *testing.T, next http.Handler) h
 		fail := capture.calls == capture.failCall
 		capture.mu.Unlock()
 		if fail {
-			http.Error(w, "demo interrupted member transfer", http.StatusServiceUnavailable)
+			w.Header().Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte{0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0xff})
 			return
 		}
 		recorded := httptest.NewRecorder()
 		next.ServeHTTP(recorded, r)
 		if recorded.Code == http.StatusOK {
 			var batch reportBatch
-			if err := DecodeCanonical(recorded.Body.Bytes(), &batch, ContractDecodeLimits{MaxBytes: reportBatchBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
+			if err := DecodeCanonical(capturedReportBody(t, recorded), &batch, ContractDecodeLimits{MaxBytes: reportBatchBytes, MaxDepth: 128, MaxItems: recorded.Body.Len()}); err != nil {
 				t.Error(err)
 			} else {
 				capture.mu.Lock()
@@ -596,9 +600,11 @@ func TestReportMemberBatchReturnsBoundedOriginalPrefix(t *testing.T) {
 	for _, wantCount := range []int{2, 1} {
 		body, _ := CanonicalEncode(reportBatchRequest{3, missing})
 		response := httptest.NewRecorder()
-		server.internalReports(response, httptest.NewRequest(http.MethodPost, "/internal/reports", bytes.NewReader(body)))
+		request := httptest.NewRequest(http.MethodPost, "/internal/reports", bytes.NewReader(body))
+		request.Header.Set("Accept-Encoding", "gzip")
+		server.internalReports(response, request)
 		var batch reportBatch
-		if response.Code != http.StatusOK || response.Body.Len() > reportBatchBytes || DecodeCanonical(response.Body.Bytes(), &batch, ContractDecodeLimits{MaxBytes: reportBatchBytes, MaxDepth: 128, MaxItems: response.Body.Len()}) != nil || len(batch.Reports) != wantCount {
+		if response.Code != http.StatusOK || response.Body.Len() > reportBatchBytes || DecodeCanonical(capturedReportBody(t, response), &batch, ContractDecodeLimits{MaxBytes: reportBatchBytes, MaxDepth: 128, MaxItems: response.Body.Len()}) != nil || len(batch.Reports) != wantCount {
 			t.Fatal("member response did not provide the fitting original prefix", response.Code, response.Body.Len())
 		}
 		for i, report := range batch.Reports {
@@ -611,5 +617,75 @@ func TestReportMemberBatchReturnsBoundedOriginalPrefix(t *testing.T) {
 	}
 	if len(missing) != 0 {
 		t.Fatal("bounded responses left requested originals behind")
+	}
+}
+
+func capturedReportBody(t *testing.T, response *httptest.ResponseRecorder) []byte {
+	t.Helper()
+	if response.Header().Get("Content-Encoding") != "gzip" {
+		return response.Body.Bytes()
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, maxControlInputBytes+1))
+	closed := reader.Close()
+	if err != nil || closed != nil || len(body) > maxControlInputBytes {
+		t.Fatal("invalid captured compressed report", err, closed)
+	}
+	return body
+}
+func TestReportResponseCompressionPreservesCanonicalBody(t *testing.T) {
+	body, _ := CanonicalEncode(map[string]string{"demo": "demo-" + strings.Repeat("value ", 2048)})
+	for _, test := range []struct {
+		header     string
+		compressed bool
+	}{{"gzip", true}, {"br, gzip;q=0.7", true}, {"gzip;q=0", false}, {"gzip;q=NaN", false}, {"identity", false}, {"", false}} {
+		request := httptest.NewRequest(http.MethodGet, "/internal/report-ranges", nil)
+		request.Header.Set("Accept-Encoding", test.header)
+		response := httptest.NewRecorder()
+		writeReportBody(response, request, body)
+		if (response.Header().Get("Content-Encoding") == "gzip") != test.compressed || !bytes.Equal(capturedReportBody(t, response), body) {
+			t.Fatal("HTTP encoding changed canonical report bytes", test.header)
+		}
+		if test.compressed && response.Body.Len()*10 >= len(body) {
+			t.Fatal("repeated report content was not compressed")
+		}
+	}
+}
+
+func TestPeerCompressedResponseBoundsBothStreams(t *testing.T) {
+	body := bytes.Repeat([]byte("demo-"), 512)
+	var buffer bytes.Buffer
+	writer := gzip.NewWriter(&buffer)
+	_, _ = writer.Write(body)
+	_ = writer.Close()
+	encoded := buffer.Bytes()
+	response := func(raw []byte, encoding string) *http.Response {
+		return &http.Response{ContentLength: -1, Header: http.Header{"Content-Encoding": {encoding}}, Body: io.NopCloser(bytes.NewReader(raw))}
+	}
+	decoded, err := readPeerResponseBody(response(encoded, "gzip"), 4096)
+	if err != nil || !bytes.Equal(decoded, body) {
+		t.Fatal("bounded peer gzip changed bytes", err)
+	}
+	if _, err := readPeerResponseBody(response(encoded, "gzip"), 1024); err == nil {
+		t.Fatal("decoded gzip exceeded body budget")
+	}
+	// Multiple valid empty members consume wire bytes without producing output.
+	buffer.Reset()
+	writer = gzip.NewWriter(&buffer)
+	_ = writer.Close()
+	empty := bytes.Clone(buffer.Bytes())
+	if _, err := readPeerResponseBody(response(bytes.Repeat(empty, 128), "gzip"), 1024); err == nil {
+		t.Fatal("empty gzip members evaded encoded byte budget")
+	}
+	for _, test := range []struct {
+		raw      []byte
+		encoding string
+	}{{encoded[:len(encoded)-3], "gzip"}, {encoded, "br"}, {body, ""}} {
+		if _, err := readPeerResponseBody(response(test.raw, test.encoding), 1024); err == nil {
+			t.Fatal("invalid or oversize peer response accepted", test.encoding)
+		}
 	}
 }

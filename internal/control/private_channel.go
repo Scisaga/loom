@@ -394,7 +394,7 @@ func (channel *PrivateChannel) peerClientFor(node string, proofOnly bool) (*http
 	if _, ok := channel.memberForNode(node); !ok {
 		return nil, errors.New("control HTTP target is not a configured member")
 	}
-	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, DisableKeepAlives: true,
+	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, DisableKeepAlives: true, DisableCompression: true,
 		MaxIdleConns: 1, MaxIdleConnsPerHost: 1, MaxConnsPerHost: 1, IdleConnTimeout: 30 * time.Second}
 	transport.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return channel.dialMemberTLSFor(ctx, node, controlALPN, controlRelayALPN, 15*time.Second, proofOnly)
