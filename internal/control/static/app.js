@@ -4,7 +4,7 @@ import {policyChoicesHTML,syncPolicyChoices,policyPickerInput,policyPickerClick,
 import {releasesHTML,deviceVersionsHTML} from './releases.js';
 import {createConfigurationReview} from './configuration.js';
 import {hy2TransferHTML,hy2FirstHopRows} from './hy2-transfer.js';
-import{trafficBytes,trafficRates,trafficSummary,trafficHistoryHTML,trafficRatesHTML,trafficHistoryRequest,trafficNextExpiry}from'./traffic-history.js';
+import{trafficBytes,trafficRates,trafficSummary,networkTrafficSummary,validateTrafficHistory,trafficHistoryHTML,trafficRatesHTML,trafficHistoryRequest,trafficNextExpiry}from'./traffic-history.js';
 import{canonical,currentDevices,nodeRuntimeState,nodeRuntimeCounts,appliedReadback,targetDependencies,parseMatchers,componentComparisons,expectedComponentID,reportIsCurrent,expireEvidence,nextEvidenceExpiry}from'./model.js';
 import{icon,headingIcon}from'./icons.js';
 import{routingHTML,routingHistoryRequest}from'./routing.js';
@@ -110,6 +110,16 @@ const list=v=>Array.isArray(v)?v:[],esc=v=>String(v??'').replace(/[&<>"']/g,c=>(
 const heading=(title,lead,actions='',eyebrow='LOOM CONTROL')=>`<div class="heading network-heading"><div><span class="eyebrow">${esc(eyebrow)}</span><h1>${esc(title)}</h1><p>${esc(lead)}</p></div>${actions}</div>`;
 const table=(headers,rows)=>`<div class="table-wrap"><table><thead><tr>${headers.map(v=>`<th>${esc(v)}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${headers.length}" class="empty">No projected records.</td></tr>`}</tbody></table></div>`;
 async function api(path,options={}){const response=await fetch(path,{headers:{Accept:'application/json',...(options.headers||{})},...options});if(!response.ok)throw Error((await response.text()).trim()||`HTTP ${response.status}`);return response.json()}
+const historyReadTimeoutMS=30000;
+function readHistory(path,signal){
+ const controller=new AbortController;let timer,cancel;
+ const deadline=new Promise((resolve,reject)=>{
+  cancel=()=>{reject(new DOMException('History read cancelled.','AbortError'));controller.abort()};
+  if(signal.aborted)cancel();else signal.addEventListener('abort',cancel,{once:true});
+  timer=setTimeout(()=>{reject(Error('History read timed out. Retry this range.'));controller.abort()},historyReadTimeoutMS);
+ });
+ return Promise.race([api(path,{signal:controller.signal}),deadline]).finally(()=>{clearTimeout(timer);signal.removeEventListener('abort',cancel)});
+}
 function toast(message,error=false){notice.textContent=message;notice.className=error?'error':'';notice.hidden=false;setTimeout(()=>notice.hidden=true,5000)}
 function accept(payload,redraw=true){
  if(payload?.schema!==3)throw Error('Unsupported control snapshot.');
@@ -177,7 +187,7 @@ function topology(compact=false,options={}){
 const byteSize=trafficBytes;
 const age=value=>{if(!value)return'—';const seconds=Math.max(0,Math.floor((Date.now()-new Date(value).getTime())/1000));if(seconds<60)return`${seconds}s`;if(seconds<3600)return`${Math.floor(seconds/60)}m`;if(seconds<86400)return`${Math.floor(seconds/3600)}h`;return`${Math.floor(seconds/86400)}d`};
 function latestReport(device){return list(reports).filter(v=>v.device_id===device).sort((a,b)=>String(b.reported_at).localeCompare(String(a.reported_at)))[0]}
-function trafficScope(scope){return trafficSummary(projection,scope,histories.get('traffic:'+scope))}
+function trafficScope(scope){return scope==='network:'+projection.network_id?networkTrafficSummary(projection,histories):trafficSummary(projection,scope,histories.get('traffic:'+scope))}
 function trafficFor(device=''){return trafficScope(device?'device:'+device:'network:'+projection.network_id)}
 function trafficBars(summary,both=false,compact=false,endpoints=false){return trafficHistoryHTML(summary,both,compact,endpoints)}
 function componentRows(device,report){
@@ -234,7 +244,7 @@ function devicesPage(){
 // bounded and cancelled when their identity/authorization or page is replaced.
 function visibleHistories(){
  const wanted=new Map(),visible=selector=>[...app.querySelectorAll(selector)].filter(node=>!node.closest('[hidden],details:not([open])')&&node.getClientRects().length>0);
- const traffic=node=>{const scope=node.dataset.trafficScope,request=trafficHistoryRequest(projection,scope);if(request)wanted.set('traffic:'+scope,request)};
+ const traffic=node=>{const scope=node.dataset.trafficScope,scopes=scope==='network:'+projection.network_id?list(projection.devices).filter(device=>device.authorized).map(device=>'device:'+device.id):[scope];for(const value of scopes){const request=trafficHistoryRequest(projection,value);if(request)wanted.set('traffic:'+value,request)}};
  const link=id=>{const value=list(projection.links).find(v=>v.id===id);if(value?.authorized&&value.spec_digest)wanted.set('link:'+id,{key:linkHistoryKey(projection,value),version:linkHistoryVersion(projection,value),url:'/api/control/ui/link-history?'+new URLSearchParams({link:id})})};
  for(const node of visible('[data-selected-link] [data-traffic-scope]'))traffic(node);
  for(const node of visible('[data-selected-link]'))link(node.dataset.selectedLink);
@@ -258,11 +268,12 @@ function loadHistories(){
   const index=[...historyLoads.keys()].some(id=>selected.has(id))?0:Math.max(0,pending.findIndex(([id])=>selected.has(id)));
   const [id,{key,version,url}]=pending.splice(index,1)[0];
   const request={key,controller:new AbortController()};historyLoads.set(id,request);
-  const current=()=>!request.controller.signal.aborted&&visibleHistories().get(id)?.key===key;
+  const current=()=>historyLoads.get(id)===request&&!request.controller.signal.aborted&&visibleHistories().get(id)?.key===key;
   const save=value=>{if(current()){histories.delete(id);histories.set(id,{key,version,...value})}};
-  api(url,{signal:request.controller.signal}).then(data=>save({data})).catch(error=>save({error:error.message})).finally(()=>{if(historyLoads.get(id)===request)historyLoads.delete(id);if(current()){stableRender();scheduleEvidenceExpiry()}else queueMicrotask(loadHistories)});
+  readHistory(url,request.controller.signal).then(data=>{if(id.startsWith('traffic:'))validateTrafficHistory(data,id.slice('traffic:'.length));save({data})}).catch(error=>save({error:error.message})).finally(()=>{const display=current();if(historyLoads.get(id)===request)historyLoads.delete(id);if(display){stableRender();scheduleEvidenceExpiry()}else queueMicrotask(loadHistories)});
  }
 }
+function retryHistory(id){const request=historyLoads.get(id);if(request){historyLoads.delete(id);request.controller.abort()}histories.delete(id)}
 async function loadEnrollmentOptions(){try{enrollmentOptions=await api('/api/control/ui/enrollment-options')}catch{enrollmentOptions=null}if(location.pathname==='/devices'&&new URLSearchParams(location.search).get('new')==='1')render()}
 function addDevicePage(){
  const options=enrollmentOptions;if(!options||projection.schema!==3){app.innerHTML=heading('Add Device','Authenticated enrollment options are not ready.')+'<button id="retry-enrollment" type="button">Retry</button>';return}
@@ -589,9 +600,9 @@ document.addEventListener('click',async event=>{
  const configurationAction=configurationReview.click(event);if(configurationAction){await configurationAction;return}
  const websiteButton=event.target.closest('[data-website-action]');if(websiteButton){await clickWebsiteAction(websiteButton,{api,operate,refresh:async()=>{await refresh(false);render()},toast,operationBody});return}
  if(event.target.closest('[data-paths-history-retry]')){routingHistory=null;render();return}
- const runtimeRetry=event.target.closest('[data-runtime-history-retry]');if(runtimeRetry){histories.delete('runtime:'+runtimeRetry.dataset.runtimeHistoryRetry);stableRender();return}
- const trafficRetry=event.target.closest('[data-traffic-retry]');if(trafficRetry){histories.delete('traffic:'+trafficRetry.dataset.trafficRetry);stableRender();return}
- const linkRetry=event.target.closest('[data-link-history-retry]');if(linkRetry){histories.delete('link:'+linkRetry.dataset.linkHistoryRetry);stableRender();return}
+ const runtimeRetry=event.target.closest('[data-runtime-history-retry]');if(runtimeRetry){retryHistory('runtime:'+runtimeRetry.dataset.runtimeHistoryRetry);stableRender();return}
+ const trafficRetry=event.target.closest('[data-traffic-retry]');if(trafficRetry){const scope=trafficRetry.dataset.trafficRetry,scopes=scope==='network:'+projection.network_id?list(projection.devices).filter(device=>device.authorized).map(device=>'device:'+device.id):[scope];for(const value of scopes)retryHistory('traffic:'+value);stableRender();return}
+ const linkRetry=event.target.closest('[data-link-history-retry]');if(linkRetry){retryHistory('link:'+linkRetry.dataset.linkHistoryRetry);stableRender();return}
  const createPolicy=event.target.closest('[data-copy-policy],[data-new-device-policy]');if(createPolicy){openPolicyDraft(createPolicy);return}
  if(event.target.closest('[data-return-policy]')){returnFromPolicy();return}
  const remove=event.target.closest('[data-delete-kind]');if(remove){if(!confirm(remove.dataset.deleteMessage||(remove.dataset.deleteKind==='public_trust'?'Remove this website root from future device configurations? Certificates already installed in browsers remain installed.':remove.dataset.deleteKind==='expected_component'?'Clear this component expectation?':remove.dataset.deleteKind==='admin_certificate'?'Revoke this administrator certificate? Existing management sessions will lose access.':`Delete ${remove.dataset.deleteKind} ${remove.dataset.deleteId}?`)))return;remove.disabled=true;try{const form=remove.closest('form')||remove,operation=remove.dataset.deleteKind+'.delete';if(!remove.submission)remove.submission=operationBody(operation,{id:remove.dataset.deleteId},crypto.randomUUID(),commandDependencies(form,remove.dataset.deleteKind,remove.dataset.deleteId));await submitOperation(operation,remove.submission);if(remove.dataset.deleteKind==='expected_component'&&form.isConnected){const selected=form.elements.component.value;form.remove();stableRender();const next=document.querySelector('#expected-component-form [name=component]');if(next&&[...next.options].some(v=>v.value===selected))next.value=selected}else stableRender();toast('Deletion accepted locally.')}catch(error){remove.disabled=false;toast(error.message,true)}return}

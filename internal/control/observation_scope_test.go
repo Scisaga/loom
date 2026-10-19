@@ -87,7 +87,7 @@ func TestReportCommitReadsActualOwnerHistory(t *testing.T) {
 				t.Fatal("independent commit manufactured whole-database validity")
 			}
 			for _, device := range []string{"demo-a", "demo-b"} {
-				err := store.walkDeviceHistorySnapshot(context.Background(), "demo-network", device, func(U64, reportReference, []byte) error { return nil })
+				err := store.walkDeviceHistorySnapshot(context.Background(), "demo-network", device, func(U64, reportReference, *reportHistoryOriginal) error { return nil })
 				if (err != nil) != (device == "demo-b") {
 					t.Fatal("history reader did not validate its own originals", device, err)
 				}

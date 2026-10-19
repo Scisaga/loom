@@ -42,7 +42,7 @@ func TestTrafficHistoryProjectionDoesNotBlockReportCommit(t *testing.T) {
 	readCtx, readCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer readCancel()
 	go func() {
-		done <- store.walkDeviceHistorySnapshot(readCtx, "demo-network", "demo-device", func(highest U64, _ reportReference, raw []byte) error {
+		done <- store.walkDeviceHistorySnapshot(readCtx, "demo-network", "demo-device", func(highest U64, _ reportReference, original *reportHistoryOriginal) error {
 			if len(seen) == 0 {
 				close(entered)
 				<-release
@@ -50,10 +50,7 @@ func TestTrafficHistoryProjectionDoesNotBlockReportCommit(t *testing.T) {
 			if highest != 3 {
 				return fmt.Errorf("query highest changed to %d", highest)
 			}
-			var report DeviceReport
-			if err := decodeStoredReport(raw, &report); err != nil {
-				return err
-			}
+			report := original.report
 			seen = append(seen, report.ReportSequence)
 			return report.Verify(public)
 		})
@@ -120,7 +117,7 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			visited := 0
-			err = store.walkDeviceHistorySnapshot(ctx, "demo-network", "demo-device", func(_ U64, _ reportReference, raw []byte) error {
+			err = store.walkDeviceHistorySnapshot(ctx, "demo-network", "demo-device", func(_ U64, _ reportReference, original *reportHistoryOriginal) error {
 				if visited == 0 {
 					if action == "cancel" {
 						cancel()
@@ -137,10 +134,7 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 						return err
 					}
 				}
-				var report DeviceReport
-				if err := decodeStoredReport(raw, &report); err != nil {
-					return err
-				}
+				report := original.report
 				if report.ReportSequence == 1 {
 					t.Error("changed or removed original reached projection")
 				}
@@ -189,14 +183,11 @@ func TestHistorySnapshotExcludesForksAcrossBatchesAndAtHighestSequence(t *testin
 			}
 			original := testObservationBytes(t, store)
 			seen := map[U64]bool{}
-			err = store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(highest U64, ref reportReference, raw []byte) error {
+			err = store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(highest U64, ref reportReference, original *reportHistoryOriginal) error {
 				if highest != 65 || ref.ReportSequence == forkSequence || seen[ref.ReportSequence] {
 					return fmt.Errorf("fork became a winner, highest changed, or original repeated")
 				}
-				var report DeviceReport
-				if err := decodeStoredReport(raw, &report); err != nil {
-					return err
-				}
+				report := original.report
 				if report.ReportSequence != ref.ReportSequence {
 					return fmt.Errorf("reference differs from original")
 				}
@@ -227,7 +218,7 @@ func TestHistorySnapshotRejectsMalformedPhysicalKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	visited := false
-	err = store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(U64, reportReference, []byte) error {
+	err = store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(U64, reportReference, *reportHistoryOriginal) error {
 		visited = true
 		return nil
 	})

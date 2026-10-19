@@ -61,19 +61,19 @@ func (store *ObservationStore) runtimeHistory(ctx context.Context, network, devi
 	for index := range result.Buckets {
 		result.Buckets[index].Hour = start.Add(time.Duration(index) * time.Hour).UnixMilli()
 	}
-	err := store.walkDeviceHistorySnapshot(ctx, network, device, func(_ U64, pending reportReference, pendingRaw []byte) error {
-		if pendingRaw == nil || pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
+	err := store.walkDeviceHistorySnapshot(ctx, network, device, func(_ U64, pending reportReference, original *reportHistoryOriginal) error {
+		if original == nil || pending.ReportedAt < result.From || pending.ReportedAt > result.Until {
 			return nil
 		}
 		bucket := &result.Buckets[(pending.ReportedAt-result.From)/time.Hour.Milliseconds()]
 		if prior := bucket.Sample; prior != nil && (prior.ReportedAt > pending.ReportedAt || prior.ReportedAt == pending.ReportedAt && prior.ReportSequence > pending.ReportSequence) {
 			return nil
 		}
-		report, err := store.verifiedReport(pendingRaw, publicKey)
+		report, err := store.verifiedHistoryOriginal(original, publicKey)
 		if err != nil {
 			return nil
 		}
-		bucket.Sample = &WebRuntimeSample{ReportID: ReleaseDigest(pendingRaw), ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt,
+		bucket.Sample = &WebRuntimeSample{ReportID: original.id, ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt,
 			ViewDigest: report.ViewDigest, State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}
 		return nil
 	}, reportHistoryWindow{kind: reportTime, from: result.From, until: result.Until, include: func(ref reportReference) bool {

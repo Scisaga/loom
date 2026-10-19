@@ -46,7 +46,10 @@ func TestReportIndexesRebuildWithoutChangingOriginals(t *testing.T) {
 		t.Fatal("content location was not rebuilt", err)
 	}
 	seen := []U64{}
-	err = rebuilt.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(_ U64, ref reportReference, _ []byte) error { seen = append(seen, ref.ReportSequence); return nil }, reportHistoryWindow{kind: reportTime, from: 2, until: 2})
+	err = rebuilt.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(_ U64, ref reportReference, _ *reportHistoryOriginal) error {
+		seen = append(seen, ref.ReportSequence)
+		return nil
+	}, reportHistoryWindow{kind: reportTime, from: 2, until: 2})
 	if err != nil || len(seen) != 1 || seen[0] != 2 {
 		t.Fatal("time window was not rebuilt", seen, err)
 	}
@@ -63,12 +66,12 @@ func TestReportWindowDoesNotReadUnrelatedHistoricalBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := 0
-	err := store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(_ U64, ref reportReference, raw []byte) error {
+	err := store.walkDeviceHistorySnapshot(context.Background(), "demo-network", "demo-device", func(_ U64, ref reportReference, original *reportHistoryOriginal) error {
 		seen++
 		if ref.ReportSequence != 2 {
 			t.Fatal("window included unrelated history")
 		}
-		_, err := store.verifiedReport(raw, public)
+		_, err := store.verifiedHistoryOriginal(original, public)
 		return err
 	}, reportHistoryWindow{kind: reportTime, from: 2, until: 2})
 	if err != nil || seen != 1 {

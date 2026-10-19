@@ -34,18 +34,15 @@ func (server *Server) wgPortRecoveryReports(ctx context.Context, projection Proj
 	result := make([]WGPortRecoveryReports, 0, len(ordered))
 	for _, id := range ordered {
 		history := WGPortRecoveryReports{DeviceID: id, Reports: []DeviceReport{}}
-		err := server.Runtime.Reports.walkDeviceHistorySnapshot(ctx, projection.NetworkID, id, func(highest U64, ref reportReference, raw []byte) error {
+		err := server.Runtime.Reports.walkDeviceHistorySnapshot(ctx, projection.NetworkID, id, func(highest U64, ref reportReference, original *reportHistoryOriginal) error {
 			history.Highest = highest
-			if raw == nil {
+			if original == nil {
 				if ref.ReportedAt >= now.Add(-wgPortRecoveryWindow).UnixMilli() && ref.ReportedAt <= now.UnixMilli() {
 					history.Forked = true
 				}
 				return nil
 			}
-			var report DeviceReport
-			if err := decodeStoredReport(raw, &report); err != nil {
-				return err
-			}
+			report := original.report
 			if report.ReportedAt <= now.UnixMilli() {
 				history.Reports = append(history.Reports, report)
 			}

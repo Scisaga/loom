@@ -161,6 +161,17 @@ func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceRep
 	if err != nil {
 		return report, err
 	}
+	return store.verifiedHistoryOriginal(&reportHistoryOriginal{id: id, report: report}, key)
+}
+
+// The caller already decoded the exact canonical bytes named by this digest.
+// Reuse that one value while still requiring this call's exact key; neither
+// the current authorization nor report contents enter the proof cache.
+func (store *ObservationStore) verifiedHistoryOriginal(original *reportHistoryOriginal, key string) (DeviceReport, error) {
+	if original == nil {
+		return DeviceReport{}, errors.New("report original is unavailable")
+	}
+	id, report := original.id, original.report
 	cache := &store.cache
 	cache.mu.Lock()
 	if element := cache.items[id]; element != nil && key != "" {

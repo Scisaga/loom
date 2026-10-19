@@ -105,8 +105,8 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 	}
 	recent := map[int64]*Observation{}
 	recentBodies := map[int64]string{}
-	err := store.walkDeviceHistorySnapshot(ctx, network, identity.ID, func(highest U64, ref reportReference, raw []byte) error {
-		if raw == nil {
+	err := store.walkDeviceHistorySnapshot(ctx, network, identity.ID, func(highest U64, ref reportReference, original *reportHistoryOriginal) error {
+		if original == nil {
 			return nil
 		}
 		candidate := ref.ReportSequence == highest
@@ -119,7 +119,7 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 		if !candidate {
 			return nil
 		}
-		report, err := store.verifiedReport(raw, identity.DevicePublicKey)
+		report, err := store.verifiedHistoryOriginal(original, identity.DevicePublicKey)
 		if err != nil {
 			return nil
 		}

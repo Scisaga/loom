@@ -17,9 +17,17 @@ type reportHistoryWindow struct {
 	include     func(reportReference) bool
 }
 
+// One freshly read, canonical original and its actual content digest. History
+// callbacks receive it only after its physical position was checked. The value
+// is immutable during consumption and is never cached.
+type reportHistoryOriginal struct {
+	id     string
+	report DeviceReport
+}
+
 // Pin only the requested time window and highest original position. Forks are
 // checked against originals. No read transaction survives into projection work.
-func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, visit func(U64, reportReference, []byte) error, window ...reportHistoryWindow) error {
+func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, visit func(U64, reportReference, *reportHistoryOriginal) error, window ...reportHistoryWindow) error {
 	if ValidateID(network) != nil || ValidateID(device) != nil || len(window) > 1 {
 		return errors.New("invalid report history scope")
 	}
@@ -133,6 +141,7 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 	}
 	sort.Slice(positions, func(i, j int) bool { return bytes.Compare(positions[i].key, positions[j].key) > 0 })
 	var previous U64
+	codec := newContractCodec()
 	include := func(position location) bool {
 		return len(window) == 0 || window[0].include == nil || position.fork || position.ref.ReportSequence == highest || window[0].include(position.ref)
 	}
@@ -178,12 +187,13 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				return err
 			}
 			position := positions[first+i]
-			report, err := store.decodedReport(raw)
+			id := ReleaseDigest(raw)
+			report, err := store.decodedReportWithCodec(raw, id, codec)
 			if err != nil {
 				return err
 			}
 			ref := referenceOf(report)
-			if !bytes.Equal(ref.key(ReleaseDigest(raw)), position.key) {
+			if !bytes.Equal(ref.key(id), position.key) {
 				return errors.New("pinned report differs from its original location")
 			}
 			if position.fork {
@@ -203,7 +213,7 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				}
 			}
 			previous = ref.ReportSequence
-			if err := visit(highest, ref, raw); err != nil {
+			if err := visit(highest, ref, &reportHistoryOriginal{id: id, report: report}); err != nil {
 				return err
 			}
 		}

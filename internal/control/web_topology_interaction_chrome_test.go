@@ -151,7 +151,7 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	overviewRequested, resumeOverview := make(chan struct{}), make(chan struct{})
 	handler := server.AdminHandler()
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/control/ui/traffic-history" && r.URL.Query().Get("network") != "" && holdOverviewHistory.Swap(false) {
+		if r.URL.Path == "/api/control/ui/traffic-history" && r.URL.Query().Get("device") != "" && holdOverviewHistory.Swap(false) {
 			close(overviewRequested)
 			select {
 			case <-resumeOverview:
@@ -271,7 +271,7 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	select {
 	case <-overviewRequested:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Overview did not request its original network traffic history")
+		t.Fatal("Overview did not request its original device traffic history")
 	}
 	chromeDo(t, debug, `window.demoOverviewSVG=document.querySelector('.overview-topology-card svg');window.demoOverviewDetached=0;window.demoOverviewObserver=new MutationObserver(records=>{for(const record of records)for(const node of record.removedNodes)if(node===demoOverviewSVG||node.contains?.(demoOverviewSVG))demoOverviewDetached++});demoOverviewObserver.observe(document.querySelector('#app'),{subtree:true,childList:true});true`)
 	close(resumeOverview)

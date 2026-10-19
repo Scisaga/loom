@@ -97,12 +97,12 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 	// Sequence order is authoritative for adjacency, not for wall-clock time.
 	// A backwards clock cannot make an older interval overlap a counted one.
 	ceiling := until
-	err := store.walkDeviceHistorySnapshot(ctx, network, identity.ID, func(highest U64, ref reportReference, raw []byte) error {
-		if raw == nil || ref.CounterAt == nil || *ref.CounterAt < start || *ref.CounterAt > until {
+	err := store.walkDeviceHistorySnapshot(ctx, network, identity.ID, func(highest U64, ref reportReference, original *reportHistoryOriginal) error {
+		if original == nil || ref.CounterAt == nil || *ref.CounterAt < start || *ref.CounterAt > until {
 			newer = nil
 			return nil
 		}
-		report, err := store.verifiedReport(raw, identity.DevicePublicKey)
+		report, err := store.verifiedHistoryOriginal(original, identity.DevicePublicKey)
 		if err != nil || report.WireGuardCounters == nil || report.ReportedAt > until {
 			newer = nil
 			return nil
