@@ -132,7 +132,7 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 	if ValidatePublicKey(publicKey) != nil {
 		return errors.New("invalid counter history verification key")
 	}
-	highest, positions, err := store.pinDeviceHistoryLocations(ctx, network, device, []reportHistoryWindow{{kind: counterTime, from: from, until: until}})
+	highest, positions, err := store.pinDeviceCounterHistoryLocations(ctx, network, device, from, until)
 	if err != nil {
 		return err
 	}

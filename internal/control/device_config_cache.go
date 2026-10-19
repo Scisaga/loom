@@ -169,17 +169,19 @@ func deviceConfigHeapCost(value reflect.Value) int {
 		}
 	case reflect.Struct:
 		for i := 0; i < value.NumField() && cost <= deviceConfigCacheBytes; i++ {
-			cost += deviceConfigHeapCost(value.Field(i))
+			cost += deviceConfigHeapCost(value.Field(i)) - int(value.Field(i).Type().Size())
 		}
 	case reflect.Slice, reflect.Array:
 		if value.Kind() == reflect.Slice {
 			cost += value.Cap() * int(value.Type().Elem().Size())
 			if value.Type().Elem().Kind() == reflect.Uint8 {
-				return cost + value.Len()
+				return cost
 			}
+			// Retained references in spare backing slots remain reachable too.
+			value = value.Slice(0, value.Cap())
 		}
 		for i := 0; i < value.Len() && cost <= deviceConfigCacheBytes; i++ {
-			cost += deviceConfigHeapCost(value.Index(i))
+			cost += deviceConfigHeapCost(value.Index(i)) - int(value.Index(i).Type().Size())
 		}
 	case reflect.Map:
 		cost += 128
@@ -209,6 +211,11 @@ func (server *Server) newDeviceConfigRequest() (*deviceConfigRequest, error) {
 	if err != nil {
 		return nil, err
 	}
+	return server.newDeviceConfigRequestUsing(authority, input, server.expectedReleaseSets(input.projection))
+}
+
+// The caller supplies release sets independently verified in this request.
+func (server *Server) newDeviceConfigRequestUsing(authority *Authority, input deviceConfigInputs, sets []ReleaseSet) (*deviceConfigRequest, error) {
 	config := server.Runtime.Config
 	member, err := activeLocalMember(config, input.projection.Config)
 	if err != nil {
@@ -218,7 +225,6 @@ func (server *Server) newDeviceConfigRequest() (*deviceConfigRequest, error) {
 	if err != nil || base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)) != member.PublicKey {
 		return nil, errors.New("device configuration signing identity changed")
 	}
-	sets := server.expectedReleaseSets(input.projection)
 	releaseBody, err := json.Marshal(sets)
 	if err != nil {
 		return nil, err
@@ -286,7 +292,9 @@ func (request *deviceConfigRequest) get(ctx context.Context, device string) (*de
 		if err != nil {
 			return nil, err
 		}
-		if err := request.finish(); err != nil {
+		// The caller verifies its own current release metadata before returning.
+		// Retain only a result still bound to these authenticated inputs.
+		if err := request.current(); err != nil {
 			return nil, err
 		}
 		return &deviceConfigValue{envelope, body}, nil

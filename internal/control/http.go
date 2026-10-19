@@ -350,7 +350,11 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	if server.Runtime == nil || server.Runtime.Authority == nil {
 		return WebSnapshot{}, errors.New("control projection unavailable")
 	}
-	projection := server.Runtime.Authority.Snapshot()
+	authority := server.Runtime.Authority
+	authority.mu.RLock()
+	projection := cloneAuthorityProjection(authority.projection)
+	input := deviceConfigInputs{authority.deviceConfigRevision, authority.projection, ControlProof{Genesis: authority.genesis, Successors: authority.certificates}}
+	authority.mu.RUnlock()
 	var currentRelease ReleaseSet
 	var releaseErr error
 	verified := []ReleaseSet{}
@@ -361,21 +365,55 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		}
 	}
 	releases := server.expectedReleaseSets(projection, verified...)
-	// Paths and reports use the same authoritative inputs in this one request.
-	// Keep only successful projections here; no View escapes into the Web value
-	// or survives a subsequent request's authorization and release reads.
-	views := map[string]DeviceView{}
+	// Read-only or blocked controls keep their ordinary pure UI projection. A
+	// missing signing identity must not make an otherwise readable page fail.
+	writable := server.Runtime.Writable()
+	var configuration *deviceConfigRequest
+	if writable {
+		configuration, _ = server.newDeviceConfigRequestUsing(authority, input, releases)
+	}
+	views := map[string]struct {
+		view   DeviceView
+		digest string
+	}{}
+	var viewErr error
+	viewForDigest := func(id string) (DeviceView, string, error) {
+		if value, ok := views[id]; ok {
+			return value.view, value.digest, nil
+		}
+		var view DeviceView
+		var digest string
+		if configuration != nil {
+			value, err := configuration.get(r.Context(), id)
+			if err == nil {
+				view, digest = value.envelope.View, value.envelope.ViewDigest
+			} else if errors.Is(err, errDeviceConfigChanged) || r.Context().Err() != nil {
+				viewErr = err
+				return DeviceView{}, "", err
+			}
+		}
+		if digest == "" {
+			var err error
+			view, err = ProjectDeviceView(projection, id, releases...)
+			if err != nil {
+				return DeviceView{}, "", err
+			}
+			digest, err = DeviceViewDigest(view)
+			if err != nil {
+				return DeviceView{}, "", err
+			}
+		}
+		views[id] = struct {
+			view   DeviceView
+			digest string
+		}{view, digest}
+		return view, digest, nil
+	}
 	viewFor := func(id string) (DeviceView, error) {
-		if view, ok := views[id]; ok {
-			return view, nil
-		}
-		view, err := ProjectDeviceView(projection, id, releases...)
-		if err == nil {
-			views[id] = view
-		}
+		view, _, err := viewForDigest(id)
 		return view, err
 	}
-	snapshot := buildWebSnapshotUsing(projection, server.admin(r), localAdmin(r), server.Runtime.Writable(), viewFor, releases...)
+	snapshot := buildWebSnapshotUsing(projection, server.admin(r), localAdmin(r), writable, viewFor, releases...)
 	server.memberSnapshot(&snapshot)
 	snapshot.EndpointCertificates = webEndpointCertificates(server.Runtime.Authority.root, server.Config.ControlID, projection, server.now())
 	server.websiteSnapshot(&snapshot, r, projection)
@@ -388,7 +426,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		projectWebLastReportTimes(&snapshot, latest, projection)
 		reports := []DeviceReport{}
 		for _, report := range latest {
-			if verifyCurrentReportUsing(report, projection, viewFor) == nil {
+			if verifyCurrentReportUsingDigest(report, projection, viewForDigest) == nil {
 				reports = append(reports, report)
 			}
 		}
@@ -399,6 +437,17 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 			snapshot.UIState.Warnings = append(snapshot.UIState.Warnings, WebWarning{Code: "release_catalog_unavailable", Message: "Signed release catalog or referenced artifacts could not be verified."})
 		} else {
 			projectReleases(&snapshot, currentRelease)
+		}
+	}
+	if viewErr != nil {
+		return WebSnapshot{}, viewErr
+	}
+	if err := r.Context().Err(); err != nil {
+		return WebSnapshot{}, err
+	}
+	if configuration != nil {
+		if err := configuration.current(); err != nil {
+			return WebSnapshot{}, err
 		}
 	}
 	return snapshot, nil

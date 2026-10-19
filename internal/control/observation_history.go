@@ -57,6 +57,17 @@ type reportHistoryLocation struct {
 // Pin only the requested time window and highest original position. Forks are
 // checked against original keys. No transaction survives into projection work.
 func (store *ObservationStore) pinDeviceHistoryLocations(ctx context.Context, network, device string, window []reportHistoryWindow) (U64, []reportHistoryLocation, error) {
+	return store.pinDeviceHistoryLocationsFrom(ctx, network, device, window, false)
+}
+
+// The same committed per-original keys provide ordinary WG history positions.
+// Highest positions still come from original keys so a missing highest fork row
+// cannot hide an equivocation. Historical body integrity is an offline check.
+func (store *ObservationStore) pinDeviceCounterHistoryLocations(ctx context.Context, network, device string, from, until int64) (U64, []reportHistoryLocation, error) {
+	return store.pinDeviceHistoryLocationsFrom(ctx, network, device, []reportHistoryWindow{{kind: counterTime, from: from, until: until}}, true)
+}
+
+func (store *ObservationStore) pinDeviceHistoryLocationsFrom(ctx context.Context, network, device string, window []reportHistoryWindow, counters bool) (U64, []reportHistoryLocation, error) {
 	if ValidateID(network) != nil || ValidateID(device) != nil || len(window) > 1 {
 		return 0, nil, errors.New("invalid report history scope")
 	}
@@ -70,6 +81,14 @@ func (store *ObservationStore) pinDeviceHistoryLocations(ctx context.Context, ne
 		highest, err = highestReportPosition(bucket, owner)
 		if err != nil || highest == 0 {
 			return err
+		}
+		locations := bucket
+		if counters {
+			parent := tx.Bucket(reportIndexBucket)
+			if parent == nil || parent.Bucket(reportCountersBucket) == nil || parent.Bucket(reportCountersBucket).Sequence() != 0 {
+				return errors.New("report counter projections unavailable")
+			}
+			locations = parent.Bucket(reportCountersBucket)
 		}
 		sequences := map[U64]bool{highest: true}
 		references := map[string]reportReference{}
@@ -111,7 +130,7 @@ func (store *ObservationStore) pinDeviceHistoryLocations(ctx context.Context, ne
 					break
 				}
 				original := append(bytes.Clone(prefix), key[len(timePrefix)+8:]...)
-				if bucket.Get(original) == nil {
+				if locations.Get(original) == nil {
 					return errors.New("indexed original is absent")
 				}
 				_, ref, err := locateReportKey(original)
@@ -132,14 +151,18 @@ func (store *ObservationStore) pinDeviceHistoryLocations(ctx context.Context, ne
 			}
 		}
 		// Include every fork at selected positions even if only one is in the time index.
-		cursor := bucket.Cursor()
+		cursor := locations.Cursor()
 		for sequence := range sequences {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			position := binary.BigEndian.AppendUint64(bytes.Clone(prefix), uint64(sequence))
+			positionCursor := cursor
+			if counters && sequence == highest {
+				positionCursor = bucket.Cursor()
+			}
 			start := len(positions)
-			for key, _ := cursor.Seek(position); key != nil && bytes.HasPrefix(key, position); key, _ = cursor.Next() {
+			for key, _ := positionCursor.Seek(position); key != nil && bytes.HasPrefix(key, position); key, _ = positionCursor.Next() {
 				_, ref, err := locateReportKey(key)
 				if err != nil {
 					return err
