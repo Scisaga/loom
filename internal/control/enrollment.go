@@ -11,6 +11,8 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -519,6 +521,14 @@ func (envelope DeviceViewEnvelope) Validate() error {
 	if err != nil {
 		return err
 	}
+	return envelope.validateCanonicalUnsigned(body)
+}
+
+// Callers construct this body from the same typed value in this call.
+func (envelope DeviceViewEnvelope) validateCanonicalUnsigned(body []byte) error {
+	if envelope.Schema != 3 || envelope.View.NetworkID != envelope.NetworkID || ValidateID(envelope.IssuerControlID) != nil || ValidateDigest(envelope.IssuerKeyID) != nil || validateFactFrontier(envelope.FactFrontier) != nil {
+		return errors.New("device view envelope is invalid")
+	}
 	var encoded struct {
 		View json.RawMessage `json:"view"`
 	}
@@ -583,6 +593,55 @@ func (envelope DeviceViewEnvelope) Validate() error {
 		return errors.New("device view envelope signature is invalid")
 	}
 	return nil
+}
+
+// The complete private pipeline owns its typed View and all encoded bytes.
+// No caller can supply an allegedly validated View or canonical fragment.
+func signProjectedDeviceConfig(envelope DeviceViewEnvelope, projection Projection, deviceID string, releases []ReleaseSet, private ed25519.PrivateKey) (DeviceViewEnvelope, []byte, error) {
+	if len(private) != ed25519.PrivateKeySize {
+		return DeviceViewEnvelope{}, nil, errors.New("device view signing key is invalid")
+	}
+	view, err := projectDeviceView(projection, deviceID, releases...)
+	if err != nil {
+		return DeviceViewEnvelope{}, nil, err
+	}
+	codec := newContractCodec()
+	canonicalView, err := codec.encode(view)
+	if err != nil {
+		return DeviceViewEnvelope{}, nil, err
+	}
+	envelope.View = view
+	envelope.ViewDigest = deviceViewDigestFromCanonical(canonicalView)
+	if err := codec.inspectType(reflect.TypeFor[DeviceViewEnvelope]()); err != nil {
+		return DeviceViewEnvelope{}, nil, err
+	}
+	unsigned := envelope.unsigned()
+	names := make([]string, 0, len(unsigned))
+	for name := range unsigned {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if name == "view" {
+			continue
+		}
+		if err := codec.inspect(reflect.ValueOf(unsigned[name]), map[contractVisit]bool{}); err != nil {
+			return DeviceViewEnvelope{}, nil, err
+		}
+	}
+	body, err := codec.append(nil, reflect.ValueOf(unsigned))
+	if err != nil {
+		return DeviceViewEnvelope{}, nil, err
+	}
+	envelope.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, append([]byte(deviceViewDomain), body...)))
+	if err := envelope.validateCanonicalUnsigned(body); err != nil {
+		return DeviceViewEnvelope{}, nil, err
+	}
+	encoded, err := codec.append(nil, reflect.ValueOf(envelope))
+	if err != nil {
+		return DeviceViewEnvelope{}, nil, err
+	}
+	return envelope, encoded, nil
 }
 
 func SignDeviceViewEnvelope(envelope DeviceViewEnvelope, private ed25519.PrivateKey) (DeviceViewEnvelope, error) {

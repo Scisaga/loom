@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -61,6 +62,24 @@ func windowsFixture(t *testing.T) (control.BootstrapInvite, func(string, uint64,
 		}
 		for _, change := range changes {
 			change(&view)
+		}
+		// Changes describe domain inputs. Rebuild the certified candidates from
+		// those inputs before consuming the View in the runtime renderer.
+		p.NetworkIntent.Services, p.NetworkIntent.Policies = view.Services, view.Policies
+		p.DeviceAuthorizations[0].Responsibilities = append([]string{}, view.Responsibilities...)
+		p.DeviceAuthorizations[0].PolicyIDs = append([]string{}, view.PolicyIDs...)
+		p.NetworkIntent.BusinessProbeTargets = []control.BusinessProbeTarget{}
+		for _, group := range view.BusinessProbeTargets {
+			for _, target := range group.Targets {
+				p.NetworkIntent.BusinessProbeTargets = append(p.NetworkIntent.BusinessProbeTargets, control.BusinessProbeTarget{ID: fmt.Sprintf("demo-probe-%d", len(p.NetworkIntent.BusinessProbeTargets)+1), URL: target})
+			}
+		}
+		sort.Slice(p.NetworkIntent.BusinessProbeTargets, func(i, j int) bool {
+			return p.NetworkIntent.BusinessProbeTargets[i].URL < p.NetworkIntent.BusinessProbeTargets[j].URL
+		})
+		view, err = control.ProjectDeviceView(p, invitation.DeviceID)
+		if err != nil {
+			t.Fatal(err)
 		}
 		view.Routes, view.RuntimeProfile, err = control.ProjectAccessRuntime(view)
 		if err != nil {

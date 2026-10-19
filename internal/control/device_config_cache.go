@@ -275,20 +275,12 @@ func (request *deviceConfigRequest) get(ctx context.Context, device string) (*de
 		if err := request.current(); err != nil {
 			return nil, err
 		}
-		view, err := ProjectDeviceView(request.input.projection, device, request.sets...)
-		if err != nil {
-			return nil, err
-		}
 		keyID, err := KeyID(request.member.PublicKey)
 		if err != nil {
 			return nil, err
 		}
-		envelope, err := SignDeviceViewEnvelope(DeviceViewEnvelope{Schema: 3, NetworkID: request.input.projection.NetworkID, GenesisDigest: request.config.GenesisID,
-			IssuerControlID: request.member.ControlID, IssuerKeyID: keyID, ControlProof: request.input.proof, FactFrontier: request.input.projection.Frontier, View: view}, request.key)
-		if err != nil {
-			return nil, err
-		}
-		body, err := CanonicalEncode(envelope)
+		envelope, body, err := signProjectedDeviceConfig(DeviceViewEnvelope{Schema: 3, NetworkID: request.input.projection.NetworkID, GenesisDigest: request.config.GenesisID,
+			IssuerControlID: request.member.ControlID, IssuerKeyID: keyID, ControlProof: request.input.proof, FactFrontier: request.input.projection.Frontier}, request.input.projection, device, request.sets, request.key)
 		if err != nil {
 			return nil, err
 		}

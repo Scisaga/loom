@@ -194,6 +194,18 @@ func validateDeviceViewAuthorization(view DeviceView) error {
 // immutable release sets. It performs no I/O; the envelope signer attaches the
 // actual member proof and verified fact frontier.
 func ProjectDeviceView(projection Projection, deviceID string, releases ...ReleaseSet) (DeviceView, error) {
+	view, err := projectDeviceView(projection, deviceID, releases...)
+	if err != nil {
+		return DeviceView{}, err
+	}
+	if err := view.Validate(); err != nil {
+		return DeviceView{}, err
+	}
+	return view, nil
+}
+
+// Only the private configuration builder may defer validation to its strict encoder.
+func projectDeviceView(projection Projection, deviceID string, releases ...ReleaseSet) (DeviceView, error) {
 	var authorization DeviceAuthorization
 	found := false
 	for _, value := range projection.DeviceAuthorizations {
@@ -305,9 +317,6 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 	}
 	view.Routes, view.RuntimeProfile, err = projectAccessRuntime(view, credentials)
 	if err != nil {
-		return DeviceView{}, err
-	}
-	if err := view.Validate(); err != nil {
 		return DeviceView{}, err
 	}
 	return view, nil
