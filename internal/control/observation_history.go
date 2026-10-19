@@ -15,15 +15,39 @@ type reportHistoryWindow struct {
 	from, until int64
 	link, spec  string
 	include     func(reportReference) bool
+	counterKey  string
 }
 
 // One freshly read, canonical original and its actual content digest. History
 // callbacks receive it only after its physical position was checked. The value
 // is immutable during consumption and is never cached.
 type reportHistoryOriginal struct {
-	id     string
-	raw    []byte
-	report DeviceReport
+	id       string
+	raw      []byte
+	report   DeviceReport
+	counters *reportCounterProjection
+}
+
+// Only the traffic consumer accepts this one-way projection. It is never a
+// complete report or a writable wire/persistent value. verifiedKey holds the
+// exact original's immutable proof only for this callback, not authorization.
+type reportCounterProjection struct {
+	NetworkID         string             `json:"network_id"`
+	DeviceID          string             `json:"device_id"`
+	ReportSequence    U64                `json:"report_sequence"`
+	NetworkGeneration string             `json:"network_generation"`
+	ReportedAt        int64              `json:"reported_at"`
+	WireGuardCounters *WireGuardCounters `json:"wireguard_counters"`
+	verifiedKey       string
+}
+
+func (report reportCounterProjection) reference() reportReference {
+	ref := reportReference{NetworkID: report.NetworkID, DeviceID: report.DeviceID, ReportSequence: report.ReportSequence, ReportedAt: report.ReportedAt}
+	if report.WireGuardCounters != nil {
+		at := report.WireGuardCounters.ObservedAt
+		ref.CounterAt = &at
+	}
+	return ref
 }
 
 // Pin only the requested time window and highest original position. Forks are
@@ -143,6 +167,10 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 	sort.Slice(positions, func(i, j int) bool { return bytes.Compare(positions[i].key, positions[j].key) > 0 })
 	var previous U64
 	codec := newContractCodec()
+	counterKey := ""
+	if len(window) != 0 && window[0].kind == counterTime {
+		counterKey = window[0].counterKey
+	}
 	include := func(position location) bool {
 		return len(window) == 0 || window[0].include == nil || position.fork || position.ref.ReportSequence == highest || window[0].include(position.ref)
 	}
@@ -189,11 +217,14 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 			}
 			position := positions[first+i]
 			id := ReleaseDigest(raw)
-			report, err := store.decodedReportWithCodec(raw, id, codec)
+			original, err := store.decodedHistoryOriginal(raw, id, codec, counterKey)
 			if err != nil {
 				return err
 			}
-			ref := referenceOf(report)
+			ref := referenceOf(original.report)
+			if original.counters != nil {
+				ref = original.counters.reference()
+			}
 			if !bytes.Equal(ref.key(id), position.key) {
 				return errors.New("pinned report differs from its original location")
 			}
@@ -214,7 +245,7 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				}
 			}
 			previous = ref.ReportSequence
-			if err := visit(highest, ref, &reportHistoryOriginal{id: id, raw: raw, report: report}); err != nil {
+			if err := visit(highest, ref, original); err != nil {
 				return err
 			}
 		}

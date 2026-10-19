@@ -57,7 +57,7 @@ func addTrafficDelta(target **WebTrafficDelta, rx, tx U64, from, until int64) er
 	value.LastAt = max(value.LastAt, until)
 	return nil
 }
-func counterDifference(older, newer DeviceReport, scope *trafficLinkScope) (U64, U64, bool) {
+func counterDifference(older, newer reportCounterProjection, scope *trafficLinkScope) (U64, U64, bool) {
 	a, b := older.WireGuardCounters, newer.WireGuardCounters
 	if a == nil || b == nil || uint64(older.ReportSequence) == math.MaxUint64 || older.ReportSequence+1 != newer.ReportSequence || older.NetworkGeneration != newer.NetworkGeneration || a.Interface != b.Interface || a.Epoch != b.Epoch || a.ObservedAt >= b.ObservedAt || b.ObservedAt-a.ObservedAt > 3*time.Minute.Milliseconds() || len(a.Peers) != len(b.Peers) {
 		return 0, 0, false
@@ -92,8 +92,8 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 	for i := range result.Buckets {
 		result.Buckets[i].Hour = start + int64(i)*time.Hour.Milliseconds()
 	}
-	var newer *DeviceReport
-	var current *DeviceReport
+	var newer *reportCounterProjection
+	var current *reportCounterProjection
 	// Sequence order is authoritative for adjacency, not for wall-clock time.
 	// A backwards clock cannot make an older interval overlap a counted one.
 	ceiling := until
@@ -102,7 +102,7 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 			newer = nil
 			return nil
 		}
-		report, err := store.verifiedHistoryOriginal(original, identity.DevicePublicKey)
+		report, err := store.trafficHistoryOriginal(original, identity.DevicePublicKey)
 		if err != nil || report.WireGuardCounters == nil || report.ReportedAt > until {
 			newer = nil
 			return nil
@@ -145,7 +145,7 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 		}
 		newer = &report
 		return nil
-	}, reportHistoryWindow{kind: counterTime, from: start, until: until})
+	}, reportHistoryWindow{kind: counterTime, from: start, until: until, counterKey: identity.DevicePublicKey})
 	if result.Recent != nil && result.Recent.LastAt < until-3*time.Minute.Milliseconds() {
 		result.Recent = nil
 	}

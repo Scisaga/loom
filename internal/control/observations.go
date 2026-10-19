@@ -359,6 +359,22 @@ func verifyCurrentReport(report DeviceReport, projection Projection, releases ..
 }
 
 func verifyCurrentReportUsing(report DeviceReport, projection Projection, viewFor func(string) (DeviceView, error)) error {
+	return verifyCurrentReportUsingDigest(report, projection, func(id string) (DeviceView, string, error) {
+		view, err := viewFor(id)
+		if err != nil {
+			return DeviceView{}, "", err
+		}
+		digest, err := DeviceViewDigest(view)
+		if err != nil {
+			return DeviceView{}, "", errors.New("device report view is stale")
+		}
+		return view, digest, nil
+	})
+}
+
+// The callback supplies a View and its digest from the same immutable request
+// inputs. Report signatures, scope and execution fields are still checked here.
+func verifyCurrentReportUsingDigest(report DeviceReport, projection Projection, viewFor func(string) (DeviceView, string, error)) error {
 	if report.NetworkID != projection.NetworkID {
 		return errors.New("device report belongs to another network")
 	}
@@ -366,12 +382,11 @@ func verifyCurrentReportUsing(report DeviceReport, projection Projection, viewFo
 	if !found || report.Verify(authorization.DevicePublicKey) != nil {
 		return errors.New("device report signature or authorization rejected")
 	}
-	view, err := viewFor(report.DeviceID)
+	view, digest, err := viewFor(report.DeviceID)
 	if err != nil {
 		return err
 	}
-	digest, err := DeviceViewDigest(view)
-	if err != nil || report.ViewDigest != digest {
+	if view.NetworkID != projection.NetworkID || view.DeviceID != report.DeviceID || report.ViewDigest != digest {
 		return errors.New("device report view is stale")
 	}
 	return verifyReportViewFields(report, view)

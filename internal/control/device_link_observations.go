@@ -59,7 +59,16 @@ func (v DeviceLinkObservations) Validate() error {
 // ValidateForView matches every sample to the recipient's exact signed scope.
 func (v DeviceLinkObservations) ValidateForView(view DeviceView) error {
 	digest, err := DeviceViewDigest(view)
-	if err != nil || v.Validate() != nil || v.NetworkID != view.NetworkID || v.DeviceID != view.DeviceID || v.ViewDigest != digest {
+	if err != nil {
+		return errors.New("link observation delivery belongs to another View")
+	}
+	return v.validateForViewDigest(view, digest)
+}
+
+// Only the current call's successfully validated, unchanged View may supply this
+// digest. External callers use ValidateForView and independently validate it.
+func (v DeviceLinkObservations) validateForViewDigest(view DeviceView, digest string) error {
+	if v.Validate() != nil || v.NetworkID != view.NetworkID || v.DeviceID != view.DeviceID || v.ViewDigest != digest {
 		return errors.New("link observation delivery belongs to another View")
 	}
 	links := map[string]NetworkLink{}
@@ -76,10 +85,10 @@ func (v DeviceLinkObservations) ValidateForView(view DeviceView) error {
 	return nil
 }
 
-func projectDeviceLinkObservations(projection Projection, view DeviceView, reports []DeviceReport, now time.Time, viewFor func(string) (DeviceView, error)) (DeviceLinkObservations, error) {
-	digest, err := DeviceViewDigest(view)
-	if err != nil {
-		return DeviceLinkObservations{}, err
+func projectDeviceLinkObservations(projection Projection, recipient, requestedDigest string, reports []DeviceReport, now time.Time, viewFor func(string) (DeviceView, string, error)) (DeviceLinkObservations, error) {
+	view, digest, err := viewFor(recipient)
+	if err != nil || view.DeviceID != recipient || digest != requestedDigest {
+		return DeviceLinkObservations{}, errors.New("current device View required")
 	}
 	result := DeviceLinkObservations{Schema: 3, NetworkID: view.NetworkID, DeviceID: view.DeviceID, ViewDigest: digest, Observations: []DeviceLinkObservation{}}
 	links := map[string]NetworkLink{}
@@ -87,7 +96,7 @@ func projectDeviceLinkObservations(projection Projection, view DeviceView, repor
 		links[link.ID] = link
 	}
 	for _, report := range reports {
-		if verifyCurrentReportUsing(report, projection, viewFor) != nil {
+		if verifyCurrentReportUsingDigest(report, projection, viewFor) != nil {
 			continue
 		}
 		_, reportUntil := webReportTime(report, now)
@@ -111,7 +120,37 @@ func projectDeviceLinkObservations(projection Projection, view DeviceView, repor
 	sort.Slice(result.Observations, func(i, j int) bool {
 		return result.Observations[i].Observation.LinkID < result.Observations[j].Observation.LinkID
 	})
-	return result, result.ValidateForView(view)
+	return result, result.validateForViewDigest(view, digest)
+}
+
+// This closure owns only successful projections and digests for one request.
+// It is discarded before the next authorization and release inputs are read.
+func deviceLinkViewFor(project func(string) (DeviceView, error)) func(string) (DeviceView, string, error) {
+	views := map[string]struct {
+		view   DeviceView
+		digest string
+	}{}
+	return func(id string) (DeviceView, string, error) {
+		if value, ok := views[id]; ok {
+			return value.view, value.digest, nil
+		}
+		view, err := project(id)
+		if err != nil {
+			return DeviceView{}, "", err
+		}
+		if view.DeviceID != id {
+			return DeviceView{}, "", errors.New("projected View belongs to another device")
+		}
+		digest, err := DeviceViewDigest(view)
+		if err != nil {
+			return DeviceView{}, "", err
+		}
+		views[id] = struct {
+			view   DeviceView
+			digest string
+		}{view, digest}
+		return view, digest, nil
+	}
 }
 
 func (server *Server) deviceLinkObservations(w http.ResponseWriter, r *http.Request) {
@@ -126,20 +165,11 @@ func (server *Server) deviceLinkObservations(w http.ResponseWriter, r *http.Requ
 	}
 	projection := server.Runtime.Authority.Snapshot()
 	sets := server.expectedReleaseSets(projection)
-	views := map[string]DeviceView{}
-	viewFor := func(id string) (DeviceView, error) {
-		if v, ok := views[id]; ok {
-			return v, nil
-		}
-		v, e := ProjectDeviceView(projection, id, sets...)
-		if e == nil {
-			views[id] = v
-		}
-		return v, e
-	}
-	view, err := viewFor(identity.DeviceID)
-	digest, digestErr := DeviceViewDigest(view)
-	if err != nil || digestErr != nil || request.Validate() != nil || digest != request.ViewDigest {
+	viewFor := deviceLinkViewFor(func(id string) (DeviceView, error) {
+		return ProjectDeviceView(projection, id, sets...)
+	})
+	_, digest, err := viewFor(identity.DeviceID)
+	if err != nil || request.Validate() != nil || digest != request.ViewDigest {
 		http.Error(w, "current device View required", http.StatusConflict)
 		return
 	}
@@ -148,7 +178,7 @@ func (server *Server) deviceLinkObservations(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "link observations unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	result, err := projectDeviceLinkObservations(projection, view, reports, server.now(), viewFor)
+	result, err := projectDeviceLinkObservations(projection, identity.DeviceID, digest, reports, server.now(), viewFor)
 	if err != nil {
 		http.Error(w, "link observations unavailable", http.StatusServiceUnavailable)
 		return

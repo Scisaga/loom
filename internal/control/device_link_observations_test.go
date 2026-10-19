@@ -3,6 +3,7 @@ package control
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"net"
 	"net/http"
 	"reflect"
@@ -19,18 +20,21 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 			p.DeviceAuthorizations[i].DevicePublicKey = base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
 		}
 	}
-	viewFor := func(id string) (DeviceView, error) { return ProjectDeviceView(p, id) }
-	source, err := viewFor("demo-entry")
+	calls := map[string]int{}
+	viewFor := deviceLinkViewFor(func(id string) (DeviceView, error) {
+		calls[id]++
+		return ProjectDeviceView(p, id)
+	})
+	source, digest, err := viewFor("demo-entry")
 	if err != nil {
 		t.Fatal(err)
 	}
-	recipient, err := viewFor("demo-access")
+	recipient, recipientDigest, err := viewFor("demo-access")
 	if err != nil {
 		t.Fatal(err)
 	}
 	link := testDerivedLink(t, p, "demo-entry", "demo-exit")
 	spec, _ := LinkSpecDigest(source, link.ID)
-	digest, _ := DeviceViewDigest(source)
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	sample := Observation{Level: "link", ResourceID: link.ResourceID, LinkID: link.ID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-source-underlay", Result: "unavailable", ObservedAt: now.Add(-time.Second).UnixMilli(), ValidUntil: now.Add(29 * time.Second).UnixMilli()}
 	resources := []ResourceReadback{}
@@ -51,9 +55,12 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := projectDeviceLinkObservations(p, recipient, []DeviceReport{signed}, now, viewFor)
+	result, err := projectDeviceLinkObservations(p, recipient.DeviceID, recipientDigest, []DeviceReport{signed}, now, viewFor)
 	if err != nil || len(result.Observations) != 1 || !reflect.DeepEqual(result.Observations[0].Observation, sample) {
 		t.Fatal("current signed original was not delivered", err, result)
+	}
+	if calls[source.DeviceID] != 1 || calls[recipient.DeviceID] != 1 {
+		t.Fatal("recipient and report checks rebuilt a View in the same request", calls)
 	}
 	body, err := CanonicalEncode(result)
 	if err != nil {
@@ -77,6 +84,8 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 		}, now},
 		{"source generation", func(r *DeviceReport) { r.NetworkGeneration = "demo-other-underlay" }, now},
 		{"spec", func(r *DeviceReport) { r.Observations[0].SpecDigest = ReleaseDigest([]byte("demo-other")) }, now},
+		{"stale view", func(r *DeviceReport) { r.ViewDigest = ReleaseDigest([]byte("demo-old-view")) }, now},
+		{"other network", func(r *DeviceReport) { r.NetworkID = "demo-other-network" }, now},
 		{"expired", func(*DeviceReport) {}, now.Add(30 * time.Second)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +98,7 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 					t.Fatal(err)
 				}
 			}
-			got, err := projectDeviceLinkObservations(p, recipient, []DeviceReport{r}, tc.at, viewFor)
+			got, err := projectDeviceLinkObservations(p, recipient.DeviceID, recipientDigest, []DeviceReport{r}, tc.at, viewFor)
 			if err != nil || len(got.Observations) != 0 {
 				t.Fatal("invalid execution sample delivered", err, got)
 			}
@@ -99,6 +108,83 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 	copy.Links = []NetworkLink{}
 	if result.ValidateForView(copy) == nil {
 		t.Fatal("recipient scope withdrawal was ignored")
+	}
+	copy = recipient
+	copy.Schema = 0
+	if result.ValidateForView(copy) == nil {
+		t.Fatal("public validation trusted a previously matching digest for an invalid View")
+	}
+}
+
+func TestDeviceLinkViewReuseIsRequestLocalAndRejectsFailedProjections(t *testing.T) {
+	p := relayProjectionFixture(t)
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	calls := map[string]int{}
+	viewFor := deviceLinkViewFor(func(id string) (DeviceView, error) {
+		calls[id]++
+		return ProjectDeviceView(p, id)
+	})
+	view, digest, err := viewFor("demo-entry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, againDigest, err := viewFor("demo-entry")
+	if err != nil || digest != againDigest || !reflect.DeepEqual(view, again) || calls["demo-entry"] != 1 {
+		t.Fatal("one request rebuilt the same successful View or changed its digest", err, calls)
+	}
+	if _, _, err := viewFor("demo-exit"); err != nil || calls["demo-exit"] != 1 {
+		t.Fatal("another source did not keep its own projection", err, calls)
+	}
+	for _, recipient := range []string{view.DeviceID, "demo-exit"} {
+		wrong := ReleaseDigest([]byte("demo-wrong-view"))
+		if recipient != view.DeviceID {
+			wrong = digest
+		}
+		if _, err := projectDeviceLinkObservations(p, recipient, wrong, nil, now, viewFor); err == nil {
+			t.Fatal("private projection accepted a digest paired with another recipient View")
+		}
+	}
+	changed := cloneAuthorityProjection(p)
+	for i := range changed.DeviceAuthorizations {
+		if changed.DeviceAuthorizations[i].ID == view.DeviceID {
+			changed.DeviceAuthorizations[i].Name = "Demo renamed entry"
+		}
+	}
+	next := deviceLinkViewFor(func(id string) (DeviceView, error) { return ProjectDeviceView(changed, id) })
+	_, nextDigest, err := next(view.DeviceID)
+	if err != nil || nextDigest == digest {
+		t.Fatal("a later request reused an earlier authorization projection", err)
+	}
+	if _, err := projectDeviceLinkObservations(changed, view.DeviceID, digest, nil, now, next); err == nil {
+		t.Fatal("private projection paired an earlier digest with a changed authorization View")
+	}
+	for _, mode := range []string{"projection error", "invalid View", "another device"} {
+		t.Run(mode, func(t *testing.T) {
+			attempts := 0
+			read := deviceLinkViewFor(func(string) (DeviceView, error) {
+				attempts++
+				if attempts < 3 {
+					if mode == "projection error" {
+						return DeviceView{}, errors.New("demo unavailable projection")
+					}
+					if mode == "another device" {
+						return ProjectDeviceView(p, "demo-exit")
+					}
+					invalid := view
+					invalid.Schema = 0
+					return invalid, nil
+				}
+				return view, nil
+			})
+			for range 2 {
+				if _, _, err := read(view.DeviceID); err == nil {
+					t.Fatal("failed projection or invalid View was accepted")
+				}
+			}
+			if _, got, err := read(view.DeviceID); err != nil || got != digest || attempts != 3 {
+				t.Fatal("failed projection was cached or recovery changed its canonical digest", err, attempts)
+			}
+		})
 	}
 }
 
@@ -127,5 +213,31 @@ func TestDeviceLinkObservationEndpointRequiresCurrentAuthenticatedView(t *testin
 	request.ViewDigest = ReleaseDigest([]byte("demo-old-view"))
 	if enrollmentHTTP(t, server, "/device/link-observations", request, identity).Code != http.StatusConflict {
 		t.Fatal("stale View could read observations")
+	}
+	projection := server.Runtime.Authority.Snapshot()
+	policy := projection.NetworkIntent.Policies[0]
+	policy.Action = "deny"
+	target, _ := projection.CurrentTarget("policy", policy.ID)
+	service, _ := projection.CurrentTarget("service", policy.ServiceID)
+	dependencies := sortedUniqueDependencies(append(append([]string{}, target.MaterialIDs...), service.MaterialIDs...))
+	operation := Operation{Schema: 3, RequestID: "demo-link-withdraw-policy", Operation: "policy.put", TargetKind: "policy", TargetID: policy.ID, Dependencies: dependencies, Payload: policy}
+	if response := localNetworkAdminHTTP(t, server, "/api/control/operations", operation); response.Code != http.StatusOK {
+		t.Fatal("policy update failed", response.Code)
+	}
+	request.ViewDigest = envelope.ViewDigest
+	if enrollmentHTTP(t, server, "/device/link-observations", request, identity).Code != http.StatusConflict {
+		t.Fatal("the next request retained the previous authorization digest")
+	}
+	next, err := server.deviceEnvelope(invite.DeviceID)
+	if err != nil || next.ViewDigest == envelope.ViewDigest {
+		t.Fatal("changed authorization did not produce a new View", err)
+	}
+	request.ViewDigest = next.ViewDigest
+	response = enrollmentHTTP(t, server, "/device/link-observations", request, identity)
+	if response.Code != http.StatusOK {
+		t.Fatal("new current View could not read observations", response.Code)
+	}
+	if DecodeCanonical(response.Body.Bytes(), &result, ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 16, MaxItems: 1024}) != nil || result.ValidateForView(next.View) != nil || result.ValidateForView(envelope.View) == nil {
+		t.Fatal("request-local reuse returned another request's recipient scope")
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +14,129 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
+
+func TestTrafficHistoryCounterProjectionPreservesOriginalResultsAndProofScope(t *testing.T) {
+	key := testKey(t)
+	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	identity := projectedDeviceIdentity{ID: "demo-device", DevicePublicKey: public}
+	peer := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
+	digest := "sha256:" + strings.Repeat("0", 64)
+	now := time.Date(2030, 1, 2, 12, 30, 0, 0, time.UTC)
+	networks := []LocalNetworkPrefix{{Prefix: "192.0.2.0/24", LAN: true}}
+	reports := make([]DeviceReport, 3)
+	for i := range reports {
+		at := now.Add(time.Duration(i-2) * time.Minute).UnixMilli()
+		report := DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: identity.ID, ReportSequence: U64(i + 1), ViewDigest: digest,
+			NetworkGeneration: "demo-underlay", ReportedAt: at, Selections: []ReportSelection{{ServiceID: "demo-service", CandidateID: digest}},
+			Preference: &ReportPreference{Mode: "auto"}, LocalNetworks: &networks,
+			Observations: []Observation{},
+			Components:   []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest},
+			WireGuardCounters: &WireGuardCounters{Interface: "resource:demo-wg", Epoch: strings.Repeat("a", 32), ObservedAt: at,
+				Peers: []WireGuardPeerCounter{{PublicKey: peer, RXBytes: U64(math.MaxUint64 - 900 + uint64(i)*100), TXBytes: U64(math.MaxUint64 - 1500 + uint64(i)*500), Links: []WireGuardCounterLink{}}}}}
+		for j := 0; j < 128; j++ {
+			report.Observations = append(report.Observations, Observation{Level: "service", ServiceID: "demo-service", CandidateID: digest, SpecDigest: digest,
+				Target: fmt.Sprintf("https://demo-%03d.example/probe", j), Action: "https_request", NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: at, ValidUntil: at + 30000})
+		}
+		var err error
+		reports[i], err = SignDeviceReport(report, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	testSetObservationReports(t, root, reports)
+	store, err := testOpenObservationStore(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := testObservationBytes(t, store)
+	var first WebDeviceTraffic
+	for _, state := range []string{"cold", "hot", "cleared"} {
+		if state == "cleared" {
+			store.cache.clear()
+		}
+		got, err := store.deviceTrafficHistory(context.Background(), "demo-network", identity, nil, now)
+		if err != nil || got.Recent == nil || got.Recent.RXBytes != 200 || got.Recent.TXBytes != 1000 || got.Recent.CoveredMS != 120000 {
+			t.Fatal("projection changed original large-integer deltas or coverage", state, got.Recent, err)
+		}
+		if state == "cold" {
+			first = got
+		} else if !reflect.DeepEqual(first, got) {
+			t.Fatal("proof cache changed the actual history result", state)
+		}
+	}
+	raw, err := CanonicalEncode(reports[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := store.decodedHistoryOriginal(raw, ReleaseDigest(raw), newContractCodec(), public)
+	if err != nil || original.counters == nil || original.counters.verifiedKey != public {
+		t.Fatal("the actual accepted original did not use its counter projection", err)
+	}
+	if _, err := store.verifiedHistoryOriginal(original, public); err == nil {
+		t.Fatal("a counter projection was accepted as a complete report")
+	}
+	if _, err := CanonicalEncode(*original.counters); err == nil {
+		t.Fatal("a counter projection became a writable canonical domain value")
+	}
+	other := testKey(t)
+	wrong := base64.RawURLEncoding.EncodeToString(other.Public().(ed25519.PublicKey))
+	for _, rejected := range []string{wrong, ""} {
+		fallback, err := store.decodedHistoryOriginal(raw, ReleaseDigest(raw), newContractCodec(), rejected)
+		if err != nil || fallback.counters != nil {
+			t.Fatal("a different or missing key selected another key's counter projection", err)
+		}
+		if _, err := store.verifiedHistoryOriginal(fallback, rejected); err == nil {
+			t.Fatal("canonical proof supplied a different or missing verification key")
+		}
+	}
+	store.cache.clear()
+	if _, err := store.trafficHistoryOriginal(original, public); err != nil {
+		t.Fatal("eviction between projection and consumption changed immutable verification", err)
+	}
+	if _, err := store.trafficHistoryOriginal(original, wrong); err == nil {
+		t.Fatal("a counter projection supplied another verification key")
+	}
+	if _, err := store.verifiedReport(raw, public); err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []string{"invalid", "unavailable"} {
+		changed := bytes.Replace(raw, []byte(`"result":"available"`), []byte(`"result":"`+result+`"`), 1)
+		value, err := store.decodedHistoryOriginal(changed, ReleaseDigest(changed), newContractCodec(), public)
+		if err == nil {
+			if value.counters != nil {
+				t.Fatal("changed omitted fields reused an earlier original's proof")
+			}
+			_, err = store.verifiedHistoryOriginal(value, public)
+		}
+		if err == nil {
+			t.Fatal("a changed omitted observation passed canonical/signature verification", result)
+		}
+	}
+	if !bytes.Equal(before, testObservationBytes(t, store)) {
+		t.Fatal("counter projection rewrote signed originals")
+	}
+	position := referenceOf(reports[2]).key(ReleaseDigest(raw))
+	prior, err := CanonicalEncode(reports[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.verifiedReport(prior, public); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error { return tx.Bucket(observationBucket).Put(position, prior) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.deviceTrafficHistory(context.Background(), "demo-network", identity, nil, now); err == nil {
+		t.Fatal("a verified counter projection hid a changed highest physical position")
+	}
+}
 
 func TestTrafficHistoryUsesOnlyOriginalAdjacentScopedCounters(t *testing.T) {
 	key := testKey(t)
