@@ -22,6 +22,7 @@ type reportHistoryWindow struct {
 // is immutable during consumption and is never cached.
 type reportHistoryOriginal struct {
 	id     string
+	raw    []byte
 	report DeviceReport
 }
 
@@ -213,7 +214,7 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				}
 			}
 			previous = ref.ReportSequence
-			if err := visit(highest, ref, &reportHistoryOriginal{id: id, report: report}); err != nil {
+			if err := visit(highest, ref, &reportHistoryOriginal{id: id, raw: raw, report: report}); err != nil {
 				return err
 			}
 		}

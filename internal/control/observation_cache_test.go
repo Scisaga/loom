@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,11 @@ func TestEventRuntimeMessagePreservesSignedCanonicalFields(t *testing.T) {
 				t.Fatal("original-byte signature message differs from canonical unsigned value", err, encodeErr)
 			}
 			store := &ObservationStore{}
+			verified, err := store.verifiedReport(raw, public)
+			if err != nil || !reflect.DeepEqual(verified, report) {
+				t.Fatal("original-byte report verification changed required or optional signed fields", err)
+			}
+			store.cache.clear()
 			if _, _, err := store.originalRuntimeKeys(raw, []string{public}); err != nil {
 				t.Fatal("cold original-byte verification rejected a valid signature", err)
 			}

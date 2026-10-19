@@ -17,6 +17,17 @@ import (
 // Exercise the real window/index/original/signature/aggregation chain, with a
 // full day's reports rather than using the small response size as input size.
 func BenchmarkDeviceTrafficHistory(b *testing.B) {
+	for _, scenario := range []struct {
+		name         string
+		observations int
+	}{{"simple", 4}, {"dense", 128}} {
+		b.Run(scenario.name, func(b *testing.B) {
+			benchmarkDeviceTrafficHistory(b, scenario.observations)
+		})
+	}
+}
+
+func benchmarkDeviceTrafficHistory(b *testing.B, observations int) {
 	_, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		b.Fatal(err)
@@ -48,11 +59,16 @@ func BenchmarkDeviceTrafficHistory(b *testing.B) {
 				link := fmt.Sprintf("demo-link-%d", j)
 				peer := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat(string(rune('a'+j)), 32)))
 				report.WireGuardCounters.Peers = append(report.WireGuardCounters.Peers, WireGuardPeerCounter{PublicKey: peer, RXBytes: U64(i * 1024), TXBytes: U64(i * 2048), Links: []WireGuardCounterLink{{LinkID: link, SpecDigest: digest}}})
+			}
+			for j := 0; j < observations; j++ {
 				report.Observations = append(report.Observations, Observation{Level: "service", ServiceID: fmt.Sprintf("demo-service-%d", j), CandidateID: digest, SpecDigest: digest,
 					Target: "https://demo.example/probe", Action: "https_request", NetworkGeneration: report.NetworkGeneration, Result: "available", ObservedAt: at, ValidUntil: at + 30000, DurationMS: new(int64(10))})
 			}
 			sort.Slice(report.WireGuardCounters.Peers, func(i, j int) bool {
 				return report.WireGuardCounters.Peers[i].PublicKey < report.WireGuardCounters.Peers[j].PublicKey
+			})
+			sort.Slice(report.Observations, func(i, j int) bool {
+				return compareObservationOrder(report.Observations[i], report.Observations[j]) < 0
 			})
 			report, err := SignDeviceReport(report, key)
 			if err != nil {
@@ -97,6 +113,7 @@ func BenchmarkDeviceTrafficHistory(b *testing.B) {
 				}
 				read(b)
 			}
+			b.ReportMetric(float64(originals)/float64(24*120), "original-bytes/report")
 		})
 	}
 }

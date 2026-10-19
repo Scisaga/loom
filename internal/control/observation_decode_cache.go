@@ -161,7 +161,7 @@ func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceRep
 	if err != nil {
 		return report, err
 	}
-	return store.verifiedHistoryOriginal(&reportHistoryOriginal{id: id, report: report}, key)
+	return store.verifiedHistoryOriginal(&reportHistoryOriginal{id: id, raw: raw, report: report}, key)
 }
 
 // The caller already decoded the exact canonical bytes named by this digest.
@@ -182,8 +182,20 @@ func (store *ObservationStore) verifiedHistoryOriginal(original *reportHistoryOr
 		}
 	}
 	cache.mu.Unlock()
-	if err := report.Verify(key); err != nil {
+	public, err := base64.RawURLEncoding.DecodeString(key)
+	if err != nil || len(public) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(public) != key {
+		return DeviceReport{}, errors.New("report verification key is invalid")
+	}
+	// Canonical decoding already validated every concrete field. Its original
+	// unsigned bytes are the same signature message, without rebuilding and
+	// validating the complete report a second time.
+	message, err := reportMessageFromCanonical(original.raw, report.Signature)
+	if err != nil {
 		return DeviceReport{}, err
+	}
+	signature, _ := base64.RawURLEncoding.DecodeString(report.Signature)
+	if !ed25519.Verify(ed25519.PublicKey(public), message, signature) {
+		return DeviceReport{}, errors.New("report signature is invalid")
 	}
 	store.rememberVerifiedRuntime(id, key, report)
 	return report, nil
