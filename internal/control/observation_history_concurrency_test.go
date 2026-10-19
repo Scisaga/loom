@@ -16,6 +16,49 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+func TestCounterHistorySnapshotReleasesTransactionBeforeConsumption(t *testing.T) {
+	store, reports, public := admissionReports(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	seen := []U64{}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		done <- store.walkDeviceCounterHistory(ctx, "demo-network", "demo-device", public, 0, 10, func(highest U64, _ reportReference, value *reportCounterProjection) error {
+			close(entered)
+			<-release
+			if highest != 1 || value == nil || value.ReportSequence != 1 || value.WireGuardCounters != nil {
+				return errors.New("no-counter highest position was dropped or changed")
+			}
+			seen = append(seen, value.ReportSequence)
+			return nil
+		})
+	}()
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatal("counter history did not reach consumption", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	writeCtx, stop := context.WithTimeout(ctx, time.Second)
+	writeErr := store.mergeReports(writeCtx, reports[1:], map[reportOwner]string{{"demo-network", "demo-device"}: public}, false)
+	stop()
+	close(release)
+	readErr := <-done
+	if writeErr != nil || readErr != nil || !reflect.DeepEqual(seen, []U64{1}) {
+		t.Fatal("counter consumption blocked a commit or changed its pinned input", writeErr, readErr, seen)
+	}
+	canceled, stop := context.WithCancel(context.Background())
+	stop()
+	if err := store.walkDeviceCounterHistory(canceled, "demo-network", "demo-device", public, 0, 10, func(U64, reportReference, *reportCounterProjection) error {
+		t.Error("canceled counter read reached consumption")
+		return nil
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatal("counter query ignored cancellation", err)
+	}
+}
+
 func TestTrafficHistoryProjectionDoesNotBlockReportCommit(t *testing.T) {
 	key := testKey(t)
 	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
@@ -31,7 +74,7 @@ func TestTrafficHistoryProjectionDoesNotBlockReportCommit(t *testing.T) {
 		}
 		reports[i] = value
 	}
-	testSetObservationReports(t, root, []DeviceReport{reports[0], reports[2]})
+	testSetObservationReports(t, root, []DeviceReport{reports[0], reports[2]}, public)
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +146,7 @@ func TestTrafficHistorySnapshotRejectsChangedOriginalsAndCancellation(t *testing
 				}
 				reports[i] = value
 			}
-			testSetObservationReports(t, root, reports)
+			testSetObservationReports(t, root, reports, public)
 			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)
@@ -176,7 +219,7 @@ func TestHistorySnapshotExcludesForksAcrossBatchesAndAtHighestSequence(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			testSetObservationReports(t, root, append(reports, fork))
+			testSetObservationReports(t, root, append(reports, fork), public)
 			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)

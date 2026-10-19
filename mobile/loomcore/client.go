@@ -352,6 +352,8 @@ type androidSelection struct {
 	CandidateID string `json:"candidate_id"`
 }
 
+const androidReportTimeLayout = "2006-01-02T15:04:05.000Z"
+
 func androidReport(state deviceclient.State, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, interfaceAddresses []byte, generation, reportedAt string) (control.DeviceReport, error) {
 	if state.LKG == nil || state.ReportSequence == 0 {
 		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
@@ -387,8 +389,8 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 			return control.DeviceReport{}, errors.New("Android component is outside the executing platform")
 		}
 	}
-	now, err := time.Parse(time.RFC3339, reportedAt)
-	if err != nil || now.UTC().Format(time.RFC3339) != reportedAt {
+	now, err := time.Parse(androidReportTimeLayout, reportedAt)
+	if err != nil || now.UTC().Format(androidReportTimeLayout) != reportedAt {
 		return control.DeviceReport{}, errors.New("Android report time is not canonical")
 	}
 	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Preference: reportedPreference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
@@ -400,11 +402,7 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 		if err != nil {
 			return control.DeviceReport{}, err
 		}
-		for _, value := range values {
-			if value.ObservedAt <= report.ReportedAt && report.ReportedAt < value.ValidUntil {
-				report.Observations = append(report.Observations, value)
-			}
-		}
+		report.Observations = append(report.Observations, values...)
 	}
 	routes := map[string]control.RouteCandidate{}
 	targets := map[string]map[string]bool{}
@@ -441,6 +439,10 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 		a, b := report.Observations[i], report.Observations[j]
 		return strings.Join([]string{a.Level, a.ServiceID, a.CandidateID, a.ResourceID, a.LinkID, a.Target, a.Action, a.SpecDigest}, "\x00") < strings.Join([]string{b.Level, b.ServiceID, b.CandidateID, b.ResourceID, b.LinkID, b.Target, b.Action, b.SpecDigest}, "\x00")
 	})
+	report.Observations, err = clientadapter.CurrentReportObservations(report.Observations, generation, report.ReportedAt)
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
 	if runtime.State == "running" && runtime.AppliedViewDigest != state.LKG.ViewDigest {
 		return control.DeviceReport{}, errors.New("running report is not the actual accepted configuration")
 	}

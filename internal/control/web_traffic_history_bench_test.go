@@ -44,7 +44,7 @@ func benchmarkDeviceTrafficHistory(b *testing.B, observations int) {
 	identity := projectedDeviceIdentity{ID: "demo-device", DevicePublicKey: base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))}
 	now := time.Date(2030, 1, 2, 23, 59, 30, 0, time.UTC)
 	digest := "sha256:" + strings.Repeat("0", 64)
-	var originals int64
+	var originals, compact, highestBytes int64
 	err = store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
 		if err := tx.DeleteBucket(reportIndexBucket); err != nil {
 			return err
@@ -79,11 +79,21 @@ func benchmarkDeviceTrafficHistory(b *testing.B, observations int) {
 				return err
 			}
 			originals += int64(len(raw))
+			highestBytes = int64(len(raw))
 			if err := tx.Bucket(observationBucket).Put(referenceOf(report).key(ReleaseDigest(raw)), raw); err != nil {
 				return err
 			}
 		}
-		return ensureReportIndexes(tx)
+		if err := ensureReportIndexes(tx); err != nil {
+			return err
+		}
+		if err := rebuildReportCounters(context.Background(), tx, map[reportOwner]string{{"demo-network", identity.ID}: identity.DevicePublicKey}); err != nil {
+			return err
+		}
+		return tx.Bucket(reportIndexBucket).Bucket(reportCountersBucket).ForEach(func(_, raw []byte) error {
+			compact += int64(len(raw))
+			return nil
+		})
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -102,7 +112,7 @@ func benchmarkDeviceTrafficHistory(b *testing.B, observations int) {
 		}
 		b.Run(name, func(b *testing.B) {
 			read(b)
-			b.SetBytes(originals)
+			b.SetBytes(compact + highestBytes)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -114,6 +124,7 @@ func benchmarkDeviceTrafficHistory(b *testing.B, observations int) {
 				read(b)
 			}
 			b.ReportMetric(float64(originals)/float64(24*120), "original-bytes/report")
+			b.ReportMetric(float64(compact)/float64(24*120), "index-bytes/report")
 		})
 	}
 }

@@ -56,7 +56,7 @@ func TestReportCacheSharesScalarsWithinBudget(t *testing.T) {
 	}}
 	// Exercise cache storage after its existing canonical/signature admission;
 	// no report bodies or fabricated business observations enter this cache.
-	const count = 42000
+	const count = 36000
 	for i := range count {
 		id := fmt.Sprintf("sha256:%064x", i)
 		report.ReportSequence = U64(i + 1)

@@ -60,7 +60,8 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 	})
 	add(6*time.Minute, 90, func(r *DeviceReport) { r.Observations[0].SpecDigest = "sha256:" + strings.Repeat("f", 64) })
 	add(5*time.Minute, 90, nil)
-	reports[len(reports)-1], err = SignDeviceReport(reports[len(reports)-1], testKey(t))
+	foreign := testKey(t)
+	reports[len(reports)-1], err = SignDeviceReport(reports[len(reports)-1], foreign)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, identity.DevicePublicKey, base64.RawURLEncoding.EncodeToString(foreign.Public().(ed25519.PublicKey)))
 	original := testObservationBytes(t, root)
 	var previous WebLinkHistory
 	for attempt := 0; attempt < 2; attempt++ {
@@ -147,7 +148,7 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 			if err := os.Chmod(root, 0700); err != nil {
 				t.Fatal(err)
 			}
-			testSetObservationReports(t, root, values)
+			testSetObservationReports(t, root, values, identity.DevicePublicKey, base64.RawURLEncoding.EncodeToString(signing.Public().(ed25519.PublicKey)))
 			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)

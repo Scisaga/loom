@@ -78,7 +78,7 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, view.DevicePublicKey)
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)

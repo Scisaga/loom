@@ -19,7 +19,7 @@ type materialFixture struct {
 	configID string
 }
 
-func newMaterialFixture(t *testing.T) materialFixture {
+func newMaterialFixture(t testing.TB) materialFixture {
 	t.Helper()
 	fixture := materialFixture{}
 	for _, suffix := range []string{"a", "b"} {
@@ -53,7 +53,7 @@ func (fixture materialFixture) sign(t *testing.T, index int, sequence U64, previ
 	}
 	return value
 }
-func materialTestID(t *testing.T, value Material) string {
+func materialTestID(t testing.TB, value Material) string {
 	t.Helper()
 	id, err := MaterialID(value)
 	if err != nil {

@@ -92,6 +92,9 @@ func cmdControlPrepareReportIndex(args []string) error {
 	fs := flag.NewFlagSet("control prepare-report-index", flag.ContinueOnError)
 	root := fs.String("state-dir", "/var/lib/loom-control", "现行控制目录")
 	socket := fs.String("admin-socket", "", "已停止 control 的实际管理 socket，默认由 state-dir 定位")
+	verify := fs.Bool("verify", false, "只读完整核对报告原件及 WG 派生投影")
+	rebuild := fs.Bool("rebuild", false, "验签原件并原子重建 WG 派生投影")
+	asJSON := fs.Bool("json", false, "输出本次操作的成功统计 JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -105,10 +108,26 @@ func cmdControlPrepareReportIndex(args []string) error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := control.PrepareReportIndex(ctx, *root, *socket); err != nil {
+	var stats control.ReportIndexStats
+	if err := control.PrepareReportIndex(ctx, *root, *socket, control.ReportIndexOptions{Verify: *verify, Rebuild: *rebuild, Stats: &stats}); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(os.Stdout, "report indexes ready")
+	message := "report indexes ready"
+	operation := "prepare"
+	if *verify {
+		message = "original reports and WG counter projections verified"
+		operation = "verify"
+	} else if *rebuild {
+		message = "WG counter projections rebuilt from verified originals"
+		operation = "rebuild"
+	}
+	if *asJSON {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Operation string `json:"operation"`
+			control.ReportIndexStats
+		}{operation, stats})
+	}
+	_, err := fmt.Fprintf(os.Stdout, "%s: originals=%d wg_rows=%d original_bytes=%d wg_bytes=%d\n", message, stats.Originals, stats.WGRows, stats.OriginalBytes, stats.WGBytes)
 	return err
 }
 

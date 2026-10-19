@@ -31,7 +31,7 @@ func admissionReports(t *testing.T) (*ObservationStore, []DeviceReport, string) 
 		}
 		reports[i] = value
 	}
-	testSetObservationReports(t, root, reports[:1])
+	testSetObservationReports(t, root, reports[:1], public)
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +82,9 @@ func TestReportFailedTransactionLeavesOriginalsAndIndexesUnchanged(t *testing.T)
 			return err
 		}
 		if err := indexReport(tx, key, reports[1]); err != nil {
+			return err
+		}
+		if err := indexReportCounters(tx, key, reports[1], public); err != nil {
 			return err
 		}
 		return failure

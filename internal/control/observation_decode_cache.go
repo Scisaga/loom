@@ -11,7 +11,7 @@ import (
 	"sync"
 )
 
-const reportCacheBytes = 16 << 20
+const reportCacheBytes = 14 << 20
 
 // Conservative charges include allocator rounding, entry/list/map slots, ID
 // backing storage and retained Swiss-map split slack. Pool map/value overhead is charged
@@ -156,48 +156,15 @@ func (store *ObservationStore) decodedReportWithCodec(raw []byte, id string, cod
 	return report, nil
 }
 
-// id is the walker's fresh digest of this actual original. A matching exact-key
-// proof already covers all omitted fields and their canonical validation. This
-// is a one-way traffic projection, never another writable report schema.
-func (store *ObservationStore) decodedHistoryOriginal(raw []byte, id string, codec *contractCodec, counterKey string) (*reportHistoryOriginal, error) {
+// id is the walker's fresh digest of this actual original.
+func (store *ObservationStore) decodedHistoryOriginal(raw []byte, id string, codec *contractCodec) (*reportHistoryOriginal, error) {
 	original := &reportHistoryOriginal{id: id, raw: raw}
-	if counterKey != "" {
-		if _, _, _, found := store.cachedOriginalRuntime(id, []string{counterKey}); found {
-			var counters reportCounterProjection
-			if err := json.Unmarshal(raw, &counters); err != nil {
-				return nil, err
-			}
-			// Keep this immutable proof only for the callback, so LRU eviction
-			// between projection and consumption cannot change the result.
-			counters.verifiedKey = counterKey
-			original.counters = &counters
-			return original, nil
-		}
-	}
 	report, err := store.decodedReportWithCodec(raw, id, codec)
 	if err != nil {
 		return nil, err
 	}
 	original.report = report
 	return original, nil
-}
-
-func (store *ObservationStore) trafficHistoryOriginal(original *reportHistoryOriginal, key string) (reportCounterProjection, error) {
-	if original == nil {
-		return reportCounterProjection{}, errors.New("report original is unavailable")
-	}
-	if counters := original.counters; counters != nil {
-		if counters.verifiedKey == "" || counters.verifiedKey != key {
-			return reportCounterProjection{}, errors.New("counter projection belongs to a different verification key")
-		}
-		return *counters, nil
-	}
-	report, err := store.verifiedHistoryOriginal(original, key)
-	if err != nil {
-		return reportCounterProjection{}, err
-	}
-	return reportCounterProjection{NetworkID: report.NetworkID, DeviceID: report.DeviceID, ReportSequence: report.ReportSequence,
-		NetworkGeneration: report.NetworkGeneration, ReportedAt: report.ReportedAt, WireGuardCounters: report.WireGuardCounters, verifiedKey: key}, nil
 }
 
 func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceReport, error) {
@@ -215,9 +182,6 @@ func (store *ObservationStore) verifiedReport(raw []byte, key string) (DeviceRep
 func (store *ObservationStore) verifiedHistoryOriginal(original *reportHistoryOriginal, key string) (DeviceReport, error) {
 	if original == nil {
 		return DeviceReport{}, errors.New("report original is unavailable")
-	}
-	if original.counters != nil {
-		return DeviceReport{}, errors.New("counter projection is not a complete report")
 	}
 	id, report := original.id, original.report
 	cache := &store.cache

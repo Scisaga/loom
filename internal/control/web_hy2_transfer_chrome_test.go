@@ -37,7 +37,7 @@ func TestWebChromeHY2TransferHasOwnCurrentScopeAndUnknownExpiry(t *testing.T) {
 	}
 	root := t.TempDir()
 	os.Chmod(root, 0o700)
-	testSetObservationReports(t, root, []DeviceReport{report})
+	testSetObservationReports(t, root, []DeviceReport{report}, view.DevicePublicKey)
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)

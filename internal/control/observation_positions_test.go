@@ -33,7 +33,7 @@ func TestReportPositionBatchIsAtomicAndIndependentOfUnqueriedHistory(t *testing.
 		return r
 	}
 	originals := []DeviceReport{sign("demo-a", 1, 1), sign("demo-a", 3, 3), sign("demo-b", 1, 1), sign("demo-b", 3, 3)}
-	testSetObservationReports(t, root, originals)
+	testSetObservationReports(t, root, originals, keys[reportOwner{"demo-network", "demo-a"}], keys[reportOwner{"demo-network", "demo-b"}])
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)

@@ -26,7 +26,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.time.Instant
-import java.time.temporal.ChronoUnit
 
 enum class EnrollmentPhase { CHECKING, NOT_JOINED, CLAIMING, WAITING, PULLING, READY, ERROR }
 
@@ -161,7 +160,7 @@ class EnrollmentManager private constructor(context: Context) {
             val runtimeBytes = runtime.toString().encodeToByteArray()
             val components = Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version())
             val addresses = readLocalInterfaceAddresses()
-            val observedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS).toString()
+            val observedAt = reportTimestamp(Instant.now())
             val transmit: () -> Unit = {
                 Loomcore.postAndroidDeviceReport(
                     reserved, routing.preference, routing.resourceObservations, routing.observations, routing.selections, runtimeBytes,

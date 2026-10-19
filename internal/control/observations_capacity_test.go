@@ -106,7 +106,7 @@ func TestObservationTransactionsExceedFormerAggregateCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := testOpenObservationStore(t, root)
+	store, err := testOpenObservationStore(t, root, map[reportOwner]string{{"demo-network", "demo-device"}: public})
 	if err != nil {
 		t.Fatal("large accepted history prevented restart", err)
 	}

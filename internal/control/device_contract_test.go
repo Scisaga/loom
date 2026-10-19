@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func deviceContractFixture(t *testing.T) (materialFixture, ControlProof, Projection) {
+func deviceContractFixture(t testing.TB) (materialFixture, ControlProof, Projection) {
 	t.Helper()
 	f := newMaterialFixture(t)
 	// Use the second member as genesis signer: member count/order is not a mode.

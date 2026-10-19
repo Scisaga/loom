@@ -77,7 +77,7 @@ func TestWebRuntimeHistoryReadsOriginalHourlySamples(t *testing.T) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, view.DevicePublicKey, fixture.members[1].PublicKey)
 	original := testObservationBytes(t, root)
 	var previous WebRuntimeHistory
 	for attempt := 0; attempt < 2; attempt++ {

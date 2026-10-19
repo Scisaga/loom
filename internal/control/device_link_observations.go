@@ -86,17 +86,28 @@ func (v DeviceLinkObservations) validateForViewDigest(view DeviceView, digest st
 }
 
 func projectDeviceLinkObservations(projection Projection, recipient, requestedDigest string, reports []DeviceReport, now time.Time, viewFor func(string) (DeviceView, string, error)) (DeviceLinkObservations, error) {
+	return projectDeviceLinkObservationsUsing(projection, recipient, requestedDigest, reports, now, viewFor, func(report DeviceReport) error {
+		return verifyCurrentReportUsingDigest(report, projection, viewFor)
+	})
+}
+
+// Only the formal handler supplies a verifier reusing LatestForDevices' proof
+// of the freshly read original. The ordinary projection above still verifies
+// every supplied report independently; neither path caches dynamic health.
+func projectDeviceLinkObservationsUsing(projection Projection, recipient, requestedDigest string, reports []DeviceReport, now time.Time, viewFor func(string) (DeviceView, string, error), verify func(DeviceReport) error) (DeviceLinkObservations, error) {
 	view, digest, err := viewFor(recipient)
 	if err != nil || view.DeviceID != recipient || digest != requestedDigest {
 		return DeviceLinkObservations{}, errors.New("current device View required")
 	}
 	result := DeviceLinkObservations{Schema: 3, NetworkID: view.NetworkID, DeviceID: view.DeviceID, ViewDigest: digest, Observations: []DeviceLinkObservation{}}
 	links := map[string]NetworkLink{}
+	sources := map[string]bool{}
 	for _, link := range view.Links {
 		links[link.ID] = link
+		sources[link.FromNodeID] = true
 	}
 	for _, report := range reports {
-		if verifyCurrentReportUsingDigest(report, projection, viewFor) != nil {
+		if !sources[report.DeviceID] || verify(report) != nil {
 			continue
 		}
 		_, reportUntil := webReportTime(report, now)
@@ -163,23 +174,57 @@ func (server *Server) deviceLinkObservations(w http.ResponseWriter, r *http.Requ
 	if !readDeviceJSON(w, r, &request) {
 		return
 	}
-	projection := server.Runtime.Authority.Snapshot()
-	sets := server.expectedReleaseSets(projection)
-	viewFor := deviceLinkViewFor(func(id string) (DeviceView, error) {
-		return ProjectDeviceView(projection, id, sets...)
-	})
-	_, digest, err := viewFor(identity.DeviceID)
+	configuration, err := server.newDeviceConfigRequest()
+	if err != nil {
+		http.Error(w, "current device View unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	projection := configuration.input.projection
+	views := map[string]*deviceConfigValue{}
+	viewFor := func(id string) (DeviceView, string, error) {
+		value := views[id]
+		if value == nil {
+			var err error
+			value, err = configuration.get(r.Context(), id)
+			if err != nil {
+				return DeviceView{}, "", err
+			}
+			views[id] = value
+		}
+		return value.envelope.View, value.envelope.ViewDigest, nil
+	}
+	view, digest, err := viewFor(identity.DeviceID)
 	if err != nil || request.Validate() != nil || digest != request.ViewDigest {
 		http.Error(w, "current device View required", http.StatusConflict)
 		return
 	}
-	reports, err := server.Runtime.Reports.Latest(r.Context())
+	sources := map[string]string{}
+	for _, link := range view.Links {
+		if source, found := identityFor(projection, link.FromNodeID); found {
+			sources[source.ID] = source.DevicePublicKey
+		}
+	}
+	reports, err := server.Runtime.Reports.LatestForDevices(r.Context(), projection.NetworkID, sources)
 	if err != nil {
 		http.Error(w, "link observations unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	result, err := projectDeviceLinkObservations(projection, identity.DeviceID, digest, reports, server.now(), viewFor)
-	if err != nil {
+	// LatestForDevices has just checked actual bytes, position and signature
+	// under these exact current keys. Everything depending on current execution
+	// inputs and time is deliberately checked again in this request.
+	verify := func(report DeviceReport) error {
+		source, found := identityFor(projection, report.DeviceID)
+		if !found || sources[report.DeviceID] != source.DevicePublicKey || report.NetworkID != projection.NetworkID {
+			return errors.New("Link source is outside the current request")
+		}
+		view, digest, err := viewFor(report.DeviceID)
+		if err != nil || report.ViewDigest != digest {
+			return errors.New("Link source View is stale")
+		}
+		return verifyReportViewFields(report, view)
+	}
+	result, err := projectDeviceLinkObservationsUsing(projection, identity.DeviceID, digest, reports, server.now(), viewFor, verify)
+	if err != nil || configuration.finish() != nil {
 		http.Error(w, "link observations unavailable", http.StatusServiceUnavailable)
 		return
 	}

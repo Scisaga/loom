@@ -51,7 +51,7 @@ func openRuntime(root string, openChannel func(NodeConfig) (*PrivateChannel, err
 	if _, err := activeLocalMember(config, a.Snapshot().Config); err != nil {
 		return nil, err
 	}
-	reports, err := OpenObservationStore(root)
+	reports, err := openObservationStore(root, a.reportVerificationKeys)
 	if err != nil {
 		return nil, err
 	}

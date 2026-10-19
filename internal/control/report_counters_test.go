@@ -58,7 +58,7 @@ func TestWireGuardCountersPreserveOriginalReportsAndSignedPrecision(t *testing.T
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, []DeviceReport{report})
+	testSetObservationReports(t, root, []DeviceReport{report}, public)
 	old := testObservationBytes(t, root)
 	for i := 0; i < 2; i++ {
 		store, err := testOpenObservationStore(t, root)

@@ -35,7 +35,7 @@ func TestReportCommitReadsActualOwnerHistory(t *testing.T) {
 				return value
 			}
 			firstA, firstB := sign("demo-a", 1, 1), sign("demo-b", 1, 1)
-			testSetObservationReports(t, root, []DeviceReport{firstA, firstB})
+			testSetObservationReports(t, root, []DeviceReport{firstA, firstB}, public("demo-a"), public("demo-b"))
 			store, err := testOpenObservationStore(t, root)
 			if err != nil {
 				t.Fatal(err)

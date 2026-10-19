@@ -34,7 +34,9 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.InetAddress
 import java.net.Socket
+import java.math.BigInteger
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
@@ -152,8 +154,39 @@ class CertifiedRuntimeInstrumentedTest {
             if (routing.status(profileID).value.currentPaths.isEmpty()) {
                 compose.onNodeWithText("当前没有已选业务路径").assertIsDisplayed()
             }
-            File(directory, name).writeText(JSONObject().put("view_digest", enrollment.status(profileID).value.viewDigest)
-                .put("phase", VpnRuntime.status.value.phase.name).toString())
+            // Only this opt-in demo fixture exports public continuity checks.
+            // Never write the private key, Invite or complete protected state.
+            val state = JSONObject(checkNotNull(ManagedProfileStore(context, profileID).state()).decodeToString())
+            assertTrue("accepted identity must retain its authentication latch", state.getBoolean("authenticated_latch"))
+            val publicHash = MessageDigest.getInstance("SHA-256").digest(state.getString("public_key").toByteArray())
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val value = JSONObject().put("view_digest", enrollment.status(profileID).value.viewDigest)
+                .put("phase", VpnRuntime.status.value.phase.name).put("profile_id", profileID)
+                .put("public_key_sha256", publicHash).put("platform", state.getString("platform"))
+                .put("authenticated_latch", true).put("high_water", state.getJSONArray("high_water"))
+                .put("report_sequence", state.getString("report_sequence"))
+            if (resume) {
+                val previous = JSONObject(File(directory, "demo-revoked.json").readText())
+                for (field in listOf("profile_id", "public_key_sha256", "platform", "authenticated_latch")) {
+                    assertEquals("upgrade must preserve the accepted demo identity: $field", previous.get(field), value.get(field))
+                }
+                assertTrue("report sequence must not fall after upgrade", BigInteger(value.getString("report_sequence")) >= BigInteger(previous.getString("report_sequence")))
+                val current = value.getJSONArray("high_water")
+                val byKey = (0 until current.length()).associate { index ->
+                    val prefix = current.getJSONObject(index)
+                    prefix.getString("key_id") to prefix
+                }
+                val earlier = previous.getJSONArray("high_water")
+                for (index in 0 until earlier.length()) {
+                    val prefix = earlier.getJSONObject(index)
+                    val next = checkNotNull(byKey[prefix.getString("key_id")]) { "accepted fact prefix disappeared after upgrade" }
+                    val oldSequence = BigInteger(prefix.getString("sequence"))
+                    val newSequence = BigInteger(next.getString("sequence"))
+                    assertTrue("accepted fact prefix must not fall after upgrade", newSequence >= oldSequence)
+                    if (newSequence == oldSequence) assertEquals(prefix.getString("tip_material_id"), next.getString("tip_material_id"))
+                }
+            }
+            File(directory, name).writeText(value.toString())
         }
         fun awaitConnected() {
             await("VPN must be backed by libbox and selector readback") {

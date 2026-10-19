@@ -545,29 +545,20 @@ func (a *Authority) completeBoundAuthorizationLocked(ctx context.Context, origin
 }
 
 func (server *Server) deviceEnvelope(deviceID string) (DeviceViewEnvelope, error) {
-	projection := server.Runtime.Authority.Snapshot()
-	member, err := activeLocalMember(server.Runtime.Config, projection.Config)
+	request, err := server.newDeviceConfigRequest()
 	if err != nil {
 		return DeviceViewEnvelope{}, err
 	}
-	view, err := ProjectDeviceView(projection, deviceID, server.expectedReleaseSets(projection)...)
+	value, err := request.get(context.Background(), deviceID)
 	if err != nil {
 		return DeviceViewEnvelope{}, err
 	}
-	proof, err := server.Runtime.Authority.ControlProof()
-	if err != nil {
+	if err := request.finish(); err != nil {
 		return DeviceViewEnvelope{}, err
 	}
-	keyID, err := KeyID(member.PublicKey)
-	if err != nil {
-		return DeviceViewEnvelope{}, err
-	}
-	key, err := server.Runtime.Config.PrivateKey()
-	if err != nil {
-		return DeviceViewEnvelope{}, err
-	}
-	return SignDeviceViewEnvelope(DeviceViewEnvelope{Schema: 3, NetworkID: projection.NetworkID, GenesisDigest: server.Runtime.Config.GenesisID,
-		IssuerControlID: member.ControlID, IssuerKeyID: keyID, ControlProof: proof, FactFrontier: projection.Frontier, View: view}, key)
+	var envelope DeviceViewEnvelope
+	err = DecodeCanonical(value.body, &envelope, ContractDecodeLimits{MaxBytes: maxControlInputBytes, MaxDepth: 128, MaxItems: 1 << 20})
+	return envelope, err
 }
 func (server *Server) EnrollmentResponse(transactionID string) (EnrollmentResponse, error) {
 	state, err := server.Runtime.Authority.EnrollmentState(transactionID)
@@ -697,12 +688,20 @@ func (server *Server) deviceConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device tunnel required", http.StatusForbidden)
 		return
 	}
-	view, err := server.deviceEnvelope(identity.DeviceID)
+	request, err := server.newDeviceConfigRequest()
 	if err != nil {
 		http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeCanonical(w, http.StatusOK, view)
+	value, err := request.get(r.Context(), identity.DeviceID)
+	if err != nil || request.finish() != nil {
+		http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(value.body)
 }
 func (server *Server) deviceReport(w http.ResponseWriter, r *http.Request) {
 	identity, ok := tunnelAuth(r)

@@ -388,6 +388,10 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 		return strings.Join([]string{value.Level, value.ServiceID, value.CandidateID, value.ResourceID, value.LinkID, value.Target, value.Action, value.SpecDigest}, "\x00")
 	}
 	sort.Slice(report.Observations, func(i, j int) bool { return order(report.Observations[i]) < order(report.Observations[j]) })
+	report.Observations, err = clientadapter.CurrentReportObservations(report.Observations, report.NetworkGeneration, report.ReportedAt)
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
 	return report, nil
 }
 

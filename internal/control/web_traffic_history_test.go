@@ -50,7 +50,7 @@ func TestTrafficHistoryCounterProjectionPreservesOriginalResultsAndProofScope(t 
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, public)
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)
@@ -71,53 +71,48 @@ func TestTrafficHistoryCounterProjectionPreservesOriginalResultsAndProofScope(t 
 			t.Fatal("proof cache changed the actual history result", state)
 		}
 	}
+	aged, err := store.deviceTrafficHistory(context.Background(), "demo-network", identity, nil, now.Add(4*time.Minute))
+	if err != nil || aged.Recent != nil || !reflect.DeepEqual(first.Buckets, aged.Buckets) {
+		t.Fatal("unchanged originals froze the current rate or changed historical buckets", err)
+	}
 	raw, err := CanonicalEncode(reports[2])
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := store.decodedHistoryOriginal(raw, ReleaseDigest(raw), newContractCodec(), public)
-	if err != nil || original.counters == nil || original.counters.verifiedKey != public {
-		t.Fatal("the actual accepted original did not use its counter projection", err)
-	}
-	if _, err := store.verifiedHistoryOriginal(original, public); err == nil {
-		t.Fatal("a counter projection was accepted as a complete report")
-	}
-	if _, err := CanonicalEncode(*original.counters); err == nil {
-		t.Fatal("a counter projection became a writable canonical domain value")
-	}
 	other := testKey(t)
 	wrong := base64.RawURLEncoding.EncodeToString(other.Public().(ed25519.PublicKey))
 	for _, rejected := range []string{wrong, ""} {
-		fallback, err := store.decodedHistoryOriginal(raw, ReleaseDigest(raw), newContractCodec(), rejected)
-		if err != nil || fallback.counters != nil {
-			t.Fatal("a different or missing key selected another key's counter projection", err)
-		}
-		if _, err := store.verifiedHistoryOriginal(fallback, rejected); err == nil {
-			t.Fatal("canonical proof supplied a different or missing verification key")
+		changed := identity
+		changed.DevicePublicKey = rejected
+		if _, err := store.deviceTrafficHistory(context.Background(), "demo-network", changed, nil, now); err == nil {
+			t.Fatal("counter projection supplied a different or missing verification key")
 		}
 	}
-	store.cache.clear()
-	if _, err := store.trafficHistoryOriginal(original, public); err != nil {
-		t.Fatal("eviction between projection and consumption changed immutable verification", err)
-	}
-	if _, err := store.trafficHistoryOriginal(original, wrong); err == nil {
-		t.Fatal("a counter projection supplied another verification key")
-	}
-	if _, err := store.verifiedReport(raw, public); err != nil {
+	oldRaw, err := CanonicalEncode(reports[0])
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, result := range []string{"invalid", "unavailable"} {
-		changed := bytes.Replace(raw, []byte(`"result":"available"`), []byte(`"result":"`+result+`"`), 1)
-		value, err := store.decodedHistoryOriginal(changed, ReleaseDigest(changed), newContractCodec(), public)
-		if err == nil {
-			if value.counters != nil {
-				t.Fatal("changed omitted fields reused an earlier original's proof")
-			}
-			_, err = store.verifiedHistoryOriginal(value, public)
-		}
-		if err == nil {
-			t.Fatal("a changed omitted observation passed canonical/signature verification", result)
-		}
+	oldPosition := referenceOf(reports[0]).key(ReleaseDigest(oldRaw))
+	changed := bytes.Replace(oldRaw, []byte(`"result":"available"`), []byte(`"result":"unavailable"`), 1)
+	if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		return tx.Bucket(observationBucket).Put(oldPosition, changed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.deviceTrafficHistory(context.Background(), "demo-network", identity, nil, now)
+	if err != nil || !reflect.DeepEqual(first, got) {
+		t.Fatal("historical body corruption changed the transactionally derived read boundary", err)
+	}
+	keys := map[reportOwner]string{{"demo-network", identity.ID}: public}
+	if err := store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+		return verifyReportCounters(context.Background(), tx, keys)
+	}); err == nil {
+		t.Fatal("explicit verification did not detect a changed historical original")
+	}
+	if err := store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		return tx.Bucket(observationBucket).Put(oldPosition, oldRaw)
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if !bytes.Equal(before, testObservationBytes(t, store)) {
 		t.Fatal("counter projection rewrote signed originals")
@@ -219,7 +214,7 @@ func TestTrafficHistoryUsesOnlyOriginalAdjacentScopedCounters(t *testing.T) {
 			if err := os.Chmod(root, 0700); err != nil {
 				t.Fatal(err)
 			}
-			testSetObservationReports(t, root, reports)
+			testSetObservationReports(t, root, reports, public)
 			original := testObservationBytes(t, root)
 			var first WebDeviceTraffic
 			for i := 0; i < 2; i++ {

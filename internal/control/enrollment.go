@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/netip"
@@ -486,8 +487,14 @@ func DeviceViewDigest(view DeviceView) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return deviceViewDigestFromCanonical(body), nil
+}
+
+// The bytes belong to this call's strict encoding, including when the View is
+// a member of a larger canonical object. This helper accepts no external wire.
+func deviceViewDigestFromCanonical(body []byte) string {
 	sum := sha256.Sum256(append([]byte("loom-device-view-digest-v3\x00"), body...))
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func validateFactFrontier(frontier []FactFrontier) error {
@@ -503,8 +510,20 @@ func validateFactFrontier(frontier []FactFrontier) error {
 }
 
 func (envelope DeviceViewEnvelope) Validate() error {
-	if envelope.Schema != 3 || envelope.View.NetworkID != envelope.NetworkID || ValidateID(envelope.IssuerControlID) != nil || ValidateDigest(envelope.IssuerKeyID) != nil || validateFactFrontier(envelope.FactFrontier) != nil || envelope.View.Validate() != nil {
+	if envelope.Schema != 3 || envelope.View.NetworkID != envelope.NetworkID || ValidateID(envelope.IssuerControlID) != nil || ValidateDigest(envelope.IssuerKeyID) != nil || validateFactFrontier(envelope.FactFrontier) != nil {
 		return errors.New("device view envelope is invalid")
+	}
+	// Strictly encode every unsigned field once. This checks the complete typed
+	// View and its nested values; the exact same body is the signature message.
+	body, err := CanonicalEncode(envelope.unsigned())
+	if err != nil {
+		return err
+	}
+	var encoded struct {
+		View json.RawMessage `json:"view"`
+	}
+	if err := json.Unmarshal(body, &encoded); err != nil || len(encoded.View) == 0 {
+		return errors.New("device view is absent from its canonical envelope")
 	}
 	config, err := VerifyControlProof(envelope.ControlProof, envelope.NetworkID, envelope.GenesisDigest)
 	if err != nil {
@@ -555,13 +574,8 @@ func (envelope DeviceViewEnvelope) Validate() error {
 	if !found || err != nil || keyID != envelope.IssuerKeyID {
 		return errors.New("device view issuer is not a proven member")
 	}
-	digest, err := DeviceViewDigest(envelope.View)
-	if err != nil || digest != envelope.ViewDigest {
+	if deviceViewDigestFromCanonical(encoded.View) != envelope.ViewDigest {
 		return errors.New("device view digest is invalid")
-	}
-	body, err := CanonicalEncode(envelope.unsigned())
-	if err != nil {
-		return err
 	}
 	key, _ := base64.RawURLEncoding.DecodeString(member.PublicKey)
 	signature, err := base64.RawURLEncoding.DecodeString(envelope.Signature)

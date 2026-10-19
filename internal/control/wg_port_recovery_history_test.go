@@ -4,6 +4,8 @@ package control
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -36,7 +38,7 @@ func TestWGPortRecoveryOriginalWindowHighestAndFork(t *testing.T) {
 		makeReport("demo-stale", 7, now.Add(-4*time.Minute), "stopped"),
 		makeReport("demo-unrelated", 9, now, "running"),
 	}
-	testSetObservationReports(t, store, originals)
+	testSetObservationReports(t, store, originals, base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)))
 	projection := Projection{NetworkID: "demo-network", DeviceAuthorizations: []DeviceAuthorization{{ID: "demo-stale"}, {ID: "demo-active"}}}
 	server := &Server{Runtime: &Runtime{Reports: store}}
 	read := func(at time.Time) []WGPortRecoveryReports {
@@ -59,7 +61,7 @@ func TestWGPortRecoveryOriginalWindowHighestAndFork(t *testing.T) {
 		t.Fatal("short window omitted a breaking original, included an inactive device, or lost the real stale highest", values)
 	}
 	fork := makeReport("demo-active", 4, now.Add(-9*time.Second), "error")
-	testSetObservationReports(t, store, append(originals, fork))
+	testSetObservationReports(t, store, append(originals, fork), base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)))
 	values = read(now)
 	if values[0].Highest != 4 || !values[0].Forked || !reflect.DeepEqual(sequences(values[0]), []U64{3, 2}) {
 		t.Fatal("highest fork selected an original or changed the persistent highest", values[0])
@@ -73,7 +75,7 @@ func TestWGPortRecoveryOriginalWindowHighestAndFork(t *testing.T) {
 		t.Fatal("an entirely forked highest fell back to an old original outside the time window", afterWindow[0])
 	}
 	oldFork := makeReport("demo-active", 2, now.Add(-89*time.Second), "error")
-	testSetObservationReports(t, store, append(originals, oldFork))
+	testSetObservationReports(t, store, append(originals, oldFork), base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)))
 	historicalFork := read(now.Add(-time.Minute))
 	if historicalFork[0].Highest != 4 || !historicalFork[0].Forked || !reflect.DeepEqual(sequences(historicalFork[0]), []U64{1}) {
 		t.Fatal("a selected historical fork was hidden by a newer report outside the baseline window", historicalFork[0])

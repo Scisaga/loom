@@ -53,7 +53,7 @@ func eventIndexFixture(t *testing.T, samples []eventIndexSample) (*ObservationSt
 	for i, sample := range samples {
 		reports[i] = eventIndexReport(t, private, sample)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey)))
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)

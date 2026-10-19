@@ -127,6 +127,10 @@ type Authority struct {
 	// Decoded immutable originals, bounded by the last successful disk read.
 	// These values are private; every hit still hashes the actual file bytes.
 	decodedMaterials map[string]Material
+	// Every replacement of authenticated inputs changes this process-local
+	// coordinate, including proof/frontier progress with an unchanged View.
+	deviceConfigRevision uint64
+	deviceConfigs        deviceConfigCache
 }
 
 func OpenAuthority(root string) (*Authority, error) {
@@ -372,6 +376,7 @@ func (a *Authority) reloadLocked() (retErr error) {
 		return err
 	}
 	a.genesis, a.materials, a.projection, a.certificates = genesis, materials, projection, certificates
+	a.deviceConfigRevision++
 	a.decodedMaterials = decoded
 	return nil
 }
@@ -606,6 +611,7 @@ func (a *Authority) PutMaterial(body []byte) (string, error) {
 		return "", err
 	}
 	a.materials, a.projection = next, projection
+	a.deviceConfigRevision++
 	if errors.Is(admissionErr, ErrMaterialEquivocation) {
 		return id, admissionErr
 	}
@@ -807,6 +813,7 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 		return Submission{}, err
 	}
 	a.materials, a.projection = next, projection
+	a.deviceConfigRevision++
 	return Submission{MaterialID: id, Projection: cloneAuthorityProjection(projection)}, nil
 }
 

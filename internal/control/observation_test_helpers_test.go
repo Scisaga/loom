@@ -49,9 +49,15 @@ func (store *ObservationStore) Verified(projection Projection, releases ...Relea
 	return result
 }
 
-func testOpenObservationStore(t *testing.T, root string) (*ObservationStore, error) {
+func testOpenObservationStore(t *testing.T, root string, keys ...map[reportOwner]string) (*ObservationStore, error) {
 	t.Helper()
-	store, err := OpenObservationStore(root)
+	var store *ObservationStore
+	var err error
+	if len(keys) == 0 {
+		store, err = OpenObservationStore(root)
+	} else {
+		store, err = openObservationStore(root, func() (map[reportOwner]string, error) { return keys[0], nil })
+	}
 	if err == nil {
 		t.Cleanup(func() {
 			if err := store.Close(); err != nil {
@@ -83,7 +89,7 @@ func testObservationBytes(t *testing.T, source any) []byte {
 	}
 	return body
 }
-func testSetObservationReports(t *testing.T, source any, reports []DeviceReport) {
+func testSetObservationReports(t *testing.T, source any, reports []DeviceReport, publicKeys ...string) {
 	t.Helper()
 	write := func(tx *bolt.Tx) error {
 		if err := tx.DeleteBucket(observationBucket); err != nil {
@@ -109,6 +115,28 @@ func testSetObservationReports(t *testing.T, source any, reports []DeviceReport)
 		}
 		if err := ensureReportIndexes(tx); err != nil {
 			return err
+		}
+		if _, err := tx.Bucket(reportIndexBucket).CreateBucket(reportCountersBucket); err != nil {
+			return err
+		}
+		for _, report := range reports {
+			verified := ""
+			for _, public := range publicKeys {
+				if report.Verify(public) == nil {
+					verified = public
+					break
+				}
+			}
+			if verified == "" {
+				t.Fatal("report fixture requires its explicit signing public key")
+			}
+			raw, err := CanonicalEncode(report)
+			if err != nil {
+				return err
+			}
+			if err := indexReportCounters(tx, referenceOf(report).key(ReleaseDigest(raw)), report, verified); err != nil {
+				return err
+			}
 		}
 		if tx.Bucket(reportReceptionBucket) != nil {
 			return ensureReportEventIndex(context.Background(), tx)

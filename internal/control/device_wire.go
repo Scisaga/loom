@@ -325,6 +325,20 @@ func compareObservationOrder(left, right Observation) int {
 	return 0
 }
 
+// ValidateReportObservations checks the complete collection before a producer
+// projects its sample window. Expiry never weakens canonical report validation.
+func ValidateReportObservations(observations []Observation, networkGeneration string) error {
+	if observations == nil || ValidateID(networkGeneration) != nil {
+		return errors.New("report observations or network generation are invalid")
+	}
+	for index, observation := range observations {
+		if observation.Validate() != nil || observation.NetworkGeneration != networkGeneration || index > 0 && compareObservationOrder(observations[index-1], observation) >= 0 {
+			return errors.New("report observations are invalid or not uniquely sorted")
+		}
+	}
+	return nil
+}
+
 type DeviceReport struct {
 	WireGuardCounters *WireGuardCounters    `json:"wireguard_counters,omitempty"`
 	Schema            int                   `json:"schema"`
@@ -382,10 +396,8 @@ func (report DeviceReport) validateFields() error {
 			return errors.New("report selections are invalid or not uniquely sorted")
 		}
 	}
-	for index, observation := range report.Observations {
-		if observation.Validate() != nil || observation.NetworkGeneration != report.NetworkGeneration || index > 0 && compareObservationOrder(report.Observations[index-1], observation) >= 0 {
-			return errors.New("report observations are invalid or not uniquely sorted")
-		}
+	if err := ValidateReportObservations(report.Observations, report.NetworkGeneration); err != nil {
+		return err
 	}
 	for index, component := range report.Components {
 		if component.Validate() != nil {

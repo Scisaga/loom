@@ -15,22 +15,20 @@ type reportHistoryWindow struct {
 	from, until int64
 	link, spec  string
 	include     func(reportReference) bool
-	counterKey  string
 }
 
 // One freshly read, canonical original and its actual content digest. History
 // callbacks receive it only after its physical position was checked. The value
 // is immutable during consumption and is never cached.
 type reportHistoryOriginal struct {
-	id       string
-	raw      []byte
-	report   DeviceReport
-	counters *reportCounterProjection
+	id     string
+	raw    []byte
+	report DeviceReport
 }
 
 // Only the traffic consumer accepts this one-way projection. It is never a
-// complete report or a writable wire/persistent value. verifiedKey holds the
-// exact original's immutable proof only for this callback, not authorization.
+// complete report or a writable report value. verifiedKey records the exact
+// verification key of its transactionally maintained source, not permission.
 type reportCounterProjection struct {
 	NetworkID         string             `json:"network_id"`
 	DeviceID          string             `json:"device_id"`
@@ -50,20 +48,21 @@ func (report reportCounterProjection) reference() reportReference {
 	return ref
 }
 
+type reportHistoryLocation struct {
+	key  []byte
+	fork bool
+	ref  reportReference
+}
+
 // Pin only the requested time window and highest original position. Forks are
-// checked against originals. No read transaction survives into projection work.
-func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, visit func(U64, reportReference, *reportHistoryOriginal) error, window ...reportHistoryWindow) error {
+// checked against original keys. No transaction survives into projection work.
+func (store *ObservationStore) pinDeviceHistoryLocations(ctx context.Context, network, device string, window []reportHistoryWindow) (U64, []reportHistoryLocation, error) {
 	if ValidateID(network) != nil || ValidateID(device) != nil || len(window) > 1 {
-		return errors.New("invalid report history scope")
+		return 0, nil, errors.New("invalid report history scope")
 	}
 	owner := reportOwner{network, device}
 	prefix := reportOwnerPrefix(owner)
-	type location struct {
-		key  []byte
-		fork bool
-		ref  reportReference
-	}
-	var positions []location
+	var positions []reportHistoryLocation
 	var highest U64
 	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(observationBucket)
@@ -148,7 +147,7 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 				if indexed, found := references[string(key)]; found {
 					ref = indexed
 				}
-				positions = append(positions, location{key: bytes.Clone(key), ref: ref})
+				positions = append(positions, reportHistoryLocation{key: bytes.Clone(key), ref: ref})
 			}
 			if len(positions) == start {
 				return errors.New("pinned original position is absent")
@@ -162,16 +161,20 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	sort.Slice(positions, func(i, j int) bool { return bytes.Compare(positions[i].key, positions[j].key) > 0 })
+	return highest, positions, nil
+}
+
+func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, network, device string, visit func(U64, reportReference, *reportHistoryOriginal) error, window ...reportHistoryWindow) error {
+	highest, positions, err := store.pinDeviceHistoryLocations(ctx, network, device, window)
+	if err != nil {
+		return err
+	}
 	var previous U64
 	codec := newContractCodec()
-	counterKey := ""
-	if len(window) != 0 && window[0].kind == counterTime {
-		counterKey = window[0].counterKey
-	}
-	include := func(position location) bool {
+	include := func(position reportHistoryLocation) bool {
 		return len(window) == 0 || window[0].include == nil || position.fork || position.ref.ReportSequence == highest || window[0].include(position.ref)
 	}
 	batchLimit := 64
@@ -217,14 +220,11 @@ func (store *ObservationStore) walkDeviceHistorySnapshot(ctx context.Context, ne
 			}
 			position := positions[first+i]
 			id := ReleaseDigest(raw)
-			original, err := store.decodedHistoryOriginal(raw, id, codec, counterKey)
+			original, err := store.decodedHistoryOriginal(raw, id, codec)
 			if err != nil {
 				return err
 			}
 			ref := referenceOf(original.report)
-			if original.counters != nil {
-				ref = original.counters.reference()
-			}
 			if !bytes.Equal(ref.key(id), position.key) {
 				return errors.New("pinned report differs from its original location")
 			}

@@ -85,7 +85,7 @@ func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *tes
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, []DeviceReport{report})
+	testSetObservationReports(t, root, []DeviceReport{report}, view.DevicePublicKey)
 	original := testObservationBytes(t, root)
 	for i := 0; i < 2; i++ {
 		store, err := testOpenObservationStore(t, root)

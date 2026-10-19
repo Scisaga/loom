@@ -154,7 +154,7 @@ func TestReportMigrationInterruptedPublicationAndRefusals(t *testing.T) {
 				if scenario == "extra-original" {
 					reports = append(reports, sign(4))
 				}
-				testSetObservationReports(t, root, reports)
+				testSetObservationReports(t, root, reports, public)
 				if _, err := testOpenObservationStore(t, root); err == nil {
 					t.Fatal("dual containers entered the daemon")
 				}

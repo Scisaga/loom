@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -463,6 +464,14 @@ func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activa
 				observations = append(observations, control.Observation{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: value.Target, Action: "https_request", SpecDigest: route.SpecDigest, NetworkGeneration: activation.State.NetworkGeneration, Result: value.Result, ObservedAt: observed.UnixMilli(), ValidUntil: until.UnixMilli(), DurationMS: &duration})
 			}
 		}
+	}
+	order := func(value control.Observation) string {
+		return strings.Join([]string{value.Level, value.ServiceID, value.CandidateID, value.ResourceID, value.LinkID, value.Target, value.Action, value.SpecDigest}, "\x00")
+	}
+	sort.Slice(observations, func(i, j int) bool { return order(observations[i]) < order(observations[j]) })
+	observations, err = clientadapter.CurrentReportObservations(observations, activation.State.NetworkGeneration, at.UnixMilli())
+	if err != nil {
+		return control.DeviceReport{}, err
 	}
 	localNetworks, _ := collectLocalNetworks(ctx, lkg.View)
 	return control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Preference: preference, LocalNetworks: localNetworks, WireGuardCounters: counters, Selections: selections, Observations: observations, Components: components, Runtime: readback}, nil

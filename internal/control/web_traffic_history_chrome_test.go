@@ -118,7 +118,7 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)), base64.RawURLEncoding.EncodeToString(reverseKey.Public().(ed25519.PublicKey)))
 	store, err := testOpenObservationStore(t, root)
 	if err != nil {
 		t.Fatal(err)

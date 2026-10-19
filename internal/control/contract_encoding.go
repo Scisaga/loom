@@ -179,6 +179,15 @@ func (codec *contractCodec) inspect(value reflect.Value, active map[contractVisi
 	if value.Type() == reflect.TypeFor[Operation]() {
 		return value.Interface().(Operation).Validate()
 	}
+	if value.Type() == reflect.TypeFor[DeviceViewEnvelope]() {
+		if err := codec.inspectType(value.Type()); err != nil {
+			return err
+		}
+		// This fixed validator strictly encodes all unsigned fields and checks
+		// the only omitted field as a canonical base64url signature. Repeating
+		// field inspection would validate the same complete View again.
+		return value.Interface().(DeviceViewEnvelope).Validate()
+	}
 	if value.Type() == reflect.TypeFor[ConflictResolution]() {
 		return codec.inspect(reflect.ValueOf(value.Interface().(ConflictResolution).contractObject()), active)
 	}

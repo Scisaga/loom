@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
@@ -10,7 +11,41 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
+
+func TestEmptyLinkScopeDoesNotReadUnrelatedReportOriginals(t *testing.T) {
+	server, invite, _, claim, _, _ := enrollmentAuthorityFixture(t)
+	if response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
+		t.Fatal("join failed", response.Code)
+	}
+	envelope, err := server.deviceEnvelope(invite.DeviceID)
+	if err != nil || len(envelope.View.Links) != 0 {
+		t.Fatal("fixture must have an empty relay source scope", err)
+	}
+	// Corrupt only a test-owned unrelated original. An all-owner read would
+	// fail, but this recipient has no reason to consume that owner's history.
+	raw := []byte("demo-corrupt-unrelated-original")
+	ref := reportReference{NetworkID: envelope.NetworkID, DeviceID: "demo-unrelated", ReportSequence: 1}
+	err = server.Runtime.Reports.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+		return tx.Bucket(observationBucket).Put(ref.key(ReleaseDigest(raw)), raw)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Runtime.Reports.Latest(context.Background()); err == nil {
+		t.Fatal("fixture did not exercise an unrelated failed read")
+	}
+	response := enrollmentHTTP(t, server, "/device/link-observations", DeviceLinkObservationRequest{Schema: 3, ViewDigest: envelope.ViewDigest}, tunnelIdentity{Mode: "device", DeviceID: invite.DeviceID})
+	if response.Code != http.StatusOK {
+		t.Fatal("empty recipient scope consumed an unrelated report", response.Code, response.Body.String())
+	}
+	var result DeviceLinkObservations
+	if err := DecodeCanonical(response.Body.Bytes(), &result, ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 16, MaxItems: 1024}); err != nil || result.ValidateForView(envelope.View) != nil || len(result.Observations) != 0 {
+		t.Fatal("empty current scope did not return its canonical empty projection", err)
+	}
+}
 
 func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.T) {
 	p := relayProjectionFixture(t)

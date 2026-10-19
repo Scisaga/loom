@@ -34,7 +34,7 @@ func TestReportIndexesRebuildWithoutChangingOriginals(t *testing.T) {
 	if err := withReportDatabase(context.Background(), store.path, true, func(tx *bolt.Tx) error { return tx.DeleteBucket(reportIndexBucket) }); err != nil {
 		t.Fatal(err)
 	}
-	rebuilt, err := testOpenObservationStore(t, filepath.Dir(store.path))
+	rebuilt, err := testOpenObservationStore(t, filepath.Dir(store.path), map[reportOwner]string{{"demo-network", "demo-device"}: public})
 	if err != nil {
 		t.Fatal(err)
 	}

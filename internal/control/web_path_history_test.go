@@ -110,7 +110,7 @@ func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, view.DevicePublicKey, fixture.members[1].PublicKey)
 	body := testObservationBytes(t, root)
 	for attempt := 0; attempt < 2; attempt++ {
 		store, err := testOpenObservationStore(t, root)

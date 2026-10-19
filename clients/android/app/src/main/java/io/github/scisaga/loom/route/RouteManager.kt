@@ -365,10 +365,8 @@ class RouteManager private constructor(context: Context) {
                 ByteArray(0)
             }
         } else ByteArray(0)
-        val now = Instant.now()
         val values = if (running) observations(profileId).objects().filter { observation ->
-            observation.getString("network_generation") == runtime.generation &&
-                observation.currentAt(now)
+            observation.getString("network_generation") == runtime.generation
         }.sortedBy { it.getString("candidate_id") } else emptyList()
         RuntimeReportData(
             protected.get(ProfileStorage.routePreference(profileId)) ?: ByteArray(0),

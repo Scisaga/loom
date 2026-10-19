@@ -95,16 +95,36 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 	if err != nil || !bytes.Equal(cache, unchanged) || requests.Load() != 1 {
 		t.Fatal("unrelated accepted View invalidated original execution inputs", err)
 	}
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	service, _ := json.Marshal([]androidObservation{{CandidateID: route.ID, NetworkGeneration: "demo-underlay", Scope: route.Scope,
 		Result: "unavailable", Action: "https_request", Target: "https://demo.example:8443/health", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}})
 	runtime, _ := json.Marshal(control.RuntimeReadback{State: "running", AppliedViewDigest: state.LKG.ViewDigest})
 	state.ReportSequence = 1
-	report, err := androidReport(state, nil, cache, service, selections, runtime, []byte("[]"), nil, "demo-underlay", now.Format(time.RFC3339))
+	report, err := androidReport(state, nil, cache, service, selections, runtime, []byte("[]"), nil, "demo-underlay", now.Format(androidReportTimeLayout))
 	if err != nil || report.Verify(state.PublicKey) != nil || len(report.Observations) != 2 ||
 		report.Observations[0].Level != "resource" || report.Observations[0].Result != "available" ||
 		report.Observations[0].ObservedAt != samples[0].ObservedAt || report.Observations[1].Result != "unavailable" {
 		t.Fatal("resource authentication changed the independent signed Service failure", err)
+	}
+	// Resource samples use millisecond time even when the Service cache uses seconds.
+	// The bridge must preserve a sample from earlier in the same report second.
+	reportAt := time.Date(2030, 1, 1, 0, 1, 0, 120_000_000, time.UTC)
+	for _, offset := range []int64{-1, 0, 1} {
+		sample := samples[0]
+		sample.ObservedAt = reportAt.UnixMilli() + offset
+		sample.ValidUntil = sample.ObservedAt + time.Minute.Milliseconds()
+		input, err := clientadapter.EncodeResourceObservations(*state.LKG, []control.Observation{sample})
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := androidReport(state, nil, input, []byte("[]"), selections, runtime, []byte("[]"), nil, "demo-underlay", reportAt.Format(androidReportTimeLayout))
+		want := 1
+		if offset > 0 {
+			want = 0
+		}
+		if err != nil || len(value.Observations) != want || value.ReportedAt != reportAt.UnixMilli() || want == 1 && value.Observations[0].ObservedAt != sample.ObservedAt {
+			t.Fatal("resource millisecond boundary was rounded, retimed or treated as future", offset, err)
+		}
 	}
 	protector.allow = false
 	failed, err := ObserveAndroidFirstHops(body, selections, cache, "demo-other-underlay")

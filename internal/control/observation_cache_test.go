@@ -51,7 +51,7 @@ func TestReportPositionsRequireExactOriginalAndPublicKey(t *testing.T) {
 	if !bytes.Equal(original, unchanged) {
 		t.Fatal("rejected key changed original history")
 	}
-	testSetObservationReports(t, store, []DeviceReport{sign(1, other)})
+	testSetObservationReports(t, store, []DeviceReport{sign(1, other)}, public(other))
 	forged, _ := os.ReadFile(path)
 	if store.Put(next, public(key)) == nil {
 		t.Fatal("same position with changed signature bypassed cached-file verification")
@@ -60,7 +60,7 @@ func TestReportPositionsRequireExactOriginalAndPublicKey(t *testing.T) {
 	if !bytes.Equal(forged, unchanged) {
 		t.Fatal("failed verification silently repaired the changed file")
 	}
-	testSetObservationReports(t, store, []DeviceReport{first})
+	testSetObservationReports(t, store, []DeviceReport{first}, public(key))
 	if err := store.Put(next, public(key)); err != nil {
 		t.Fatal(err)
 	}

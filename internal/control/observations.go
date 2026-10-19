@@ -46,6 +46,12 @@ type reportPosition struct {
 }
 
 func OpenObservationStore(root string) (*ObservationStore, error) {
+	return openObservationStore(root, func() (map[reportOwner]string, error) {
+		return loadReportVerificationKeys(context.Background(), root)
+	})
+}
+
+func openObservationStore(root string, historicalKeys func() (map[reportOwner]string, error)) (*ObservationStore, error) {
 	if err := validateControlRoot(root); err != nil {
 		return nil, err
 	}
@@ -80,6 +86,30 @@ func OpenObservationStore(root string) (*ObservationStore, error) {
 	err = db.View(func(tx *bolt.Tx) error { indexed = tx.Bucket(reportIndexBucket) != nil; return nil })
 	if err == nil && !indexed {
 		err = store.withDatabase(context.Background(), true, ensureReportIndexes)
+	}
+	if err == nil {
+		ready, empty := false, false
+		err = store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+			child := tx.Bucket(reportIndexBucket).Bucket(reportCountersBucket)
+			ready = child != nil
+			if ready && child.Sequence() != 0 {
+				return errors.New("report counter projection has an independent sequence")
+			}
+			first, _ := tx.Bucket(observationBucket).Cursor().First()
+			empty = first == nil
+			return nil
+		})
+		if err == nil && !ready {
+			var keys map[reportOwner]string
+			if !empty {
+				keys, err = historicalKeys()
+			}
+			if err == nil {
+				err = store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+					return rebuildReportCounters(context.Background(), tx, keys)
+				})
+			}
+		}
 	}
 	if err == nil {
 		ready := false
@@ -267,6 +297,9 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 				return err
 			}
 			if err := indexReport(tx, key, report); err != nil {
+				return err
+			}
+			if err := indexReportCounters(tx, key, report, keys[owner]); err != nil {
 				return err
 			}
 			at := time.Now()

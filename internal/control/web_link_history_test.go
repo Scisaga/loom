@@ -103,7 +103,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	testSetObservationReports(t, root, reports)
+	testSetObservationReports(t, root, reports, identity.DevicePublicKey, f.members[1].PublicKey)
 	original := testObservationBytes(t, root)
 	var previous WebLinkHistory
 	for attempt := 0; attempt < 2; attempt++ {
