@@ -98,7 +98,7 @@ func TestSnapshotConfigReuseRejectsAnInputChangeWhileWaiting(t *testing.T) {
 	buildStarted, release := make(chan struct{}), make(chan struct{})
 	buildDone := make(chan error, 1)
 	go func() {
-		_, err := cache.get(context.Background(), key, func() (*deviceConfigValue, error) { close(buildStarted); <-release; return value, nil })
+		_, err := cache.get(context.Background(), key, true, func() (*deviceConfigValue, error) { close(buildStarted); <-release; return value, nil }, nil)
 		buildDone <- err
 	}()
 	<-buildStarted

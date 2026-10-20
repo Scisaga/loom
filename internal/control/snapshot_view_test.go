@@ -8,6 +8,75 @@ import (
 	"testing"
 )
 
+func TestSnapshotColdReadDoesNotMaterializeDeviceConfiguration(t *testing.T) {
+	server, invite, _, claim, _, _ := enrollmentAuthorityFixture(t)
+	if response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
+		t.Fatal("claim failed", response.Code)
+	}
+	// A normal reopen removes process-local computation while retaining the
+	// accepted authorization and enrollment response on disk.
+	root := server.Runtime.Authority.root
+	if err := server.Runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := OpenRuntime(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	server.Runtime = runtime
+	read := func() {
+		t.Helper()
+		response := httptest.NewRecorder()
+		server.AdminHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/control/ui/snapshot", nil))
+		if response.Code != http.StatusOK {
+			t.Fatal("snapshot failed", response.Code, response.Body.String())
+		}
+		var snapshot WebSnapshot
+		if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, device := range snapshot.Devices {
+			found = found || device.ID == invite.DeviceID && device.Authorized
+		}
+		if !found || len(snapshot.Paths) == 0 {
+			t.Fatal("cold snapshot lost the current authorized path projection")
+		}
+	}
+	read()
+	cache := &runtime.Authority.deviceConfigs
+	cache.mu.Lock()
+	entries := len(cache.items)
+	materialized := false
+	for _, item := range cache.items {
+		materialized = materialized || len(item.Value.(*deviceConfigEntry).value.body) != 0
+	}
+	cache.mu.Unlock()
+	if entries == 0 || materialized {
+		t.Fatal("reading the UI did not retain a view-only computation")
+	}
+
+	response := enrollmentHTTP(t, server, "/device/config", map[string]any{"schema": 3}, tunnelIdentity{Mode: "device", DeviceID: invite.DeviceID})
+	if response.Code != http.StatusOK {
+		t.Fatal("normal configuration request failed", response.Code, response.Body.String())
+	}
+	var envelope DeviceViewEnvelope
+	if err := DecodeCanonical(response.Body.Bytes(), &envelope, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil || envelope.View.DeviceID != invite.DeviceID {
+		t.Fatal("normal configuration lost its strict signed envelope", err)
+	}
+	read()
+	cache.mu.Lock()
+	materialized = false
+	for key, item := range cache.items {
+		materialized = materialized || key.device == invite.DeviceID && len(item.Value.(*deviceConfigEntry).value.body) != 0
+	}
+	cache.mu.Unlock()
+	if !materialized {
+		t.Fatal("a later UI read discarded the requested signed configuration")
+	}
+}
+
 func TestSnapshotViewReuseDoesNotSurviveAuthorizationChanges(t *testing.T) {
 	server, invite, _, claim, key, _ := enrollmentAuthorityFixture(t)
 	if enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)).Code != http.StatusOK {

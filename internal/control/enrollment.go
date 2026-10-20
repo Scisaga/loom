@@ -601,17 +601,36 @@ func signProjectedDeviceConfig(envelope DeviceViewEnvelope, projection Projectio
 	if len(private) != ed25519.PrivateKeySize {
 		return DeviceViewEnvelope{}, nil, errors.New("device view signing key is invalid")
 	}
-	view, err := projectDeviceView(projection, deviceID, releases...)
+	value, err := projectDeviceConfigView(projection, deviceID, releases)
 	if err != nil {
 		return DeviceViewEnvelope{}, nil, err
+	}
+	return signDeviceConfigView(envelope, value, private)
+}
+
+func projectDeviceConfigView(projection Projection, deviceID string, releases []ReleaseSet) (*deviceConfigValue, error) {
+	view, err := projectDeviceView(projection, deviceID, releases...)
+	if err != nil {
+		return nil, err
 	}
 	codec := newContractCodec()
 	canonicalView, err := codec.encode(view)
 	if err != nil {
-		return DeviceViewEnvelope{}, nil, err
+		return nil, err
 	}
-	envelope.View = view
-	envelope.ViewDigest = deviceViewDigestFromCanonical(canonicalView)
+	return &deviceConfigValue{view: view, digest: deviceViewDigestFromCanonical(canonicalView), canonicalView: canonicalView}, nil
+}
+
+// The fragment and typed View are immutable private outputs of the same strict
+// projection above, bound by the configuration cache's complete input key. No
+// external caller supplies a canonical fragment or a validation bypass flag.
+func signDeviceConfigView(envelope DeviceViewEnvelope, value *deviceConfigValue, private ed25519.PrivateKey) (DeviceViewEnvelope, []byte, error) {
+	if len(private) != ed25519.PrivateKeySize || value == nil || len(value.canonicalView) == 0 {
+		return DeviceViewEnvelope{}, nil, errors.New("strict device View or signing key is unavailable")
+	}
+	envelope.View = value.view
+	envelope.ViewDigest = value.digest
+	codec := newContractCodec()
 	if err := codec.inspectType(reflect.TypeFor[DeviceViewEnvelope]()); err != nil {
 		return DeviceViewEnvelope{}, nil, err
 	}
@@ -629,7 +648,34 @@ func signProjectedDeviceConfig(envelope DeviceViewEnvelope, projection Projectio
 			return DeviceViewEnvelope{}, nil, err
 		}
 	}
-	body, err := codec.append(nil, reflect.ValueOf(unsigned))
+	// Only the View field comes from the strict fragment in this private value.
+	// Every other actual field has just been inspected, and the ordinary codec
+	// emits it. Sorting field names preserves the public encoder's exact bytes.
+	appendFields := func(fields map[string]any) ([]byte, error) {
+		names := make([]string, 0, len(fields))
+		for name := range fields {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		body := []byte{'{'}
+		for i, name := range names {
+			if i != 0 {
+				body = append(body, ',')
+			}
+			body = append(appendContractString(body, name), ':')
+			if name == "view" {
+				body = append(body, value.canonicalView...)
+				continue
+			}
+			var err error
+			body, err = codec.append(body, reflect.ValueOf(fields[name]))
+			if err != nil {
+				return nil, err
+			}
+		}
+		return append(body, '}'), nil
+	}
+	body, err := appendFields(unsigned)
 	if err != nil {
 		return DeviceViewEnvelope{}, nil, err
 	}
@@ -637,7 +683,8 @@ func signProjectedDeviceConfig(envelope DeviceViewEnvelope, projection Projectio
 	if err := envelope.validateCanonicalUnsigned(body); err != nil {
 		return DeviceViewEnvelope{}, nil, err
 	}
-	encoded, err := codec.append(nil, reflect.ValueOf(envelope))
+	unsigned["signature"] = envelope.Signature
+	encoded, err := appendFields(unsigned)
 	if err != nil {
 		return DeviceViewEnvelope{}, nil, err
 	}

@@ -386,9 +386,9 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		var view DeviceView
 		var digest string
 		if configuration != nil {
-			value, err := configuration.get(r.Context(), id)
+			currentView, currentDigest, err := configuration.view(r.Context(), id)
 			if err == nil {
-				view, digest = value.envelope.View, value.envelope.ViewDigest
+				view, digest = currentView, currentDigest
 			} else if errors.Is(err, errDeviceConfigChanged) || r.Context().Err() != nil {
 				viewErr = err
 				return DeviceView{}, "", err

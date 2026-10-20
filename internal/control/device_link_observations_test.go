@@ -24,6 +24,16 @@ func TestEmptyLinkScopeDoesNotReadUnrelatedReportOriginals(t *testing.T) {
 	if err != nil || len(envelope.View.Links) != 0 {
 		t.Fatal("fixture must have an empty relay source scope", err)
 	}
+	root := server.Runtime.Authority.root
+	if err := server.Runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := OpenRuntime(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	server.Runtime = runtime
 	// Corrupt only a test-owned unrelated original. An all-owner read would
 	// fail, but this recipient has no reason to consume that owner's history.
 	raw := []byte("demo-corrupt-unrelated-original")
@@ -44,6 +54,17 @@ func TestEmptyLinkScopeDoesNotReadUnrelatedReportOriginals(t *testing.T) {
 	var result DeviceLinkObservations
 	if err := DecodeCanonical(response.Body.Bytes(), &result, ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 16, MaxItems: 1024}); err != nil || result.ValidateForView(envelope.View) != nil || len(result.Observations) != 0 {
 		t.Fatal("empty current scope did not return its canonical empty projection", err)
+	}
+	cache := &runtime.Authority.deviceConfigs
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.items) == 0 {
+		t.Fatal("cold Link delivery did not retain its current view")
+	}
+	for _, item := range cache.items {
+		if len(item.Value.(*deviceConfigEntry).value.body) != 0 {
+			t.Fatal("reading Link observations unnecessarily signed a configuration")
+		}
 	}
 }
 

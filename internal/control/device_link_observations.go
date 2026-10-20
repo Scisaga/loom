@@ -180,18 +180,21 @@ func (server *Server) deviceLinkObservations(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	projection := configuration.input.projection
-	views := map[string]*deviceConfigValue{}
+	views := map[string]struct {
+		view   DeviceView
+		digest string
+	}{}
 	viewFor := func(id string) (DeviceView, string, error) {
-		value := views[id]
-		if value == nil {
+		value, found := views[id]
+		if !found {
 			var err error
-			value, err = configuration.get(r.Context(), id)
+			value.view, value.digest, err = configuration.view(r.Context(), id)
 			if err != nil {
 				return DeviceView{}, "", err
 			}
 			views[id] = value
 		}
-		return value.envelope.View, value.envelope.ViewDigest, nil
+		return value.view, value.digest, nil
 	}
 	view, digest, err := viewFor(identity.DeviceID)
 	if err != nil || request.Validate() != nil || digest != request.ViewDigest {

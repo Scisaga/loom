@@ -48,8 +48,10 @@ type deviceConfigKey struct {
 // The typed value and encoded response are immutable private computation
 // outputs. Public callers receive a fresh decode, never a mutable cache alias.
 type deviceConfigValue struct {
-	envelope DeviceViewEnvelope
-	body     []byte
+	view          DeviceView
+	digest        string
+	canonicalView []byte
+	body          []byte
 }
 
 type deviceConfigEntry struct {
@@ -59,9 +61,14 @@ type deviceConfigEntry struct {
 }
 
 type deviceConfigFlight struct {
-	done  chan struct{}
-	value *deviceConfigValue
-	err   error
+	viewReady chan struct{}
+	view      *deviceConfigValue
+	viewErr   error
+	done      chan struct{}
+	value     *deviceConfigValue
+	err       error
+	full      bool
+	sign      func(*deviceConfigValue) (*deviceConfigValue, error)
 }
 
 type deviceConfigCache struct {
@@ -76,17 +83,21 @@ type deviceConfigCache struct {
 // At most two distinct builds run concurrently. A cancelled waiter does not
 // cancel shared work or create a duplicate build; waiting does not retain an
 // unbounded second map of queued configurations.
-func (cache *deviceConfigCache) get(ctx context.Context, key deviceConfigKey, build func() (*deviceConfigValue, error)) (*deviceConfigValue, error) {
+func (cache *deviceConfigCache) get(ctx context.Context, key deviceConfigKey, full bool, project func() (*deviceConfigValue, error), sign func(*deviceConfigValue) (*deviceConfigValue, error)) (*deviceConfigValue, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		cache.mu.Lock()
+		var view *deviceConfigValue
 		if element := cache.items[key]; element != nil {
 			cache.lru.MoveToFront(element)
 			value := element.Value.(*deviceConfigEntry).value
-			cache.mu.Unlock()
-			return value, nil
+			if !full || value.body != nil {
+				cache.mu.Unlock()
+				return value, nil
+			}
+			view = value
 		}
 		flight := cache.flights[key]
 		if flight == nil && len(cache.flights) >= deviceConfigBuilds {
@@ -106,11 +117,30 @@ func (cache *deviceConfigCache) get(ctx context.Context, key deviceConfigKey, bu
 			if cache.changed == nil {
 				cache.changed = make(chan struct{})
 			}
-			flight = &deviceConfigFlight{done: make(chan struct{})}
+			flight = &deviceConfigFlight{viewReady: make(chan struct{}), view: view, done: make(chan struct{}), full: full, sign: sign}
+			if view != nil {
+				close(flight.viewReady)
+			}
 			cache.flights[key] = flight
-			go cache.build(key, flight, build)
+			go cache.build(key, flight, project)
+		} else if full {
+			flight.full = true
+			if flight.sign == nil {
+				flight.sign = sign
+			}
 		}
 		cache.mu.Unlock()
+		if !full {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-flight.viewReady:
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				return flight.view, flight.viewErr
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -123,17 +153,22 @@ func (cache *deviceConfigCache) get(ctx context.Context, key deviceConfigKey, bu
 	}
 }
 
-func (cache *deviceConfigCache) build(key deviceConfigKey, flight *deviceConfigFlight, build func() (*deviceConfigValue, error)) {
-	value, err := build()
-	cost := 0
-	if err == nil {
-		cost = 512 + len(key.device) + len(key.signer) + len(key.local) + len(key.releases) + deviceConfigHeapCost(reflect.ValueOf(*value))
-	}
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if err == nil && cost <= deviceConfigCacheBytes {
+func deviceConfigCost(key deviceConfigKey, value *deviceConfigValue) int {
+	return 512 + len(key.device) + len(key.signer) + len(key.local) + len(key.releases) + deviceConfigHeapCost(reflect.ValueOf(*value))
+}
+
+// Both outputs share one LRU entry. Values are replaced, never amended while a
+// reader holds the independently completed View. Failed signing keeps no error
+// or partial response; an already successful View remains independently useful.
+func (cache *deviceConfigCache) retain(key deviceConfigKey, value *deviceConfigValue, cost int) {
+	if cost <= deviceConfigCacheBytes {
 		if cache.items == nil {
 			cache.items = map[deviceConfigKey]*list.Element{}
+		}
+		if prior := cache.items[key]; prior != nil {
+			cache.bytes -= prior.Value.(*deviceConfigEntry).cost
+			cache.lru.Remove(prior)
+			delete(cache.items, key)
 		}
 		for cache.bytes+cost > deviceConfigCacheBytes {
 			old := cache.lru.Back()
@@ -145,11 +180,63 @@ func (cache *deviceConfigCache) build(key deviceConfigKey, flight *deviceConfigF
 		cache.items[key] = cache.lru.PushFront(&deviceConfigEntry{key, value, cost})
 		cache.bytes += cost
 	}
+}
+
+func (cache *deviceConfigCache) complete(key deviceConfigKey, flight *deviceConfigFlight, value *deviceConfigValue, err error) {
 	flight.value, flight.err = value, err
 	delete(cache.flights, key)
 	close(flight.done)
 	close(cache.changed)
 	cache.changed = make(chan struct{})
+}
+
+func (cache *deviceConfigCache) build(key deviceConfigKey, flight *deviceConfigFlight, project func() (*deviceConfigValue, error)) {
+	value, err := flight.view, error(nil)
+	if value == nil {
+		value, err = project()
+	}
+	if err == nil && value == nil {
+		err = errors.New("device configuration projection is absent")
+	}
+	cost := 0
+	if err == nil {
+		cost = deviceConfigCost(key, value)
+	}
+	cache.mu.Lock()
+	if flight.view == nil {
+		flight.view, flight.viewErr = value, err
+		close(flight.viewReady)
+	}
+	if err != nil {
+		cache.complete(key, flight, nil, err)
+		cache.mu.Unlock()
+		return
+	}
+	cache.retain(key, value, cost)
+	if value.body != nil || !flight.full {
+		cache.complete(key, flight, value, nil)
+		cache.mu.Unlock()
+		return
+	}
+	sign := flight.sign
+	cache.mu.Unlock()
+	if sign == nil {
+		err = errors.New("complete device configuration builder is absent")
+	} else {
+		value, err = sign(value)
+		if err == nil && (value == nil || value.body == nil) {
+			err = errors.New("complete device configuration response is absent")
+		}
+	}
+	if err == nil {
+		cost = deviceConfigCost(key, value)
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if err == nil {
+		cache.retain(key, value, cost)
+	}
+	cache.complete(key, flight, value, err)
 }
 
 // Conservatively count typed backing storage as well as the encoded body.
@@ -259,6 +346,18 @@ func (request *deviceConfigRequest) finish() error {
 }
 
 func (request *deviceConfigRequest) get(ctx context.Context, device string) (*deviceConfigValue, error) {
+	return request.value(ctx, device, true)
+}
+
+func (request *deviceConfigRequest) view(ctx context.Context, device string) (DeviceView, string, error) {
+	value, err := request.value(ctx, device, false)
+	if err != nil {
+		return DeviceView{}, "", err
+	}
+	return value.view, value.digest, nil
+}
+
+func (request *deviceConfigRequest) value(ctx context.Context, device string, full bool) (*deviceConfigValue, error) {
 	if err := request.current(); err != nil {
 		return nil, err
 	}
@@ -271,7 +370,19 @@ func (request *deviceConfigRequest) get(ctx context.Context, device string) (*de
 		return nil, err
 	}
 	key := deviceConfigKey{request.input.revision, device, request.member.PublicKey, request.local, request.releases}
-	value, err := request.authority.deviceConfigs.get(ctx, key, func() (*deviceConfigValue, error) {
+	value, err := request.authority.deviceConfigs.get(ctx, key, full, func() (*deviceConfigValue, error) {
+		if err := request.current(); err != nil {
+			return nil, err
+		}
+		value, err := projectDeviceConfigView(request.input.projection, device, request.sets)
+		if err != nil {
+			return nil, err
+		}
+		if err := request.current(); err != nil {
+			return nil, err
+		}
+		return value, nil
+	}, func(view *deviceConfigValue) (*deviceConfigValue, error) {
 		if err := request.current(); err != nil {
 			return nil, err
 		}
@@ -279,8 +390,8 @@ func (request *deviceConfigRequest) get(ctx context.Context, device string) (*de
 		if err != nil {
 			return nil, err
 		}
-		envelope, body, err := signProjectedDeviceConfig(DeviceViewEnvelope{Schema: 3, NetworkID: request.input.projection.NetworkID, GenesisDigest: request.config.GenesisID,
-			IssuerControlID: request.member.ControlID, IssuerKeyID: keyID, ControlProof: request.input.proof, FactFrontier: request.input.projection.Frontier}, request.input.projection, device, request.sets, request.key)
+		_, body, err := signDeviceConfigView(DeviceViewEnvelope{Schema: 3, NetworkID: request.input.projection.NetworkID, GenesisDigest: request.config.GenesisID,
+			IssuerControlID: request.member.ControlID, IssuerKeyID: keyID, ControlProof: request.input.proof, FactFrontier: request.input.projection.Frontier}, view, request.key)
 		if err != nil {
 			return nil, err
 		}
@@ -289,7 +400,10 @@ func (request *deviceConfigRequest) get(ctx context.Context, device string) (*de
 		if err := request.current(); err != nil {
 			return nil, err
 		}
-		return &deviceConfigValue{envelope, body}, nil
+		// The full response now contains these canonical View bytes. Do not keep
+		// a second byte copy in the LRU; readers holding the earlier immutable
+		// View output remain unaffected by this replacement.
+		return &deviceConfigValue{view: view.view, digest: view.digest, body: body}, nil
 	})
 	if err != nil {
 		return nil, err
