@@ -92,8 +92,10 @@ func openObservationStore(root string, historicalKeys func() (map[reportOwner]st
 		err = store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
 			child := tx.Bucket(reportIndexBucket).Bucket(reportCountersBucket)
 			ready = child != nil
-			if ready && child.Sequence() != 0 {
-				return errors.New("report counter projection has an independent sequence")
+			if ready {
+				if err := reportCountersReady(child); err != nil {
+					return err
+				}
 			}
 			first, _ := tx.Bucket(observationBucket).Cursor().First()
 			empty = first == nil

@@ -60,8 +60,10 @@ func PrepareReportIndex(ctx context.Context, root, adminSocket string, options .
 				return ctx.Err()
 			})
 			if operationErr == nil {
-				operationErr = tx.Bucket(reportIndexBucket).Bucket(reportCountersBucket).ForEach(func(_, raw []byte) error {
-					stats.WGRows++
+				operationErr = tx.Bucket(reportIndexBucket).Bucket(reportCountersBucket).ForEach(func(key, raw []byte) error {
+					if !isReportCounterLayoutKey(key) {
+						stats.WGRows++
+					}
 					stats.WGBytes += int64(len(raw))
 					return ctx.Err()
 				})
@@ -95,10 +97,7 @@ func PrepareReportIndex(ctx context.Context, root, adminSocket string, options .
 		if child == nil {
 			return rebuildReportCounters(ctx, tx, keys)
 		}
-		if child.Sequence() != 0 {
-			return errors.New("report counter projection has an independent sequence")
-		}
-		return nil
+		return reportCountersReady(child)
 	})
 	if err == nil && mode.Stats != nil {
 		*mode.Stats = stats

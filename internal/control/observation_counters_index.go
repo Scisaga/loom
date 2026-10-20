@@ -3,13 +3,15 @@ package control
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 
 	bolt "go.etcd.io/bbolt"
 )
 
 // A disposable, one-way projection of each accepted original, including reports
-// without counters. Keys are the complete original keys, never a latest pointer.
+// without counters. Full original keys hold samples, and NUL-prefixed content
+// keys share their immutable layout bytes. Neither is a latest pointer.
 var reportCountersBucket = []byte("wg-counters")
 
 type reportCounterIndexValue struct {
@@ -38,12 +40,47 @@ func indexReportCounters(tx *bolt.Tx, location []byte, report DeviceReport, key 
 	if index == nil {
 		return errors.New("report counter projections unavailable")
 	}
-	body, err := encodeReportCounterIndex(counterIndexValue(report, key))
+	body, layout, err := encodeReportCounterIndex(counterIndexValue(report, key))
+	if err != nil {
+		return err
+	}
+	layoutKey, err := reportCounterLayoutKey(body)
 	if err != nil {
 		return err
 	}
 	index.FillPercent = 0.9
+	if previous := index.Get(layoutKey); previous != nil {
+		if !bytes.Equal(previous, layout) {
+			return errors.New("counter layout digest collides with different stored bytes")
+		}
+	} else if err := index.Put(layoutKey, layout); err != nil {
+		return err
+	}
 	return index.Put(location, body)
+}
+
+// A nonempty old per-row encoding has no NUL-prefixed layout keys. This bounded
+// startup check rejects it without silently scanning or replacing old history.
+// Full integrity, including all referenced layouts, belongs to offline verify.
+func reportCountersReady(index *bolt.Bucket) error {
+	if index == nil {
+		return errors.New("report counter projections unavailable")
+	}
+	if index.Sequence() != 0 {
+		return errors.New("report counter projection has an independent sequence")
+	}
+	key, raw := index.Cursor().First()
+	if key == nil {
+		return nil
+	}
+	if !isReportCounterLayoutKey(key) || raw == nil {
+		return errors.New("report counter index requires offline prepare-report-index --rebuild")
+	}
+	layout, err := decodeReportCounterLayout(raw)
+	if err != nil || !bytes.Equal(key[1:], layout.digest[:]) {
+		return errors.New("invalid counter layout; run offline prepare-report-index --rebuild")
+	}
+	return nil
 }
 
 // Every original is checked before its derived row is trusted or replaced.
@@ -99,6 +136,7 @@ func verifyReportCounters(ctx context.Context, tx *bolt.Tx, keys map[reportOwner
 		return errors.New("report counter projection has an independent sequence")
 	}
 	codec := newContractCodec()
+	usedLayouts := map[[sha256.Size]byte]bool{}
 	if err := tx.Bucket(observationBucket).ForEach(func(location, raw []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -107,10 +145,15 @@ func verifyReportCounters(ctx context.Context, tx *bolt.Tx, keys map[reportOwner
 		if err != nil {
 			return err
 		}
-		expected, err := encodeReportCounterIndex(counterIndexValue(report, key))
+		expected, layout, err := encodeReportCounterIndex(counterIndexValue(report, key))
 		if err != nil || !bytes.Equal(index.Get(location), expected) {
 			return errors.New("report counter projection differs from its verified original")
 		}
+		layoutKey, err := reportCounterLayoutKey(expected)
+		if err != nil || !bytes.Equal(index.Get(layoutKey), layout) {
+			return errors.New("report counter layout differs from its verified original")
+		}
+		usedLayouts[[sha256.Size]byte(expected[:sha256.Size])] = true
 		return nil
 	}); err != nil {
 		return err
@@ -119,7 +162,16 @@ func verifyReportCounters(ctx context.Context, tx *bolt.Tx, keys map[reportOwner
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if raw == nil || tx.Bucket(observationBucket).Get(location) == nil {
+		if raw == nil {
+			return errors.New("unexpected counter projection child bucket")
+		}
+		if isReportCounterLayoutKey(location) {
+			if !usedLayouts[[sha256.Size]byte(location[1:])] {
+				return errors.New("counter layout has no referencing original")
+			}
+			return nil
+		}
+		if _, _, err := locateReportKey(location); err != nil || tx.Bucket(observationBucket).Get(location) == nil {
 			return errors.New("counter projection has no original")
 		}
 		return nil
@@ -144,8 +196,9 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 			return err
 		}
 		first, copied := offset, 0
-		type row struct{ value, highestRaw []byte }
+		type row struct{ value, layout, highestRaw []byte }
 		var rows []row
+		layouts := map[[sha256.Size]byte][]byte{}
 		err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
 			index := tx.Bucket(reportIndexBucket).Bucket(reportCountersBucket)
 			if index == nil || index.Sequence() != 0 {
@@ -160,6 +213,18 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 				if len(value) == 0 || len(value) > controlHTTPBodyLimit {
 					return errors.New("pinned counter projection is absent or exceeds its input boundary")
 				}
+				layoutKey, err := reportCounterLayoutKey(value)
+				if err != nil {
+					return err
+				}
+				layoutID := [sha256.Size]byte(value[:sha256.Size])
+				layout, shared := layouts[layoutID]
+				if !shared {
+					layout = index.Get(layoutKey)
+					if len(layout) == 0 || len(layout) > controlHTTPBodyLimit {
+						return errors.New("pinned counter layout is absent or exceeds its input boundary")
+					}
+				}
 				var raw []byte
 				if position.ref.ReportSequence == highest {
 					raw = tx.Bucket(observationBucket).Get(position.key)
@@ -167,11 +232,19 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 						return errors.New("pinned highest original is absent or exceeds its input boundary")
 					}
 				}
-				if copied > 0 && copied+len(value)+len(raw) > 1<<20 {
+				size := len(value) + len(raw)
+				if !shared {
+					size += len(layout)
+				}
+				if copied > 0 && copied+size > 1<<20 {
 					break
 				}
-				rows = append(rows, row{bytes.Clone(value), bytes.Clone(raw)})
-				copied += len(value) + len(raw)
+				if !shared {
+					layout = bytes.Clone(layout)
+					layouts[layoutID] = layout
+				}
+				rows = append(rows, row{bytes.Clone(value), layout, bytes.Clone(raw)})
+				copied += size
 				offset++
 			}
 			return nil
@@ -179,13 +252,23 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 		if err != nil {
 			return err
 		}
+		decodedLayouts := map[[sha256.Size]byte]*reportCounterLayout{}
 		for i, row := range rows {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			position := positions[first+i]
+			layoutID := [sha256.Size]byte(row.value[:sha256.Size])
+			layout := decodedLayouts[layoutID]
+			if layout == nil {
+				layout, err = decodeReportCounterLayout(row.layout)
+				if err != nil {
+					return err
+				}
+				decodedLayouts[layoutID] = layout
+			}
 			var value reportCounterIndexValue
-			if err := decodeReportCounterIndex(row.value, &value); err != nil {
+			if err := decodeReportCounterSample(row.value, layout, &value); err != nil {
 				return err
 			}
 			if value.VerifiedPublicKey != publicKey {
@@ -208,8 +291,8 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 				if err != nil {
 					return err
 				}
-				expected, err := encodeReportCounterIndex(counterIndexValue(report, publicKey))
-				if err != nil || !bytes.Equal(row.value, expected) {
+				expected, expectedLayout, err := encodeReportCounterIndex(counterIndexValue(report, publicKey))
+				if err != nil || !bytes.Equal(row.value, expected) || !bytes.Equal(row.layout, expectedLayout) {
 					return errors.New("highest counter projection differs from its original")
 				}
 			}
