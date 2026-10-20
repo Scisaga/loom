@@ -151,8 +151,13 @@ func (store *ObservationStore) pinDeviceHistoryLocationsFrom(ctx context.Context
 			}
 		}
 		// Include every fork at selected positions even if only one is in the time index.
-		cursor := locations.Cursor()
+		ordered := make([]U64, 0, len(sequences))
 		for sequence := range sequences {
+			ordered = append(ordered, sequence)
+		}
+		sort.Slice(ordered, func(i, j int) bool { return ordered[i] > ordered[j] })
+		cursor := locations.Cursor()
+		for _, sequence := range ordered {
 			if err := ctx.Err(); err != nil {
 				return err
 			}

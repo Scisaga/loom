@@ -1,6 +1,8 @@
 package control
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/subtle"
@@ -672,8 +674,40 @@ func (server *Server) page(writer http.ResponseWriter, request *http.Request) {
 func secureFiles(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Cache-Control", "no-cache")
+		name := strings.TrimPrefix(request.URL.Path, "/")
+		switch path.Ext(name) {
+		case ".js", ".css", ".svg":
+			if !strings.Contains(name, "/") {
+				if body, err := staticFiles.ReadFile("static/" + name); err == nil {
+					writer.Header().Add("Vary", "Accept-Encoding")
+					if compressed, ok := staticGzip(request, body); ok {
+						writer.Header().Set("Content-Encoding", "gzip")
+						writer.Header().Set("Content-Length", strconv.Itoa(len(compressed)))
+						http.ServeContent(writer, request, name, time.Time{}, bytes.NewReader(compressed))
+						return
+					}
+				}
+			}
+		}
 		next.ServeHTTP(writer, request)
 	})
+}
+
+// Static compression has no retained state. Range requests keep the existing
+// identity representation and FileServer's byte-range and conditional behavior.
+func staticGzip(request *http.Request, body []byte) ([]byte, bool) {
+	if request.Header.Get("Range") != "" || !acceptsReportGzip(request.Header.Get("Accept-Encoding")) {
+		return nil, false
+	}
+	var buffer bytes.Buffer
+	writer := gzip.NewWriter(&buffer)
+	if _, err := writer.Write(body); err != nil {
+		return nil, false
+	}
+	if err := writer.Close(); err != nil {
+		return nil, false
+	}
+	return buffer.Bytes(), true
 }
 
 func serveEmbedded(writer http.ResponseWriter, request *http.Request, name, contentType string) {
@@ -686,6 +720,12 @@ func serveEmbedded(writer http.ResponseWriter, request *http.Request, name, cont
 		contentType = mime.TypeByExtension(path.Ext(name))
 	}
 	writer.Header().Set("Content-Type", contentType)
+	writer.Header().Add("Vary", "Accept-Encoding")
+	if compressed, ok := staticGzip(request, body); ok {
+		body = compressed
+		writer.Header().Set("Content-Encoding", "gzip")
+		writer.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	}
 	if request.Method != http.MethodHead {
 		_, _ = writer.Write(body)
 	}

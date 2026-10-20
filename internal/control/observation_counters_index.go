@@ -38,10 +38,11 @@ func indexReportCounters(tx *bolt.Tx, location []byte, report DeviceReport, key 
 	if index == nil {
 		return errors.New("report counter projections unavailable")
 	}
-	body, err := CanonicalEncode(counterIndexValue(report, key))
+	body, err := encodeReportCounterIndex(counterIndexValue(report, key))
 	if err != nil {
 		return err
 	}
+	index.FillPercent = 0.9
 	return index.Put(location, body)
 }
 
@@ -106,7 +107,7 @@ func verifyReportCounters(ctx context.Context, tx *bolt.Tx, keys map[reportOwner
 		if err != nil {
 			return err
 		}
-		expected, err := CanonicalEncode(counterIndexValue(report, key))
+		expected, err := encodeReportCounterIndex(counterIndexValue(report, key))
 		if err != nil || !bytes.Equal(index.Get(location), expected) {
 			return errors.New("report counter projection differs from its verified original")
 		}
@@ -184,7 +185,7 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 			}
 			position := positions[first+i]
 			var value reportCounterIndexValue
-			if err := codec.decode(row.value, &value, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
+			if err := decodeReportCounterIndex(row.value, &value); err != nil {
 				return err
 			}
 			if value.VerifiedPublicKey != publicKey {
@@ -207,7 +208,7 @@ func (store *ObservationStore) walkDeviceCounterHistory(ctx context.Context, net
 				if err != nil {
 					return err
 				}
-				expected, err := CanonicalEncode(counterIndexValue(report, publicKey))
+				expected, err := encodeReportCounterIndex(counterIndexValue(report, publicKey))
 				if err != nil || !bytes.Equal(row.value, expected) {
 					return errors.New("highest counter projection differs from its original")
 				}
