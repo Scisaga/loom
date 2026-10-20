@@ -148,6 +148,9 @@ func TestWebChromeOverviewSharesProgressiveTrafficAndRecoversReads(t *testing.T)
 	}
 	mu.Unlock()
 
+	// Cancellation below exercises the normal two-slot round after the initial
+	// navigation budget, including explicit reloads that clear every old result.
+	waitChromeEvaluation(t, debug, `performance.now()>=3000`)
 	// A fetch that ignores cancellation makes late-response rejection observable.
 	chromeDo(t, debug, `window.demoFetch=window.fetch;window.demoPending=[];window.fetch=(url,options)=>String(url).startsWith('/api/control/ui/traffic-history')?new Promise(resolve=>demoPending.push({url,options,resolve})):demoFetch(url,options);document.querySelector('[data-traffic-retry^="network:"]').click();true`)
 	waitChromeEvaluation(t, debug, `demoPending.length===2`)

@@ -102,6 +102,7 @@ const app=document.querySelector('#app'),connection=document.querySelector('#con
 let projection={ui_state:{warnings:[]},devices:[],links:[],paths:[],policies:[],services:[],releases:[],},reports=[],admin=false,operations=new Set,lastSnapshot='',enrollmentOptions=null,deferredRender=false,snapshotSerial=0;
 const inviteCache=new Map,inviteLoads=new Set;
 const histories=new Map,historyLoads=new Map;
+let historyStartTimer=0;
 let evidenceTimer=0,evidenceUTC=Date.now(),evidenceMonotonic=performance.now();
 function evidenceNow(){const tick=performance.now();evidenceUTC=Math.max(Date.now(),evidenceUTC+tick-evidenceMonotonic);evidenceMonotonic=tick;return evidenceUTC}
 function updateDisplayedEvidence(){projection=expireEvidence(projection,evidenceNow());reports=list(projection.devices).filter(v=>v.evidence).map(v=>({device_id:v.id,...v.evidence,observations:list(v.evidence.measurements)}))}
@@ -254,6 +255,7 @@ function visibleHistories(){
  return wanted;
 }
 function loadHistories(){
+ clearTimeout(historyStartTimer);historyStartTimer=0;
  const wanted=visibleHistories();
  for(const [id,value]of histories)if(wanted.get(id)?.key!==value.key)histories.delete(id);
  for(const [id,value]of historyLoads)if(wanted.get(id)?.key!==value.key)value.controller.abort();
@@ -263,8 +265,12 @@ function loadHistories(){
  const pending=[...wanted].filter(([id,value])=>!historyLoads.has(id)&&(!histories.has(id)||histories.get(id).version!==value.version));
  pending.sort(([a],[b])=>(order.get(a)??-1)-(order.get(b)??-1));
  const selected=new Set([...app.querySelectorAll('[data-selected-link]')].flatMap(node=>['link:'+node.dataset.selectedLink,'traffic:link:'+node.dataset.selectedLink]));
+ // Give the first Overview read the remaining navigation budget, then let
+ // another scope progress even if that first read is still pending.
+ const firstBudget=location.pathname==='/'&&histories.size===0&&wanted.size>0?3000-performance.now():0,limit=firstBudget>0?1:2;
+ if(firstBudget>0&&(pending.length||historyLoads.size))historyStartTimer=setTimeout(()=>{historyStartTimer=0;loadHistories()},Math.max(1,Math.ceil(firstBudget)));
  // Prefer the selected metrics in one slot; let the other continue the round.
- while(historyLoads.size<2&&pending.length){
+ while(historyLoads.size<limit&&pending.length){
   const index=[...historyLoads.keys()].some(id=>selected.has(id))?0:Math.max(0,pending.findIndex(([id])=>selected.has(id)));
   const [id,{key,version,url}]=pending.splice(index,1)[0];
   const request={key,controller:new AbortController()};historyLoads.set(id,request);

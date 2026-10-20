@@ -461,6 +461,16 @@ func (server *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "control projection unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	w.Header().Add("Vary", "Accept-Encoding")
+	if r.Header.Get("Range") == "" && acceptsReportGzip(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		writer := gzip.NewWriter(w)
+		_ = json.NewEncoder(writer).Encode(value)
+		_ = writer.Close()
+		return
+	}
 	writeJSON(w, http.StatusOK, value)
 }
 func (server *Server) live(w http.ResponseWriter, r *http.Request) {
