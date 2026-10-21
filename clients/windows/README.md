@@ -12,6 +12,21 @@ enrollment and private transport are defined by
 All editions use the same enrollment, candidate, observation, and selection
 semantics.
 
+Each profile stores one policy choice per Service in its existing protected
+preference. The control grants a set of available policies; multiple policies for
+the same Service are allowed. A new Service with one policy is initialized once;
+multiple options require an explicit client choice. Revocation clears that
+Service's choice and requires reselection. Runtime failure stays within the
+chosen policy. Switching one Service leaves other Services and their connections
+unchanged. The previous global Direct / Auto / fixed-exit setting is retired.
+
+Existing global preferences require the explicit `migrate-policy-selection
+-state <protected-profile> -view <certified-view> -evidence <protected-original>`
+command from the exact new edition. Stop the GUI and runtime first; the command
+takes both existing execution locks and preserves the original DPAPI bytes.
+The control must reassert the authorization through `device.put` before exporting
+the replacement View. Ordinary startup and sync only accept the current shape.
+
 ## Normal user flow
 
 All three editions use the same native Misaka UI and the same private device
@@ -80,9 +95,9 @@ Ordinary Direct has `final_exit=direct` and no managed hops. A device authorized
 to execute as its own final egress keeps its NodeID in `final_exit` even though
 its network hop list is empty. Local egress has no entry hop, so entry-node scopes
 do not apply and it needs no self-dial or inbound resource.
-Where the HostAdapter supports local egress, Auto
-and a fixed preference for that NodeID can select this local candidate; Direct
-selects ordinary Direct only. The UI and profile reconstruction preserve the
+Where the HostAdapter supports local egress, the selected Policy must explicitly
+authorize it. Candidate choice stays inside that Policy, including its final-exit
+restriction. The UI and profile reconstruction preserve the
 logical exit instead of inferring Direct from an empty hop list.
 
 The UI uses the native Direct2D/DirectWrite Misaka layout, profile

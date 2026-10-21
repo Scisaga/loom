@@ -45,6 +45,9 @@ func (server *Server) HandleOperation(ctx context.Context, operation Operation) 
 		return Submission{}, nil, err
 	}
 	business := effectiveOperation(operation)
+	if policy, ok := business.Payload.(NetworkPolicy); ok && business.Operation == "policy.put" && policy.Action != "allow" {
+		return Submission{}, nil, errors.New("current Policies only express explicit allow")
+	}
 	_, _, priorErr := server.Runtime.Authority.MaterialForRequest(operation.RequestID)
 	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
 		return Submission{}, nil, priorErr

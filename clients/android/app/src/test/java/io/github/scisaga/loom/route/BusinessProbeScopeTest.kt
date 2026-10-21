@@ -12,7 +12,7 @@ class BusinessProbeScopeTest {
         val profile = ManagedProfile("demo-device", "Demo", "demo-digest", "[]", "{}", "[]", "demo-record",
             listOf("192.0.2.53"), listOf(ServiceProbeTargets("demo-service", listOf("https://web.example/health"))))
         val selected = AppliedSelector("service:demo-service", "demo-candidate", listOf("demo-exit"), "demo-exit")
-        val application = AppliedRoute(RouteMode.AUTO, "", false, listOf("demo-exit"), listOf(selected))
+        val application = AppliedRoute(mapOf("demo-service" to "demo-policy"), listOf(selected))
         val input = serviceBusinessProbeInputs(profile, application, "demo-network").single()
         assertEquals(selected, input.selector)
         assertEquals("192.0.2.53", input.dns)

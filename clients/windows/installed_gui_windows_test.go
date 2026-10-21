@@ -54,13 +54,8 @@ func TestInstalledGUIJoinLive(t *testing.T) {
 	if err := app.createControls(); err != nil {
 		t.Fatal(err)
 	}
-	app.exchangeInstalledBroker(brokerRequest{Operation: "status"})
-	if s := app.snapshot(); s.joined || s.state != guiNeedsJoin {
-		t.Fatal("service must be waiting for its first join")
-	}
-	app.renderControls()
 	showPortableWindow(hwnd)
-	app.importJoinArtifact(qr)
+	opened, submitted, connecting := false, false, false
 	for ctx.Err() == nil {
 		app.exchangeInstalledBroker(brokerRequest{Operation: "status"})
 		var msg portableMSG
@@ -73,7 +68,24 @@ func TestInstalledGUIJoinLive(t *testing.T) {
 			procDispatchMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		}
 		s := app.snapshot()
-		if s.state == guiError {
+		if !opened && s.profilesReady {
+			procSendMessage.Call(app.controls.addProfileButton, 0x00F5, 0, 0)
+			opened = true
+			continue
+		}
+		if opened && !submitted && s.profileDraft != nil {
+			app.importJoinArtifact(qr)
+			setPortableControlText(app.controls.draftName, "Demo installed network")
+			procSendMessage.Call(app.controls.draftSubmit, 0x00F5, 0, 0)
+			submitted = true
+			continue
+		}
+		if submitted && s.profileDraft == nil && s.joined && s.state == guiStopped && !connecting {
+			procSendMessage.Call(app.controls.primaryButton, 0x00F5, 0, 0)
+			connecting = true
+			continue
+		}
+		if submitted && s.state == guiError {
 			t.Fatalf("ordinary GUI join failed: %s", s.detail)
 		}
 		if s.state == guiConnected && len(s.routeOptions) > 0 {

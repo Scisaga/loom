@@ -26,7 +26,7 @@ func ObserveAndroidAlternateBusiness(stateBody, observationsBody, preferenceBody
 	}
 	state := clientadapter.State{NetworkGeneration: generation}
 	if len(preferenceBody) == 0 {
-		preferenceBody, _ = NewAndroidPreference("auto", "")
+		preferenceBody, _ = control.CanonicalEncode(clientmodel.EmptyPreference())
 	}
 	if err := control.DecodeCanonical(preferenceBody, &state.Preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
 		return nil, err

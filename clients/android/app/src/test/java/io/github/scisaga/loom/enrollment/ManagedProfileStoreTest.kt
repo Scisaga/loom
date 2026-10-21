@@ -13,6 +13,30 @@ class ManagedProfileStoreTest {
     private val stateKey = ProfileStorage.state(profileId)
 
     @Test
+    fun currentCertifiedFileImportKeepsServiceChoicesAndDoesNotCreateMigrationEvidence() {
+        val storage = MemoryStorage()
+        val original = "demo-current-identity".encodeToByteArray()
+        val next = "demo-forward-identity".encodeToByteArray()
+        val choice = "demo-service-choice".encodeToByteArray()
+        storage.put(stateKey, original)
+        storage.put(ProfileStorage.routePreference(profileId), choice)
+        var checked = false
+        val handle = ManagedProfileStore(storage, profileId,
+            validate = {}, checkAdvance = { after, before ->
+                assertArrayEquals(next, after); assertArrayEquals(original, before); checked = true
+            }, authenticatedView = { "demo-digest" },
+            project = { bytes -> ManagedProfile("demo-device", "Demo", "demo-digest", "[]", "{}", "[]", bytes.decodeToString()) },
+            acceptImportedView = { before, _ -> assertArrayEquals(original, before); next },
+        )
+        handle.importCertifiedView(byteArrayOf(1))
+        assertEquals(true, checked)
+        assertArrayEquals(next, handle.state())
+        assertArrayEquals(choice, storage.get(ProfileStorage.routePreference(profileId)))
+        assertNull(storage.get(ProfileStorage.policyIdentityEvidence(profileId)))
+        assertNull(storage.get(ProfileStorage.policyPreferenceEvidence(profileId)))
+    }
+
+    @Test
     fun explicitTransportImportPreservesEvidenceBeforeReplacingSingleAuthority() {
         val storage = MemoryStorage()
         val original = "demo-signed-historical-state".encodeToByteArray()
@@ -31,6 +55,37 @@ class ManagedProfileStoreTest {
         handle.replaceTransport(replacement)
         assertArrayEquals(original, storage.get(ProfileStorage.transportEvidence(profileId)))
         assertArrayEquals(replacement, store(storage).state())
+    }
+
+    @Test
+    fun policyImportRetriesBetweenPreferenceAndIdentityWritesAndPreservesLaterChoice() {
+        val storage = MemoryStorage()
+        val original = "demo-historical-identity".encodeToByteArray()
+        val legacy = "demo-old-preference".encodeToByteArray()
+        val current = "demo-current-identity".encodeToByteArray()
+        val converted = "demo-current-preference".encodeToByteArray()
+        val preferenceKey = ProfileStorage.routePreference(profileId)
+        storage.put(stateKey, original)
+        storage.put(preferenceKey, legacy)
+        val handle = ManagedProfileStore(storage, profileId,
+            validate = { check(!it.contentEquals(original)) }, checkAdvance = { next, expected -> assertArrayEquals(expected, next) },
+            authenticatedView = { "demo-digest" }, project = { bytes -> ManagedProfile("demo-device", "Demo", "demo-digest", "[]", "{}", "[]", bytes.decodeToString()) },
+            replacePolicy = { before, _, preference -> assertArrayEquals(original, before); assertArrayEquals(legacy, preference); current },
+            migratePreference = { _, _, _ -> converted },
+        )
+        storage.dropKey = stateKey
+        assertThrows(IllegalStateException::class.java) { handle.replacePolicySelection(byteArrayOf(1)) }
+        assertArrayEquals(original, storage.get(stateKey))
+        assertArrayEquals(converted, storage.get(preferenceKey))
+        storage.dropKey = null
+        handle.replacePolicySelection(byteArrayOf(1))
+        val laterChoice = "demo-user-choice-after-migration".encodeToByteArray()
+        storage.put(preferenceKey, laterChoice)
+        handle.replacePolicySelection(byteArrayOf(1))
+        assertArrayEquals(laterChoice, storage.get(preferenceKey))
+        assertArrayEquals(original, storage.get(ProfileStorage.policyIdentityEvidence(profileId)))
+        assertArrayEquals(legacy, storage.get(ProfileStorage.policyPreferenceEvidence(profileId)))
+        assertArrayEquals(current, handle.state())
     }
 
     @Test
@@ -139,10 +194,11 @@ class ManagedProfileStoreTest {
         private val records = mutableMapOf<String, ByteArray>()
         var rejectWrite = false
         var dropWrite = false
+        var dropKey: String? = null
         override fun get(key: String) = records[key]?.copyOf()
         override fun put(key: String, value: ByteArray) {
             check(!rejectWrite) { "atomic write failed" }
-            if (!dropWrite) records[key] = value.copyOf()
+            if (!dropWrite && key != dropKey) records[key] = value.copyOf()
         }
         override fun remove(key: String) { records.remove(key) }
     }

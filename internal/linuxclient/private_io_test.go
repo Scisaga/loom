@@ -84,7 +84,7 @@ func TestRuntimeReportUploadCoalescesPendingSnapshotsAndCancels(t *testing.T) {
 func TestReportConfirmationCannotOverwriteNewerReadback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	status := Status{Schema: 3, DeviceID: "demo-device", ViewDigest: control.ReleaseDigest([]byte("demo-view")),
-		FactFrontier: []control.FactFrontier{}, Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto},
+		FactFrontier: []control.FactFrontier{}, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}},
 		Runtime: "running", NetworkGeneration: "demo-old-network", Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}}
 	previous := &runtimeReportAttempt{status: status}
 	status.NetworkGeneration = "demo-new-network"

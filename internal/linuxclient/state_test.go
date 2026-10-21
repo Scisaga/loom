@@ -26,20 +26,20 @@ func TestResourceCacheRestartPreservesFailureAndConcurrentPreference(t *testing.
 	}
 	state.ResourceObservations = []control.Observation{{Level: "resource", ResourceID: "demo-resource", Target: "demo.example:443", Action: "hysteria2_tls",
 		SpecDigest: digest, NetworkGeneration: state.NetworkGeneration, Result: "unavailable", ObservedAt: 1000, ValidUntil: 31000}}
-	preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}
+	preference := clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	if err := SetPreference(path, state.NetworkGeneration, preference); err != nil {
 		t.Fatal(err)
 	}
 	saved, err := SaveObservations(path, state)
-	if err != nil || saved.Preference != preference {
+	if err != nil || !saved.Preference.Equal(preference) {
 		t.Fatal("resource sample overwrote the CLI preference", err)
 	}
 	restarted, err := loadLocalState(path, state.NetworkGeneration, digest)
-	if err != nil || !reflect.DeepEqual(restarted.ResourceObservations, state.ResourceObservations) || restarted.Preference != preference {
+	if err != nil || !reflect.DeepEqual(restarted.ResourceObservations, state.ResourceObservations) || !restarted.Preference.Equal(preference) {
 		t.Fatal("restart replaced original failure or its validity", err)
 	}
 	changed, err := loadLocalState(path, "demo-new-underlay", digest)
-	if err != nil || changed.ResourceObservations != nil || changed.Preference != preference {
+	if err != nil || changed.ResourceObservations != nil || !changed.Preference.Equal(preference) {
 		t.Fatal("network change retained stale authentication", err)
 	}
 }
@@ -77,19 +77,19 @@ func TestLocalStateRoundTripAndNetworkChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}
+	state.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	state.Observations = []clientmodel.Observation{{CandidateID: "relay", NetworkGeneration: "network-a", Scope: "service",
+	state.Observations = []clientmodel.Observation{{CandidateID: "relay", NetworkGeneration: "network-a", Scope: "service:demo-service",
 		Result: "available", Action: "tcp_udp_dns", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}
 	if err := SaveLocalState(path, state); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, err := LoadLocalState(path, "network-a")
-	if err != nil || len(reloaded.Observations) != 1 || reloaded.Preference.Exit != "demo-exit" {
+	if err != nil || len(reloaded.Observations) != 1 || reloaded.Preference.Policy("demo-service") != "demo-policy" {
 		t.Fatalf("reload = %+v, %v", reloaded, err)
 	}
 	changed, err := LoadLocalState(path, "network-b")
-	if err != nil || len(changed.Observations) != 0 || changed.Preference.Exit != "demo-exit" {
+	if err != nil || len(changed.Observations) != 0 || changed.Preference.Policy("demo-service") != "demo-policy" {
 		t.Fatalf("network change = %+v, %v", changed, err)
 	}
 }
@@ -97,7 +97,7 @@ func TestLocalStateRoundTripAndNetworkChange(t *testing.T) {
 func TestServerOnlyStatusAllowsNoSelections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	status := Status{Schema: 3, DeviceID: "demo-server", ViewDigest: "sha256:" + strings.Repeat("1", 64), FactFrontier: []control.FactFrontier{},
-		Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-generation",
+		Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-generation",
 		Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}, Runtime: "running", Reported: false}
 	if err := WriteStatus(path, status); err != nil {
 		t.Fatal(err)
@@ -118,9 +118,9 @@ func TestObservationCacheRequiresTheSameCertifiedView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}
+	state.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	state.Observations = []clientmodel.Observation{{CandidateID: "demo-route", NetworkGeneration: "demo-network", Scope: "demo-service",
+	state.Observations = []clientmodel.Observation{{CandidateID: "demo-route", NetworkGeneration: "demo-network", Scope: "service:demo-service",
 		Result: "available", Action: "tcp_udp_dns", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}
 	if err := SaveLocalState(path, state); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestObservationCacheRequiresTheSameCertifiedView(t *testing.T) {
 		t.Fatalf("same view lost reusable evidence: %+v, %v", restarted, err)
 	}
 	changed, err := loadLocalState(path, "demo-network", "sha256:"+strings.Repeat("2", 64))
-	if err != nil || len(changed.Observations) != 0 || changed.Preference != state.Preference {
+	if err != nil || len(changed.Observations) != 0 || !changed.Preference.Equal(state.Preference) {
 		t.Fatalf("new view inherited old evidence or lost preference: %+v, %v", changed, err)
 	}
 	if _, err := SaveObservations(path, restarted); err == nil {
@@ -141,7 +141,7 @@ func TestObservationCacheRequiresTheSameCertifiedView(t *testing.T) {
 func TestFailedApplicationStatusIsReadableWithoutOldSelections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	status := Status{Schema: 3, DeviceID: "demo-device", ViewDigest: "sha256:" + strings.Repeat("1", 64), FactFrontier: []control.FactFrontier{},
-		Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-generation",
+		Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-generation",
 		Runtime: "error", Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}}
 	if err := WriteStatus(path, status); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestFailedApplicationStatusIsReadableWithoutOldSelections(t *testing.T) {
 	if err != nil || read.Runtime != "error" || read.ViewDigest != status.ViewDigest || len(read.Selections) != 0 {
 		t.Fatalf("failed runtime readback = %+v, %v", read, err)
 	}
-	status.Selections = []SelectionStatus{{Scope: "demo-service", CandidateID: "demo-old"}}
+	status.Selections = []SelectionStatus{{Scope: "service:demo-service", CandidateID: "demo-old"}}
 	if err := WriteStatus(path, status); err == nil {
 		t.Fatal("failed application reused a previous generation's selection")
 	}

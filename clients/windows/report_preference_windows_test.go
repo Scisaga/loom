@@ -14,6 +14,38 @@ import (
 	"loom/internal/deviceclient"
 )
 
+func TestWindowsPolicyApplyFailureStopsRuntimeWhenRejectionCannotBeVerified(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app := &portableGUI{edition: editionPortableMixed, root: t.TempDir(), ctx: ctx, state: guiConnected, joined: true, runCancel: cancel}
+	invite, makeView := windowsFixture(t)
+	path := windowsProfileStatePath(app.root)
+	store, err := deviceclient.OpenProtected(path, invite, clientsecret.UserProtector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := makeView(store.PublicKey(), 7, func(view *control.DeviceView) {
+		other := view.Policies[0]
+		other.ID = "demo-policy-other"
+		view.Policies = append(view.Policies, other)
+		view.PolicyIDs = append(view.PolicyIDs, other.ID)
+	})
+	if err := store.SaveLKG(view); err != nil {
+		t.Fatal(err)
+	}
+	preference, err := clientmodel.ChoosePolicy(store.Preference(), view.View, "demo-service", "demo-policy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.setRoutePreference(preference); err == nil || ctx.Err() == nil {
+		t.Fatal("unverified selector rejection left the runtime serving")
+	}
+	reopened, err := deviceclient.LoadProtected(path, clientsecret.UserProtector{})
+	if err != nil || !reopened.Preference().Equal(preference) || reopened.PublicKey() != store.PublicKey() {
+		t.Fatal("failed application lost the saved choice or identity", err)
+	}
+}
+
 func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 	for _, edition := range []clientEdition{editionPortableMixed, editionPortableTUN, editionInstalled} {
 		t.Run(string(edition), func(t *testing.T) {
@@ -31,6 +63,10 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 			view := makeView(store.PublicKey(), 7, func(view *control.DeviceView) {
 				view.Responsibilities = []string{"access", "internet_egress"}
 				view.Policies[0].LocalEgressDevices = new([]string{view.DeviceID})
+				second := view.Policies[0]
+				second.ID = "demo-policy-other"
+				view.Policies = append(view.Policies, second)
+				view.PolicyIDs = append(view.PolicyIDs, second.ID)
 			})
 			if err := store.SaveLKG(view); err != nil {
 				t.Fatal(err)
@@ -44,19 +80,23 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 			if actual.ID == "" {
 				t.Fatal("demo Direct readback missing")
 			}
-			for _, preference := range []clientmodel.Preference{{Schema: 3, Mode: clientmodel.ModeAuto}, {Schema: 3, Mode: clientmodel.ModeDirect}, {Schema: 3, Mode: clientmodel.ModeFixed, Exit: view.View.DeviceID}} {
+			for _, policy := range view.View.Policies {
+				preference, err := clientmodel.ChoosePolicy(clientmodel.EmptyPreference(), view.View, policy.ServiceID, policy.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
 				// This is the same write operation used by the native GUI/broker.
 				// No transport is launched: this test covers saved settings/readback.
 				if err := app.setRoutePreference(preference); err != nil {
 					t.Fatal(err)
 				}
 				reopened, err := deviceclient.LoadProtected(path, protector)
-				if err != nil || reopened.PublicKey() != store.PublicKey() || reopened.Preference() != preference {
+				if err != nil || reopened.PublicKey() != store.PublicKey() || !reopened.Preference().Equal(preference) {
 					t.Fatal("native preference write lost its original DPAPI identity", err)
 				}
 				activation := clientadapter.Activation{State: clientadapter.State{Preference: reopened.Preference(), NetworkGeneration: "demo-underlay"}, Selections: []clientadapter.SelectionStatus{{Scope: actual.Scope, CandidateID: actual.ID}}}
 				report, err := windowsDeviceReport(reopened.LKG(), activation, nil, time.Now())
-				if err != nil || report.Preference == nil || report.Preference.Mode != string(preference.Mode) || report.Preference.Exit != preference.Exit || report.Selections[0].CandidateID != actual.ID {
+				if err != nil || report.PolicyChoices == nil || report.Preference != nil || (*report.PolicyChoices)[0].PolicyID != policy.ID || report.Selections[0].CandidateID != actual.ID {
 					t.Fatal("native report replaced the setting with the actual selector", err)
 				}
 				sequence, err := reopened.ReserveReportSequence()

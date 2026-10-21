@@ -83,6 +83,37 @@ func androidFixture(t *testing.T, sequence uint64, deny bool, changes ...func(*c
 	}
 	return state, body
 }
+
+func TestExplicitCurrentAndroidViewImportKeepsIdentityAndForwardChecks(t *testing.T) {
+	old, _ := androidFixture(t, 7, false)
+	old.ReportSequence = 12
+	original, err := deviceclient.EncodeIdentityState(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _ := androidFixture(t, 8, false)
+	view, err := control.CanonicalEncode(next.LKG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported, err := AcceptAndroidCertifiedView(original, view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := decodeState(imported)
+	if err != nil || accepted.PublicKey != old.PublicKey || accepted.PrivateKey != old.PrivateKey || accepted.ReportSequence != 12 || accepted.LKG.Signature != next.LKG.Signature {
+		t.Fatal("current import replaced identity or lost progress", err)
+	}
+	stale, _ := control.CanonicalEncode(old.LKG)
+	conflict, _ := androidFixture(t, 8, true)
+	conflicting, _ := control.CanonicalEncode(conflict.LKG)
+	for _, rejected := range [][]byte{stale, conflicting} {
+		if _, err := AcceptAndroidCertifiedView(imported, rejected); err == nil {
+			t.Fatal("current import bypassed authenticated frontier")
+		}
+	}
+}
+
 func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
 	state, body := androidFixture(t, 7, false)
 	profileBody, err := AndroidDeviceProfile(body)
@@ -301,7 +332,7 @@ func assertRuntimeSelectorRejectionOnly(t *testing.T, original, derived []byte) 
 	for i := range before {
 		if string(before[i]["type"]) == `"selector"` {
 			var members, actual []string
-			if json.Unmarshal(before[i]["outbounds"], &members) != nil || json.Unmarshal(after[i]["outbounds"], &actual) != nil || len(actual) != len(members)+1 || actual[len(actual)-1] != "reject" || string(after[i]["default"]) != `"reject"` {
+			if json.Unmarshal(before[i]["outbounds"], &members) != nil || json.Unmarshal(after[i]["outbounds"], &actual) != nil || len(actual) != len(members) || len(actual) == 0 || actual[0] != "reject" || string(after[i]["default"]) != `"reject"` {
 				t.Fatal("selector has no exact local rejection position")
 			}
 			for j := range members {

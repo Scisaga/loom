@@ -111,7 +111,8 @@ func TestSnapshotConfigReuseRejectsAnInputChangeWhileWaiting(t *testing.T) {
 	<-ctx.entered
 	projection := request.authority.Snapshot()
 	policy := projection.NetworkIntent.Policies[0]
-	policy.Action = "deny"
+	policy.AllowDirect = new(false)
+	policy.EntryScope = PolicyScope{Mode: "none", NodeIDs: []string{}}
 	target, _ := projection.CurrentTarget("policy", policy.ID)
 	service, _ := projection.CurrentTarget("service", policy.ServiceID)
 	dependencies := sortedUniqueDependencies(append(append([]string{}, target.MaterialIDs...), service.MaterialIDs...))

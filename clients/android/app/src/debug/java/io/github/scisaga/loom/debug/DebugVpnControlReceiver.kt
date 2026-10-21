@@ -9,7 +9,6 @@ import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.readBounded
 import io.github.scisaga.loom.route.RouteManager
-import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.vpn.LoomVpnService
 import io.github.scisaga.loom.vpn.VpnRuntime
 import java.io.File
@@ -48,7 +47,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
                 append(";running=").append(status.running)
                 append(";busy=").append(status.busy)
                 append(";blocked=").append(status.blocked)
-                append(";mode=").append(status.mode.wire)
+                append(";choices=").append(status.services.joinToString(",") { "${it.serviceID}:${it.policyID}" })
                 append(";paths=").append(status.currentPaths.size)
                 append(";detail=").append(status.detail)
             }
@@ -65,10 +64,11 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
             }
             return
         }
-        if (intent.action == ACTION_ROUTE_DIRECT || intent.action == ACTION_ROUTE_AUTO) {
+        if (intent.action == ACTION_POLICY_SELECT) {
             RouteManager.get(context).select(
                 viewedProfileId,
-                if (intent.action == ACTION_ROUTE_DIRECT) RouteMode.DIRECT else RouteMode.AUTO,
+                requireNotNull(intent.getStringExtra("service_id")),
+                requireNotNull(intent.getStringExtra("policy_id")),
             )
             return
         }
@@ -118,8 +118,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         const val ACTION_ENROLLMENT_STATUS = "io.github.scisaga.loom.debug.ENROLLMENT_STATUS"
         const val ACTION_ROUTE_STATUS = "io.github.scisaga.loom.debug.ROUTE_STATUS"
         const val ACTION_RUNTIME_STATUS = "io.github.scisaga.loom.debug.RUNTIME_STATUS"
-        const val ACTION_ROUTE_DIRECT = "io.github.scisaga.loom.debug.ROUTE_DIRECT"
-        const val ACTION_ROUTE_AUTO = "io.github.scisaga.loom.debug.ROUTE_AUTO"
+        const val ACTION_POLICY_SELECT = "io.github.scisaga.loom.debug.POLICY_SELECT"
         private const val PENDING_INVITE = "pending.loom-invite"
         private const val MAX_INVITE_BYTES = 16 * 1024
     }

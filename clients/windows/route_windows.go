@@ -19,50 +19,63 @@ import (
 
 type portableRouteOption struct {
 	Label      string
+	ServiceID  string
+	PolicyID   string
+	Selected   bool
 	Preference clientmodel.Preference
 }
 
-func routeOptions(routes []clientmodel.RouteCandidate) ([]portableRouteOption, error) {
-	exits := map[string]bool{}
-	direct := false
-	for _, route := range routes {
-		if err := route.Validate(); err != nil {
-			return nil, err
-		}
-		if route.FinalExit == "direct" {
-			direct = true
-		} else {
-			exits[route.FinalExit] = true
+func equalRouteOptions(left, right []portableRouteOption) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		a, b := left[i], right[i]
+		if a.Label != b.Label || a.ServiceID != b.ServiceID || a.PolicyID != b.PolicyID || a.Selected != b.Selected || !a.Preference.Equal(b.Preference) {
+			return false
 		}
 	}
-	options := []portableRouteOption{{Label: "自动选择", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}}}
-	if direct {
-		options = append(options, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}})
-	}
-	ids := make([]string, 0, len(exits))
-	for id := range exits {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		options = append(options, portableRouteOption{Label: "固定出口 · " + id,
-			Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: id}})
-	}
-	return options, nil
+	return true
 }
 
-func windowsRouteOptions(view control.DeviceView) ([]portableRouteOption, error) {
+func windowsRouteOptions(view control.DeviceView, preferences ...clientmodel.Preference) ([]portableRouteOption, error) {
 	if err := view.Validate(); err != nil {
 		return nil, err
 	}
-	if view.RuntimeProfile == nil {
-		return routeOptions(nil)
+	preference := clientmodel.EmptyPreference()
+	if len(preferences) == 1 {
+		preference = preferences[0]
 	}
-	routes, _, err := clientadapter.AccessProjection(view)
+	preference, err := clientmodel.ReconcilePreference(preference, view)
 	if err != nil {
 		return nil, err
 	}
-	return routeOptions(routes)
+	options := []portableRouteOption{}
+	for _, service := range view.Services {
+		for _, policy := range view.Policies {
+			if policy.ServiceID != service.ID || policy.Action != "allow" {
+				continue
+			}
+			next, err := clientmodel.ChoosePolicy(preference, view, service.ID, policy.ID)
+			if err != nil {
+				continue
+			}
+			selected := preference.Policy(service.ID) == policy.ID
+			label := service.Name + " / " + policy.Name
+			if selected {
+				label += " ✓"
+			}
+			options = append(options, portableRouteOption{Label: label, ServiceID: service.ID, PolicyID: policy.ID, Selected: selected, Preference: next})
+		}
+	}
+	sort.Slice(options, func(i, j int) bool {
+		a, b := options[i], options[j]
+		if a.ServiceID != b.ServiceID {
+			return a.ServiceID < b.ServiceID
+		}
+		return a.PolicyID < b.PolicyID
+	})
+	return options, nil
 }
 func windowsRuntimeSelector(root, viewDigest string) (*clientadapter.HTTPSelector, error) {
 	status, err := readWindowsRuntimeStatus(root)
@@ -87,7 +100,7 @@ func windowsRuntimeSelector(root, viewDigest string) (*clientadapter.HTTPSelecto
 
 func routeOptionIndex(options []portableRouteOption, preference clientmodel.Preference) int {
 	for index, option := range options {
-		if option.Preference == preference {
+		if option.Preference.Equal(preference) {
 			return index
 		}
 	}
@@ -117,7 +130,7 @@ func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uin
 	if err != nil || store.LKG() == nil {
 		return errors.New("DPAPI profile 暂不可读")
 	}
-	options, err := windowsRouteOptions(store.LKG().View)
+	options, err := windowsRouteOptions(store.LKG().View, store.Preference())
 	if err != nil {
 		return err
 	}
@@ -171,30 +184,59 @@ func (app *portableGUI) routeSelectionChanged() {
 	go func() {
 		defer app.workers.Done()
 		if err := app.setRoutePreference(preference); err != nil {
-			app.routeFailure(app.runSequence, fmt.Errorf("出口切换失败: %w", err))
+			app.routeFailure(app.runSequence, fmt.Errorf("服务策略切换失败: %w", err))
 		}
 	}()
 }
 
-func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) error {
+func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) (resultErr error) {
 	app.routeMu.Lock()
 	defer app.routeMu.Unlock()
 	store, err := deviceclient.LoadProtected(windowsProfileStatePath(app.root), app.protector())
 	if err != nil || store.LKG() == nil {
 		return errors.New("无法读取 DPAPI profile")
 	}
-	options, err := windowsRouteOptions(store.LKG().View)
+	options, err := windowsRouteOptions(store.LKG().View, store.Preference())
 	if err != nil || routeOptionIndex(options, preference) < 0 {
-		return errors.New("出口未获当前 LKG 授权")
+		return errors.New("策略未获当前签名配置授权")
 	}
 	previous := store.Preference()
+	changedScopes := map[string]bool{}
+	for _, choice := range preference.Services {
+		if previous.Policy(choice.ServiceID) != choice.PolicyID {
+			for _, service := range store.LKG().View.Services {
+				if service.ID == choice.ServiceID {
+					changedScopes[service.Scope()] = true
+				}
+			}
+		}
+	}
 	if err := store.SetPreference(preference); err != nil {
 		return err
 	}
+	defer func() {
+		app.mu.Lock()
+		app.routeOptions, _ = windowsRouteOptions(store.LKG().View, preference)
+		app.routeSelected = routeOptionIndex(app.routeOptions, preference)
+		app.routeBusy = false
+		app.routeDetail = ""
+		if resultErr != nil {
+			app.routeDetail = "服务策略已保存；应用未确认：" + resultErr.Error()
+		}
+		paths := app.paths[:0]
+		for _, path := range app.paths {
+			if !changedScopes[path.Service] {
+				paths = append(paths, path)
+			}
+		}
+		app.paths = paths
+		app.mu.Unlock()
+		app.repaint()
+	}()
 	app.mu.RLock()
 	online := app.state == guiConnected && app.runCancel != nil
 	app.mu.RUnlock()
-	if online {
+	if online && len(changedScopes) > 0 {
 		lkg := store.LKG()
 		selector, selectErr := windowsRuntimeSelector(app.root, lkg.ViewDigest)
 		if selectErr == nil {
@@ -203,7 +245,7 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 				if err != nil {
 					return err
 				}
-				scopes, byScope, err := clientadapter.Scopes(routes)
+				scopes, byScope, err := clientadapter.Scopes(routes, clientmodel.ServiceScopes(lkg.View)...)
 				if err != nil {
 					return err
 				}
@@ -222,6 +264,9 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 				refreshWindowsLinkObservations(app.ctx, store, lkg, &linkState)
 				desired := map[string]string{}
 				for _, scope := range scopes {
+					if !changedScopes[scope] {
+						continue
+					}
 					current, readErr := selector.Read(app.ctx, scope)
 					if readErr != nil {
 						return readErr
@@ -242,17 +287,27 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) er
 			}()
 		}
 		if selectErr != nil {
-			_ = store.SetPreference(previous)
+			confirmed := false
+			if selector != nil {
+				scopes := []string{}
+				for scope := range changedScopes {
+					scopes = append(scopes, scope)
+				}
+				sort.Strings(scopes)
+				blocked, rejectErr := clientadapter.RejectSelections(app.ctx, selector, scopes)
+				confirmed = rejectErr == nil && len(blocked) == len(scopes)
+				selectErr = errors.Join(selectErr, rejectErr)
+			}
+			if !confirmed {
+				app.mu.RLock()
+				cancel := app.runCancel
+				app.mu.RUnlock()
+				if cancel != nil {
+					cancel()
+				}
+			}
 			return selectErr
 		}
 	}
-	app.mu.Lock()
-	app.routeOptions = options
-	app.routeSelected = routeOptionIndex(options, preference)
-	app.routeBusy = false
-	app.routeDetail = ""
-	app.paths = nil
-	app.mu.Unlock()
-	app.repaint()
 	return nil
 }

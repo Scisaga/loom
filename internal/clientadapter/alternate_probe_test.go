@@ -12,8 +12,8 @@ func TestAlternateSamplingIsBoundedFairAndDoesNotTouchCurrentSelector(t *testing
 	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	scope := "service:demo-service"
 	target := "https://demo.example/"
-	routes := []clientmodel.RouteCandidate{{ID: "demo-current", FinalExit: "demo-exit", Scope: scope}, {ID: "demo-b", FinalExit: "demo-exit", Scope: scope}, {ID: "demo-a", FinalExit: "demo-exit", Scope: scope}}
-	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-underlay"}
+	routes := []clientmodel.RouteCandidate{{ID: "demo-current", FinalExit: "demo-exit", Scope: scope, PolicyID: "demo-policy"}, {ID: "demo-b", FinalExit: "demo-exit", Scope: scope, PolicyID: "demo-policy"}, {ID: "demo-a", FinalExit: "demo-exit", Scope: scope, PolicyID: "demo-policy"}}
+	state := State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-underlay"}
 	selector := &fakeSelector{current: map[string]string{scope: "demo-current"}}
 	before := map[string]string{scope: "demo-current"}
 	calls := []string{}
@@ -42,9 +42,9 @@ func TestIndependentAlternateImprovementBecomesActualReadbackAfterMeasurement(t 
 	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	scope := "service:demo-service"
 	target := "https://demo.example/"
-	routes := []clientmodel.RouteCandidate{{ID: "demo-current", FinalExit: "demo-exit", Scope: scope}, {ID: "demo-alternate", FinalExit: "demo-exit", Scope: scope}}
+	routes := []clientmodel.RouteCandidate{{ID: "demo-current", FinalExit: "demo-exit", Scope: scope, PolicyID: "demo-policy"}, {ID: "demo-alternate", FinalExit: "demo-exit", Scope: scope, PolicyID: "demo-policy"}}
 	selector := &fakeSelector{current: map[string]string{scope: routes[0].ID}}
-	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-underlay", Observations: []clientmodel.Observation{{CandidateID: routes[0].ID, Scope: scope, Target: target, NetworkGeneration: "demo-underlay", Result: "available", Action: "https_request", ObservedAt: at.Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339), MetricMillis: 100}}}
+	state := State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-underlay", Observations: []clientmodel.Observation{{CandidateID: routes[0].ID, Scope: scope, Target: target, NetworkGeneration: "demo-underlay", Result: "available", Action: "https_request", ObservedAt: at.Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339), MetricMillis: 100}}}
 	state, err := sampleAlternateBusiness(context.Background(), routes, state, routes[0].ID, []string{target}, func() time.Time { return at.Add(time.Second) }, func(_ context.Context, candidate, actualTarget string) ProbeResult {
 		if selector.current[scope] != routes[0].ID || candidate != routes[1].ID || actualTarget != target {
 			t.Fatal("production selector was changed to take an alternate sample")

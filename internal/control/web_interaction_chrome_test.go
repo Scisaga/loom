@@ -531,7 +531,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	}
 	route := view.View.Routes[0]
 	zero := int64(0)
-	report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: "demo-browser-device", ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-network-generation", ReportedAt: server.now().UnixMilli(), Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}
+	report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: "demo-browser-device", ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-network-generation", ReportedAt: server.now().UnixMilli(), PolicyChoices: new([]PolicyChoice{{ServiceID: route.ServiceID, PolicyID: route.PolicyID}}), Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}
 	report.Components = []ComponentReadback{{ComponentID: "agent", Platform: "linux-amd64", Version: "demo-agent", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}, {ComponentID: "sing-box", Platform: "linux-amd64", Version: "demo-dataplane", ArtifactDigest: "sha256:" + strings.Repeat("b", 64)}}
 	// These signed samples test the UI mapping, not a live request to the example targets.
 	for index, target := range []string{"https://demo-service.example/no-duration", "https://demo-service.example/zero-duration"} {
@@ -590,19 +590,20 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	assertChromeLivePaths(t, debug)
 	report = assertChromeEvidenceExpiry(t, debug, report, sendReport)
 	for _, sample := range []struct {
-		value *ReportPreference
+		value *[]PolicyChoice
 		label string
-	}{{&ReportPreference{Mode: "auto"}, "Mode: Auto"}, {&ReportPreference{Mode: "direct"}, "Mode: Direct"}, {&ReportPreference{Mode: "fixed_exit", Exit: "demo-unavailable-exit"}, "Mode: Fixed exit · demo-unavailable-exit"}, {nil, "Mode: not reported"}} {
+	}{{new([]PolicyChoice{{ServiceID: route.ServiceID, PolicyID: route.PolicyID}}), "Demo browser policy"}, {new([]PolicyChoice{{ServiceID: route.ServiceID}}), "Waiting for selection"}, {nil, "not reported"}} {
 		report.ReportSequence++
-		report.Preference = sample.value
+		report.PolicyChoices = sample.value
 		sendReport(report)
 		chromeDo(t, debug, `(()=>{history.pushState({},'','/routing?service=demo-service&device=demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 		label, _ := json.Marshal(sample.label)
 		waitChromeEvaluation(t, debug, `document.querySelector('[data-routing-preference]')?.textContent.includes(`+string(label)+`)`)
-		if chromeDo(t, debug, `document.querySelector('.paths-current').textContent.includes('Current selection confirmed')&&[...document.querySelectorAll('tr[data-candidate]')].some(row=>row.cells[0].textContent.includes('Direct')&&row.cells[2].textContent.includes('Current selection'))`) != true {
-			t.Fatal("reported preference rewrote the actual path or created health")
+		if chromeDo(t, debug, `document.querySelector('.paths-current').textContent.includes('Current selection confirmed')`) != (sample.value != nil) {
+			t.Fatal("historical or missing choices fabricated a current policy")
 		}
 	}
+
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-browser-device');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#expected-component-form');f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')&&document.querySelector('#expected-component-form [data-delete-kind="expected_component"]')`)

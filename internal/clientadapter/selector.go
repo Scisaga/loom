@@ -174,61 +174,80 @@ func WaitSelector(ctx context.Context, selector Selector, scopes []string) error
 	}
 }
 
+// RejectSelections closes only the affected Services, including connections
+// created before a failed or ambiguous selector update. Cleanup outlives a
+// cancelled request but is bounded; a failed readback is never reported applied.
+func RejectSelections(ctx context.Context, selector Selector, scopes []string) (map[string]string, error) {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	readback := map[string]string{}
+	var failures []error
+	for _, scope := range scopes {
+		if err := selector.Set(cleanup, scope, BlockedSelection); err != nil {
+			failures = append(failures, fmt.Errorf("reject %s: %w", scope, err))
+		}
+	}
+	if len(scopes) > 0 {
+		if err := selector.CloseConnections(cleanup, scopes); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	for _, scope := range scopes {
+		actual, err := selector.Read(cleanup, scope)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if actual != BlockedSelection {
+			failures = append(failures, fmt.Errorf("Service %s rejection was not applied", scope))
+			continue
+		}
+		readback[scope] = actual
+	}
+	return readback, errors.Join(failures...)
+}
+
 func ApplySelections(ctx context.Context, selector Selector, desired map[string]string) (map[string]string, error) {
 	scopes := make([]string, 0, len(desired))
 	for scope := range desired {
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
-	before := make(map[string]string, len(scopes))
-	for _, scope := range scopes {
-		current, err := selector.Read(ctx, scope)
-		if err != nil {
-			return nil, err
-		}
-		before[scope] = current
-	}
-	changed := []string{}
-	rollback := func(cause error) error {
-		var failures []error
-		for index := len(changed) - 1; index >= 0; index-- {
-			if err := selector.Set(ctx, changed[index], before[changed[index]]); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		if len(changed) > 0 {
-			if err := selector.CloseConnections(ctx, changed); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		return errors.Join(append([]error{cause}, failures...)...)
-	}
-	for _, scope := range scopes {
-		if before[scope] == desired[scope] {
-			continue
-		}
-		if err := selector.Set(ctx, scope, desired[scope]); err != nil {
-			return nil, rollback(err)
-		}
-		changed = append(changed, scope)
-	}
-	if len(changed) > 0 {
-		if err := selector.CloseConnections(ctx, changed); err != nil {
-			return nil, rollback(err)
-		}
-	}
 	readback := make(map[string]string, len(scopes))
+	var failures []error
 	for _, scope := range scopes {
-		actual, err := selector.Read(ctx, scope)
-		if err != nil {
-			return nil, rollback(fmt.Errorf("selector %s readback failed: %w", scope, err))
+		apply := func() error {
+			current, err := selector.Read(ctx, scope)
+			if err != nil {
+				return err
+			}
+			if current != desired[scope] {
+				if err := selector.Set(ctx, scope, desired[scope]); err != nil {
+					return err
+				}
+				if err := selector.CloseConnections(ctx, []string{scope}); err != nil {
+					return err
+				}
+			}
+			actual, err := selector.Read(ctx, scope)
+			if err != nil {
+				return fmt.Errorf("selector %s readback failed: %w", scope, err)
+			}
+			if actual != desired[scope] {
+				return fmt.Errorf("selector %s readback does not match applied candidate", scope)
+			}
+			readback[scope] = actual
+			return nil
 		}
-		if actual != desired[scope] {
-			return nil, rollback(fmt.Errorf("selector %s readback does not match applied candidate", scope))
+		if err := apply(); err != nil {
+			blocked, rejectErr := RejectSelections(ctx, selector, []string{scope})
+			for key, value := range blocked {
+				readback[key] = value
+			}
+			failures = append(failures, errors.Join(err, rejectErr))
 		}
-		readback[scope] = actual
 	}
-	return readback, nil
+	return readback, errors.Join(failures...)
 }
 
 func (selector *HTTPSelector) Health(ctx context.Context) error {

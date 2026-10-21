@@ -17,6 +17,22 @@ leave business status unknown without preventing an active VPN. These Android
 catalog rules differ from Windows, which adds a new profile to its list only
 after joining and saving. See the [profile model](../../docs/clients/android-profile-model.md).
 
+Each profile stores one policy choice per Service in its existing protected
+preference. The control grants a set of available policies; multiple policies for
+the same Service are allowed. A new Service with one policy is initialized once;
+multiple options require an explicit client choice. Revocation clears that
+Service's choice and requires reselection. Runtime failure stays within the
+chosen policy. Switching one Service leaves other Services and their connections
+unchanged. The previous global Direct / Auto / fixed-exit setting is retired.
+
+Existing profiles use explicit certified-file import for the one-time forward
+replacement. The control first reasserts authorization through `device.put` and
+exports the signed View. Import retains the original identity and preference in
+protected evidence slots before replacing their existing records. Interrupted
+writes can be retried; completed retries preserve later user choices. Ordinary
+startup and background sync only decode current values. Subsequent current View
+imports use the normal identity and frontier checks without invoking migration.
+
 ## Shared client contract
 
 The Android app consumes a private `DeviceView` signed by an effective control,
@@ -29,7 +45,7 @@ The protected Android Keystore store contains:
 
 - the Ed25519 device identity, bootstrap capability, monotonic observed-fact floor,
   control membership proof, and complete signed LKG as one state record;
-- the user's Direct / Auto / fixed-exit preference;
+- the user's per-Service policy choices, including initialized waiting records;
 - bounded business observations keyed by network generation.
 - a deletable first-hop observation cache bound to the profile identity, exact
   authorized resource inputs and network generation; original sample times survive restart.
@@ -70,9 +86,9 @@ Ordinary Direct has `final_exit=direct` and no managed hops. An authorized local
 egress candidate also has no network hops, but retains this device's NodeID as
 its logical final exit. Local egress has no entry hop, so entry-node scopes do not
 apply and it needs no self-dial or inbound resource.
-Where the HostAdapter supports local egress, Auto and a
-fixed preference for that NodeID can select it; Direct mode selects only ordinary
-Direct. Rebuilding a candidate must preserve this distinction and its authorization source.
+Where the HostAdapter supports local egress, the selected Policy must explicitly
+authorize it. Candidate choice stays inside that Policy, including its final-exit
+restriction. Rebuilding a candidate must preserve this distinction and its authorization source.
 
 A verified signed View becomes the `CertifiedLKG` when authentication, member
 proof, device binding, floor checks, and protected atomic write/readback succeed.

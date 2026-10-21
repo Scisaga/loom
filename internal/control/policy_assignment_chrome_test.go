@@ -84,7 +84,7 @@ func TestWebChromePolicyCopyPreservesAssignmentDraftAndSharedSource(t *testing.T
 	target, _ := before.CurrentTarget("device", original.ID)
 	edit := DevicePut{ID: original.ID, Name: "Demo concurrent name", Responsibilities: original.Responsibilities, PolicyIDs: original.PolicyIDs, DistributionURLs: original.DistributionURLs}
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-concurrent-device", Operation: "device.put", TargetKind: "device", TargetID: original.ID, Dependencies: sortedUniqueDependencies(append(dependencies, target.MaterialIDs...)), Payload: edit})
-	chromeDo(t, debug, `(()=>{const f=document.querySelector('#policy-form');f.elements.id.value='demo-copied-policy';f.elements.name.value='Demo single device';f.elements.action.value='deny';f.requestSubmit();return true})()`)
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#policy-form');f.elements.id.value='demo-copied-policy';f.elements.name.value='Demo single device';f.elements.action.value='allow';f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#operation-status').textContent==='Demo response lost after saving Policy'`)
 	copyFrontier := server.Runtime.Authority.Frontier()
 	chromeDo(t, debug, `(()=>{document.querySelector('#policy-form').requestSubmit();return true})()`)
@@ -95,7 +95,7 @@ func TestWebChromePolicyCopyPreservesAssignmentDraftAndSharedSource(t *testing.T
 	if !same || !reflect.DeepEqual(copyFrontier, server.Runtime.Authority.Frontier()) {
 		t.Fatal("copy retry signed another Policy or changed request bytes")
 	}
-	if chromeDo(t, debug, `(()=>{const f=document.querySelector('#device-policy-form');return f===demoParent&&f.elements.name.value==='Demo draft retained'&&f.elements.dns_servers.value==='192.0.2.54'&&f.querySelector('[name=policy_id][value=demo-copied-policy]').checked&&!f.querySelector('[name=policy_id][value=demo-policy]').checked&&JSON.stringify(JSON.parse(f.dataset.targets).find(v=>v.target_kind==='device'&&v.target_id==='demo-access'))===JSON.stringify(JSON.parse(demoTargets).find(v=>v.target_kind==='device'&&v.target_id==='demo-access'))})()`) != true {
+	if chromeDo(t, debug, `(()=>{const f=document.querySelector('#device-policy-form');return f===demoParent&&f.elements.name.value==='Demo draft retained'&&f.elements.dns_servers.value==='192.0.2.54'&&f.querySelector('[name=policy_id][value=demo-copied-policy]').checked&&f.querySelector('[name=policy_id][value=demo-policy]').checked&&JSON.stringify(JSON.parse(f.dataset.targets).find(v=>v.target_kind==='device'&&v.target_id==='demo-access'))===JSON.stringify(JSON.parse(demoTargets).find(v=>v.target_kind==='device'&&v.target_id==='demo-access'))})()`) != true {
 		t.Fatal("return changed the device baseline or lost draft fields/selection")
 	}
 	chromeDo(t, debug, `(()=>{demoParent.requestSubmit();return true})()`)
@@ -122,9 +122,9 @@ func TestWebChromePolicyCopyPreservesAssignmentDraftAndSharedSource(t *testing.T
 	if !reflect.DeepEqual(projection.DeviceAuthorizations[1], other) || projection.DeviceAuthorizations[0].RuntimeKey != original.RuntimeKey || projection.DeviceAuthorizations[0].DevicePublicKey != original.DevicePublicKey {
 		t.Fatal("single device assignment changed another device or identity")
 	}
-	denied, err := ProjectDeviceView(projection, original.ID)
-	if err != nil || len(denied.Routes) != 0 || !reflect.DeepEqual(denied.PolicyIDs, []string{"demo-copied-policy"}) {
-		t.Fatal("saved deny assignment did not reach the device view", err)
+	permitted, err := ProjectDeviceView(projection, original.ID)
+	if err != nil || len(permitted.Routes) != 2 || !reflect.DeepEqual(permitted.PolicyIDs, []string{"demo-copied-policy", "demo-policy"}) {
+		t.Fatal("saved same-Service policy collection did not reach the device view", err)
 	}
 	allowed, err := ProjectDeviceView(projection, other.ID)
 	if err != nil || len(allowed.Routes) == 0 {

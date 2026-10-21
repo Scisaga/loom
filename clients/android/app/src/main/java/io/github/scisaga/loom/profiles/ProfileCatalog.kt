@@ -47,6 +47,10 @@ object ProfileStorage {
 
     fun transportEvidence(profileId: String): String = key(profileId, "transport-evidence")
 
+    fun policyIdentityEvidence(profileId: String): String = key(profileId, "policy-identity-evidence")
+
+    fun policyPreferenceEvidence(profileId: String): String = key(profileId, "policy-preference-evidence")
+
     fun routePreference(profileId: String): String = key(profileId, "route-preference-v2")
 
     fun observations(profileId: String): String = key(profileId, "route-observations-v2")

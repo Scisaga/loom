@@ -204,9 +204,12 @@ func (r *segmentedRuntime) incoming() ([]any, error) {
 
 func (r *segmentedRuntime) access(services map[string]Service, policies map[string]NetworkPolicy) error {
 	ids := []string{}
-	for id := range policies {
-		if _, found := services[id]; found {
-			ids = append(ids, id)
+	for id := range services {
+		for _, policy := range policies {
+			if policy.ServiceID == id {
+				ids = append(ids, id)
+				break
+			}
 		}
 	}
 	sort.Strings(ids)
@@ -218,8 +221,8 @@ func (r *segmentedRuntime) access(services map[string]Service, policies map[stri
 	byService := map[string][]string{}
 	for index, candidate := range r.view.Routes {
 		service, exists := services[candidate.ServiceID]
-		policy, assigned := policies[candidate.ServiceID]
-		if candidate.Validate() != nil || !exists || !assigned || policy.Action != "allow" || index > 0 && r.view.Routes[index-1].ID >= candidate.ID {
+		policy, assigned := policies[candidate.PolicyID]
+		if candidate.Validate() != nil || !exists || !assigned || policy.ServiceID != candidate.ServiceID || policy.Action != "allow" || index > 0 && r.view.Routes[index-1].ID >= candidate.ID {
 			return errors.New("certified candidates are invalid, duplicated or unassigned")
 		}
 		if candidate.FirstResourceID == "" {
@@ -261,12 +264,9 @@ func (r *segmentedRuntime) access(services map[string]Service, policies map[stri
 		byService[service.ID] = append(byService[service.ID], candidate.ID)
 	}
 	for _, id := range ids {
-		members := byService[id]
-		if len(members) == 0 {
-			continue
-		}
+		members := append([]string{"reject"}, byService[id]...)
 		scope := services[id].Scope()
-		if err := r.addOutbound(map[string]any{"type": "selector", "tag": scope, "outbounds": members, "default": members[0]}); err != nil {
+		if err := r.addOutbound(map[string]any{"type": "selector", "tag": scope, "outbounds": members, "default": "reject"}); err != nil {
 			return err
 		}
 		rule := serviceRule(services[id], r.view.DNSRecords...)

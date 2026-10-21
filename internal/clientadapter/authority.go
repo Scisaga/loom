@@ -28,7 +28,7 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 	}
 	routes := make([]clientmodel.RouteCandidate, 0, len(view.Routes))
 	for _, route := range view.Routes {
-		candidate := clientmodel.RouteCandidate{ID: route.ID, FinalExit: route.FinalExit, Chain: append([]string{}, route.NodeChain...), Scope: route.Scope}
+		candidate := clientmodel.RouteCandidate{ID: route.ID, PolicyID: route.PolicyID, FinalExit: route.FinalExit, Chain: append([]string{}, route.NodeChain...), Scope: route.Scope}
 		for _, id := range route.LinkIDs {
 			for _, link := range view.Links {
 				if link.ID != id {

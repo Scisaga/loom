@@ -159,7 +159,7 @@ LINK_MEASUREMENTS = {
 # independent of transport RTT, interface counters and device runtime reports.
 PATH_CONTEXT = {
     "device": "demo-phone-f", "service": "demo-video", "policy": "demo-policy",
-    "candidate": "demo-media-relay-wg", "mode": "Auto", "selection_age": "8s ago",
+    "candidate": "demo-media-relay-wg", "policy_id": "demo-policy", "selection_age": "8s ago",
     "target": "media.example", "probe": "media.example/health", "business_age": "8s ago",
     "first_hop_ms": 12, "first_hop_age": "11s ago",
 }
@@ -1260,10 +1260,10 @@ def live_path_view(scene: str) -> Canvas:
         flow_link(c, 712, 244, policy + "  ↗", f"/policies/{policy}?{scope}", href=policy_href)
     else:
         c.txt(712, 244, "None assigned", "body amber")
-    c.txt(1100, 205, "LAN ROUTING" if scene == "lan" else "DEVICE MODE", "eyebrow muted")
+    c.txt(1100, 205, "LAN ROUTING" if scene == "lan" else "SERVICE POLICY", "eyebrow muted")
     reported = scene in ("current", "failed", "direct")
-    c.txt(1100, 244, "To fixed gateway" if scene == "lan" else "Auto" if reported else "Unknown", "section")
-    c.txt(1280 if scene == "lan" else 1175 if reported else 1210, 244, "Within allowed routes" if scene == "lan" else "Reported by device" if reported else "No current report", "small muted")
+    c.txt(1100, 244, "To fixed gateway" if scene == "lan" else policy if reported else "Unknown", "section")
+    c.txt(1305 if reported or scene == "lan" else 1210, 244, "Within allowed routes" if scene == "lan" else "Reported by device" if reported else "No current report", "small muted")
     c.add(f'<g data-ui="path-policy-summary" data-policy="{policy}">')
     c.txt(48, 294, "Access denied" if scene == "denied" else "Not authorized" if scene == "unassigned" else "Access allowed", "body red" if scene in ("denied", "unassigned") else "body green")
     summary = "All paths and target probes are denied" if scene == "denied" else "Assign an access policy on this device to use private-app" if scene == "unassigned" else "Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit" if scene in ("current", "expired", "failed") else "Direct only · no entry, transit or internet exit nodes" if scene in ("pending", "direct") else "Fixed gateway: relay-west · entry: unrestricted · transit: unrestricted"
@@ -1634,7 +1634,7 @@ def policy_picker(c: Canvas, y: int, policy_ids: tuple[str, ...], *, device: str
     flow_link(c, 1233, y, "+ New policy", f"/policies?new=1&return_device={device}", anchor="end")
     tags = tuple((policy, policy + " · " + POLICY_FIXTURES[policy]["service"]) for policy in policy_ids)
     height = tag_selector(c, 353, y + 19, 880, tags, field="policy-ids", placeholder="Find a policy…")
-    c.txt(353, y + height + 45, "Each policy includes its service and rules. Choose at most one policy per service.", "small muted")
+    c.txt(353, y + height + 45, "Authorize available policies. The client chooses one for each service.", "small muted")
     top = y + height + 72
     for policy in policy_ids:
         value = POLICY_FIXTURES[policy]
@@ -2625,16 +2625,10 @@ def policies(*, lan: bool = False, new: bool = False) -> Canvas:
         flow_input(c, left, 440, width, "Office LAN access" if lan else "Media access")
     c.line(left, 511, right, 511)
     c.txt(left, 550, "Access to this service", "section")
-    c.add('<g data-ui="policy-effect" data-value="allow" role="radiogroup">')
-    for x, label, value in ((1240, "Allow", "allow"), (1410, "Deny", "deny")):
-        c.add(f'<g role="radio" data-value="{value}" aria-checked="{str(value == "allow").lower()}">')
-        c.circle(x, 544, 8, "#FFFFFF", "#248F64" if value == "allow" else "#BCC8C0")
-        if value == "allow":
-            c.circle(x, 544, 4, "#248F64")
-        c.txt(x + 22, 550, label, "body")
-        c.add('</g>')
+    c.add('<g data-ui="policy-effect" data-value="allow" aria-readonly="true">')
+    c.txt(right, 550, "Allowed", "body green", "end")
     c.add('</g>')
-    c.txt(left, 582, "Deny blocks service access while keeping the policy assigned and its path rules saved.", "small muted")
+    c.txt(left, 582, "This policy defines allowed access. Remove its authorization to withdraw access.", "small muted")
     if lan:
         c.add('<g data-ui="fixed-lan-gateway" data-node="demo-forward-c" aria-readonly="true">')
         c.txt(left, 635, "Destination gateway", "body")
@@ -2849,13 +2843,13 @@ def current_device_detail() -> Canvas:
     c.txt(left, 517, "The device selection is saved on control-a. Shared policy rules have not changed.", "small muted")
     c.line(left, 552, right, 552)
     c.txt(left, 595, "Current media path", "section")
-    c.txt(right, 595, "Preference · Auto", "small muted", "end")
+    c.txt(right, 595, "Service policy · media-access", "small muted", "end")
     c.txt(left, 641, "Unknown · no current selected path", "body amber")
     c.txt(left, 675, "Awaiting path and business results for the current configuration.", "small muted")
     flow_link(c, left, 717, "View live paths →", f"/routing?device={device}&service=demo-video")
     c.line(left, 752, right, 752)
     flow_link(c, left, 794, "+ Assign another policy", f"/devices/{device}/access")
-    c.txt(left, 829, "Choose at most one policy per service. Replacing a selection changes only this device.", "small muted")
+    c.txt(left, 829, "Authorize available policies. Adding an option preserves the client’s current selection.", "small muted")
     c.add('</g></g>')
 
     panel("forwarding", "Forwarding & LAN")

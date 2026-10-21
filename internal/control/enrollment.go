@@ -318,6 +318,7 @@ type RouteCandidate struct {
 	SpecDigest      string   `json:"spec_digest"`
 	Scope           string   `json:"scope"`
 	ServiceID       string   `json:"service_id"`
+	PolicyID        string   `json:"policy_id"`
 	FirstResourceID string   `json:"first_resource_id"`
 	NodeChain       []string `json:"node_chain"`
 	LinkIDs         []string `json:"link_ids"`
@@ -325,7 +326,7 @@ type RouteCandidate struct {
 }
 
 func (candidate RouteCandidate) Validate() error {
-	if ValidateDigest(candidate.ID) != nil || ValidateDigest(candidate.SpecDigest) != nil || ValidateID(candidate.ServiceID) != nil || (candidate.Scope != "service:"+candidate.ServiceID && candidate.Scope != "local_network:"+candidate.ServiceID) || ValidateID(candidate.FinalExit) != nil || candidate.NodeChain == nil || candidate.LinkIDs == nil {
+	if ValidateDigest(candidate.ID) != nil || ValidateDigest(candidate.SpecDigest) != nil || ValidateID(candidate.ServiceID) != nil || ValidateID(candidate.PolicyID) != nil || (candidate.Scope != "service:"+candidate.ServiceID && candidate.Scope != "local_network:"+candidate.ServiceID) || ValidateID(candidate.FinalExit) != nil || candidate.NodeChain == nil || candidate.LinkIDs == nil {
 		return errors.New("route candidate is invalid")
 	}
 	if len(candidate.NodeChain) == 0 {
@@ -391,7 +392,7 @@ func (value InboundCredential) Validate() error {
 			return errors.New("inbound credential binding is invalid")
 		}
 	}
-	if value.DeviceID == value.ReceiverNodeID || value.SenderID == value.ReceiverNodeID || value.Candidate.Validate() != nil || value.Candidate.ServiceID != value.ServiceID || value.Candidate.FirstResourceID == "" ||
+	if value.DeviceID == value.ReceiverNodeID || value.SenderID == value.ReceiverNodeID || value.Candidate.Validate() != nil || value.Candidate.ServiceID != value.ServiceID || value.Candidate.PolicyID != value.PolicyID || value.Candidate.FirstResourceID == "" ||
 		value.Credential != "" && ValidatePublicKey(value.Credential) != nil || len(value.AllowedTargets) == 0 || value.ExcludedTargets == nil {
 		return errors.New("inbound credential has no distinct source, secret or target boundary")
 	}

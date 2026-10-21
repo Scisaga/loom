@@ -1538,19 +1538,21 @@ func validateAssignedPolicies(material Material, view Projection, ids []string) 
 			return err
 		}
 		service, found := services[policy.ServiceID]
-		if !found || seen[service.ID] {
-			return errors.New("assigned Policy has an unavailable or duplicated Service")
+		if !found {
+			return errors.New("assigned Policy has an unavailable Service")
 		}
 		if err := requireTargetDependency(material, view, "service", service.ID, true); err != nil {
 			return err
 		}
 		for _, other := range selected {
-			if serviceTargetsOverlap(service, other) {
+			if other.ID != service.ID && serviceTargetsOverlap(service, other) {
 				return errors.New("assigned Services have ambiguous targets")
 			}
 		}
+		if !seen[service.ID] {
+			selected = append(selected, service)
+		}
 		seen[service.ID] = true
-		selected = append(selected, service)
 	}
 	return nil
 }

@@ -41,6 +41,7 @@ type DeviceEvidence struct {
 	CurrentUntil      int64                 `json:"current_until,omitempty"`
 	LocalNetworks     *[]LocalNetworkPrefix `json:"local_networks,omitempty"`
 	Preference        *ReportPreference     `json:"preference,omitempty"`
+	PolicyChoices     *[]PolicyChoice       `json:"policy_choices,omitempty"`
 	ReportedAt        string                `json:"reported_at"`
 	ReportSequence    U64                   `json:"report_sequence"`
 	ViewDigest        string                `json:"view_digest"`
@@ -74,6 +75,7 @@ type Link struct {
 }
 
 type Path struct {
+	PolicyID        string   `json:"policy_id"`
 	CandidateID     string   `json:"candidate_id,omitempty"`
 	ServiceID       string   `json:"service_id"`
 	SpecDigest      string   `json:"spec_digest"`

@@ -113,7 +113,7 @@ func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testin
 	report := DeviceReport{Schema: 3, NetworkID: projection.NetworkID, DeviceID: view.DeviceID, ReportSequence: 1,
 		ViewDigest: digest, NetworkGeneration: "demo-network", ReportedAt: at.UnixMilli(),
 		Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{},
-		Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}},
+		PolicyChoices: new([]PolicyChoice{{ServiceID: route.ServiceID, PolicyID: route.PolicyID}}), Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}},
 		Observations: []Observation{{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: target, Action: "https_request", SpecDigest: route.SpecDigest,
 			NetworkGeneration: "demo-network", Result: "available", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(10 * time.Minute).UnixMilli()}}}
 	root := t.TempDir()

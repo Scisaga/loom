@@ -223,7 +223,8 @@ func openStore(path string, invite control.BootstrapInvite, platform string, pro
 		return nil, err
 	}
 	if protector != nil {
-		next.Preference = &clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}
+		preference := clientmodel.EmptyPreference()
+		next.Preference = &preference
 	}
 	if err := store.save(next, nil, false); err != nil {
 		return nil, err
@@ -388,6 +389,25 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 			// stale LKG held by a separate GUI or reporting handle.
 			next = current
 			if preference != nil {
+				if current.Preference == nil || current.LKG == nil {
+					return errors.New("policy choice requires a current protected profile")
+				}
+				expected := *current.Preference
+				changed := 0
+				for _, choice := range preference.Services {
+					if expected.Policy(choice.ServiceID) == choice.PolicyID {
+						continue
+					}
+					changed++
+					var err error
+					expected, err = clientmodel.ChoosePolicy(expected, current.LKG.View, choice.ServiceID, choice.PolicyID)
+					if err != nil {
+						return err
+					}
+				}
+				if changed > 1 || !expected.Equal(*preference) {
+					return errors.New("choose one Service policy against the current protected profile")
+				}
 				copy := *preference
 				next.Preference = &copy
 			}
@@ -402,6 +422,13 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 		} else {
 			next.Preference = current.Preference
 			next.ReportSequence = current.ReportSequence
+			if next.Preference != nil && next.LKG != nil {
+				reconciled, err := clientmodel.ReconcilePreference(*next.Preference, next.LKG.View)
+				if err != nil {
+					return err
+				}
+				next.Preference = &reconciled
+			}
 			if err := checkStateAdvance(next, current); err != nil {
 				return err
 			}

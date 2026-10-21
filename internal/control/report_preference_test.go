@@ -65,7 +65,7 @@ func TestReportedPreferenceKeepsOriginalBytesAndBindsNewSamples(t *testing.T) {
 	}
 }
 
-func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *testing.T) {
+func TestReportedPolicyChoiceRemainsSeparateFromSelectionAndSurvivesRestart(t *testing.T) {
 	fixture, _, projection := deviceContractFixture(t)
 	view, err := ProjectDeviceView(projection, "demo-access")
 	if err != nil {
@@ -74,9 +74,9 @@ func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *tes
 	digest, _ := DeviceViewDigest(view)
 	report := DeviceReport{Schema: 3, NetworkID: projection.NetworkID, DeviceID: view.DeviceID, ReportSequence: 1,
 		ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: 1,
-		Preference:   &ReportPreference{Mode: "fixed_exit", Exit: "demo-unavailable-exit"},
-		Selections:   []ReportSelection{{ServiceID: view.Routes[0].ServiceID, CandidateID: view.Routes[0].ID}},
-		Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
+		PolicyChoices: new([]PolicyChoice{{ServiceID: "demo-service"}}),
+		Selections:    []ReportSelection{{ServiceID: view.Routes[0].ServiceID, PolicyID: view.Routes[0].PolicyID, CandidateID: view.Routes[0].ID}},
+		Observations:  []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
 	report, err = SignDeviceReport(report, fixture.keys[0])
 	if err != nil || verifyCurrentReport(report, projection) != nil {
 		t.Fatal("intent was confused with actual selection or authorization", err)
@@ -94,8 +94,8 @@ func TestReportedPreferenceRemainsSeparateFromSelectionAndSurvivesRestart(t *tes
 		}
 		snapshot := WebSnapshot{Devices: []Device{{ID: view.DeviceID}}, Paths: projectWebPaths(projection)}
 		projectWebObservations(&snapshot, store.Verified(projection), time.UnixMilli(report.ReportedAt))
-		if snapshot.Devices[0].Evidence == nil || !reflect.DeepEqual(snapshot.Devices[0].Evidence.Preference, report.Preference) || !snapshot.Paths[0].Selected || snapshot.Paths[0].FinalExit != "direct" {
-			t.Fatal("readback replaced actual Direct or lost unavailable fixed intent")
+		if snapshot.Devices[0].Evidence == nil || !reflect.DeepEqual(snapshot.Devices[0].Evidence.PolicyChoices, report.PolicyChoices) || !snapshot.Paths[0].Selected || snapshot.Paths[0].FinalExit != "direct" {
+			t.Fatal("readback replaced actual Direct or lost pending policy intent")
 		}
 		if !bytes.Equal(original, testObservationBytes(t, store)) {
 			t.Fatal("restart modified the original signed setting sample")

@@ -21,10 +21,13 @@ export function policyPathOptions(projection,deviceID,policy,now,reviewedTargets
  if(report.freshness==='clock_unknown'||Date.parse(report.reported_at)>now+5000)return unknown('Device report time needs checking.');
  if(!reportIsCurrent(report,now))return unknown('Device report has expired.');
  if(report.runtime?.state!=='running'||!report.view_digest||report.runtime.applied_view_digest!==report.view_digest)return unknown('No running, applied configuration report.');
- const preference=report.preference,lan=service.kind==='local_network';
- if(!lan&&!['auto','direct','fixed_exit'].includes(preference?.mode))return unknown('Client mode was not reported.');
- const mode=lan?'Fixed LAN gateway':preference.mode==='auto'?'Auto':preference.mode==='direct'?'Direct':'Fixed exit '+(list(projection.devices).find(v=>v.id===preference.exit)?.name||preference.exit);
- const paths=list(projection.paths).filter(v=>v.device===deviceID&&v.service_id===current.service_id&&(lan||preference.mode==='auto'||preference.mode==='direct'&&v.final_exit==='direct'||preference.mode==='fixed_exit'&&v.final_exit===preference.exit));
+ const choices=report.policy_choices;
+ if(!Array.isArray(choices))return unknown('Client policy choice was not reported.');
+ const choice=choices.find(v=>v.service_id===current.service_id);
+ if(!choice?.policy_id)return unknown('Waiting for the client to select a policy for this Service.');
+ if(choice.policy_id!==policy.id)return unknown('This Policy is available but is not selected by this client.');
+ const mode=current.name||current.id;
+ const paths=list(projection.paths).filter(v=>v.device===deviceID&&v.service_id===current.service_id&&v.policy_id===policy.id);
  if(!paths.length)return unknown(mode+': no candidate in the current projection.');
  if(paths.every(v=>!list(v.targets).length))return unknown(mode+': no matching business probe targets.');
  const counts={available:0,unavailable:0,unknown:0};
@@ -57,8 +60,8 @@ const selectedTag=(id,label)=>`<span class="selected-node-tag">${esc(label)}<but
 export function policyChoicesHTML(selected,policies,services,targets,context={}){
  const values=[...policies].sort((a,b)=>(a.name||a.id).localeCompare(b.name||b.id));
  for(const id of selected)if(!values.some(p=>p.id===id))values.push({id,name:id,service_id:'',unavailable:true});
- const rows=values.map(p=>{const service=services.find(s=>s.id===p.service_id),unavailable=p.unavailable||!service||targets.some(t=>((t.target_kind==='policy'&&t.target_id===p.id)||(t.target_kind==='service'&&t.target_id===p.service_id))&&(t.deleted||t.conflicted)),label=policyLabel(p,service);return `<label data-policy-option="${esc([label,service?.local_network?.gateway_node_id||'',p.id].join(' '))}" data-policy-label="${esc(label)}"><input type="checkbox" name="policy_id" value="${esc(p.id)}" ${selected.includes(p.id)?'checked':''} ${unavailable?'disabled data-policy-unavailable':''}><span>${esc(label)}<small>${unavailable?'Unavailable reference · remove it explicitly':p.action==='deny'?'Deny this service':service.kind==='local_network'?'Shared LAN':'Internet'}</small>${unavailable?'':policyRuntimeHTML(p,context,false,true)}</span></label>`}).join('');
- return `<div class="policy-picker"><div class="policy-tags">${selected.map(id=>{const p=values.find(p=>p.id===id);return selectedTag(id,policyLabel(p,services.find(s=>s.id===p.service_id)))}).join('')}</div><details><summary>Find a policy… <span aria-hidden="true">⌄</span></summary><div class="node-picker-popup"><input type="search" data-policy-search aria-label="Find a policy or service" placeholder="Policy, service or gateway">${rows||'<p>No policies. Joining without business access is allowed.</p>'}</div></details></div><p class="tiny dim">Each Policy includes its Service and rules. Choose at most one Policy per Service.</p><div data-selected-policy-summary></div>`;
+ const rows=values.map(p=>{const service=services.find(s=>s.id===p.service_id),unavailable=p.unavailable||p.action!=='allow'||!service||targets.some(t=>((t.target_kind==='policy'&&t.target_id===p.id)||(t.target_kind==='service'&&t.target_id===p.service_id))&&(t.deleted||t.conflicted)),label=policyLabel(p,service);return `<label data-policy-option="${esc([label,service?.local_network?.gateway_node_id||'',p.id].join(' '))}" data-policy-label="${esc(label)}"><input type="checkbox" name="policy_id" value="${esc(p.id)}" ${selected.includes(p.id)?'checked':''} ${unavailable?'disabled data-policy-unavailable':''}><span>${esc(label)}<small>${unavailable?'Unavailable reference · remove it explicitly':p.action==='deny'?'Deny this service':service.kind==='local_network'?'Shared LAN':'Internet'}</small>${unavailable?'':policyRuntimeHTML(p,context,false,true)}</span></label>`}).join('');
+ return `<div class="policy-picker"><div class="policy-tags">${selected.map(id=>{const p=values.find(p=>p.id===id);return selectedTag(id,policyLabel(p,services.find(s=>s.id===p.service_id)))}).join('')}</div><details><summary>Find a policy… <span aria-hidden="true">⌄</span></summary><div class="node-picker-popup"><input type="search" data-policy-search aria-label="Find a policy or service" placeholder="Policy, service or gateway">${rows||'<p>No policies. Joining without business access is allowed.</p>'}</div></details></div><p class="tiny dim">Authorize the policies this device may choose. The client selects one policy for each service.</p><div data-selected-policy-summary></div>`;
 }
 export function syncPolicyChoices(form,services,canCopy=false,context={}){
  const picker=form.querySelector('.policy-picker');if(!picker)return;

@@ -4,10 +4,12 @@ import android.content.Context
 import android.util.Log
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.ManagedProfileStore
+import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loom.vpn.ProbeResult
+import io.github.scisaga.loom.vpn.LoomVpnService
 import io.github.scisaga.loomcore.Loomcore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,19 +26,13 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
-enum class RouteMode(val wire: String) {
-    DIRECT("direct"),
-    AUTO("auto"),
-    FIXED_EXIT("fixed_exit"),
-}
+data class ServicePolicyOption(val id: String, val name: String)
+data class ServicePolicyStatus(val serviceID: String, val name: String, val policyID: String, val options: List<ServicePolicyOption>)
 
 data class RouteStatus(
     val available: Boolean = false,
     val busy: Boolean = false,
-    val mode: RouteMode = RouteMode.AUTO,
-    val exit: String = "",
-    val exits: List<String> = emptyList(),
-    val directAvailable: Boolean = false,
+    val services: List<ServicePolicyStatus> = emptyList(),
     val blocked: Boolean = false,
     val detail: String = "等待认证 DeviceView",
     val observationDetail: String = "业务结果尚未产生",
@@ -55,10 +51,7 @@ data class RoutePathStatus(
 )
 
 internal data class AppliedRoute(
-    val mode: RouteMode,
-    val exit: String,
-    val directAvailable: Boolean,
-    val exits: List<String>,
+    val choices: Map<String, String>,
     val selectors: List<AppliedSelector>,
     val blockedScopes: List<String> = emptyList(),
 ) {
@@ -181,24 +174,48 @@ class RouteManager private constructor(context: Context) {
         desired
     }
 
-    fun select(profileId: String, mode: RouteMode, exit: String = "") {
+    fun select(profileId: String, serviceID: String, policyID: String) {
         val runtime = runtime(profileId)
         scope.launch {
             operation.withLock {
                 if (!catalog.contains(profileId)) return@withLock
-                val preference = Loomcore.newAndroidPreference(mode.wire, if (mode == RouteMode.FIXED_EXIT) exit else "")
-                protected.put(ProfileStorage.routePreference(profileId), preference)
                 val available = runtime.runningProfile ?: runtime.availableProfile ?: return@withLock
-                if (runtime.runningProfile != null) {
+                var savedDesired: AppliedRoute? = null
+                try {
+                    val state = checkNotNull(ManagedProfileStore(applicationContext, profileId).state())
+                    val previous = checkNotNull(protected.get(ProfileStorage.routePreference(profileId)))
+                    val preference = Loomcore.chooseAndroidPolicy(state, previous, serviceID, policyID)
+                    protected.put(ProfileStorage.routePreference(profileId), preference)
+                    check(protected.get(ProfileStorage.routePreference(profileId))?.contentEquals(preference) == true)
                     val desired = evaluate(profileId, runtime, available, runtime.actual)
-                    SelectorClient(available.config).apply(desired.execution())
-                    runtime.actual = LinkedHashMap(SelectorClient(available.config).readCurrent(desired.execution()))
-                    runtime.application = desired
-                    publish(profileId, runtime, desired, running = true, observation = businessObservationDetail(profileId, runtime))
-                } else {
-                    publish(profileId, runtime, evaluate(profileId, runtime, available, emptyMap()), running = false)
+                    savedDesired = desired
+                    if (runtime.runningProfile != null) {
+                        val client = SelectorClient(available.config)
+                        val affected = desired.execution().filter { it.selector.substringAfter(":") == serviceID }
+                        check(affected.size == 1) { "服务 selector 缺失或歧义" }
+                        client.apply(affected)
+                        runtime.actual.putAll(client.readCurrent(affected))
+                        val previousApplication = runtime.application
+                        val applied = desired.copy(
+                            selectors = previousApplication?.selectors.orEmpty().filter { it.selector.substringAfter(":") != serviceID } + desired.selectors.filter { it.selector.substringAfter(":") == serviceID },
+                            blockedScopes = previousApplication?.blockedScopes.orEmpty().filter { it.substringAfter(":") != serviceID } + desired.blockedScopes.filter { it.substringAfter(":") == serviceID },
+                        )
+                        runtime.application = applied
+                        publish(profileId, runtime, applied, running = true, observation = businessObservationDetail(profileId, runtime))
+                    } else publish(profileId, runtime, desired, running = false)
+                } catch (error: Exception) {
+                    val scope = JSONArray(available.serviceScopes).strings().firstOrNull { it.substringAfter(":") == serviceID }
+                    if (scope != null && runtime.runningProfile != null) {
+                        val rejection = runCatching { SelectorClient(available.config).apply(listOf(AppliedSelector(scope, "reject", emptyList(), "", "unavailable"))) }
+                        if (rejection.isFailure) LoomVpnService.stopUnverifiablePolicySelection(profileId)
+                        runtime.actual.remove(scope)
+                        runtime.application = runtime.application?.let { it.copy(choices = savedDesired?.choices ?: it.choices, selectors = it.selectors.filter { selected -> selected.selector != scope }, blockedScopes = (it.blockedScopes + scope).distinct()) }
+                        runtime.application?.let { publish(profileId, runtime, it, running = true) }
+                    }
+                    runtime.mutableStatus.value = runtime.mutableStatus.value.copy(busy = false, detail = "服务策略未应用：${error.message}", blocked = true)
                 }
             }
+            EnrollmentManager.get(applicationContext).reportRuntimeOutcome(profileId)
         }
     }
 
@@ -408,6 +425,13 @@ class RouteManager private constructor(context: Context) {
         profile: ManagedProfile,
         current: Map<String, String>,
     ): AppliedRoute {
+        if (runtime.preferenceViewDigest != profile.viewDigest) {
+            val state = checkNotNull(ManagedProfileStore(applicationContext, profileId).state())
+            val preference = Loomcore.reconcileAndroidPreference(state, protected.get(ProfileStorage.routePreference(profileId)) ?: ByteArray(0))
+            protected.put(ProfileStorage.routePreference(profileId), preference)
+            check(protected.get(ProfileStorage.routePreference(profileId))?.contentEquals(preference) == true)
+            runtime.preferenceViewDigest = profile.viewDigest
+        }
         val currentBody = JSONObject(current).toString().encodeToByteArray()
         val resources = runCatching {
             Loomcore.androidCachedResourceObservations(
@@ -431,13 +455,11 @@ class RouteManager private constructor(context: Context) {
             }).toString().encodeToByteArray(),
             resources,
             if (runtime.linkObservationViewDigest == profile.viewDigest) runtime.linkObservations ?: "[]".encodeToByteArray() else "[]".encodeToByteArray(),
+            profile.serviceScopes.encodeToByteArray(),
         )
         val root = JSONObject(body.decodeToString())
         return AppliedRoute(
-            mode = RouteMode.entries.first { it.wire == root.getString("mode") },
-            exit = root.optString("exit"),
-            directAvailable = root.getBoolean("direct_available"),
-            exits = root.getJSONArray("exits").strings(),
+            choices = root.getJSONArray("policy_choices").objects().associate { it.getString("service_id") to it.optString("policy_id") },
             blockedScopes = root.getJSONArray("blocked_scopes").strings(),
             selectors = root.getJSONArray("selections").objects().map {
                 AppliedSelector(
@@ -489,23 +511,22 @@ class RouteManager private constructor(context: Context) {
         running: Boolean,
         observation: String = runtime.mutableStatus.value.observationDetail,
     ) {
-        val label = when (route.mode) {
-            RouteMode.DIRECT -> "Direct"
-            RouteMode.AUTO -> "Auto"
-            RouteMode.FIXED_EXIT -> "指定出口 ${route.exit}"
-        }
+        val profile = runtime.runningProfile ?: runtime.availableProfile
+        val policies = JSONArray(profile?.policyCatalog ?: "[]").objects()
+        val services = JSONArray(profile?.serviceCatalog ?: "[]").objects().map { service ->
+            val id = service.getString("id")
+            ServicePolicyStatus(id, service.getString("name"), route.choices[id].orEmpty(), policies.filter { it.optString("service_id") == id && it.optString("action") == "allow" }.map { ServicePolicyOption(it.getString("id"), it.getString("name")) })
+        }.filter { it.options.isNotEmpty() }
         val now = Instant.now().truncatedTo(ChronoUnit.SECONDS).toString()
         runtime.mutableStatus.value = RouteStatus(
-            available = route.selectors.isNotEmpty(),
-            mode = route.mode,
-            exit = route.exit,
-            exits = route.exits,
-            directAvailable = route.directAvailable,
-            detail = (if (running) "$label 已应用并读回" else "$label · 等待连接") +
+            available = services.isNotEmpty(),
+            services = services,
+            blocked = route.blockedScopes.isNotEmpty(),
+            detail = (if (running) "服务策略已应用并读回" else "服务策略 · 等待连接") +
                 if (route.blockedScopes.isEmpty()) "" else "；暂无可用路径：${route.blockedScopes.joinToString()}",
             observationDetail = observation,
             businessEvidence = businessEvidence(profileId, runtime, route, running, Instant.parse(now)),
-            currentPaths = route.selectors.map { selected ->
+            currentPaths = route.selectors.filter { running && runtime.actual[it.selector] == it.candidate }.map { selected ->
                 RoutePathStatus(
                     service = selected.selector,
                     candidate = selected.candidate,
@@ -563,6 +584,7 @@ class RouteManager private constructor(context: Context) {
         @Volatile var networkIdentity: String = ""
         @Volatile var actual = linkedMapOf<String, String>()
         @Volatile var application: AppliedRoute? = null
+        var preferenceViewDigest: String = ""
         var resourceObservations: ByteArray? = null
         var linkObservations: ByteArray? = null
         var linkObservationViewDigest: String = ""

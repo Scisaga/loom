@@ -370,6 +370,49 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		}
 		mark("restarted", status)
 		signal("regranted")
+		wait("reauthorization remains pending", func() bool {
+			s := load()
+			current, err := readWindowsRuntimeStatus(profileRoot)
+			if err != nil || len(s.LKG().View.PolicyIDs) == 0 || current.ViewDigest != s.LKG().ViewDigest || len(current.Selections) != 0 || len(current.BlockedScopes) == 0 {
+				return false
+			}
+			for _, choice := range s.Preference().Services {
+				if choice.PolicyID != "" {
+					t.Fatal("reauthorization restored an old choice")
+				}
+			}
+			return true
+		})
+		if business() == nil {
+			t.Fatal("reauthorized Service bypassed pending client choice")
+		}
+		for _, service := range load().LKG().View.Services {
+			var policyID string
+			wait("service policy option", func() bool {
+				snapshot := app.snapshot()
+				if app.skin.route.pending != nil || snapshot.routeBusy {
+					return false
+				}
+				for index, option := range snapshot.routeOptions {
+					if option.ServiceID != service.ID {
+						continue
+					}
+					for visibleIndex, value := range app.routeVisible {
+						if value != index {
+							continue
+						}
+						policyID = option.PolicyID
+						procSendMessage.Call(app.controls.routeCombo, portableCBSetCurSel, uintptr(visibleIndex), 0)
+						procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRoute|portableCBNSelEndOK<<16, app.controls.routeCombo)
+						return true
+					}
+				}
+				return false
+			})
+			wait("explicit service policy persisted", func() bool {
+				return load().Preference().Policy(service.ID) == policyID && app.skin.route.pending == nil
+			})
+		}
 		status = readback(true)
 		wait("reauthorized HTTPS business", func() bool { return business() == nil })
 		captureProfileGUITestWindow(t, app, filepath.Join(evidence, "regranted.png"))

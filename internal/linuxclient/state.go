@@ -56,7 +56,7 @@ type Status struct {
 
 func defaultState(generation string) LocalState {
 	return LocalState{Schema: localStateSchema,
-		Preference:        clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto},
+		Preference:        clientmodel.EmptyPreference(),
 		NetworkGeneration: generation, Observations: []clientmodel.Observation{}}
 }
 
@@ -285,6 +285,52 @@ func SetPreference(path, generation string, preference clientmodel.Preference) e
 		}
 		state.Preference = preference
 		return atomicJSON(path, state)
+	})
+}
+
+// ReconcilePolicyChoices writes initialization/revocation under the same lock as
+// interactive choices. Observations and unrelated Service choices are retained.
+func ReconcilePolicyChoices(path, generation string, view control.DeviceView) (LocalState, error) {
+	var result LocalState
+	err := withLock(path, func() error {
+		var current LocalState
+		if err := readStrict(path, 1<<20, &current); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			current = defaultState(generation)
+		} else if err := current.validate(); err != nil {
+			return err
+		}
+		next, err := clientmodel.ReconcilePreference(current.Preference, view)
+		if err != nil {
+			return err
+		}
+		current.Preference = next
+		if err := atomicJSON(path, current); err != nil {
+			return err
+		}
+		result = current
+		return nil
+	})
+	return result, err
+}
+
+func SelectPolicy(path, generation string, view control.DeviceView, serviceID, policyID string) error {
+	return withLock(path, func() error {
+		var current LocalState
+		if err := readStrict(path, 1<<20, &current); err != nil {
+			return err
+		}
+		if err := current.validate(); err != nil {
+			return err
+		}
+		next, err := clientmodel.ChoosePolicy(current.Preference, view, serviceID, policyID)
+		if err != nil {
+			return err
+		}
+		current.Preference = next
+		return atomicJSON(path, current)
 	})
 }
 

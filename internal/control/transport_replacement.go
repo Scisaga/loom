@@ -19,6 +19,16 @@ import (
 // for an explicitly requested, one-time forward replacement. It never returns
 // a historical View, regenerates its runtime, or admits it to current decoding.
 func CheckTransportReplacement(previousBytes []byte, next DeviceViewEnvelope, trusted BootstrapInvite, highWater []FactFrontier) error {
+	return checkSignedViewReplacement(previousBytes, next, trusted, highWater, false)
+}
+
+// CheckPolicySelectionReplacement is only used by the explicit policy cutover.
+// The historical execution body stays opaque and cannot enter current decoding.
+func CheckPolicySelectionReplacement(previousBytes []byte, next DeviceViewEnvelope, trusted BootstrapInvite, highWater []FactFrontier) error {
+	return checkSignedViewReplacement(previousBytes, next, trusted, highWater, true)
+}
+
+func checkSignedViewReplacement(previousBytes []byte, next DeviceViewEnvelope, trusted BootstrapInvite, highWater []FactFrontier, policySelection bool) error {
 	if err := VerifyDeviceViewEnvelope(next, trusted); err != nil {
 		return err
 	}
@@ -74,17 +84,22 @@ func CheckTransportReplacement(previousBytes []byte, next DeviceViewEnvelope, tr
 				} `json:"fakeip"`
 			} `json:"dns"`
 		}
-		recognized := false
-		if ok && json.Unmarshal([]byte(config), &retired) == nil {
+		recognized := policySelection && historicalPolicyCandidates(view)
+		if !policySelection && ok && json.Unmarshal([]byte(config), &retired) == nil {
 			recognized = retired.DNS.FakeIP.Range == "2001:db8:8000::/49"
 			for _, endpoint := range retired.Endpoints {
 				recognized = recognized || endpoint.Type == "wireguard" && strings.HasPrefix(endpoint.Tag, "wg-send.") && ValidateID(strings.TrimPrefix(endpoint.Tag, "wg-send.")) == nil
 			}
 		}
-		recognized = recognized || recognizeHistoricalSharedWG(view, config)
+		if !policySelection {
+			recognized = recognized || recognizeHistoricalSharedWG(view, config)
+		}
 		if !recognized {
 			return errors.New("historical View is not a retired WG projection")
 		}
+	}
+	if policySelection && !historicalPolicyCandidates(view) {
+		return errors.New("policy replacement requires the finite original candidate shape")
 	}
 	viewBody := appendContractJSON(nil, view)
 	sum := sha256.Sum256(append([]byte("loom-device-view-digest-v3\x00"), viewBody...))
@@ -352,3 +367,39 @@ func recognizeHistoricalSharedWG(view map[string]any, config string) bool {
 }
 
 func stringContractValue(value any) string { text, _ := value.(string); return text }
+
+func historicalPolicyCandidates(view map[string]any) bool {
+	routes, ok := view["routes"].([]any)
+	if !ok {
+		return false
+	}
+	known := map[string]bool{"id": true, "spec_digest": true, "scope": true, "service_id": true, "first_resource_id": true, "node_chain": true, "link_ids": true, "final_exit": true}
+	for _, raw := range routes {
+		route, ok := raw.(map[string]any)
+		if !ok || len(route) != len(known) {
+			return false
+		}
+		for key := range route {
+			if !known[key] {
+				return false
+			}
+		}
+		for _, key := range []string{"id", "spec_digest", "scope", "service_id", "first_resource_id", "final_exit"} {
+			if _, ok := route[key].(string); !ok {
+				return false
+			}
+		}
+		for _, key := range []string{"node_chain", "link_ids"} {
+			values, ok := route[key].([]any)
+			if !ok {
+				return false
+			}
+			for _, v := range values {
+				if _, ok := v.(string); !ok {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}

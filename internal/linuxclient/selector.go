@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"time"
 
 	"loom/internal/clientadapter"
@@ -164,60 +163,7 @@ func waitSelector(ctx context.Context, selector Selector, scopes []string) error
 }
 
 func applySelections(ctx context.Context, selector Selector, desired map[string]string) (map[string]string, error) {
-	scopes := make([]string, 0, len(desired))
-	for scope := range desired {
-		scopes = append(scopes, scope)
-	}
-	sort.Strings(scopes)
-	before := make(map[string]string, len(scopes))
-	for _, scope := range scopes {
-		current, err := selector.Read(ctx, scope)
-		if err != nil {
-			return nil, err
-		}
-		before[scope] = current
-	}
-	changed := []string{}
-	rollback := func(cause error) error {
-		var failures []error
-		for index := len(changed) - 1; index >= 0; index-- {
-			if err := selector.Set(ctx, changed[index], before[changed[index]]); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		if len(changed) > 0 {
-			if err := selector.CloseConnections(ctx, changed); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		return errors.Join(append([]error{cause}, failures...)...)
-	}
-	for _, scope := range scopes {
-		if before[scope] == desired[scope] {
-			continue
-		}
-		if err := selector.Set(ctx, scope, desired[scope]); err != nil {
-			return nil, rollback(err)
-		}
-		changed = append(changed, scope)
-	}
-	if len(changed) > 0 {
-		if err := selector.CloseConnections(ctx, changed); err != nil {
-			return nil, rollback(err)
-		}
-	}
-	readback := make(map[string]string, len(scopes))
-	for _, scope := range scopes {
-		actual, err := selector.Read(ctx, scope)
-		if err != nil {
-			return nil, rollback(fmt.Errorf("selector %s readback failed: %w", scope, err))
-		}
-		if actual != desired[scope] {
-			return nil, rollback(fmt.Errorf("selector %s readback does not match applied candidate", scope))
-		}
-		readback[scope] = actual
-	}
-	return readback, nil
+	return clientadapter.ApplySelections(ctx, selector, desired)
 }
 
 func (selector *HTTPSelector) Health(ctx context.Context) error {

@@ -10,9 +10,9 @@ import (
 func TestRemoteRelayFailureOnlyExcludesExactPathAndCompleteNewBusinessRecovers(t *testing.T) {
 	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	ref := LinkSampleRef{LinkID: "demo-link", DeviceID: "demo-entry", ResourceID: "demo-exit-wg", SpecDigest: "sha256:" + strings.Repeat("a", 64), Target: "[fdab::1]:53", Action: "wireguard_dns"}
-	routes := []RouteCandidate{{ID: "demo-relay", Scope: "service:demo-service", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, RelayLinks: []LinkSampleRef{ref}}, {ID: "demo-direct", Scope: "service:demo-service", FinalExit: "demo-exit", Chain: []string{"demo-exit"}}}
+	routes := []RouteCandidate{{ID: "demo-relay", Scope: "service:demo-service", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, RelayLinks: []LinkSampleRef{ref}, PolicyID: "demo-policy"}, {ID: "demo-direct", Scope: "service:demo-service", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, PolicyID: "demo-policy"}}
 	sample := control.DeviceLinkObservation{DeviceID: ref.DeviceID, ReportSequence: 1, ReportDigest: "sha256:" + strings.Repeat("b", 64), CurrentUntil: at.Add(30 * time.Second).UnixMilli(), Observation: control.Observation{Level: "link", ResourceID: ref.ResourceID, LinkID: ref.LinkID, SpecDigest: ref.SpecDigest, Target: ref.Target, Action: ref.Action, NetworkGeneration: "demo-remote-generation", Result: "unavailable", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli()}}
-	pref := Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"}
+	pref := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	targets := []string{"https://demo.example/a", "https://demo.example/b"}
 	selectRoute := func(samples []Observation, remote control.DeviceLinkObservation, now time.Time) string {
 		t.Helper()

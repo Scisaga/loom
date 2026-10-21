@@ -9,21 +9,20 @@ import (
 	"time"
 )
 
-func TestLocalNetworkSelectionIgnoresInternetPreference(t *testing.T) {
+func TestLocalNetworkSelectedPolicyRetainsGateway(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []RouteCandidate{
-		{ID: "demo-one-hop", FinalExit: "demo-gateway", Chain: []string{"demo-gateway"}, Scope: "local_network:demo-lan"},
-		{ID: "demo-relay", FinalExit: "demo-gateway", Chain: []string{"demo-entry", "demo-gateway"}, Scope: "local_network:demo-lan"},
+		{ID: "demo-one-hop", FinalExit: "demo-gateway", Chain: []string{"demo-gateway"}, Scope: "local_network:demo-lan", PolicyID: "demo-policy"},
+		{ID: "demo-relay", FinalExit: "demo-gateway", Chain: []string{"demo-entry", "demo-gateway"}, Scope: "local_network:demo-lan", PolicyID: "demo-policy"},
 	}
 	failed := Observation{CandidateID: routes[0].ID, NetworkGeneration: "demo-network-generation", Scope: "local_network:demo-lan", Result: "unavailable", Action: "https_request", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}
-	for _, preference := range []Preference{{Schema: 3, Mode: ModeDirect}, {Schema: 3, Mode: ModeAuto}, {Schema: 3, Mode: ModeFixed, Exit: "demo-internet-exit"}} {
-		selection, err := Select(routes, []Observation{failed}, nil, preference, routes[0].ID, failed.NetworkGeneration, now, "")
-		if err != nil || selection.CandidateID != "demo-relay" || selection.Scope != "local_network:demo-lan" {
-			t.Fatal("internet preference pruned an authorized fixed-gateway LAN path", preference.Mode, err)
-		}
+	preference := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-lan", PolicyID: "demo-policy"}}}
+	selection, err := Select(routes, []Observation{failed}, nil, preference, routes[0].ID, failed.NetworkGeneration, now, "")
+	if err != nil || selection.CandidateID != "demo-relay" {
+		t.Fatal("LAN selected policy lost its alternate gateway path", err)
 	}
 	routes[0].FinalExit, routes[0].Chain = "direct", nil
-	if _, err := Select(routes, nil, nil, Preference{Schema: 3, Mode: ModeAuto}, "", failed.NetworkGeneration, now, ""); err == nil {
+	if _, err := Select(routes, nil, nil, Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-lan", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, "", failed.NetworkGeneration, now, ""); err == nil {
 		t.Fatal("LAN candidate escaped through Direct")
 	}
 }
@@ -31,22 +30,22 @@ func TestLocalNetworkSelectionIgnoresInternetPreference(t *testing.T) {
 func TestSelectAvailabilityGenerationAndSameExitFallback(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []RouteCandidate{
-		{ID: "direct", FinalExit: "direct", Scope: "service"},
-		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service"},
+		{ID: "direct", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-direct-policy"},
+		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
 	}
 	observations := []Observation{
-		{CandidateID: "one-hop", NetworkGeneration: "network-a", Scope: "service", Result: "unavailable", Action: "https",
+		{CandidateID: "one-hop", NetworkGeneration: "network-a", Scope: "service:demo-service", Result: "unavailable", Action: "https",
 			ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)},
-		{CandidateID: "relay", NetworkGeneration: "old-network", Scope: "service", Result: "unavailable", Action: "https",
+		{CandidateID: "relay", NetworkGeneration: "old-network", Scope: "service:demo-service", Result: "unavailable", Action: "https",
 			ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)},
 	}
-	selected, err := Select(routes, observations, nil, Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"},
+	selected, err := Select(routes, observations, nil, Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-lan", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}},
 		"one-hop", "network-a", now, "")
 	if err != nil || selected.CandidateID != "relay" {
 		t.Fatalf("same-exit fallback = %+v, %v", selected, err)
 	}
-	selected, err = Select(routes, observations, nil, Preference{Schema: 3, Mode: ModeDirect}, "", "network-a", now, "")
+	selected, err = Select(routes, observations, nil, Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-lan", PolicyID: "demo-direct-policy"}, {ServiceID: "demo-service", PolicyID: "demo-direct-policy"}}}, "", "network-a", now, "")
 	if err != nil || selected.CandidateID != "direct" {
 		t.Fatalf("direct = %+v, %v", selected, err)
 	}
@@ -55,17 +54,17 @@ func TestSelectAvailabilityGenerationAndSameExitFallback(t *testing.T) {
 func TestExpiredFailuresDoNotStarveOtherAuthorizedPaths(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []RouteCandidate{
-		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service"},
-		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service:demo-service"},
-		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: "service:demo-service"},
-		{ID: "demo-0", FinalExit: "direct", Scope: "service:demo-service"},
+		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "demo-0", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-direct-policy"},
 	}
 	failed := func(id string, at time.Time) Observation {
 		return Observation{CandidateID: id, NetworkGeneration: "demo-network", Scope: routes[0].Scope,
 			Result: "unavailable", Action: "https_request", ObservedAt: at.Format(time.RFC3339), ValidUntil: at.Add(30 * time.Second).Format(time.RFC3339)}
 	}
 	observations := []Observation{failed("demo-a", now.Add(-time.Minute)), failed("demo-b", now.Add(-2*time.Minute))}
-	preference := Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"}
+	preference := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-lan", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	selectID := func(current, generation string) string {
 		t.Helper()
 		selection, err := Select(routes, observations, nil, preference, current, generation, now, "")
@@ -97,21 +96,7 @@ func TestExpiredFailuresDoNotStarveOtherAuthorizedPaths(t *testing.T) {
 }
 
 func TestLocalExitIsNotDirectAndKeepsItsRuntimeIdentity(t *testing.T) {
-	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	local := RouteCandidate{ID: "demo-local", FinalExit: "demo-hybrid", Chain: []string{}, Scope: "service:demo-service"}
-	routes := []RouteCandidate{local, {ID: "demo-direct", FinalExit: "direct", Chain: []string{}, Scope: local.Scope}}
-	for _, item := range []struct {
-		preference Preference
-		wanted     string
-	}{{Preference{Schema: 3, Mode: ModeDirect}, "demo-direct"}, {Preference{Schema: 3, Mode: ModeFixed, Exit: local.FinalExit}, local.ID}, {Preference{Schema: 3, Mode: ModeAuto}, local.ID}} {
-		selected, err := Select(routes, nil, nil, item.preference, local.ID, "demo-generation", now, "")
-		if err != nil || selected.CandidateID != item.wanted {
-			t.Fatalf("%s lost final exit identity: %+v, %v", item.preference.Mode, selected, err)
-		}
-	}
-	if _, err := Select([]RouteCandidate{local}, nil, nil, Preference{Schema: 3, Mode: ModeDirect}, local.ID, "demo-generation", now, ""); err == nil {
-		t.Fatal("Direct preference selected an empty chain belonging to the local exit")
-	}
+	local := RouteCandidate{ID: "demo-local", PolicyID: "demo-policy", FinalExit: "demo-hybrid", Chain: []string{}, Scope: "service:demo-service"}
 	config, err := canonicalRuntimeFixture([]byte(`{"outbounds":[{"type":"direct","tag":"demo-local"},{"type":"selector","tag":"service:demo-service","outbounds":["demo-local"]}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -123,13 +108,13 @@ func TestLocalExitIsNotDirectAndKeepsItsRuntimeIdentity(t *testing.T) {
 }
 
 func TestRuntimeProfileRequiresExactRouteMapping(t *testing.T) {
-	raw := `{"outbounds":[{"type":"direct","tag":"direct"},{"type":"selector","tag":"service","outbounds":["direct","relay"]},{"type":"hysteria2","tag":"relay"}]}`
+	raw := `{"outbounds":[{"type":"direct","tag":"direct"},{"type":"selector","tag":"service:demo-service","outbounds":["direct","relay"]},{"type":"hysteria2","tag":"relay"}]}`
 	config, err := canonicalRuntimeFixture([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes := []RouteCandidate{{ID: "direct", FinalExit: "direct", Scope: "service"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service"}}
+	routes := []RouteCandidate{{ID: "direct", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"}}
 	if err := (RuntimeProfile{Kind: "sing_box", Config: config}).Validate(routes); err != nil {
 		t.Fatal(err)
 	}
@@ -141,19 +126,19 @@ func TestRuntimeProfileRequiresExactRouteMapping(t *testing.T) {
 }
 
 func TestRuntimeCandidatesArePureStableProjection(t *testing.T) {
-	raw := `{"outbounds":[{"type":"selector","tag":"service","outbounds":["relay","direct"]},{"type":"hysteria2","tag":"relay"},{"type":"direct","tag":"direct"}]}`
+	raw := `{"outbounds":[{"type":"selector","tag":"service:demo-service","outbounds":["relay","direct"]},{"type":"hysteria2","tag":"relay"},{"type":"direct","tag":"direct"}]}`
 	config, err := canonicalRuntimeFixture([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
 	profile := RuntimeProfile{Kind: "sing_box", Config: config}
 	routes := []RouteCandidate{
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service"},
-		{ID: "direct", FinalExit: "direct", Scope: "service"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "direct", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-policy"},
 	}
 	want := []RuntimeCandidate{
-		{ID: "direct", FinalExit: "direct", Scope: "service", Transport: "direct"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service", Transport: "hysteria2"},
+		{ID: "direct", PolicyID: "demo-policy", FinalExit: "direct", Scope: "service:demo-service", Transport: "direct"},
+		{ID: "relay", PolicyID: "demo-policy", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service:demo-service", Transport: "hysteria2"},
 	}
 	first, err := ProjectRuntimeCandidates(routes, profile)
 	if err != nil {
@@ -175,6 +160,24 @@ func canonicalRuntimeFixture(body []byte) (string, error) {
 	if err := json.Unmarshal(body, &value); err != nil {
 		return "", err
 	}
+	document := value.(map[string]any)
+	if raw, ok := document["outbounds"].([]any); ok {
+		hasReject := false
+		for _, item := range raw {
+			outbound := item.(map[string]any)
+			if outbound["tag"] == "reject" {
+				hasReject = true
+			}
+			if outbound["type"] == "selector" {
+				outbound["default"] = "reject"
+				members, _ := outbound["outbounds"].([]any)
+				outbound["outbounds"] = append([]any{"reject"}, members...)
+			}
+		}
+		if !hasReject {
+			document["outbounds"] = append(raw, map[string]any{"type": "block", "tag": "reject"})
+		}
+	}
 	result, err := control.CanonicalEncode(value)
 	return string(result), err
 }
@@ -183,7 +186,7 @@ func TestRuntimeProfileUsesContractEscapingForCertificates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes := []RouteCandidate{{ID: "demo-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service"}}
+	routes := []RouteCandidate{{ID: "demo-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"}}
 	if err := (RuntimeProfile{Kind: "sing_box", Config: config}).Validate(routes); err != nil {
 		t.Fatal(err)
 	}

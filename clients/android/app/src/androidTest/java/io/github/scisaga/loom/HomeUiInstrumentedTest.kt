@@ -39,10 +39,8 @@ class HomeUiInstrumentedTest {
         compose.onNodeWithTag("tab-configuration").performClick()
         compose.onNodeWithTag("profiles-card").assertIsDisplayed()
         compose.onNodeWithTag("add-profile").assertIsDisplayed()
-        compose.onNodeWithTag("route-mode-card").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("route-direct").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithTag("route-auto").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithTag("route-fixed-exit").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithTag("service-policy-card").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("等待认证配置中的服务与策略").assertIsDisplayed()
 
         compose.onNodeWithTag("tab-diagnostics").performClick()
         compose.onNodeWithTag("network-evidence-card").assertIsDisplayed()

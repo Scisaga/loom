@@ -73,6 +73,10 @@ func ReplaceTransportLKG(original []byte, replacement control.DeviceViewEnvelope
 // The explicit command supplies both a newly certified View and an evidence
 // destination. Failed verification leaves the original state untouched.
 func MigrateTransportFile(path, evidence string, replacement control.DeviceViewEnvelope, protector clientsecret.Protector) error {
+	return migrateForwardState(path, evidence, replacement, protector, ReplaceTransportLKG, false)
+}
+
+func migrateForwardState(path, evidence string, replacement control.DeviceViewEnvelope, protector clientsecret.Protector, replace func([]byte, control.DeviceViewEnvelope) (State, error), completed bool) error {
 	if !validStatePath(path) || !validStatePath(evidence) || path == evidence {
 		return errors.New("migration requires distinct canonical state and evidence paths")
 	}
@@ -87,7 +91,22 @@ func MigrateTransportFile(path, evidence string, replacement control.DeviceViewE
 		return err
 	}
 	defer clear(original)
-	next, err := ReplaceTransportLKG(original, replacement)
+	if completed {
+		if current, err := DecodeIdentityState(original); err == nil && current.LKG != nil && current.LKG.ViewDigest == replacement.ViewDigest {
+			backup := &Store{path: evidence, protector: protector}
+			before, err := backup.readBytesUnlocked()
+			if err != nil {
+				return err
+			}
+			defer clear(before)
+			expected, err := replace(before, replacement)
+			if err != nil {
+				return err
+			}
+			return CheckIdentityStateAdvance(current, expected)
+		}
+	}
+	next, err := replace(original, replacement)
 	if err != nil {
 		return err
 	}

@@ -44,7 +44,7 @@ func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 	if len(snapshot.Paths) != 1 || snapshot.Paths[0].FinalExit != "demo-access" || len(snapshot.Paths[0].Chain) != 0 || snapshot.Paths[0].Selected || snapshot.Paths[0].Availability != "unknown" {
 		t.Fatal("unmeasured local candidate disappeared or acquired a selection/health assertion")
 	}
-	report := DeviceReport{DeviceID: "demo-access", NetworkGeneration: "demo-generation", ReportedAt: 1000, ViewDigest: "demo-digest", Runtime: RuntimeReadback{State: "running", AppliedViewDigest: "demo-digest"}, Selections: []ReportSelection{{ServiceID: "demo-service", CandidateID: snapshot.Paths[0].CandidateID}}, Observations: []Observation{}}
+	report := DeviceReport{DeviceID: "demo-access", NetworkGeneration: "demo-generation", ReportedAt: 1000, ViewDigest: "demo-digest", Runtime: RuntimeReadback{State: "running", AppliedViewDigest: "demo-digest"}, PolicyChoices: new([]PolicyChoice{{ServiceID: "demo-service", PolicyID: "demo-policy"}}), Selections: []ReportSelection{{ServiceID: "demo-service", PolicyID: "demo-policy", CandidateID: snapshot.Paths[0].CandidateID}}, Observations: []Observation{}}
 	projectWebObservations(&snapshot, []DeviceReport{report}, time.UnixMilli(2000))
 	if !snapshot.Paths[0].Selected || snapshot.Paths[0].Availability != "unknown" {
 		t.Fatal("selector readback without a business probe was lost or manufactured health")

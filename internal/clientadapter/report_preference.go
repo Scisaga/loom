@@ -5,9 +5,8 @@ import (
 	"loom/internal/control"
 )
 
-// ReportedPreference projects the existing local setting without deriving it
-// from the current selector, or granting permission to the requested exit.
-func ReportedPreference(view control.DeviceView, preference clientmodel.Preference) (*control.ReportPreference, error) {
+// ReportedPolicyChoices samples the saved setting independently of actual paths.
+func ReportedPolicyChoices(view control.DeviceView, preference clientmodel.Preference) (*[]control.PolicyChoice, error) {
 	access := false
 	for _, role := range view.Responsibilities {
 		access = access || role == "access"
@@ -18,6 +17,6 @@ func ReportedPreference(view control.DeviceView, preference clientmodel.Preferen
 	if err := preference.Validate(); err != nil {
 		return nil, err
 	}
-	value := &control.ReportPreference{Mode: string(preference.Mode), Exit: preference.Exit}
-	return value, value.Validate()
+	values := append([]control.PolicyChoice{}, preference.Services...)
+	return &values, nil
 }

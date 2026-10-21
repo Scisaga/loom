@@ -430,7 +430,7 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 	if err := verifyWireGuardCounters(report.WireGuardCounters, view); err != nil {
 		return err
 	}
-	if report.Preference != nil && !containsString(view.Responsibilities, "access") {
+	if (report.Preference != nil || report.PolicyChoices != nil) && !containsString(view.Responsibilities, "access") {
 		return errors.New("routing preference report requires an access device")
 	}
 	owned := map[string]TransportResource{}
@@ -460,9 +460,23 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 	for _, route := range view.Routes {
 		routes[route.ID] = route
 	}
+	if report.PolicyChoices != nil {
+		for _, choice := range *report.PolicyChoices {
+			if choice.PolicyID == "" {
+				continue // Initialized records can outlive a revoked Service.
+			}
+			granted := false
+			for _, policy := range view.Policies {
+				granted = granted || policy.ID == choice.PolicyID && policy.ServiceID == choice.ServiceID && policy.Action == "allow" && containsString(view.PolicyIDs, policy.ID)
+			}
+			if !granted {
+				return errors.New("reported policy choice is outside the current authorization")
+			}
+		}
+	}
 	for _, selection := range report.Selections {
 		route, found := routes[selection.CandidateID]
-		if !found || route.ServiceID != selection.ServiceID {
+		if !found || route.ServiceID != selection.ServiceID || selection.PolicyID != "" && route.PolicyID != selection.PolicyID {
 			return errors.New("report selection is outside the current view")
 		}
 	}

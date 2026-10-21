@@ -20,7 +20,7 @@ func digestContractValue(domain string, value any) (string, error) {
 }
 
 func localCandidate(service Service, policy NetworkPolicy, finalExit string, records ...DNSRecord) (RouteCandidate, error) {
-	identity := map[string]any{"service_id": service.ID, "first_resource_id": "", "node_chain": []string{}, "link_ids": []string{}, "final_exit": finalExit}
+	identity := map[string]any{"service_id": service.ID, "policy_id": policy.ID, "first_resource_id": "", "node_chain": []string{}, "link_ids": []string{}, "final_exit": finalExit}
 	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
 	if err != nil {
 		return RouteCandidate{}, err
@@ -29,7 +29,7 @@ func localCandidate(service Service, policy NetworkPolicy, finalExit string, rec
 	if err != nil {
 		return RouteCandidate{}, err
 	}
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID,
+	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, PolicyID: policy.ID,
 		FirstResourceID: "", NodeChain: []string{}, LinkIDs: []string{}, FinalExit: finalExit}, nil
 }
 
@@ -46,7 +46,7 @@ func servicePermissionValues(view DeviceView) (map[string]Service, map[string]Ne
 		}
 		services[service.ID] = service
 	}
-	byService := map[string]NetworkPolicy{}
+	byPolicy := map[string]NetworkPolicy{}
 	inboundPolicies := map[string]bool{}
 	for _, credential := range view.InboundCredentials {
 		inboundPolicies[credential.PolicyID] = true
@@ -62,12 +62,9 @@ func servicePermissionValues(view DeviceView) (map[string]Service, map[string]Ne
 		if !selected {
 			continue
 		}
-		if _, found := byService[policy.ServiceID]; found {
-			return nil, nil, errors.New("device selected multiple Policies for one Service")
-		}
-		byService[policy.ServiceID] = policy
+		byPolicy[policy.ID] = policy
 	}
-	return services, byService, nil
+	return services, byPolicy, nil
 }
 
 func matcherRule(matcher ServiceMatcher) map[string]any {
@@ -138,8 +135,11 @@ func validateDeviceViewAuthorization(view DeviceView) error {
 	}
 	for index, group := range view.BusinessProbeTargets {
 		service, exists := services[group.ServiceID]
-		policy, assigned := policies[group.ServiceID]
-		if !exists || !assigned || policy.Action != "allow" || group.Targets == nil || index > 0 && view.BusinessProbeTargets[index-1].ServiceID >= group.ServiceID {
+		assigned := false
+		for _, policy := range policies {
+			assigned = assigned || policy.ServiceID == group.ServiceID && policy.Action == "allow"
+		}
+		if !exists || !assigned || group.Targets == nil || index > 0 && view.BusinessProbeTargets[index-1].ServiceID >= group.ServiceID {
 			return errors.New("business probe group is unauthorized or not uniquely sorted")
 		}
 		for targetIndex, target := range group.Targets {
@@ -148,7 +148,11 @@ func validateDeviceViewAuthorization(view DeviceView) error {
 			}
 			for otherID, other := range services {
 				if otherID != service.ID {
-					if _, chosen := policies[otherID]; chosen && targetMatchesService(target, other, view.DNSRecords...) {
+					assigned := false
+					for _, policy := range policies {
+						assigned = assigned || policy.ServiceID == otherID
+					}
+					if assigned && targetMatchesService(target, other, view.DNSRecords...) {
 						return errors.New("business probe target belongs to multiple Services")
 					}
 				}
@@ -278,14 +282,11 @@ func projectDeviceView(projection Projection, deviceID string, releases ...Relea
 	// reserved website projection. The management snapshot exposes the conflict.
 	view.WebEndpoints, _ = WebsiteEndpoints(projection)
 	for _, service := range view.Services {
-		var policy NetworkPolicy
-		for _, selected := range view.Policies {
-			if selected.ServiceID == service.ID && containsString(view.PolicyIDs, selected.ID) {
-				policy = selected
-				break
-			}
+		allowed := false
+		for _, policy := range view.Policies {
+			allowed = allowed || policy.ServiceID == service.ID && containsString(view.PolicyIDs, policy.ID) && policy.Action == "allow"
 		}
-		if policy.Action != "allow" {
+		if !allowed {
 			continue
 		}
 		group := ServiceProbeTargets{ServiceID: service.ID, Targets: []string{}}

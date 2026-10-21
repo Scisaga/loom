@@ -73,7 +73,7 @@ class EnrollmentManager private constructor(context: Context) {
             launch(profileId, "配置替换失败") { store ->
                 val profile = LoomVpnService.acceptConfiguration(profileId) {
                     check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
-                    store.replaceTransport(body)
+                    store.importCertifiedView(body)
                 }
                 ready(profileId, profile, "认证配置已更新，原设备身份已保留")
             }

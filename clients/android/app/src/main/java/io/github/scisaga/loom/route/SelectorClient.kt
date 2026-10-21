@@ -26,28 +26,29 @@ internal class SelectorClient(config: String) {
             checkHealth()
             return
         }
-        val ordered = targets.sortedBy(AppliedSelector::selector)
-        val current = readCurrent(ordered)
-        val changed = mutableListOf<String>()
-        try {
-            ordered.forEach { target ->
-                if (current.getValue(target.selector) == target.candidate) return@forEach
-                request("PUT", target.selector, target.candidate)
-                changed += target.selector
-            }
-            if (changed.isNotEmpty()) closeServiceConnections(changed)
-            ordered.forEach { target ->
+        var failure: Throwable? = null
+        for (target in targets.sortedBy(AppliedSelector::selector)) {
+            try {
+                val current = readCurrentWithStartupRetry(target.selector)
+                if (current != target.candidate) {
+                    request("PUT", target.selector, target.candidate)
+                    closeServiceConnections(listOf(target.selector))
+                }
                 check(request("GET", target.selector) == target.candidate) {
                     "selector ${target.selector} 未读回目标候选"
                 }
+            } catch (error: Throwable) {
+                // A failed switch must not revive an earlier policy. Other
+                // Services and their established connections remain untouched.
+                runCatching { request("PUT", target.selector, "reject") }.exceptionOrNull()?.let(error::addSuppressed)
+                runCatching { closeServiceConnections(listOf(target.selector)) }.exceptionOrNull()?.let(error::addSuppressed)
+                runCatching { check(request("GET", target.selector) == "reject") { "服务拒绝状态未读回" } }
+                    .exceptionOrNull()?.let(error::addSuppressed)
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                if (failure == null) failure = error else failure.addSuppressed(error)
             }
-        } catch (error: Throwable) {
-            changed.asReversed().forEach { selector ->
-                runCatching { request("PUT", selector, current.getValue(selector)) }
-            }
-            if (changed.isNotEmpty()) runCatching { closeServiceConnections(changed) }
-            throw error
         }
+        failure?.let { throw it }
     }
 
     /** §7.3.3：只读投影 libbox 的实际 selector 状态。 */

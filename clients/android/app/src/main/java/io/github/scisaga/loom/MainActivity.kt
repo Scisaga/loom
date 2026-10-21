@@ -81,7 +81,6 @@ import io.github.scisaga.loom.profiles.checkedProfileName
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.RouteBusinessStatus
 import io.github.scisaga.loom.route.currentAt
-import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.route.RoutePathStatus
 import io.github.scisaga.loom.route.RouteStatus
 import io.github.scisaga.loom.vpn.ConnectionPhase
@@ -381,7 +380,7 @@ private fun LoomHomeRoute(
                 onRetryEnrollment = enrollment::retry,
                 onRefreshEnrollment = enrollment::refreshConfiguration,
                 onAbandonEnrollment = enrollment::abandonPending,
-                onSelectRoute = { profileID, mode, exit -> routeManager.select(profileID, mode, exit) },
+                onSelectRoute = { profileID, serviceID, policyID -> routeManager.select(profileID, serviceID, policyID) },
                 onOpenNotificationSettings = onOpenNotificationSettings,
             ),
         )
@@ -1105,78 +1104,27 @@ private fun enrollmentTitle(phase: EnrollmentPhase): String = when (phase) {
 }
 
 @Composable
-internal fun RouteModeCard(status: RouteStatus, onSelect: (RouteMode, String) -> Unit) {
-    var choosingExit by remember { mutableStateOf(false) }
-    if (choosingExit) {
-        AlertDialog(
-            onDismissRequest = { choosingExit = false },
-            title = { Text("选择固定出口") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    status.exits.forEach { exit ->
-                        TextButton(
-                            onClick = {
-                                choosingExit = false
-                                onSelect(RouteMode.FIXED_EXIT, exit)
-                            },
-                            modifier = Modifier.fillMaxWidth().testTag("route-exit-$exit"),
-                        ) { Text(exit) }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { choosingExit = false }) { Text("取消") }
-            },
-        )
-    }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth().testTag("route-mode-card"),
-    ) {
+internal fun ServicePolicyCard(status: RouteStatus, onSelect: (String, String) -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().testTag("service-policy-card")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("流量模式", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RouteModeButton(
-                    label = "Direct",
-                    selected = status.mode == RouteMode.DIRECT,
-                    onClick = { onSelect(RouteMode.DIRECT, "") },
-                    enabled = status.available && status.directAvailable && !status.busy,
-                    modifier = Modifier.weight(1f).testTag("route-direct"),
-                )
-                RouteModeButton(
-                    label = "Auto",
-                    selected = status.mode == RouteMode.AUTO,
-                    onClick = { onSelect(RouteMode.AUTO, "") },
-                    enabled = status.available && !status.busy,
-                    modifier = Modifier.weight(1f).testTag("route-auto"),
-                )
-                RouteModeButton(
-                    label = "指定出口",
-                    selected = status.mode == RouteMode.FIXED_EXIT,
-                    onClick = { choosingExit = true },
-                    enabled = status.available && status.exits.isNotEmpty() && !status.busy,
-                    modifier = Modifier.weight(1f).testTag("route-fixed-exit"),
-                )
+            Text("服务策略", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            if (status.services.isEmpty()) Text("等待认证配置中的服务与策略", color = Muted, fontSize = 12.sp)
+            status.services.forEach { service ->
+                Text(service.name, fontWeight = FontWeight.Bold)
+                if (service.policyID.isEmpty()) Text("请选择策略后使用此服务", color = Muted, fontSize = 12.sp)
+                service.options.forEach { policy ->
+                    ServicePolicyButton(label = policy.name, selected = service.policyID == policy.id,
+                        onClick = { onSelect(service.serviceID, policy.id) }, enabled = status.available && !status.busy,
+                        modifier = Modifier.fillMaxWidth().testTag("service-policy-${service.serviceID}-${policy.id}"))
+                }
             }
-            Text(
-                status.detail,
-                color = if (status.blocked) Color(0xFFB33A3A) else Muted,
-                fontSize = 12.sp,
-            )
+            Text(status.detail, color = if (status.blocked) Color(0xFFB33A3A) else Muted, fontSize = 12.sp)
         }
     }
 }
 
 @Composable
-private fun RouteModeButton(
+private fun ServicePolicyButton(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,

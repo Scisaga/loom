@@ -102,7 +102,7 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 			}
 			// A CLI write after the runtime took its old snapshot must survive
 			// the cache transition under the same existing file lock.
-			preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}
+			preference := clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 			if err := SetPreference(path, state.NetworkGeneration, preference); err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +127,7 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 					wanted = append(wanted, observation)
 				}
 			}
-			if !reflect.DeepEqual(actual.Observations, wanted) || actual.Preference != preference || actual.ObservationViewDigest != next.ViewDigest || actual.NetworkGeneration != generation {
+			if !reflect.DeepEqual(actual.Observations, wanted) || !actual.Preference.Equal(preference) || actual.ObservationViewDigest != next.ViewDigest || actual.NetworkGeneration != generation {
 				t.Fatal("transition lost valid evidence/preference or retained changed evidence")
 			}
 			restarted, err := deviceclient.Load(identityPath)

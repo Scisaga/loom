@@ -59,7 +59,10 @@ type TransferCounts struct {
 }
 
 type Options struct {
-	Config          localconfig.Config
+	Config localconfig.Config
+	// Nodes fixes this invocation's explicit identity-check scope. It must
+	// include every publication target; nil means all configured deploy hosts.
+	Nodes           []string
 	ReloadConfig    func() (localconfig.Config, error)
 	Inputs          func(context.Context) (control.ReleaseDeploymentInputs, error)
 	Transport       Transport
@@ -68,6 +71,32 @@ type Options struct {
 	HTTP            *http.Client
 	Observe         func(Result)
 	inputMu         *sync.Mutex
+}
+
+func publicationNodes(config localconfig.Config, all []target, selected []string) ([]string, error) {
+	if selected == nil {
+		return append([]string{}, config.DeployHosts...), nil
+	}
+	if len(selected) == 0 {
+		return nil, errors.New("publication node scope is empty")
+	}
+	known := map[string]bool{}
+	for _, node := range config.DeployHosts {
+		known[node] = true
+	}
+	chosen := map[string]bool{}
+	for i, node := range selected {
+		if !known[node] || i > 0 && selected[i-1] >= node {
+			return nil, errors.New("publication node scope must be uniquely sorted configured nodes")
+		}
+		chosen[node] = true
+	}
+	for _, target := range all {
+		if !chosen[target.alias] {
+			return nil, errors.New("publication scope cannot omit a configured distribution target")
+		}
+	}
+	return append([]string{}, selected...), nil
 }
 
 type target struct {
@@ -188,6 +217,10 @@ func Publish(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	nodeScope, err := publicationNodes(o.Config, all, o.Nodes)
+	if err != nil {
+		return err
+	}
 	store, err := clientrelease.New(o.Source, o.PublicKey)
 	if err != nil {
 		return err
@@ -214,8 +247,8 @@ func Publish(ctx context.Context, o Options) error {
 			return errors.New("authenticated distribution roots are invalid")
 		}
 	}
-	if err = parallelByNode(ctx, o.Config.DeployHosts, func(i int) error {
-		alias := o.Config.DeployHosts[i]
+	if err = parallelByNode(ctx, nodeScope, func(i int) error {
+		alias := nodeScope[i]
 		if err := o.unchanged(ctx, inputs); err != nil {
 			return err
 		}

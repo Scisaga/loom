@@ -23,7 +23,7 @@ func TestWebChromeDeviceSectionsAndPolicyTags(t *testing.T) {
 	}
 	p := server.Runtime.Authority.Snapshot()
 	policy := p.NetworkIntent.Policies[0]
-	policy.ID, policy.Name, policy.Action = "demo-replacement-policy", "Demo replacement", "deny"
+	policy.ID, policy.Name, policy.Action = "demo-replacement-policy", "Demo alternative", "allow"
 	service, _ := p.CurrentTarget("service", policy.ServiceID)
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-create-alternative", Operation: "policy.put", TargetKind: "policy", TargetID: policy.ID, Dependencies: service.MaterialIDs, Payload: policy})
 	before := server.Runtime.Authority.Frontier()
@@ -38,13 +38,12 @@ func TestWebChromeDeviceSectionsAndPolicyTags(t *testing.T) {
 	if chromeDo(t, debug, `demoDraft===document.querySelector('#device-policy-form')&&demoDraft.elements.name.value==='Demo unsaved name'&&document.querySelectorAll('[data-device-panel]:not([hidden])').length===1`) != true {
 		t.Fatal("section navigation discarded the draft or mixed panels")
 	}
-	chromeDo(t, debug, `(()=>{window.confirm=()=>false;const picker=demoDraft.querySelector('.policy-picker');picker.querySelector('details').open=true;const search=picker.querySelector('[data-policy-search]');search.value='Demo replacement';search.dispatchEvent(new Event('input',{bubbles:true}));search.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return true})()`)
-	if chromeDo(t, debug, `demoDraft.querySelector('[name=policy_id][value=demo-policy]').checked&&!demoDraft.querySelector('[value=demo-replacement-policy]').checked`) != true {
-		t.Fatal("replacement bypassed confirmation")
+	chromeDo(t, debug, `(()=>{window.confirm=()=>false;const picker=demoDraft.querySelector('.policy-picker');picker.querySelector('details').open=true;const search=picker.querySelector('[data-policy-search]');search.value='Demo alternative';search.dispatchEvent(new Event('input',{bubbles:true}));search.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return true})()`)
+	if chromeDo(t, debug, `demoDraft.querySelector('[name=policy_id][value=demo-policy]').checked&&demoDraft.querySelector('[value=demo-replacement-policy]').checked`) != true {
+		t.Fatal("same-Service alternative replaced the earlier authorization")
 	}
-	chromeDo(t, debug, `(()=>{window.confirm=()=>true;demoDraft.querySelector('[value=demo-replacement-policy]').click();return true})()`)
-	if chromeDo(t, debug, `demoDraft.querySelectorAll('[name=policy_id]:checked').length===1&&demoDraft.querySelector('.policy-picker details').open&&demoDraft.querySelector('[data-selected-policy-summary]').textContent.includes('Deny this service')`) != true {
-		t.Fatal("tags stacked policies for one service, closed continuous selection, or hid deny")
+	if chromeDo(t, debug, `demoDraft.querySelectorAll('[name=policy_id]:checked').length===2&&demoDraft.querySelector('.policy-picker details').open&&demoDraft.querySelector('[data-selected-policy-summary]').textContent.includes('Direct')`) != true {
+		t.Fatal("same-Service policy collection was lost or continuous selection closed")
 	}
 	chromeDo(t, debug, `(()=>{window.confirm=()=>false;demoDraft.querySelector('[name=responsibility][value=access]').click();return true})()`)
 	if chromeDo(t, debug, `demoDraft.querySelector('[name=responsibility][value=access]').checked&&demoDraft.querySelector('[value=demo-replacement-policy]').checked`) != true {

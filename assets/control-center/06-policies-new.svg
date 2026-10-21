@@ -177,18 +177,10 @@
   </g>
   <line class="rule" x1="372" y1="511" x2="1538" y2="511"/>
   <text class="ui section" x="372" y="550" text-anchor="start">Access to this service</text>
-  <g data-ui="policy-effect" data-value="allow" role="radiogroup">
-  <g role="radio" data-value="allow" aria-checked="true">
-  <circle cx="1240" cy="544" r="8" fill="#FFFFFF" stroke="#248F64"/>
-  <circle cx="1240" cy="544" r="4" fill="#248F64" stroke="none"/>
-  <text class="ui body" x="1262" y="550" text-anchor="start">Allow</text>
+  <g data-ui="policy-effect" data-value="allow" aria-readonly="true">
+  <text class="ui body green" x="1538" y="550" text-anchor="end">Allowed</text>
   </g>
-  <g role="radio" data-value="deny" aria-checked="false">
-  <circle cx="1410" cy="544" r="8" fill="#FFFFFF" stroke="#BCC8C0"/>
-  <text class="ui body" x="1432" y="550" text-anchor="start">Deny</text>
-  </g>
-  </g>
-  <text class="ui small muted" x="372" y="582" text-anchor="start">Deny blocks service access while keeping the policy assigned and its path rules saved.</text>
+  <text class="ui small muted" x="372" y="582" text-anchor="start">This policy defines allowed access. Remove its authorization to withdraw access.</text>
   <g data-ui="allow-direct" aria-checked="true">
   <rect x="372" y="617" width="18" height="18" rx="3" fill="#248F64" stroke="#248F64"/>
   <text class="ui small white" x="381" y="631" text-anchor="middle">✓</text>

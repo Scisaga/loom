@@ -219,23 +219,13 @@ def connection_summary(parent, fixed=False):
     return 112 + extra
 
 
-def route_mode(parent, top, fixed=False):
-    text(parent, LEFT, top + 16, "路由模式", 14, weight=500)
-    group = element(parent, "g", data_ui="segmented-control")
-    rect(group, 280, top, 240, 32, "#E4ECE7", radius=CONTROL_RADIUS)
-    selected = 2 if fixed else 1
-    rect(group, 284 + selected * 80, top + 4, 72, 24, GREEN, radius=4,
-         data_ui="selected-segment")
-    for index, label in enumerate(("直连", "自动", "固定出口")):
-        text(group, 320 + index * 80, top + 16, label, 12,
-             SURFACE if selected == index else MUTED,
-             500 if selected == index else 400, "middle")
-    if fixed:
-        selector = element(parent, "g", data_ui="select")
-        rect(selector, 536, top, 160, 32, SURFACE, "#D7DFD9", CONTROL_RADIUS)
-        text(selector, 548, top + 16, "demo-exit")
-        path(selector, f"M676 {top+14}l4 4 4-4")
-        text(parent, 708, top + 16, "前置路径自动选择", 11, MUTED)
+def service_policies(parent, top, fixed=False):
+    text(parent, LEFT, top + 16, "服务策略", 14, weight=500)
+    group = element(parent, "g", data_ui="service-policy-select")
+    rect(group, 280, top, 556, 32, "#E9F5EE", radius=CONTROL_RADIUS)
+    label = "境外 API / 固定德国出口 ✓" if fixed else "境外 API / 境外最优出口 ✓"
+    text(group, 292, top + 16, label, 12, GREEN)
+    path(group, f"M812 {top+14}l4 4 4-4")
 
 
 def route_node(parent, x, y, label, kind):
@@ -334,7 +324,7 @@ def connected(parent, defs, scene):
     heading(content, "演示网络甲", delete=True, connected=True)
     summary_height = connection_summary(content, fixed)
     mode_top = 104 + summary_height + 24
-    route_mode(content, mode_top, fixed)
+    service_policies(content, mode_top, fixed)
     services = [("统一上网路径", True)] if fixed else [("demo-web", True), ("demo-api", False)]
     routes_top = mode_top + CONTROL_HEIGHT + 24
     height = route_panel(content, routes_top, services, expanded)

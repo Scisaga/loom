@@ -16,7 +16,7 @@ func firstHopSelectionFixture() ([]RouteCandidate, []control.Observation, time.T
 	var samples []control.Observation
 	for _, id := range []string{"a", "b", "c"} {
 		ref := &ResourceSampleRef{ResourceID: "demo-resource-" + id, SpecDigest: "sha256:" + strings.Repeat(id, 64), Target: "demo.example:443", Action: "hysteria2_tls"}
-		routes = append(routes, RouteCandidate{ID: "demo-" + id, FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-web", FirstHop: ref})
+		routes = append(routes, RouteCandidate{ID: "demo-" + id, FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-web", FirstHop: ref, PolicyID: "demo-policy"})
 		samples = append(samples, control.Observation{Level: "resource", ResourceID: ref.ResourceID, SpecDigest: ref.SpecDigest, Target: ref.Target, Action: ref.Action,
 			NetworkGeneration: "demo-network", Result: "available", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(time.Minute).UnixMilli()})
 	}
@@ -27,7 +27,7 @@ func TestFirstHopFailureRequiresExactExecutionAndOriginalWindow(t *testing.T) {
 	routes, samples, at := firstHopSelectionFixture()
 	failed := samples[0]
 	failed.Result = "unavailable"
-	pref := Preference{Schema: 3, Mode: ModeFixed, Exit: "demo-exit"}
+	pref := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}, {ServiceID: "demo-web", PolicyID: "demo-policy"}}}
 	for _, tc := range []struct {
 		name   string
 		change func(*control.Observation)
@@ -61,7 +61,7 @@ func TestFirstHopFailureRequiresExactExecutionAndOriginalWindow(t *testing.T) {
 func TestFirstHopSuccessOrdersAttemptsWithoutCreatingBusinessHealth(t *testing.T) {
 	routes, samples, at := firstHopSelectionFixture()
 	const target = "https://demo.example/"
-	pref := Preference{Schema: 3, Mode: ModeAuto}
+	pref := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}, {ServiceID: "demo-web", PolicyID: "demo-policy"}}}
 	positive := samples[1:2]
 	for _, current := range []string{"", "demo-a"} {
 		want := "demo-b"
@@ -87,7 +87,7 @@ func TestBusinessRecoveryAndPartialTargetsPreserveTheirScope(t *testing.T) {
 	failed := samples[0]
 	failed.Result = "unavailable"
 	failed.ObservedAt += 500 // A same-second business result cannot be ordered before this fraction.
-	pref := Preference{Schema: 3, Mode: ModeAuto}
+	pref := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}, {ServiceID: "demo-web", PolicyID: "demo-policy"}}}
 	for _, tc := range []struct {
 		name, target, scope string
 		delta               time.Duration
@@ -119,7 +119,7 @@ func TestFirstHopAttemptOrderIsDeterministicAndDoesNotRefreshSamples(t *testing.
 	for _, order := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
 		values := []RouteCandidate{routes[order[0]], routes[order[1]], routes[order[2]]}
 		resources := []control.Observation{samples[order[2]], samples[order[1]], samples[order[0]]}
-		selected, err := Select(values, nil, resources, Preference{Schema: 3, Mode: ModeAuto}, "demo-a", "demo-network", at)
+		selected, err := Select(values, nil, resources, Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}, {ServiceID: "demo-web", PolicyID: "demo-policy"}}}, "demo-a", "demo-network", at)
 		if err != nil || selected.CandidateID != "demo-b" {
 			t.Fatal("input order changed selection", order, selected, err)
 		}
@@ -127,7 +127,7 @@ func TestFirstHopAttemptOrderIsDeterministicAndDoesNotRefreshSamples(t *testing.
 	if !reflect.DeepEqual(before, samples) {
 		t.Fatal("selection rewrote an original resource sample")
 	}
-	if _, err := Select(routes, nil, []control.Observation{samples[0], samples[0]}, Preference{Schema: 3, Mode: ModeAuto}, "", "demo-network", at); err == nil {
+	if _, err := Select(routes, nil, []control.Observation{samples[0], samples[0]}, Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}, {ServiceID: "demo-web", PolicyID: "demo-policy"}}}, "", "demo-network", at); err == nil {
 		t.Fatal("duplicate samples were silently resolved")
 	}
 	for i := range samples {
@@ -135,7 +135,7 @@ func TestFirstHopAttemptOrderIsDeterministicAndDoesNotRefreshSamples(t *testing.
 		samples[i].ObservedAt = at.Add(time.Duration(2-i) * time.Second).UnixMilli()
 		samples[i].ValidUntil = samples[i].ObservedAt + 1000
 	}
-	selected, err := Select(routes, nil, samples, Preference{Schema: 3, Mode: ModeAuto}, "demo-a", "demo-network", at.Add(4*time.Second))
+	selected, err := Select(routes, nil, samples, Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}, {ServiceID: "demo-web", PolicyID: "demo-policy"}}}, "demo-a", "demo-network", at.Add(4*time.Second))
 	if err != nil || selected.CandidateID != "demo-c" {
 		t.Fatal("expired first-hop failures starved the oldest untried path", selected, err)
 	}
@@ -146,7 +146,7 @@ func TestFutureBusinessSamplesCannotDetermineCurrentHealthOrAttemptOrder(t *test
 	const target = "https://demo.example/"
 	for _, result := range []string{"available", "unavailable"} {
 		sample := Observation{CandidateID: "demo-a", Scope: routes[0].Scope, NetworkGeneration: "demo-network", Target: target, Action: "https_request", Result: result, ObservedAt: at.Add(time.Second).Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339)}
-		selected, err := Select(routes, []Observation{sample}, nil, Preference{Schema: 3, Mode: ModeAuto}, "demo-a", "demo-network", at, target)
+		selected, err := Select(routes, []Observation{sample}, nil, Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}, {ServiceID: "demo-web", PolicyID: "demo-policy"}}}, "demo-a", "demo-network", at, target)
 		state, _ := ObservationState([]Observation{sample}, "demo-a", routes[0].Scope, "demo-network", []string{target}, at)
 		if err != nil || selected.CandidateID != "demo-a" || state != "unknown" || sample.CurrentAt(at) {
 			t.Fatal("a sample after the caller's time was treated as current evidence", selected, state, err)

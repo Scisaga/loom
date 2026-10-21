@@ -24,6 +24,9 @@ import (
 
 // This is a disposable Android host projection, never a second authority wire.
 type androidProfile struct {
+	Services                      []control.Service             `json:"services"`
+	Policies                      []control.NetworkPolicy       `json:"policies"`
+	Scopes                        []string                      `json:"scopes"`
 	PossiblePermissionRestoration bool                          `json:"possible_permission_restoration"`
 	HasWebsite                    bool                          `json:"has_website"`
 	Schema                        int                           `json:"schema"`
@@ -184,7 +187,8 @@ func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.We
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(androidProfile{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...), ResourceCacheIdentity: identity})
+	services, policies := clientmodel.PolicyOptions(view)
+	return json.Marshal(androidProfile{Services: services, Policies: policies, Scopes: clientmodel.ServiceScopes(view), PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...), ResourceCacheIdentity: identity})
 }
 func androidLocalRuntimeSecret(state deviceclient.State) string {
 	key, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
@@ -358,13 +362,13 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if state.LKG == nil || state.ReportSequence == 0 {
 		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
 	}
-	preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}
+	preference := clientmodel.EmptyPreference()
 	if len(preferenceBody) > 0 {
 		if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
 			return control.DeviceReport{}, err
 		}
 	}
-	reportedPreference, err := clientadapter.ReportedPreference(state.LKG.View, preference)
+	reportedPreference, err := clientadapter.ReportedPolicyChoices(state.LKG.View, preference)
 	if err != nil {
 		return control.DeviceReport{}, err
 	}
@@ -393,7 +397,7 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if err != nil || now.UTC().Format(androidReportTimeLayout) != reportedAt {
 		return control.DeviceReport{}, errors.New("Android report time is not canonical")
 	}
-	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), Preference: reportedPreference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
+	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), PolicyChoices: reportedPreference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
 	if len(resourceBody) > 0 {
 		if runtime.State != "running" || runtime.AppliedViewDigest != state.LKG.ViewDigest {
 			return control.DeviceReport{}, errors.New("resource samples require the actual accepted Android runtime")
@@ -420,7 +424,7 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 		if !ok || route.Scope != selection.Scope {
 			return control.DeviceReport{}, errors.New("reported selector is not authorized")
 		}
-		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, CandidateID: route.ID})
+		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID})
 	}
 	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
 	for _, observation := range observations {

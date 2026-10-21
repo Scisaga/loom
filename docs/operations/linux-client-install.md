@@ -1,8 +1,8 @@
 # Loom Linux 客户端安装
 
 本文面向 `linux/amd64` 的原生安装与 `linux/arm64` 的制品核验。Linux 与 Android 复用
-[客户端运行时最小模型](../clients/client-runtime-model.md)：Direct、Auto 和指定最终出口只是同一候选集合上的
-`Preference`，实际路径必须来自 sing-box selector 回读，授权与可用性不得混为一谈。
+[客户端运行时最小模型](../clients/client-runtime-model.md)：每服务所选策略内的 Direct、一跳和中继使用同一候选模型；策略选择保存在
+`Preference.services`，实际路径来自 sing-box selector 回读，授权、保存的选择与实际应用分别回读。
 
 > **执行边界：** access TUN 只在专用 network namespace 中运行。默认开发入口仍为 Mixed。
 > installer 显式接收 `--capture mixed` 或 `--capture tun`；后者由同一 agent 创建隔离数据面，应用须从
@@ -229,13 +229,12 @@ WG 新接口先以不可碰撞的临时名称创建，取得 ifindex 并设置�
 偏好通过唯一 CLI 入口修改：
 
 ```bash
-sudo loom client route direct
-sudo loom client route auto
-sudo loom client route exit demo-exit
+sudo loom client policy list
+sudo loom client policy select demo-service demo-policy
 ```
 
 命令只持久化 `Preference` 并重载同一 service。service 使用共享纯核心选择候选、应用 selector 并读回；
-随后执行一次真实 TCP/TLS 与 UDP/DNS 业务检查。首次失败时只尝试一次同一偏好范围内的必要 fallback。
+随后执行一次真实 TCP/TLS 与 UDP/DNS 业务检查。首次失败时只尝试一次同一所选策略内的必要 fallback，不改选其他策略。
 
 实际 Selection、当前网络代和有限 Observation 从正常入口回读：
 
@@ -246,6 +245,22 @@ sudo loom client inspect
 
 `status` 来自 `/run`，service 未运行时不能用上次期望值冒充当前路径。签名报告经私有 device tunnel 提交，
 控制 Web/API 的 Devices 与 Live paths 页面从同一观测投影回读结果。
+
+### 已有全局偏好的显式前向迁移
+
+先核对该设备的原本机偏好。经正式 `device.put` 重申其原授权、推进认证事实前沿后，
+使用 `loom control export-device-view -device demo-device -out /absolute/demo-view.json`
+取得当前签名 View。停止正式客户端，再由精确的新程序执行一次：
+
+```bash
+loom client migrate-policy-selection -state /absolute/demo-identity.json \
+  -runtime-state /absolute/demo-runtime.json -view /absolute/demo-view.json \
+  -evidence /absolute/protected/demo-original.json -unit loom-client.service
+```
+
+命令验证原签名、身份、认证进度及新 View，保全原身份和偏好字节后写入当前表达；服务保持停止，
+等精确制品激活再启动并回读。失败可以重试，已完成重试保留之后的用户选择。旧 Auto 仅对原单策略
+服务保留选择；Direct/固定出口必须证明完整规则等价，否则写入待选。启动、sync 和正常解码不执行迁移。
 
 ## 撤权与恢复边界
 

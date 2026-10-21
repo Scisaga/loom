@@ -127,7 +127,9 @@ func TestOfficialLinuxMixedSlowPrivateRequests(t *testing.T) {
 			}
 		}
 	}
-	wait(func(status Status) bool { return status.Runtime == "running" && active.Load() == 2 })
+	// Configuration, Link observations and the signed report are three
+	// independent pending private requests. Each worker must remain single-file.
+	wait(func(status Status) bool { return status.Runtime == "running" && active.Load() == 3 })
 	proxy, _ := url.Parse("http://127.0.0.1:1080")
 	client := target.Client()
 	client.Timeout = time.Second
@@ -148,15 +150,16 @@ func TestOfficialLinuxMixedSlowPrivateRequests(t *testing.T) {
 		t.Fatal("authorized HTTPS failed while management requests were waiting")
 	}
 	generation.Store("demo-after")
-	if err := SetPreference(options.LocalState, "demo-after", clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}); err != nil {
+	if err := SetPreference(options.LocalState, "demo-after", clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}); err != nil {
 		t.Fatal(err)
 	}
 	reload <- syscall.SIGHUP
 	status := wait(func(status Status) bool {
-		return status.Runtime == "running" && status.NetworkGeneration == "demo-after" && status.Preference.Mode == clientmodel.ModeDirect
+		return status.Runtime == "running" && status.NetworkGeneration == "demo-after" && status.Preference.Policy("demo-service") == "demo-policy"
 	})
-	if status.Reported || accepted.Load() != 2 || !request() {
-		t.Fatal("local change waited for management, overlapped requests or invented report acknowledgement")
+	businessOK := request()
+	if status.Reported || accepted.Load() != 3 || !businessOK {
+		t.Fatalf("local change waited for management, overlapped requests or invented report acknowledgement: reported=%t, accepted=%d, active=%d, business=%t", status.Reported, accepted.Load(), active.Load(), businessOK)
 	}
 	if err := store.SaveLKG(revoked); err != nil {
 		t.Fatal(err)

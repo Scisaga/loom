@@ -18,11 +18,7 @@ func TestAndroidReportsTheSavedPreferenceIndependentlyOfRuntime(t *testing.T) {
 	selected, _ := json.Marshal([]androidSelection{{Scope: route.Scope, CandidateID: route.ID}})
 	for _, sample := range []struct{ mode, status string }{{"auto", "running"}, {"direct", "stopped"}, {"fixed_exit", "running"}, {"fixed_exit", "error"}} {
 		mode, status := sample.mode, sample.status
-		exit := ""
-		if mode == "fixed_exit" {
-			exit = "demo-unavailable-exit"
-		}
-		preference, err := NewAndroidPreference(mode, exit)
+		preference, err := testPolicyPreference()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,7 +31,7 @@ func TestAndroidReportsTheSavedPreferenceIndependentlyOfRuntime(t *testing.T) {
 		}
 		encoded, _ := json.Marshal(runtime)
 		report, err := androidReport(state, preference, nil, []byte("[]"), selections, encoded, []byte("[]"), nil, "demo-underlay", "2030-01-01T00:00:00.000Z")
-		if err != nil || report.Preference == nil || report.Preference.Mode != mode || report.Preference.Exit != exit || report.Verify(state.PublicKey) != nil {
+		if err != nil || report.PolicyChoices == nil || report.Preference != nil || report.Verify(state.PublicKey) != nil {
 			t.Fatal("report lost the existing setting or its signature", mode, status, err)
 		}
 		if status == "running" && report.Selections[0].CandidateID != route.ID || status != "running" && len(report.Selections) != 0 {

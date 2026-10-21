@@ -1045,6 +1045,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
         private val configurationLifecycle = Mutex()
         @Volatile private var runningService: LoomVpnService? = null
 
+        internal fun stopUnverifiablePolicySelection(profileId: String) {
+            val service = runningService ?: return
+            // Schedule after the caller releases the route lock. Normal stop
+            // owns VPN cleanup and the final signed runtime report.
+            service.scope.launch {
+                if (service.runtimeProfileId != profileId) return@launch
+                VpnRuntime.transform { it.copy(phase = ConnectionPhase.ERROR, detail = "服务拒绝状态未确认；运行已停止") }
+                service.stopTunnel(preserveFailure = true)
+            }
+        }
+
         internal suspend fun <T> withRuntimeReport(profileId: String, send: suspend (JSONObject) -> T): T =
             configurationLifecycle.withLock {
                 val service = runningService

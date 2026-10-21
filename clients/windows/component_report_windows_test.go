@@ -124,7 +124,7 @@ func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *tes
 	route := lkg.View.Routes[0]
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	activation := clientadapter.Activation{State: clientadapter.State{NetworkGeneration: "demo-network", Observations: []clientmodel.Observation{{CandidateID: route.ID, Target: "https://demo.example/", Scope: route.Scope, NetworkGeneration: "demo-network", Action: "https_request", Result: "unavailable", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}}, Selections: []clientadapter.SelectionStatus{{Scope: route.Scope, CandidateID: route.ID}}}
-	activation.State.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}
+	activation.State.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	report, err := windowsDeviceReport(&lkg, activation, nil, now)
 	if err != nil {
 		t.Fatal(err)
@@ -133,9 +133,9 @@ func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *tes
 		t.Fatal("report lost authenticated coordinates or coupled runtime to business failure")
 	}
 	first := windowsRuntimeFactsDigest(activation, nil)
-	activation.State.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-unavailable-exit"}
+	activation.State.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service"}}}
 	changed, err := windowsDeviceReport(&lkg, activation, nil, now)
-	if err != nil || changed.Preference == nil || changed.Preference.Mode != "fixed_exit" || changed.Preference.Exit != "demo-unavailable-exit" || first == windowsRuntimeFactsDigest(activation, nil) || changed.Selections[0] != report.Selections[0] {
+	if err != nil || changed.PolicyChoices == nil || changed.Preference != nil || first == windowsRuntimeFactsDigest(activation, nil) || changed.Selections[0] != report.Selections[0] {
 		t.Fatal("setting change was not reported independently from the selector", err)
 	}
 	first = windowsRuntimeFactsDigest(activation, nil)

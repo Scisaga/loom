@@ -14,7 +14,17 @@ import (
 )
 
 func migrateWindowsTransport(args []string, edition clientEdition) error {
-	fs := flag.NewFlagSet("migrate-transport", flag.ContinueOnError)
+	return migrateWindowsCertified(args, edition, false)
+}
+func migrateWindowsPolicySelection(args []string, edition clientEdition) error {
+	return migrateWindowsCertified(args, edition, true)
+}
+func migrateWindowsCertified(args []string, edition clientEdition, policySelection bool) error {
+	command := "migrate-transport"
+	if policySelection {
+		command = "migrate-policy-selection"
+	}
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	state := fs.String("state", "", "existing protected identity file")
 	view := fs.String("view", "", "certified replacement file")
 	evidence := fs.String("evidence", "", "protected historical evidence file")
@@ -22,7 +32,7 @@ func migrateWindowsTransport(args []string, edition clientEdition) error {
 		return err
 	}
 	if fs.NArg() != 0 || *state == "" || *view == "" || *evidence == "" {
-		return errors.New("migrate-transport requires -state, -view and -evidence")
+		return errors.New(command + " requires -state, -view and -evidence")
 	}
 	ui, err := acquireWindowsClientUILock()
 	if err != nil {
@@ -58,6 +68,10 @@ func migrateWindowsTransport(args []string, edition clientEdition) error {
 	var protector clientsecret.Protector = clientsecret.UserProtector{}
 	if edition == editionInstalled {
 		protector = clientsecret.MachineProtector{}
+	}
+	if policySelection {
+		_, err := deviceclient.MigratePolicySelectionFile(*state, *evidence, envelope, nil, protector)
+		return err
 	}
 	return deviceclient.MigrateTransportFile(*state, *evidence, envelope, protector)
 }

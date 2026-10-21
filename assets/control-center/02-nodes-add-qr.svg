@@ -130,7 +130,7 @@
   <text class="ui small muted" x="550" y="538" text-anchor="start">Find a policy…</text>
   <use href="#icon-chevron" x="1209" y="526" width="16" height="16" class="nav-icon"/>
   </g>
-  <text class="ui small muted" x="353" y="581" text-anchor="start">Each policy includes its service and rules. Choose at most one policy per service.</text>
+  <text class="ui small muted" x="353" y="581" text-anchor="start">Authorize available policies. The client chooses one for each service.</text>
   <g data-ui="selected-policy-summary" data-policy="demo-direct-policy" data-service="demo-video" aria-readonly="true">
   <line class="rule" x1="353" y1="608" x2="1233" y2="608"/>
   <text class="ui body mono" x="353" y="639" text-anchor="start">direct-access</text>

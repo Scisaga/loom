@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// These display inputs isolate grouping and mode boundaries. The next test
+// These display inputs isolate grouping and policy boundaries. The next test
 // exercises authenticated reports, persistence and the ordinary device editor.
 func TestWebChromePolicyPathOptionsStayDeviceScoped(t *testing.T) {
 	if os.Getenv("LOOM_WEB_CHROME_TEST") != "1" {
@@ -24,28 +24,28 @@ func TestWebChromePolicyPathOptionsStayDeviceScoped(t *testing.T) {
 	result := chromeDo(t, debug, `(async()=>{
  const {policyPathOptions,policyRuntimeHTML}=await import('/assets/policy-selection.js');
  const now=Date.UTC(2030,0,2,12),policy={id:'demo-policy',name:'Demo policy',service_id:'demo-service',action:'allow'},service={id:'demo-service',kind:'internet'};
- const evidence={freshness:'current',current_until:now+60000,reported_at:new Date(now).toISOString(),view_digest:'demo-view',runtime:{state:'running',applied_view_digest:'demo-view'},preference:{mode:'auto'}};
+ const evidence={freshness:'current',current_until:now+60000,reported_at:new Date(now).toISOString(),view_digest:'demo-view',runtime:{state:'running',applied_view_digest:'demo-view'},policy_choices:[{service_id:'demo-service',policy_id:'demo-policy'}]};
  const device=id=>({id,authorized:true,policy_ids:[policy.id],evidence:structuredClone(evidence)});
- const path=(id,owner,exit,state)=>({candidate_id:id,device:owner,service_id:service.id,final_exit:exit,availability:state,current_until:now+30000,targets:['https://demo.example/health']});
+ const path=(id,owner,exit,state)=>({candidate_id:id,device:owner,service_id:service.id,policy_id:policy.id,final_exit:exit,availability:state,current_until:now+30000,targets:['https://demo.example/health']});
  const original={policies:[policy],services:[service],devices:[device('demo-a'),device('demo-b')],paths:[path('demo-a-one','demo-a','demo-exit-a','unavailable'),path('demo-a-two','demo-a','demo-exit-b','unavailable'),path('demo-b-one','demo-b','demo-exit-a','available')],targets:[]};
  const encoded=JSON.stringify(original),read=(p,id='demo-a',reviewed=policy)=>policyPathOptions(p,id,reviewed,now),check=(p,state,reason)=>{const result=read(p);if(result.state!==state||reason&&!result.reason.includes(reason))throw Error(JSON.stringify(result))};
  check(original,'unavailable');if(read(original,'demo-b').state!=='available'||JSON.stringify(original)!==encoded)throw Error('cross-device health or mutated projection');
  let p=structuredClone(original);p.paths[1].availability='available';check(p,'available');
- p.devices[0].evidence.preference={mode:'fixed_exit',exit:'demo-exit-a'};check(p,'unavailable','Fixed exit demo-exit-a');
- p.devices[0].evidence.preference={mode:'direct'};check(p,'unknown','no candidate');
- p.paths.push(path('demo-a-direct','demo-a','direct','available'));check(p,'available','Direct');
+ p.devices[0].evidence.policy_choices=[{service_id:service.id}];check(p,'unknown','Waiting');
+ p.devices[0].evidence.policy_choices=[{service_id:service.id,policy_id:'demo-unused'}];check(p,'unknown','not selected');
+ p.devices[0].evidence.policy_choices=[{service_id:service.id,policy_id:policy.id}];p.paths[1].policy_id='demo-unused';check(p,'unavailable');
  p=structuredClone(original);p.paths[1].availability='unknown';check(p,'unknown','1 unknown');
- for(const change of [v=>v.devices[0].evidence.current_until=now,v=>v.devices[0].evidence.freshness='stale',v=>v.devices[0].evidence.reported_at=new Date(now+5001).toISOString(),v=>v.devices[0].evidence.runtime.applied_view_digest='demo-other-view',v=>delete v.devices[0].evidence,v=>delete v.devices[0].evidence.preference,v=>v.paths.forEach(path=>path.current_until=now),v=>v.paths.forEach(path=>path.targets=[]),v=>v.paths=v.paths.filter(path=>path.device!=='demo-a'),v=>v.devices[0].authorized=false,v=>v.devices[0].policy_ids=[],v=>v.targets=[{target_kind:'service',target_id:service.id,conflicted:true}]]){p=structuredClone(original);change(p);check(p,'unknown')}
+ for(const change of [v=>v.devices[0].evidence.current_until=now,v=>v.devices[0].evidence.freshness='stale',v=>v.devices[0].evidence.reported_at=new Date(now+5001).toISOString(),v=>v.devices[0].evidence.runtime.applied_view_digest='demo-other-view',v=>delete v.devices[0].evidence,v=>delete v.devices[0].evidence.policy_choices,v=>v.paths.forEach(path=>path.current_until=now),v=>v.paths.forEach(path=>path.targets=[]),v=>v.paths=v.paths.filter(path=>path.device!=='demo-a'),v=>v.devices[0].authorized=false,v=>v.devices[0].policy_ids=[],v=>v.targets=[{target_kind:'service',target_id:service.id,conflicted:true}]]){p=structuredClone(original);change(p);check(p,'unknown')}
  p=structuredClone(original);p.policies[0].name='Demo changed';check(p,'unknown','changed since this draft');
  p=structuredClone(original);p.targets=[{target_kind:'policy',target_id:policy.id,material_ids:['demo-policy-original']},{target_kind:'service',target_id:service.id,material_ids:['demo-service-original']}];const reviewed=structuredClone(p.targets);p.targets[1].material_ids=['demo-service-changed'];if(policyPathOptions(p,'demo-a',policy,now,reviewed).state!=='unknown')throw Error('new Service facts authenticated an older draft');
  p=structuredClone(original);p.policies[0].action='deny';if(read(p,'demo-a',p.policies[0]).state!=='unknown'||!read(p,'demo-a',p.policies[0]).reason.includes('denied'))throw Error('deny became a network failure');
- p=structuredClone(original);p.services[0].kind='local_network';p.devices[0].evidence.preference={mode:'fixed_exit',exit:'demo-unrelated-exit'};check(p,'unavailable','Fixed LAN gateway');
+ p=structuredClone(original);p.services[0].kind='local_network';check(p,'unavailable');
  const html=policyRuntimeHTML(policy,{projection:original,deviceID:'demo-a',now},true,true),doc=new DOMParser().parseFromString(html,'text/html'),link=doc.querySelector('a');
  if(new URL(link.href).searchParams.get('device')!=='demo-a'||new URL(link.href).searchParams.get('service')!==service.id||link.target!=='_blank'||link.hasAttribute('data-nav'))throw Error('details lost context or navigated away from a draft');
  return true;
 })()`)
 	if result != true {
-		t.Fatalf("policy path projection escaped its device, mode or time: %#v", result)
+		t.Fatalf("policy path projection escaped its device, policy or time: %#v", result)
 	}
 }
 
@@ -80,7 +80,7 @@ func TestWebChromePolicyPathsFollowReportsWithoutReplacingDraft(t *testing.T) {
 		route := view.View.Routes[0]
 		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: view.View.NetworkID, DeviceID: invite.DeviceID,
 			ReportSequence: sequence, ViewDigest: view.ViewDigest, ReportedAt: at.UnixMilli(), NetworkGeneration: "demo-network",
-			Preference: &ReportPreference{Mode: "auto"}, Selections: []ReportSelection{},
+			PolicyChoices: new([]PolicyChoice{{ServiceID: "demo-service", PolicyID: "demo-policy"}}), Selections: []ReportSelection{},
 			Observations: []Observation{{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, SpecDigest: route.SpecDigest, NetworkGeneration: "demo-network", Target: "https://demo-service.example/health", Action: "https_request", Result: result, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(lifetime).UnixMilli()}},
 			Runtime:      RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, key)
 		if err != nil {
@@ -118,10 +118,10 @@ func TestWebChromePolicyPathsFollowReportsWithoutReplacingDraft(t *testing.T) {
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-selected-policy-summary] [data-policy-runtime="demo-draft-policy"]')?.textContent.includes('not applied')`)
 	publish("available", 8*time.Second)
 	waitChromeEvaluation(t, debug, `document.querySelector('.policy-picker [data-policy-runtime="demo-policy"]')?.dataset.policyState==='available'`)
-	if chromeDo(t, debug, `(()=>{const form=document.querySelector('#device-policy-form');return form===demoPolicyForm&&form.dataset.requestId===demoPolicyRequest&&form.dataset.targets===demoPolicyTargets&&form.elements.name.value==='Demo retained draft'&&document.activeElement===form.elements.name&&form.elements.name.selectionStart===2&&form.elements.name.selectionEnd===5&&form.querySelector('[value=demo-draft-policy]').checked&&!form.querySelector('[value=demo-policy]').checked&&form.querySelector('[data-selected-policy-summary] [data-policy-state="unknown"]')!==null})()`) != true {
+	if chromeDo(t, debug, `(()=>{const form=document.querySelector('#device-policy-form');return form===demoPolicyForm&&form.dataset.requestId===demoPolicyRequest&&form.dataset.targets===demoPolicyTargets&&form.elements.name.value==='Demo retained draft'&&document.activeElement===form.elements.name&&form.elements.name.selectionStart===2&&form.elements.name.selectionEnd===5&&form.querySelector('[value=demo-draft-policy]').checked&&form.querySelector('[value=demo-policy]').checked&&form.querySelector('[data-selected-policy-summary] [data-policy-state="unknown"]')!==null})()`) != true {
 		t.Fatal("live recovery replaced the form, changed the draft or borrowed another Policy's outcome", chromeDo(t, debug, `(()=>{const form=document.querySelector('#device-policy-form');return {same:form===demoPolicyForm,request:form.dataset.requestId===demoPolicyRequest,targets:form.dataset.targets===demoPolicyTargets,name:form.elements.name.value,active:document.activeElement?.name,start:form.elements.name.selectionStart,end:form.elements.name.selectionEnd,draft:form.querySelector('[value=demo-draft-policy]').checked,original:form.querySelector('[value=demo-policy]').checked,summary:form.querySelector('[data-selected-policy-summary]').textContent}})()`))
 	}
-	chromeDo(t, debug, `demoPolicyForm.querySelector('[value=demo-policy]').click();true`)
+	chromeDo(t, debug, `demoPolicyForm.querySelector('[value=demo-draft-policy]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-selected-policy-summary] [data-policy-state="available"]')`)
 	accessConfigurationChromeScreenshot(t, debug, "demo-policy-path-options")
 	chromeDo(t, debug, `demoPolicyForm.querySelector('.policy-picker details').open=false;true`)

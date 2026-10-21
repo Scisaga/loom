@@ -64,7 +64,7 @@ func TestWireGuardCertifiedDNSAndAddressChanges(t *testing.T) {
 		t.Fatalf("new DNS address not projected: %+v, %v", changed, err)
 	}
 	view := control.DeviceView{Links: []control.NetworkLink{{ID: "demo-link", FromResourceID: "demo-resource-a"}}, Routes: []control.RouteCandidate{
-		{ID: "demo-candidate-relay", LinkIDs: []string{"demo-link"}}, {ID: "demo-candidate-direct", LinkIDs: []string{}},
+		{ID: "demo-candidate-relay", LinkIDs: []string{"demo-link"}, PolicyID: "demo-policy"}, {ID: "demo-candidate-direct", LinkIDs: []string{}, PolicyID: "demo-policy"},
 	}}
 	state := LocalState{Observations: []clientmodel.Observation{{CandidateID: "demo-candidate-direct"}, {CandidateID: "demo-candidate-relay"}}}
 	invalidated := invalidateWireGuardObservations(state, view, initial, changed)

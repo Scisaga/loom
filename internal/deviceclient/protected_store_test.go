@@ -47,8 +47,11 @@ func TestProtectedProfileIndependentHandlesPreserveRevocationAndPreference(t *te
 	if err := runtime.SaveLKG(revoked); err != nil {
 		t.Fatal(err)
 	}
-	pref := clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}
-	if err := gui.SetPreference(pref); err != nil {
+	pref := clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
+	if err := gui.SetPreference(pref); err == nil {
+		t.Fatal("stale GUI reselected a revoked policy")
+	}
+	if _, err := gui.Reload(); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(gui.LKG(), &revoked) {
@@ -64,7 +67,7 @@ func TestProtectedProfileIndependentHandlesPreserveRevocationAndPreference(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Preference() != pref || loaded.state.HighWater[0].Sequence != 9 || !loaded.state.AuthenticatedLatch {
+	if loaded.Preference().Policy("demo-service") != "" || loaded.state.HighWater[0].Sequence != 9 || !loaded.state.AuthenticatedLatch {
 		t.Fatal("reload lost preferences, identity or high-water")
 	}
 }

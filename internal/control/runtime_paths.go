@@ -59,13 +59,13 @@ func pathCandidate(service Service, policy NetworkPolicy, chain []string, hops [
 		values = append(values, resource)
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
-	identity := map[string]any{"service_id": service.ID, "first_resource_id": first, "node_chain": chain, "link_ids": ids, "final_exit": chain[len(chain)-1]}
+	identity := map[string]any{"service_id": service.ID, "policy_id": policy.ID, "first_resource_id": first, "node_chain": chain, "link_ids": ids, "final_exit": chain[len(chain)-1]}
 	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
 	if err != nil {
 		return RouteCandidate{}, err
 	}
 	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": values, "links": links}, service, records))
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, FirstResourceID: first, NodeChain: append([]string{}, chain...), LinkIDs: ids, FinalExit: chain[len(chain)-1]}, err
+	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, PolicyID: policy.ID, FirstResourceID: first, NodeChain: append([]string{}, chain...), LinkIDs: ids, FinalExit: chain[len(chain)-1]}, err
 }
 
 func transportPaths(source string, localForward bool, service Service, policy NetworkPolicy, values []TransportResource, links []NetworkLink, records ...DNSRecord) ([]transportPath, error) {

@@ -6,6 +6,7 @@ package clientmodel
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,16 +16,9 @@ import (
 	"loom/internal/control"
 )
 
-const (
-	ModeDirect Mode = "direct"
-	ModeAuto   Mode = "auto"
-	ModeFixed  Mode = "fixed_exit"
-)
-
-type Mode string
-
 type RouteCandidate struct {
 	ID         string             `json:"id"`
+	PolicyID   string             `json:"policy_id"`
 	FinalExit  string             `json:"final_exit"`
 	Chain      []string           `json:"chain"`
 	Scope      string             `json:"scope"`
@@ -61,6 +55,7 @@ type RuntimeProfile struct {
 // host state and is rebuilt rather than persisted.
 type RuntimeCandidate struct {
 	ID        string   `json:"id"`
+	PolicyID  string   `json:"policy_id"`
 	FinalExit string   `json:"final_exit"`
 	Chain     []string `json:"chain"`
 	Scope     string   `json:"scope"`
@@ -79,10 +74,24 @@ type Observation struct {
 	MetricMillis      int64  `json:"metric_millis,omitempty"`
 }
 
+type ServicePreference = control.PolicyChoice
+
 type Preference struct {
-	Schema int    `json:"schema"`
-	Mode   Mode   `json:"mode"`
-	Exit   string `json:"exit,omitempty"`
+	Schema   int                 `json:"schema"`
+	Services []ServicePreference `json:"services"`
+}
+
+func (preference Preference) Equal(other Preference) bool {
+	return preference.Schema == other.Schema && slices.Equal(preference.Services, other.Services)
+}
+
+func (preference Preference) Policy(serviceID string) string {
+	for _, choice := range preference.Services {
+		if choice.ServiceID == serviceID {
+			return choice.PolicyID
+		}
+	}
+	return ""
 }
 
 type Selection struct {
@@ -95,7 +104,7 @@ func validName(value string) bool {
 }
 
 func (candidate RouteCandidate) Validate() error {
-	if !validName(candidate.ID) || !validName(candidate.FinalExit) || !validName(candidate.Scope) {
+	if !validName(candidate.ID) || control.ValidateID(candidate.PolicyID) != nil || !validName(candidate.FinalExit) || !validName(candidate.Scope) {
 		return errors.New("route candidate is incomplete")
 	}
 	seen := map[string]bool{}
@@ -152,19 +161,7 @@ func (preference Preference) Validate() error {
 	if preference.Schema != 3 {
 		return errors.New("preference schema is invalid")
 	}
-	switch preference.Mode {
-	case ModeDirect, ModeAuto:
-		if preference.Exit != "" {
-			return errors.New("direct and auto preferences cannot name an exit")
-		}
-	case ModeFixed:
-		if !validName(preference.Exit) || preference.Exit == "direct" || preference.Exit == "auto" {
-			return errors.New("fixed preference exit is invalid")
-		}
-	default:
-		return errors.New("preference mode is invalid")
-	}
-	return nil
+	return control.ValidatePolicyChoices(preference.Services)
 }
 
 // ErrNoUsableCandidate distinguishes a current selection limit from invalid
@@ -284,9 +281,8 @@ func SelectWithLinks(routes []RouteCandidate, observations []Observation, resour
 			return Selection{}, errors.New("route candidates are invalid or duplicated")
 		}
 		seen[candidate.ID] = true
-		allowed := strings.HasPrefix(candidate.Scope, "local_network:") || preference.Mode == ModeAuto ||
-			preference.Mode == ModeDirect && candidate.FinalExit == "direct" ||
-			preference.Mode == ModeFixed && candidate.FinalExit == preference.Exit
+		_, serviceID, found := strings.Cut(candidate.Scope, ":")
+		allowed := found && preference.Policy(serviceID) == candidate.PolicyID
 		if !allowed || byID[candidate.ID] == "unavailable" || hopFailed[candidate.ID] {
 			continue
 		}
@@ -343,6 +339,7 @@ type runtimeDocument struct {
 		Detour    string   `json:"detour"`
 		Tag       string   `json:"tag"`
 		Outbounds []string `json:"outbounds,omitempty"`
+		Default   string   `json:"default"`
 	} `json:"outbounds"`
 	Endpoints []struct {
 		Type string `json:"type"`
@@ -380,7 +377,7 @@ func (profile RuntimeProfile) Validate(routes []RouteCandidate) error {
 		}
 		outboundType[outbound.Tag] = outbound.Type
 		if outbound.Type == "selector" {
-			if len(outbound.Outbounds) == 0 {
+			if len(outbound.Outbounds) == 0 || outbound.Default != "reject" {
 				return errors.New("runtime profile selector is empty")
 			}
 			selectors[outbound.Tag] = append([]string(nil), outbound.Outbounds...)
@@ -402,22 +399,30 @@ func (profile RuntimeProfile) Validate(routes []RouteCandidate) error {
 		}
 		wanted[route.Scope][route.ID] = true
 	}
-	if len(selectors) != len(wanted) {
-		return errors.New("runtime selectors do not match authorized scopes")
-	}
-	for scope, candidates := range wanted {
-		members, found := selectors[scope]
-		if !found || len(members) != len(candidates) {
+	for scope, members := range selectors {
+		if !strings.HasPrefix(scope, "service:") && !strings.HasPrefix(scope, "local_network:") {
+			return errors.New("runtime selector has no Service scope")
+		}
+		candidates := wanted[scope]
+		if len(members) != len(candidates)+1 {
 			return errors.New("runtime selector members do not match authorized candidates")
 		}
 		seen := map[string]bool{}
 		for _, member := range members {
-			if !candidates[member] || seen[member] {
+			if member != "reject" && !candidates[member] || seen[member] {
 				return errors.New("runtime selector contains an unauthorized candidate")
 			}
 			seen[member] = true
 		}
+		if !seen["reject"] || outboundType["reject"] != "block" {
+			return errors.New("runtime selector has no rejecting default")
+		}
+		delete(wanted, scope)
 	}
+	if len(wanted) != 0 {
+		return errors.New("runtime selectors do not match authorized scopes")
+	}
+
 	return nil
 }
 
@@ -445,7 +450,7 @@ func ProjectRuntimeCandidates(routes []RouteCandidate, profile RuntimeProfile) (
 	}
 	result := make([]RuntimeCandidate, 0, len(routes))
 	for _, route := range routes {
-		result = append(result, RuntimeCandidate{ID: route.ID, FinalExit: route.FinalExit,
+		result = append(result, RuntimeCandidate{ID: route.ID, PolicyID: route.PolicyID, FinalExit: route.FinalExit,
 			Chain: append([]string(nil), route.Chain...), Scope: route.Scope, Transport: transport[route.ID]})
 	}
 	sort.Slice(result, func(i, j int) bool {

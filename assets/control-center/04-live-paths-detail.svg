@@ -156,9 +156,9 @@
   <a data-ui="navigation" data-route="/policies/demo-policy?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="06-policies.svg">
   <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
   </a>
-  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
-  <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
-  <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">SERVICE POLICY</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">media-access</text>
+  <text class="ui small muted" x="1305" y="244" text-anchor="start">Reported by device</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
   <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
@@ -520,9 +520,9 @@
   <g data-ui="navigation" data-route="/policies/demo-policy?device=demo-laptop&amp;service=demo-video&amp;policy=demo-policy">
   <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
   </g>
-  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
-  <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
-  <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">SERVICE POLICY</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">media-access</text>
+  <text class="ui small muted" x="1305" y="244" text-anchor="start">Reported by device</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
   <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct allowed · entry: unrestricted · transit: unrestricted · internet exit: only internet-exit</text>
@@ -766,9 +766,9 @@
   <g data-ui="navigation" data-route="/policies/demo-direct-policy?device=demo-access-g&amp;service=demo-video&amp;policy=demo-direct-policy">
   <text class="ui small green" x="712" y="244" text-anchor="start">direct-access  ↗</text>
   </g>
-  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
-  <text class="ui section" x="1100" y="244" text-anchor="start">Auto</text>
-  <text class="ui small muted" x="1175" y="244" text-anchor="start">Reported by device</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">SERVICE POLICY</text>
+  <text class="ui section" x="1100" y="244" text-anchor="start">direct-access</text>
+  <text class="ui small muted" x="1305" y="244" text-anchor="start">Reported by device</text>
   <g data-ui="path-policy-summary" data-policy="demo-direct-policy">
   <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Direct only · no entry, transit or internet exit nodes</text>
@@ -952,7 +952,7 @@
   <g data-ui="navigation" data-route="/policies/demo-direct-policy?device=demo-forward-c&amp;service=demo-video&amp;policy=demo-direct-policy">
   <text class="ui small green" x="712" y="244" text-anchor="start">direct-access  ↗</text>
   </g>
-  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">SERVICE POLICY</text>
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="demo-direct-policy">
@@ -1152,7 +1152,7 @@
   <a data-ui="navigation" data-route="/policies/demo-policy?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy" href="06-policies.svg">
   <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
   </a>
-  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">SERVICE POLICY</text>
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
@@ -1460,7 +1460,7 @@
   <g data-ui="navigation" data-route="/policies/demo-policy?device=demo-phone-f&amp;service=demo-video&amp;policy=demo-policy">
   <text class="ui small green" x="712" y="244" text-anchor="start">media-access  ↗</text>
   </g>
-  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">SERVICE POLICY</text>
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="demo-policy">
@@ -1572,7 +1572,7 @@
   </g>
   <text class="ui eyebrow muted" x="712" y="205" text-anchor="start">POLICY FOR THIS DEVICE</text>
   <text class="ui body amber" x="712" y="244" text-anchor="start">None assigned</text>
-  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">DEVICE MODE</text>
+  <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">SERVICE POLICY</text>
   <text class="ui section" x="1100" y="244" text-anchor="start">Unknown</text>
   <text class="ui small muted" x="1210" y="244" text-anchor="start">No current report</text>
   <g data-ui="path-policy-summary" data-policy="">
@@ -1703,7 +1703,7 @@
   </a>
   <text class="ui eyebrow muted" x="1100" y="205" text-anchor="start">LAN ROUTING</text>
   <text class="ui section" x="1100" y="244" text-anchor="start">To fixed gateway</text>
-  <text class="ui small muted" x="1280" y="244" text-anchor="start">Within allowed routes</text>
+  <text class="ui small muted" x="1305" y="244" text-anchor="start">Within allowed routes</text>
   <g data-ui="path-policy-summary" data-policy="demo-lan-policy">
   <text class="ui body green" x="48" y="294" text-anchor="start">Access allowed</text>
   <text class="ui small muted" x="171" y="294" text-anchor="start">Fixed gateway: relay-west · entry: unrestricted · transit: unrestricted</text>

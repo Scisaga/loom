@@ -12,14 +12,13 @@ import (
 
 	"golang.org/x/sys/windows"
 	"loom/internal/clientjoin"
-	"loom/internal/clientmodel"
 	"loom/internal/control"
 )
 
 const (
-	misakaControlAuto = 4201 + iota
-	misakaControlFixed
-	misakaControlDirect
+	misakaControlReserved = 4201 + iota
+	_
+	_
 	_ // §7.2：保留后续控件编号；侧栏不再有配置操作按钮。
 	misakaControlDraftName
 	misakaControlDraftImport
@@ -256,10 +255,6 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 	}
 	if snapshot.joined {
 		hint := app.misakaConnectionHintHeight(snapshot)
-		modeWidth, modeTop := s(80), s(240)+hint
-		move(app.controls.modeDirect, main+s(80), modeTop, modeWidth, s(32))
-		move(app.controls.modeAuto, main+s(80)+modeWidth, modeTop, modeWidth, s(32))
-		move(app.controls.modeFixed, main+s(80)+modeWidth*2, modeTop, modeWidth, s(32))
 		if app.misakaRouteVisible(snapshot) {
 			var r portableRect
 			procMisakaGetWindowRect.Call(app.controls.routeCombo, uintptr(unsafe.Pointer(&r)))
@@ -268,7 +263,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 				h = s(32)
 			}
 			parent := app.skin.pane
-			target := misakaRect(main+s(336)-s(176), modeTop+(s(32)-h)/2-s(misakaContentOriginY)-app.skin.scrollY, min(s(160), end-main-s(336)), h)
+			target := misakaRect(main+s(80)-s(176), s(240)+hint+(s(32)-h)/2-s(misakaContentOriginY)-app.skin.scrollY, end-main-s(80), h)
 			procMisakaMapPoints.Call(0, parent, uintptr(unsafe.Pointer(&r)), 2)
 			if r != target {
 				procMoveWindow.Call(app.controls.routeCombo, uintptr(target.left), uintptr(target.top), uintptr(target.right-target.left), uintptr(s(220)), 0)
@@ -311,13 +306,6 @@ func (app *portableGUI) misakaDraftBounds() (int32, int32, int32) {
 	return x, app.scale(104), w
 }
 
-func misakaSelectedMode(snapshot portableGUISnapshot) clientmodel.Mode {
-	if snapshot.routeSelected >= 0 && snapshot.routeSelected < len(snapshot.routeOptions) {
-		return snapshot.routeOptions[snapshot.routeSelected].Preference.Mode
-	}
-	return ""
-}
-
 func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *portableGUISnapshot) {
 	if app.skin == nil {
 		return
@@ -346,7 +334,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 		setPortableControlText(app.controls.primaryButton, "切换连接")
 	}
 	if app.isElevationPending() {
-		for _, control := range []uintptr{app.controls.networkList, app.controls.deleteButton, app.controls.primaryButton, app.controls.modeAuto, app.controls.modeFixed, app.controls.modeDirect, app.controls.routeCombo} {
+		for _, control := range []uintptr{app.controls.networkList, app.controls.deleteButton, app.controls.primaryButton, app.controls.routeCombo} {
 			enablePortableControl(control, false)
 		}
 	}
@@ -565,8 +553,6 @@ func (app *portableGUI) acceptMisakaInvite(invite control.BootstrapInvite, err e
 func (app *portableGUI) misakaCommand(id uint16) bool {
 	snapshot := app.snapshot()
 	switch id {
-	case misakaControlAuto, misakaControlDirect, misakaControlFixed:
-		return app.misakaRouteCommand(id)
 	case misakaControlDraftImport:
 		app.chooseMisakaInvite(false)
 		return true

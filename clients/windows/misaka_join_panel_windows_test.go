@@ -30,7 +30,7 @@ func TestGUIMisakaEmptyProfileOffersInlineJoinWithoutChangingActiveProfile(t *te
 				t.Fatalf("[§7.2] DPI=%d 空配置缺少直接导入、粘贴或删除入口", dpi)
 			}
 		}
-		for _, control := range []uintptr{app.controls.modeDirect, app.controls.modeAuto, app.controls.modeFixed, app.controls.routeCombo, app.controls.pathsValue, app.controls.pathsDetailsButton} {
+		for _, control := range []uintptr{app.controls.routeCombo, app.controls.pathsValue, app.controls.pathsDetailsButton} {
 			if profileGUIStyle(control)&portableWSVisible != 0 {
 				t.Fatalf("[§7.2] DPI=%d 空配置泄露上个已连接配置的选路控件", dpi)
 			}

@@ -13,7 +13,8 @@ import io.github.scisaga.loom.enrollment.EnrollmentPhase
 import io.github.scisaga.loom.enrollment.EnrollmentStatus
 import io.github.scisaga.loom.profiles.ConnectionProfile
 import io.github.scisaga.loom.profiles.ProfileIndex
-import io.github.scisaga.loom.route.RouteMode
+import io.github.scisaga.loom.route.ServicePolicyOption
+import io.github.scisaga.loom.route.ServicePolicyStatus
 import io.github.scisaga.loom.route.RouteBusinessStatus
 import io.github.scisaga.loom.route.RoutePathStatus
 import io.github.scisaga.loom.route.RouteStatus
@@ -77,10 +78,11 @@ private val connectedStatus = VpnStatus(
 
 private val connectedRoute = RouteStatus(
     available = true,
-    mode = RouteMode.AUTO,
-    exits = listOf("demo-exit"),
-    directAvailable = true,
-    detail = "Auto · 当前 selector 已回读",
+    services = listOf(
+        ServicePolicyStatus("demo-web", "国内站点", "demo-web-policy", listOf(ServicePolicyOption("demo-web-policy", "最优出口"))),
+        ServicePolicyStatus("demo-api", "境外 API", "demo-api-fixed", listOf(ServicePolicyOption("demo-api-fixed", "固定德国出口"), ServicePolicyOption("demo-api-auto", "境外最优"))),
+    ),
+    detail = "服务策略已保存 · 当前 selector 已回读",
     observationDetail = "真实 DNS 与 HTTPS 业务成功",
     currentPaths = demoPaths,
     businessEvidence = listOf(

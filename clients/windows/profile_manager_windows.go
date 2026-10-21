@@ -140,7 +140,7 @@ func (app *portableGUI) loadOfflineProfileRoutes() {
 	if err != nil || store.LKG() == nil {
 		return
 	}
-	options, err := windowsRouteOptions(store.LKG().View)
+	options, err := windowsRouteOptions(store.LKG().View, store.Preference())
 	if err != nil {
 		return
 	}
@@ -408,7 +408,7 @@ func (m *windowsProfileManager) dispatchWithCompletion(req brokerRequest, comple
 		if child.routeBusy || m.routeRequests[req.ProfileID] || (!online && !offline) || routeOptionIndex(child.routeOptions, *req.Preference) < 0 {
 			child.mu.Unlock()
 			m.mu.Unlock()
-			return errors.New("出口未获当前签名配置授权，或数据面正在切换")
+			return errors.New("策略未获当前签名配置授权，或数据面正在切换")
 		}
 		// §7.2：先发布现有忙状态，Installed 的异步 ACK 才能区分已完成与尚未执行。
 		child.routeBusy = true

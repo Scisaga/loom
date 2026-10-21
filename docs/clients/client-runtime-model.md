@@ -19,7 +19,7 @@
 | `RouteCandidate` | 描述某一 Service 范围内从本机到目标的一条允许路径及其最终出口 | 节点类型、健康状态或平台进程 |
 | `RuntimeCandidate` | 将一条 `RouteCandidate` 化为宿主可执行且可稳定识别的运行描述 | 第二份拓扑、独立配置源或健康注册表 |
 | `Observation` | 记录特定底层网络代中实际 transport / business outcome 及有限提示 | 授权、期望状态或为了填满评分而生成的样本 |
-| `Preference` | 表达 Direct、Auto 或指定最终出口的用户意图 | 对当前可用性的断言 |
+| `Preference` | 按 ServiceID 保存已选择的 PolicyID 或明确待选记录 | 对当前可用性的断言 |
 | `Selection` | 记录宿主 selector 回读确认的当前实际选择 | 仅由决策函数算出的期望值 |
 | `HostAdapter` | 连接纯核心与 Android / Linux / Windows 的安全存储、VPN、transport 和 selector | 平台各自实现的一套选路规则 |
 
@@ -44,10 +44,10 @@ Preference + Observation ────────┴─→ 纯函数提出候选
 
 ## 路径语义
 
-`Service` 定义目标地址或名称范围；每条 `NetworkPolicy` 固定属于一个 Service，定义 allow/deny
-和允许的路径。设备的 `DeviceAuthorization.PolicyIDs` 只选择策略，客户端经策略的固定 ServiceID
-解析目标。同一设备同一 Service 最多一条 Policy，不叠加或按顺序挑选规则；不同设备可以选择不同
-Policy。未选择、deny、已删除或冲突的策略均不产生该服务的候选、ACL、数据面凭据或探测授权。
+`Service` 定义目标地址或名称范围；每条 `NetworkPolicy` 固定属于一个 Service，定义显式允许
+和路径限制。设备的 `DeviceAuthorization.PolicyIDs` 授权可选策略集合，同服务可以有多条；
+客户端按 ServiceID 保存当前选择，只在该策略内选路，不叠加其他策略的规则。未授权、历史 deny、
+已删除或冲突的策略不产生候选、ACL、凭据或探测授权；待选服务保留默认拒绝的 selector。
 Loom 管理的请求命中上述目标时须拒绝，不能因没有候选就回退 Direct、换用较宽服务或绕过捕获。
 客户端只消费签名 DeviceView 下发的交集，不从入口存在、DNS 解析或探测结果创造新授权。
 互联网 Service 的终点是指定或可选的最终出网节点；`local_network` Service 的终点是固定的
@@ -86,7 +86,7 @@ any 表示所有符合资格的当前及未来节点；only 只允许非空的�
 
 普通 Direct 独立由 `allow_direct` 控制，不经过受管首跳或出口。Direct 允许加出口 only 表示两种
 路径都允许；要求只经指定出口时必须关闭 Direct。没有设备限定本地出网许可时，纯 Direct 可用入口 none 表达，不能把旧空入口
-集合重解释为不限。LAN Policy 只含 allow/deny、入口及转发范围，没有互联网 Direct/出口字段，
+集合重解释为不限。LAN Policy 新写入固定 allow，只含入口及转发范围，没有互联网 Direct/出口字段，
 入口选择只能改变到固定网关的路径。这些检查均从所选 PolicyIDs 解析，不新增本机授权策略。
 
 中继段 From/To 表示业务方向，WG 两端均配置对端已认证拨号坐标并允许建立同一会话。
@@ -99,8 +99,8 @@ any 表示所有符合资格的当前及未来节点；only 只允许非空的�
 能力；只有授权设备 ID 命中时才生成受管节点链为空、`final_exit` 为该设备稳定 NodeID 的本地出口
 候选。空链表示本机执行、不经网络隧道，不能抹去逻辑最终出口身份。候选 ID 同样绑定该 NodeID；
 其他设备仍把该节点当作一跳或中继出口。普通 Direct 与设备限定本地出网的授权来源不同，不能在
-导入时把设备级许可提升成全 policy 的 `allow_direct`。Auto 可选择该本地候选，指定本机 NodeID
-作为最终出口时也保留它；Direct 模式只选择 `final_exit=direct` 的普通 Direct，不选择设备限定本地出网。
+导入时把设备级许可提升成全 policy 的 `allow_direct`。每服务所选 Policy 允许本机作为最终出口时可选择该本地候选；普通 Direct 候选仍由该策略的
+`allow_direct` 独立决定，不通过全局模式过滤。
 本地出网没有业务首跳，不套用入口范围，也不要求回拨本机或提供入站资源。
 
 `TransportResource` 是共享传输权威，保存稳定 ID、承载节点、interface/listener、认证拨号坐标与公开
@@ -520,8 +520,8 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
 `local_network:<mapping_id>` 是独立的 Service scope。客户端只对该虚拟前缀建立精确业务捕获与
 路由，在到固定网关的一跳或中继路径中自动选择，不把网关误作互联网最终出口。开发宿主上
 这些路由、策略规则和 DNS 投影只能在专用 capture namespace 内应用，不进入初始 namespace。
-互联网业务的 Direct、Auto、指定最终出口 Preference 维持原有语义；局域网 scope 的候选不受
-这三种互联网偏好裁剪，只在到固定网关的授权路径内自动选择，也不成为互联网 Auto 的捷径。
+局域网和互联网各自按服务选择 Policy；局域网仅在该策略允许、通往固定网关的路径内选路，
+不改变互联网服务的选择，也不扩大为互联网出口许可。
 网关按同一授权检查，完成目标地址按主机位对应的转换，并在 LAN 主机没有
 回程路由时做必要的源地址转换。只有 overlay 端能主动发起连接；LAN 主机可回复，不能凭映射主动
 建立到 access 的会话，不修改 LAN 路由器。
@@ -542,34 +542,31 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
 
 ## Preference 与 Selection
 
-`Preference` 只表达 Direct、Auto 或指定最终出口三种意图，不包含延迟、吞吐等额外的用户排序目标或开关。
-选择函数先按授权与平台能力过滤候选，再按这三种意图限定范围：
+Preference 是本机当前策略选择，唯一现行编码为
+`{"schema":3,"services":[{"service_id":"demo-service","policy_id":"demo-policy"}]}`。
+services 显式出现，按 ServiceID 唯一排序；条目省略 policy_id 表示已初始化但待选。
+空串、null、重复 ServiceID、未知字段和非规范顺序拒绝。此值沿各端已有受保护偏好存储保存，
+不新增网络权威或 store；domain、规范本机 wire、persistent 必须完整往返。
 
-| 模式 | 候选范围 |
-|---|---|
-| `Direct` | 仅 `final_exit=direct` 且受管节点链为空的普通 Direct 候选；不创建代理入口探测 |
-| `Auto` | 当前互联网 Service 范围内所有由 `CertifiedLKG` 授权且平台可执行的候选，包括设备限定本地出网 |
-| 指定最终出口 | 所有最终出口为指定 NodeID 的候选，包括一跳直达、中继，以及指定本机时获授权的本地出网 |
+设备 PolicyIDs 是获准选择的集合，同一 Service 可以有多条；候选显式绑定 PolicyID。
+首次遇到服务时，恰好一条有效策略则保存选择，多条则保存待选。已有选择仍有效就保留；
+新增策略不改变它。撤权、删除或引用失效后清除 PolicyID，保留待选记录，不能因为只剩一条、
+重启或重新授权而自行恢复。暂时没有路径或真实业务失败不撤销有效选择，也不切换策略。
 
-在范围内，已知可用候选优先于未知候选，已知不可用候选不参与新选择。比较只能使用同范围、
-仍有效的实际指标；不同观测范围的数字不能直接比较，缺失指标不能补零。没有可用候选时，
-允许确定性地尝试未知候选，而不是等待测量。当前实际选择仍符合授权、平台能力及偏好范围，
-且未被有效结果判定不可用时，没有更优的可比较证据就保持它，避免无理由切换。
-排序是一次纯计算，不需要挑战者状态、采样收敛或额外状态机。ICMP RTT 最多只能为同类入口
-提供次级提示，不能覆盖真实 transport / business outcome。
+纯函数先按本服务所选 PolicyID 过滤，再复用现有可用性与真实观测算法：可用优先于未知，
+有效失败排除；同一目标有可比较的正耗时且严格改善时才替换，否则保留当前路径并稳定排序。
+缺项不补零，多目标不借用单目标耗时。Direct、一跳、同出口中继和设备限定本地出网只是
+所选策略允许的候选种类；不再有全局 Direct、Auto 或固定出口偏好。
 
-现有单目标耗时比较必须与缺项时的稳定选择分开。先按可用性、unknown 的既有失败尝试次序、
-当前实际选择、稳定候选 ID 确定基准候选；仅当基准为 available、只有一个目标且具有正的实际
-耗时，才在同目标 available 候选中选择严格更小的正耗时。相同耗时保持基准；多个严格改善值
-相同时按稳定 ID 选择。基准缺耗时则保留，不把缺项当作零或较慢；多目标不进入此性能比较。
-没有当前选择时也先用同一稳定顺序确定基准，不能因输入集合的排列改变结果。
+每个已授权 Service 保留默认 reject 的 selector，即使没有候选或尚未选择策略。切换保存偏好后，
+只关闭该服务原连接并应用新选择；实际 selector 回读成功才成为 Selection，失败则拒绝该服务。
+其他服务继续运行。UI 与签名报告分别投影保存的 policy_choices、实际带 PolicyID 的 selections
+及业务观测，不能相互推断。未使用策略显示未使用/未知，资源成功不制造其业务成功。
 
-反例是当前路径耗时 100、另一路缺耗时、第三路耗时 10：若每一对候选临时在耗时、当前选择和
-ID 之间切换排序依据，会形成比较环，同一集合可选出三个不同结果。上述两步只允许有同目标
-证据的第三路替代当前路径。此修正不新增性能指标优先级、后台扫描或操作者配置；domain、wire、
-持久 Observation/Preference 与认证字节不变，三端从同一纯函数提出候选，运行时应用并回读后
-才成为 Selection，UI 和报告仍只展示实际结果。失败与重试沿原路径，无第二套选择状态。
-最小验证覆盖三候选全部排列、当前或基准缺指标、同值保持、过期/异代结果及多目标不借用耗时。
+最小反例：两个策略都可经同一路径，但其中一个仅许某最终出口；不能复用另一策略的凭据或
+观测，也不能在该出口失败后改用另一策略。两个服务分别切换时，只关闭变更服务的连接。
+最小测试覆盖默认选择、待选、增权保持、撤权清空、无路不改策略、配置隔离、重启恢复、
+同路径不同策略隔离、真实业务与报告回读，以及待选不能回退 Direct。
 
 ### 首跳样本参与必要尝试
 
@@ -750,7 +747,7 @@ selector 回读失败不能冒充局部业务失败，以及三端正常入口�
 | 多项可比指标的优先级 | 只有同范围、仍有效且实际测得的值可比较；入口 RTT 不冒充完整 HTTPS 耗时，缺项不补零。 | 多个合法候选都有有效结果时，哪些指标用于排序、适用条件及优先顺序是什么；缺少足以比较的指标时不能宣称某候选“最快”。此决定不新增用户偏好选项。 |
 
 接收端报告、样本最大窗口与时钟前提见[限时观测投影](../core/current-contract.md#接收端的限时观测投影)。
-页面的当前或历史判定不改变本机选择窗口；未定性能优先级也不改变三种 Preference、授权过滤和实际
+页面的当前或历史判定不改变本机选择窗口；未定性能优先级也不改变按服务的 Preference、授权过滤和实际
 selector 回读的边界，不授权各平台各自补一套算法。
 
 指定 `demo-sv` 最终出口时，如果一跳直达候选被真实 transport 结果判定不可用，而
@@ -773,7 +770,7 @@ selector 回读的边界，不授权各平台各自补一套算法。
 | `RouteCandidate` | 允许路径、首跳资源、受管节点链、按序 `LinkID`、最终出口和 Service 范围 | 不单独传输；由认证设备视图中的授权链路与资源派生 | 不持久化 | 每次从 LKG 纯函数重建 | 显示 Direct / 节点链 / 链路传输 / 最终出口 |
 | `RuntimeCandidate` | 路径的可执行投影及稳定身份 | 不单独传输；所需入口和资源材料来自私有认证配置 | 不持久化独立副本 | 按调用方平台能力投影，供 adapter 按资源 ID 复用 transport / outbound | 通常只显示协议和入口类别，不暴露秘密参数 |
 | `Observation` | 某网络代、某 Service、某候选、实际目标及链路规范摘要的真实结果 | 私有认证报告保留来源、目标、范围和 `link_spec_digest` | 不作为配置权威；可留诊断历史，但恢复时不得直接当作当前结果 | 当前网络代的有限集合，摘要不匹配即失效 | 显示 available / unavailable / unknown、实测范围与陈旧状态 |
-| `Preference` | Direct、Auto 或指定最终出口 | 私有签名 Report 的可选 preference 只读投影本次采样读取的本机设置，不是设置同步 | 只保存一份本机用户设置；报告历史不成为设置权威 | 作为纯选择函数输入；停止或执行失败仍可上报保存的设置 | 客户端唯一可编辑的选路意图；Web 分别展示已报告设置、原时间和实际选择 |
+| `Preference` | 每服务的 PolicyID 或待选记录 | 私有签名 Report 的 policy_choices 只读采样本机设置，不是设置同步 | 只保存一份本机用户设置；报告历史不成为设置权威 | 作为纯选择函数输入；停止或执行失败仍可上报保存的设置 | 客户端唯一可编辑的选路意图；Web 分别展示已报告设置、原时间和实际选择 |
 | `Selection` | selector 回读确认的实际候选 | 可通过私有认证状态报告上送 | 不作为下次启动的权威；事件可供诊断 | 当前实际候选及回读时间 | 与 Preference 分栏显示，明确“当前实际路径” |
 | `HostAdapter` | 平台能力边界 | 无独立 wire 对象 | 只使用平台既有安全存储与服务配置 | 在平台隔离边界内执行 load、apply、readback 和真实 outcome 采集 | 提供能力/错误，不提供第二套选路开关 |
 
@@ -852,7 +849,7 @@ domain、wire 与 persistent 保持；runtime/UI 消费独立副本。最小验�
 3. 纯核心逐项解析该设备 PolicyIDs，从有效 allow Policy、其固定 Service、首跳资源、节点链和有序 `LinkID` 派生授权候选，再按平台
    实际能力投影可执行候选；`HostAdapter` 按资源 ID 复用并安装必要运行配置。首份 View 没有
    派生中继段时仍可经设备认证私有入口领配置，并按授权使用共享首跳。
-4. 有可执行业务候选时，按 `Preference` 立即选择一个被授权且未被证明不可用的候选，应用并回读；
+4. 先持久化按服务初始化/撤权校验后的 `Preference`；已有 PolicyID 时在该策略内选择一个未被证明不可用的候选，应用并回读；待选服务保持 reject；
    没有时业务保持 `unknown`，仍可经现行私有入口领取修复 View 和报告。
 5. 并行采集必要的真实 transport outcome；结果到达后再以同一纯函数重算。
 
@@ -1144,7 +1141,7 @@ access namespace。unit 沿已签模板与实际本机输入精确回读，升�
 这些检查通过以前，不宣称对应部署完成。[系统总线事故](../incidents/2026-10-06-isolated-tun-host-dns.md)
 说明为何仅比较网络空间或 resolver 文件不足以证明 DNS 隔离。
 
-`loom client route direct|auto|exit <ID>` 是 Linux 唯一偏好写入口；写入后重载同一 service。
+`loom client policy list` 回读每服务可选集合与已保存选择；`loom client policy select <ServiceID> <PolicyID>` 是唯一选择写入口，持久化后重载同一 service，只切换受影响的服务。
 `loom client status` 只读取 `/run` 中的实际 Selection，不把偏好冒充为运行事实。service 启动时可以尝试
 私有配置同步；控制面离线或报告暂不可达时继续使用已验证 LKG，不能改走公开配置或旧 pull。
 
@@ -1190,7 +1187,7 @@ SYSTEM/Administrators DACL；Portable TUN 与 Portable Mixed 使用 current-user
 宿主 preflight、组件可用性及运行回读不决定认证 LKG 是否接受；应用失败遵循上述新认证配置规则，
 保留新 LKG 并收口已撤销授权，不把旧 envelope 恢复为运行权威。
 
-首次导入时先生成 Ed25519 身份并把 `v2_latch=true`、floor 0、capability 绑定和默认 Auto Preference 原子
+首次导入时先生成 Ed25519 身份并把 `v2_latch=true`、floor 0、capability 绑定和空 services Preference 原子
 保护，再经受限 bootstrap tunnel claim/resume。同一事务恢复复用同一 identity/request ID；不同邀请不得接管。
 完成后保存完整 LKG 并推进 floor。进程、SCM 服务或系统重启从同一 envelope 验证恢复；DPAPI 解密失败、schema
 未知、latch 缺失、未经证书限定的前沿回退、LKG 无效或 Preference 非规范时整个 profile 失败关闭，不回退 P-256、公开配置、
@@ -1230,7 +1227,7 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
 2. **确定性派生**：相同 LKG 在 Android/Linux/Windows 纯核心得到相同授权候选身份和顺序；相同平台
    能力值生成相同可执行集合，重启结果不变；能力不足时不改变授权候选 ID。
 3. **Direct 与本地出网语义**：普通 Direct 的终点为 `direct`、链为空；设备限定本地出网终点为本机
-   NodeID、链同样为空。两者身份不同，Direct 模式只取前者，Auto 与指定本机出口可取获授权的后者；
+   NodeID、链同样为空。两者身份不同，只能由所选 Policy 的完整规则决定允许哪一种；
    重建不丢失 NodeID，均不产生回拨本机的入口检查；一跳直达包含远端最终出口，不与二者混淆。
 4. **同出口多路径**：同一最终出口同时产生一跳直达和中继；不同 WG/Hy2 首跳资源及自动 WG
    中继段的 `LinkID` 分别形成候选 ID，资源可按 ID 复用；关闭

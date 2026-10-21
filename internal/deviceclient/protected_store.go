@@ -37,7 +37,7 @@ func LoadProtected(path string, protector clientsecret.Protector) (*ProtectedSto
 func (store *ProtectedStore) Preference() clientmodel.Preference {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	return *store.state.Preference
+	return clientmodel.Preference{Schema: store.state.Preference.Schema, Services: append([]clientmodel.ServicePreference{}, store.state.Preference.Services...)}
 }
 func (store *ProtectedStore) SetPreference(preference clientmodel.Preference) error {
 	if err := preference.Validate(); err != nil {

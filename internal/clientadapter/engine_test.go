@@ -36,13 +36,13 @@ func (*fakeSelector) CloseConnections(context.Context, []string) error { return 
 func TestActivateUsesReadbackAndOneSameExitFallback(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []clientmodel.RouteCandidate{
-		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "internet"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "internet"},
+		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
 	}
-	selector := &fakeSelector{current: map[string]string{"internet": "one-hop"}}
+	selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}}
 	results := []ProbeResult{{Available: false, Metric: time.Second}, {Available: true, Metric: 2 * time.Second}}
 	activation, err := Activate(context.Background(), selector, routes, State{
-		Preference:        clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"},
+		Preference:        clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}},
 		NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
 		result := results[0]
 		results = results[1:]
@@ -51,7 +51,7 @@ func TestActivateUsesReadbackAndOneSameExitFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selector.current["internet"] != "relay" || len(activation.Selections) != 1 ||
+	if selector.current["service:demo-service"] != "relay" || len(activation.Selections) != 1 ||
 		activation.Selections[0].CandidateID != "relay" || len(activation.State.Observations) != 2 {
 		t.Fatalf("fallback did not preserve selector readback: selector=%+v activation=%+v", selector.current, activation)
 	}
@@ -62,9 +62,9 @@ func TestProbeBudgetRetainsRemainingAuthorizedPathAndRecovers(t *testing.T) {
 	scope := "service:demo-service"
 	target := "https://demo.example/test"
 	routes := []clientmodel.RouteCandidate{
-		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: scope},
-		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: scope},
-		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: scope},
+		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
+		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
+		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
 	}
 	selector := &fakeSelector{current: map[string]string{scope: "demo-a"}}
 	working := "demo-c"
@@ -74,7 +74,7 @@ func TestProbeBudgetRetainsRemainingAuthorizedPathAndRecovers(t *testing.T) {
 		attempts = append(attempts, candidate)
 		return ProbeResult{Available: candidate == working, Action: "https_request"}
 	}}
-	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-network"}
+	state := State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"}
 	first, err := Activate(context.Background(), selector, routes, state, probes, func() time.Time { return at })
 	if err != nil || len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-c" ||
 		first.Selections[0].State != "unknown" || len(first.BlockedScopes) != 0 ||
@@ -96,18 +96,18 @@ func TestProbeBudgetRetainsRemainingAuthorizedPathAndRecovers(t *testing.T) {
 }
 
 func TestApplyRejectsMismatchedSelectorReadback(t *testing.T) {
-	selector := &fakeSelector{current: map[string]string{"internet": "one-hop"}, readAs: "unauthorized"}
-	if _, err := ApplySelections(context.Background(), selector, map[string]string{"internet": "relay"}); err == nil {
+	selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}, readAs: "unauthorized"}
+	if _, err := ApplySelections(context.Background(), selector, map[string]string{"service:demo-service": "relay"}); err == nil {
 		t.Fatal("mismatched selector readback was accepted as Selection")
 	}
 }
 
 func TestActivateWithoutProbeKeepsActualSelectionUnknown(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	routes := []clientmodel.RouteCandidate{{ID: "demo-direct", FinalExit: "direct", Scope: "demo-service"}}
-	selector := &fakeSelector{current: map[string]string{"demo-service": "demo-direct"}}
+	routes := []clientmodel.RouteCandidate{{ID: "demo-direct", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-policy"}}
+	selector := &fakeSelector{current: map[string]string{"service:demo-service": "demo-direct"}}
 	activation, err := Activate(context.Background(), selector, routes, State{
-		Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-network"},
+		Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"},
 		nil, func() time.Time { return now })
 	if err != nil || len(activation.Selections) != 1 || activation.Selections[0].CandidateID != "demo-direct" ||
 		activation.Selections[0].State != "unknown" || len(activation.State.Observations) != 0 {
@@ -115,7 +115,7 @@ func TestActivateWithoutProbeKeepsActualSelectionUnknown(t *testing.T) {
 	}
 	failed, err := Activate(context.Background(), selector, routes, activation.State, Probes{"": func(context.Context) ProbeResult { return ProbeResult{Description: "demo business failed"} }}, func() time.Time { return now })
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(failed.Selections) != 0 ||
-		!reflect.DeepEqual(failed.BlockedScopes, []string{"demo-service"}) || selector.current["demo-service"] != BlockedSelection ||
+		!reflect.DeepEqual(failed.BlockedScopes, []string{"service:demo-service"}) || selector.current["service:demo-service"] != BlockedSelection ||
 		failed.State.NetworkGeneration == "" || len(failed.State.Observations) != 1 || failed.State.Observations[0].Result != "unavailable" {
 		t.Fatalf("business failure did not retain evidence and read back its Service rejection: %+v, %v", failed, err)
 	}
@@ -124,8 +124,8 @@ func TestActivateWithoutProbeKeepsActualSelectionUnknown(t *testing.T) {
 func TestServicesProbeIndependentlyAndRecoverWithoutClearingEvidence(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []clientmodel.RouteCandidate{
-		{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-a"},
-		{ID: "demo-b", FinalExit: "direct", Scope: "service:demo-b"},
+		{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-a", PolicyID: "demo-policy"},
+		{ID: "demo-b", FinalExit: "direct", Scope: "service:demo-b", PolicyID: "demo-policy"},
 	}
 	selector := &fakeSelector{current: map[string]string{routes[0].Scope: BlockedSelection, routes[1].Scope: BlockedSelection}}
 	calls := map[string]int{}
@@ -136,7 +136,7 @@ func TestServicesProbeIndependentlyAndRecoverWithoutClearingEvidence(t *testing.
 			return ProbeResult{Available: scope == routes[0].Scope || recovered, Action: "https_request"}
 		}}
 	}
-	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-network"}
+	state := State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"}
 	first, err := ActivateServices(context.Background(), selector, routes, state, probe, func() time.Time { return now })
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-a" ||
 		!reflect.DeepEqual(first.BlockedScopes, []string{routes[1].Scope}) || len(first.State.Observations) != 2 || calls[routes[0].Scope] != 1 || calls[routes[1].Scope] != 1 {
@@ -171,8 +171,8 @@ func TestSelectorReadbackAcceptsRuntimeStatusFieldsButRejectsAmbiguity(t *testin
 func TestCancellationDoesNotBecomeBusinessFailure(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []clientmodel.RouteCandidate{
-		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "demo-service"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "demo-service"},
+		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
 	}
 	for _, cancelOnFallback := range []bool{false, true} {
 		name := "first probe"
@@ -182,9 +182,9 @@ func TestCancellationDoesNotBecomeBusinessFailure(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			selector := &fakeSelector{current: map[string]string{"demo-service": "one-hop"}}
+			selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}}
 			calls := 0
-			activation, err := Activate(ctx, selector, routes, State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
+			activation, err := Activate(ctx, selector, routes, State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
 				calls++
 				if !cancelOnFallback || calls == 2 {
 					cancel()

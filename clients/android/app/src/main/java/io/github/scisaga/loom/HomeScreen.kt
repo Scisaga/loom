@@ -19,7 +19,6 @@ import io.github.scisaga.loom.enrollment.EnrollmentStatus
 import io.github.scisaga.loom.enrollment.InviteScanner
 import io.github.scisaga.loom.profiles.ConnectionProfile
 import io.github.scisaga.loom.profiles.ProfileIndex
-import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.route.RouteStatus
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.VpnStatus
@@ -57,7 +56,7 @@ internal data class HomeUiActions(
     val onRetryEnrollment: (String) -> Unit = {},
     val onRefreshEnrollment: (String) -> Unit = {},
     val onAbandonEnrollment: (String) -> Unit = {},
-    val onSelectRoute: (String, RouteMode, String) -> Unit = { _, _, _ -> },
+    val onSelectRoute: (String, String, String) -> Unit = { _, _, _ -> },
     val onOpenNotificationSettings: () -> Unit = {},
 )
 
@@ -157,8 +156,8 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                             onAbandonPending = { actions.onAbandonEnrollment(viewedProfile.id) },
                         )
                     }
-                    RouteModeCard(state.route) { mode, exit ->
-                        actions.onSelectRoute(viewedProfile.id, mode, exit)
+                    ServicePolicyCard(state.route) { serviceID, policyID ->
+                        actions.onSelectRoute(viewedProfile.id, serviceID, policyID)
                     }
                     Text(
                         "配置身份、签名运行配置与连接模式均保存在本机受保护存储中。",

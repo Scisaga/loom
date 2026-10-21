@@ -43,6 +43,7 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 	portNumber, _ := strconv.Atoi(port)
 	name, trust := "demo.example", []string{base64.RawURLEncoding.EncodeToString(der)}
 	configure := func(p *control.Projection) {
+		p.NetworkIntent.Policies[0].AllowDirect = new(false)
 		owner := p.DeviceAuthorizations[0]
 		owner.ID, owner.Responsibilities, owner.PolicyIDs = "demo-exit", []string{"internet_egress"}, []string{}
 		p.DeviceAuthorizations = append(p.DeviceAuthorizations, owner)
@@ -143,11 +144,11 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 	}
 	routesBody, _ := json.Marshal(profile.Routes)
 	targetsBody, _ := json.Marshal(profile.BusinessProbeTargets)
-	preference, _ := NewAndroidPreference("fixed_exit", route.FinalExit)
+	preference, _ := testPolicyPreference()
 	current, _ := json.Marshal(map[string]string{route.Scope: route.ID})
 	evaluate := func(at time.Time, raw []byte) runtimeApplication {
 		t.Helper()
-		body, err := EvaluateAndroidRoutes(routesBody, nil, preference, current, "demo-other-underlay", at.UTC().Format(time.RFC3339), targetsBody, raw, nil)
+		body, err := EvaluateAndroidRoutes(routesBody, nil, preference, current, "demo-other-underlay", at.UTC().Format(time.RFC3339), targetsBody, raw, nil, nil)
 		var result runtimeApplication
 		if err != nil || json.Unmarshal(body, &result) != nil {
 			t.Fatal("Android pure bridge could not consume its existing cache", err)
@@ -155,7 +156,7 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 		return result
 	}
 	blocked := evaluate(time.UnixMilli(failedSamples[0].ObservedAt), resources)
-	if len(blocked.Selections) != 0 || len(blocked.BlockedScopes) != 1 || blocked.BlockedScopes[0] != route.Scope {
+	if len(blocked.Selections) == 1 && blocked.Selections[0].Candidate == route.ID || len(blocked.Selections) == 0 && (len(blocked.BlockedScopes) != 1 || blocked.BlockedScopes[0] != route.Scope) {
 		t.Fatal("Android ignored the real failed protected first-hop authentication")
 	}
 	expired := evaluate(time.UnixMilli(failedSamples[0].ValidUntil), resources)

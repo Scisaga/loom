@@ -7,8 +7,6 @@ import (
 	"strings"
 	"unicode/utf8"
 	"unsafe"
-
-	"loom/internal/clientmodel"
 )
 
 func (app *portableGUI) paintMisaka(dc uintptr) {
@@ -93,12 +91,7 @@ func (app *portableGUI) paintMisakaContent(c *misakaCanvas, snapshot portableGUI
 	}
 	c.Text(device, misakaRect(main+s(16), s(168)+hint, end-main-s(32), s(48)), s(11), 400, misakaMuted, 0)
 	if snapshot.joined {
-		c.Text("路由模式", misakaRect(main, s(240)+hint, s(72), s(32)), s(14), 500, misakaText, 0)
-		modeGroup := misakaRect(main+s(80), s(240)+hint, s(240), s(32))
-		c.Fill(modeGroup, 0xE4ECE7, s(8))
-		if misakaSelectedMode(snapshot) == clientmodel.ModeFixed && end-s(708) >= s(120) {
-			c.Text("前置路径自动选择", misakaRect(s(708), s(240)+hint, end-s(708), s(32)), s(11), 400, misakaMuted, 0)
-		}
+		c.Text("服务策略", misakaRect(main, s(240)+hint, s(72), s(32)), s(14), 500, misakaText, 0)
 		top := s(296) + hint
 		c.Fill(misakaRect(main, top, end-main, s(48)+app.misakaPathsHeight()+s(16)), misakaWhite, s(12))
 		c.Text("当前选路", misakaRect(main+s(16), top, s(140), s(48)), s(14), 500, misakaText, 0)
@@ -234,31 +227,10 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 		parent = misakaSidebar
 		bg = 0xEEF1EE
 	}
-	selected := false
 	snapshot := app.snapshot()
-	mode := misakaSelectedMode(snapshot)
-	isMode := item.hwndItem == app.controls.modeAuto || item.hwndItem == app.controls.modeFixed || item.hwndItem == app.controls.modeDirect
-	if isMode {
-		parent, bg, fg = 0xE4ECE7, 0xE4ECE7, misakaMuted
-		paintMisakaModeBackground(c, r, s, item.hwndItem == app.controls.modeDirect, item.hwndItem == app.controls.modeFixed)
-	} else {
-		c.Fill(r, parent, 0)
-	}
-	if item.hwndItem == app.controls.modeAuto {
-		selected = mode == clientmodel.ModeAuto
-	}
-	if item.hwndItem == app.controls.modeFixed {
-		selected = mode == clientmodel.ModeFixed
-	}
-	if item.hwndItem == app.controls.modeDirect {
-		selected = mode == clientmodel.ModeDirect
-	}
+	c.Fill(r, parent, 0)
 	primary := item.hwndItem == app.controls.draftSubmit || item.hwndItem == app.controls.primaryButton && !portableStatusAnimated(snapshot.state)
 	if primary {
-		bg = misakaGreen
-		fg = misakaWhite
-	}
-	if selected {
 		bg = misakaGreen
 		fg = misakaWhite
 	}
@@ -270,31 +242,17 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 		}
 	}
 	if item.itemState&(portableODSDisabled|portableODSGrayed) != 0 {
-		if !isMode {
-			bg = 0xF0F2F0
-		}
+		bg = 0xF0F2F0
 		fg = 0x9BA09E
 	}
 	border := uint32(misakaBorder)
-	if primary || isMode || item.hwndItem == app.controls.addProfileButton {
+	if primary || item.hwndItem == app.controls.addProfileButton {
 		border = bg
 	}
 	if item.itemState&portableODSFocus != 0 {
 		border = misakaGreen
-		if selected {
-			border = misakaWhite
-		}
-	}
-	if isMode {
-		r.left += s(4)
-		r.top += s(4)
-		r.right -= s(4)
-		r.bottom -= s(4)
 	}
 	radius := s(8)
-	if isMode {
-		radius = s(4)
-	}
 	c.Fill(r, border, radius)
 	if border != bg {
 		r.left += s(1)
@@ -312,22 +270,6 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 	}
 	app.finishMisakaPaint(item.dc)
 	return true
-}
-
-func paintMisakaModeBackground(c *misakaCanvas, rect portableRect, scale func(int32) int32, first, last bool) {
-	// §7.2：首尾按钮各自绘制整段的外圆角，不能用矩形背景盖掉父画布的边角。
-	c.Fill(rect, misakaBackground, 0)
-	radius := int32(0)
-	if first || last {
-		radius = scale(8)
-	}
-	c.Fill(rect, 0xE4ECE7, radius)
-	middle := (rect.left + rect.right) / 2
-	if first {
-		c.Fill(misakaRect(middle, rect.top, rect.right-middle, rect.bottom-rect.top), 0xE4ECE7, 0)
-	} else if last {
-		c.Fill(misakaRect(rect.left, rect.top, middle-rect.left, rect.bottom-rect.top), 0xE4ECE7, 0)
-	}
 }
 
 func (app *portableGUI) drawMisakaStatus(item *portableDrawItem) {
@@ -552,14 +494,17 @@ func (app *portableGUI) drawMisakaRoute(item *portableDrawItem) {
 	radius := int32(0)
 	if folded {
 		radius = s(6)
+		// Clear the complete child surface before antialiasing rounded corners;
+		// the parent clips child rectangles during scrolling and cannot erase it.
+		c.Fill(item.rect, misakaBackground, 0)
 	}
 	c.Fill(item.rect, bg, radius)
-	label := "选择出口…"
+	label := "选择服务策略…"
 	if int(item.itemID) < len(app.routeVisible) {
 		snapshot := app.snapshot()
 		index := app.routeVisible[item.itemID]
 		if index < len(snapshot.routeOptions) {
-			label = strings.TrimPrefix(snapshot.routeOptions[index].Label, "固定出口 · ")
+			label = snapshot.routeOptions[index].Label
 		}
 	}
 	if app.routeFiltering && item.itemState&portableODSComboBoxEdit != 0 {
@@ -613,9 +558,6 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	}
 	serviceWidth := min(s(200), (r.right-r.left-s(110))/3)
 	serviceLabel := row.Service
-	if misakaSelectedMode(app.snapshot()) == clientmodel.ModeFixed {
-		serviceLabel = "统一上网路径"
-	}
 	c.Text(serviceLabel, misakaRect(r.left+s(16), r.top+s(8), serviceWidth, s(24)), s(12), 500, misakaText, 0)
 	if row.LinkLabels == "" {
 		quality := row.MeasurementSummary
@@ -681,7 +623,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 					}
 				}
 			}
-			fixed := start+index == len(nodes)-2 && misakaSelectedMode(app.snapshot()) == clientmodel.ModeFixed
+			fixed := false
 			paintMisakaPathNode(c, x, y, start+index, len(nodes), s, fixed)
 			// §7.2：两端标签按可用对称宽度收窄，不将文字挤离节点的中心轴。
 			labelWidth := min(s(120), step-s(6), (x-r.left-s(10))*2, (r.right-s(10)-x)*2)

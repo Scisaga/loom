@@ -45,7 +45,11 @@ func TestActivationRestoresFirstHopCacheWithoutBorrowingAnotherCredential(t *tes
 		}
 	}
 	selector := &fakeSelector{current: map[string]string{matching.Scope: matching.ID, unrelated.Scope: unrelated.ID}}
-	state := State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-underlay", ResourceObservations: restored}
+	preference, err := clientmodel.ReconcilePreference(clientmodel.EmptyPreference(), lkg.View)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := State{Preference: preference, NetworkGeneration: "demo-underlay", ResourceObservations: restored}
 	activation, err := ActivateServices(context.Background(), selector, allowed, state, nil, func() time.Time { return time.UnixMilli(failed.ObservedAt) })
 	if err != nil || len(activation.Selections) != 2 || selector.current[matching.Scope] == matching.ID || selector.current[unrelated.Scope] != unrelated.ID {
 		t.Fatal("cached authentication failure was ignored or crossed credentials", err)

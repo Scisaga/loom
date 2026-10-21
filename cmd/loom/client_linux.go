@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"loom/internal/clientmodel"
+	"loom/internal/control"
 	"loom/internal/deviceclient"
 	"loom/internal/linuxclient"
 )
@@ -107,59 +109,52 @@ func cmdClientCleanup(args []string) error {
 	return linuxclient.CleanupWireGuard(linuxclient.Options{Config: *config})
 }
 
-func cmdClientRoute(args []string) error {
-	fs := flag.NewFlagSet("client route", flag.ContinueOnError)
+func cmdClientPolicy(args []string) error {
+	fs := flag.NewFlagSet("client policy", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	state := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
-	local := fs.String("runtime-state", defaultLinuxLocalState, "preference and bounded observation state")
+	local := fs.String("runtime-state", defaultLinuxLocalState, "protected policy choice state")
 	unit := fs.String("unit", "loom-client.service", "formal Linux client service")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	rest := fs.Args()
-	preference := clientmodel.Preference{Schema: 3}
-	switch {
-	case len(rest) == 1 && rest[0] == "direct":
-		preference.Mode = clientmodel.ModeDirect
-	case len(rest) == 1 && rest[0] == "auto":
-		preference.Mode = clientmodel.ModeAuto
-	case len(rest) == 2 && rest[0] == "exit":
-		preference.Mode, preference.Exit = clientmodel.ModeFixed, rest[1]
-	default:
-		return errors.New("用法: loom client route <direct|auto|exit ID>")
+	if len(rest) != 1 || rest[0] != "list" {
+		if len(rest) != 3 || rest[0] != "select" {
+			return errors.New("用法: loom client policy [flags] <list|select ServiceID PolicyID>")
+		}
 	}
 	store, err := deviceclient.Load(*state)
 	if err != nil {
 		return err
 	}
 	lkg := store.LKG()
-	if lkg == nil || lkg.View.Platform != "linux" || lkg.View.RuntimeProfile == nil {
-		return errors.New("Linux device has no certified runtime profile")
-	}
-	if preference.Mode == clientmodel.ModeFixed {
-		found := false
-		for _, route := range lkg.View.Routes {
-			found = found || route.FinalExit == preference.Exit
-		}
-		if !found {
-			return errors.New("requested final exit is not authorized by the certified LKG")
-		}
+	if lkg == nil || lkg.View.Platform != "linux" {
+		return errors.New("Linux device has no certified view")
 	}
 	generation, err := linuxclient.NetworkGeneration()
 	if err != nil {
 		return err
 	}
-	if err := linuxclient.SetPreference(*local, generation, preference); err != nil {
+	current, err := linuxclient.ReconcilePolicyChoices(*local, generation, lkg.View)
+	if err != nil {
+		return err
+	}
+	if rest[0] == "list" {
+		services, policies := clientmodel.PolicyOptions(lkg.View)
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Services []control.Service       `json:"services"`
+			Policies []control.NetworkPolicy `json:"policies"`
+			Choices  []control.PolicyChoice  `json:"policy_choices"`
+		}{services, policies, current.Preference.Services})
+	}
+	if err := linuxclient.SelectPolicy(*local, generation, lkg.View, rest[1], rest[2]); err != nil {
 		return err
 	}
 	if output, err := exec.Command("systemctl", "reload", *unit).CombinedOutput(); err != nil {
-		return fmt.Errorf("preference saved but service reload failed: %w: %s", err, string(output))
+		return fmt.Errorf("policy choice saved but service reload failed: %w: %s", err, string(output))
 	}
-	fmt.Printf("Linux route preference saved and runtime refresh requested; verify with client status: %s", preference.Mode)
-	if preference.Exit != "" {
-		fmt.Printf(" %s", preference.Exit)
-	}
-	fmt.Println()
+	fmt.Println("Service policy choice saved; verify actual application with client status")
 	return nil
 }
 
@@ -188,5 +183,63 @@ func cmdClientStatus(args []string) error {
 		}
 		return errors.New("certified configuration is saved; Linux client runtime is not running")
 	}
+	return nil
+}
+
+func cmdClientMigratePolicySelection(args []string) error {
+	fs := flag.NewFlagSet("client migrate-policy-selection", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", defaultDeviceState, "existing identity")
+	local := fs.String("runtime-state", defaultLinuxLocalState, "existing protected runtime preferences")
+	view := fs.String("view", "", "new certified configuration")
+	evidence := fs.String("evidence", "", "protected original identity evidence")
+	unit := fs.String("unit", "loom-client.service", "formal service that must remain stopped")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *view == "" || *evidence == "" {
+		return errors.New("migrate-policy-selection requires -view and -evidence")
+	}
+	active, err := exec.Command("systemctl", "show", *unit, "-p", "ActiveState", "--value").Output()
+	if err != nil {
+		return err
+	}
+	if value := strings.TrimSpace(string(active)); value != "inactive" && value != "failed" {
+		return errors.New("stop the formal client service before policy migration")
+	}
+	body, err := readBoundedRegular(*view, 5<<20, true)
+	if err != nil {
+		return err
+	}
+	defer clear(body)
+	var envelope control.DeviceViewEnvelope
+	if err := control.DecodeCanonical(body, &envelope, control.ContractDecodeLimits{MaxBytes: 5 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
+		return err
+	}
+	original, legacy, err := linuxclient.PolicyMigrationInput(*local, *evidence+".runtime")
+	if err != nil {
+		return err
+	}
+	defer clear(original)
+	defer clear(legacy)
+	preference, err := deviceclient.PreviewPolicySelectionFile(*state, *evidence, envelope, legacy, nil)
+	if err != nil {
+		return err
+	}
+	generation, err := linuxclient.NetworkGeneration()
+	if err != nil {
+		return err
+	}
+	next, err := linuxclient.PreparePolicyMigration(original, preference, generation, envelope.ViewDigest)
+	if err != nil {
+		return err
+	}
+	if err := linuxclient.CommitPolicyMigration(*local, *evidence+".runtime", original, next); err != nil {
+		return err
+	}
+	if _, err := deviceclient.MigratePolicySelectionFile(*state, *evidence, envelope, legacy, nil); err != nil {
+		return err
+	}
+	fmt.Println("policy configuration advanced; original identity and settings preserved; service remains stopped pending activation readback")
 	return nil
 }

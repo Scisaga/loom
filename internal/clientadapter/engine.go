@@ -22,6 +22,7 @@ type State struct {
 type SelectionStatus struct {
 	Scope       string   `json:"scope"`
 	CandidateID string   `json:"candidate_id"`
+	PolicyID    string   `json:"policy_id"`
 	FinalExit   string   `json:"final_exit"`
 	Chain       []string `json:"chain,omitempty"`
 	State       string   `json:"state"`
@@ -49,8 +50,11 @@ type Activation struct {
 
 const BlockedSelection = "reject"
 
-func Scopes(routes []clientmodel.RouteCandidate) ([]string, map[string][]clientmodel.RouteCandidate, error) {
+func Scopes(routes []clientmodel.RouteCandidate, scopeIDs ...string) ([]string, map[string][]clientmodel.RouteCandidate, error) {
 	byScope := map[string][]clientmodel.RouteCandidate{}
+	for _, scope := range scopeIDs {
+		byScope[scope] = []clientmodel.RouteCandidate{}
+	}
 	for _, route := range routes {
 		if err := route.Validate(); err != nil {
 			return nil, nil, err
@@ -67,8 +71,8 @@ func Scopes(routes []clientmodel.RouteCandidate) ([]string, map[string][]clientm
 }
 
 func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.Observation, resources []control.Observation, links []control.DeviceLinkObservation,
-	preference clientmodel.Preference, current map[string]string, generation string, now time.Time, targets ...string) (map[string]string, error) {
-	scopes, byScope, err := Scopes(routes)
+	preference clientmodel.Preference, current map[string]string, generation string, now time.Time, targets []string, scopeIDs ...string) (map[string]string, error) {
+	scopes, byScope, err := Scopes(routes, scopeIDs...)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +159,7 @@ func selectionStatuses(routes []clientmodel.RouteCandidate, observations []clien
 		}
 		candidate := byID[selected[scope]]
 		state, _ := clientmodel.ObservationState(observations, candidate.ID, scope, generation, targets, now)
-		statuses = append(statuses, SelectionStatus{Scope: scope, CandidateID: candidate.ID, FinalExit: candidate.FinalExit,
+		statuses = append(statuses, SelectionStatus{Scope: scope, CandidateID: candidate.ID, PolicyID: candidate.PolicyID, FinalExit: candidate.FinalExit,
 			Chain: append([]string(nil), candidate.Chain...), State: state})
 	}
 	return statuses
@@ -163,8 +167,8 @@ func selectionStatuses(routes []clientmodel.RouteCandidate, observations []clien
 
 // activate samples only the current path, and at most one necessary fallback.
 func activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
-	probes Probes, now func() time.Time) (Activation, error) {
-	scopes, _, err := Scopes(routes)
+	probes Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
+	scopes, _, err := Scopes(routes, scopeIDs...)
 	if err != nil {
 		return Activation{}, err
 	}
@@ -185,13 +189,13 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 	}
 	at := now().UTC()
 	transportSamples := append(append([]control.Observation{}, state.ResourceObservations...), state.LocalLinkObservations...)
-	desired, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, current, state.NetworkGeneration, at, targets...)
+	desired, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, current, state.NetworkGeneration, at, targets, scopeIDs...)
 	if err != nil {
 		return Activation{}, err
 	}
 	readback, err := ApplySelections(ctx, selector, desired)
 	if err != nil {
-		return Activation{}, err
+		return Activation{State: state}, err
 	}
 	result := func() Activation {
 		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, now().UTC(), targets...)}
@@ -247,24 +251,24 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 				if err != nil {
 					return result(), err
 				}
-				improved, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, now().UTC(), targets...)
+				improved, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, now().UTC(), targets, scopeIDs...)
 				if err != nil {
 					return result(), err
 				}
 				readback, err = ApplySelections(ctx, selector, improved)
 				if err != nil {
-					return Activation{}, err
+					return Activation{State: state}, err
 				}
 			}
 			return result(), nil
 		}
-		fallback, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, at, targets...)
+		fallback, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, at, targets, scopeIDs...)
 		if err != nil {
 			return result(), err
 		}
 		readback, err = ApplySelections(ctx, selector, fallback)
 		if err != nil {
-			return Activation{}, err
+			return Activation{State: state}, err
 		}
 	}
 	// Exhausting this pass's probe budget does not disqualify an untried path.
@@ -279,14 +283,27 @@ func activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 // Activate returns rejected scopes separately from genuine candidate selections.
 // They are a disposable readback of the local selector, never report authority.
 func Activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
-	probe Probes, now func() time.Time) (Activation, error) {
-	result, err := activate(ctx, selector, routes, state, probe, now)
-	if result.State.NetworkGeneration == "" || ctx.Err() != nil {
+	probe Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
+	result, err := activate(ctx, selector, routes, state, probe, now, scopeIDs...)
+	if ctx.Err() != nil {
 		return result, err
 	}
-	scopes, _, scopeErr := Scopes(routes)
+	scopes, _, scopeErr := Scopes(routes, scopeIDs...)
 	if scopeErr != nil {
 		return Activation{}, scopeErr
+	}
+	if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+		blocked, rejectErr := RejectSelections(ctx, selector, scopes)
+		if result.State.NetworkGeneration == "" {
+			result.State = state
+		}
+		result.Selections, result.BlockedScopes = nil, nil
+		for _, scope := range scopes {
+			if blocked[scope] == BlockedSelection {
+				result.BlockedScopes = append(result.BlockedScopes, scope)
+			}
+		}
+		return result, errors.Join(err, rejectErr)
 	}
 	for _, scope := range scopes {
 		actual, readErr := selector.Read(ctx, scope)
@@ -311,8 +328,8 @@ func Activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 // ActivateServices keeps each Service's outcome and failure recovery separate.
 // Probe factories return nil where no authenticated target exists.
 func ActivateServices(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
-	probeForScope func(string) Probes, now func() time.Time) (Activation, error) {
-	scopes, byScope, err := Scopes(routes)
+	probeForScope func(string) Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
+	scopes, byScope, err := Scopes(routes, scopeIDs...)
 	if err != nil {
 		return Activation{}, err
 	}
@@ -323,7 +340,7 @@ func ActivateServices(ctx context.Context, selector Selector, routes []clientmod
 		if probeForScope != nil {
 			probe = probeForScope(scope)
 		}
-		next, err := Activate(ctx, selector, byScope[scope], result.State, probe, now)
+		next, err := Activate(ctx, selector, byScope[scope], result.State, probe, now, scope)
 		if next.State.NetworkGeneration == "" {
 			return Activation{}, err
 		}

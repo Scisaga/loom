@@ -126,9 +126,9 @@ func TestGUIDPIChanges(t *testing.T) {
 				t.Errorf("DPI %d: window rectangle = %+v, want %+v", dpi, rect, suggested)
 			}
 			button := guiWindowRect(t, app.controls.primaryButton)
-			buttonWidth := int32(100)
+			buttonWidth := int32(96)
 			if !joined {
-				buttonWidth = 132 // §7.2：空配置的导入按钮与说明左对齐，容纳完整操作名。
+				buttonWidth = 152 // The retained Misaka import button fits its full caption.
 			}
 			if button.right-button.left != buttonWidth*dpi/96 || button.bottom-button.top != 32*dpi/96 {
 				t.Errorf("DPI %d: button did not scale with its font: %+v", dpi, button)
@@ -137,7 +137,7 @@ func TestGUIDPIChanges(t *testing.T) {
 				control, message, index uintptr
 				height                  int32
 			}{
-				{app.controls.networkList, 0x01A1, 0, 55}, // LB_GETITEMHEIGHT
+				{app.controls.networkList, 0x01A1, 0, 72}, // LB_GETITEMHEIGHT
 				{app.controls.routeCombo, 0x0154, 0, 23},  // CB_GETITEMHEIGHT
 				{app.controls.routeCombo, 0x0154, ^uintptr(0), 23},
 			} {
@@ -199,8 +199,8 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 	app := &portableGUI{edition: editionInstalled, ctx: ctx, cancel: cancel,
 		state: guiConnected, joined: true, deviceID: "demo-device", root: `C:\demo-client`,
 		detail: "已连接", routeSelected: 0, routeOptions: []portableRouteOption{
-			{Label: "自动选择", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}},
-			{Label: "固定出口 · demo-exit", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}},
+			{Label: "境外 API / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}},
+			{Label: "境外 API / 固定德国出口", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}},
 		}}
 	hwnd, err := createPortableWindow(app)
 	if err != nil {
@@ -264,11 +264,10 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 	app.renderControls()
 	resets := 0
 	for _, event := range writes {
-		if event.message == 0x0046 { // §7.2：固定出口会展开出口输入，允许这次真实模式变化重排布局。
+		if event.message == 0x0046 { // §7.2：策略选项变化时允许控件按实际内容重排布局。
 			continue
 		}
-		if event.control != app.controls.routeCombo && event.control != app.controls.modeAuto &&
-			event.control != app.controls.modeFixed && event.control != app.controls.modeDirect {
+		if event.control != app.controls.routeCombo {
 			t.Fatalf("route update rewrote another control: %+v", event)
 		}
 		if event.message == portableCBResetContent {

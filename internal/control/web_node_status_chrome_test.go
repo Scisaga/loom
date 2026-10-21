@@ -92,15 +92,19 @@ func TestWebChromeRuntimeAndDifferentServiceResultsRemainSeparate(t *testing.T) 
 	digest, _ := DeviceViewDigest(view)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	report := DeviceReport{Schema: 3, NetworkID: projection.NetworkID, DeviceID: view.DeviceID, ReportSequence: 1, ViewDigest: digest, NetworkGeneration: "demo-network", ReportedAt: now.UnixMilli(), Selections: []ReportSelection{}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
+	choices := []PolicyChoice{}
+	report.PolicyChoices = &choices
 	for _, route := range view.Routes {
 		result := "available"
 		if route.ServiceID == "demo-service-b" {
 			result = "unavailable"
 		}
-		report.Selections = append(report.Selections, ReportSelection{ServiceID: route.ServiceID, CandidateID: route.ID})
+		choices = append(choices, PolicyChoice{ServiceID: route.ServiceID, PolicyID: route.PolicyID})
+		report.Selections = append(report.Selections, ReportSelection{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID})
 		report.Observations = append(report.Observations, Observation{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: "https://" + route.ServiceID + ".example/probe", Action: "https_request", SpecDigest: route.SpecDigest, NetworkGeneration: report.NetworkGeneration, Result: result, ObservedAt: now.UnixMilli(), ValidUntil: now.Add(30 * time.Second).UnixMilli()})
 	}
 	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
+	sort.Slice(choices, func(i, j int) bool { return choices[i].ServiceID < choices[j].ServiceID })
 	sort.Slice(report.Observations, func(i, j int) bool {
 		return compareObservationOrder(report.Observations[i], report.Observations[j]) < 0
 	})

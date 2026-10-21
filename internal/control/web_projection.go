@@ -147,7 +147,7 @@ func projectWebPathsUsing(projection Projection, viewFor func(string) (DeviceVie
 				}
 			}
 			paths = append(paths, Path{CandidateID: candidate.ID, Device: device.ID, Scope: candidate.Scope,
-				ServiceID: candidate.ServiceID, SpecDigest: candidate.SpecDigest, FirstResourceID: candidate.FirstResourceID,
+				ServiceID: candidate.ServiceID, PolicyID: candidate.PolicyID, SpecDigest: candidate.SpecDigest, FirstResourceID: candidate.FirstResourceID,
 				FirstTransport: transport, LinkIDs: append([]string{}, candidate.LinkIDs...), Targets: targets,
 				FinalExit: candidate.FinalExit, Chain: append([]string{}, candidate.NodeChain...), Availability: "unknown"})
 		}
@@ -219,6 +219,9 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 				preference := *report.Preference
 				device.Evidence.Preference = &preference
 			}
+			if report.PolicyChoices != nil {
+				device.Evidence.PolicyChoices = new(append([]PolicyChoice{}, (*report.PolicyChoices)...))
+			}
 			if report.LocalNetworks != nil {
 				device.Evidence.LocalNetworks = new(append([]LocalNetworkPrefix{}, (*report.LocalNetworks)...))
 			}
@@ -230,11 +233,18 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 					continue
 				}
 				for _, selection := range report.Selections {
-					if (path.Scope == "service:"+selection.ServiceID || path.Scope == "local_network:"+selection.ServiceID) && path.CandidateID == selection.CandidateID && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
+					if (path.Scope == "service:"+selection.ServiceID || path.Scope == "local_network:"+selection.ServiceID) && path.CandidateID == selection.CandidateID && selection.PolicyID == path.PolicyID && report.PolicyChoices != nil && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
 						path.Selected = true
 					}
 				}
-				path.Availability, path.CurrentUntil = webPathAvailability(*path, device.Evidence.Measurements, now)
+				path.Availability, path.CurrentUntil = "unknown", 0
+				if report.PolicyChoices != nil {
+					for _, choice := range *report.PolicyChoices {
+						if choice.ServiceID == path.ServiceID && choice.PolicyID == path.PolicyID {
+							path.Availability, path.CurrentUntil = webPathAvailability(*path, device.Evidence.Measurements, now)
+						}
+					}
+				}
 			}
 			for linkIndex := range snapshot.Links {
 				link := &snapshot.Links[linkIndex]

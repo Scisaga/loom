@@ -109,20 +109,12 @@
         <line x1="200" y1="192" x2="852" y2="192" stroke="#E1E8E3" stroke-width="0.75" data-ui="panel-divider" />
         <text x="216" y="216" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">Device  demo-device-a</text>
       </g>
-      <text x="200" y="280" font-size="14" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">路由模式</text>
-      <g data-ui="segmented-control">
-        <rect x="280" y="264" width="240" height="32" rx="8" fill="#E4ECE7" />
-        <rect x="444" y="268" width="72" height="24" rx="4" fill="#239B68" data-ui="selected-segment" />
-        <text x="320" y="280" font-size="12" fill="#647269" font-weight="400" text-anchor="middle" dominant-baseline="central">直连</text>
-        <text x="400" y="280" font-size="12" fill="#647269" font-weight="400" text-anchor="middle" dominant-baseline="central">自动</text>
-        <text x="480" y="280" font-size="12" fill="#FFFFFF" font-weight="500" text-anchor="middle" dominant-baseline="central">固定出口</text>
+      <text x="200" y="280" font-size="14" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">服务策略</text>
+      <g data-ui="service-policy-select">
+        <rect x="280" y="264" width="556" height="32" rx="8" fill="#E9F5EE" />
+        <text x="292" y="280" font-size="12" fill="#239B68" font-weight="400" text-anchor="start" dominant-baseline="central">境外 API / 固定德国出口 ✓</text>
+        <path d="M812 278l4 4 4-4" fill="none" stroke="#647269" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
       </g>
-      <g data-ui="select">
-        <rect x="536" y="264" width="160" height="32" rx="8" fill="#FFFFFF" stroke="#D7DFD9" stroke-width="0.75" />
-        <text x="548" y="280" font-size="12" fill="#17211B" font-weight="400" text-anchor="start" dominant-baseline="central">demo-exit</text>
-        <path d="M676 278l4 4 4-4" fill="none" stroke="#647269" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
-      </g>
-      <text x="708" y="280" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">前置路径自动选择</text>
       <g data-ui="panel" data-kind="routes">
         <rect x="200" y="320" width="652" height="176" rx="12" fill="#FFFFFF" />
         <text x="216" y="344" font-size="14" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">当前选路</text>

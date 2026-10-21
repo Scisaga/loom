@@ -96,11 +96,7 @@ func (app *portableGUI) misakaRouteVisible(snapshot portableGUISnapshot) bool {
 	if app.skin == nil || !snapshot.joined || snapshot.profileDraft != nil {
 		return false
 	}
-	route := &app.skin.route
-	if route.pending != nil {
-		return route.pending.Mode == clientmodel.ModeFixed
-	}
-	return route.picker || misakaSelectedMode(snapshot) == clientmodel.ModeFixed
+	return true
 }
 
 func (app *portableGUI) misakaRouteSelectable(snapshot portableGUISnapshot) bool {
@@ -142,8 +138,8 @@ func (app *portableGUI) reconcileMisakaRoute(snapshot portableGUISnapshot) bool 
 		route.pending, route.acknowledged, route.picker = nil, false, false
 		changed = true
 	}
-	hasFixed := slices.ContainsFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == clientmodel.ModeFixed })
-	if route.picker && (!app.misakaRouteSelectable(snapshot) || !hasFixed) {
+	hasOptions := len(snapshot.routeOptions) > 0
+	if route.picker && (!app.misakaRouteSelectable(snapshot) || !hasOptions) {
 		route.picker = false
 		app.closeMisakaRouteDropDown()
 		changed = true
@@ -191,39 +187,7 @@ func (app *portableGUI) misakaRouteFilterKey(message portableMSG) bool {
 	return false
 }
 
-func (app *portableGUI) misakaRouteCommand(id uint16) bool {
-	if id != misakaControlAuto && id != misakaControlFixed && id != misakaControlDirect {
-		return false
-	}
-	snapshot := app.snapshot()
-	if !app.misakaRouteSelectable(snapshot) {
-		return true
-	}
-	mode := clientmodel.ModeAuto
-	if id == misakaControlFixed {
-		mode = clientmodel.ModeFixed
-	} else if id == misakaControlDirect {
-		mode = clientmodel.ModeDirect
-	}
-	index := slices.IndexFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == mode })
-	if index < 0 {
-		return true
-	}
-	app.closeMisakaRouteDropDown()
-	if mode == clientmodel.ModeFixed {
-		app.skin.route.picker = true
-		app.renderRouteCombo(snapshot)
-		app.syncMisakaRouteLayout(snapshot)
-		procMisakaSetFocus.Call(app.controls.routeCombo)
-		procSendMessage.Call(app.controls.routeCombo, portableCBShowDropDown, 1, 0)
-		return true
-	}
-	app.skin.route.picker = false
-	app.submitMisakaRoutePreference(snapshot, snapshot.routeOptions[index].Preference)
-	return true
-}
-
-// §7.2：导航候选不是确认；Esc 必须能撤销整个 Fixed 编辑而不触发任何偏好写入。
+// §7.2：导航候选不是确认；Esc 必须能撤销当前策略选择编辑而不触发任何偏好写入。
 func (app *portableGUI) misakaRouteNotification(notification uint16) {
 	if app.routeUpdating {
 		return
@@ -238,7 +202,7 @@ func (app *portableGUI) misakaRouteNotification(notification uint16) {
 
 func (app *portableGUI) commitMisakaRouteSelection() {
 	snapshot := app.snapshot()
-	if !app.misakaRouteSelectable(snapshot) || !app.misakaRouteVisible(snapshot) || !slices.Equal(app.skin.route.options, snapshot.routeOptions) {
+	if !app.misakaRouteSelectable(snapshot) || !app.misakaRouteVisible(snapshot) || !equalRouteOptions(app.skin.route.options, snapshot.routeOptions) {
 		return
 	}
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
@@ -247,7 +211,7 @@ func (app *portableGUI) commitMisakaRouteSelection() {
 		return
 	}
 	index := app.routeVisible[selection]
-	if index < 0 || index >= len(snapshot.routeOptions) || snapshot.routeOptions[index].Preference.Mode != clientmodel.ModeFixed {
+	if index < 0 || index >= len(snapshot.routeOptions) {
 		return
 	}
 	app.submitMisakaRoutePreference(snapshot, snapshot.routeOptions[index].Preference)
@@ -310,18 +274,8 @@ func (app *portableGUI) renderMisakaRoutes(snapshot portableGUISnapshot, previou
 	if !selectable && app.routeFiltering {
 		app.closeMisakaRouteDropDown()
 	}
-	if previous == nil || previous.routeSelected != snapshot.routeSelected || !slices.Equal(previous.routeOptions, snapshot.routeOptions) {
+	if previous == nil || previous.routeSelected != snapshot.routeSelected || !equalRouteOptions(previous.routeOptions, snapshot.routeOptions) {
 		app.renderRouteCombo(snapshot)
-	}
-	for _, pair := range []struct {
-		hwnd uintptr
-		mode clientmodel.Mode
-	}{{app.controls.modeAuto, clientmodel.ModeAuto}, {app.controls.modeFixed, clientmodel.ModeFixed}, {app.controls.modeDirect, clientmodel.ModeDirect}} {
-		available := slices.ContainsFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == pair.mode })
-		enablePortableControl(pair.hwnd, selectable && available)
-		if previous == nil || previous.routeSelected != snapshot.routeSelected || previous.routeBusy != snapshot.routeBusy {
-			procInvalidateRect.Call(pair.hwnd, 0, 0)
-		}
 	}
 	enablePortableControl(app.controls.routeCombo, selectable)
 }
@@ -333,11 +287,11 @@ func (app *portableGUI) renderMisakaRouteCombo(snapshot portableGUISnapshot) {
 	var visible []int
 	query := strings.ToLower(app.routeFilter)
 	for index, option := range snapshot.routeOptions {
-		if option.Preference.Mode == clientmodel.ModeFixed && (!app.routeFiltering || strings.Contains(strings.ToLower(option.Label), query)) {
+		if !app.routeFiltering || strings.Contains(strings.ToLower(option.Label), query) {
 			visible = append(visible, index)
 		}
 	}
-	if !slices.Equal(app.skin.route.options, snapshot.routeOptions) || !slices.Equal(app.routeVisible, visible) {
+	if !equalRouteOptions(app.skin.route.options, snapshot.routeOptions) || !slices.Equal(app.routeVisible, visible) {
 		procSendMessage.Call(app.controls.routeCombo, portableCBResetContent, 0, 0)
 		for _, index := range visible {
 			label, _ := windows.UTF16PtrFromString(snapshot.routeOptions[index].Label)

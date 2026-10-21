@@ -50,6 +50,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "migrate-policy-selection" {
+		if err := migrateWindowsPolicySelection(os.Args[2:], edition); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "migrate-transport" {
 		if err := migrateWindowsTransport(os.Args[2:], edition); err != nil {
 			log.Fatal(err)
@@ -312,7 +319,7 @@ func activateWindowsServices(ctx context.Context, selector clientadapter.Selecto
 		}
 		return probes
 	}
-	return clientadapter.ActivateServices(ctx, selector, routes, state, factory, time.Now)
+	return clientadapter.ActivateServices(ctx, selector, routes, state, factory, time.Now, clientmodel.ServiceScopes(view)...)
 }
 
 func windowsNetworkGeneration() (string, error) {
@@ -340,13 +347,13 @@ func windowsNetworkGeneration() (string, error) {
 
 func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapter.Activation,
 	components []control.ComponentReadback, reportedAt time.Time) (control.DeviceReport, error) {
-	preference, err := clientadapter.ReportedPreference(lkg.View, activation.State.Preference)
+	preference, err := clientadapter.ReportedPolicyChoices(lkg.View, activation.State.Preference)
 	if err != nil {
 		return control.DeviceReport{}, err
 	}
 	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
 	report := control.DeviceReport{LocalNetworks: clientadapter.UnderlayNetworkReport(connected), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, ReportedAt: reportedAt.UnixMilli(),
-		Preference: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: append([]control.ComponentReadback{}, components...),
+		PolicyChoices: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: append([]control.ComponentReadback{}, components...),
 		Runtime: control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}}
 	routes := map[string]control.RouteCandidate{}
 	for _, route := range lkg.View.Routes {
@@ -357,7 +364,7 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 		if !ok || route.Scope != selection.Scope {
 			return control.DeviceReport{}, errors.New("selection is not in the accepted View")
 		}
-		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, CandidateID: route.ID})
+		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID})
 	}
 	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
 	for _, observation := range activation.State.ResourceObservations {
@@ -395,14 +402,14 @@ func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapt
 	return report, nil
 }
 
-func windowsActivationApplied(activation clientadapter.Activation, routes []clientmodel.RouteCandidate) bool {
-	scopes, byScope, err := clientadapter.Scopes(routes)
+func windowsActivationApplied(activation clientadapter.Activation, routes []clientmodel.RouteCandidate, scopeIDs ...string) bool {
+	scopes, byScope, err := clientadapter.Scopes(routes, scopeIDs...)
 	if err != nil || activation.State.NetworkGeneration == "" || len(activation.Selections)+len(activation.BlockedScopes) != len(scopes) {
 		return false
 	}
 	seen := map[string]bool{}
 	for _, scope := range activation.BlockedScopes {
-		if seen[scope] || len(byScope[scope]) == 0 {
+		if _, exists := byScope[scope]; seen[scope] || !exists {
 			return false
 		}
 		seen[scope] = true
@@ -622,7 +629,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if !windowsActivationApplied(activation, routes) {
+	if !windowsActivationApplied(activation, routes, clientmodel.ServiceScopes(lkg.View)...) {
 		return activationErr
 	}
 	if err := writeWindowsRuntimeStatus(root, lkg, activation, false, selectorReadAt); err != nil {
@@ -639,7 +646,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if !windowsActivationApplied(activation, routes) {
+	if !windowsActivationApplied(activation, routes, clientmodel.ServiceScopes(lkg.View)...) {
 		return activationErr
 	}
 
@@ -714,7 +721,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if !windowsActivationApplied(next, routes) {
+			if !windowsActivationApplied(next, routes, clientmodel.ServiceScopes(lkg.View)...) {
 				return fmt.Errorf("Windows selector application failed: %w", nextErr)
 			}
 			observeWindowsFirstHops(diagnosticContext, root, *lkg, &next, nil)

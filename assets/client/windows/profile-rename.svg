@@ -110,13 +110,11 @@
         <line x1="200" y1="168" x2="852" y2="168" stroke="#E1E8E3" stroke-width="0.75" data-ui="panel-divider" />
         <text x="216" y="192" font-size="11" fill="#647269" font-weight="400" text-anchor="start" dominant-baseline="central">Device  demo-device-a</text>
       </g>
-      <text x="200" y="256" font-size="14" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">路由模式</text>
-      <g data-ui="segmented-control">
-        <rect x="280" y="240" width="240" height="32" rx="8" fill="#E4ECE7" />
-        <rect x="364" y="244" width="72" height="24" rx="4" fill="#239B68" data-ui="selected-segment" />
-        <text x="320" y="256" font-size="12" fill="#647269" font-weight="400" text-anchor="middle" dominant-baseline="central">直连</text>
-        <text x="400" y="256" font-size="12" fill="#FFFFFF" font-weight="500" text-anchor="middle" dominant-baseline="central">自动</text>
-        <text x="480" y="256" font-size="12" fill="#647269" font-weight="400" text-anchor="middle" dominant-baseline="central">固定出口</text>
+      <text x="200" y="256" font-size="14" fill="#17211B" font-weight="500" text-anchor="start" dominant-baseline="central">服务策略</text>
+      <g data-ui="service-policy-select">
+        <rect x="280" y="240" width="556" height="32" rx="8" fill="#E9F5EE" />
+        <text x="292" y="256" font-size="12" fill="#239B68" font-weight="400" text-anchor="start" dominant-baseline="central">境外 API / 境外最优出口 ✓</text>
+        <path d="M812 254l4 4 4-4" fill="none" stroke="#647269" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
       </g>
       <g data-ui="panel" data-kind="routes">
         <rect x="200" y="296" width="652" height="288" rx="12" fill="#FFFFFF" />

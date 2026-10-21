@@ -93,6 +93,7 @@ func cmdReleasePublish(args []string) error {
 	pub := fs.String("pubkey", "", "独立固定的发布公钥")
 	socket := fs.String("control-socket", "", "私有 control 管理 Unix socket")
 	reason := fs.String("reason", "", "本次显式发布理由")
+	nodes := fs.String("nodes", "", "本次显式核对的节点，逗号分隔并排序；必须覆盖全部分发目标，默认全部部署节点")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -148,6 +149,9 @@ func cmdReleasePublish(args []string) error {
 	encoder := json.NewEncoder(os.Stdout)
 	options := releasedeploy.Options{Config: config, ReloadConfig: func() (localconfig.Config, error) { return localconfig.Load(*env) }, Inputs: read, Transport: executor,
 		Source: sourcePath, Catalog: *catalog, PublicKey: key, HTTP: publicClient, Observe: func(value releasedeploy.Result) { encoder.Encode(value) }}
+	if *nodes != "" {
+		options.Nodes = strings.Split(*nodes, ",")
+	}
 	if err = releasedeploy.Publish(ctx, options); err != nil {
 		return fmt.Errorf("publication incomplete: %w", err)
 	}

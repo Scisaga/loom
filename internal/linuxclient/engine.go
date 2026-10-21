@@ -16,12 +16,13 @@ type Probes = clientadapter.Probes
 const blockedSelection = clientadapter.BlockedSelection
 
 type Activation struct {
-	State      LocalState
-	Selections []SelectionStatus
+	State         LocalState
+	Selections    []SelectionStatus
+	BlockedScopes []string
 }
 
-func scopesFor(routes []clientmodel.RouteCandidate) ([]string, map[string][]clientmodel.RouteCandidate, error) {
-	return clientadapter.Scopes(routes)
+func scopesFor(routes []clientmodel.RouteCandidate, scopeIDs ...string) ([]string, map[string][]clientmodel.RouteCandidate, error) {
+	return clientadapter.Scopes(routes, scopeIDs...)
 }
 
 // Local persistence stays platform-owned; all Service selection and sampling
@@ -32,16 +33,16 @@ func Activate(ctx context.Context, selector Selector, routes []clientmodel.Route
 }
 
 func activateWithLinkSamples(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state LocalState,
-	local []control.Observation, remote []control.DeviceLinkObservation, probes Probes, now func() time.Time) (Activation, error) {
+	local []control.Observation, remote []control.DeviceLinkObservation, probes Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
 	value, err := clientadapter.Activate(ctx, selector, routes, clientadapter.State{
 		Preference: state.Preference, NetworkGeneration: state.NetworkGeneration,
 		Observations: state.Observations, ResourceObservations: state.ResourceObservations,
 		LinkObservations:      remote,
 		LocalLinkObservations: local,
-	}, probes, now)
+	}, probes, now, scopeIDs...)
 	if value.State.NetworkGeneration == "" {
 		return Activation{}, err
 	}
 	state.Observations, state.ResourceObservations = value.State.Observations, value.State.ResourceObservations
-	return Activation{State: state, Selections: value.Selections}, err
+	return Activation{State: state, Selections: value.Selections, BlockedScopes: value.BlockedScopes}, err
 }

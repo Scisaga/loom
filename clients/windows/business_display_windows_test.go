@@ -14,7 +14,7 @@ import (
 
 func TestWindowsBusinessDisplayKeepsTargetsTimesAndFailureScope(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 20, 0, time.UTC)
-	view := control.DeviceView{Routes: []control.RouteCandidate{{ID: "demo-a", Scope: "service:demo-a"}, {ID: "demo-b", Scope: "service:demo-b"}},
+	view := control.DeviceView{Routes: []control.RouteCandidate{{ID: "demo-a", Scope: "service:demo-a", PolicyID: "demo-policy"}, {ID: "demo-b", Scope: "service:demo-b", PolicyID: "demo-policy"}},
 		BusinessProbeTargets: []control.ServiceProbeTargets{{ServiceID: "demo-a", Targets: []string{"https://web.example/", "https://web.example/extra"}}, {ServiceID: "demo-b", Targets: []string{"https://api.example/"}}}}
 	sample := func(candidate, target, result string) clientmodel.Observation {
 		return clientmodel.Observation{CandidateID: candidate, Scope: "service:" + candidate, NetworkGeneration: "demo-network", Action: "https_request", Target: target, Result: result, ObservedAt: "2030-01-01T00:00:00Z", ValidUntil: "2030-01-01T00:00:30Z"}

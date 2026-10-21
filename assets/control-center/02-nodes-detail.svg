@@ -278,7 +278,7 @@ svg:has(#detail-identity:target) #detail-nav-identity .detail-nav-label { font-w
   <text class="ui small muted" x="446" y="517" text-anchor="start">The device selection is saved on control-a. Shared policy rules have not changed.</text>
   <line class="rule" x1="446" y1="552" x2="1514" y2="552"/>
   <text class="ui section" x="446" y="595" text-anchor="start">Current media path</text>
-  <text class="ui small muted" x="1514" y="595" text-anchor="end">Preference · Auto</text>
+  <text class="ui small muted" x="1514" y="595" text-anchor="end">Service policy · media-access</text>
   <text class="ui body amber" x="446" y="641" text-anchor="start">Unknown · no current selected path</text>
   <text class="ui small muted" x="446" y="675" text-anchor="start">Awaiting path and business results for the current configuration.</text>
   <g data-ui="navigation" data-route="/routing?device=demo-forward-c&amp;service=demo-video">
@@ -288,7 +288,7 @@ svg:has(#detail-identity:target) #detail-nav-identity .detail-nav-label { font-w
   <g data-ui="navigation" data-route="/devices/demo-forward-c/access">
   <text class="ui small green" x="446" y="794" text-anchor="start">+ Assign another policy</text>
   </g>
-  <text class="ui small muted" x="446" y="829" text-anchor="start">Choose at most one policy per service. Replacing a selection changes only this device.</text>
+  <text class="ui small muted" x="446" y="829" text-anchor="start">Authorize available policies. Adding an option preserves the client’s current selection.</text>
   </g></g>
   <g id="detail-panel-forwarding" class="detail-panel" data-ui="device-section" data-section="forwarding" role="region" aria-label="Forwarding &amp; LAN">
   <text class="ui section" x="446" y="228" text-anchor="start">Forwarding &amp; LAN</text>

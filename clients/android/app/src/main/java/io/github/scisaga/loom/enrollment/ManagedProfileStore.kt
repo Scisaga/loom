@@ -25,6 +25,9 @@ data class ManagedProfile(
     internal val hasWebsite: Boolean = false,
     val possiblePermissionRestoration: Boolean = false,
     val resourceCacheIdentity: String = "",
+    val serviceCatalog: String = "[]",
+    val policyCatalog: String = "[]",
+    val serviceScopes: String = "[]",
 ) {
     internal val hasLocalNetwork: Boolean
         get() = JSONArray(routes).let { values ->
@@ -47,6 +50,9 @@ internal class ManagedProfileStore internal constructor(
     private val replaceTransport: (ByteArray, ByteArray) -> ByteArray = { original, replacement ->
         Loomcore.replaceAndroidTransport(original, replacement)
     },
+    private val replacePolicy: (ByteArray, ByteArray, ByteArray) -> ByteArray = Loomcore::replaceAndroidPolicySelection,
+    private val migratePreference: (ByteArray, ByteArray, ByteArray) -> ByteArray = Loomcore::migrateAndroidPolicyPreference,
+    private val acceptImportedView: (ByteArray, ByteArray) -> ByteArray = Loomcore::acceptAndroidCertifiedView,
 ) {
     constructor(context: Context, profileId: String) : this(
         object : ProfileByteStore {
@@ -76,6 +82,53 @@ internal class ManagedProfileStore internal constructor(
     private val stateKey = ProfileStorage.state(profileId)
     private val candidateKey = ProfileStorage.candidate(profileId)
     private val transportEvidenceKey = ProfileStorage.transportEvidence(profileId)
+    private val policyIdentityEvidenceKey = ProfileStorage.policyIdentityEvidence(profileId)
+    private val policyPreferenceEvidenceKey = ProfileStorage.policyPreferenceEvidence(profileId)
+    private val preferenceKey = ProfileStorage.routePreference(profileId)
+
+    // Explicit import supports ordinary current Views and the finite one-time
+    // cutover. Startup and background refresh use only the current decoder.
+    fun importCertifiedView(replacement: ByteArray): ManagedProfile = synchronized(stateLock) {
+        check(protected.get(candidateKey) == null) { "存在待核对的旧材料，不能替换认证配置" }
+        val original = checkNotNull(protected.get(stateKey)) { "设备身份不存在" }
+        if (runCatching { validate(original) }.isFailure) {
+            return@synchronized replacePolicySelection(replacement)
+        }
+        val next = acceptImportedView(original, replacement)
+        acceptCertified(next)
+    }
+
+    // Called only while explicit file import holds the VPN lifecycle lock.
+    // The two evidence slots are immutable originals, never startup authorities.
+    fun replacePolicySelection(replacement: ByteArray): ManagedProfile = synchronized(stateLock) {
+        check(protected.get(candidateKey) == null) { "存在待核对的旧材料，不能替换认证配置" }
+        val current = checkNotNull(protected.get(stateKey)) { "设备身份不存在" }
+        val original = protected.get(policyIdentityEvidenceKey) ?: current
+        val previousPreference = protected.get(policyPreferenceEvidenceKey)
+            ?: (protected.get(preferenceKey) ?: ByteArray(0)).also {
+                check(protected.get(policyIdentityEvidenceKey) == null) { "迁移的原偏好证据缺失" }
+            }
+        val next = replacePolicy(original, replacement, previousPreference)
+        val preference = migratePreference(original, replacement, previousPreference)
+        validate(next)
+        if (!current.contentEquals(original)) {
+            validate(current)
+            check(authenticatedView(current) == authenticatedView(next)) { "不能覆盖另一次配置更新" }
+            checkAdvance(current, next)
+            return@synchronized checkNotNull(project(current)) { "认证配置已保存；没有可执行的 access 配置" }
+        }
+        if (protected.get(policyPreferenceEvidenceKey) == null) {
+            protected.put(policyPreferenceEvidenceKey, previousPreference)
+        }
+        check(protected.get(policyPreferenceEvidenceKey)?.contentEquals(previousPreference) == true) { "原偏好保全回读不一致" }
+        protected.preserve(stateKey, policyIdentityEvidenceKey)
+        check(protected.get(policyIdentityEvidenceKey)?.contentEquals(original) == true) { "原认证材料保全回读不一致" }
+        protected.put(preferenceKey, preference)
+        check(protected.get(preferenceKey)?.contentEquals(preference) == true) { "服务选择持久化回读不一致" }
+        protected.put(stateKey, next)
+        check(protected.get(stateKey)?.contentEquals(next) == true) { "认证配置持久化回读不一致" }
+        checkNotNull(project(next)) { "认证配置已保存；没有可执行的 access 配置" }
+    }
 
     // Only explicit certified-file import reaches this path. Ordinary state(),
     // background sync and startup continue to reject the historical runtime.
@@ -177,6 +230,9 @@ private fun decodeAndroidProfile(body: ByteArray): ManagedProfile {
         hasWebsite = root.getBoolean("has_website"),
         possiblePermissionRestoration = root.getBoolean("possible_permission_restoration"),
         routes = root.getJSONArray("routes").toString(),
+        serviceCatalog = root.getJSONArray("services").toString(),
+        policyCatalog = root.getJSONArray("policies").toString(),
+        serviceScopes = root.getJSONArray("scopes").toString(),
         resourceCacheIdentity = root.getString("resource_cache_identity"),
         recordID = root.getString("record_id"),
         dns = root.optJSONArray("dns")?.let { values -> (0 until values.length()).map(values::getString) }.orEmpty(),

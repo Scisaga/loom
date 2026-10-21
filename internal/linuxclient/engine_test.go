@@ -19,14 +19,14 @@ type fakeSelector struct {
 
 func TestServiceActivationNeverSharesBusinessOutcome(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	routes := []clientmodel.RouteCandidate{{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-a"}, {ID: "demo-b", FinalExit: "direct", Scope: "service:demo-b"}}
+	routes := []clientmodel.RouteCandidate{{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-a", PolicyID: "demo-policy"}, {ID: "demo-b", FinalExit: "direct", Scope: "service:demo-b", PolicyID: "demo-policy"}}
 	selector := &fakeSelector{current: map[string]string{"service:demo-a": "demo-a", "service:demo-b": "demo-b"}}
 	calls := 0
 	options := Options{Now: func() time.Time { return now }, Probe: func(context.Context) ProbeResult {
 		calls++
 		return ProbeResult{Available: calls == 1, Action: "https_request"}
 	}}
-	value, err := activateServices(context.Background(), options, control.DeviceView{}, selector, routes, defaultState("demo-network"), true)
+	value, err := activateServices(context.Background(), options, control.DeviceView{}, selector, routes, selectedPolicyState("demo-network"), true)
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 2 || len(value.State.Observations) != 2 || len(value.Selections) != 1 || value.Selections[0].State != "available" || selector.current["service:demo-b"] != blockedSelection {
 		t.Fatal("one Service probe was applied to another", calls, err, value.Selections)
 	}
@@ -34,14 +34,14 @@ func TestServiceActivationNeverSharesBusinessOutcome(t *testing.T) {
 
 func TestUnavailableServiceStaysBlockedUntilObservationExpires(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	routes := []clientmodel.RouteCandidate{{ID: "demo-route", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service"}}
+	routes := []clientmodel.RouteCandidate{{ID: "demo-route", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"}}
 	selector := &fakeSelector{current: map[string]string{"service:demo-service": blockedSelection}}
 	calls := 0
 	probe := func(context.Context) ProbeResult {
 		calls++
 		return ProbeResult{Available: calls > 1, Action: "https_request"}
 	}
-	first, err := Activate(context.Background(), selector, routes, defaultState("demo-network"), Probes{"": probe}, func() time.Time { return now })
+	first, err := Activate(context.Background(), selector, routes, selectedPolicyState("demo-network"), Probes{"": probe}, func() time.Time { return now })
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || calls != 1 || len(first.Selections) != 0 || selector.current[routes[0].Scope] != blockedSelection || len(first.State.Observations) != 1 || first.State.Observations[0].Result != "unavailable" {
 		t.Fatal("failed business did not retain its observation and block only its Service", err)
 	}
@@ -68,7 +68,7 @@ func TestUnavailableServiceStaysBlockedUntilObservationExpires(t *testing.T) {
 		t.Fatal("successful observation was retried before its own deadline", err)
 	}
 	selector.failSet = blockedSelection
-	if value, err := Activate(context.Background(), selector, routes, previousFailure, Probes{"": probe}, func() time.Time { return now }); err == nil || value.State.Schema != 0 {
+	if value, err := Activate(context.Background(), selector, routes, previousFailure, Probes{"": probe}, func() time.Time { return now }); err == nil || errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(value.Selections) != 0 || value.State.Schema == 0 {
 		t.Fatal("failed runtime block application was mistaken for business unavailability")
 	}
 }
@@ -77,9 +77,9 @@ func TestSlowRefreshReachesUntriedPathAfterTwoFailures(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	scope := "service:demo-service"
 	routes := []clientmodel.RouteCandidate{
-		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: scope},
-		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: scope},
-		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: scope},
+		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
+		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
+		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
 	}
 	selector := &fakeSelector{current: map[string]string{scope: blockedSelection}}
 	attempts := []string{}
@@ -87,7 +87,7 @@ func TestSlowRefreshReachesUntriedPathAfterTwoFailures(t *testing.T) {
 		attempts = append(attempts, selector.current[scope])
 		return ProbeResult{Available: selector.current[scope] == "demo-c", Action: "https_request"}
 	}
-	first, err := Activate(context.Background(), selector, routes, defaultState("demo-network"), Probes{"": probe}, func() time.Time { return now })
+	first, err := Activate(context.Background(), selector, routes, selectedPolicyState("demo-network"), Probes{"": probe}, func() time.Time { return now })
 	if err != nil || !reflect.DeepEqual(attempts, []string{"demo-a", "demo-b"}) ||
 		len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-c" ||
 		first.Selections[0].State != "unknown" || selector.current[scope] != "demo-c" {
@@ -128,17 +128,17 @@ func (selector *fakeSelector) CloseConnections(context.Context, []string) error 
 
 func linuxRoutes() []clientmodel.RouteCandidate {
 	return []clientmodel.RouteCandidate{
-		{ID: "direct", FinalExit: "direct", Scope: "service"},
-		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service"},
+		{ID: "direct", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-direct-policy"},
+		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
 	}
 }
 
 func TestActivateUsesSharedPreferenceAndNecessaryFallback(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	selector := &fakeSelector{current: map[string]string{"service": "one-hop"}}
-	state := defaultState("network-a")
-	state.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}
+	selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}}
+	state := selectedPolicyState("network-a")
+	state.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	results := []bool{false, true}
 	activation, err := Activate(context.Background(), selector, linuxRoutes(), state, Probes{"": func(context.Context) ProbeResult {
 		result := results[0]
@@ -148,7 +148,7 @@ func TestActivateUsesSharedPreferenceAndNecessaryFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selector.current["service"] != "relay" || activation.Selections[0].CandidateID != "relay" ||
+	if selector.current["service:demo-service"] != "relay" || activation.Selections[0].CandidateID != "relay" ||
 		activation.Selections[0].State != "available" || len(activation.State.Observations) != 2 || len(results) != 0 {
 		t.Fatalf("fallback activation = %+v selector=%+v remaining=%d", activation, selector.current, len(results))
 	}
@@ -160,8 +160,8 @@ func TestActivateUsesSharedPreferenceAndNecessaryFallback(t *testing.T) {
 
 func TestActivationWithoutBusinessTargetKeepsRuntimeSelectionUnknown(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	selector := &fakeSelector{current: map[string]string{"service": "one-hop"}}
-	state := defaultState("demo-network")
+	selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}}
+	state := selectedPolicyState("demo-network")
 	activation, err := Activate(context.Background(), selector, linuxRoutes(), state, nil, func() time.Time { return now })
 	if err != nil || len(activation.Selections) != 1 || activation.Selections[0].CandidateID != "one-hop" ||
 		activation.Selections[0].State != "unknown" || len(activation.State.Observations) != 0 {
@@ -171,10 +171,10 @@ func TestActivationWithoutBusinessTargetKeepsRuntimeSelectionUnknown(t *testing.
 
 func TestActivateReusesCurrentGenerationObservationWithoutProbe(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	selector := &fakeSelector{current: map[string]string{"service": "relay"}}
-	state := defaultState("network-a")
-	state.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}
-	state.Observations = []clientmodel.Observation{{CandidateID: "relay", NetworkGeneration: "network-a", Scope: "service",
+	selector := &fakeSelector{current: map[string]string{"service:demo-service": "relay"}}
+	state := selectedPolicyState("network-a")
+	state.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}
+	state.Observations = []clientmodel.Observation{{CandidateID: "relay", NetworkGeneration: "network-a", Scope: "service:demo-service",
 		Result: "available", Action: "tcp_udp_dns", ObservedAt: now.Add(-time.Minute).Format(time.RFC3339),
 		ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}
 	activation, err := Activate(context.Background(), selector, linuxRoutes(), state, Probes{"": func(context.Context) ProbeResult {
@@ -188,10 +188,10 @@ func TestActivateReusesCurrentGenerationObservationWithoutProbe(t *testing.T) {
 
 func TestSelectionReadbackExpiresSelectedObservation(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	activation := Activation{State: defaultState("network-a"),
-		Selections: []SelectionStatus{{Scope: "service", CandidateID: "relay"}}}
+	activation := Activation{State: selectedPolicyState("network-a"),
+		Selections: []SelectionStatus{{Scope: "service:demo-service", CandidateID: "relay"}}}
 	activation.State.Observations = []clientmodel.Observation{{CandidateID: "relay", NetworkGeneration: "network-a",
-		Scope: "service", Result: "available", Action: "tcp_udp_dns", ObservedAt: now.Add(-time.Minute).Format(time.RFC3339),
+		Scope: "service:demo-service", Result: "available", Action: "tcp_udp_dns", ObservedAt: now.Add(-time.Minute).Format(time.RFC3339),
 		ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}
 	if observationState(activation.State.Observations, "relay", activation.State.NetworkGeneration, now) != "available" {
 		t.Fatal("current selected observation was treated as stale")
@@ -205,21 +205,21 @@ func TestSelectionReadbackExpiresSelectedObservation(t *testing.T) {
 	}
 }
 
-func TestApplySelectionsRollsBackOnFailure(t *testing.T) {
+func TestApplySelectionsRejectsOnlyFailedService(t *testing.T) {
 	selector := &fakeSelector{current: map[string]string{"a": "old-a", "b": "old-b"}, failSet: "new-b"}
 	if _, err := applySelections(context.Background(), selector, map[string]string{"a": "new-a", "b": "new-b"}); err == nil {
 		t.Fatal("failed selector apply succeeded")
 	}
-	if !reflect.DeepEqual(selector.current, map[string]string{"a": "old-a", "b": "old-b"}) {
-		t.Fatalf("selector rollback = %+v", selector.current)
+	if !reflect.DeepEqual(selector.current, map[string]string{"a": "new-a", "b": "reject"}) {
+		t.Fatalf("Service apply failure = %+v", selector.current)
 	}
 }
 
 func TestCancellationDoesNotBecomeBusinessFailure(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	routes := []clientmodel.RouteCandidate{
-		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "demo-service"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "demo-service"},
+		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
 	}
 	for _, cancelOnFallback := range []bool{false, true} {
 		name := "first probe"
@@ -229,9 +229,9 @@ func TestCancellationDoesNotBecomeBusinessFailure(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			selector := &fakeSelector{current: map[string]string{"demo-service": "one-hop"}}
+			selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}}
 			calls := 0
-			activation, err := Activate(ctx, selector, routes, LocalState{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}, NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
+			activation, err := Activate(ctx, selector, routes, LocalState{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
 				calls++
 				if !cancelOnFallback || calls == 2 {
 					cancel()
@@ -254,4 +254,10 @@ func TestCancellationDoesNotBecomeBusinessFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func selectedPolicyState(generation string) LocalState {
+	state := defaultState(generation)
+	state.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}
+	return state
 }

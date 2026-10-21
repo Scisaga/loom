@@ -12,13 +12,10 @@ import (
 )
 
 type runtimeApplication struct {
-	Schema          int                `json:"schema"`
-	Mode            string             `json:"mode"`
-	Exit            string             `json:"exit,omitempty"`
-	DirectAvailable bool               `json:"direct_available"`
-	Exits           []string           `json:"exits"`
-	Selections      []runtimeSelection `json:"selections"`
-	BlockedScopes   []string           `json:"blocked_scopes"`
+	Schema        int                    `json:"schema"`
+	PolicyChoices []control.PolicyChoice `json:"policy_choices"`
+	Selections    []runtimeSelection     `json:"selections"`
+	BlockedScopes []string               `json:"blocked_scopes"`
 }
 
 type runtimeSelection struct {
@@ -31,7 +28,7 @@ type runtimeSelection struct {
 
 // EvaluateAndroidRoutes applies one Preference to every authorized scope. It performs no I/O.
 func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, currentBody []byte,
-	generation, nowRFC3339 string, targetsBody, resourcesBody, linksBody []byte) ([]byte, error) {
+	generation, nowRFC3339 string, targetsBody, resourcesBody, linksBody, scopesBody []byte) ([]byte, error) {
 	var links []control.DeviceLinkObservation
 	if len(linksBody) > 0 {
 		if err := decodeStrictJSON(linksBody, 4<<20, &links); err != nil {
@@ -87,7 +84,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 		observations = append(observations, clientmodel.Observation{CandidateID: item.CandidateID, Target: item.Target, NetworkGeneration: item.NetworkGeneration, Scope: item.Scope, Result: item.Result, Action: item.Action, ObservedAt: item.ObservedAt, ValidUntil: item.ValidUntil, MetricMillis: metric})
 	}
 	if len(preferenceBody) == 0 {
-		preferenceBody, _ = NewAndroidPreference("auto", "")
+		preferenceBody, _ = control.CanonicalEncode(clientmodel.EmptyPreference())
 	}
 	if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
 		return nil, err
@@ -102,29 +99,28 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 		return nil, errors.New("invalid selection time")
 	}
 	byScope := map[string][]clientmodel.RouteCandidate{}
-	exits, direct := map[string]bool{}, false
+	var explicitScopes []string
+	if len(scopesBody) > 0 {
+		if err := decodeStrictJSON(scopesBody, 1<<20, &explicitScopes); err != nil {
+			return nil, err
+		}
+	}
+	for _, scope := range explicitScopes {
+		byScope[scope] = []clientmodel.RouteCandidate{}
+	}
 	for _, route := range routes {
 		if err := route.Validate(); err != nil {
 			return nil, err
 		}
 		byScope[route.Scope] = append(byScope[route.Scope], route)
-		if route.FinalExit == "direct" {
-			direct = true
-		} else {
-			exits[route.FinalExit] = true
-		}
+
 	}
 	scopes := make([]string, 0, len(byScope))
 	for scope := range byScope {
 		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
-	application := runtimeApplication{Schema: 3, Mode: string(preference.Mode), Exit: preference.Exit,
-		DirectAvailable: direct, Exits: make([]string, 0, len(exits)), Selections: []runtimeSelection{}, BlockedScopes: []string{}}
-	for exit := range exits {
-		application.Exits = append(application.Exits, exit)
-	}
-	sort.Strings(application.Exits)
+	application := runtimeApplication{Schema: 3, PolicyChoices: append([]control.PolicyChoice{}, preference.Services...), Selections: []runtimeSelection{}, BlockedScopes: []string{}}
 	for _, scope := range scopes {
 		selection, err := clientmodel.SelectWithLinks(byScope[scope], observations, resources, links, preference, current[scope], generation, now.UTC(), targetsByScope[scope]...)
 		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
@@ -168,8 +164,43 @@ func AndroidCachedResourceObservations(body []byte, identity, generation string)
 	return json.Marshal(values)
 }
 
-// NewAndroidPreference emits the single canonical local preference value.
-func NewAndroidPreference(mode, exit string) ([]byte, error) {
-	preference := clientmodel.Preference{Schema: 3, Mode: clientmodel.Mode(mode), Exit: exit}
-	return control.CanonicalEncode(preference)
+// ReconcileAndroidPreference initializes choices from the authenticated identity only.
+func ReconcileAndroidPreference(stateBody, preferenceBody []byte) ([]byte, error) {
+	state, err := decodeState(stateBody)
+	if err != nil {
+		return nil, err
+	}
+	if state.LKG == nil {
+		return nil, errors.New("no authenticated Android configuration")
+	}
+	preference := clientmodel.EmptyPreference()
+	if len(preferenceBody) != 0 {
+		if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 4096}); err != nil {
+			return nil, err
+		}
+	}
+	next, err := clientmodel.ReconcilePreference(preference, state.LKG.View)
+	if err != nil {
+		return nil, err
+	}
+	return control.CanonicalEncode(next)
+}
+
+func ChooseAndroidPolicy(stateBody, preferenceBody []byte, serviceID, policyID string) ([]byte, error) {
+	state, err := decodeState(stateBody)
+	if err != nil {
+		return nil, err
+	}
+	if state.LKG == nil {
+		return nil, errors.New("no authenticated Android configuration")
+	}
+	var preference clientmodel.Preference
+	if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 4096}); err != nil {
+		return nil, err
+	}
+	next, err := clientmodel.ChoosePolicy(preference, state.LKG.View, serviceID, policyID)
+	if err != nil {
+		return nil, err
+	}
+	return control.CanonicalEncode(next)
 }

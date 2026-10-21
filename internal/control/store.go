@@ -694,6 +694,55 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 	if _, stopped, err := a.stoppedOrdinaryKey(keyID); err != nil || stopped {
 		return Submission{}, errors.New("local key has permanently stopped ordinary signing")
 	}
+	if business := effectiveOperation(op); business.Operation == "policy.put" && business.Payload.(NetworkPolicy).Action != "allow" {
+		return Submission{}, errors.New("current Policies only express explicit allow")
+	}
+	// Historical signed references to deny retain their original meaning during
+	// replay. Only the current signer prevents adding or retaining such grants.
+	var policyIDs []string
+	switch value := effectiveOperation(op).Payload.(type) {
+	case DevicePut:
+		policyIDs = value.PolicyIDs
+	case DeviceAuthorization:
+		policyIDs = value.PolicyIDs
+	case Invite:
+		policyIDs = value.PolicyIDs
+	case EnrollmentBind:
+		original, err := a.inviteLocked(value.TransactionID)
+		if err != nil {
+			return Submission{}, err
+		}
+		policyIDs = original.Payload.(Invite).PolicyIDs
+	}
+	for _, policy := range a.projection.NetworkIntent.Policies {
+		if policy.Action != "allow" && containsString(policyIDs, policy.ID) {
+			return Submission{}, errors.New("withdraw historical deny references before changing this authorization")
+		}
+	}
+	if effectiveOperation(op).Operation == "policy.put" {
+		for _, target := range a.projection.Targets {
+			if target.TargetKind != "policy" || target.TargetID != op.TargetID {
+				continue
+			}
+			for _, material := range a.materials {
+				if material.TargetKind != "policy" || material.TargetID != op.TargetID {
+					continue
+				}
+				id, _ := MaterialID(material)
+				if !containsString(target.MaterialIDs, id) {
+					continue
+				}
+				prior, err := material.OperationRequest()
+				if err != nil {
+					return Submission{}, err
+				}
+				business := effectiveOperation(prior)
+				if policy, ok := business.Payload.(NetworkPolicy); ok && business.Operation == "policy.put" && policy.Action == "deny" {
+					return Submission{}, errors.New("historical deny Policy is read-only; withdraw references and delete it")
+				}
+			}
+		}
+	}
 	for _, target := range a.projection.Targets {
 		if target.TargetKind != op.TargetKind || target.TargetID != op.TargetID {
 			continue

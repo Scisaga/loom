@@ -68,8 +68,8 @@ func TestGUIVisualScenarios(t *testing.T) {
 	t.Run("fixed-tun", func(t *testing.T) {
 		app := newProfileGUITestWindow(t)
 		app.routeOptions = append(app.routeOptions, portableRouteOption{
-			Label:      "直连",
-			Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect},
+			Label:      "国内站点 / 最优出口 ✓",
+			Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}},
 		})
 		app.routeSelected = 1
 		app.paths = app.paths[:1]

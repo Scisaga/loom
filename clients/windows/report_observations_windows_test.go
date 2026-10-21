@@ -24,7 +24,7 @@ func TestWindowsReportFiltersAtSnapshotKeepsUnselectedEvidence(t *testing.T) {
 		t.Fatal("fixture requires selected and unselected candidates")
 	}
 	at := time.Date(2030, 1, 1, 0, 1, 0, 120_000_000, time.UTC)
-	activation := clientadapter.Activation{State: clientadapter.State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-underlay"},
+	activation := clientadapter.Activation{State: clientadapter.State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-underlay"},
 		Selections: []clientadapter.SelectionStatus{{Scope: lkg.View.Routes[0].Scope, CandidateID: lkg.View.Routes[0].ID}}}
 	for _, row := range []struct {
 		route           int

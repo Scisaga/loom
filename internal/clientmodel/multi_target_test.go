@@ -8,7 +8,7 @@ import (
 func TestTargetSetSelectionDoesNotVoteOrBorrowAnotherScope(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	targets := []string{"https://demo.example/a", "https://demo.example/b", "https://demo.example/c"}
-	routes := []RouteCandidate{{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-service"}, {ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service"}}
+	routes := []RouteCandidate{{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-policy"}, {ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"}}
 	var samples []Observation
 	for i, route := range routes {
 		for j, target := range targets {
@@ -19,7 +19,7 @@ func TestTargetSetSelectionDoesNotVoteOrBorrowAnotherScope(t *testing.T) {
 			samples = append(samples, Observation{CandidateID: route.ID, Scope: route.Scope, Target: target, NetworkGeneration: "demo-network", Action: "https_request", Result: result, ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)})
 		}
 	}
-	pref := Preference{Schema: 3, Mode: ModeAuto}
+	pref := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	selected, err := Select(routes, samples, nil, pref, "demo-a", "demo-network", now, targets...)
 	if err != nil || selected.CandidateID != "demo-a" {
 		t.Fatal("partial results were ranked by successful target count", selected, err)

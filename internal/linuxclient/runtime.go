@@ -126,26 +126,58 @@ func activateServices(ctx context.Context, options Options, view control.DeviceV
 	return activateServicesWithLinkSamples(ctx, options, view, selector, routes, state, nil, nil, probe)
 }
 
-func activateServicesWithLinkSamples(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, local []control.Observation, remote []control.DeviceLinkObservation, probe bool) (Activation, error) {
-	scopes, byScope, err := scopesFor(routes)
+func activateServicesWithLinkSamples(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, local []control.Observation, remote []control.DeviceLinkObservation, probe bool, onlyScopes ...string) (Activation, error) {
+	scopes, byScope, err := scopesFor(routes, clientmodel.ServiceScopes(view)...)
 	if err != nil {
 		return Activation{}, err
 	}
 	result := Activation{State: state, Selections: []SelectionStatus{}}
 	var failures []error
 	for _, scope := range scopes {
+		if onlyScopes != nil && !slices.Contains(onlyScopes, scope) {
+			actual, err := selector.Read(ctx, scope)
+			if err != nil {
+				return Activation{}, err
+			}
+			if actual == blockedSelection {
+				result.BlockedScopes = append(result.BlockedScopes, scope)
+				continue
+			}
+			found := false
+			targets := []string{}
+			for target := range options.probeForService(view, scope) {
+				targets = append(targets, target)
+			}
+			sort.Strings(targets)
+			for _, candidate := range byScope[scope] {
+				if candidate.ID != actual || candidate.PolicyID != state.Preference.Policy(strings.SplitN(scope, ":", 2)[1]) {
+					continue
+				}
+				observed, err := clientmodel.ObservationState(state.Observations, actual, scope, state.NetworkGeneration, targets, options.Now())
+				if err != nil {
+					return Activation{}, err
+				}
+				result.Selections = append(result.Selections, SelectionStatus{Scope: scope, CandidateID: actual, PolicyID: candidate.PolicyID, FinalExit: candidate.FinalExit, Chain: append([]string(nil), candidate.Chain...), State: observed})
+				found = true
+			}
+			if !found {
+				return Activation{}, errors.New("unchanged Service selector does not match its saved policy")
+			}
+			continue
+		}
 		probes := options.probeForService(view, scope)
 		if !probe {
 			for target := range probes {
 				probes[target] = nil
 			}
 		}
-		value, err := activateWithLinkSamples(ctx, selector, byScope[scope], result.State, local, remote, probes, options.Now)
+		value, err := activateWithLinkSamples(ctx, selector, byScope[scope], result.State, local, remote, probes, options.Now, scope)
 		if value.State.Schema == 0 {
 			return Activation{}, err
 		}
 		result.State = value.State
 		result.Selections = append(result.Selections, value.Selections...)
+		result.BlockedScopes = append(result.BlockedScopes, value.BlockedScopes...)
 		if err != nil {
 			failures = append(failures, err)
 		}
@@ -426,7 +458,7 @@ func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io
 	return acceptCertifiedView(store, envelope)
 }
 func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback, links []control.Observation, counters *control.WireGuardCounters) (control.DeviceReport, error) {
-	preference, err := clientadapter.ReportedPreference(lkg.View, activation.State.Preference)
+	preference, err := clientadapter.ReportedPolicyChoices(lkg.View, activation.State.Preference)
 	if err != nil {
 		return control.DeviceReport{}, err
 	}
@@ -439,7 +471,7 @@ func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activa
 		}
 		for _, route := range lkg.View.Routes {
 			if route.ID == selection.CandidateID {
-				selections = append(selections, control.ReportSelection{ServiceID: route.ServiceID, CandidateID: route.ID})
+				selections = append(selections, control.ReportSelection{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID})
 			}
 		}
 	}
@@ -474,7 +506,7 @@ func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activa
 		return control.DeviceReport{}, err
 	}
 	localNetworks, _ := collectLocalNetworks(ctx, lkg.View)
-	return control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, Preference: preference, LocalNetworks: localNetworks, WireGuardCounters: counters, Selections: selections, Observations: observations, Components: components, Runtime: readback}, nil
+	return control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, PolicyChoices: preference, LocalNetworks: localNetworks, WireGuardCounters: counters, Selections: selections, Observations: observations, Components: components, Runtime: readback}, nil
 }
 func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool, readback control.RuntimeReadback) Status {
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration, Selections: activation.Selections, Observations: activation.State.Observations, Runtime: readback.State, Reported: reported}
@@ -646,6 +678,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		// contract, so it cannot prove cross-view sample equivalence.
 		previous = nil
 	}
+	if _, err := ReconcilePolicyChoices(options.LocalState, generation, lkg.View); err != nil {
+		return err
+	}
 	local, err := loadLocalStateForView(options.LocalState, generation, lkg, previous)
 	if err != nil {
 		return err
@@ -738,7 +773,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 				httpSelector := selector.(*HTTPSelector)
 				httpSelector.client.Transport.(*http.Transport).DialContext = namespaceDialer(options.captureNamespace)
 			}
-			scopes, _, err := scopesFor(routes)
+			scopes, _, err := scopesFor(routes, clientmodel.ServiceScopes(lkg.View)...)
 			if err != nil {
 				return err
 			}
@@ -812,6 +847,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	}()
 	offerLatest(refreshRequests, struct{}{})
 	offerLatest(linkRequests, struct{}{})
+	lastPreference := clientmodel.Preference{}
 	update := func(periodic bool) error {
 		// Frontier/proof progress with the same View is durable authentication
 		// progress, not a reason to interrupt unchanged execution.
@@ -835,6 +871,15 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		if err != nil {
 			return err
 		}
+		var onlyScopes []string
+		if lastPreference.Schema == 3 && !lastPreference.Equal(local.Preference) {
+			onlyScopes = []string{}
+			for _, service := range lkg.View.Services {
+				if lastPreference.Policy(service.ID) != local.Preference.Policy(service.ID) {
+					onlyScopes = append(onlyScopes, service.Scope())
+				}
+			}
+		}
 		activation := Activation{State: local, Selections: []SelectionStatus{}}
 		select {
 		case delivery := <-linkResults:
@@ -851,7 +896,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		if hasAccess {
 			currentIDs := []string{}
-			scopes, _, err := scopesFor(routes)
+			scopes, _, err := scopesFor(routes, clientmodel.ServiceScopes(lkg.View)...)
 			if err != nil {
 				return err
 			}
@@ -882,9 +927,15 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		if pid != 0 {
 			if hasAccess {
-				activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, false)
-				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+				activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, false, onlyScopes...)
+				if activation.State.Schema == 0 {
 					return err
+				}
+				if len(activation.Selections)+len(activation.BlockedScopes) != len(clientmodel.ServiceScopes(lkg.View)) {
+					return errors.Join(err, errors.New("Service rejection could not be confirmed"))
+				}
+				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+					fmt.Fprintln(options.Log, "a Service selector failed; affected traffic remains rejected")
 				}
 			}
 			readback, err = resourceRuntimeReadback(ctx, lkg, executions, resourcePID, options.Now(), periodic, *transaction)
@@ -907,9 +958,12 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			selected = append(selected, selection.CandidateID)
 		}
 		if len(routes) > 0 {
-			activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, true)
+			activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, true, onlyScopes...)
 			if activation.State.Schema == 0 {
 				return err
+			}
+			if len(activation.Selections)+len(activation.BlockedScopes) != len(clientmodel.ServiceScopes(lkg.View)) {
+				return errors.Join(err, errors.New("Service rejection could not be confirmed"))
 			}
 		}
 		for _, selection := range activation.Selections {
@@ -940,6 +994,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 		pendingReport = &runtimeReportAttempt{report: report, status: status}
 		offerLatest(reportRequests, pendingReport)
+		lastPreference = activation.State.Preference
 		return nil
 	}
 	if err := update(false); err != nil {
@@ -1043,10 +1098,10 @@ func waitForRepair(ctx context.Context, store *deviceclient.Store, options Optio
 			return err
 		}
 		pending, cancel := context.WithTimeout(ctx, 20*time.Second)
-		preference, prefErr := clientadapter.ReportedPreference(store.LKG().View, status.Preference)
+		preference, prefErr := clientadapter.ReportedPolicyChoices(store.LKG().View, status.Preference)
 		if prefErr == nil {
 			diagnostic := safeRuntimeFailure(failure)
-			_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, Preference: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: diagnostic.operation + "_" + diagnostic.class}})
+			_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, PolicyChoices: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: diagnostic.operation + "_" + diagnostic.class}})
 		}
 		cancel()
 		timer := time.NewTimer(options.RefreshPoll)

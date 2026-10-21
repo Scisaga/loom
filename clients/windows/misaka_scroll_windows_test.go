@@ -19,11 +19,11 @@ func TestGUIMisakaRouteWheelOutsidePopupScrollsPageWithoutSelecting(t *testing.T
 	app := newMisakaViewportTestWindow(t)
 	for index := 0; index < 12; index++ {
 		name := fmt.Sprintf("demo-wheel-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: name}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
 	}
 	app.renderControls()
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)
-	procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed, app.controls.modeFixed)
+	procSendMessage.Call(app.controls.routeCombo, portableCBShowDropDown, 1, 0)
 	dropped, _, _ := procSendMessage.Call(app.controls.routeCombo, 0x0157, 0, 0)
 	if dropped == 0 {
 		t.Fatal("[§7.2] 回归前置：出口菜单未打开")
@@ -74,11 +74,11 @@ func TestGUIMisakaRouteWheelInsidePopupKeepsNativeListNavigation(t *testing.T) {
 	app := newMisakaViewportTestWindow(t)
 	for index := 0; index < 80; index++ {
 		name := fmt.Sprintf("demo-menu-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: name}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
 	}
 	app.renderControls()
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)
-	procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed, app.controls.modeFixed)
+	procSendMessage.Call(app.controls.routeCombo, portableCBShowDropDown, 1, 0)
 	list := app.skin.route.list
 	if list == 0 {
 		t.Fatal("[§7.2] 出口原生列表不存在")
@@ -130,21 +130,28 @@ func TestGUIMisakaScrolledPixelsMatchCompleteRepaint(t *testing.T) {
 		app.layoutControls()
 		for _, position := range []int32{24, 280, 12} {
 			app.scrollMisakaPane(0)
-			procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed, app.controls.modeFixed)
+			procSendMessage.Call(app.controls.routeCombo, portableCBShowDropDown, 1, 0)
 			app.scrollMisakaPane(app.scale(position))
+			// Compare stable paint, excluding the editable combo's blinking caret.
+			procMisakaSetFocus.Call(app.skin.pane)
 			misakaAssertVisibleFrame(t, app, "菜单关闭后滚动")
 			normal := capture()
 			procRedrawWindow.Call(app.skin.pane, 0, 0, 0x0185)
 			misakaAssertVisibleFrame(t, app, "完整参考重绘")
 			fresh := capture()
 			changed := 0
+			view := misakaViewportClientRect(app.skin.pane)
+			bounds := portableRect{left: view.right, top: view.bottom}
 			for i := 0; i < len(normal); i += 4 {
 				if normal[i] != fresh[i] || normal[i+1] != fresh[i+1] || normal[i+2] != fresh[i+2] {
 					changed++
+					x, y := int32(i/4)%view.right, int32(i/4)/view.right
+					bounds.left, bounds.top = min(bounds.left, x), min(bounds.top, y)
+					bounds.right, bounds.bottom = max(bounds.right, x+1), max(bounds.bottom, y+1)
 				}
 			}
 			if changed != 0 {
-				t.Errorf("[§7.2] 详情=%v 位置=%d：正常滚动仍有 %d 个像素需要额外刷新", expanded, position, changed)
+				t.Errorf("[§7.2] 详情=%v 位置=%d：正常滚动仍有 %d 个像素需要额外刷新，区域=%+v", expanded, position, changed, bounds)
 			}
 		}
 	}

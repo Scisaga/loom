@@ -149,6 +149,7 @@ func (response EnrollmentResponse) Validate() error {
 
 type ReportSelection struct {
 	ServiceID   string `json:"service_id"`
+	PolicyID    string `json:"policy_id,omitempty"`
 	CandidateID string `json:"candidate_id"`
 }
 
@@ -350,6 +351,7 @@ type DeviceReport struct {
 	ReportedAt        int64                 `json:"reported_at"`
 	Selections        []ReportSelection     `json:"selections"`
 	Preference        *ReportPreference     `json:"preference,omitempty"`
+	PolicyChoices     *[]PolicyChoice       `json:"policy_choices,omitempty"`
 	LocalNetworks     *[]LocalNetworkPrefix `json:"local_networks,omitempty"`
 	Observations      []Observation         `json:"observations"`
 	Runtime           RuntimeReadback       `json:"runtime"`
@@ -364,6 +366,9 @@ func (report DeviceReport) unsigned() map[string]any {
 	}
 	if report.Preference != nil {
 		value["preference"] = *report.Preference
+	}
+	if report.PolicyChoices != nil {
+		value["policy_choices"] = *report.PolicyChoices
 	}
 	if report.LocalNetworks != nil {
 		value["local_networks"] = *report.LocalNetworks
@@ -381,6 +386,10 @@ func (report DeviceReport) validateFields() error {
 	if report.Preference != nil && report.Preference.Validate() != nil {
 		return errors.New("device report preference is invalid")
 	}
+	if report.PolicyChoices != nil && (ValidatePolicyChoices(*report.PolicyChoices) != nil || report.Preference != nil) {
+		return errors.New("invalid or ambiguous current policy choices")
+	}
+
 	if report.LocalNetworks != nil {
 		if *report.LocalNetworks == nil {
 			return errors.New("local network report must be an explicit prefix collection")
@@ -392,7 +401,7 @@ func (report DeviceReport) validateFields() error {
 		}
 	}
 	for index, selection := range report.Selections {
-		if ValidateID(selection.ServiceID) != nil || ValidateDigest(selection.CandidateID) != nil || index > 0 && report.Selections[index-1].ServiceID >= selection.ServiceID {
+		if ValidateID(selection.ServiceID) != nil || ValidateDigest(selection.CandidateID) != nil || selection.PolicyID != "" && ValidateID(selection.PolicyID) != nil || report.PolicyChoices != nil && selection.PolicyID == "" || index > 0 && report.Selections[index-1].ServiceID >= selection.ServiceID {
 			return errors.New("report selections are invalid or not uniquely sorted")
 		}
 	}

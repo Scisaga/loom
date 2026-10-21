@@ -62,7 +62,7 @@ func (s portableGUISnapshot) equal(other portableGUISnapshot) bool {
 	return s.state == other.state && s.joined == other.joined && s.deviceID == other.deviceID &&
 		s.detail == other.detail && s.hostname == other.hostname &&
 		s.routeSelected == other.routeSelected && s.routeBusy == other.routeBusy &&
-		s.routeDetail == other.routeDetail && slices.Equal(s.routeOptions, other.routeOptions) &&
+		s.routeDetail == other.routeDetail && equalRouteOptions(s.routeOptions, other.routeOptions) &&
 		slices.Equal(s.paths, other.paths) && slices.Equal(s.profiles, other.profiles) &&
 		s.profilesReady == other.profilesReady && s.selectedProfile == other.selectedProfile &&
 		s.profileName == other.profileName && s.activeProfile == other.activeProfile && s.activeProfileName == other.activeProfileName &&
@@ -1173,9 +1173,6 @@ type portableIconInfo struct {
 }
 
 type portableGUIControls struct {
-	modeAuto           uintptr
-	modeFixed          uintptr
-	modeDirect         uintptr
 	draftName          uintptr
 	draftImport        uintptr
 	draftPaste         uintptr
@@ -1217,7 +1214,6 @@ type portableGUIControls struct {
 
 func (controls portableGUIControls) all() []uintptr {
 	return []uintptr{
-		controls.modeAuto, controls.modeFixed, controls.modeDirect,
 		controls.draftName, controls.draftImport, controls.draftPaste, controls.draftSubmit, controls.draftCancel,
 		controls.brandIcon, controls.brandName, controls.brandEdition,
 		controls.networkList, controls.interfaceGroup,
@@ -1488,9 +1484,6 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.privilegeCaption, 0, "STATIC", "权限:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.privilegeValue, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.message, 0, "STATIC", "", 0x000D, 0},
-		{&app.controls.modeAuto, 0, "BUTTON", "自动", portableWSTabStop | portableBSOwnerDraw, misakaControlAuto},
-		{&app.controls.modeFixed, 0, "BUTTON", "固定出口", portableWSTabStop | portableBSOwnerDraw, misakaControlFixed},
-		{&app.controls.modeDirect, 0, "BUTTON", "直连", portableWSTabStop | portableBSOwnerDraw, misakaControlDirect},
 		{&app.controls.draftName, 0, "EDIT", "", portableWSTabStop | 0x0080, misakaControlDraftName},
 		{&app.controls.draftImport, 0, "BUTTON", "选择邀请文件", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftImport},
 		{&app.controls.draftPaste, 0, "BUTTON", "粘贴二维码", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftPaste},
@@ -2254,9 +2247,7 @@ func (app *portableGUI) renderRouteCombo(snapshot portableGUISnapshot) {
 	app.routeVisible = app.routeVisible[:0]
 	query := strings.ToLower(app.routeFilter)
 	for index, option := range snapshot.routeOptions {
-		if app.skin != nil && option.Preference.Mode != "fixed_exit" {
-			continue
-		}
+
 		if app.routeFiltering && !strings.Contains(strings.ToLower(option.Label), query) {
 			continue
 		}

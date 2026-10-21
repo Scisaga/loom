@@ -47,8 +47,8 @@ func TestWindowsRuntimeReadyRequiresSelectorStatusWithoutBusinessSuccess(t *test
 	}
 	lkg := &control.DeviceViewEnvelope{View: control.DeviceView{DeviceID: "demo-windows"}, ViewDigest: "sha256:" + strings.Repeat("1", 64)}
 	activation := clientadapter.Activation{
-		State:      clientadapter.State{Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeAuto}, NetworkGeneration: "demo-network"},
-		Selections: []clientadapter.SelectionStatus{{Scope: "demo-service", CandidateID: "demo-route", State: "unknown"}},
+		State:      clientadapter.State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"},
+		Selections: []clientadapter.SelectionStatus{{Scope: "service:demo-service", CandidateID: "demo-route", State: "unknown"}},
 	}
 	readAt := time.Date(2030, 1, 1, 0, 0, 20, 0, time.UTC)
 	if err := writeWindowsRuntimeStatus(root, lkg, activation, false, readAt); err != nil {
@@ -66,7 +66,7 @@ func TestWindowsRuntimeReadyRequiresSelectorStatusWithoutBusinessSuccess(t *test
 }
 
 func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
-	view := control.DeviceView{Routes: []control.RouteCandidate{{ID: "demo-route", FinalExit: "direct", Scope: "service:demo-service", ServiceID: "demo-service"}},
+	view := control.DeviceView{Routes: []control.RouteCandidate{{ID: "demo-route", FinalExit: "direct", Scope: "service:demo-service", ServiceID: "demo-service", PolicyID: "demo-policy"}},
 		DNSServers: []string{"192.0.2.53"}, BusinessProbeTargets: []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo.example/demo-probe"}}}}
 	if probe := windowsBusinessProbe(view, "service:demo-service"); probe == nil {
 		t.Fatal("single authorized target unavailable")
@@ -218,7 +218,7 @@ func testWindowsResponsibilityRemoval(t *testing.T, protector clientsecret.Prote
 }
 
 func TestWindowsSelectorFailureCannotPublishRunning(t *testing.T) {
-	routes := []clientmodel.RouteCandidate{{ID: "demo-route", Scope: "demo-service", FinalExit: "direct"}}
+	routes := []clientmodel.RouteCandidate{{ID: "demo-route", Scope: "service:demo-service", FinalExit: "direct", PolicyID: "demo-policy"}}
 	state := clientadapter.State{NetworkGeneration: "demo-network"}
 	if windowsActivationApplied(clientadapter.Activation{State: state}, routes) {
 		t.Fatal("failed selector application accepted as running")

@@ -14,7 +14,7 @@ func TestTargetSamplesRoundTripWithoutReinterpretingOldCache(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	state := defaultState("demo-network")
 	state.ObservationViewDigest = "sha256:" + strings.Repeat("a", 64)
-	state.Preference = clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: "demo-exit"}
+	state.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
 	for i, target := range []string{"", "https://demo.example/a", "https://demo.example/b"} {
 		result := "available"
 		if i == 2 {

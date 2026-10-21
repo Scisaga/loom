@@ -34,7 +34,7 @@ const clientUsage = `loom client —— 客户端交付
 	loom client run                              Linux 运行入口，默认显式 Mixed proxy
 	loom client exec -- <command>                在当前隔离 TUN 内运行应用，随该运行代退出
 	loom client preflight                        验证 LKG 与真实 sing-box，不改变运行状态
-	loom client route <direct|auto|exit ID>       持久化偏好并重载正式 service
+	loom client policy <list|select ServiceID PolicyID> 按服务选择获授权策略
 	loom client status                           回读 selector 已确认的实际路径与观测
 	loom client install -package-root <目录>      执行已验签 Linux 包的正式安装入口
 	loom client update -capture mixed            消费当前已接受配置的精确签名期望包
@@ -57,6 +57,8 @@ func cmdClient(args []string) error {
 		return cmdClientEnrollMinimal(args[1:])
 	case "sync":
 		return cmdClientSync(args[1:])
+	case "migrate-policy-selection":
+		return cmdClientMigratePolicySelection(args[1:])
 	case "migrate-transport":
 		return cmdClientMigrateTransport(args[1:])
 	case "inspect":
@@ -71,8 +73,8 @@ func cmdClient(args []string) error {
 		return cmdClientPreflight(args[1:])
 	case "cleanup":
 		return cmdClientCleanup(args[1:])
-	case "route":
-		return cmdClientRoute(args[1:])
+	case "policy":
+		return cmdClientPolicy(args[1:])
 	case "status":
 		return cmdClientStatus(args[1:])
 	case "install":

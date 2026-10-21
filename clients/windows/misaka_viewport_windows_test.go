@@ -62,7 +62,7 @@ func TestGUIMisakaViewportScrollsWholeRightPaneAndReachesLastService(t *testing.
 	}
 	left := guiWindowRect(t, app.controls.networkList)
 	add := guiWindowRect(t, app.controls.addProfileButton)
-	right := []uintptr{app.controls.stateIcon, app.controls.stateValue, app.controls.primaryButton, app.controls.modeDirect, app.controls.modeAuto, app.controls.modeFixed, app.controls.pathsValue}
+	right := []uintptr{app.controls.stateIcon, app.controls.stateValue, app.controls.primaryButton, app.controls.pathsValue}
 	beforeRects := make([]portableRect, len(right))
 	for index, control := range right {
 		parent, _, _ := portableUser32.NewProc("GetParent").Call(control)
@@ -132,7 +132,7 @@ func TestGUIMisakaViewportComboCentersAndOpensMultipleRows(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	for index := 0; index < 7; index++ {
 		name := fmt.Sprintf("demo-exit-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "固定出口 · " + name, Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeFixed, Exit: name}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "境外 API / " + name, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
 	}
 	app.routeSelected = 1
 	app.renderControls()
@@ -142,9 +142,9 @@ func TestGUIMisakaViewportComboCentersAndOpensMultipleRows(t *testing.T) {
 		suggested := portableRect{left: 20, top: 20, right: 20 + width, bottom: 20 + height}
 		procSendMessage.Call(app.hwnd, portableWMDPIChanged, uintptr(dpi)|uintptr(dpi)<<16, uintptr(unsafe.Pointer(&suggested)))
 		app.scrollMisakaPane(0)
-		mode, combo := guiWindowRect(t, app.controls.modeFixed), guiWindowRect(t, app.controls.routeCombo)
-		if delta := absMisakaAlignment((mode.top + mode.bottom) - (combo.top + combo.bottom)); delta > 2 {
-			t.Errorf("[§7.2] DPI %d 出口下拉框实际折叠中心偏移 %.1f 像素", dpi, float64(delta)/2)
+		combo := guiWindowRect(t, app.controls.routeCombo)
+		if combo.bottom <= combo.top || combo.right <= combo.left {
+			t.Errorf("DPI %d has no visible policy chooser", dpi)
 		}
 		var info struct {
 			size              uint32
@@ -277,7 +277,7 @@ func TestGUIMisakaViewportPassesCoveredResizeEdgesToRoot(t *testing.T) {
 
 func TestGUIMisakaViewportFixedTUNActualHintCapture(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "直连", Preference: clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}})
+	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "国内站点 / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
 	app.routeSelected = 1
 	app.paths = app.paths[:1]
 	app.detail = "系统 TUN 已启用；本地 HTTP/SOCKS 代理：127.0.0.1:1080。"
@@ -286,7 +286,7 @@ func TestGUIMisakaViewportFixedTUNActualHintCapture(t *testing.T) {
 	procRedrawWindow.Call(app.hwnd, 0, 0, 0x0181)
 	misakaAssertVisibleFrame(t, app, "固定出口合成截图")
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
-	if selection != 0 || profileGUIText(app.controls.routeCombo) != "固定出口 · demo-exit" {
+	if selection != 1 || profileGUIText(app.controls.routeCombo) != "境外 API / 固定德国出口" {
 		t.Fatal("[§7.2] 固定出口组合框没有选择实际快照中的出口")
 	}
 	// §7.2：先验证真实可见 HWND 的字形。隐藏且从未绘制的原生组合框

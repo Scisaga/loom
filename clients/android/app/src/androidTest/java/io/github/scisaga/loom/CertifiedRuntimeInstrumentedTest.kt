@@ -434,7 +434,17 @@ class CertifiedRuntimeInstrumentedTest {
             await("new permission must replace the withdrawn LKG") {
                 enrollment.status(profileID).value.phase == EnrollmentPhase.READY &&
                     enrollment.status(profileID).value.viewDigest != previous &&
-                    routing.status(profileID).value.currentPaths.size == serviceCount
+                    routing.status(profileID).value.services.size == serviceCount
+            }
+            val services = routing.status(profileID).value.services
+            assertTrue("reauthorization must wait for a new client choice", services.all { it.policyID.isEmpty() })
+            assertTrue(routing.status(profileID).value.currentPaths.isEmpty())
+            assertFalse("reauthorization silently restored business", business())
+            for (service in services) {
+                click("service-policy-${service.serviceID}-${service.options.first().id}")
+                await("explicit policy choice must reach its selector") {
+                    routing.status(profileID).value.currentPaths.any { it.service.endsWith(":" + service.serviceID) }
+                }
             }
             compose.onNodeWithTag("tab-connection").performClick()
             awaitConnected()

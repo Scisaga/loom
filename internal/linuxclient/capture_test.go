@@ -29,6 +29,7 @@ import (
 
 	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
+	"loom/internal/control"
 	"loom/internal/deviceclient"
 )
 
@@ -370,13 +371,36 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 		}
 	}
 	readSelector()
-	if err := SetPreference(options.LocalState, "demo-network", clientmodel.Preference{Schema: 3, Mode: clientmodel.ModeDirect}); err != nil {
+	// This test concerns the actual selector/probe boundary; the per-Service
+	// preference lifecycle and unchanged connections have separate live coverage.
+	// Wait for the runtime's current report reservation, which happens after its
+	// last selector application, before applying the explicit diagnostic below.
+	sequence := func() control.U64 {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := deviceclient.DecodeIdentityState(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state.ReportSequence
+	}
+	for sequence() == 0 {
+		select {
+		case <-ctx.Done():
+			t.Fatal("initial report was not reserved")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	previousSequence := sequence()
+	if err := SetPreference(options.LocalState, "demo-network", clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}); err != nil {
 		t.Fatal(err)
 	}
 	reload <- syscall.SIGHUP
 	for {
 		readback, err := ReadStatus(options.Status)
-		if err == nil && readback.Preference.Mode == clientmodel.ModeDirect {
+		if err == nil && sequence() > previousSequence && readback.Preference.Policy("demo-service") == "demo-policy" {
 			if readback.ViewDigest != status.ViewDigest || len(readback.Selections) != 1 || readback.Selections[0].CandidateID != store.LKG().View.Routes[0].ID {
 				t.Fatal("preference reload changed the certified authority or actual selector")
 			}
