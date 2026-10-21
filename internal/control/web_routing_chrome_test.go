@@ -24,6 +24,9 @@ func assertChromeLivePaths(t *testing.T, debug *chromeDevTools) {
 	}
 	chromeDo(t, debug, `(()=>{[...document.querySelectorAll('[role=tab]')].find(a=>a.textContent==='History').click();[...document.querySelectorAll('.paths-history-select a')].find(a=>a.textContent==='https://demo-service.example/zero-duration').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.paths-hour').length===24&&[...document.querySelectorAll('.paths-hour')].some(v=>v.title.includes('0 ms'))`)
+	if chromeDo(t, debug, `!document.querySelector('[data-paths-history-retry]')`) != true {
+		t.Fatal("successful Service history retained manual refresh controls")
+	}
 	if chromeDo(t, debug, `(async()=>{const q=new URLSearchParams(location.search);q.delete('q');q.delete('filter');q.delete('tab');const candidate=document.querySelector('.paths-history-select a').href;const id=new URL(candidate).searchParams.get('candidate');q.set('candidate',id);q.set('device','demo-browser-device');const response=await fetch('/api/control/ui/path-history?'+q);const body=await response.json();const sample=body.buckets.find(v=>v.observation)?.observation;const malformed=await fetch('/api/control/ui/path-history?'+q+'&service=demo-service');const outside=new URLSearchParams(q);outside.set('target','https://other.example/');const rejected=await fetch('/api/control/ui/path-history?'+outside);return response.ok&&sample?.result==='available'&&sample.duration_ms===0&&malformed.status===400&&rejected.status===404})()`) != true {
 		t.Fatal("history lost original zero duration or admitted an ambiguous/unauthorized scope")
 	}

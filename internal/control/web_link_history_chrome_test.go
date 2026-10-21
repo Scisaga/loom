@@ -113,14 +113,25 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	chromeDo(t, debug, `history.pushState({},'','/topology?link=`+link.ID+`');dispatchEvent(new PopStateEvent('popstate'));true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-missing-reverse]')?.textContent.includes('No relay candidate')&&document.querySelectorAll('.topology-direction').length===1&&document.querySelector('.topology-direction [data-link-rtt]').textContent==='0 ms'`)
 	chromeDo(t, debug, `history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));true`)
-	chromeDo(t, debug, `(()=>{document.querySelector('#topology [data-node="demo-entry"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));document.querySelector('[data-link-history-retry]').click();return true})()`)
+	chromeDo(t, debug, `(()=>{document.querySelector('#topology [data-node="demo-entry"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelector('#topology').dataset.locked==='demo-entry'`)
+	if chromeDo(t, debug, `!document.querySelector('[data-link-history-retry],[data-traffic-retry]')`) != true {
+		t.Fatal("successful history retained manual refresh controls")
+	}
 	refuse.Store(true)
-	chromeDo(t, debug, `(()=>{document.querySelector('[data-link-history-retry]').click();return true})()`)
+	latest := reports[len(reports)-1]
+	latest.ReportSequence++
+	latest, err = SignDeviceReport(latest, f.keys[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(latest, p.DeviceAuthorizations[0].DevicePublicKey); err != nil {
+		t.Fatal(err)
+	}
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-history]')?.textContent.includes('could not be read')`)
 	refuse.Store(false)
 	chromeDo(t, debug, `(()=>{document.querySelector('[data-link-history-retry]').click();return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&!document.querySelector('[data-link-history-retry]')&&document.querySelector('#topology').dataset.locked==='demo-entry'`)
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/devices/demo-entry');dispatchEvent(new PopStateEvent('popstate'));return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#device-runtime summary')!==null`)
 	chromeDo(t, debug, `document.querySelector('#device-runtime summary').click();true`)
@@ -132,7 +143,6 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24`)
 	// Report sequences change while the device wall-clock timestamp is unchanged.
 	// Missing newest RTT cannot retain the older current distribution.
-	latest := reports[len(reports)-1]
 	for _, rtt := range []*int64{nil, new(int64(40))} {
 		latest.ReportSequence++
 		latest.Observations = append([]Observation{}, latest.Observations...)
@@ -168,16 +178,16 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	if chromeDo(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=`+link.ID+`');const value=await r.json();return r.status===200&&value.buckets.filter(v=>v.observation).length===2})()`) != true {
 		t.Fatal("component expectations erased original Link observations")
 	}
-	chromeDo(t, debug, `(()=>{document.querySelector('[data-link-history-retry]').click();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour').length===24&&document.querySelectorAll('.link-hour.available').length===1`)
-	// A successful empty current window replaces the old visible samples. A
-	// read error and an empty authenticated result are different UI inputs.
+	// A successful empty current window remains a normal result on navigation.
+	// A read error and an empty authenticated result are different UI inputs.
 	clock.Store(now.Add(25 * time.Hour).UnixMilli())
 	if chromeDo(t, debug, `(async()=>{const r=await fetch('/api/control/ui/link-history?link=`+link.ID+`'),v=await r.json();return r.status===200&&v.link_id==='`+link.ID+`'&&v.buckets.length===24&&v.buckets.every(bucket=>!bucket.observation&&!bucket.ambiguous)})()`) != true {
 		t.Fatal("formal Link history did not return the empty requested window")
 	}
-	chromeDo(t, debug, `document.querySelector('[data-link-history-retry="`+link.ID+`"]').click();true`)
-	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour.missing').length===24&&document.querySelectorAll('.link-hour.available,.link-hour.unavailable').length===0&&document.querySelector('[data-link-spread="`+link.ID+`"]').textContent.includes('Unknown')`)
+	chromeDo(t, debug, `history.pushState({},'','/devices/demo-entry');dispatchEvent(new PopStateEvent('popstate'));true`)
+	chromeDo(t, debug, `history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));true`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('.link-hour.missing').length===24&&document.querySelectorAll('.link-hour.available,.link-hour.unavailable').length===0&&document.querySelector('[data-link-spread="`+link.ID+`"]').textContent.includes('Unknown')&&!document.querySelector('[data-link-history-retry]')`)
 	a.mu.Lock()
 	a.projection.DeviceAuthorizations = slices.DeleteFunc(a.projection.DeviceAuthorizations, func(device DeviceAuthorization) bool { return device.ID == "demo-exit" })
 	a.mu.Unlock()

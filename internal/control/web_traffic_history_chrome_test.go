@@ -143,7 +143,8 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 		t.Fatal("measured zero, unknown hours, or exact deltas were lost")
 	}
 	refused.Store(true)
-	chromeDo(t, debug, `document.querySelector('[data-traffic-retry]').click();true`)
+	chromeDo(t, debug, `history.pushState({},'','/topology');dispatchEvent(new PopStateEvent('popstate'));true`)
+	chromeDo(t, debug, `history.pushState({},'','/devices/demo-entry');dispatchEvent(new PopStateEvent('popstate'));true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-traffic-scope="device:demo-entry"]').textContent.includes('could not be read')`)
 	refused.Store(false)
 	chromeDo(t, debug, `document.querySelector('[data-traffic-retry]').click();true`)
@@ -178,8 +179,9 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{window.demoSharedScope=document.querySelector('.topology-traffic-card [data-traffic-scope]').dataset.trafficScope;document.querySelector('button[data-topology-direction="`+reverse.ID+`"]').click();return document.querySelector('.topology-traffic-card [data-traffic-scope]').dataset.trafficScope===demoSharedScope&&document.querySelector('.topology-traffic-card .metric').textContent==='1.0 MiB'&&new URLSearchParams(location.search).get('link')==='`+reverse.ID+`'})()`) != true {
 		t.Fatal("direction switching duplicated or re-scoped the shared peer counters")
 	}
-	chromeDo(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-retry]').click();true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('.topology-traffic-card [data-traffic-endpoint="demo-entry"][data-traffic-value="1048576"]')!==null`)
+	if chromeDo(t, debug, `!document.querySelector('[data-traffic-retry],[data-link-history-retry]')`) != true {
+		t.Fatal("successful topology history retained manual refresh controls")
+	}
 	if chromeDo(t, debug, `(async()=>{const {trafficHistoryRequest,trafficSummary,trafficRates}=await import('/assets/traffic-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),scope='link:`+link.ID+`',request=trafficHistoryRequest(p,scope),data=await(await fetch(request.url)).json(),entry={key:request.key,version:request.version,data},initial=trafficSummary(p,scope,entry),device=p.devices.find(d=>d.id==='demo-entry');device.last_report_at=new Date(Date.parse(device.last_report_at)+1).toISOString();const pending=trafficSummary(p,scope,entry);p.links.find(l=>l.id==='`+link.ID+`').spec_digest='sha256:'+ 'f'.repeat(64);return trafficRates(initial,Date.now()).some(v=>v.text.includes('0.139 Mbps'))&&pending.known&&trafficRates(pending,Date.now()).every(v=>v.text.includes('Unknown'))&&trafficSummary(p,scope,entry).data===null})()`) != true {
 		t.Fatal("refreshing a report must preserve scoped history without reusing a current rate or a replaced Link")
 	}
@@ -210,7 +212,7 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{const line=document.querySelector('#topology .edge-stroke');return line.dataset.observationPattern==='solid'&&getComputedStyle(line).strokeDasharray==='none'&&!line.hasAttribute('marker-start')&&!line.hasAttribute('marker-end')})()`) != true {
 		t.Fatal("two original successful WG DNS directions were not displayed as a solid line")
 	}
-	chromeDo(t, debug, `window.demoRealNow=Date.now;Date.now=()=>window.demoRealNow()+181000;document.querySelector('[data-traffic-retry="link:`+sharedID+`"]').click();true`)
+	chromeDo(t, debug, `window.demoRealNow=Date.now;Date.now=()=>window.demoRealNow()+181000;document.querySelector('button[data-topology-direction="`+reverse.ID+`"]').click();true`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-row="`+sharedID+`"] [data-traffic-rate="demo-entry"]')?.textContent.includes('Unknown')&&[...document.querySelectorAll('.topology-direction [data-link-rtt]')].every(value=>value.textContent==='Unknown')`)
 	if chromeDo(t, debug, `(()=>{const line=document.querySelector('#topology .edge-stroke');return line.dataset.observationPattern==='unknown'&&!line.hasAttribute('marker-start')&&!line.hasAttribute('marker-end')})()`) != true {
 		t.Fatal("expired directions were represented as confirmed success, failure or a one-way observation")

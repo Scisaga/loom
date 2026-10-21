@@ -18,7 +18,7 @@ export function runtimeHistoryHTML(projection,device,history,showCurrent=true){
    const title=sample?`${hour} · sampled ${new Date(sample.reported_at).toISOString()} · ${state}\nView: ${sample.view_digest}\nApplied: ${sample.applied_view_digest||'none'}\nError: ${sample.error_code||'none'}\nReport: ${sample.report_id} · sequence ${sample.report_sequence}`:`${hour} · No valid runtime sample`;
    return `<span class="runtime-hour ${esc(state)}" data-runtime-hour="${bucket.hour}" data-runtime-state-sample="${esc(state)}" tabindex="0" title="${esc(title)}" aria-label="${esc(title)}"></span>`;
   }).join('');
-  contents=`<div class="runtime-hours" aria-label="24 hourly runtime samples; not continuous uptime">${slots}</div><small title="As of ${esc(new Date(data.until).toISOString())}">24 hourly samples · not uptime <button type="button" class="tiny" data-runtime-history-retry="${esc(device.id)}">Refresh</button></small>`;
+  contents=`<div class="runtime-hours" aria-label="24 hourly runtime samples; not continuous uptime">${slots}</div><small title="As of ${esc(new Date(data.until).toISOString())}">24 hourly samples · not uptime</small>`;
  }
  return `${prefix}<div data-runtime-history="${esc(device.id)}">${contents}</div>`;
 }

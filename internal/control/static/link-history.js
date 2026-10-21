@@ -33,7 +33,7 @@ export function linkHistoryHTML(projection,link,history){
    const title=bucket.ambiguous?`${hour} · Conflicting samples at the same time`:sample?`${hour} · sampled ${new Date(sample.observed_at).toISOString()} · ${state}\n${data.from_node_id} → ${data.to_node_id}\nLink: ${data.link_id}\nSpec: ${sample.spec_digest}\nNetwork generation: ${sample.network_generation}\nAction: ${sample.action}`:`${hour} · No valid Link sample`;
    return `<span class="link-hour ${esc(state)}" data-link-hour="${bucket.hour}" tabindex="0" title="${esc(title)}" aria-label="${esc(title)}"></span>`;
   }).join('');
-  contents=`<div class="link-hours" aria-label="24 hourly Link samples; not continuous uptime">${slots}</div><small title="As of ${esc(new Date(data.until).toISOString())}">24 hourly samples · not uptime <button type="button" class="tiny" data-link-history-retry="${esc(link.id)}">Refresh</button></small>`;
+  contents=`<div class="link-hours" aria-label="24 hourly Link samples; not continuous uptime">${slots}</div><small title="As of ${esc(new Date(data.until).toISOString())}">24 hourly samples · not uptime</small>`;
  }
  return `<div data-link-history="${esc(link.id)}">${contents}</div>`;
 }

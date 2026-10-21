@@ -28,9 +28,11 @@ func TestWebChromeOverviewSharesProgressiveTrafficAndRecoversReads(t *testing.T)
 	normal := server.AdminHandler()
 	now := time.Date(2030, 1, 2, 12, 30, 0, 0, time.UTC)
 	var revoked atomic.Bool
+	var reportVersion atomic.Int64
 	projection := func() WebSnapshot {
 		value := buildWebSnapshot(p, true, true, true)
 		for i := range value.Devices {
+			value.Devices[i].LastReportAt = now.Add(time.Duration(reportVersion.Load()) * time.Second).Format(time.RFC3339Nano)
 			if revoked.Load() && value.Devices[i].ID == "demo-entry" {
 				value.Devices[i].Authorized = false
 			}
@@ -149,22 +151,31 @@ func TestWebChromeOverviewSharesProgressiveTrafficAndRecoversReads(t *testing.T)
 	mu.Unlock()
 
 	// Cancellation below exercises the normal two-slot round after the initial
-	// navigation budget, including explicit reloads that clear every old result.
+	// navigation budget. Report changes refresh without manual controls.
 	waitChromeEvaluation(t, debug, `performance.now()>=3000`)
+	if chromeDo(t, debug, `!document.querySelector('[data-traffic-retry]')`) != true {
+		t.Fatal("successful Overview history retained manual refresh controls")
+	}
 	// A fetch that ignores cancellation makes late-response rejection observable.
-	chromeDo(t, debug, `window.demoFetch=window.fetch;window.demoPending=[];window.fetch=(url,options)=>String(url).startsWith('/api/control/ui/traffic-history')?new Promise(resolve=>demoPending.push({url,options,resolve})):demoFetch(url,options);document.querySelector('[data-traffic-retry^="network:"]').click();true`)
+	chromeDo(t, debug, `window.demoFetch=window.fetch;window.demoPending=[];window.fetch=(url,options)=>String(url).startsWith('/api/control/ui/traffic-history')?new Promise(resolve=>demoPending.push({url,options,resolve})):demoFetch(url,options);true`)
+	reportVersion.Add(1)
 	waitChromeEvaluation(t, debug, `demoPending.length===2`)
-	chromeDo(t, debug, `document.querySelector('[data-traffic-retry^="network:"]').click();true`)
+	chromeDo(t, debug, `history.pushState({},'','/ssot');dispatchEvent(new PopStateEvent('popstate'));true`)
+	chromeDo(t, debug, `history.pushState({},'','/');dispatchEvent(new PopStateEvent('popstate'));true`)
 	waitChromeEvaluation(t, debug, `demoPending.length===4`)
+	if chromeDo(t, debug, `!document.querySelector('[data-traffic-retry]')`) != true {
+		t.Fatal("loading history exposed manual reload controls")
+	}
 	chromeDo(t, debug, `(async()=>{for(const pending of demoPending.slice(0,2))pending.resolve(await demoFetch(pending.url));return true})()`)
 	if chromeDo(t, debug, `document.querySelector('[data-traffic-loaded="0"]')!==null`) != true {
-		t.Fatal("Reload accepted a cancelled predecessor's late response")
+		t.Fatal("navigation accepted a cancelled predecessor's late response")
 	}
 	chromeDo(t, debug, `(async()=>{window.fetch=demoFetch;for(const pending of demoPending.slice(2))pending.resolve(await demoFetch(pending.url));return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-traffic-loaded="'+demoTrafficTotal+'"]')!==null`)
 
 	// Shorten only the history deadline, preserving all other application timers.
-	chromeDo(t, debug, `window.demoSetTimeout=window.setTimeout;window.setTimeout=(callback,delay,...args)=>demoSetTimeout(callback,delay===30000?40:delay,...args);window.demoTimeoutReads=0;window.fetch=(url,options)=>{if(String(url).startsWith('/api/control/ui/traffic-history')){demoTimeoutReads++;return new Promise(()=>{})}return demoFetch(url,options)};document.querySelector('[data-traffic-retry^="network:"]').click();true`)
+	chromeDo(t, debug, `window.demoSetTimeout=window.setTimeout;window.setTimeout=(callback,delay,...args)=>demoSetTimeout(callback,delay===30000?40:delay,...args);window.demoTimeoutReads=0;window.fetch=(url,options)=>{if(String(url).startsWith('/api/control/ui/traffic-history')){demoTimeoutReads++;return new Promise(()=>{})}return demoFetch(url,options)};true`)
+	reportVersion.Add(1)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-traffic-loaded="0"][data-traffic-failed="'+demoTrafficTotal+'"]')!==null`)
 	chromeDo(t, debug, `new Promise(resolve=>demoSetTimeout(()=>resolve(demoTimeoutReads===demoTrafficTotal),180))`)
 	if chromeDo(t, debug, `demoTimeoutReads===demoTrafficTotal&&document.querySelector('[data-traffic-retry^="network:"]').textContent==='Retry'`) != true {
@@ -174,7 +185,8 @@ func TestWebChromeOverviewSharesProgressiveTrafficAndRecoversReads(t *testing.T)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-traffic-loaded="'+demoTrafficTotal+'"][data-traffic-failed="0"]')!==null`)
 
 	// Withdrawal invalidates both the row and its contribution to the aggregate.
-	chromeDo(t, debug, `window.demoPending=[];window.fetch=(url,options)=>String(url).startsWith('/api/control/ui/traffic-history')?new Promise(resolve=>demoPending.push({url,options,resolve})):demoFetch(url,options);document.querySelector('[data-traffic-retry^="network:"]').click();true`)
+	chromeDo(t, debug, `window.demoPending=[];window.fetch=(url,options)=>String(url).startsWith('/api/control/ui/traffic-history')?new Promise(resolve=>demoPending.push({url,options,resolve})):demoFetch(url,options);true`)
+	reportVersion.Add(1)
 	waitChromeEvaluation(t, debug, `demoPending.length===2`)
 	revoked.Store(true)
 	waitChromeEvaluation(t, debug, `document.querySelector('[data-traffic-total="'+(demoTrafficTotal-1)+'"]')!==null`)
@@ -198,6 +210,9 @@ func TestWebChromeOverviewSharesProgressiveTrafficAndRecoversReads(t *testing.T)
   const invalid=structuredClone(a);mutate(invalid);let rejected=false;try{validateTrafficHistory(invalid,a.scope)}catch{rejected=true}if(!rejected)return {error:'malformed source accepted'};
   const request=trafficHistoryRequest(p,a.scope),value=trafficSummary(p,a.scope,{...request,data:invalid});if(value.data||!value.error||value.tx!==null)return {error:'malformed source contributed traffic'};
  }
+ histories.set('traffic:'+a.scope,{...trafficHistoryRequest(p,a.scope),error:'demo source unavailable'});
+ const partial=networkTrafficSummary(p,histories),partialHTML=trafficHistoryHTML(partial,false,true);
+ if(partial.loaded!==1||partial.failed!==1||partial.tx!==7n||!partialHTML.includes('data-traffic-retry')||!partialHTML.includes('Retry')||!partialHTML.includes(new Date(b.until).toISOString()))return {error:'partial failure lost successful data, its cutoff, or retry'};
  for(const device of p.devices)device.authorized=false;const empty=networkTrafficSummary(p,histories),emptyHTML=trafficHistoryHTML(empty,false,true);if(empty.data||empty.tx!==null||!emptyHTML.includes('No authorized devices')||emptyHTML.includes('Loading')||emptyHTML.includes('data-traffic-retry'))return {error:'empty authorization waited for a query or invented traffic'};
  return {passed:true};
 })()`)

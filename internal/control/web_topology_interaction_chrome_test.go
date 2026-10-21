@@ -148,9 +148,15 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	}
 	server := &Server{Runtime: &Runtime{Config: config, Authority: authority, Reports: store}}
 	var holdOverviewHistory atomic.Bool
+	var refuseLinkHistory atomic.Bool
+	refuseLinkHistory.Store(true)
 	overviewRequested, resumeOverview := make(chan struct{}), make(chan struct{})
 	handler := server.AdminHandler()
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/control/ui/link-history" && refuseLinkHistory.Load() {
+			http.Error(w, "demo history unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		if r.URL.Path == "/api/control/ui/traffic-history" && r.URL.Query().Get("device") != "" && holdOverviewHistory.Swap(false) {
 			close(overviewRequested)
 			select {
@@ -175,7 +181,7 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 	if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 1600, "height": 1100, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
 		t.Fatal(err)
 	}
-	waitChromeEvaluation(t, debug, `document.querySelectorAll('#topology [data-topology-link]').length===1&&document.querySelectorAll('.link-hour').length===48`)
+	waitChromeEvaluation(t, debug, `document.querySelectorAll('#topology [data-topology-link]').length===1&&document.querySelectorAll('[data-link-history-retry]').length===2`)
 	if chromeDo(t, debug, `(()=>{const edge=document.querySelector('#topology [data-topology-links]');return JSON.parse(edge.dataset.topologyLinks).includes('`+link.ID+`')&&JSON.parse(edge.dataset.topologyLinks).includes('`+reverse.ID+`')})()`) != true {
 		t.Fatal("one relay connection lost an original direction")
 	}
@@ -219,10 +225,11 @@ func TestWebChromeTopologyRealPointerPreviewAndPinStayStable(t *testing.T) {
 			t.Fatalf("real hovering detaches or loses the same LinkID: %#v", result)
 		}
 	}
-	// Keep the real pointer on the edge while an independent history refresh
-	// completes through the SPA's normal asynchronous redraw path.
-	chromeDo(t, debug, `window.demoTopologyHistoryAsOf=document.querySelector('[data-link-history="`+primary+`"] small[title]').title;document.querySelector('[data-link-history-retry="`+primary+`"]').click();true`)
-	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-history="`+primary+`"] small[title]')?.title!==undefined&&document.querySelector('[data-link-history="`+primary+`"] small[title]').title!==demoTopologyHistoryAsOf`)
+	// Keep the real pointer on the edge while a failed history read recovers
+	// through the SPA's normal asynchronous redraw path.
+	refuseLinkHistory.Store(false)
+	chromeDo(t, debug, `document.querySelector('[data-link-history-retry="`+primary+`"]').click();true`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-link-history="`+primary+`"] .link-hours')&&!document.querySelector('[data-link-history-retry="`+primary+`"]')`)
 	if chromeDo(t, debug, `demoTopologyDetached===0&&document.querySelector('#topology svg')===demoTopologySVG&&demoTopologyEdges.every(edge=>edge.isConnected)&&document.querySelector('.topology-traffic-card').dataset.selectedLink==='`+primary+`'&&document.querySelector('[data-topology-link="`+primary+`"]').classList.contains('is-related')`) != true {
 		t.Fatal("asynchronous history refresh detached the hovered topology or changed its LinkID")
 	}
