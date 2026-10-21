@@ -73,7 +73,7 @@ func TestSnapshotGzipPreservesJSONAndNegotiation(t *testing.T) {
 			}
 		})
 	}
-	// The same advertised encoding must not change signed device responses.
+	// HTTP compression must preserve the complete canonical signed device value.
 	deviceRead := func(encoding string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/device/config", nil)
 		request.Header.Set("Accept-Encoding", encoding)
@@ -83,11 +83,23 @@ func TestSnapshotGzipPreservesJSONAndNegotiation(t *testing.T) {
 		return response
 	}
 	devicePlain, deviceGzip := deviceRead("identity"), deviceRead("gzip")
-	if devicePlain.Code != http.StatusOK || deviceGzip.Code != http.StatusOK || !bytes.Equal(devicePlain.Body.Bytes(), deviceGzip.Body.Bytes()) || deviceGzip.Header().Get("Content-Encoding") != "" || deviceGzip.Header().Get("Vary") != "" {
-		t.Fatal("Web snapshot compression changed the canonical device response")
+	if devicePlain.Code != http.StatusOK || deviceGzip.Code != http.StatusOK || deviceGzip.Header().Get("Content-Encoding") != "gzip" || deviceGzip.Header().Get("Vary") != "Accept-Encoding" {
+		t.Fatal("device configuration did not negotiate compression")
+	}
+	reader, err := gzip.NewReader(deviceGzip.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil || reader.Close() != nil || !bytes.Equal(body, devicePlain.Body.Bytes()) {
+		t.Fatal("HTTP compression changed the canonical signed device response", err)
 	}
 	var envelope DeviceViewEnvelope
-	if err := DecodeCanonical(deviceGzip.Body.Bytes(), &envelope, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
+	trusted, err := server.bootstrapInvite(invite.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := DecodeCanonical(body, &envelope, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20}); err != nil || VerifyDeviceViewEnvelope(envelope, trusted) != nil {
 		t.Fatal("device response lost its original canonical and signature checks", err)
 	}
 }

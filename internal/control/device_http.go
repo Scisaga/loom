@@ -701,10 +701,13 @@ func (server *Server) deviceConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(value.body)
+	w.Header().Set(DeviceConfigDigestHeader, value.configDigest)
+	if r.Header.Get(DeviceConfigDigestHeader) == value.configDigest {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeReportBody(w, r, value.body)
 }
 func (server *Server) deviceReport(w http.ResponseWriter, r *http.Request) {
 	identity, ok := tunnelAuth(r)

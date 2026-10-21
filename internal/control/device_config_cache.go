@@ -52,6 +52,7 @@ type deviceConfigValue struct {
 	digest        string
 	canonicalView []byte
 	body          []byte
+	configDigest  string
 }
 
 type deviceConfigEntry struct {
@@ -390,8 +391,12 @@ func (request *deviceConfigRequest) value(ctx context.Context, device string, fu
 		if err != nil {
 			return nil, err
 		}
-		_, body, err := signDeviceConfigView(DeviceViewEnvelope{Schema: 3, NetworkID: request.input.projection.NetworkID, GenesisDigest: request.config.GenesisID,
+		envelope, body, err := signDeviceConfigView(DeviceViewEnvelope{Schema: 3, NetworkID: request.input.projection.NetworkID, GenesisDigest: request.config.GenesisID,
 			IssuerControlID: request.member.ControlID, IssuerKeyID: keyID, ControlProof: request.input.proof, FactFrontier: request.input.projection.Frontier}, view, request.key)
+		if err != nil {
+			return nil, err
+		}
+		configDigest, err := DeviceConfigurationDigest(envelope)
 		if err != nil {
 			return nil, err
 		}
@@ -403,7 +408,7 @@ func (request *deviceConfigRequest) value(ctx context.Context, device string, fu
 		// The full response now contains these canonical View bytes. Do not keep
 		// a second byte copy in the LRU; readers holding the earlier immutable
 		// View output remain unaffected by this replacement.
-		return &deviceConfigValue{view: view.view, digest: view.digest, body: body}, nil
+		return &deviceConfigValue{view: view.view, digest: view.digest, body: body, configDigest: configDigest}, nil
 	})
 	if err != nil {
 		return nil, err

@@ -846,7 +846,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 	}()
 	offerLatest(refreshRequests, struct{}{})
-	offerLatest(linkRequests, struct{}{})
+	if hasAccess {
+		offerLatest(linkRequests, struct{}{})
+	}
 	lastPreference := clientmodel.Preference{}
 	update := func(periodic bool) error {
 		// Frontier/proof progress with the same View is durable authentication
@@ -1046,7 +1048,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return errCertifiedViewChanged
 		}
 		offerLatest(refreshRequests, struct{}{})
-		offerLatest(linkRequests, struct{}{})
+		if hasAccess {
+			offerLatest(linkRequests, struct{}{})
+		}
 		resolved, err := resolveWireGuardEndpoints(ctx, desiredWG, wg, lkg.View.DNSServers, nil)
 		if err != nil {
 			if ctx.Err() != nil {

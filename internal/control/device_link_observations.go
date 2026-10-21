@@ -231,5 +231,11 @@ func (server *Server) deviceLinkObservations(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "link observations unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeCanonical(w, http.StatusOK, result)
+	body, err := CanonicalEncode(result)
+	if err != nil {
+		http.Error(w, "canonical response unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeReportBody(w, r, body)
 }

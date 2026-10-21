@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"sync"
@@ -114,6 +115,21 @@ func TestDeviceConfigurationReusesCanonicalOutputAndAdvancesUnchangedView(t *tes
 		return value
 	}
 	first := read()
+	conditional := func(digest string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/device/config", nil)
+		r.Header.Set(DeviceConfigDigestHeader, digest)
+		r = r.WithContext(context.WithValue(r.Context(), tunnelIdentityKey{}, tunnelIdentity{Mode: "device", DeviceID: invite.DeviceID}))
+		w := httptest.NewRecorder()
+		server.DeviceHandler().ServeHTTP(w, r)
+		return w
+	}
+	confirmed := conditional(first.configDigest)
+	if confirmed.Code != http.StatusNoContent || confirmed.Body.Len() != 0 || confirmed.Header().Get(DeviceConfigDigestHeader) != first.configDigest || confirmed.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("unchanged certified configuration was not confirmed", confirmed.Code)
+	}
+	if conditional(ReleaseDigest([]byte("demo-other-config"))).Code != http.StatusOK {
+		t.Fatal("different configuration did not return its complete signed envelope")
+	}
 	if next := read(); next != first || !bytes.Equal(next.body, first.body) {
 		t.Fatal("unchanged authenticated inputs rebuilt the configuration")
 	}
@@ -160,6 +176,9 @@ func TestDeviceConfigurationReusesCanonicalOutputAndAdvancesUnchangedView(t *tes
 	if next == first || nextEnvelope.ViewDigest != firstEnvelope.ViewDigest || reflect.DeepEqual(nextEnvelope.FactFrontier, firstEnvelope.FactFrontier) || bytes.Equal(next.body, first.body) {
 		t.Fatal("unchanged execution View hid authentication progress")
 	}
+	if response := conditional(first.configDigest); response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), next.body) || first.configDigest == next.configDigest {
+		t.Fatal("unchanged View suppressed a new signed authentication frontier", response.Code)
+	}
 	a := server.Runtime.Authority
 	a.mu.Lock()
 	a.blocked = errors.New("demo blocked authority")
@@ -177,6 +196,9 @@ func TestDeviceConfigurationReusesCanonicalOutputAndAdvancesUnchangedView(t *tes
 	}
 	if _, err := server.deviceEnvelope(invite.DeviceID); err == nil {
 		t.Fatal("revocation returned an older cached configuration")
+	}
+	if response := conditional(next.configDigest); response.Code == http.StatusNoContent || response.Code == http.StatusOK {
+		t.Fatal("revoked device received an unchanged-configuration success")
 	}
 }
 

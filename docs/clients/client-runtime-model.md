@@ -914,6 +914,9 @@ LKG、信任绑定及 floor，再按新授权收口运行投影。宿主 preflig
 
 #### 新报告的观测投影
 
+Linux 仅在承担 access、实际执行候选选择时领取其他节点的 Link 观测；纯服务节点没有这个下游消费者，
+不周期领取全网范围的远端样本。它仍按原频率探测并报告自己发出的 Link，control 的成员报告同步及 Web 回读保持。
+
 Linux、Android 和 Windows 在现有采样缓存及当前授权范围内汇总所有候选，按现有规范排序；先检查完整
 Observation 集合，再复制 `observed_at <= reported_at < valid_until` 的项进入新报告。共用纯函数只消费
 显式报告毫秒时间，不读时钟、不修改输入或本地缓存，未选候选、有效失败与 unknown 均保留。

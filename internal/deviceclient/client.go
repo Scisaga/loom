@@ -57,6 +57,10 @@ func postCanonicalJSON(ctx context.Context, connection net.Conn, path string, bo
 		return 0, err
 	}
 	defer response.Body.Close()
+	return readCanonicalResponse(response, responseValue)
+}
+
+func readCanonicalResponse(response *http.Response, responseValue any) (int, error) {
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8<<20+1))
 	if err != nil {
 		return response.StatusCode, err
@@ -269,9 +273,34 @@ func EndpointRouteExclusions(ctx context.Context, endpoints []control.EndpointGe
 // Fetch verifies authentication without applying a runtime. SaveLKG is the
 // durable acceptance boundary; execution and probes happen only afterward.
 func Fetch(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
-	return requestDevice(ctx, store, store.LKG(), 2, deviceRequestTimeout, func(attempt context.Context, connection net.Conn) (control.DeviceViewEnvelope, error) {
+	previous := store.LKG()
+	if previous == nil {
+		return control.DeviceViewEnvelope{}, errors.New("device has no accepted View")
+	}
+	digest, err := control.DeviceConfigurationDigest(*previous)
+	if err != nil {
+		return control.DeviceViewEnvelope{}, err
+	}
+	return requestDevice(ctx, store, previous, 2, deviceRequestTimeout, func(attempt context.Context, connection net.Conn) (control.DeviceViewEnvelope, error) {
 		var envelope control.DeviceViewEnvelope
-		if _, err := postJSON(attempt, connection, "/device/config", struct{}{}, &envelope); err != nil {
+		request, err := http.NewRequestWithContext(attempt, http.MethodPost, "http://loom.private/device/config", strings.NewReader("{}"))
+		if err != nil {
+			return envelope, err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(control.DeviceConfigDigestHeader, digest)
+		response, err := tunnelHTTPClient(connection).Do(request)
+		if err != nil {
+			return envelope, err
+		}
+		defer response.Body.Close()
+		if response.StatusCode == http.StatusNoContent {
+			body, err := io.ReadAll(io.LimitReader(response.Body, 1))
+			if err != nil || len(body) != 0 || response.Header.Get(control.DeviceConfigDigestHeader) != digest {
+				return envelope, errors.New("unchanged device configuration was not confirmed")
+			}
+			envelope = *previous
+		} else if _, err := readCanonicalResponse(response, &envelope); err != nil {
 			return control.DeviceViewEnvelope{}, err
 		}
 		return envelope, validateFetchedView(store, envelope)
