@@ -27,6 +27,9 @@ type Runtime struct {
 	done      chan struct{}
 	wake      chan struct{}
 	once      sync.Once
+
+	reportTransferMu   sync.Mutex
+	reportTransferDone chan struct{}
 }
 
 func OpenRuntime(root string, channel *PrivateChannel) (*Runtime, error) {

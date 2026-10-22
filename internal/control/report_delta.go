@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"time"
 )
 
 const reportLeafHeight = 4
@@ -242,6 +243,38 @@ func (runtime *Runtime) peerReportJSON(ctx context.Context, member Member, metho
 	}
 	return DecodeCanonical(raw, result, ContractDecodeLimits{MaxBytes: limit, MaxDepth: 128, MaxItems: len(raw)})
 }
+
+// A notification says only that another pull ended. Committed originals remain
+// the source of truth. A slow member cannot serialize other members' transfers.
+func (runtime *Runtime) awaitReportTransfer(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	runtime.reportTransferMu.Lock()
+	done := runtime.reportTransferDone
+	if done == nil {
+		done = make(chan struct{})
+		runtime.reportTransferDone = done
+		runtime.reportTransferMu.Unlock()
+		return func() {
+			runtime.reportTransferMu.Lock()
+			runtime.reportTransferDone = nil
+			close(done)
+			runtime.reportTransferMu.Unlock()
+		}, nil
+	}
+	runtime.reportTransferMu.Unlock()
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-done:
+	case <-timer.C:
+	}
+	return func() {}, nil
+}
+
 func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) error {
 	if runtime.Reports == nil {
 		return errors.New("local report history unavailable")
@@ -372,7 +405,31 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 	if len(wanted) == 0 {
 		return nil
 	}
+	release, err := runtime.awaitReportTransfer(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	ordered := sortedReportIDs(wanted)
+	known, err := runtime.Reports.knownReports(ctx, ordered)
+	if err != nil {
+		return err
+	}
+	missing := make([]string, 0, len(ordered))
+	for _, id := range ordered {
+		if report, ok := known[id]; ok {
+			scope := wanted[id]
+			if report.NetworkID != projection.NetworkID || report.DeviceID != scope.DeviceID || reportRangeStart(report.ReportSequence) != scope.FirstSequence {
+				return errors.New("concurrently received report differs from peer leaf")
+			}
+			continue
+		}
+		missing = append(missing, id)
+	}
+	ordered = missing
+	if len(ordered) == 0 {
+		return nil
+	}
 	body, err := CanonicalEncode(reportBatchRequest{3, ordered})
 	if err != nil {
 		return err
