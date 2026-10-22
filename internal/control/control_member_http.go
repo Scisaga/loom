@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,6 +116,14 @@ func (server *Server) internalControlVote(w http.ResponseWriter, r *http.Request
 	}
 	writeCanonical(w, http.StatusOK, result)
 }
+func controlProofRepresentation(proof ControlProof) ([]byte, string, error) {
+	body, err := CanonicalEncode(proof)
+	if err != nil {
+		return nil, "", err
+	}
+	return body, fmt.Sprintf("\"sha256:%x\"", sha256.Sum256(body)), nil
+}
+
 func (server *Server) internalControlProof(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		http.Error(w, "member proof query is invalid", http.StatusBadRequest)
@@ -126,7 +135,20 @@ func (server *Server) internalControlProof(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "member proof unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		writeCanonical(w, http.StatusOK, proof)
+		body, etag, err := controlProofRepresentation(proof)
+		if err != nil {
+			http.Error(w, "member proof unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("ETag", etag)
+		if len(r.Header.Values("If-None-Match")) == 1 && r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, controlHTTPBodyLimit+1))

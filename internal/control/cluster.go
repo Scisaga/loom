@@ -471,6 +471,19 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	var knownProof []byte
+	var proofETag string
+	if proofOnly {
+		proof, err := runtime.Authority.ControlProof()
+		if err != nil {
+			return nil, err
+		}
+		knownProof, proofETag, err = controlProofRepresentation(proof)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("If-None-Match", proofETag)
+	}
 	if path == "/internal/report-ranges" || path == "/internal/report-ids" || path == "/internal/reports" {
 		request.Header.Set("Accept-Encoding", "gzip")
 	}
@@ -488,6 +501,13 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 		if err := runtime.Channel.relayTargetTLS(member.NodeID, controlALPN, proofOnly).VerifyConnection(*response.TLS); err != nil {
 			return nil, err
 		}
+	}
+	if proofOnly && response.StatusCode == http.StatusNotModified {
+		body, err := readPeerResponseBody(response, 1)
+		if err != nil || len(body) != 0 || len(response.Header.Values("ETag")) != 1 || response.Header.Get("ETag") != proofETag {
+			return nil, errors.New("unchanged member proof was not confirmed")
+		}
+		return knownProof, nil
 	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("private member request failed: HTTP %d", response.StatusCode)

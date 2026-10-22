@@ -417,6 +417,14 @@ successors 按前驱顺序排列，空链唯一值为 `[]`，不是省略或 nul
 端到端 TLS 通道发送，prepare 的 proposer 必须是该认证成员；vote 的当前轮 proposer 同样核对。
 这些是操作参数与原证据的交付，不持久化请求包装或新状态。
 
+`GET /internal/control-proof` 可用强 ETag 比较完整规范 `ControlProof` 字节：
+`ETag` 恰为双引号包围的 `sha256:<规范原件摘要>`。请求的单个 `If-None-Match` 与服务端当前
+原件完全一致时返回无正文的 304 并回传同一 ETag；其余读取返回原 200 正文。客户端只从本机
+Authority 已验证的完整证明生成条件值，并在本次请求内保留对应原字节；只有当前成员 TLS
+检查通过、304 无正文且回传的单个强 ETag 完全相等，才能把本次已知原件交给原证明验证链。
+没有确认、确认不匹配及其他入口的 304 均拒绝。证明变化、成员失格和通知丢失仍走原完整证明
+验收与停止链，不降低检查频率，不增加远端证明缓存、持久游标或第二份成员权威。
+
 上述消息没有省略的空集合；ControlConfig 的 join/invalidation 只在对应操作出现，其余操作出现即拒绝。
 genesis 拒绝 target_node_id、origin_promises、join 和 invalidation。delete 与 target_node_id 一起构成该
 节点的不可复活删除事实；不再增加第二份墓碑实体。add 的事务、公钥、目标及所引条件授权必须一致，新增 Member.public_key 等于 join.device_public_key；
