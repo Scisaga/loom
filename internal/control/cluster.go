@@ -265,8 +265,8 @@ func (runtime *Runtime) memberClients(member Member) (memberHTTPAttempt, error) 
 		client.CloseIdleConnections()
 		return memberHTTPAttempt{}, err
 	}
-	client.Transport.(*http.Transport).DisableKeepAlives = false
-	proof.Transport.(controlProofRoundTripper).transport.(*http.Transport).DisableKeepAlives = false
+	client.Transport.(*memberHTTPTransport).transport.DisableKeepAlives = false
+	proof.Transport.(controlProofRoundTripper).transport.(*memberHTTPTransport).transport.DisableKeepAlives = false
 	return memberHTTPAttempt{member: member, client: client, proof: proof}, nil
 }
 

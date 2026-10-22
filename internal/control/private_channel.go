@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -375,6 +376,26 @@ func (channel *PrivateChannel) peerClient(node string) (*http.Client, error) {
 	return channel.peerClientFor(node, false)
 }
 
+// A relay can survive a temporary direct outage. Its pool eventually retries
+// the current routes without shortening requests or rotating healthy direct TLS.
+type memberHTTPTransport struct {
+	transport  *http.Transport
+	now        func() time.Time
+	relayUntil atomic.Pointer[time.Time]
+}
+
+func (t *memberHTTPTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if expiry := t.relayUntil.Load(); expiry != nil && !t.now().Before(*expiry) && t.relayUntil.CompareAndSwap(expiry, nil) {
+		t.transport.CloseIdleConnections()
+	}
+	return t.transport.RoundTrip(r)
+}
+
+func (t *memberHTTPTransport) CloseIdleConnections() {
+	t.relayUntil.Store(nil)
+	t.transport.CloseIdleConnections()
+}
+
 type controlProofRoundTripper struct{ transport http.RoundTripper }
 
 func (t controlProofRoundTripper) CloseIdleConnections() {
@@ -396,12 +417,19 @@ func (channel *PrivateChannel) peerClientFor(node string, proofOnly bool) (*http
 	}
 	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, DisableKeepAlives: true, DisableCompression: true,
 		MaxIdleConns: 1, MaxIdleConnsPerHost: 1, MaxConnsPerHost: 1, IdleConnTimeout: 30 * time.Second}
+	owned := &memberHTTPTransport{transport: transport, now: time.Now}
 	transport.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return channel.dialMemberTLSFor(ctx, node, controlALPN, controlRelayALPN, 15*time.Second, proofOnly)
+		return channel.dialMemberTLSFor(ctx, node, controlALPN, controlRelayALPN, 15*time.Second, proofOnly, func(relayed bool) {
+			owned.relayUntil.Store(nil)
+			if relayed {
+				expiry := owned.now().Add(time.Minute)
+				owned.relayUntil.Store(&expiry)
+			}
+		})
 	}
-	client := &http.Client{Timeout: 15 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("member request redirect is forbidden") }}
+	client := &http.Client{Timeout: 15 * time.Second, Transport: owned, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("member request redirect is forbidden") }}
 	if proofOnly {
-		client.Transport = controlProofRoundTripper{transport}
+		client.Transport = controlProofRoundTripper{owned}
 	}
 	return client, nil
 }
@@ -495,10 +523,10 @@ func (address channelAddress) Network() string { return "loom-private" }
 func (address channelAddress) String() string  { return string(address) }
 
 func (channel *PrivateChannel) dialMemberTLS(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration) (net.Conn, error) {
-	return channel.dialMemberTLSFor(ctx, target, protocol, relayProtocol, timeout, false)
+	return channel.dialMemberTLSFor(ctx, target, protocol, relayProtocol, timeout, false, nil)
 }
 
-func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration, proofOnly bool) (net.Conn, error) {
+func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration, proofOnly bool, connected func(bool)) (net.Conn, error) {
 	if _, ok := channel.memberForNode(target); !ok {
 		return nil, errors.New("private control target is not a current member")
 	}
@@ -528,13 +556,14 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 	type result struct {
 		connection net.Conn
 		err        error
+		relayed    bool
 	}
 	results := make(chan result)
 	start := func(candidate route) {
 		go func(candidate route) {
 			connection, err := channel.dialMemberRoute(ctx, target, candidate.endpoint, protocol, relayProtocol, candidate.relayNode, proofOnly)
 			select {
-			case results <- result{connection, err}:
+			case results <- result{connection, err, candidate.relayNode != ""}:
 			case <-ctx.Done():
 				if connection != nil {
 					_ = connection.Close()
@@ -588,6 +617,9 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 		case result := <-results:
 			pending--
 			if result.err == nil {
+				if connected != nil {
+					connected(result.relayed)
+				}
 				return result.connection, nil
 			}
 			failures = append(failures, result.err)
