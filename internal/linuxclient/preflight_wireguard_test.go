@@ -47,6 +47,15 @@ func TestPreflightUsesCertifiedWGExecutionAddressWithoutChangingAuthority(t *tes
 	if !ok || len(endpoints) != 1 {
 		t.Fatal("preflight duplicated the shared WG endpoint")
 	}
+	endpoint := endpoints[0].(map[string]any)
+	name, _ := endpoint["name"].(string)
+	if !strings.HasPrefix(name, "loom-wg") || len(name) != 15 {
+		t.Fatal("preflight still uses the stable listener identity as a Linux interface name")
+	}
+	profile, _, err := projectWireGuard(view)
+	if err != nil || len(profile.WireGuard) == 0 || name != profile.WireGuard[0].Interface {
+		t.Fatal("preflight and runtime disagree on the projected interface name", err)
+	}
 	peers := endpoints[0].(map[string]any)["peers"].([]any)
 	resolved := false
 	for _, raw := range peers {

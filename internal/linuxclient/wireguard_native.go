@@ -159,7 +159,7 @@ func appendNativeReceivers(config string, view control.DeviceView, profile wireG
 			hostSources = append(hostSources, peer.AllowedIP)
 		}
 		if len(hostSources) > 0 {
-			name := resource.ListenerID
+			name := wireGuardInterface(view.NetworkID, resource.ID)
 			if transaction != nil {
 				for _, handle := range transaction.owned {
 					if handle.link.LinkID == resource.ID {

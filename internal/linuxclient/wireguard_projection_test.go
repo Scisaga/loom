@@ -3,11 +3,76 @@ package linuxclient
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"loom/internal/control"
 )
+
+func TestWireGuardHostNameDoesNotRewriteStableResourceIdentity(t *testing.T) {
+	view := sharedWireGuardView(t)
+	view.Resources[0].ListenerID = "demo-stable-listener-identity"
+	before, err := control.CanonicalEncode(view.Resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := projectWireGuard(view)
+	if err != nil || len(first.WireGuard) != 2 {
+		t.Fatal("stable listener identity was treated as a Linux interface name", err)
+	}
+	name := first.WireGuard[0].Interface
+	if len(name) != 15 || !strings.HasPrefix(name, "loom-wg") || name == view.Resources[0].ListenerID {
+		t.Fatal("shared WG did not receive a neutral Linux interface name")
+	}
+	for _, peer := range first.WireGuard {
+		if peer.Interface != name || peer.LinkID != view.Resources[0].ID {
+			t.Fatal("a peer changed the shared interface or resource identity")
+		}
+	}
+	after, _ := control.CanonicalEncode(view.Resources)
+	if !bytes.Equal(before, after) {
+		t.Fatal("host interface projection changed certified bytes")
+	}
+	links := []control.NetworkLink{}
+	for _, link := range view.Links {
+		if link.FromNodeID != "demo-peer-b" && link.ToNodeID != "demo-peer-b" {
+			links = append(links, link)
+		}
+	}
+	view.Links = links
+	next, _, err := projectWireGuard(view)
+	if err != nil || len(next.WireGuard) != 1 || next.WireGuard[0].Interface != name {
+		t.Fatal("removing a neighbor renamed the shared interface", err)
+	}
+	view.NetworkID = "demo-other-network"
+	other, _, err := projectWireGuard(view)
+	if err != nil || other.WireGuard[0].Interface == name {
+		t.Fatal("independent networks shared an interface name", err)
+	}
+}
+
+func TestWireGuardProjectedNameRefusesAnExistingInterface(t *testing.T) {
+	view := sharedWireGuardView(t)
+	profile, _, err := projectWireGuard(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, _, _, load, save := wireGuardFixture(t)
+	host := load()
+	host.Link = &ipLinkDocument{Index: 17, Name: profile.WireGuard[0].Interface, Alias: "demo-unrelated-owner"}
+	host.Link.Info.Kind = "tun"
+	save(host)
+	if _, err := prepareNativeWireGuard(view, profile, options); !errors.Is(err, ErrWireGuardOwnership) {
+		t.Fatal("projected name claimed an existing interface", err)
+	}
+	for _, call := range load().Calls {
+		if strings.Join(call, " ") != "ip -json -details link show" {
+			t.Fatal("interface name collision executed a host mutation")
+		}
+	}
+}
 
 func sharedWireGuardView(t *testing.T) control.DeviceView {
 	t.Helper()

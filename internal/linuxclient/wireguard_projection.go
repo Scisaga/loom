@@ -1,15 +1,22 @@
 package linuxclient
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net"
 	"net/netip"
 	"strconv"
-	"strings"
 
 	"loom/internal/control"
 )
+
+// Host interface names are execution projections, never resource or peer IDs.
+func wireGuardInterface(networkID, resourceID string) string {
+	digest := sha256.Sum256([]byte("loom-linux-wg-interface\x00" + networkID + "\x00" + resourceID))
+	return "loom-wg" + hex.EncodeToString(digest[:4])
+}
 
 func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardIdentity, error) {
 	result := wireGuardExecution{WireGuard: []wireGuardExecutionLink{}}
@@ -28,7 +35,7 @@ func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardId
 		}
 		localAddress, e1 := control.WGResourceAddress(local)
 		peerAddress, e2 := control.WGResourceAddress(peer)
-		if e1 != nil || e2 != nil || local.OwnerNodeID != view.DeviceID || len(local.ListenerID) > 15 || strings.ContainsAny(local.ListenerID, "/: ") {
+		if e1 != nil || e2 != nil || local.OwnerNodeID != view.DeviceID {
 			return result, nil, errors.New("WireGuard Link execution identities are invalid")
 		}
 		localKey, _ := base64.RawURLEncoding.DecodeString(*local.Authentication.PublicKey)
@@ -38,7 +45,7 @@ func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardId
 			return result, nil, errors.New("WireGuard resources do not share this node's fixed key reference")
 		}
 		identity.WGPublicKey = publicKey
-		value := wireGuardExecutionLink{LinkID: local.ID, Interface: local.ListenerID, LocalAddress: netip.PrefixFrom(localAddress, localAddress.BitLen()).String(), PeerID: peer.OwnerNodeID,
+		value := wireGuardExecutionLink{LinkID: local.ID, Interface: wireGuardInterface(view.NetworkID, local.ID), LocalAddress: netip.PrefixFrom(localAddress, localAddress.BitLen()).String(), PeerID: peer.OwnerNodeID,
 			PeerPublicKey: base64.StdEncoding.EncodeToString(peerKey), AllowedIP: netip.PrefixFrom(peerAddress, peerAddress.BitLen()).String(), Mode: "initiator", ListenPort: local.DialPort,
 			PersistentKeepalive: 25, Endpoint: net.JoinHostPort(peer.DialHost, strconv.Itoa(peer.DialPort))}
 		result.WireGuard = append(result.WireGuard, value)
