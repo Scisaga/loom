@@ -27,6 +27,7 @@ type Runtime struct {
 	done      chan struct{}
 	wake      chan struct{}
 	once      sync.Once
+	now       func() time.Time
 
 	reportTransferMu   sync.Mutex
 	reportTransferDone chan struct{}
@@ -142,18 +143,12 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 	defer close(runtime.done)
 	ctx, cancel := context.WithCancel(context.Background())
 	var workers sync.WaitGroup
-	type call struct {
-		member Member
-		cancel context.CancelFunc
-		done   chan struct{}
-		http   memberHTTPAttempt
-	}
-	inflight := map[string]*call{}
+	inflight := map[string]*memberCall{}
 	defer func() {
 		cancel()
 		workers.Wait()
 		for _, active := range inflight {
-			active.http.close()
+			active.close()
 		}
 	}()
 	for {
@@ -170,17 +165,28 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 			}
 		}
 		for id, active := range inflight {
+			member, present := members[id]
+			eligible := present && member == active.member
+			if !eligible {
+				active.stop()
+			}
 			select {
 			case <-active.done:
 				active.done = nil
+				active.finishAttempt(runtime, eligible)
 			default:
 			}
-			if member, present := members[id]; !present || member != active.member {
-				if active.cancel != nil {
-					active.cancel()
+			if !eligible {
+				checking := false
+				if active.direct != nil {
+					select {
+					case <-active.direct.done:
+					default:
+						checking = true
+					}
 				}
-				if active.done == nil {
-					active.http.close()
+				if active.done == nil && !checking {
+					active.close()
 					delete(inflight, id)
 				}
 			}
@@ -189,7 +195,7 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 		// A slow member must not gate the next attempt of an available member.
 		for _, member := range config.Members {
 			active := inflight[member.ControlID]
-			if _, eligible := members[member.ControlID]; !eligible || active != nil && active.done != nil {
+			if _, eligible := members[member.ControlID]; !eligible || active != nil && active.member != member {
 				continue
 			}
 			if active == nil {
@@ -198,19 +204,26 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 					log.Printf("private member transport unavailable: %v", err)
 					continue
 				}
-				active = &call{member: member, http: clients}
+				memberCtx, memberStop := context.WithCancel(ctx)
+				active = &memberCall{member: member, ctx: memberCtx, stop: memberStop, http: clients}
 				inflight[member.ControlID] = active
 			}
-			peerCtx, peerCancel := context.WithCancel(ctx)
-			active.cancel, active.done = peerCancel, make(chan struct{})
-			peerCtx = context.WithValue(peerCtx, memberHTTPAttemptKey{}, active.http)
+			active.checkDirect(runtime, &workers)
+			if active.done != nil {
+				continue
+			}
+			scope := active.attemptScope()
+			peerCtx, peerCancel := context.WithCancel(active.ctx)
+			active.done = make(chan struct{})
+			peerCtx = context.WithValue(peerCtx, memberHTTPAttemptKey{}, scope)
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
 				defer close(active.done)
 				defer peerCancel()
-				if err := runtime.reconcilePeerAttempt(peerCtx, member); err != nil && peerCtx.Err() == nil {
-					log.Printf("private control synchronization unavailable for member %s: %v", member.ControlID, err)
+				active.result = runtime.reconcilePeerAttempt(peerCtx, member)
+				if active.result != nil && peerCtx.Err() == nil {
+					log.Printf("private control synchronization unavailable for member %s: %v", member.ControlID, active.result)
 				}
 			}()
 		}
@@ -265,7 +278,7 @@ func (runtime *Runtime) memberClients(member Member) (memberHTTPAttempt, error) 
 		client.CloseIdleConnections()
 		return memberHTTPAttempt{}, err
 	}
-	client.Transport.(*memberHTTPTransport).transport.DisableKeepAlives = false
+	runtime.retainMemberClient(client)
 	proof.Transport.(controlProofRoundTripper).transport.(*memberHTTPTransport).transport.DisableKeepAlives = false
 	return memberHTTPAttempt{member: member, client: client, proof: proof}, nil
 }

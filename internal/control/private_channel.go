@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -376,25 +377,66 @@ func (channel *PrivateChannel) peerClient(node string) (*http.Client, error) {
 	return channel.peerClientFor(node, false)
 }
 
-// A relay can survive a temporary direct outage. Its pool eventually retries
-// the current routes without shortening requests or rotating healthy direct TLS.
+// A pool records only its current transport resource. The member runtime owns
+// recovery checks; connection age never retires a working relay.
 type memberHTTPTransport struct {
-	transport  *http.Transport
-	now        func() time.Time
-	relayUntil atomic.Pointer[time.Time]
+	transport      *http.Transport
+	now            func() time.Time
+	connectedAt    atomic.Pointer[time.Time]
+	relayed        atomic.Bool
+	preference     atomic.Int32
+	networkFailure atomic.Bool
 }
 
 func (t *memberHTTPTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if expiry := t.relayUntil.Load(); expiry != nil && !t.now().Before(*expiry) && t.relayUntil.CompareAndSwap(expiry, nil) {
-		t.transport.CloseIdleConnections()
+	response, err := t.transport.RoundTrip(r)
+	if err != nil {
+		t.noteNetworkFailure(r.Context(), err, true)
+	} else if response.Body != nil {
+		response.Body = memberResponseBody{ReadCloser: response.Body, failed: func(err error) { t.noteNetworkFailure(r.Context(), err, false) }}
 	}
-	return t.transport.RoundTrip(r)
+	return response, err
 }
 
 func (t *memberHTTPTransport) CloseIdleConnections() {
-	t.relayUntil.Store(nil)
+	t.connectedAt.Store(nil)
 	t.transport.CloseIdleConnections()
 }
+
+func (t *memberHTTPTransport) noteNetworkFailure(ctx context.Context, err error, headers bool) {
+	if err == nil || errors.Is(ctx.Err(), context.Canceled) || t.connectedAt.Load() == nil || t.relayed.Load() {
+		return
+	}
+	var networkError net.Error
+	failed := errors.As(err, &networkError) && networkError.Timeout() || errors.Is(err, io.ErrUnexpectedEOF) || headers && errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)
+	for _, cause := range []syscall.Errno{syscall.ECONNRESET, syscall.ECONNREFUSED, syscall.EPIPE, syscall.ETIMEDOUT, syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.ENETDOWN, syscall.ENETRESET} {
+		failed = failed || errors.Is(err, cause)
+	}
+	if failed {
+		t.networkFailure.Store(true)
+	}
+}
+
+type memberResponseBody struct {
+	io.ReadCloser
+	failed func(error)
+}
+
+func (body memberResponseBody) Read(p []byte) (int, error) {
+	n, err := body.ReadCloser.Read(p)
+	if err != nil && err != io.EOF {
+		body.failed(err)
+	}
+	return n, err
+}
+
+type memberDialPreference int32
+
+const (
+	memberPreferDirect memberDialPreference = iota
+	memberPreferRelay
+	memberDirectOnly
+)
 
 type controlProofRoundTripper struct{ transport http.RoundTripper }
 
@@ -412,19 +454,22 @@ func (t controlProofRoundTripper) RoundTrip(r *http.Request) (*http.Response, er
 }
 
 func (channel *PrivateChannel) peerClientFor(node string, proofOnly bool) (*http.Client, error) {
+	return channel.memberClient(node, proofOnly, memberPreferDirect)
+}
+
+func (channel *PrivateChannel) memberClient(node string, proofOnly bool, preference memberDialPreference) (*http.Client, error) {
 	if _, ok := channel.memberForNode(node); !ok {
 		return nil, errors.New("control HTTP target is not a configured member")
 	}
 	transport := &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, DisableKeepAlives: true, DisableCompression: true,
 		MaxIdleConns: 1, MaxIdleConnsPerHost: 1, MaxConnsPerHost: 1, IdleConnTimeout: 30 * time.Second}
 	owned := &memberHTTPTransport{transport: transport, now: time.Now}
+	owned.preference.Store(int32(preference))
 	transport.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return channel.dialMemberTLSFor(ctx, node, controlALPN, controlRelayALPN, 15*time.Second, proofOnly, func(relayed bool) {
-			owned.relayUntil.Store(nil)
-			if relayed {
-				expiry := owned.now().Add(time.Minute)
-				owned.relayUntil.Store(&expiry)
-			}
+		return channel.dialMemberTLSWithPreference(ctx, node, controlALPN, controlRelayALPN, 15*time.Second, proofOnly, memberDialPreference(owned.preference.Load()), func(relayed bool) {
+			owned.relayed.Store(relayed)
+			connected := owned.now()
+			owned.connectedAt.Store(&connected)
 		})
 	}
 	client := &http.Client{Timeout: 15 * time.Second, Transport: owned, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("member request redirect is forbidden") }}
@@ -527,6 +572,10 @@ func (channel *PrivateChannel) dialMemberTLS(ctx context.Context, target, protoc
 }
 
 func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration, proofOnly bool, connected func(bool)) (net.Conn, error) {
+	return channel.dialMemberTLSWithPreference(ctx, target, protocol, relayProtocol, timeout, proofOnly, memberPreferDirect, connected)
+}
+
+func (channel *PrivateChannel) dialMemberTLSWithPreference(ctx context.Context, target, protocol, relayProtocol string, timeout time.Duration, proofOnly bool, preference memberDialPreference, connected func(bool)) (net.Conn, error) {
 	if _, ok := channel.memberForNode(target); !ok {
 		return nil, errors.New("private control target is not a current member")
 	}
@@ -544,7 +593,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 		routes = append(routes, route{endpoint: endpoint})
 	}
 	for _, peer := range channel.config.Peers {
-		if peer.Node != target {
+		if peer.Node != target && preference != memberDirectOnly {
 			for _, endpoint := range peer.Addresses {
 				routes = append(routes, route{endpoint: endpoint, relayNode: peer.Node})
 			}
@@ -571,13 +620,17 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 			}
 		}(candidate)
 	}
-	// A fast authenticated direct route avoids paying for an extra relay hop
-	// throughout the retained member connection. Slow direct authentication
-	// cannot consume the whole request before independent relays get a chance.
+	// Initial establishment gives the preferred kind a bounded head start.
+	// Other routes retain an independent chance; the member runtime validates
+	// long-term direct preference while keeping a working relay available.
 	var waiting []route
 	pending := 0
 	for _, candidate := range routes {
-		if candidate.relayNode != "" {
+		deferred := candidate.relayNode != ""
+		if preference == memberPreferRelay {
+			deferred = !deferred
+		}
+		if deferred {
 			waiting = append(waiting, candidate)
 		} else {
 			start(candidate)
@@ -591,7 +644,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 		release = timer.C
 		defer timer.Stop()
 	}
-	startRelays := func() {
+	startDeferred := func() {
 		if timer != nil {
 			timer.Stop()
 		}
@@ -603,7 +656,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 		waiting = nil
 	}
 	if pending == 0 {
-		startRelays()
+		startDeferred()
 	}
 	var failures []error
 	for pending > 0 {
@@ -613,7 +666,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 		case <-channel.done:
 			return nil, net.ErrClosed
 		case <-release:
-			startRelays()
+			startDeferred()
 		case result := <-results:
 			pending--
 			if result.err == nil {
@@ -624,7 +677,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 			}
 			failures = append(failures, result.err)
 			if pending == 0 {
-				startRelays()
+				startDeferred()
 			}
 		}
 	}

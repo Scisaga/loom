@@ -230,37 +230,7 @@ func TestMemberSchedulingCancelsReplacedMembershipIdentity(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("member request did not start")
 			}
-			// Accept a real majority-signed successor, not a mocked projection.
-			s := successorFixture{base: f.genesis.Payload.(Genesis).ControlConfig, keys: f.keys, baseID: f.configID}
-			signers := []int{0, 2}
-			if operation == "rotate" {
-				signers[0] = 1
-			}
-			promises := []ControlPromise{s.promise(t, signers[0], 1, []ControlVoteHistoryItem{}), s.promise(t, signers[1], 1, []ControlVoteHistoryItem{})}
-			if operation == "rotate" {
-				for i, signer := range signers {
-					promises[i].Round.ProposerControlID = f.members[1].ControlID
-					promises[i].Signature, _ = signControlValue("loom-control-promise-v3\x00", unsignedControlPromise(promises[i]), f.keys[signer])
-				}
-			}
-			key, _ := KeyID(f.members[1].PublicKey)
-			next := ControlConfig{Schema: 3, NetworkID: s.base.NetworkID, PreviousConfigID: s.baseID, Operation: operation,
-				TargetNodeID: f.members[1].NodeID, Members: []Member{f.members[0], f.members[2]},
-				SealedKeys: []ControlSealedKey{{KeyID: key, TipMaterialID: emptyMaterialTip()}}, OriginPromises: promises}
-			if operation == "rotate" {
-				next.Members = append([]Member{}, f.members...)
-				next.Members[1].PublicKey = base64.RawURLEncoding.EncodeToString(testKey(t).Public().(ed25519.PublicKey))
-			}
-			cert := ControlCertificate{Config: next, Round: promises[0].Round, Promises: promises,
-				Votes: []ControlVote{s.vote(t, signers[0], 1, next), s.vote(t, signers[1], 1, next)}}
-			for i, signer := range signers {
-				cert.Votes[i].Round = cert.Round
-				cert.Votes[i].Signature, _ = signControlValue("loom-control-vote-v3\x00", unsignedControlVote(cert.Votes[i]), f.keys[signer])
-			}
-			body, _ := CanonicalEncode(cert)
-			if err := runtime.Authority.AcceptControlCertificate(context.Background(), body, runtime.Config); err != nil {
-				t.Fatal(err)
-			}
+			acceptSchedulingReplacement(t, runtime, f, operation)
 			ticks <- time.Now()
 			select {
 			case <-cancelled:
@@ -310,5 +280,39 @@ func TestMemberRequestRechecksCertificateLifetime(t *testing.T) {
 			t.Fatal("an earlier TLS handshake preserved an expired HTTP request identity")
 		}
 		certificate.NotAfter = now.Add(time.Hour)
+	}
+}
+
+func acceptSchedulingReplacement(t *testing.T, runtime *Runtime, f materialFixture, operation string) {
+	t.Helper()
+	s := successorFixture{base: f.genesis.Payload.(Genesis).ControlConfig, keys: f.keys, baseID: f.configID}
+	signers := []int{0, 2}
+	if operation == "rotate" {
+		signers[0] = 1
+	}
+	promises := []ControlPromise{s.promise(t, signers[0], 1, []ControlVoteHistoryItem{}), s.promise(t, signers[1], 1, []ControlVoteHistoryItem{})}
+	if operation == "rotate" {
+		for i, signer := range signers {
+			promises[i].Round.ProposerControlID = f.members[1].ControlID
+			promises[i].Signature, _ = signControlValue("loom-control-promise-v3\x00", unsignedControlPromise(promises[i]), f.keys[signer])
+		}
+	}
+	key, _ := KeyID(f.members[1].PublicKey)
+	next := ControlConfig{Schema: 3, NetworkID: s.base.NetworkID, PreviousConfigID: s.baseID, Operation: operation,
+		TargetNodeID: f.members[1].NodeID, Members: []Member{f.members[0], f.members[2]},
+		SealedKeys: []ControlSealedKey{{KeyID: key, TipMaterialID: emptyMaterialTip()}}, OriginPromises: promises}
+	if operation == "rotate" {
+		next.Members = append([]Member{}, f.members...)
+		next.Members[1].PublicKey = base64.RawURLEncoding.EncodeToString(testKey(t).Public().(ed25519.PublicKey))
+	}
+	cert := ControlCertificate{Config: next, Round: promises[0].Round, Promises: promises,
+		Votes: []ControlVote{s.vote(t, signers[0], 1, next), s.vote(t, signers[1], 1, next)}}
+	for i, signer := range signers {
+		cert.Votes[i].Round = cert.Round
+		cert.Votes[i].Signature, _ = signControlValue("loom-control-vote-v3\x00", unsignedControlVote(cert.Votes[i]), f.keys[signer])
+	}
+	body, _ := CanonicalEncode(cert)
+	if err := runtime.Authority.AcceptControlCertificate(context.Background(), body, runtime.Config); err != nil {
+		t.Fatal(err)
 	}
 }
