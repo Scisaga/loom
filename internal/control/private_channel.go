@@ -530,7 +530,7 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 		err        error
 	}
 	results := make(chan result)
-	for _, candidate := range routes {
+	start := func(candidate route) {
 		go func(candidate route) {
 			connection, err := channel.dialMemberRoute(ctx, target, candidate.endpoint, protocol, relayProtocol, candidate.relayNode, proofOnly)
 			select {
@@ -542,16 +542,58 @@ func (channel *PrivateChannel) dialMemberTLSFor(ctx context.Context, target, pro
 			}
 		}(candidate)
 	}
+	// A fast authenticated direct route avoids paying for an extra relay hop
+	// throughout the retained member connection. Slow direct authentication
+	// cannot consume the whole request before independent relays get a chance.
+	var waiting []route
+	pending := 0
+	for _, candidate := range routes {
+		if candidate.relayNode != "" {
+			waiting = append(waiting, candidate)
+		} else {
+			start(candidate)
+			pending++
+		}
+	}
+	var release <-chan time.Time
+	var timer *time.Timer
+	if pending > 0 && len(waiting) > 0 {
+		timer = time.NewTimer(150 * time.Millisecond)
+		release = timer.C
+		defer timer.Stop()
+	}
+	startRelays := func() {
+		if timer != nil {
+			timer.Stop()
+		}
+		release = nil
+		for _, candidate := range waiting {
+			start(candidate)
+			pending++
+		}
+		waiting = nil
+	}
+	if pending == 0 {
+		startRelays()
+	}
 	var failures []error
-	for range routes {
+	for pending > 0 {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-channel.done:
+			return nil, net.ErrClosed
+		case <-release:
+			startRelays()
 		case result := <-results:
+			pending--
 			if result.err == nil {
 				return result.connection, nil
 			}
 			failures = append(failures, result.err)
+			if pending == 0 {
+				startRelays()
+			}
 		}
 	}
 	return nil, errors.Join(failures...)
