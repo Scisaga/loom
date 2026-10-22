@@ -30,25 +30,34 @@ func TestMemberConnectionsReuseAcrossAttemptsAndClose(t *testing.T) {
 	ctx := context.WithValue(context.Background(), memberHTTPAttemptKey{}, clients)
 	var got []httptrace.GotConnInfo
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { got = append(got, info) }})
+	var retained []httptrace.GotConnInfo
 	for round := range 2 {
 		got = nil
 		if err := runtime.reconcilePeerAttempt(ctx, member); err != nil {
 			t.Fatal(err)
 		}
-		if len(got) < 2 || got[0].Reused != (round > 0) || got[1].Reused != (round > 0) || got[0].Conn == got[1].Conn {
-			t.Fatal("attempt did not retain separate proof and ordinary connections", round, got)
+		if len(got) < 1 || got[0].Reused != (round > 0) {
+			t.Fatal("attempt did not retain its ordinary connection", round, got)
 		}
-		for _, info := range got[2:] {
-			if !info.Reused || info.Conn != got[1].Conn {
+		ordinary := got[0]
+		for _, info := range got[1:] {
+			if !info.Reused || info.Conn != ordinary.Conn {
 				t.Fatal("ordinary requests did not share their own transport")
 			}
 		}
+		got = nil
+		if _, err := runtime.peerBody(ctx, member, http.MethodGet, "/internal/control-proof", nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Reused != (round > 0) || got[0].Conn == ordinary.Conn {
+			t.Fatal("proof did not retain its separate restricted transport", got)
+		}
+		retained = []httptrace.GotConnInfo{ordinary, got[0]}
 	}
 	request, _ := http.NewRequest(http.MethodGet, "https://control.loom/internal/frontier", nil)
 	if _, err := clients.proof.Do(request); err == nil {
 		t.Fatal("retained proof transport admitted a privileged request")
 	}
-	retained := append([]httptrace.GotConnInfo(nil), got[:2]...)
 	clients.close()
 	for _, info := range retained {
 		_ = info.Conn.SetReadDeadline(time.Now().Add(time.Second))

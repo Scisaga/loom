@@ -15,6 +15,10 @@ var errControlWithdrawalPending = errors.New("stopped retained signer requires a
 func (a *Authority) ControlProof() (ControlProof, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	return a.controlProofLocked()
+}
+
+func (a *Authority) controlProofLocked() (ControlProof, error) {
 	if a.blocked != nil {
 		return ControlProof{}, a.blocked
 	}

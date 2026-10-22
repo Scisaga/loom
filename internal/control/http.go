@@ -563,15 +563,6 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (server *Server) internalFrontier(w http.ResponseWriter, r *http.Request) {
-	body, err := CanonicalEncode(server.Runtime.Authority.Frontier())
-	if err != nil {
-		http.Error(w, "fact frontier unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(body)
-}
 func (server *Server) internalMaterialsAfter(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	if len(query) != 2 || len(query["key_id"]) != 1 || len(query["after"]) != 1 {

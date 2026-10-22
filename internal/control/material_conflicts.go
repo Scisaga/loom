@@ -23,6 +23,10 @@ func (a *Authority) materialConflictsAfter(after string) (materialConflicts, err
 	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	return a.materialConflictsAfterLocked(after)
+}
+
+func (a *Authority) materialConflictsAfterLocked(after string) (materialConflicts, error) {
 	type position struct {
 		key      string
 		sequence U64

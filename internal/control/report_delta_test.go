@@ -299,12 +299,12 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	capture.delay = 0
 	callsAfterBatch := capture.calls
 	connection := capture.connections["/internal/frontier"]
-	for _, path := range []string{"/internal/material-conflicts", "/internal/report-ranges", "/internal/report-ids", "/internal/reports"} {
+	for _, path := range []string{"/internal/report-ranges", "/internal/report-ids", "/internal/reports"} {
 		if connection == "" || capture.connections[path] != connection {
 			t.Error("ordinary requests in one member attempt rebuilt their TLS connection", path)
 		}
 	}
-	if capture.connections["/internal/control-proof"] == "" || capture.connections["/internal/control-proof"] == connection {
+	if capture.connections["/internal/control-proof"] != "" && capture.connections["/internal/control-proof"] == connection {
 		t.Error("proof-only connection was shared with ordinary requests")
 	}
 	capture.connections = nil

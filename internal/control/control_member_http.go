@@ -121,8 +121,10 @@ func controlProofRepresentation(proof ControlProof) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return body, fmt.Sprintf("\"sha256:%x\"", sha256.Sum256(body)), nil
+	return body, canonicalETag(body), nil
 }
+
+func canonicalETag(body []byte) string { return fmt.Sprintf("\"sha256:%x\"", sha256.Sum256(body)) }
 
 func (server *Server) internalControlProof(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {

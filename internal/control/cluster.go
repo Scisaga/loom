@@ -287,12 +287,17 @@ func validateRemoteFrontier(values []FactFrontier) error {
 	return nil
 }
 func (runtime *Runtime) reconcilePeer(ctx context.Context, member Member) error {
-	if err := runtime.reconcileControlProof(ctx, member); err != nil {
-		return err
-	}
-	var remote []FactFrontier
-	if err := runtime.peerJSON(ctx, member, http.MethodGet, "/internal/frontier", nil, &remote); err != nil {
-		return err
+	remote, confirmed, noConflicts, err := runtime.peerFrontier(ctx, member)
+	if err != nil || !confirmed {
+		// A denied ordinary read can be the only remaining withdrawal signal.
+		// Never consume the provisional frontier before the full proof path.
+		if err := runtime.reconcileControlProof(ctx, member); err != nil {
+			return err
+		}
+		remote, noConflicts = nil, false
+		if err := runtime.peerJSON(ctx, member, http.MethodGet, "/internal/frontier", nil, &remote); err != nil {
+			return err
+		}
 	}
 	if remote == nil {
 		return errors.New("peer frontier is missing")
@@ -300,8 +305,10 @@ func (runtime *Runtime) reconcilePeer(ctx context.Context, member Member) error 
 	if err := validateRemoteFrontier(remote); err != nil {
 		return err
 	}
-	if err := runtime.reconcileMaterialConflicts(ctx, member); err != nil {
-		return err
+	if !noConflicts {
+		if err := runtime.reconcileMaterialConflicts(ctx, member); err != nil {
+			return err
+		}
 	}
 	for _, tip := range remote {
 		local := frontierFor(runtime.Authority.Frontier(), tip.KeyID)
@@ -434,6 +441,47 @@ func (runtime *Runtime) peerJSON(ctx context.Context, member Member, method, pat
 	return decoder.Decode(result)
 }
 func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, path string, body []byte) ([]byte, error) {
+	var knownProof []byte
+	var proofETag string
+	header := http.Header{}
+	proofOnly := method == http.MethodGet && path == "/internal/control-proof"
+	if proofOnly {
+		proof, err := runtime.Authority.ControlProof()
+		if err != nil {
+			return nil, err
+		}
+		knownProof, proofETag, err = controlProofRepresentation(proof)
+		if err != nil {
+			return nil, err
+		}
+		header.Set("If-None-Match", proofETag)
+	}
+	return runtime.peerRead(ctx, member, method, path, body, header, func(response *http.Response) ([]byte, error) {
+		if proofOnly && response.StatusCode == http.StatusNotModified {
+			if !confirmedRepresentation(response, proofETag) {
+				return nil, errors.New("unchanged member proof was not confirmed")
+			}
+			return knownProof, nil
+		}
+		if response.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("private member request failed: HTTP %d", response.StatusCode)
+		}
+		limit := 64 << 20
+		if path == "/internal/reports" {
+			limit = reportBatchBytes
+		}
+		return readPeerResponseBody(response, limit)
+	})
+}
+
+func confirmedRepresentation(response *http.Response, etag string) bool {
+	body, err := readPeerResponseBody(response, 1)
+	return err == nil && len(body) == 0 && len(response.Header.Values("ETag")) == 1 && response.Header.Get("ETag") == etag
+}
+
+// The callback consumes the response while its body and any request-owned
+// transport remain open. Every entry retains the same member/TLS checks.
+func (runtime *Runtime) peerRead(ctx context.Context, member Member, method, path string, body []byte, header http.Header, consume func(*http.Response) ([]byte, error)) ([]byte, error) {
 	if runtime.Channel == nil {
 		return nil, errors.New("private member transport is unavailable")
 	}
@@ -474,18 +522,8 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	var knownProof []byte
-	var proofETag string
-	if proofOnly {
-		proof, err := runtime.Authority.ControlProof()
-		if err != nil {
-			return nil, err
-		}
-		knownProof, proofETag, err = controlProofRepresentation(proof)
-		if err != nil {
-			return nil, err
-		}
-		request.Header.Set("If-None-Match", proofETag)
+	for name, values := range header {
+		request.Header[name] = append([]string(nil), values...)
 	}
 	if path == "/internal/report-ranges" || path == "/internal/report-ids" || path == "/internal/reports" {
 		request.Header.Set("Accept-Encoding", "gzip")
@@ -505,22 +543,7 @@ func (runtime *Runtime) peerBody(ctx context.Context, member Member, method, pat
 			return nil, err
 		}
 	}
-	if proofOnly && response.StatusCode == http.StatusNotModified {
-		body, err := readPeerResponseBody(response, 1)
-		if err != nil || len(body) != 0 || len(response.Header.Values("ETag")) != 1 || response.Header.Get("ETag") != proofETag {
-			return nil, errors.New("unchanged member proof was not confirmed")
-		}
-		return knownProof, nil
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("private member request failed: HTTP %d", response.StatusCode)
-	}
-	limit := 64 << 20
-	if path == "/internal/reports" {
-		limit = reportBatchBytes
-	}
-	return readPeerResponseBody(response, limit)
-
+	return consume(response)
 }
 
 // Limit the encoded stream as well as its decoded canonical body. HTTP's
