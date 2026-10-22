@@ -204,6 +204,50 @@ func (store *ObservationStore) reportTreeDigest(ctx context.Context, network str
 	})
 	return digest, err
 }
+
+// A remote's latest leaf can differ while its entire earlier history already
+// agrees. Reconstruct that remote prefix from committed local subtrees, its
+// advertised leaf and an empty later suffix. The leaf itself must still pass
+// normal ID and original-report reconciliation; no local index is changed.
+func (store *ObservationStore) reportPrefixMatches(ctx context.Context, network string, root, head reportRangeSummary) (bool, error) {
+	if ValidateID(network) != nil || root.Validate() != nil || head.Validate() != nil || root.Height != 64 || head.Height != reportLeafHeight || root.DeviceID != head.DeviceID {
+		return false, errors.New("invalid report prefix comparison")
+	}
+	matched := false
+	err := store.withDatabase(ctx, false, func(tx *bolt.Tx) error {
+		tree := tx.Bucket(reportIndexBucket).Bucket(reportTreeBucket)
+		if tree == nil || tree.Sequence() != 0 {
+			return errors.New("invalid report tree")
+		}
+		local, err := reportTreeGet(tree, network, root.scope())
+		if err != nil || local == root.Digest {
+			matched = err == nil
+			return err
+		}
+		scope, digest := head.scope(), head.Digest
+		for scope.Height < 64 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			parent := parentReportScope(scope)
+			halves := parent.halves()
+			if scope == halves[0] {
+				digest = reportParentDigest(digest, "")
+			} else {
+				left, err := reportTreeGet(tree, network, halves[0])
+				if err != nil {
+					return err
+				}
+				digest = reportParentDigest(left, digest)
+			}
+			scope = parent
+		}
+		matched = digest == root.Digest
+		return nil
+	})
+	return matched, err
+}
+
 func (store *ObservationStore) reportRanges(ctx context.Context, projection Projection) (reportRanges, error) {
 	result := reportRanges{3, projection.NetworkID, []reportRangeSummary{}, []reportRangeSummary{}}
 	prefix := append([]byte{64}, []byte(projection.NetworkID+"\x00")...)

@@ -256,7 +256,16 @@ func (runtime *Runtime) reconcileReports(ctx context.Context, member Member) err
 	}
 	// The latest leaves are independent of historical traversal, including a
 	// newly opened leaf. All other pending nodes remain disposable local hints.
-	pending := append(append([]reportRangeSummary{}, remote.Heads...), remote.Ranges...)
+	pending := append([]reportRangeSummary{}, remote.Heads...)
+	for i, root := range remote.Ranges {
+		matched, err := runtime.Reports.reportPrefixMatches(ctx, projection.NetworkID, root, remote.Heads[i])
+		if err != nil {
+			return err
+		}
+		if !matched {
+			pending = append(pending, root)
+		}
+	}
 	queued := map[reportScope]bool{}
 	visited := map[reportScope]bool{}
 	for _, item := range pending {

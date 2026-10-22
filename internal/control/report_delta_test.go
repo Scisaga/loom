@@ -409,6 +409,17 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	capture.mu.Unlock()
 	latest = reportFor(latest.ReportSequence+1, "running")
 	post(0, latest, http.StatusOK)
+	if err := syncPeer(0, 1); err != nil {
+		t.Fatal("reading a temporarily older member failed", err)
+	}
+	capture.mu.Lock()
+	behindBytes := capture.indexBytes - indexBefore
+	behindCalls := capture.indexCalls - callsBefore
+	if behindCalls != 2 || behindBytes > 4096 || capture.calls != calls {
+		t.Error("a local-only latest report retraversed shared history", behindBytes, behindCalls)
+	}
+	indexBefore, callsBefore = capture.indexBytes, capture.indexCalls
+	capture.mu.Unlock()
 	if err := syncPeer(1, 0); err != nil {
 		t.Fatal("new report failed after tree convergence", err)
 	}
@@ -417,7 +428,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	changedCalls := capture.indexCalls - callsBefore
 	changedBodies := capture.calls - calls
 	capture.mu.Unlock()
-	if changedBytes > 8192 || changedCalls > 8 || changedBodies != 1 {
+	if changedBytes > 4096 || changedCalls != 2 || changedBodies != 1 {
 		t.Error("one new report retransmitted history metadata", changedBytes, changedCalls, changedBodies)
 	}
 	if !bytes.Equal(readHistory(0), readHistory(1)) {

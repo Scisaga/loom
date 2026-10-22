@@ -1,6 +1,7 @@
 package control
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -625,8 +626,28 @@ func (server *Server) deviceMemberRead(next http.Handler) http.Handler {
 	})
 }
 func readDeviceJSON(w http.ResponseWriter, r *http.Request, value any) bool {
-	body, err := io.ReadAll(io.LimitReader(r.Body, controlHTTPBodyLimit+1))
-	if err != nil || DecodeCanonical(body, value, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20}) != nil {
+	if r.ContentLength > controlHTTPBodyLimit {
+		http.Error(w, "encoded device request exceeds boundary", http.StatusRequestEntityTooLarge)
+		return false
+	}
+	wire := &io.LimitedReader{R: r.Body, N: controlHTTPBodyLimit + 1}
+	var reader io.Reader = wire
+	switch r.Header.Get("Content-Encoding") {
+	case "", "identity":
+	case "gzip":
+		decoded, err := gzip.NewReader(wire)
+		if err != nil {
+			http.Error(w, "invalid encoded device request", http.StatusBadRequest)
+			return false
+		}
+		defer decoded.Close()
+		reader = decoded
+	default:
+		http.Error(w, "unsupported device request encoding", http.StatusUnsupportedMediaType)
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, controlHTTPBodyLimit+1))
+	if err != nil || wire.N == 0 || DecodeCanonical(body, value, ContractDecodeLimits{MaxBytes: controlHTTPBodyLimit, MaxDepth: 128, MaxItems: 1 << 20}) != nil {
 		http.Error(w, "invalid canonical device request", http.StatusBadRequest)
 		return false
 	}

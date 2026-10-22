@@ -2,6 +2,7 @@ package deviceclient
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -47,11 +48,18 @@ func postJSON(ctx context.Context, connection net.Conn, path string, requestValu
 }
 
 func postCanonicalJSON(ctx context.Context, connection net.Conn, path string, body []byte, responseValue any) (int, error) {
+	return postEncodedJSON(ctx, connection, path, body, "", responseValue)
+}
+
+func postEncodedJSON(ctx context.Context, connection net.Conn, path string, body []byte, encoding string, responseValue any) (int, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://loom.private"+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if encoding != "" {
+		request.Header.Set("Content-Encoding", encoding)
+	}
 	response, err := tunnelHTTPClient(connection).Do(request)
 	if err != nil {
 		return 0, err
@@ -384,9 +392,21 @@ func PostSignedReport(ctx context.Context, store IdentityStore, report control.D
 	if err != nil {
 		return err
 	}
+	encoding := ""
+	if len(body) >= 1024 {
+		var compressed bytes.Buffer
+		writer := gzip.NewWriter(&compressed)
+		if _, err := writer.Write(body); err != nil {
+			return err
+		}
+		if err := writer.Close(); err != nil {
+			return err
+		}
+		body, encoding = compressed.Bytes(), "gzip"
+	}
 	_, err = requestDevice(ctx, store, lkg, 2, deviceRequestTimeout, func(attempt context.Context, connection net.Conn) (struct{}, error) {
 		var response control.DeviceReportResponse
-		if _, err := postCanonicalJSON(attempt, connection, "/device/report", body, &response); err != nil {
+		if _, err := postEncodedJSON(attempt, connection, "/device/report", body, encoding, &response); err != nil {
 			return struct{}{}, err
 		}
 		if response.ReportSequence != report.ReportSequence {

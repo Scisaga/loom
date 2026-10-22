@@ -2,6 +2,7 @@ package deviceclient
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -195,11 +196,31 @@ func TestReportRetriesTheSameOriginalAndReservesOnce(t *testing.T) {
 	firstRequested := make(chan struct{})
 	var originalsMu sync.Mutex
 	var originals [][]byte
+	var encodedOriginals [][]byte
 	handler := func(primary bool) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			body, _ := io.ReadAll(r.Body)
+			encoded, _ := io.ReadAll(r.Body)
+			if r.Header.Get("Content-Encoding") != "gzip" {
+				t.Error("large signed report was not compressed")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			reader, err := gzip.NewReader(bytes.NewReader(encoded))
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			body, err := io.ReadAll(reader)
+			reader.Close()
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			originalsMu.Lock()
 			originals = append(originals, body)
+			encodedOriginals = append(encodedOriginals, encoded)
 			originalsMu.Unlock()
 			var report control.DeviceReport
 			if err := control.DecodeCanonical(body, &report, control.ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
@@ -229,6 +250,9 @@ func TestReportRetriesTheSameOriginalAndReservesOnce(t *testing.T) {
 		return fixture.dial(ctx, network, address)
 	})
 	report := control.DeviceReport{NetworkGeneration: "demo-network-generation", ReportedAt: time.Now().UnixMilli(), Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: control.RuntimeReadback{State: "stopped"}, Components: []control.ComponentReadback{}}
+	for i := 0; i < 20; i++ {
+		report.Observations = append(report.Observations, control.Observation{Level: "service", ServiceID: "demo-service", CandidateID: control.ReleaseDigest([]byte("demo-candidate")), SpecDigest: control.ReleaseDigest([]byte("demo-specification")), Target: fmt.Sprintf("https://demo-service.example/probe/%02d", i), Action: "https_request", NetworkGeneration: report.NetworkGeneration, Result: "available", ObservedAt: report.ReportedAt, ValidUntil: report.ReportedAt + time.Minute.Milliseconds()})
+	}
 	if err := Report(ctx, store, report); err != nil {
 		t.Fatal(err)
 	}
@@ -239,6 +263,9 @@ func TestReportRetriesTheSameOriginalAndReservesOnce(t *testing.T) {
 	defer originalsMu.Unlock()
 	if len(originals) != 2 || !bytes.Equal(originals[0], originals[1]) {
 		t.Fatal("candidate retry altered the signed original")
+	}
+	if len(encodedOriginals) != 2 || !bytes.Equal(encodedOriginals[0], encodedOriginals[1]) || len(encodedOriginals[0])*2 >= len(originals[0]) {
+		t.Fatal("retry recompressed different bytes or failed to reduce repeated report fields")
 	}
 }
 
