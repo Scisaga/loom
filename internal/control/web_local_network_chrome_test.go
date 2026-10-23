@@ -14,17 +14,19 @@ func TestWebChromeLocalNetworkWriteReadRestart(t *testing.T) {
 	reportLocalNetworks(t, server, key, 1, []string{"192.0.2.0/24"})
 	httpServer := httptest.NewServer(server.AdminHandler())
 	defer httpServer.Close()
-	browser := openCommandChrome(t, httpServer.URL+"/services?new=1&kind=local_network&gateway=demo-gateway")
+	browser := openCommandChrome(t, httpServer.URL+"/services?new=1&gateway=demo-gateway")
+	waitChromeEvaluation(t, browser, `document.querySelector('#service-form')?.elements.kind.value===''&&document.querySelector('#service-form').elements.id.disabled&&document.querySelector('#service-form').elements.name.disabled`)
+	chromeDo(t, browser, `(()=>{const f=document.querySelector('#service-form');f.elements.kind.value='local_network';f.elements.kind.dispatchEvent(new Event('change',{bubbles:true}));return true})()`)
 	waitChromeEvaluation(t, browser, `document.querySelector('#service-form')?.elements.local_prefix.options.length>1`)
 	chromeDo(t, browser, `(()=>{const f=document.querySelector('#service-form');f.elements.id.value='demo-browser-lan';f.elements.name.value='Demo office';f.elements.local_prefix.value='192.0.2.0/24';f.querySelector('[data-lan-allocate]').click();return true})()`)
 	waitChromeEvaluation(t, browser, `document.querySelector('[data-lan-mapping]').textContent.includes(' → 192.0.2.0/24')`)
 	chromeDo(t, browser, `document.querySelector('#service-form').requestSubmit();true`)
-	waitChromeEvaluation(t, browser, `location.search==='?service=demo-browser-lan'&&document.querySelector('#notice').textContent.includes('Accepted locally')`)
-	want := currentLocalNetwork(t, server, "demo-browser-lan")
-	if !want.LocalNetwork.Enabled {
-		t.Fatal("browser failed to persist enabled LAN")
+	waitChromeEvaluation(t, browser, `location.search==='?service=local-demo-browser-lan'&&document.querySelector('#notice').textContent.includes('Accepted locally')`)
+	want := currentLocalNetwork(t, server, "local-demo-browser-lan")
+	if !want.LocalNetwork.Enabled || want.Name != "Local-Demo office" {
+		t.Fatal("browser failed to persist the complete LAN identity and mapping")
 	}
-	chromeDo(t, browser, `document.querySelector('a[href="/policies?new=1&service=demo-browser-lan"]').click();true`)
+	chromeDo(t, browser, `document.querySelector('a[href="/policies?new=1&service=local-demo-browser-lan"]').click();true`)
 	waitChromeEvaluation(t, browser, `document.querySelector('#policy-form')&&document.querySelector('[data-policy-internet]').hidden`)
 	chromeDo(t, browser, `(()=>{const f=document.querySelector('#policy-form');f.elements.id.value='demo-browser-lan-policy';f.elements.name.value='Demo office access';f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, browser, `location.search==='?policy=demo-browser-lan-policy'&&document.querySelector('#notice').textContent.includes('Accepted locally')`)
@@ -48,8 +50,8 @@ func TestWebChromeLocalNetworkWriteReadRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Runtime.Close()
-	chromeDo(t, browser, `location.href='/services?service=demo-browser-lan';true`)
-	waitChromeEvaluation(t, browser, `document.querySelector('#service-form')?.elements.kind.value==='local_network'&&document.querySelector('[data-lan-mapping]').textContent.includes('192.0.2.0/24')`)
+	chromeDo(t, browser, `location.href='/services?service=local-demo-browser-lan';true`)
+	waitChromeEvaluation(t, browser, `document.querySelector('#service-form')?.elements.kind.value==='local_network'&&document.querySelector('#service-form').elements.name.value==='Demo office'&&document.querySelector('[data-lan-mapping]').textContent.includes('192.0.2.0/24')`)
 	chromeDo(t, browser, `(()=>{const f=document.querySelector('#service-form');f.elements.lan_enabled.checked=false;f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, browser, `document.querySelector('[data-lan-state]').textContent==='Disabled'`)
 	if currentLocalNetwork(t, server, want.ID).LocalNetwork.Enabled {

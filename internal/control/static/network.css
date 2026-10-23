@@ -380,10 +380,20 @@ main {max-width:1586px;padding:28px 24px 24px}
 .policy-tags:empty {display:none}
 .policy-picker>details {flex:1;min-width:140px}
 .policy-picker summary {display:flex;justify-content:space-between;color:var(--dim);font-size:12px;line-height:28px;cursor:pointer;list-style:none;white-space:nowrap}
-.policy-picker .node-picker-popup {left:0;right:0;top:100%;z-index:20;max-height:300px;overflow:auto}
-.policy-picker .node-picker-popup>label {display:flex;gap:10px;padding:12px;font-size:13px;cursor:pointer}
+.policy-picker:has(>details[open]) {flex-wrap:nowrap}
+.policy-picker:has(>details[open]) .policy-tags {flex-wrap:nowrap;max-height:28px;overflow-x:auto;scrollbar-width:none}
+.policy-picker:has(>details[open]) .selected-node-tag {flex:0 0 auto;white-space:nowrap}
+.policy-picker .node-picker-popup {left:0;right:0;top:100%;z-index:20;max-height:min(360px,50vh);overflow:auto;scrollbar-gutter:stable}
+.policy-picker .node-picker-popup>[data-policy-search] {position:sticky;top:0;z-index:1;background:white;box-shadow:0 -12px 0 12px white}
+.policy-picker .node-picker-popup>label {display:grid;grid-template-columns:16px minmax(0,1fr) minmax(110px,.85fr);align-items:center;gap:12px;padding:8px;font-size:13px;line-height:18px;cursor:pointer;border-radius:4px}
+.policy-picker .node-picker-popup>label:hover {background:#f4f7f5}
+.policy-picker .node-picker-popup>label:has(input:checked) {background:#edf6f1;box-shadow:inset 3px 0 #209468}
+.policy-picker .node-picker-popup>label:focus-within {outline:2px solid var(--green);outline-offset:-2px}
+.policy-picker .policy-option-identity,.policy-picker .policy-option-unavailable {min-width:0}
+.policy-picker .policy-option-identity>span,.policy-picker .policy-option-unavailable>span {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.policy-picker .policy-option-unavailable {text-align:right;color:var(--dim);font-size:12px}
 .policy-picker small {display:block;color:var(--dim)}
-.policy-picker input[type=checkbox] {min-height:0;accent-color:#209468}
+.policy-picker input[type=checkbox] {width:16px;height:16px;min-height:0;margin:0;accent-color:#209468}
 .selected-policy-summary {border-top:1px solid var(--line);padding:24px 0;margin-top:20px;font-size:14px}
 .selected-policy-summary p,.selected-policy-summary small {font-size:12px;color:var(--dim);line-height:1.7}
 .selected-policy-summary button {display:block;border:0;color:var(--ok);background:none;font-size:12px;padding:10px 0 0}
@@ -393,7 +403,9 @@ main {max-width:1586px;padding:28px 24px 24px}
 .policy-runtime .badge.available {color:var(--ok)}
 .policy-runtime .badge.unavailable {color:var(--bad)}
 .policy-runtime .badge.unknown {color:var(--dim)}
-.policy-picker .policy-runtime {margin-top:4px}
+.policy-picker .policy-runtime {min-width:0;margin:0;text-align:right;white-space:nowrap;overflow:hidden}
+.policy-picker .policy-runtime>.badge {font-size:12px;line-height:18px}
+.policy-picker .policy-option-identity>small,.policy-picker .policy-option-unavailable>small,.policy-picker .policy-runtime>small {margin-top:2px;font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .policy-empty {margin:20px 0 24px;font-size:12px}
 .invitation-settings {border-top:1px solid var(--line);margin-top:42px;padding:24px 0}
 .invitation-settings summary {font-size:14px;cursor:pointer}
@@ -756,6 +768,11 @@ main {max-width:1586px;padding:28px 24px 24px}
 .service-editor [name=id]:read-only,.probe-editor [name=id]:read-only {background:#f7f9f8}
 .service-identity {display:grid;grid-template-columns:minmax(160px,.4fr) minmax(0,1fr);gap:24px}
 .service-identity[data-existing-identity] {display:block}
+.service-prefixed-input {display:flex;align-items:center;min-width:0;border:1px solid #ccd4ce;border-radius:6px;overflow:hidden}
+.service-prefixed-input:focus-within {border-color:var(--green)}
+.service-prefixed-input>span {flex:0 0 auto;padding-left:12px;color:var(--dim);white-space:nowrap}
+.service-prefixed-input>input {flex:1;min-width:0;width:100%;border:0;border-radius:0;outline:none}
+.service-prefixed-input>span:not([hidden])+input {padding-left:0}
 .intent-section,.service-related,.service-probes,.policy-allowed {border-top:1px solid var(--line);padding:24px 0;margin:0}
 .intent-section h3,.service-destinations h3,.service-related h3,.service-probes h3,.policy-allowed h3 {font-size:16px}
 .intent-section>.sectionhead,.service-related>.sectionhead,.service-probes>.sectionhead {flex-wrap:wrap;margin-bottom:18px}
@@ -780,6 +797,9 @@ main {max-width:1586px;padding:28px 24px 24px}
 .intent-actions>[role=alert],.page-services .service-save>[role=alert] {flex:0 0 100%;overflow-wrap:anywhere;color:var(--bad)}
 .intent-actions>[role=alert]:empty,.page-services .service-save>[role=alert]:empty {display:none}
 .intent-actions .primary,.page-services .service-save .primary {background:#248f66;border-color:#248f66;min-width:180px;min-height:42px}
+.page-services #lan-save-hint:not([hidden]) {display:block;margin-top:6px;color:var(--fg)}
+.page-services [data-lan-allocate] {justify-self:start}
+.page-services #service-form [type=submit]:disabled {cursor:not-allowed}
 .intent-actions>a:not(.button),.intent-actions>button:not(.primary),.page-services .service-save>a:not(.button) {color:var(--dim)}
 .intent-danger {display:flex;align-items:baseline;flex-wrap:wrap;gap:16px;border-top:1px solid var(--line);padding:22px 0;margin-top:10px}
 .intent-danger .danger {padding:0;border:0;background:transparent;font-size:13px;color:var(--bad)}
