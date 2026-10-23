@@ -33,8 +33,14 @@ func TestChromeSSHTargetEditsRequireNewInspectionAndPreserveExistingIdentity(t *
 				return
 			}
 			inspection := InstallationReadback{Platform: "linux", Architecture: "amd64", CanInstall: true}
-			if checks.Add(1) > 1 {
+			count := checks.Add(1)
+			if count > 1 {
 				inspection.Identity = &DeviceIdentityReadback{NetworkID: claim.NetworkID, GenesisDigest: claim.GenesisDigest, DeviceID: invite.DeviceID, TransactionID: invite.ID, InviteMaterialID: id, ClaimRequestID: claim.RequestID, DevicePublicKey: claim.DevicePublicKey, Platform: "linux"}
+			}
+			if count > 2 {
+				inspection.Identity.NetworkID = ""
+				inspection.Identity.DeviceID = ""
+				inspection.Identity.InviteMaterialID = ""
 			}
 			writeJSON(w, 200, SSHInspection{Target: SSHTargetReadback{Alias: request.Target, ResolvedHost: "demo-target.example", ResolvedPort: 2222, ConfiguredHost: "192.0.2.20", ConfiguredPort: 2222, CoordinatesDiffer: true}, Installation: inspection})
 			return
@@ -67,4 +73,12 @@ func TestChromeSSHTargetEditsRequireNewInspectionAndPreserveExistingIdentity(t *
 	if chromeDo(t, debug, `document.querySelector('[data-ssh-check-result] a').getAttribute('href')`) != "/devices/"+invite.DeviceID {
 		t.Fatal("existing device management lost its stable identity")
 	}
+	// Before first binding, the protected identity has only its transaction/root.
+	// The UI must not invent another network or a device coordinate.
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.ssh_target.value='demo-one';f.elements.ssh_target.dispatchEvent(new Event('change',{bubbles:true}));f.querySelector('[data-ssh-check]').click();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('[data-ssh-check-result]').textContent.includes('Saved enrollment identity:')`)
+	if chromeDo(t, debug, `(()=>{const e=document.querySelector('[data-ssh-check-result]');return e.textContent.includes('Network binding has not completed')&&!e.textContent.includes('belongs to another network')&&!e.textContent.includes('undefined')&&!e.querySelector('a[href^="/devices/"]')})()`) != true || submissions.Load() != 0 || checks.Load() != 3 {
+		t.Fatal("pending inspection invented a network/device or replaced the saved identity")
+	}
+
 }
