@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,11 @@ func TestWebChromeDeviceSectionsAndPolicyTags(t *testing.T) {
 	policy.ID, policy.Name, policy.Action = "demo-replacement-policy", "Demo alternative", "allow"
 	service, _ := p.CurrentTarget("service", policy.ServiceID)
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-create-alternative", Operation: "policy.put", TargetKind: "policy", TargetID: policy.ID, Dependencies: service.MaterialIDs, Payload: policy})
+	for i := 1; i <= 6; i++ {
+		extra := policy
+		extra.ID, extra.Name = fmt.Sprintf("demo-extra-policy-%d", i), fmt.Sprintf("Demo extra policy %d", i)
+		submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-create-" + extra.ID, Operation: "policy.put", TargetKind: "policy", TargetID: extra.ID, Dependencies: service.MaterialIDs, Payload: extra})
+	}
 	before := server.Runtime.Authority.Frontier()
 	host := httptest.NewServer(server.AdminHandler())
 	defer host.Close()
@@ -45,7 +51,7 @@ func TestWebChromeDeviceSectionsAndPolicyTags(t *testing.T) {
 	if chromeDo(t, debug, `demoDraft.querySelectorAll('[name=policy_id]:checked').length===2&&demoDraft.querySelector('.policy-picker details').open&&demoDraft.querySelector('[data-selected-policy-summary]').textContent.includes('Direct')`) != true {
 		t.Fatal("same-Service policy collection was lost or continuous selection closed")
 	}
-	if chromeDo(t, debug, `(()=>{const picker=demoDraft.querySelector('.policy-picker'),all=picker.querySelector('[data-policy-select-all]'),search=picker.querySelector('[data-policy-search]');if(!all.disabled)return false;picker.querySelector('[data-policy-remove=demo-policy]').click();if(all.disabled)return false;const top=picker.querySelector('.node-picker-popup').getBoundingClientRect().top;all.click();return all.disabled&&picker.querySelector('[value=demo-policy]').checked&&picker.querySelector('[value=demo-replacement-policy]').checked&&picker.querySelector('details').open&&search.value==='Demo alternative'&&picker.querySelector('[value=demo-policy]').closest('label').hidden&&Math.abs(picker.querySelector('.node-picker-popup').getBoundingClientRect().top-top)<1&&demoDraft.querySelectorAll('.selected-node-tag').length===2&&demoDraft.querySelector('[data-device-selection-count]').textContent.includes('2 policies')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const picker=demoDraft.querySelector('.policy-picker'),all=picker.querySelector('[data-policy-select-all]'),search=picker.querySelector('[data-policy-search]'),details=picker.querySelector('details');if(all.disabled)return false;details.open=false;if(getComputedStyle(picker.querySelector('.policy-tags')).display==='none')return false;picker.querySelector('[data-policy-remove=demo-policy]').click();if(all.disabled)return false;details.open=true;const top=picker.querySelector('.node-picker-popup').getBoundingClientRect().top;all.click();return all.disabled&&all.textContent==='All 8 selected'&&picker.querySelector('[data-policy-picker-label]').textContent==='All 8 policies selected'&&getComputedStyle(picker.querySelector('.policy-tags')).display==='none'&&picker.querySelector('[value=demo-policy]').checked&&picker.querySelector('[value=demo-replacement-policy]').checked&&details.open&&search.value==='Demo alternative'&&picker.querySelector('[value=demo-policy]').closest('label').hidden&&Math.abs(picker.querySelector('.node-picker-popup').getBoundingClientRect().top-top)<1&&demoDraft.querySelectorAll('.selected-node-tag').length===8&&demoDraft.querySelector('[data-device-selection-count]').textContent.includes('8 policies')})()`) != true {
 		t.Fatal("select all lost the filtered-out policy, duplicated selection or moved the menu")
 	}
 	for _, width := range []int{390, 1440} {
@@ -64,14 +70,14 @@ func TestWebChromeDeviceSectionsAndPolicyTags(t *testing.T) {
 		t.Fatal("draft selection or browser navigation wrote authority or lost input")
 	}
 	chromeDo(t, debug, `(()=>{demoDraft.querySelector('[name=responsibility][value=access]').click();demoDraft.querySelector('[data-policy-select-all]').click();demoDraft.requestSubmit();return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')&&document.querySelectorAll('[data-policy-access-row]').length===2`)
-	want := []string{"demo-policy", "demo-replacement-policy"}
+	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')&&document.querySelectorAll('[data-policy-access-row]').length===8`)
+	want := []string{"demo-extra-policy-1", "demo-extra-policy-2", "demo-extra-policy-3", "demo-extra-policy-4", "demo-extra-policy-5", "demo-extra-policy-6", "demo-policy", "demo-replacement-policy"}
 	reopened, err := OpenAuthority(server.Runtime.Authority.root)
 	if err != nil || !reflect.DeepEqual(reopened.Snapshot().DeviceAuthorizations[0].PolicyIDs, want) {
 		t.Fatal("select all did not persist the exact canonical policy collection", err)
 	}
 	view, err := server.deviceEnvelope(invite.DeviceID)
-	if err != nil || len(view.View.Policies) != 2 {
+	if err != nil || len(view.View.Policies) != 8 {
 		t.Fatal("select all did not reach the authenticated device view", err)
 	}
 }
