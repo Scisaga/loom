@@ -384,7 +384,9 @@ main {max-width:1586px;padding:28px 24px 24px}
 .policy-picker:has(>details[open]) .policy-tags {flex-wrap:nowrap;max-height:28px;overflow-x:auto;scrollbar-width:none}
 .policy-picker:has(>details[open]) .selected-node-tag {flex:0 0 auto;white-space:nowrap}
 .policy-picker .node-picker-popup {left:0;right:0;top:100%;z-index:20;max-height:min(360px,50vh);overflow:auto;scrollbar-gutter:stable}
-.policy-picker .node-picker-popup>[data-policy-search] {position:sticky;top:0;z-index:1;background:white;box-shadow:0 -12px 0 12px white}
+.policy-picker-toolbar {display:flex;align-items:center;gap:8px;position:sticky;top:0;z-index:1;background:white;box-shadow:0 -12px 0 12px white;margin-bottom:8px}
+.policy-picker-toolbar>[data-policy-search] {flex:1;min-width:0;height:36px}
+.policy-picker-toolbar>button {flex:none;padding:8px 10px;font-size:12px;white-space:nowrap}
 .policy-picker .node-picker-popup>label {display:grid;grid-template-columns:16px minmax(0,1fr) minmax(110px,.85fr);align-items:center;gap:12px;padding:8px;font-size:13px;line-height:18px;cursor:pointer;border-radius:4px}
 .policy-picker .node-picker-popup>label:hover {background:#f4f7f5}
 .policy-picker .node-picker-popup>label:has(input:checked) {background:#edf6f1;box-shadow:inset 3px 0 #209468}

@@ -64,12 +64,13 @@ export function policyChoicesHTML(selected,policies,services,targets,context={})
   const service=services.find(s=>s.id===p.service_id),unavailable=p.unavailable||p.action!=='allow'||!service||targets.some(t=>((t.target_kind==='policy'&&t.target_id===p.id)||(t.target_kind==='service'&&t.target_id===p.service_id))&&(t.deleted||t.conflicted)),label=policyLabel(p,service),name=p.name||p.id,description=[service?.name||p.service_id,service?(service.kind==='local_network'?'Shared LAN':'Internet'):''].filter(Boolean).join(' · ');
   return `<label data-policy-option="${esc([label,service?.local_network?.gateway_node_id||'',p.id].join(' '))}" data-policy-label="${esc(label)}"><input type="checkbox" name="policy_id" value="${esc(p.id)}" ${selected.includes(p.id)?'checked':''} ${unavailable?'disabled data-policy-unavailable':''}><span class="policy-option-identity"><span title="${esc(name)}">${esc(name)}</span><small title="${esc(description)}">${esc(description)}</small></span>${unavailable?'<span class="policy-option-unavailable"><span title="Unavailable reference">Unavailable reference</span><small title="Remove the selected tag explicitly.">Remove the selected tag explicitly.</small></span>':policyRuntimeHTML(p,context,false,true)}</label>`;
  }).join('');
- return `<div class="policy-picker"><div class="policy-tags">${selected.map(id=>{const p=values.find(p=>p.id===id);return selectedTag(id,policyLabel(p,services.find(s=>s.id===p.service_id)))}).join('')}</div><details><summary>Find a policy… <span aria-hidden="true">⌄</span></summary><div class="node-picker-popup"><input type="search" data-policy-search aria-label="Find a policy or service" placeholder="Policy, service or gateway">${rows||'<p>No policies. Joining without business access is allowed.</p>'}</div></details></div><p class="tiny dim">Authorize the policies this device may choose. The client selects one policy for each service.</p><div data-selected-policy-summary></div>`;
+ return `<div class="policy-picker"><div class="policy-tags">${selected.map(id=>{const p=values.find(p=>p.id===id);return selectedTag(id,policyLabel(p,services.find(s=>s.id===p.service_id)))}).join('')}</div><details><summary>Find a policy… <span aria-hidden="true">⌄</span></summary><div class="node-picker-popup"><div class="policy-picker-toolbar"><input type="search" data-policy-search aria-label="Find a policy or service" placeholder="Policy, service or gateway"><button type="button" data-policy-select-all disabled>Select all policies</button></div>${rows||'<p>No policies. Joining without business access is allowed.</p>'}</div></details></div><p class="tiny dim">Authorize the policies this device may choose. The client selects one policy for each service.</p><div data-selected-policy-summary></div>`;
 }
 export function syncPolicyChoices(form,services,canCopy=false,context={}){
  const picker=form.querySelector('.policy-picker');if(!picker)return;
  context={...context,reviewedTargets:form.dataset.targets?JSON.parse(form.dataset.targets):undefined};
  const policies=JSON.parse(form.dataset.policies),selected=[...picker.querySelectorAll('[name=policy_id]:checked')];
+ picker.querySelector('[data-policy-select-all]').disabled=!picker.querySelector('[name=policy_id]:enabled:not(:checked)');
  picker.querySelector('.policy-tags').innerHTML=selected.map(input=>selectedTag(input.value,input.closest('label').dataset.policyLabel)).join('');
  form.querySelector('[data-selected-policy-summary]').innerHTML=selected.map(input=>{
   const p=policies.find(p=>p.id===input.value),s=services.find(s=>s.id===p?.service_id);
@@ -80,5 +81,16 @@ export function syncPolicyChoices(form,services,canCopy=false,context={}){
  const count=form.querySelector('[data-device-selection-count]');if(count){const roles=[...form.querySelectorAll('[name=responsibility]:checked')].length,serviceIDs=new Set(selected.map(input=>policies.find(p=>p.id===input.value)?.service_id).filter(Boolean));count.textContent=roles+' roles · '+selected.length+' policies · '+serviceIDs.size+' services'}
 }
 export function policyPickerInput(event){const input=event.target.closest('[data-policy-search]');if(!input)return;for(const row of input.closest('.policy-picker').querySelectorAll('[data-policy-option]'))row.hidden=!row.dataset.policyOption.toLowerCase().includes(input.value.toLowerCase())}
-export function policyPickerClick(event){const button=event.target.closest('[data-policy-remove]');if(!button)return false;const input=[...button.closest('.policy-picker').querySelectorAll('[name=policy_id]')].find(input=>input.value===button.dataset.policyRemove);input.checked=false;input.dispatchEvent(new Event('change',{bubbles:true}));return true}
+export function policyPickerClick(event){
+ const button=event.target.closest('[data-policy-remove],[data-policy-select-all]');if(!button)return false;
+ const picker=button.closest('.policy-picker');
+ if(button.hasAttribute('data-policy-select-all')){
+  const inputs=[...picker.querySelectorAll('[name=policy_id]:enabled:not(:checked)')];
+  for(const input of inputs)input.checked=true;
+  inputs[0]?.dispatchEvent(new Event('change',{bubbles:true}));
+ }else{
+  const input=[...picker.querySelectorAll('[name=policy_id]')].find(input=>input.value===button.dataset.policyRemove);input.checked=false;input.dispatchEvent(new Event('change',{bubbles:true}));
+ }
+ return true;
+}
 export function policyPickerKey(event){const picker=event.target.closest('.policy-picker');if(!picker)return;if(event.key==='Escape'){picker.querySelector('details').open=false;picker.querySelector('summary').focus();event.preventDefault()}else if(event.key==='Enter'&&event.target.matches('[data-policy-search]')){event.preventDefault();const input=[...picker.querySelectorAll('[data-policy-option]')].find(v=>{const input=v.querySelector('input');return !v.hidden&&!input.disabled&&!input.checked})?.querySelector('input');input?.click()}}

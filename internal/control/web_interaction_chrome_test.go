@@ -424,7 +424,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if !ok {
 		t.Fatal("browser form has no stable transaction ID")
 	}
-	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.device_id.value='demo-browser-device';f.elements.name.value='Demo browser device';f.elements.dns_servers.value='192.0.2.53';f.querySelector('[name=policy_id][value=demo-policy]').checked=true;f.requestSubmit();return true})()`)
+	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.device_id.value='demo-browser-device';f.elements.name.value='Demo browser device';f.elements.dns_servers.value='192.0.2.53';f.querySelector('.policy-picker details').open=true;f.querySelector('[data-policy-select-all]').click();f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#enrollment-status').textContent==='Demo response interrupted'`)
 	beforeRetry := server.Runtime.Authority.Frontier()
 	chromeDo(t, debug, `(()=>{window.demoOriginalNow=Date.now;Date.now=()=>demoOriginalNow()+5000;document.querySelector('#enrollment-form').requestSubmit();return true})()`)

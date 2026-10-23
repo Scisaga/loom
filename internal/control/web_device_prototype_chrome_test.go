@@ -45,14 +45,34 @@ func TestWebChromeDeviceSectionsAndPolicyTags(t *testing.T) {
 	if chromeDo(t, debug, `demoDraft.querySelectorAll('[name=policy_id]:checked').length===2&&demoDraft.querySelector('.policy-picker details').open&&demoDraft.querySelector('[data-selected-policy-summary]').textContent.includes('Direct')`) != true {
 		t.Fatal("same-Service policy collection was lost or continuous selection closed")
 	}
+	if chromeDo(t, debug, `(()=>{const picker=demoDraft.querySelector('.policy-picker'),all=picker.querySelector('[data-policy-select-all]'),search=picker.querySelector('[data-policy-search]');if(!all.disabled)return false;picker.querySelector('[data-policy-remove=demo-policy]').click();if(all.disabled)return false;const top=picker.querySelector('.node-picker-popup').getBoundingClientRect().top;all.click();return all.disabled&&picker.querySelector('[value=demo-policy]').checked&&picker.querySelector('[value=demo-replacement-policy]').checked&&picker.querySelector('details').open&&search.value==='Demo alternative'&&picker.querySelector('[value=demo-policy]').closest('label').hidden&&Math.abs(picker.querySelector('.node-picker-popup').getBoundingClientRect().top-top)<1&&demoDraft.querySelectorAll('.selected-node-tag').length===2&&demoDraft.querySelector('[data-device-selection-count]').textContent.includes('2 policies')})()`) != true {
+		t.Fatal("select all lost the filtered-out policy, duplicated selection or moved the menu")
+	}
+	for _, width := range []int{390, 1440} {
+		accessConfigurationChromeViewport(t, debug, width)
+		if chromeDo(t, debug, `(()=>{const toolbar=demoDraft.querySelector('.policy-picker-toolbar'),search=toolbar.querySelector('input'),button=toolbar.querySelector('button');return toolbar.scrollWidth<=toolbar.clientWidth+1&&search.getBoundingClientRect().right<=button.getBoundingClientRect().left&&button.getBoundingClientRect().right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth+1})()`) != true {
+			t.Fatalf("select all toolbar overflowed or overlapped at %d px", width)
+		}
+	}
 	chromeDo(t, debug, `(()=>{window.confirm=()=>false;demoDraft.querySelector('[name=responsibility][value=access]').click();return true})()`)
 	if chromeDo(t, debug, `demoDraft.querySelector('[name=responsibility][value=access]').checked&&demoDraft.querySelector('[value=demo-replacement-policy]').checked`) != true {
 		t.Fatal("removing access discarded policies without confirmation")
 	}
 	chromeDo(t, debug, `(()=>{window.confirm=()=>true;demoDraft.querySelector('[name=responsibility][value=access]').click();document.querySelector('[data-device-section=identity]').click();history.back();return true})()`)
 	waitChromeEvaluation(t, debug, `location.search==='?section=access'&&document.querySelector('[data-device-panel=access]')?.hidden===false`)
-	if chromeDo(t, debug, `demoDraft===document.querySelector('#device-policy-form')&&demoDraft.querySelectorAll('[name=policy_id]:checked').length===0&&demoDraft.querySelector('[data-device-access]').hidden`) != true || !reflect.DeepEqual(before, server.Runtime.Authority.Frontier()) {
+	if chromeDo(t, debug, `demoDraft===document.querySelector('#device-policy-form')&&demoDraft.querySelectorAll('[name=policy_id]:checked').length===0&&demoDraft.querySelector('[data-device-access]').hidden&&demoDraft.querySelector('[data-policy-select-all]').disabled`) != true || !reflect.DeepEqual(before, server.Runtime.Authority.Frontier()) {
 		t.Fatal("draft selection or browser navigation wrote authority or lost input")
+	}
+	chromeDo(t, debug, `(()=>{demoDraft.querySelector('[name=responsibility][value=access]').click();demoDraft.querySelector('[data-policy-select-all]').click();demoDraft.requestSubmit();return true})()`)
+	waitChromeEvaluation(t, debug, `document.querySelector('#notice').textContent.includes('Accepted locally')&&document.querySelectorAll('[data-policy-access-row]').length===2`)
+	want := []string{"demo-policy", "demo-replacement-policy"}
+	reopened, err := OpenAuthority(server.Runtime.Authority.root)
+	if err != nil || !reflect.DeepEqual(reopened.Snapshot().DeviceAuthorizations[0].PolicyIDs, want) {
+		t.Fatal("select all did not persist the exact canonical policy collection", err)
+	}
+	view, err := server.deviceEnvelope(invite.DeviceID)
+	if err != nil || len(view.View.Policies) != 2 {
+		t.Fatal("select all did not reach the authenticated device view", err)
 	}
 }
 
