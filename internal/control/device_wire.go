@@ -123,10 +123,11 @@ func SignEnrollmentResume(request EnrollmentResumeRequest, private ed25519.Priva
 }
 
 type EnrollmentResponse struct {
-	Schema        int                 `json:"schema"`
-	TransactionID string              `json:"transaction_id"`
-	State         string              `json:"state"`
-	DeviceView    *DeviceViewEnvelope `json:"device_view,omitempty"`
+	Schema          int                 `json:"schema"`
+	TransactionID   string              `json:"transaction_id"`
+	State           string              `json:"state"`
+	DeviceView      *DeviceViewEnvelope `json:"device_view,omitempty"`
+	EnrollmentProof *BootstrapInvite    `json:"enrollment_proof,omitempty"`
 }
 
 func (response EnrollmentResponse) Validate() error {
@@ -140,6 +141,11 @@ func (response EnrollmentResponse) Validate() error {
 	}
 	if (response.State == "completed") != (response.DeviceView != nil) {
 		return errors.New("enrollment response view does not match completion")
+	}
+	if response.EnrollmentProof != nil {
+		if response.State != "bound" && response.State != "completed" || response.EnrollmentProof.Validate() != nil || response.EnrollmentProof.Material.TargetID != response.TransactionID {
+			return errors.New("enrollment proof requires bound identity")
+		}
 	}
 	if response.DeviceView != nil {
 		return response.DeviceView.Validate()

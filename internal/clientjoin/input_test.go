@@ -58,7 +58,7 @@ func TestReadEquivalentJoinInputs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if invite.Material.Payload.(control.Invite).ID != transactionID {
+			if invite.TransactionID != transactionID {
 				t.Fatalf("invite=%+v", invite)
 			}
 		})
@@ -67,7 +67,7 @@ func TestReadEquivalentJoinInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invite.Material.Payload.(control.Invite).ID != transactionID {
+	if invite.TransactionID != transactionID {
 		t.Fatalf("clipboard invite=%+v", invite)
 	}
 }
@@ -155,49 +155,39 @@ func testJoinURI(t *testing.T) (string, string) {
 	return raw, invitation.ID
 }
 
-func TestInviteCompressedDeliveryRejectsAlternateOrTrailingStreams(t *testing.T) {
+func TestInviteReferenceRejectsCompressedAndNoncanonicalDelivery(t *testing.T) {
 	raw, _ := testJoinURI(t)
-	invite, err := control.DecodeInvite(raw)
+	reference, err := control.DecodeInvite(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := control.CanonicalEncode(invite)
+	body, err := control.CanonicalEncode(reference)
 	if err != nil {
 		t.Fatal(err)
 	}
-	compressed, _ := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(raw, "loom://enroll#"))
-	var alternate bytes.Buffer
-	w, _ := zlib.NewWriterLevel(&alternate, zlib.BestSpeed)
+	var compressed bytes.Buffer
+	w := zlib.NewWriter(&compressed)
 	_, _ = w.Write(body)
 	_ = w.Close()
-	var bomb bytes.Buffer
-	w = zlib.NewWriter(&bomb)
-	_, _ = w.Write(bytes.Repeat([]byte{'x'}, (8<<20)+1))
-	_ = w.Close()
-	for _, bad := range [][]byte{body, append(append([]byte{}, compressed...), 0), append(append([]byte{}, compressed...), compressed...), alternate.Bytes(), bomb.Bytes()} {
+	for _, bad := range [][]byte{append(append([]byte{}, body...), 0), append([]byte(" "), body...), compressed.Bytes(), bytes.Repeat([]byte{'x'}, 1025)} {
 		if _, err := control.DecodeInvite("loom://enroll#" + base64.RawURLEncoding.EncodeToString(bad)); err == nil {
-			t.Fatal("alternate, trailing, concatenated or oversized delivery accepted")
+			t.Fatal("compressed, trailing, noncanonical or oversized reference accepted")
 		}
 	}
 	for _, bad := range []string{" " + raw, raw + " ", "\t" + raw} {
 		if _, err := Read(bad, nil); err == nil {
-			t.Fatal("padded invitation URI accepted")
+			t.Fatal("padded URI accepted")
 		}
 	}
-	oldURI := "loom://enroll#" + base64.RawURLEncoding.EncodeToString(body)
-	if _, err := qrcodeencoder.Encode(oldURI, qrcodeencoder.Low, 1024); err == nil {
-		t.Fatal("fixture no longer demonstrates the full-proof QR capacity boundary")
-	}
 	if _, err := qrcodeencoder.Encode(raw, qrcodeencoder.Medium, -5); err != nil {
-		t.Fatalf("compressed complete two-member proof and admin leaf do not fit: %v", err)
-	}
-	t.Logf("demo complete proof: members=2 admin_leaf_DER=%d C=%d original_URI=%d zlib=%d compressed_URI=%d", len(mustDemoAdminDER(t, invite)), len(body), len(oldURI), len(compressed), len(raw))
-}
-func mustDemoAdminDER(t *testing.T, invite control.BootstrapInvite) []byte {
-	t.Helper()
-	body, err := base64.RawURLEncoding.DecodeString(invite.ControlProof.Genesis.Payload.(control.Genesis).AdminCertificates[0].CertificateDER)
-	if err != nil {
 		t.Fatal(err)
 	}
-	return body
+	if len(raw) > 1400 {
+		t.Fatal("short reference exceeds QR delivery budget")
+	}
+	for _, private := range []string{"policy_ids", "control_proof", "dependencies", "members", "Demo access", "demo-access"} {
+		if bytes.Contains(body, []byte(private)) {
+			t.Fatalf("private field %s in invitation", private)
+		}
+	}
 }

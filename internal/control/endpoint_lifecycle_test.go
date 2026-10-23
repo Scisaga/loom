@@ -77,7 +77,7 @@ func (fixture endpointFixture) invite(t *testing.T, suffix string) (BootstrapInv
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap, err := DecodeInvite(extra.Invite)
+	reference, err := DecodeInvite(extra.Invite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,13 +86,25 @@ func (fixture endpointFixture) invite(t *testing.T, suffix string) (BootstrapInv
 	if err != nil {
 		t.Fatal(err)
 	}
+	bootstrap, err := fixture.server.bootstrapInvite(reference.TransactionID)
+	if err != nil || reference.MatchesInvite(bootstrap) != nil {
+		t.Fatal("reference does not match persisted invite", err)
+	}
 	return bootstrap, claim, key
 }
 func (fixture endpointFixture) dialBootstrap(t *testing.T, invite BootstrapInvite) net.Conn {
 	t.Helper()
+	reference, err := ReferenceForInvite(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fixture.dialReference(t, reference)
+}
+func (fixture endpointFixture) dialReference(t *testing.T, reference InvitationReference) net.Conn {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	connection, err := DialEndpoint(ctx, fixture.endpoint, TunnelHello{Schema: 3, Mode: "bootstrap", EndpointID: fixture.endpoint.ID, Generation: fixture.endpoint.Generation, Invite: &invite}, nil)
+	connection, _, err := DialInvitation(ctx, reference)
 	if err != nil {
 		t.Fatal(err)
 	}

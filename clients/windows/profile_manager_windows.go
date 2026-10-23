@@ -41,7 +41,7 @@ type windowsProfileManager struct {
 	closing          bool
 	start            func(*portableGUI)
 	resume           func(*portableGUI) (windowsJoinResult, error)
-	joinDraft        func(*portableGUI, *control.BootstrapInvite) (windowsJoinResult, error)
+	joinDraft        func(*portableGUI, *control.InvitationReference) (windowsJoinResult, error)
 	setPreference    func(*portableGUI, clientmodel.Preference) error
 	draft            *windowsProfileDraft
 	draftVisible     bool
@@ -87,7 +87,7 @@ func newWindowsProfileManager(owner *portableGUI) (*windowsProfileManager, error
 		setPreference: func(child *portableGUI, preference clientmodel.Preference) error {
 			return child.setRoutePreference(preference)
 		},
-		joinDraft: func(child *portableGUI, invite *control.BootstrapInvite) (windowsJoinResult, error) {
+		joinDraft: func(child *portableGUI, invite *control.InvitationReference) (windowsJoinResult, error) {
 			return child.joinInput("", invite)
 		}}
 	for _, p := range store.Snapshot().Profiles {

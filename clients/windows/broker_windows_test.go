@@ -100,9 +100,12 @@ func brokerTestInvite(t *testing.T) control.BootstrapInvite {
 	return invite
 }
 
-func TestBrokerAcceptsCompleteBootstrapInviteDepth(t *testing.T) {
-	body, err := control.CanonicalEncode(brokerRequest{Operation: "join_profile", Name: "Demo Installed", Invite: func() *control.BootstrapInvite {
-		invite := brokerTestInvite(t)
+func TestBrokerAcceptsMinimalInvitationReference(t *testing.T) {
+	body, err := control.CanonicalEncode(brokerRequest{Operation: "join_profile", Name: "Demo Installed", Invite: func() *control.InvitationReference {
+		invite, err := control.ReferenceForInvite(brokerTestInvite(t))
+		if err != nil {
+			t.Fatal(err)
+		}
 		return &invite
 	}()})
 	if err != nil {
@@ -110,25 +113,28 @@ func TestBrokerAcceptsCompleteBootstrapInviteDepth(t *testing.T) {
 	}
 	request, err := decodeBrokerRequest(body)
 	if err != nil {
-		t.Fatalf("complete BootstrapInvite rejected by broker: %v", err)
+		t.Fatalf("minimal invitation reference rejected by broker: %v", err)
 	}
-	if request.Invite == nil || request.Invite.Material.Payload.(control.Invite).ID != "demo-transaction" {
-		t.Fatal("broker dropped the complete BootstrapInvite")
+	if request.Invite == nil || request.Invite.TransactionID != "demo-transaction" {
+		t.Fatal("broker dropped the minimal invitation reference")
 	}
 }
 
 func TestBrokerInviteDepthStillRejectsDuplicateAndOverdeepJSON(t *testing.T) {
-	invite := brokerTestInvite(t)
+	invite, err := control.ReferenceForInvite(brokerTestInvite(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	body, err := control.CanonicalEncode(brokerRequest{Operation: "join_profile", Name: "Demo Installed", Invite: &invite})
 	if err != nil {
 		t.Fatal(err)
 	}
-	duplicate := bytes.Replace(body, []byte(`"control_id":"demo-control-a"`), []byte(`"control_id":"demo-control-a","CONTROL_ID":"demo-other"`), 1)
+	duplicate := bytes.Replace(body, []byte(`"transaction_id":"demo-transaction"`), []byte(`"transaction_id":"demo-transaction","TRANSACTION_ID":"demo-other"`), 1)
 	if bytes.Equal(duplicate, body) {
 		t.Fatal("test did not locate the member field")
 	}
 	if _, err := decodeBrokerRequest(duplicate); err == nil {
-		t.Fatal("broker accepted a case-folded duplicate inside the complete invite")
+		t.Fatal("broker accepted a case-folded duplicate inside the invitation reference")
 	}
 
 	overdeep := json.NewDecoder(strings.NewReader(strings.Repeat(`{"demo":`, 13) + `1` + strings.Repeat(`}`, 13)))

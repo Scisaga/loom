@@ -20,7 +20,7 @@ import (
 	"github.com/skip2/go-qrcode"
 )
 
-func TestInviteQRCapacityPreservesCompleteDelivery(t *testing.T) {
+func TestInviteQRSizeDoesNotGrowWithPrivateInvitation(t *testing.T) {
 	fixture := newEndpointFixture(t)
 	server := fixture.server
 	handler := server.AdminHandler()
@@ -30,7 +30,7 @@ func TestInviteQRCapacityPreservesCompleteDelivery(t *testing.T) {
 		level     qrcode.RecoveryLevel
 		available bool
 	}{
-		{"normal", 0, qrcode.Medium, true}, {"large", 384, qrcode.Low, true}, {"overflow", 762, qrcode.Low, false},
+		{"normal", 0, qrcode.Medium, true}, {"large", 384, qrcode.Medium, true}, {"overflow", 762, qrcode.Medium, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			id := "demo-qr-" + test.name
@@ -45,6 +45,15 @@ func TestInviteQRCapacityPreservesCompleteDelivery(t *testing.T) {
 			_, extra, err := server.HandleOperation(context.Background(), Operation{Schema: 3, RequestID: id, Operation: "invite.issue", TargetKind: "invite", TargetID: id, Dependencies: target.MaterialIDs, Payload: invite})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(extra.Invite) > 1400 {
+				t.Fatal("delivery grew with private DNS inputs")
+			}
+			decoded, _ := base64.RawURLEncoding.DecodeString(extra.Invite[len(invitationPrefix):])
+			for _, private := range []string{"policy_ids", "dns_servers", "control_proof", "dependencies", "members", "Demo QR capacity"} {
+				if bytes.Contains(decoded, []byte(private)) {
+					t.Fatal("private invitation input leaked into delivery")
+				}
 			}
 			path := "/api/control/ui/invites/" + id
 			request := func(path string) *httptest.ResponseRecorder {
@@ -71,16 +80,7 @@ func TestInviteQRCapacityPreservesCompleteDelivery(t *testing.T) {
 				if image.Code != http.StatusOK || err != nil || size.Width != size.Height || size.Width != len(code.Bitmap())*5 {
 					t.Fatal("QR response lost its full modules or quiet zone", err)
 				}
-			} else {
-				if image.Code != http.StatusUnprocessableEntity || readback.Error == "" {
-					t.Fatal("oversized invitation lacks explicit capacity failure")
-				}
-				if os.Getenv("LOOM_WEB_CHROME_TEST") == "1" {
-					endpoint := httptest.NewServer(handler)
-					defer endpoint.Close()
-					debug := openCommandChrome(t, endpoint.URL+"/devices/invites/"+id)
-					waitChromeEvaluation(t, debug, `document.querySelector('#device-enrollment')?.textContent.includes('too large for one QR code')&&!document.querySelector('#device-enrollment img.qr')&&!!document.querySelector('#invite-uri')`)
-				}
+
 			}
 			if test.name == "large" && os.Getenv("LOOM_WEB_CHROME_TEST") == "1" {
 				endpoint := httptest.NewServer(handler)
@@ -128,12 +128,7 @@ func TestInviteQRCapacityPreservesCompleteDelivery(t *testing.T) {
 						t.Fatal("rendered QR changed signed invitation bytes")
 					}
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := debug.call(ctx, "Emulation.setDeviceMetricsOverride", map[string]any{"width": 320, "height": 900, "deviceScaleFactor": 1, "mobile": false}, nil); err != nil {
-					t.Fatal(err)
-				}
-				waitChromeEvaluation(t, debug, `getComputedStyle(document.querySelector('img.qr')).display==='none'&&!document.querySelector('.qr-size-note').hidden&&!!document.querySelector('.qr-frame a[target=_blank]')&&!!document.querySelector('#invite-uri')`)
+
 			}
 			file := request(path + "/download")
 			if file.Code != http.StatusOK || file.Body.String() != extra.Invite+"\n" {

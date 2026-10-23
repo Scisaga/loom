@@ -65,7 +65,7 @@ func cmdClientEnrollMinimal(args []string) error {
 	if err != nil {
 		return errors.New("enrollment invite is invalid")
 	}
-	store, err := deviceclient.Open(*statePath, invite)
+	store, err := deviceclient.OpenReference(*statePath, invite)
 	if err != nil {
 		return err
 	}
@@ -93,8 +93,7 @@ func cmdClientEnrollMinimal(args []string) error {
 			fmt.Printf("device enrollment completed: device=%s view=%s\n", response.DeviceView.View.DeviceID, response.DeviceView.ViewDigest)
 			return nil
 		}
-		fmt.Printf("device enrollment %s: transaction=%s device=%s\n", response.State,
-			response.TransactionID, invite.Material.Payload.(control.Invite).DeviceID)
+		fmt.Printf("device enrollment %s: transaction=%s\n", response.State, response.TransactionID)
 		claimed = true
 		if *wait == 0 || time.Now().Add(*retry).After(deadline) {
 			return nil

@@ -282,7 +282,7 @@ func (app *portableGUI) importJoinArtifact(source string) {
 	})
 }
 
-func (app *portableGUI) importJoinInvite(invite control.BootstrapInvite) {
+func (app *portableGUI) importJoinInvite(invite control.InvitationReference) {
 	if app.skin != nil && app.snapshot().profileDraft != nil {
 		app.acceptMisakaInvite(invite, nil)
 		return
@@ -303,7 +303,7 @@ func (app *portableGUI) importJoinInvite(invite control.BootstrapInvite) {
 	})
 }
 
-func (app *portableGUI) joinInput(source string, invite *control.BootstrapInvite) (windowsJoinResult, error) {
+func (app *portableGUI) joinInput(source string, invite *control.InvitationReference) (windowsJoinResult, error) {
 	// §13.5：网络请求期间也刷新等待时长；仅重绘，不增加请求或更改加入状态。
 	ctx, cancel := context.WithCancel(app.ctx)
 	done := make(chan struct{})

@@ -250,9 +250,10 @@ DNS overlay 只接受精确 `.loom` A/AAAA 映射，`control.loom` 由已认证 
 解析结果不能扩大 Service/Policy ACL；在同一网络代内 DNS 映射改变，依赖该名称的旧连接与业务观测
 失效并重新解析。Loom 名称的解析不能反过来依赖尚未建立的自身 tunnel，亦不得把 `.loom` 规则
 安装为开发宿主初始 namespace 的全局 DNS 接管。
-尚未取得 View 的首次 bootstrap 先验证完整 Invite，并使用其中已签名的解析器查询其固定签发者入口；
-同事务恢复复用原身份、request ID 和 Invite。具名入口缺解析器时拒绝，字面地址不查询 DNS；不从业务运行时
-反推 bootstrap 权威。取得 View 后改用当前 View 的解析器；两条连接共用保留平台 socket 保护的 underlay 适配。
+尚未取得 View 的首次 bootstrap 使用只含短凭据与固定 TLS 坐标的 InvitationReference；具名入口只解析
+这一 underlay host，精确核对名称、SPKI 和叶证书摘要。同事务恢复复用原身份、request ID 与引用；
+绑定后的原签名 Invite 仅经私有认证交付，验证后替换引用。取得 View 后改用当前 View 的认证解析器；
+两条连接共用平台 socket 保护，Android 活跃 VPN 还用所选 underlying Network 解析 bootstrap host。
 Android HostAdapter 在本机执行投影启用 libbox 的平台接口控制，使其 TCP/UDP underlay socket 实际调用
 `VpnService.protect`，否则隧道自身会重新进入 VPN。私有配置/报告使用的认证 Endpoint IP 还须以精确
 `/32` 或 `/128` 从 capture 中排除；这是从同一 View 单向派生的本机路由输入，不授予 Service 权限。
@@ -1191,7 +1192,7 @@ SYSTEM/Administrators DACL；Portable TUN 与 Portable Mixed 使用 current-user
 宿主 preflight、组件可用性及运行回读不决定认证 LKG 是否接受；应用失败遵循上述新认证配置规则，
 保留新 LKG 并收口已撤销授权，不把旧 envelope 恢复为运行权威。
 
-首次导入时先生成 Ed25519 身份并把 `v2_latch=true`、floor 0、capability 绑定和空 services Preference 原子
+首次导入时先生成 Ed25519 身份并把 `authenticated_latch=true`、空 high_water、短邀请引用和空 services Preference 原子
 保护，再经受限 bootstrap tunnel claim/resume。同一事务恢复复用同一 identity/request ID；不同邀请不得接管。
 完成后保存完整 LKG 并推进 floor。进程、SCM 服务或系统重启从同一 envelope 验证恢复；DPAPI 解密失败、schema
 未知、latch 缺失、未经证书限定的前沿回退、LKG 无效或 Preference 非规范时整个 profile 失败关闭，不回退 P-256、公开配置、

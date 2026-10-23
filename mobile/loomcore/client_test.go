@@ -299,12 +299,12 @@ func TestAndroidReportSignatureCoversPlatformNetworks(t *testing.T) {
 		}
 	}
 }
-func TestAndroidRejectsHistoricalStateAndUsesSingleCompressedInviteCodec(t *testing.T) {
+func TestAndroidPersistsOnlyReferenceBeforeFirstClaim(t *testing.T) {
 	if ValidateAndroidDeviceState([]byte(`{"schema":1,"floor":1}`)) == nil {
 		t.Fatal("historical state accepted")
 	}
 	state, _ := androidFixture(t, 7, false)
-	uri, err := control.EncodeInvite(state.Invite)
+	uri, err := control.EncodeInvite(*state.Invite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,8 +316,11 @@ func TestAndroidRejectsHistoricalStateAndUsesSingleCompressedInviteCodec(t *test
 	if err != nil || newState.LKG != nil || newState.Platform != "android" {
 		t.Fatalf("Android created another authority shape: %v", err)
 	}
-	if strings.Contains(string(body), `"capability"`) {
-		t.Fatal("old capability persisted")
+	if newState.Invite != nil || newState.InvitationReference == nil || !strings.Contains(string(body), `"capability"`) || strings.Contains(string(body), `"policy_ids"`) || strings.Contains(string(body), `"control_proof"`) {
+		t.Fatal("pending Android state did not preserve only its short credential")
+	}
+	if err := CheckAndroidDeviceStateAdvance(body, body); err != nil {
+		t.Fatal(err)
 	}
 }
 

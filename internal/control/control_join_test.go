@@ -32,7 +32,7 @@ func TestControlMemberRunsFromTLSClaimAndOriginalFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, body := endpointPost(t, f.dialBootstrap(t, bootstrap), "/enrollment/claim", claim)
+	status, body := endpointPost(t, f.dialReference(t, bootstrap), "/enrollment/claim", claim)
 	if status != http.StatusOK {
 		t.Fatalf("real TLS claim failed: %d %s", status, body)
 	}

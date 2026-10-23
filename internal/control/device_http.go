@@ -704,6 +704,15 @@ func (server *Server) finishEnrollment(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, "enrollment view unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if identity.Mode == "bootstrap" && (response.State == "bound" || response.State == "completed") {
+		proof, err := server.bootstrapInvite(request.TransactionID)
+		if err != nil {
+			http.Error(w, "enrollment proof unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		response.EnrollmentProof = &proof
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeCanonical(w, http.StatusOK, response)
 }
 func (server *Server) deviceConfig(w http.ResponseWriter, r *http.Request) {

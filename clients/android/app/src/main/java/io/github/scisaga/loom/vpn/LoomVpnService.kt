@@ -124,6 +124,15 @@ class LoomVpnService : VpnService(), PlatformInterface {
         runningService = this
         io.github.scisaga.loomcore.Loomcore.setAndroidSocketProtector(
             object : io.github.scisaga.loomcore.AndroidSocketProtector {
+                override fun resolveHost(host: String): String {
+                    val network = selectedUnderlyingNetwork ?: connectivity.allNetworks.firstOrNull {
+                        val capabilities = connectivity.getNetworkCapabilities(it)
+                        capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == true &&
+                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    } ?: error("No underlying network for enrollment DNS")
+                    return network.getAllByName(host).mapNotNull { it.hostAddress }.distinct().joinToString("\n")
+                }
+
                 override fun protectSocket(fd: Long): Boolean {
                     if (!protect(fd.toInt())) return false
                     val network = selectedUnderlyingNetwork ?: return true

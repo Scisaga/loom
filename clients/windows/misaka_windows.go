@@ -59,7 +59,7 @@ type misakaUI struct {
 	rename                                    bool
 	renameID                                  string
 	route                                     misakaRouteUI
-	draftInvite                               *control.BootstrapInvite
+	draftInvite                               *control.InvitationReference
 	draftError                                string
 	inviteLabel                               string
 	hoverCaption                              int
@@ -514,7 +514,7 @@ func (app *portableGUI) finishMisakaRename(save bool) bool {
 }
 
 func (app *portableGUI) chooseMisakaInvite(paste bool) {
-	var invite control.BootstrapInvite
+	var invite control.InvitationReference
 	var err error
 	if paste {
 		invite, err = readWindowsClipboardInvite(app.hwnd)
@@ -531,7 +531,7 @@ func (app *portableGUI) chooseMisakaInvite(paste bool) {
 	app.acceptMisakaInvite(invite, err)
 }
 
-func (app *portableGUI) acceptMisakaInvite(invite control.BootstrapInvite, err error) {
+func (app *portableGUI) acceptMisakaInvite(invite control.InvitationReference, err error) {
 	draft := app.snapshot().profileDraft
 	if draft == nil || draft.Busy || draft.Recoverable {
 		return

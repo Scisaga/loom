@@ -63,7 +63,7 @@ func TestAndroidObservationBridgesRequireAcceptedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	private, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
-	fresh, err := deviceclient.NewIdentityState(state.Invite, "android", ed25519.PrivateKey(private), state.ClaimRequestID)
+	fresh, err := deviceclient.NewIdentityState(*state.Invite, "android", ed25519.PrivateKey(private), state.ClaimRequestID)
 	if err != nil {
 		t.Fatal(err)
 	}

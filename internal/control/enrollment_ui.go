@@ -110,10 +110,7 @@ func (server *Server) inviteReadback(w http.ResponseWriter, r *http.Request) {
 		_, qrErr := inviteQRCode(encoded)
 		qrAvailable = qrErr == nil
 		if qrErr != nil {
-			deliveryError = "A readable QR could not be generated. Copy or download the complete invitation."
-			if errors.Is(qrErr, errInviteQRCapacity) {
-				deliveryError = "This invitation is too large for one QR code. Copy or download the complete invitation."
-			}
+			deliveryError = "The enrollment QR could not be rendered. Refresh the invitation to retry."
 		}
 	}
 	if encoded != "" && value.Medium == "sh" {
@@ -145,7 +142,7 @@ var errInviteQRCapacity = errors.New("invite exceeds single QR capacity")
 // QR sizes and correction levels are image encoding choices. Dense content can
 // resemble extra finder patterns, so capacity alone does not prove readability.
 // Choose deterministically using an independent client decoder, preserving every
-// byte of the same canonical Invite and its complete signed member proof.
+// byte of the same minimal invitation reference.
 func inviteQRCode(invite string) (*qrcode.QRCode, error) {
 	fits := false
 	for _, level := range []qrcode.RecoveryLevel{qrcode.Medium, qrcode.Low} {
@@ -183,7 +180,7 @@ func (server *Server) inviteQR(w http.ResponseWriter, r *http.Request) {
 	}
 	code, err := inviteQRCode(invite)
 	if err != nil {
-		http.Error(w, "a readable QR is unavailable; copy or download the complete invitation", http.StatusUnprocessableEntity)
+		http.Error(w, "enrollment QR rendering unavailable", http.StatusUnprocessableEntity)
 		return
 	}
 	png, err := code.PNG(-5)

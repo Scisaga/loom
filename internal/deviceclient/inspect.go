@@ -7,17 +7,20 @@ import "loom/internal/control"
 func (store *Store) IdentityReadback() (control.DeviceIdentityReadback, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	invite := store.state.Invite
-	id, err := control.MaterialID(invite.Material)
-	if err != nil {
-		return control.DeviceIdentityReadback{}, err
-	}
-	payload := invite.Material.Payload.(control.Invite)
-	value := control.DeviceIdentityReadback{
-		NetworkID: invite.NetworkID, GenesisDigest: invite.GenesisDigest,
-		DeviceID: payload.DeviceID, TransactionID: payload.ID, InviteMaterialID: id,
-		ClaimRequestID: store.state.ClaimRequestID, DevicePublicKey: store.state.PublicKey,
-		Platform: store.state.Platform, Joined: store.state.LKG != nil,
+	state := store.state
+	value := control.DeviceIdentityReadback{TransactionID: state.TransactionID(), ClaimRequestID: state.ClaimRequestID, DevicePublicKey: state.PublicKey, Platform: state.Platform, Joined: state.LKG != nil}
+	if state.Invite == nil {
+		value.GenesisDigest = state.InvitationReference.GenesisDigest
+	} else {
+		invite := state.Invite
+		id, err := control.MaterialID(invite.Material)
+		if err != nil {
+			return control.DeviceIdentityReadback{}, err
+		}
+		value.NetworkID = invite.NetworkID
+		value.GenesisDigest = invite.GenesisDigest
+		value.DeviceID = invite.Material.Payload.(control.Invite).DeviceID
+		value.InviteMaterialID = id
 	}
 	return value, value.Validate()
 }

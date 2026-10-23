@@ -180,7 +180,7 @@ func (server *Server) checkSSHIdentity(invite BootstrapInvite, inspection Instal
 		}
 	} else {
 		id, _ := MaterialID(invite.Material)
-		if identity.NetworkID != invite.NetworkID || identity.GenesisDigest != invite.GenesisDigest || identity.InviteMaterialID != id || identity.TransactionID != value.ID || identity.DeviceID != value.DeviceID || identity.Platform != "linux" {
+		if identity.GenesisDigest != invite.GenesisDigest || identity.TransactionID != value.ID || identity.Platform != "linux" || identity.NetworkID != "" && (identity.NetworkID != invite.NetworkID || identity.InviteMaterialID != id || identity.DeviceID != value.DeviceID) {
 			return errors.New("enrollment_identity_differs")
 		}
 		if bound && (identity.DevicePublicKey != binding.DevicePublicKey || identity.ClaimRequestID != binding.ClaimRequestID || identity.Platform != binding.Platform) {

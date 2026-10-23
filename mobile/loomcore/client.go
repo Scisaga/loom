@@ -54,8 +54,7 @@ func NewAndroidDeviceState(raw string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	value := invite.Material.Payload.(control.Invite)
-	if len(value.Responsibilities) != 1 || value.Responsibilities[0] != "access" {
+	if invite.Medium != "qr" {
 		return nil, errors.New("Android supports access invitations")
 	}
 	_, private, err := ed25519.GenerateKey(rand.Reader)
@@ -66,7 +65,7 @@ func NewAndroidDeviceState(raw string) ([]byte, error) {
 	if _, err := io.ReadFull(rand.Reader, request); err != nil {
 		return nil, err
 	}
-	state, err := deviceclient.NewIdentityState(invite, "android", private, hex.EncodeToString(request))
+	state, err := deviceclient.NewPendingIdentityState(invite, "android", private, hex.EncodeToString(request))
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +114,7 @@ func AndroidEnrollmentState(body []byte) ([]byte, error) {
 		NodeID                        string                 `json:"node_id"`
 		ViewDigest                    string                 `json:"view_digest"`
 		FactFrontier                  []control.FactFrontier `json:"fact_frontier"`
-	}{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), Schema: 3, TransactionID: state.Invite.Material.Payload.(control.Invite).ID, Claimed: state.LKG != nil, Ready: state.LKG != nil, FactFrontier: []control.FactFrontier{}}
+	}{PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), Schema: 3, TransactionID: state.TransactionID(), Claimed: state.LKG != nil, Ready: state.LKG != nil, FactFrontier: []control.FactFrontier{}}
 	if state.LKG != nil {
 		value.NodeID = state.LKG.View.DeviceID
 		value.ViewDigest = state.LKG.ViewDigest
@@ -262,9 +261,24 @@ func androidRuntimeConfig(view control.DeviceView, secret string, websites ...cl
 // the one protected identity record and commits the returned value before use.
 type androidIdentity struct{ state deviceclient.State }
 
-func (store *androidIdentity) Invite() control.BootstrapInvite { return store.state.Invite }
-func (store *androidIdentity) Platform() string                { return store.state.Platform }
-func (store *androidIdentity) PublicKey() string               { return store.state.PublicKey }
+func (store *androidIdentity) Invite() control.BootstrapInvite {
+	if store.state.Invite == nil {
+		return control.BootstrapInvite{}
+	}
+	return *store.state.Invite
+}
+func (store *androidIdentity) Reference() (control.InvitationReference, error) {
+	return store.state.Reference()
+}
+func (store *androidIdentity) SaveEnrollmentProof(proof control.BootstrapInvite) error {
+	next, err := deviceclient.AcceptEnrollmentProof(store.state, proof)
+	if err == nil {
+		store.state = next
+	}
+	return err
+}
+func (store *androidIdentity) Platform() string  { return store.state.Platform }
+func (store *androidIdentity) PublicKey() string { return store.state.PublicKey }
 func (store *androidIdentity) PrivateKey() ed25519.PrivateKey {
 	key, _ := base64.RawURLEncoding.DecodeString(store.state.PrivateKey)
 	return ed25519.PrivateKey(key)

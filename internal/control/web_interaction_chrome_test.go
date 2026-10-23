@@ -443,8 +443,9 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	if !ok {
 		t.Fatal("delivery view did not show its signed invitation")
 	}
-	bootstrap, err := DecodeInvite(encoded)
-	if err != nil || bootstrap.Material.TargetID != transactionID || bootstrap.Material.Payload.(Invite).DeviceID != "demo-browser-device" {
+	reference, err := DecodeInvite(encoded)
+	bootstrap, proofErr := server.bootstrapInvite(transactionID)
+	if err != nil || proofErr != nil || reference.TransactionID != transactionID || reference.MatchesInvite(bootstrap) != nil || bootstrap.Material.Payload.(Invite).DeviceID != "demo-browser-device" {
 		t.Fatal("device detail invitation does not match its persisted transaction", err)
 	}
 	if dns := bootstrap.Material.Payload.(Invite).DNSServers; len(dns) != 1 || dns[0] != "192.0.2.53" {

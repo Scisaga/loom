@@ -54,7 +54,7 @@ func ensureWindowsJoined(ctx context.Context, root string, protector clientsecre
 // the same protected Ed25519 identity/request ID across claim/resume retries
 // and uses the shared private device tunnel wire.
 func ensureWindowsJoinedInput(ctx context.Context, root string, protector clientsecret.Protector,
-	source string, provided *control.BootstrapInvite, progress windowsJoinProgress) (windowsJoinResult, error) {
+	source string, provided *control.InvitationReference, progress windowsJoinProgress) (windowsJoinResult, error) {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || protector == nil {
 		return windowsJoinResult{}, errors.New("Windows profile root or DPAPI protector is invalid")
 	}
@@ -70,7 +70,7 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
 		return windowsJoinResult{}, fmt.Errorf("读取 DPAPI profile: %w", loadErr)
 	}
-	var invite control.BootstrapInvite
+	var invite control.InvitationReference
 	if provided != nil {
 		invite = *provided
 	} else if hasInput {
@@ -80,13 +80,19 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 			return windowsJoinResult{}, err
 		}
 	} else if loadErr == nil {
-		invite = existing.Invite()
+		invite, loadErr = existing.Reference()
+		if loadErr != nil {
+			return windowsJoinResult{}, loadErr
+		}
 	} else {
 		return windowsJoinResult{}, errWindowsJoinInputRequired
 	}
 
+	if invite.Medium != "qr" {
+		return windowsJoinResult{}, errors.New("Windows 仅支持 access 扫码邀请")
+	}
 	progress.report("正在准备本机设备身份…")
-	store, err := deviceclient.OpenProtected(statePath, invite, protector)
+	store, err := deviceclient.OpenProtectedReference(statePath, invite, protector)
 	if err != nil {
 		return windowsJoinResult{}, fmt.Errorf("准备 DPAPI profile: %w", err)
 	}

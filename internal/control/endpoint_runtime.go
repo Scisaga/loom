@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -111,6 +112,9 @@ func endpointByteDigest(value []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 func validateEndpointCertificate(leaf *x509.Certificate, endpoint EndpointGeneration, now time.Time) error {
+	return validateInvitationCertificate(leaf, invitationEndpoint(endpoint), now)
+}
+func validateInvitationCertificate(leaf *x509.Certificate, endpoint InvitationEndpoint, now time.Time) error {
 	if leaf == nil || leaf.IsCA || now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) || leaf.VerifyHostname(endpoint.ServerName) != nil || endpointByteDigest(leaf.RawSubjectPublicKeyInfo) != endpoint.SPKISHA256 || endpointByteDigest(leaf.Raw) != endpoint.CertificateDigest {
 		return errors.New("endpoint TLS certificate does not match its signed identity, name, or validity")
 	}
@@ -145,31 +149,32 @@ func loadEndpointCertificate(endpoint EndpointGeneration, inputs EndpointLocalIn
 }
 
 type TunnelHello struct {
-	Schema     int              `json:"schema"`
-	Mode       string           `json:"mode"`
-	EndpointID string           `json:"endpoint_id"`
-	Generation U64              `json:"generation"`
-	Invite     *BootstrapInvite `json:"invite,omitempty"`
-	DeviceID   string           `json:"device_id,omitempty"`
+	Schema        int    `json:"schema"`
+	Mode          string `json:"mode"`
+	EndpointID    string `json:"endpoint_id,omitempty"`
+	Generation    U64    `json:"generation,omitempty"`
+	DeviceID      string `json:"device_id,omitempty"`
+	TransactionID string `json:"transaction_id,omitempty"`
+	Capability    string `json:"capability,omitempty"`
 }
 
 func (hello TunnelHello) Validate() error {
-	if hello.Schema != 3 || ValidateID(hello.EndpointID) != nil || hello.Generation == 0 {
+	if hello.Schema != 3 {
 		return errors.New("invalid tunnel identity")
 	}
 	switch hello.Mode {
 	case "bootstrap":
-		if hello.Invite == nil || hello.DeviceID != "" {
-			return errors.New("bootstrap tunnel requires one complete invite")
+		if hello.EndpointID != "" || hello.Generation != 0 || hello.DeviceID != "" || ValidateID(hello.TransactionID) != nil || !validInvitationCapability(hello.Capability) {
+			return errors.New("bootstrap tunnel requires a transaction credential")
 		}
-		return hello.Invite.Validate()
 	case "device":
-		if hello.Invite != nil || ValidateID(hello.DeviceID) != nil {
+		if ValidateID(hello.EndpointID) != nil || hello.Generation == 0 || ValidateID(hello.DeviceID) != nil || hello.TransactionID != "" || hello.Capability != "" {
 			return errors.New("device tunnel requires a device identity")
 		}
-		return nil
+	default:
+		return errors.New("invalid tunnel mode")
 	}
-	return errors.New("invalid tunnel mode")
+	return nil
 }
 
 type tunnelChallenge struct {
@@ -199,13 +204,17 @@ func (proof TunnelProof) Validate() error {
 }
 
 type tunnelReady struct {
-	Schema int    `json:"schema"`
-	Status string `json:"status"`
+	Schema          int              `json:"schema"`
+	Status          string           `json:"status"`
+	EnrollmentStart *EnrollmentStart `json:"enrollment_start,omitempty"`
 }
 
 func (ready tunnelReady) Validate() error {
 	if ready.Schema != 3 || ready.Status != "ready" {
 		return errors.New("invalid tunnel acceptance")
+	}
+	if ready.EnrollmentStart != nil {
+		return ready.EnrollmentStart.Validate()
 	}
 	return nil
 }
@@ -566,19 +575,31 @@ func (runtime *EndpointRuntime) authenticate(connection net.Conn, socket *endpoi
 	if readFrame(reader, &hello) != nil {
 		return
 	}
-	endpoint, found := runtime.socketGeneration(socket, binding, hello.EndpointID, hello.Generation, hello.Mode, false)
+	var start *EnrollmentStart
+	endpointID, generation := hello.EndpointID, hello.Generation
+	if hello.Mode == "bootstrap" {
+		material, err := runtime.authority.Invite(hello.TransactionID)
+		if err != nil {
+			return
+		}
+		original := material.Payload.(Invite)
+		endpointID, generation = original.Endpoint.ID, original.Endpoint.Generation
+	}
+	endpoint, found := runtime.socketGeneration(socket, binding, endpointID, generation, hello.Mode, false)
 	if !found {
 		return
 	}
 	projection := runtime.authority.Snapshot()
-	identity := tunnelIdentity{Mode: hello.Mode, EndpointID: hello.EndpointID, Generation: hello.Generation}
+	identity := tunnelIdentity{Mode: hello.Mode, EndpointID: endpoint.ID, Generation: endpoint.Generation}
 	verifiedPublicKey := ""
 	switch hello.Mode {
 	case "bootstrap":
-		if runtime.authorizeBootstrap(*hello.Invite, endpoint) != nil {
+		value, err := runtime.authorizeBootstrap(hello, endpoint)
+		if err != nil {
 			return
 		}
-		identity.TransactionID = hello.Invite.Material.TargetID
+		start = &value
+		identity.TransactionID = hello.TransactionID
 	case "device":
 		authorization, found := identityFor(projection, hello.DeviceID)
 		if !found {
@@ -615,7 +636,7 @@ func (runtime *EndpointRuntime) authenticate(connection net.Conn, socket *endpoi
 		return
 	}
 	connection = nil
-	if writeFrame(wrapped, tunnelReady{Schema: 3, Status: "ready"}) != nil {
+	if writeFrame(wrapped, tunnelReady{Schema: 3, Status: "ready", EnrollmentStart: start}) != nil {
 		_ = wrapped.Close()
 		return
 	}
@@ -692,35 +713,37 @@ func (runtime *EndpointRuntime) track(connection net.Conn, reader *bufio.Reader,
 	runtime.mu.Unlock()
 	return wrapped, nil
 }
-func (runtime *EndpointRuntime) authorizeBootstrap(invite BootstrapInvite, endpoint EndpointGeneration) error {
-	if invite.Validate() != nil {
-		return errors.New("invalid bootstrap invite")
+func (runtime *EndpointRuntime) authorizeBootstrap(hello TunnelHello, endpoint EndpointGeneration) (EnrollmentStart, error) {
+	fail := func() (EnrollmentStart, error) {
+		return EnrollmentStart{}, errors.New("bootstrap invitation is not usable")
 	}
-	payload := invite.Material.Payload.(Invite)
-	if payload.IssuerControlID != runtime.controlID || payload.Endpoint.ID != endpoint.ID || payload.Endpoint.Generation != endpoint.Generation {
-		return errors.New("invite is bound to another issuer or endpoint")
+	if hello.Validate() != nil || hello.Mode != "bootstrap" {
+		return fail()
 	}
-	stored, err := runtime.authority.Invite(payload.ID)
+	stored, err := runtime.authority.Invite(hello.TransactionID)
 	if err != nil {
-		return err
+		return fail()
 	}
-	want, _, err := EncodeMaterial(stored)
-	if err != nil {
-		return err
+	capability, err := invitationCapability(stored)
+	if err != nil || subtle.ConstantTimeCompare([]byte(capability), []byte(hello.Capability)) != 1 {
+		return fail()
 	}
-	given, _, err := EncodeMaterial(invite.Material)
-	if err != nil || !bytes.Equal(want, given) {
-		return errors.New("invite differs from the stored signed material")
+	payload := stored.Payload.(Invite)
+	if payload.IssuerControlID != runtime.controlID || payload.Endpoint.ID != endpoint.ID || payload.Endpoint.Generation != endpoint.Generation || !endpointOwnerActive(runtime.authority.Snapshot(), runtime.controlID) {
+		return fail()
 	}
 	status, err := runtime.authority.EnrollmentState(payload.ID)
+	if err != nil || status == "cancelled" || status == "expired" || status == "open" && runtime.now().UnixMilli() >= payload.ExpiresAt {
+		return fail()
+	}
+	id, err := MaterialID(stored)
 	if err != nil {
-		return err
+		return fail()
 	}
-	if status == "cancelled" || status == "expired" || status == "open" && runtime.now().UnixMilli() >= payload.ExpiresAt {
-		return errors.New("bootstrap invitation is no longer usable")
-	}
-	return nil
+	value := EnrollmentStart{Schema: 3, NetworkID: stored.NetworkID, GenesisDigest: payload.GenesisDigest, TransactionID: payload.ID, InviteMaterialID: id, Medium: payload.Medium}
+	return value, value.Validate()
 }
+
 func authorizationFor(projection Projection, id string) (DeviceAuthorization, bool) {
 	for _, authorization := range projection.DeviceAuthorizations {
 		if authorization.ID == id {
@@ -903,14 +926,23 @@ func endpointConnContext(ctx context.Context, connection net.Conn) context.Conte
 }
 
 func endpointTLSConfig(endpoint EndpointGeneration, protocol string) *tls.Config {
+	return invitationTLSConfig(invitationEndpoint(endpoint), protocol)
+}
+func invitationTLSConfig(endpoint InvitationEndpoint, protocol string) *tls.Config {
 	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, ServerName: endpoint.ServerName, NextProtos: []string{protocol}, InsecureSkipVerify: true, VerifyConnection: func(state tls.ConnectionState) error {
 		if state.NegotiatedProtocol != protocol || len(state.PeerCertificates) == 0 {
 			return errors.New("endpoint TLS protocol or certificate is missing")
 		}
-		return validateEndpointCertificate(state.PeerCertificates[0], endpoint, time.Now())
+		return validateInvitationCertificate(state.PeerCertificates[0], endpoint, time.Now())
 	}}
 }
 func connectEndpoint(ctx context.Context, endpoint EndpointGeneration, protocol string) (*tls.Conn, error) {
+	if err := endpoint.Validate(); err != nil {
+		return nil, err
+	}
+	return connectInvitationEndpoint(ctx, invitationEndpoint(endpoint), protocol)
+}
+func connectInvitationEndpoint(ctx context.Context, endpoint InvitationEndpoint, protocol string) (*tls.Conn, error) {
 	if err := endpoint.Validate(); err != nil {
 		return nil, err
 	}
@@ -918,7 +950,7 @@ func connectEndpoint(ctx context.Context, endpoint EndpointGeneration, protocol 
 	if err != nil {
 		return nil, err
 	}
-	connection := tls.Client(raw, endpointTLSConfig(endpoint, protocol))
+	connection := tls.Client(raw, invitationTLSConfig(endpoint, protocol))
 	if err := connection.HandshakeContext(ctx); err != nil {
 		_ = raw.Close()
 		return nil, err
@@ -966,7 +998,7 @@ func ProbeEndpoint(ctx context.Context, endpoint EndpointGeneration) error {
 	return nil
 }
 func DialEndpoint(ctx context.Context, endpoint EndpointGeneration, hello TunnelHello, private ed25519.PrivateKey) (net.Conn, error) {
-	if endpoint.State != "serving" || hello.EndpointID != endpoint.ID || hello.Generation != endpoint.Generation || !containsString(endpoint.Modes, hello.Mode) || hello.Validate() != nil {
+	if hello.Mode != "device" || endpoint.State != "serving" || hello.EndpointID != endpoint.ID || hello.Generation != endpoint.Generation || !containsString(endpoint.Modes, hello.Mode) || hello.Validate() != nil {
 		return nil, errors.New("endpoint generation does not authorize this tunnel")
 	}
 	connection, err := connectEndpoint(ctx, endpoint, tunnelALPN)
@@ -1009,10 +1041,55 @@ func DialEndpoint(ctx context.Context, endpoint EndpointGeneration, hello Tunnel
 	if err := readFrame(reader, &ready); err != nil {
 		return nil, err
 	}
+	if ready.EnrollmentStart != nil {
+		return nil, errors.New("device tunnel returned bootstrap data")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	_ = connection.SetDeadline(time.Time{})
 	failed = false
 	return &bufferedConnection{Conn: connection, reader: reader}, nil
+}
+
+// DialInvitation authenticates only the frozen invitation endpoint and opens a
+// claim/resume-only session. No internal authorization travels in its hello.
+func DialInvitation(ctx context.Context, reference InvitationReference) (net.Conn, EnrollmentStart, error) {
+	if err := reference.Validate(); err != nil {
+		return nil, EnrollmentStart{}, err
+	}
+	connection, err := connectInvitationEndpoint(ctx, reference.Endpoint, tunnelALPN)
+	if err != nil {
+		return nil, EnrollmentStart{}, err
+	}
+	failed := true
+	defer func() {
+		if failed {
+			_ = connection.Close()
+		}
+	}()
+	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	defer stop()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = connection.SetDeadline(deadline)
+	}
+	hello := TunnelHello{Schema: 3, Mode: "bootstrap", TransactionID: reference.TransactionID, Capability: reference.Capability}
+	if err := writeFrame(connection, hello); err != nil {
+		return nil, EnrollmentStart{}, err
+	}
+	reader := bufio.NewReader(connection)
+	var ready tunnelReady
+	if err := readFrame(reader, &ready); err != nil {
+		return nil, EnrollmentStart{}, err
+	}
+	start := ready.EnrollmentStart
+	if start == nil || start.GenesisDigest != reference.GenesisDigest || start.TransactionID != reference.TransactionID || start.Medium != reference.Medium {
+		return nil, EnrollmentStart{}, errors.New("bootstrap acceptance differs from invitation")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, EnrollmentStart{}, err
+	}
+	_ = connection.SetDeadline(time.Time{})
+	failed = false
+	return &bufferedConnection{Conn: connection, reader: reader}, *start, nil
 }

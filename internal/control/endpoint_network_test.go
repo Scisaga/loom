@@ -168,7 +168,7 @@ func TestEndpointTLSClaimConfigurationReportAndRevocation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	connection, err := DialEndpoint(ctx, endpoint, TunnelHello{Schema: 3, Mode: "bootstrap", EndpointID: endpoint.ID, Generation: endpoint.Generation, Invite: &bootstrap}, nil)
+	connection, start, err := DialInvitation(ctx, bootstrap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestEndpointTLSClaimConfigurationReportAndRevocation(t *testing.T) {
 	if err := DecodeCanonical(body, &joined, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
 		t.Fatal(err)
 	}
-	if joined.DeviceView == nil || VerifyDeviceViewEnvelope(*joined.DeviceView, bootstrap) != nil {
+	if joined.EnrollmentProof == nil || bootstrap.MatchesInvite(*joined.EnrollmentProof) != nil || start.InviteMaterialID != issued.MaterialID || joined.DeviceView == nil || VerifyDeviceViewEnvelope(*joined.DeviceView, *joined.EnrollmentProof) != nil {
 		t.Fatal("claim did not return a verified current envelope")
 	}
 	deviceHello := TunnelHello{Schema: 3, Mode: "device", EndpointID: endpoint.ID, Generation: endpoint.Generation, DeviceID: invite.DeviceID}

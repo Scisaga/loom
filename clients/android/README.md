@@ -5,6 +5,14 @@ acceptance, and release status are tracked in [implementation status](../../docs
 Target prototypes follow explicit requirements and the current models; existing
 code and native screenshots document implementation and its gaps, not limits on the design.
 
+Invitation QR codes, links and files carry only a transaction credential and
+minimal pinned TLS coordinates. They contain no policies, device names or member
+proofs. The existing protected identity is saved with this reference before the
+first connection. After key binding, the authenticated private response supplies
+the original signed enrollment proof and this device's configuration. The same
+identity then stores that proof and LKG; existing keys and rollback floors remain
+unchanged. Interrupted enrollment reuses its key and request ID.
+
 ## Normal user flow
 
 Android keeps at least one named local profile, which may not have joined yet.

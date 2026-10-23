@@ -20,11 +20,11 @@ import (
 )
 
 type brokerRequest struct {
-	Operation  string                   `json:"operation"`
-	Invite     *control.BootstrapInvite `json:"invite,omitempty"`
-	Preference *clientmodel.Preference  `json:"preference,omitempty"`
-	ProfileID  string                   `json:"profile_id,omitempty"`
-	Name       string                   `json:"name,omitempty"`
+	Operation  string                       `json:"operation"`
+	Invite     *control.InvitationReference `json:"invite,omitempty"`
+	Preference *clientmodel.Preference      `json:"preference,omitempty"`
+	ProfileID  string                       `json:"profile_id,omitempty"`
+	Name       string                       `json:"name,omitempty"`
 }
 
 // §13.5：界面只收到显示状态和已授权出口，不传送配置正文、文件路径、API 密码或私钥。
@@ -57,8 +57,8 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	if len(body) == 0 || len(body) > maxBrokerMessage || !utf8.Valid(body) {
 		return req, errors.New("服务请求长度无效")
 	}
-	// BootstrapInvite contains the sole closed Material union. Use its
-	// canonical codec across the pipe; encoding/json cannot decode that union.
+	// The pipe carries the same minimal reference as QR/file import.
+	// Keep canonical decoding and reject unknown or duplicate fields.
 	if err := control.DecodeCanonical(body, &req, control.ContractDecodeLimits{MaxBytes: maxBrokerMessage, MaxDepth: 16, MaxItems: 16384}); err != nil {
 		return req, errors.New("服务请求格式无效")
 	}

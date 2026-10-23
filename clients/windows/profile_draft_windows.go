@@ -102,7 +102,7 @@ func (m *windowsProfileManager) cancelProfileDraft() {
 	}
 }
 
-func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected *windowsProfileDraft, epoch uint64) (child *portableGUI, invite *control.BootstrapInvite, retErr error) {
+func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected *windowsProfileDraft, epoch uint64) (child *portableGUI, invite *control.InvitationReference, retErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closing || m.owner.ctx.Err() != nil {

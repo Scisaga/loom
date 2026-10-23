@@ -20,6 +20,8 @@ import (
 
 type IdentityStore interface {
 	Invite() control.BootstrapInvite
+	Reference() (control.InvitationReference, error)
+	SaveEnrollmentProof(control.BootstrapInvite) error
 	Platform() string
 	ClaimRequestID() string
 	PublicKey() string
@@ -101,41 +103,64 @@ func Resume(ctx context.Context, store IdentityStore) (control.EnrollmentRespons
 	return enroll(ctx, store, true)
 }
 func enroll(ctx context.Context, store IdentityStore, resume bool) (control.EnrollmentResponse, error) {
-	invite := store.Invite()
-	if err := invite.Validate(); err != nil {
-		return control.EnrollmentResponse{}, err
+	var start control.EnrollmentStart
+	var connection net.Conn
+	var err error
+	joined := resume && store.LKG() != nil
+	if joined {
+		invite := store.Invite()
+		if err := invite.Validate(); err != nil {
+			return control.EnrollmentResponse{}, err
+		}
+		payload := invite.Material.Payload.(control.Invite)
+		id, err := control.MaterialID(invite.Material)
+		if err != nil {
+			return control.EnrollmentResponse{}, err
+		}
+		start = control.EnrollmentStart{Schema: 3, NetworkID: invite.NetworkID, GenesisDigest: invite.GenesisDigest, TransactionID: payload.ID, InviteMaterialID: id}
+	} else {
+		reference, refErr := store.Reference()
+		if refErr != nil {
+			return control.EnrollmentResponse{}, refErr
+		}
+		connection, start, err = control.DialInvitation(ctx, reference)
+		if err != nil {
+			return control.EnrollmentResponse{}, err
+		}
+		defer connection.Close()
 	}
-	payload := invite.Material.Payload.(control.Invite)
-	materialID, err := control.MaterialID(invite.Material)
-	if err != nil {
-		return control.EnrollmentResponse{}, err
-	}
-	request := control.EnrollmentClaimRequest{Schema: 3, NetworkID: invite.NetworkID, GenesisDigest: invite.GenesisDigest, TransactionID: payload.ID, InviteMaterialID: materialID, RequestID: store.ClaimRequestID(), DevicePublicKey: store.PublicKey(), Platform: store.Platform()}
+	request := control.EnrollmentClaimRequest{Schema: 3, NetworkID: start.NetworkID, GenesisDigest: start.GenesisDigest, TransactionID: start.TransactionID, InviteMaterialID: start.InviteMaterialID, RequestID: store.ClaimRequestID(), DevicePublicKey: store.PublicKey(), Platform: store.Platform()}
 	path := "/enrollment/claim"
 	var signed any
 	if resume {
-		value, err := control.SignEnrollmentResume(control.EnrollmentResumeRequest(request), store.PrivateKey())
-		if err != nil {
-			return control.EnrollmentResponse{}, err
-		}
-		signed = value
+		signed, err = control.SignEnrollmentResume(control.EnrollmentResumeRequest(request), store.PrivateKey())
 		path = "/enrollment/resume"
 	} else {
-		value, err := control.SignEnrollmentClaim(request, store.PrivateKey())
-		if err != nil {
-			return control.EnrollmentResponse{}, err
-		}
-		signed = value
+		signed, err = control.SignEnrollmentClaim(request, store.PrivateKey())
 	}
-	// Once joined, resume uses device authentication. Bootstrap remains the
-	// original issuer's frozen endpoint and is never redirected to another peer.
+	if err != nil {
+		return control.EnrollmentResponse{}, err
+	}
 	readResponse := func(attempt context.Context, connection net.Conn) (control.EnrollmentResponse, error) {
 		var response control.EnrollmentResponse
 		if _, err := postJSON(attempt, connection, path, signed, &response); err != nil {
 			return response, err
 		}
-		if response.TransactionID != payload.ID {
+		if response.TransactionID != start.TransactionID {
 			return response, errors.New("enrollment response belongs to another transaction")
+		}
+		if !joined && (response.State == "bound" || response.State == "completed") {
+			proof := response.EnrollmentProof
+			if proof == nil || proof.NetworkID != start.NetworkID || proof.GenesisDigest != start.GenesisDigest {
+				return response, errors.New("bound enrollment requires original proof")
+			}
+			id, err := control.MaterialID(proof.Material)
+			if err != nil || id != start.InviteMaterialID {
+				return response, errors.New("enrollment proof differs from authenticated claim")
+			}
+			if err := store.SaveEnrollmentProof(*proof); err != nil {
+				return response, err
+			}
 		}
 		if response.DeviceView != nil {
 			if err := validateFetchedView(store, *response.DeviceView); err != nil {
@@ -145,16 +170,9 @@ func enroll(ctx context.Context, store IdentityStore, resume bool) (control.Enro
 		return response, nil
 	}
 	var response control.EnrollmentResponse
-	if resume && store.LKG() != nil {
+	if joined {
 		response, err = requestDevice(ctx, store, store.LKG(), 2, deviceRequestTimeout, readResponse)
 	} else {
-		endpoint := payload.Endpoint
-		hello := control.TunnelHello{Schema: 3, Mode: "bootstrap", EndpointID: endpoint.ID, Generation: endpoint.Generation, Invite: &invite}
-		connection, dialErr := control.DialEndpoint(withCertifiedDNS(ctx, payload.DNSServers), endpoint, hello, nil)
-		if dialErr != nil {
-			return control.EnrollmentResponse{}, dialErr
-		}
-		defer connection.Close()
 		response, err = readResponse(ctx, connection)
 	}
 	if err != nil {

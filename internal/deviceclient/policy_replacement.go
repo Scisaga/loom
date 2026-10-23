@@ -96,7 +96,7 @@ func ReplacePolicySelectionLKG(original []byte, replacement control.DeviceViewEn
 	if err != nil {
 		return State{}, clientmodel.Preference{}, err
 	}
-	if err := control.CheckPolicySelectionReplacement(historicalView, replacement, next.Invite, next.HighWater); err != nil {
+	if err := control.CheckPolicySelectionReplacement(historicalView, replacement, *next.Invite, next.HighWater); err != nil {
 		return State{}, clientmodel.Preference{}, err
 	}
 	next, err = AcceptLKG(next, replacement)

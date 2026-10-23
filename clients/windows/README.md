@@ -27,6 +27,14 @@ takes both existing execution locks and preserves the original DPAPI bytes.
 The control must reassert the authorization through `device.put` before exporting
 the replacement View. Ordinary startup and sync only accept the current shape.
 
+Invitation QR codes, links and files carry only a transaction credential and
+minimal pinned TLS coordinates. They contain no policies, device names or member
+proofs. The existing protected identity is saved with this reference before the
+first connection. After key binding, the authenticated private response supplies
+the original signed enrollment proof and this device's configuration. The same
+identity then stores that proof and LKG; existing keys and rollback floors remain
+unchanged. Interrupted enrollment reuses its key and request ID.
+
 ## Normal user flow
 
 All three editions use the same native Misaka UI and the same private device

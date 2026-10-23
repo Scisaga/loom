@@ -63,7 +63,7 @@ func ReplaceTransportLKG(original []byte, replacement control.DeviceViewEnvelope
 	if err != nil {
 		return State{}, err
 	}
-	if err := control.CheckTransportReplacement(original[start:end], replacement, next.Invite, next.HighWater); err != nil {
+	if err := control.CheckTransportReplacement(original[start:end], replacement, *next.Invite, next.HighWater); err != nil {
 		return State{}, err
 	}
 	return AcceptLKG(next, replacement)

@@ -1,5 +1,5 @@
-// Package clientjoin adapts user-facing join artifacts to the single signed
-// schema-3 BootstrapInvite. The QR is edition-neutral across Windows adapters.
+// Package clientjoin adapts user-facing join artifacts to the single minimal
+// schema-3 invitation reference. The QR is edition-neutral across Windows adapters.
 package clientjoin
 
 import (
@@ -31,66 +31,66 @@ const (
 // a QR image path, a .loom-invite path, or the decoded loom:// URI. source may
 // be empty to read one line from stdin, which keeps the one-time secret out of
 // command history and process listings.
-func Read(source string, stdin io.Reader) (control.BootstrapInvite, error) {
+func Read(source string, stdin io.Reader) (control.InvitationReference, error) {
 	if strings.TrimSpace(source) == "" {
 		if stdin == nil {
-			return control.BootstrapInvite{}, invalidJoinInput()
+			return control.InvitationReference{}, invalidJoinInput()
 		}
 		body, err := bufio.NewReader(io.LimitReader(stdin, maxJoinInputBytes+1)).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			return control.BootstrapInvite{}, invalidJoinInput()
+			return control.InvitationReference{}, invalidJoinInput()
 		}
 		if len(body) == 0 || len(body) > maxJoinInputBytes {
-			return control.BootstrapInvite{}, invalidJoinInput()
+			return control.InvitationReference{}, invalidJoinInput()
 		}
 		source = strings.TrimSuffix(strings.TrimSuffix(body, "\n"), "\r")
 	}
 
 	if strings.HasPrefix(strings.TrimSpace(source), "loom://") {
 		invite, err := control.DecodeInvite(source)
-		if err != nil {
-			return control.BootstrapInvite{}, invalidJoinInput()
+		if err != nil || invite.Medium != "qr" {
+			return control.InvitationReference{}, invalidJoinInput()
 		}
 		return invite, nil
 	}
 	if source == "" || len(source) > maxJoinInputBytes || strings.ContainsRune(source, '\x00') {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	return readArtifact(filepath.Clean(trimDroppedPath(source)))
 }
 
-func readArtifact(path string) (control.BootstrapInvite, error) {
+func readArtifact(path string) (control.InvitationReference, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil || !localArtifactPath(absolute) {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	before, err := os.Lstat(absolute)
 	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 ||
 		before.Size() <= 0 || before.Size() > maxQRImageBytes {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	file, err := os.Open(absolute)
 	if err != nil {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	defer file.Close()
 	after, err := file.Stat()
 	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) ||
 		after.Size() <= 0 || after.Size() > maxQRImageBytes {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	body, err := io.ReadAll(io.LimitReader(file, maxQRImageBytes+1))
 	if err != nil || len(body) == 0 || len(body) > maxQRImageBytes ||
 		int64(len(body)) != after.Size() {
 		clear(body)
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	defer clear(body)
 
 	// The small text artifact is an accessibility/offline fallback for the QR.
 	// Trying it first avoids passing secret-bearing text through an image parser.
 	if len(body) <= maxJoinInputBytes {
-		if invite, parseErr := control.DecodeInvite(strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")); parseErr == nil {
+		if invite, parseErr := control.DecodeInvite(strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")); parseErr == nil && invite.Medium == "qr" {
 			return invite, nil
 		}
 	}
@@ -100,37 +100,37 @@ func readArtifact(path string) (control.BootstrapInvite, error) {
 // ReadImage decodes a QR image supplied by a native client surface, such as
 // the Windows clipboard. The image stays in memory; callers do not need to
 // write the one-time bearer credential to a temporary file.
-func ReadImage(source image.Image) (control.BootstrapInvite, error) {
+func ReadImage(source image.Image) (control.InvitationReference, error) {
 	if source == nil {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	bounds := source.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 	if width <= 0 || height <= 0 || width > maxQRImageSide || height > maxQRImageSide ||
 		width > maxQRImagePixels/height {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	return decodeQRImage(source)
 }
 
-func decodeQR(body []byte) (control.BootstrapInvite, error) {
+func decodeQR(body []byte) (control.InvitationReference, error) {
 	config, format, err := image.DecodeConfig(bytes.NewReader(body))
 	if err != nil || format != "png" || config.Width <= 0 || config.Height <= 0 ||
 		config.Width > maxQRImageSide || config.Height > maxQRImageSide ||
 		config.Width > maxQRImagePixels/config.Height {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	decoded, format, err := image.Decode(bytes.NewReader(body))
 	if err != nil || format != "png" {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	return decodeQRImage(decoded)
 }
 
-func decodeQRImage(decoded image.Image) (control.BootstrapInvite, error) {
+func decodeQRImage(decoded image.Image) (control.InvitationReference, error) {
 	bitmap, err := gozxing.NewBinaryBitmapFromImage(decoded)
 	if err != nil {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	result, err := qrcode.NewQRCodeReader().Decode(bitmap, nil)
 	if err != nil {
@@ -140,11 +140,11 @@ func decodeQRImage(decoded image.Image) (control.BootstrapInvite, error) {
 		result, err = qrcode.NewQRCodeReader().Decode(bitmap, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_PURE_BARCODE: true})
 	}
 	if err != nil || result == nil {
-		return control.BootstrapInvite{}, invalidJoinInput()
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	invite, err := control.DecodeInvite(result.GetText())
-	if err != nil {
-		return control.BootstrapInvite{}, invalidJoinInput()
+	if err != nil || invite.Medium != "qr" {
+		return control.InvitationReference{}, invalidJoinInput()
 	}
 	return invite, nil
 }

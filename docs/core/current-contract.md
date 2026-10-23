@@ -949,23 +949,36 @@ NodeID、资格仍有效且没有既有绑定/授权冲突。它不是申请新�
 
 BootstrapInvite 唯一形状为 `schema=3,network_id,genesis_digest,control_proof,material`；material 必须是
 上述 `invite.issue` 的完整规范签名事实，两个网络锚与 payload 精确一致。control_proof 是从固定锚到
-发行者所引表的完整成员证明，不能用自称的当前表替代。首次拨号只使用已验证 payload.endpoint 的坐标和
-认证身份，并核对承载者就是 issuer、模式含 bootstrap；不能因另一入口可达就替换它。沿用已有扫码/复制入口，传输字符串唯一为 `loom://enroll#` 加完整 `C(BootstrapInvite)` 经 zlib
-无损压缩后的无填充 base64url。zlib 使用 RFC 1950 单流、无预置字典、固定压缩等级 9；统一编码器
-确定输出，解码后重新编码须与原交付字符串逐字节相同。压缩与解压正文各限 8 MiB；拒绝尾随字节、
-拼接流、其他前缀、空白、旧未压缩交付及第二种 JSON 包装，不提供回退。解压结果仍须是完整原始规范
-JSON 并逐层验签，Material 的签名字节不变。重新显示/复制使用原字节，不重新签发。成员数始终只是
-ControlConfig 数据；证明增长超出单个二维码容量时，UI 明确报告无法生成二维码，保留同一原字节的
-复制与加入文件入口，不删成员、缩短证明、换身份或静默更换媒介。本链不引入分片交付状态。
+发行者所引表的完整成员证明，不能用自称的当前表替代。此值只在控制面私有存储、
+绑定后的私有响应及设备受保护身份中使用；既有签名原件不重签、不改写。
+
+唯一公共加入交付是 `InvitationReference`，字段为 `schema=3,genesis_digest,transaction_id,medium,endpoint,capability`。
+endpoint 仅含 `host,port,server_name,spki_sha256,certificate_digest`，精确投影原 Invite 的冻结入口，
+不含入口 ID、owner、成员、模式或状态。capability 是 32 字节无填充 base64url：
+`SHA256("loom-invite-capability-v3\0" || DecodeBase64url(Material.signature) || UTF8(MaterialID))`。
+原签名必须受保护；公开内容摘要不足以导出能力。它是原 Invite 的可删除重建投影，不另存 token 权威。
+链接/QR/文件唯一为 `loom://enroll#` + 无填充 base64url(C(InvitationReference))，规范 JSON 正文最多
+1536 字节；拒绝未知/重复字段、非规范字节、压缩流、完整 BootstrapInvite URI、空白及其他包装。
+不携带策略/规则、名字、设备身份、因果依赖或成员证明，大小不随这些内部资料增长。
+首次连接允许平台 underlay DNS 解析唯一 host，但必须核对交付的全部 TLS 身份；后续使用认证 View 的 DNS。
+媒介 qr 的引用只用于 access；服务端以原签名 Invite 再检查职责与媒介，篡改引用不能改变授权。
+
+客户端先持久化同一设备身份的密钥、request ID 与引用，再连接 claim；服务端以原事务和常量时间短凭据
+认证，在同一 TLS 中返回 `EnrollmentStart`：`schema=3,network_id,genesis_digest,transaction_id,invite_material_id,`
+`medium`。它不包含策略、原件或成员证明。客户端核对 genesis、事务和媒介，
+随后签名现有 claim。签发者、原件 ID、原冻结入口、当前资格和生命周期都由控制面原事实验证。
 
 claim 和 resume 的字段均为 `schema=3,network_id,genesis_digest,transaction_id,invite_material_id,`
 `request_id,device_public_key,platform,signature`。使用各自既定签名域，身份私钥在设备生成。
-首次 claim 仅交 issuer；服务端核验端点 bootstrap 模式、完整 Invite、当前签发资格、职责/媒介、期限、
+首次 claim 仅交 issuer；服务端核验端点 bootstrap 模式、原存储 Invite、短凭据、当前签发资格、职责/媒介、期限、
 平台能力和一次性绑定，再签 bind 事实。平台只表达目标端识别结果，不是硬件证明；不能因此扩权。
 resume 必须与已持久绑定的 request ID、公钥和平台完全一致；响应丢失不能重新生成 RuntimeKey 或身份。
 
 普通加入响应字段为 `schema=3,transaction_id,state`，state 为 `open/bound/completed/cancelled/expired`；
-completed 必须另有完整 `device_view` envelope，其余状态不带 View。响应经认证私有 tunnel 取得，
+completed 必须另有完整 `device_view` envelope，其余状态不带 View。bootstrap 响应在 bound/completed 时
+另有 `enrollment_proof:BootstrapInvite`，仅在请求签名、公钥与持久绑定一致后交付；其他状态及 device 模式
+省略该字段。客户端逐层验证证明、原件及其派生短引用，再在同一身份值中以 `invite` 替换
+`invitation_reference`；已持久完整原件保持原字节。响应经认证私有 tunnel 取得，
 响应状态只投影事实；成功授权须由下面的 View 验证，状态字符串本身不能推进 LKG 或 floor。
 绑定、完成、终结由事实恢复，没有 approval/complete writer、pending-device 或安装回执权威。
 
@@ -983,11 +996,13 @@ retired 的写入还须回读本代 Active 为 0。合法阶段转换、承载�
 ### DeviceView、成员证明与唯一 LKG
 
 私有 tunnel 使用 TLS 1.3 和 ALPN `loom-tunnel/3`。每帧为四字节网络序长度及一个完整 C(JSON) 值；
-接收者超出资源边界时拒绝，不截断值。hello 为 `schema=3,mode,endpoint_id,generation:U64`，
-bootstrap 另带完整 `invite:BootstrapInvite`，device 另带 `device_id`，两种字段不得混用。
+接收者超出资源边界时拒绝，不截断值。bootstrap hello 仅为
+`schema=3,mode="bootstrap",transaction_id,capability`；device hello 保留
+`schema=3,mode="device",endpoint_id,generation:U64,device_id` 的现有字节，两种字段不得混用。
 device challenge 为 `schema=3,nonce`，nonce 为 32 随机字节的无填充 base64url；proof 为
 `schema=3,signature`，设备以 `loom-device-tunnel-proof-v3\0` 加 `C({hello,challenge})` 签名。
-认证成功回应 `schema=3,status="ready"` 后，同一连接承载私有 HTTP。bootstrap 只能访问同一邀请的
+认证成功回应 `schema=3,status="ready"`，bootstrap 另含 `enrollment_start`；device 不含该字段。
+之后同一连接承载私有 HTTP。bootstrap 只能访问同一邀请的
 claim/resume；device 每次请求仍检查当前设备授权。SPKI 摘要为 `sha256:` 加 X.509
 RawSubjectPublicKeyInfo 的 SHA-256 小写 hex，证书摘要同格式但哈希完整叶证书 DER，均不加 JSON 或签名域。
 客户端同时验证这两个摘要、名称、serverAuth 用途和有效期；仅握手成功不能制造运行健康。

@@ -74,7 +74,7 @@ func DistributionURL(base, digest string) (string, error) {
 func shellLiteral(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 
 // ShellInviteDelivery receives an already verified script coordinate and the
-// same complete Invite displayed by the private delivery page. It is pure.
+// same short invitation displayed by the private delivery page. It is pure.
 func ShellInviteDelivery(bases []string, artifact ReleaseArtifact, invite string) (string, error) {
 	return inviteBootstrapDelivery(bases, artifact, invite, "sh")
 }
@@ -96,8 +96,7 @@ func inviteBootstrapDelivery(bases []string, artifact ReleaseArtifact, invite, m
 	if err != nil {
 		return "", errors.New("invalid delivery invite")
 	}
-	value, ok := decoded.Material.Payload.(Invite)
-	if !ok || value.Medium != medium || medium == "ssh" && value.SSHTarget == "" {
+	if decoded.Medium != medium {
 		return "", errors.New("installation delivery differs from the signed medium or target")
 	}
 	if strings.ContainsAny(invite, "\r\n") {

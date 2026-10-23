@@ -6,11 +6,11 @@ import "errors"
 // protected identity. It is neither authorization nor an installation receipt;
 // Joined only says that this device has persisted a certified View.
 type DeviceIdentityReadback struct {
-	NetworkID        string `json:"network_id"`
+	NetworkID        string `json:"network_id,omitempty"`
 	GenesisDigest    string `json:"genesis_digest"`
-	DeviceID         string `json:"device_id"`
+	DeviceID         string `json:"device_id,omitempty"`
 	TransactionID    string `json:"transaction_id"`
-	InviteMaterialID string `json:"invite_material_id"`
+	InviteMaterialID string `json:"invite_material_id,omitempty"`
 	ClaimRequestID   string `json:"claim_request_id"`
 	DevicePublicKey  string `json:"device_public_key"`
 	Platform         string `json:"platform"`
@@ -18,11 +18,16 @@ type DeviceIdentityReadback struct {
 }
 
 func (value DeviceIdentityReadback) Validate() error {
-	if ValidateID(value.NetworkID) != nil || ValidateDigest(value.GenesisDigest) != nil ||
-		ValidateID(value.DeviceID) != nil || ValidateID(value.TransactionID) != nil ||
-		ValidateDigest(value.InviteMaterialID) != nil || ValidateID(value.ClaimRequestID) != nil ||
+	if ValidateDigest(value.GenesisDigest) != nil || ValidateID(value.TransactionID) != nil || ValidateID(value.ClaimRequestID) != nil ||
 		ValidatePublicKey(value.DevicePublicKey) != nil || !validatePlatform(value.Platform) {
 		return errors.New("device identity inspection is invalid")
+	}
+	if value.NetworkID == "" && value.DeviceID == "" && value.InviteMaterialID == "" {
+		if value.Joined {
+			return errors.New("unbound inspection cannot be joined")
+		}
+	} else if ValidateID(value.NetworkID) != nil || ValidateID(value.DeviceID) != nil || ValidateDigest(value.InviteMaterialID) != nil {
+		return errors.New("incomplete identity inspection")
 	}
 	return nil
 }

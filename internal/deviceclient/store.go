@@ -32,17 +32,18 @@ var stateLimits = control.ContractDecodeLimits{MaxBytes: maxStateBytes, MaxDepth
 // State is the one accepted device identity and authorization. Protection is a
 // storage adapter; it does not create a second Windows authorization model.
 type State struct {
-	Schema             int                         `json:"schema"`
-	AuthenticatedLatch bool                        `json:"authenticated_latch"`
-	PrivateKey         string                      `json:"private_key"`
-	PublicKey          string                      `json:"public_key"`
-	Platform           string                      `json:"platform"`
-	ClaimRequestID     string                      `json:"claim_request_id"`
-	Invite             control.BootstrapInvite     `json:"invite"`
-	HighWater          []control.FactFrontier      `json:"high_water"`
-	ReportSequence     control.U64                 `json:"report_sequence"`
-	LKG                *control.DeviceViewEnvelope `json:"certified_lkg,omitempty"`
-	Preference         *clientmodel.Preference     `json:"preference,omitempty"`
+	Schema              int                          `json:"schema"`
+	AuthenticatedLatch  bool                         `json:"authenticated_latch"`
+	PrivateKey          string                       `json:"private_key"`
+	PublicKey           string                       `json:"public_key"`
+	Platform            string                       `json:"platform"`
+	ClaimRequestID      string                       `json:"claim_request_id"`
+	Invite              *control.BootstrapInvite     `json:"invite,omitempty"`
+	InvitationReference *control.InvitationReference `json:"invitation_reference,omitempty"`
+	HighWater           []control.FactFrontier       `json:"high_water"`
+	ReportSequence      control.U64                  `json:"report_sequence"`
+	LKG                 *control.DeviceViewEnvelope  `json:"certified_lkg,omitempty"`
+	Preference          *clientmodel.Preference      `json:"preference,omitempty"`
 }
 
 // NewIdentityState is shared with encrypted mobile storage. The caller creates
@@ -51,7 +52,7 @@ func NewIdentityState(invite control.BootstrapInvite, platform string, private e
 	if len(private) != ed25519.PrivateKeySize {
 		return State{}, errors.New("device private key is invalid")
 	}
-	state := State{Schema: stateSchema, AuthenticatedLatch: true, PrivateKey: base64.RawURLEncoding.EncodeToString(private), PublicKey: base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey)), Platform: platform, ClaimRequestID: claimRequestID, Invite: invite, HighWater: []control.FactFrontier{}}
+	state := State{Schema: stateSchema, AuthenticatedLatch: true, PrivateKey: base64.RawURLEncoding.EncodeToString(private), PublicKey: base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey)), Platform: platform, ClaimRequestID: claimRequestID, Invite: &invite, HighWater: []control.FactFrontier{}}
 	if err := state.Validate(); err != nil {
 		return State{}, err
 	}
@@ -64,7 +65,10 @@ func AcceptLKG(state State, envelope control.DeviceViewEnvelope) (State, error) 
 	if err := state.Validate(); err != nil {
 		return State{}, err
 	}
-	if err := control.VerifyDeviceViewEnvelope(envelope, state.Invite); err != nil {
+	if state.Invite == nil {
+		return State{}, errors.New("enrollment proof must be accepted before View")
+	}
+	if err := control.VerifyDeviceViewEnvelope(envelope, *state.Invite); err != nil {
 		return State{}, err
 	}
 	if envelope.View.DevicePublicKey != state.PublicKey || envelope.View.Platform != state.Platform {
@@ -146,8 +150,17 @@ func (state State) Validate() error {
 	if state.Schema != stateSchema || !state.AuthenticatedLatch || err != nil || len(private) != ed25519.PrivateKeySize || base64.RawURLEncoding.EncodeToString(private) != state.PrivateKey ||
 		!bytes.Equal(ed25519.NewKeyFromSeed(private[:ed25519.SeedSize]), private) || control.ValidatePublicKey(state.PublicKey) != nil ||
 		base64.RawURLEncoding.EncodeToString(ed25519.PrivateKey(private).Public().(ed25519.PublicKey)) != state.PublicKey || control.ValidateID(state.ClaimRequestID) != nil ||
-		state.Invite.Validate() != nil || state.HighWater == nil || state.Platform != "linux" && state.Platform != "windows" && state.Platform != "android" {
+		state.HighWater == nil || state.Platform != "linux" && state.Platform != "windows" && state.Platform != "android" {
 		return errors.New("device identity state is invalid")
+	}
+	if (state.Invite == nil) == (state.InvitationReference == nil) {
+		return errors.New("identity must contain exactly one enrollment authority")
+	}
+	if state.Invite != nil && state.Invite.Validate() != nil || state.InvitationReference != nil && state.InvitationReference.Validate() != nil {
+		return errors.New("invalid identity enrollment authority")
+	}
+	if state.InvitationReference != nil && (state.LKG != nil || len(state.HighWater) != 0 || state.ReportSequence != 0) {
+		return errors.New("unbound identity cannot contain accepted authorization")
 	}
 	if state.Preference != nil && state.Preference.Validate() != nil {
 		return errors.New("device preference is invalid")
@@ -163,7 +176,7 @@ func (state State) Validate() error {
 		}
 		return nil
 	}
-	if err := control.VerifyDeviceViewEnvelope(*state.LKG, state.Invite); err != nil {
+	if err := control.VerifyDeviceViewEnvelope(*state.LKG, *state.Invite); err != nil {
 		return err
 	}
 	if state.LKG.View.DevicePublicKey != state.PublicKey || state.LKG.View.Platform != state.Platform {
@@ -330,10 +343,12 @@ func (store *Store) load() error {
 func fixedIdentityEqual(left, right State) bool {
 	a, _ := control.CanonicalEncode(left.Invite)
 	b, _ := control.CanonicalEncode(right.Invite)
-	return left.PrivateKey == right.PrivateKey && left.PublicKey == right.PublicKey && left.Platform == right.Platform && left.ClaimRequestID == right.ClaimRequestID && left.AuthenticatedLatch && right.AuthenticatedLatch && bytes.Equal(a, b)
+	ar, _ := control.CanonicalEncode(left.InvitationReference)
+	br, _ := control.CanonicalEncode(right.InvitationReference)
+	return bytes.Equal(ar, br) && left.PrivateKey == right.PrivateKey && left.PublicKey == right.PublicKey && left.Platform == right.Platform && left.ClaimRequestID == right.ClaimRequestID && left.AuthenticatedLatch && right.AuthenticatedLatch && bytes.Equal(a, b)
 }
 func checkStateAdvance(next, previous State) error {
-	if !fixedIdentityEqual(next, previous) || next.ReportSequence < previous.ReportSequence {
+	if checkEnrollmentAdvance(next, previous) != nil || next.ReportSequence < previous.ReportSequence {
 		return errors.New("persistent device identity or report sequence cannot roll back")
 	}
 	for _, before := range previous.HighWater {
@@ -381,7 +396,7 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 	defer lock.Close()
 	current, _, readErr := store.readUnlocked()
 	if readErr == nil {
-		if !fixedIdentityEqual(next, current) {
+		if checkEnrollmentAdvance(next, current) != nil {
 			return errors.New("device write conflicts with current persistent identity")
 		}
 		if preference != nil || reserveReport {
@@ -596,7 +611,10 @@ func cloneAuthorityValue(value reflect.Value) reflect.Value {
 func (store *Store) Invite() control.BootstrapInvite {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	return cloneOwnedAuthority(store.state.Invite)
+	if store.state.Invite == nil {
+		return control.BootstrapInvite{}
+	}
+	return cloneOwnedAuthority(*store.state.Invite)
 }
 func (store *Store) LKG() *control.DeviceViewEnvelope {
 	store.mu.Lock()

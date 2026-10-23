@@ -153,9 +153,13 @@ func TestWebChromeReaddUsesPermanentDeletionAndExactInvitationRetry(t *testing.T
 		t.Fatal("delivery did not read the new unclaimed identity")
 	}
 	encoded, _ := chromeDo(t, debug, `document.querySelector('#invite-uri').value`).(string)
-	replacement, err := DecodeInvite(encoded)
+	reference, err := DecodeInvite(encoded)
 	if err != nil {
 		t.Fatal(err)
+	}
+	replacement, err := server.bootstrapInvite(reference.TransactionID)
+	if err != nil || reference.MatchesInvite(replacement) != nil {
+		t.Fatal("reference differs from original", err)
 	}
 	key := testKey(t)
 	material, _ := MaterialID(replacement.Material)

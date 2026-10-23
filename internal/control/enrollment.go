@@ -2,14 +2,12 @@ package control
 
 import (
 	"bytes"
-	"compress/zlib"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/netip"
 	"reflect"
 	"sort"
@@ -252,65 +250,6 @@ func (bootstrap BootstrapInvite) Validate() error {
 		}
 	}
 	return VerifyMaterial(bootstrap.Material, ed25519.PublicKey(key))
-}
-
-func EncodeInvite(invite BootstrapInvite) (string, error) {
-	body, err := CanonicalEncode(invite)
-	if err != nil {
-		return "", err
-	}
-	if len(body) > 8<<20 {
-		return "", errors.New("bootstrap invite exceeds delivery resource limit")
-	}
-	var compressed bytes.Buffer
-	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
-	if err != nil {
-		return "", err
-	}
-	if _, err := writer.Write(body); err != nil {
-		return "", err
-	}
-	if err := writer.Close(); err != nil {
-		return "", err
-	}
-	if compressed.Len() > 8<<20 {
-		return "", errors.New("bootstrap invite exceeds delivery resource limit")
-	}
-	return "loom://enroll#" + base64.RawURLEncoding.EncodeToString(compressed.Bytes()), nil
-}
-
-func DecodeInvite(raw string) (BootstrapInvite, error) {
-	const prefix = "loom://enroll#"
-	if !strings.HasPrefix(raw, prefix) {
-		return BootstrapInvite{}, errors.New("invalid bootstrap invite prefix")
-	}
-	encoded := strings.TrimPrefix(raw, prefix)
-	if len(encoded) == 0 || len(encoded) > base64.RawURLEncoding.EncodedLen(8<<20) {
-		return BootstrapInvite{}, errors.New("bootstrap invite exceeds delivery resource limit")
-	}
-	compressed, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil || base64.RawURLEncoding.EncodeToString(compressed) != encoded {
-		return BootstrapInvite{}, errors.New("invalid bootstrap invite encoding")
-	}
-	input := bytes.NewReader(compressed)
-	reader, err := zlib.NewReader(input)
-	if err != nil {
-		return BootstrapInvite{}, errors.New("invalid compressed bootstrap invite")
-	}
-	body, readErr := io.ReadAll(io.LimitReader(reader, (8<<20)+1))
-	closeErr := reader.Close()
-	if readErr != nil || closeErr != nil || len(body) > 8<<20 || input.Len() != 0 {
-		return BootstrapInvite{}, errors.New("bootstrap invite contains an invalid, oversized or trailing compressed stream")
-	}
-	var invite BootstrapInvite
-	if err := DecodeCanonical(body, &invite, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
-		return BootstrapInvite{}, err
-	}
-	canonical, err := EncodeInvite(invite)
-	if err != nil || canonical != raw {
-		return BootstrapInvite{}, errors.New("bootstrap invite delivery encoding is not canonical")
-	}
-	return invite, nil
 }
 
 type RouteCandidate struct {
