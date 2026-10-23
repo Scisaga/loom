@@ -79,7 +79,8 @@ class EnrollmentManager private constructor(context: Context) {
             }
         } else {
             require(body.size <= 16 * 1024) { "加入文件必须小于 16 KiB" }
-            importInvite(profileId, body.decodeToString())
+            // The download is one canonical URI followed by a text-file line ending.
+            importInvite(profileId, body.decodeToString().removeSuffix("\n").removeSuffix("\r"))
         }
     }
 

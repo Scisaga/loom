@@ -959,7 +959,8 @@ endpoint 仅含 `host,port,server_name,spki_sha256,certificate_digest`，精确�
 原签名必须受保护；公开内容摘要不足以导出能力。它是原 Invite 的可删除重建投影，不另存 token 权威。
 链接/QR/文件唯一为 `loom://enroll#` + 无填充 base64url(C(InvitationReference))，规范 JSON 正文最多
 1536 字节；拒绝未知/重复字段、非规范字节、压缩流、完整 BootstrapInvite URI、空白及其他包装。
-不携带策略/规则、名字、设备身份、因果依赖或成员证明，大小不随这些内部资料增长。
+加入文件的文本适配器可移除一个末尾行尾（LF、CRLF 或 CR）；二维码/URI 解码不接受空白，
+文件适配不修改规范 URI 本身。不携带策略/规则、名字、设备身份、因果依赖或成员证明，大小不随这些内部资料增长。
 首次连接允许平台 underlay DNS 解析唯一 host，但必须核对交付的全部 TLS 身份；后续使用认证 View 的 DNS。
 媒介 qr 的引用只用于 access；服务端以原签名 Invite 再检查职责与媒介，篡改引用不能改变授权。
 
