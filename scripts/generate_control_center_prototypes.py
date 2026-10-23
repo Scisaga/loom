@@ -574,10 +574,10 @@ def workspace_surface(c: Canvas, x: int, y: int, w: int, h: int, *, sidebar: boo
         c.parts.insert(before, surface)
 
 
-def network_graph(c: Canvas, x: int, y: int, w: int, h: int, *, large: bool = False, selected_metrics: str = "") -> None:
+def network_graph(c: Canvas, x: int, y: int, w: int, h: int, *, large: bool = False, selected_metrics: str = "", adaptive: bool = False) -> None:
     """Two concentric rings, using the established six-node composition."""
-    cx, cy = x + w / 2, y + h * (.42 if large else .44)
-    rx, ry = w * .30, h * (.44 if large else .38)
+    cx, cy = x + w / 2, y + h * (.47 if adaptive else .42 if large else .44)
+    rx, ry = w * (.25 if adaptive else .30), h * (.38 if adaptive else .44 if large else .38)
     inner_rx, inner_ry = rx * .58, ry * .59
     positions = {
         "demo-control-a": (cx, cy - inner_ry),
@@ -610,11 +610,11 @@ def network_graph(c: Canvas, x: int, y: int, w: int, h: int, *, large: bool = Fa
     c.add(f'<path d="M{ax+5} {ay+5} Q{mid} {control_y} {ex-5} {ey+5}" fill="none" stroke="#C39952" stroke-width="1.5" stroke-dasharray="5 4"/>')
     c.add(f'<path d="M{px+8} {py-4} Q{(px+ax)/2} {ay-25} {ax-10} {ay-3}" class="selected" stroke-dasharray="5 4"/>')
     c.add(f'<path d="M{ax+10} {ay-2} L{ex-10} {ey-3}" class="selected"/>')
-    c.txt((px+ax)/2, ay-21, "Shared first hop", "tiny blue", "middle")
+    c.txt((px+ax)/2, ay + 38 if adaptive else ay - 21, "Shared first hop", "tiny blue", "middle")
     if selected_metrics:
         c.add('<g data-ui="link-metric-label">')
-        c.txt(mid, (ay+ey)/2 - 25, "media · selected", "tiny blue", "middle")
-        c.txt(mid, (ay+ey)/2 - 9, selected_metrics, "tiny blue", "middle")
+        c.txt(mid, (ay+ey)/2 + (75 if adaptive else -25), "media · selected", "tiny blue", "middle")
+        c.txt(mid, (ay+ey)/2 + (91 if adaptive else -9), selected_metrics, "tiny blue", "middle")
         c.add('</g>')
     else:
         c.txt(mid, (ay+ey)/2 - 19, "media · selected", "tiny blue", "middle")
@@ -632,8 +632,8 @@ def network_graph(c: Canvas, x: int, y: int, w: int, h: int, *, large: bool = Fa
     )
     for name, role, side, current in labels:
         nx, ny = positions[name]
-        c.circle(nx, ny, 7, "#FFFFFF")
-        c.circle(nx, ny, 4.5, "#28A472" if current else "#B3BEB6")
+        c.circle(nx, ny, 8 if adaptive else 7, "#FFFFFF")
+        c.circle(nx, ny, 6 if adaptive else 4.5, "#28A472" if current else "#B3BEB6")
         if side == "top":
             tx, name_y, role_y, anchor = nx, ny - 22, ny - 40, "middle"
         elif side == "bottom":
@@ -643,7 +643,7 @@ def network_graph(c: Canvas, x: int, y: int, w: int, h: int, *, large: bool = Fa
             name_y, role_y = ny - 2, ny + 18
             anchor = "start" if side == "right" else "end"
         c.txt(tx, name_y, name, "body mono" if large else "small mono", anchor)
-        c.txt(tx, role_y, role, "tiny muted", anchor)
+        c.txt(tx, role_y, role, "small muted" if adaptive else "tiny muted", anchor)
 
 
 def timeline(c: Canvas, x: int, y: int, w: int, labels: tuple[str, ...], complete: int, *, pending: bool = True) -> None:
@@ -889,133 +889,165 @@ def nodes() -> Canvas:
 
 
 def topology() -> Canvas:
-    c = Canvas("topology", "Network topology", "Inspect connections, measured link quality and the path reported for a selected Service.", "network / topology", "topology", height=1680)
+    c = Canvas("topology", "Network topology", "Inspect connections, independent directional WG DNS results and the reported Service path.", "network / topology", "topology", height=1840, show_status=False)
     selected = link_stats("demo-link-wg")
-    c.rect(24, 201, 1080, 571, panel=True)
-    c.txt(46, 234, "Connections", "section")
-    c.pill(178, 215, 88, "6 devices", "neutral", 25)
-    c.txt(834, 234, "View from demo-control-a", "small muted")
-    c.line(24, 249, 1104, 249, kind="panel-header")
-    search_control(c, 45, 265, 236, "Find a device or LinkID")
-    c.rect(293, 265, 231, 38, "#FFFFFF", "#DAE3DC", 5)
-    c.txt(306, 289, "Service: demo-video", "small mono")
-    c.icon("icon-chevron", 498, 276)
-    for xx, label, checked in ((546, "WG", True), (622, "hy2", True), (706, "Selected path", True)):
-        c.rect(xx, 277, 13, 13, "#2A9066" if checked else "#FFFFFF", "#2A9066", 3)
-        c.txt(xx + 6, 288, "✓", "tiny white", "middle")
-        c.txt(xx + 22, 288, label, "small")
-    c.rect(999, 268, 82, 32, "#FFFFFF", "#DDE5DF", 5)
-    c.icon("icon-expand", 1009, 276)
-    c.txt(1034, 289, "Fit", "small")
-    selected_label = f'{selected["latency"]} ms · {rate_label(selected["rate"])} · {variation_label(selected["variation"])}'
-    network_graph(c, 45, 316, 1039, 405, large=True, selected_metrics=selected_label)
-    c.txt(46, 716, "Point to a link to preview its metrics; click to pin the selection.", "tiny muted")
-    c.line(24, 732, 1104, 732, kind="panel-section")
-    c.add('<path d="M48 751h24" class="selected"/>')
-    c.txt(83, 755, "Observed selection", "tiny muted")
-    c.add('<path d="M233 751h25" stroke="#BECBC2" stroke-width="1.5"/>')
-    c.txt(266, 755, "Declared relay", "tiny muted")
-    c.circle(393, 751, 3, "#2AA875"); c.txt(404, 755, "Runtime current", "tiny muted")
-    c.circle(515, 751, 3, "#B3BEB6"); c.txt(526, 755, "Runtime unknown", "tiny muted")
-    c.txt(1082, 755, "3 / 6 current runtime reports", "tiny muted", "end")
+    # An independent synthetic reverse observation, never inferred from forward.
+    reverse_samples = (40, 41, 39, 40, 38, 43, 39, 41, 40, 42, 39, 40)
+    reverse_percentiles = rtt_percentiles(reverse_samples)
+    reverse = {"source": "demo-egress-e", "target": "demo-control-a", "age": "21s ago",
+               "latency": reverse_samples[-1], "variation": reverse_percentiles[1] - reverse_percentiles[0],
+               "rate": observed_rate_mbps(((180_000_000, 150), (180_000_000, 150))),
+               "coverage": 300, "samples": len(reverse_samples), "p50": reverse_percentiles[0], "p95": reverse_percentiles[1]}
+    c.txt(1562, 103, "8 relay connections · 9 directional candidates", "small", "end")
+    c.circle(1300, 129, 3, "#3BAA79"); c.txt(1311, 133, "6 available", "small green")
+    c.circle(1448, 129, 3, "#B3BEB6"); c.txt(1459, 133, "3 unknown", "small muted")
+    c.txt(1562, 159, "WG DNS observations · current spec", "small muted", "end")
 
-    c.card(1120, 201, 442, 320, "Link observations", "current spec only")
-    # One segment per current result; the ring encodes 5 of 9, not volume.
-    c.add('<circle cx="1181" cy="302" r="33" fill="none" stroke="#F2E8D6" stroke-width="8"/>')
-    c.add('<circle cx="1181" cy="302" r="33" fill="none" stroke="#3BAA79" stroke-width="8" stroke-dasharray="115.19 207.35" transform="rotate(-90 1181 302)"/>')
-    c.txt(1181, 303, "5 / 9", "section", "middle")
-    c.txt(1181, 319, "current", "tiny muted", "middle")
-    c.circle(1245, 280, 4, "#3BAA79"); c.txt(1258, 285, "5 available", "body green")
-    c.circle(1245, 308, 4, "#D2A45B"); c.txt(1258, 313, "4 unknown", "body amber")
-    c.line(1120, 348, 1562, 348, kind="panel-section")
-    c.txt(1141, 378, "demo-link-wg · WG", "body mono")
-    c.pill(1431, 360, 109, "available", "green", 25)
-    for xx, heading, value, caption in (
-        (1141, "LATENCY", f'{selected["latency"]} ms', "RTT · latest"),
-        (1269, "BANDWIDTH", rate_label(selected["rate"]), f'TX · {selected["coverage"]}/300s'),
-        (1410, "VARIATION", variation_label(selected["variation"]), "P95 − P50 · 15m"),
-    ):
-        c.txt(xx, 412, heading, "eyebrow muted")
-        c.txt(xx, 440, value, "metric")
-        c.txt(xx, 461, caption, "tiny muted")
-    c.txt(1141, 489, f'P50 {selected["p50"]} ms · P95 {selected["p95"]} ms · {selected["samples"]} successful samples', "tiny muted")
-    c.txt(1141, 509, f'{selected["source"]} → {selected["target"]} · {selected["age"]}', "tiny mono muted")
+    # One toolbar applies to the full-width connection inventory and diagram.
+    search_control(c, 24, 201, 236, "Find a device or LinkID")
+    c.rect(278, 201, 231, 38, "#FFFFFF", "#DAE3DC", 5)
+    c.txt(291, 225, "Service: demo-video", "small mono")
+    c.icon("icon-chevron", 483, 212)
+    for xx, label in ((530, "WG"), (606, "Hy2"), (690, "Selected path")):
+        c.rect(xx, 213, 13, 13, "#2A9066", "#2A9066", 3)
+        c.txt(xx + 6, 224, "✓", "tiny white", "middle")
+        c.txt(xx + 22, 224, label, "small")
+    c.txt(846, 225, "Filters apply to the diagram and connection list", "small muted")
+    c.rect(1480, 204, 82, 32, "#FFFFFF", "#DDE5DF", 5)
+    c.icon("icon-expand", 1490, 212); c.txt(1515, 225, "Fit", "small")
 
-    c.card(1120, 537, 442, 235, "Link traffic", "link-wg · endpoint TX")
+    # Both panels have the same 600px extent; only the graph radii deform.
+    c.rect(24, 250, 788, 600, panel=True)
+    c.icon("icon-topology", 44, 267); c.txt(70, 282, "Connections", "section")
+    c.pill(185, 264, 88, "6 devices", "neutral", 25)
+    c.txt(790, 282, "View from demo-control-a", "small muted", "end")
+    c.line(24, 298, 812, 298, kind="panel-header")
+    selected_label = f'{selected["source"]} → {selected["target"]} · {selected["latency"]} ms'
+    network_graph(c, 25, 299, 786, 476, large=True, selected_metrics=selected_label, adaptive=True)
+    c.line(24, 775, 812, 775, kind="panel-section")
+    c.txt(44, 794, "Point to preview both directions; click to pin. Blue arrows show the reported Service path.", "tiny muted")
+    for xx, label, pattern, color in ((44, "Service path", "", "#4D78D1"),
+                                      (185, "WG DNS · both", "", "#B8C4BC"),
+                                      (340, "One direction →", "6 5", "#B8C4BC"),
+                                      (518, "Both failed", "1 6", "#B8C4BC"),
+                                      (660, "Unknown", "8 8", "#CBD4CE")):
+        c.add(f'<path d="M{xx} 815h22" stroke="{color}" stroke-width="{3 if xx == 44 else 1}" stroke-dasharray="{pattern}"/>')
+        c.txt(xx + 29, 819, label, "tiny muted")
+    c.circle(47, 835, 3, "#2AA875"); c.txt(58, 839, "Runtime current", "tiny muted")
+    c.circle(201, 835, 3, "#B3BEB6"); c.txt(212, 839, "Runtime unknown", "tiny muted")
+    c.txt(790, 839, "3 / 6 current runtime reports", "tiny muted", "end")
+
+    c.card(828, 250, 734, 600, "Connection details", "directional · current spec")
+    c.txt(848, 325, "demo-control-a ↔ demo-egress-e", "body mono")
+    c.txt(1540, 325, "Independent directional observations", "small muted", "end")
+    c.line(1194, 342, 1194, 581, kind="panel-section")
+    for xx, measured, link_id in ((848, selected, "demo-link-wg"), (1212, reverse, "demo-link-wg-reverse")):
+        c.add(f'<g data-ui="directional-observation" data-link-id="{link_id}">')
+        c.txt(xx, 356, f'{measured["source"]} → {measured["target"]}', "small mono")
+        c.pill(xx + 244, 338, 84, "available", "green", 24)
+        for mx, heading, value, caption in ((xx, "LATENCY", f'{measured["latency"]} ms', "WG DNS RTT · latest"),
+                                            (xx + 160, "VARIATION", f'{measured["variation"]} ms', "P95 − P50 · 15m")):
+            c.txt(mx, 388, heading, "eyebrow muted")
+            c.txt(mx, 419, value, "metric")
+            c.txt(mx, 440, caption, "small muted")
+        c.txt(xx, 468, f'From {measured["source"]}', "small muted")
+        c.txt(xx, 488, f'Sampled {measured["age"]}', "small muted")
+        c.txt(xx, 511, "WG DNS round trip succeeded.", "small muted")
+        if link_id == "demo-link-wg":
+            link_status_spark(c, xx, 530, 328, 16, link_id)
+        else:
+            # Independent demo reverse hourly samples include their own gap.
+            for index in range(24):
+                current = index != 9
+                c.rect(xx + index * 328 / 24, 530, 328 / 24 - 2, 16,
+                       "#64B88E" if current else "#FAFBFA", "#64B88E" if current else "#BFC9C2", 1.5)
+            c.txt(xx, 565, "24h ago", "micro muted"); c.txt(xx + 326, 565, "now", "micro muted", "end")
+        c.txt(xx, 582, "24 hourly samples · not uptime", "small muted")
+        c.add('</g>')
+
+    c.line(828, 598, 1562, 598, kind="panel-section")
+    c.icon("icon-path", 848, 613); c.txt(874, 627, "WG sent packets", "section")
+    c.txt(1540, 626, "shared peer · both endpoints", "small muted", "end")
     left = traffic_series(link_id="demo-link-wg", device="demo-control-a")
     right = traffic_series(link_id="demo-link-wg", device="demo-egress-e")
-    c.txt(1141, 617, "OBSERVED TX", "eyebrow muted")
-    c.txt(1141, 648, byte_size(traffic_total(traffic_series(link_id="demo-link-wg"))), "metric")
-    c.txt(1141, 674, "2 reporting endpoints", "tiny muted")
-    c.txt(1141, 696, "22 / 24 h with deltas", "tiny muted")
-    traffic_chart(c, 1320, 619, 219, 79, ((left, "#5D89C5"), (right, "#8CCCB0")))
-    c.rect(1141, 736, 8, 8, "#5D89C5", "none", 2); c.txt(1157, 744, "demo-control-a", "tiny mono muted")
-    c.rect(1291, 736, 8, 8, "#8CCCB0", "none", 2); c.txt(1307, 744, "demo-egress-e", "tiny mono muted")
-    c.txt(1539, 744, "24h", "tiny muted", "end")
+    c.txt(848, 652, "OBSERVED WG TX", "eyebrow muted")
+    c.txt(848, 680, byte_size(traffic_total(traffic_series(link_id="demo-link-wg"))), "metric")
+    for xx, endpoint, values, color, measured in ((1094, "demo-control-a", left, "#5D89C5", selected),
+                                                (1328, "demo-egress-e", right, "#8CCCB0", reverse)):
+        c.rect(xx, 642, 7, 7, color, "none", 1)
+        c.txt(xx + 13, 652, f"{endpoint} TX", "small muted")
+        c.txt(xx, 679, byte_size(traffic_total(values)), "metric")
+        c.txt(xx, 701, "Current: " + rate_label(measured["rate"]), "small muted")
+    traffic_chart(c, 864, 728, 676, 50, ((left, "#5D89C5"), (right, "#8CCCB0")))
+    c.txt(848, 816, "22 / 24 h with observed deltas · partial coverage", "small muted")
+    c.txt(1540, 816, "As of latest endpoint samples", "small muted", "end")
+    c.txt(848, 833, "Count this peer pair once. Includes WG handshakes, keepalives and encrypted transport overhead.", "tiny muted")
+    c.txt(848, 847, "Sent bytes do not confirm delivery.", "tiny muted")
 
-    c.card(24, 788, 1538, 868, "Relay link inventory", "9 explicit links · access first hop is a separate resource")
+    # The table follows both panel bottoms directly, with one TX count per peer.
+    c.card(24, 866, 1538, 944, "Relay connections", "8 connections · 9 directional candidates · access first hop is separate")
     columns = (47, 450, 903, 1192)
-    headings = ("LINK", "CURRENT MEASUREMENTS", "STATUS · 24H", "TRANSFER · 24H")
-    for xx, label in zip(columns, headings):
-        c.txt(xx, 862, label, "eyebrow muted")
-    c.line(24, 876, 1562, 876, kind="table-rule")
+    for xx, label in zip(columns, ("CONNECTION / DIRECTIONS", "CURRENT MEASUREMENTS", "WG DNS · 24H", "SHARED WG SENT · 24H")):
+        c.txt(xx, 940, label, "eyebrow muted")
+    c.line(24, 954, 1562, 954, kind="table-rule")
     link_rows = (
-        ("demo-link-wg", "demo-control-a ↔ demo-egress-e", "WG", "available", "current · demo-control-a"),
-        ("demo-link-hy2", "demo-control-a ↔ demo-egress-e", "hy2", "unknown", "no fresh report"),
-        ("demo-link-a-b", "demo-control-a ↔ demo-forward-b", "WG", "available", "current · demo-control-a"),
-        ("demo-link-a-c", "demo-control-a ↔ demo-forward-c", "WG", "available", "current · demo-control-a"),
-        ("demo-link-a-cb", "demo-control-a ↔ demo-control-b", "WG", "unknown", "report missing"),
-        ("demo-link-e-b", "demo-egress-e ↔ demo-forward-b", "WG", "available", "current · demo-egress-e"),
-        ("demo-link-e-cb", "demo-egress-e ↔ demo-control-b", "WG", "unknown", "report expired"),
-        ("demo-link-b-cb", "demo-forward-b ↔ demo-control-b", "WG", "available", "current · demo-control-b"),
-        ("demo-link-c-cb", "demo-forward-c ↔ demo-control-b", "WG", "unknown", "spec changed · old report"),
+        ("demo-link-wg", "demo-control-a", "demo-egress-e", "available", "current scope"),
+        ("demo-link-a-b", "demo-control-a", "demo-forward-b", "available", "current scope"),
+        ("demo-link-a-c", "demo-control-a", "demo-forward-c", "available", "current scope"),
+        ("demo-link-a-cb", "demo-control-a", "demo-control-b", "unknown", "report missing"),
+        ("demo-link-e-b", "demo-egress-e", "demo-forward-b", "available", "current scope"),
+        ("demo-link-e-cb", "demo-egress-e", "demo-control-b", "unknown", "report expired"),
+        ("demo-link-b-cb", "demo-control-b", "demo-forward-b", "available", "current scope"),
+        ("demo-link-c-cb", "demo-forward-c", "demo-control-b", "unknown", "spec changed · old report"),
     )
-    for i, row in enumerate(link_rows):
-        link_id, endpoints, transport, availability, evidence = row
+    top = 954
+    for index, (link_id, source, target, availability, evidence) in enumerate(link_rows):
         measured = link_stats(link_id)
-        top = 876 + i * 80
-        yy = top + 25
+        row_h = 120 if index == 0 else 96
         c.add(f'<g data-ui="link-row" data-link-id="{link_id}">')
-        if measured is not None:
-            tooltip = (f'{measured["source"]} → {measured["target"]} · {measured["age"]}; '
-                       f'latest transport RTT {measured["latency"]} ms; '
-                       f'5m TX rate {rate_label(measured["rate"])} · {measured["coverage"]}/300 seconds observed; '
-                       f'15m RTT: {measured["samples"]} successful samples · {variation_label(measured["variation"])}')
-            if measured["variation"] is not None:
-                tooltip += f' · P50 {measured["p50"]} ms / P95 {measured["p95"]} ms'
-        else:
-            tooltip = f'{link_id} · {evidence} · current RTT, rate and variation unknown'
+        tooltip = f"{source} ↔ {target}; directional WG DNS; shared endpoint TX counted once"
+        for value in (measured, reverse) if index == 0 else (measured,):
+            if value is not None:
+                tooltip += (f'; {value["source"]} → {value["target"]} · {value["age"]}; '
+                            f'latest WG DNS RTT {value["latency"]} ms; '
+                            f'5m TX rate {rate_label(value["rate"])} · {value["coverage"]}/300 seconds observed; '
+                            f'15m RTT: {value["samples"]} successful samples · {variation_label(value["variation"])}')
+                if value["variation"] is not None:
+                    tooltip += f' · P50 {value["p50"]} ms / P95 {value["p95"]} ms'
+            else:
+                tooltip += f'; {link_id} · {evidence} · current RTT, rate and variation unknown'
         c.add(f'<title>{escape(display_text(tooltip))}</title>')
-        if i == 0:
-            c.rect(25, top, 1536, 80, "#EDF4FC", "none", 0)
-            c.rect(25, top, 3, 80, "#537FCC", "none", 0)
-        c.txt(47, yy, endpoints, "body")
-        c.txt(47, yy + 20, f"{link_id} · {transport}", "small mono muted")
-        c.txt(47, yy + 39, f'From {measured["source"]} · {measured["age"]}' if measured else "No current measurement", "tiny muted")
-        if measured:
-            rate = rate_label(measured["rate"]) if measured["rate"] is not None else "rate unknown"
-            variation = variation_label(measured["variation"]) if measured["variation"] is not None else "Δ unknown"
-            c.txt(450, top + 33, f'{measured["latency"]} ms · {rate} · {variation}', "body")
-            caption = "RTT · 5m TX rate · 15m variation" if measured["variation"] is not None else "1 RTT sample · no rate window or variation yet"
-            c.txt(450, top + 55, caption, "tiny muted")
-        else:
-            c.txt(450, top + 33, "unknown", "body amber")
-            c.txt(450, top + 55, evidence, "tiny muted")
-        c.circle(907, top + 16, 3, "#3BAA79" if availability == "available" else "#D2A45B")
-        c.txt(918, top + 20, availability, "small green" if availability == "available" else "small amber")
-        link_status_spark(c, 903, top + 34, 225, 16, link_id)
-        link_traffic_spark(c, 1192, top + 15, 306, 34, link_id)
-        c.txt(1534, top + 45, "›", "small blue" if i == 0 else "small faint", "end")
-        c.line(24, top + 80, 1562, top + 80, kind="table-rule")
+        if index == 0:
+            c.rect(25, top, 1536, row_h, "#EDF4FC", "none", 0)
+            c.rect(25, top, 3, row_h, "#537FCC", "none", 0)
+        c.txt(47, top + 25, source + " ↔ " + target, "body")
+        c.txt(47, top + 45, "Shared WG peer · " + ("2 directional candidates" if index == 0 else "1 directional candidate"), "small muted")
+        c.txt(47, top + 66, link_id, "small mono muted")
+        c.txt(47, top + 86, "demo-link-wg-reverse" if index == 0 else "No reverse relay candidate", "small muted")
+        members = ((measured, source, target, link_id, availability),)
+        if index == 0:
+            members += ((reverse, target, source, "demo-link-wg-reverse", "available"),)
+        for offset, (value, origin, destination, direction_id, state) in enumerate(members):
+            yy = top + 25 + offset * 48
+            c.txt(450, yy, origin + " → " + destination, "small muted")
+            metric = f'{value["latency"]} ms · {variation_label(value["variation"])}' if value else "Unknown · " + evidence
+            c.txt(450, yy + 22, metric, "body" if value else "body muted")
+            c.circle(907, yy - 4, 3, "#3BAA79" if state == "available" else "#B3BEB6")
+            c.txt(918, yy, state, "small green" if state == "available" else "small muted")
+            if direction_id in LINK_HISTORY:
+                link_status_spark(c, 1000, yy - 13, 156, 14, direction_id)
+            else:
+                for hour in range(24):
+                    c.rect(1000 + hour * 156 / 24, yy - 13, 156 / 24 - 2, 14,
+                           "#64B88E" if hour != 9 else "#FAFBFA", "#64B88E" if hour != 9 else "#BFC9C2", 1)
+        link_traffic_spark(c, 1192, top + 23, 306, 34, link_id)
+        c.txt(1534, top + row_h / 2 + 5, "›", "small blue" if index == 0 else "small faint", "end")
+        top += row_h
+        c.line(24, top, 1562, top, kind="table-rule")
         c.add('</g>')
-    for xx, label, fill, stroke in ((47, "Available", "#64B88E", "#64B88E"),
-                                     (165, "Unavailable", "#C87171", "#C87171"),
-                                     (305, "Unknown", "#FAFBFA", "#BFC9C2")):
-        c.rect(xx, 1612, 7, 12, fill, stroke, 1)
-        c.txt(xx + 14, 1622, label, "tiny muted")
-    c.txt(450, 1622, "Status: last valid link sample each hour.", "tiny muted")
-    c.txt(1192, 1622, "TX: both endpoints · per-link scale", "tiny muted")
-    c.txt(47, 1642, "Rate: WG 5m TX / hy2 probe throughput. Variation: 15m P95 − P50. Hover for sample counts, coverage and measurement details.", "tiny muted")
+    c.txt(47, 1774, "WG DNS: last valid hourly observation · independent directions · not continuous uptime.", "tiny muted")
+    c.txt(1192, 1774, "Shared endpoint TX · counted once", "tiny muted")
+    c.txt(47, 1796, "Latency: latest WG DNS RTT. Variation: 15m P95 − P50. Missing reverse candidates and unknown samples stay explicit.", "tiny muted")
     return c
 
 
