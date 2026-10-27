@@ -640,7 +640,7 @@ private fun HomeTabIcon(tab: HomeTab, selected: Boolean) {
 internal fun enrollmentSummary(join: EnrollmentStatus): String = when {
     join.phase == EnrollmentPhase.READY -> "设备已加入 · 认证配置已保存"
     join.phase == EnrollmentPhase.PULLING -> "正在下载并验证配置更新"
-    join.phase == EnrollmentPhase.ERROR && join.viewDigest.isNotEmpty() -> "更新未完成 · 已安装配置保留"
+    join.phase == EnrollmentPhase.ERROR && join.viewDigest.isNotEmpty() -> "已加入 · 认证配置保留，需要处理"
     join.viewDigest.isNotEmpty() -> "设备已加入 · 已安装配置保留"
     else -> "加入网络、管理配置与本机信息"
 }
@@ -1022,7 +1022,7 @@ internal fun EnrollmentCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("加入网络", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Text(
-                "${profile.name} · ${enrollmentTitle(status.phase)}",
+                "${profile.name} · ${if (status.phase == EnrollmentPhase.ERROR && status.viewDigest.isNotEmpty()) "已加入，需要处理" else enrollmentTitle(status.phase)}",
                 color = Ink,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,

@@ -6,9 +6,27 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strings"
+
+	"loom/internal/netx"
 )
 
 const LinkProbeInbound = "loom-link-probe"
+
+// ManagedResolverRules uses existing DNS Lookup response rules to try the
+// configured encrypted alternatives. The address limits accept both families;
+// they are DNS response conditions, never business routes or permissions.
+func ManagedResolverRules(servers, outbounds []string) []map[string]any {
+	rules := []map[string]any{}
+	for i := range servers {
+		rule := map[string]any{"outbound": outbounds, "server": fmt.Sprintf("loom-resolver-%d", i)}
+		if i+1 < len(servers) {
+			rule["ip_cidr"] = []string{"0.0.0.0/0", "::/0"}
+		}
+		rules = append(rules, rule)
+	}
+	return rules
+}
 
 func ResourceInboundTag(resourceID string) string { return "resource:" + resourceID }
 func WireGuardBaseTag(resourceID string) string   { return "wg-base." + resourceID }
@@ -311,7 +329,11 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 			return nil, err
 		}
 		for i, address := range r.view.DNSServers {
-			servers = append(servers, map[string]any{"tag": fmt.Sprintf("loom-resolver-%d", i), "address": "udp://" + net.JoinHostPort(address, "53"), "detour": "loom-underlay-dns"})
+			resolver, err := netx.ParseDNSResolver(address)
+			if err != nil {
+				return nil, err
+			}
+			servers = append(servers, map[string]any{"tag": fmt.Sprintf("loom-resolver-%d", i), "address": resolver.RuntimeAddress(), "detour": "loom-underlay-dns"})
 		}
 		final = "loom-resolver-0"
 	}
@@ -323,7 +345,13 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 		}
 	}
 	if len(physical) > 0 {
-		r.dnsRules = append(r.dnsRules, map[string]any{"outbound": physical, "server": final})
+		if len(r.view.DNSServers) > 1 && strings.HasPrefix(r.view.DNSServers[0], "https://") {
+			for _, rule := range ManagedResolverRules(r.view.DNSServers, physical) {
+				r.dnsRules = append(r.dnsRules, rule)
+			}
+		} else {
+			r.dnsRules = append(r.dnsRules, map[string]any{"outbound": physical, "server": final})
+		}
 	}
 	ids := []string{}
 	for id := range r.sources {

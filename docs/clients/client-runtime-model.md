@@ -217,16 +217,17 @@ domain、schema 3 wire 和身份保持；RAM 远端观测为可删除投影，�
 Service business 仍为 `unknown`，直到对该 Service 匹配的真实目标或正常业务动作成功。
 Auto 可以用已知首跳连通性优先尝试候选，但不能据此向 UI 或报告宣称该 Service 已健康。
 
-完整业务探测的 DNS 地址和 HTTPS 目标都来自同一份认证 `DeviceView`。DNS 地址来自设备授权中的
+完整业务探测保留认证 HTTPS 目标的原域名，沿当前候选执行，由最终出口使用自己的认证解析器解析；
+Direct 由本机解析。不先用客户端解析器生成目标 IP，也不把未单独检查的 UDP/DNS 宣称为成功。
+解析器与 HTTPS 目标都来自相应执行设备的认证 `DeviceView`。解析器来自设备授权中的
 规范解析器集合，首次加入可由 Invite 配置；HTTPS 目标来自 `NetworkIntent` 中一份规范排序、去重、仅含 HTTPS URL 的全局业务探测
 目标池，不要求每个 access 节点手工填写。服务端先解析该设备的 `PolicyIDs`，过滤出有效 allow 策略及其固定 Service，再只把
 主机名被这些 Service matcher 覆盖且授权允许的 HTTPS URL **按 Service 分别**投影为 `BusinessProbeTargets`，
 不建立第二个权威 `ProbeGroup`。不同设备/Service/Policy 范围的实际业务结果不得互相借用。无匹配目标时，
 主动业务探测范围保持 `unknown`，不把 transport 成功冒充业务成功，也不把缺少目标视为加入失败；
-真实正常业务仍可形成其实际范围的 Observation。客户端用认证 DNS 解析获授权 HTTPS 目标，执行真实
-TCP/TLS 与 HTTP 探测，并对认证 DNS
-执行 UDP/DNS 查询；不得改用主机 resolver、硬编码公网域名或为使探测通过而扩宽数据面 ACL。出网节点仍只允许
-认证 DNS 的 53 端口和既有 Service matcher；目标池及投影均不新增授权。中继 `NetworkLink` 的精确
+真实正常业务仍可形成其实际范围的 Observation。客户端沿候选执行真实 TCP/TLS 与 HTTP 探测；
+不得改用主机 resolver、硬编码公网域名或为使探测通过而扩宽数据面 ACL。出网节点仍只允许
+由认证配置派生的解析基础设施连接和既有 Service matcher；解析器的基础设施连接不授予普通 Service 访问权限。目标池及投影均不新增授权。中继 `NetworkLink` 的精确
 `LinkProbeTargets` 是另一类输入，按 `LinkID` 和资源传输检查，不从全局 HTTPS 目标池推导。这样，业务成功
 仅证明该设备实际获授权的业务链。
 
@@ -251,9 +252,9 @@ DNS overlay 只接受精确 `.loom` A/AAAA 映射，`control.loom` 由已认证 
 失效并重新解析。Loom 名称的解析不能反过来依赖尚未建立的自身 tunnel，亦不得把 `.loom` 规则
 安装为开发宿主初始 namespace 的全局 DNS 接管。
 尚未取得 View 的首次 bootstrap 使用只含短凭据与固定 TLS 坐标的 InvitationReference；具名入口只解析
-这一 underlay host，精确核对名称、SPKI 和叶证书摘要。同事务恢复复用原身份、request ID 与引用；
+这一 underlay host，使用内置 DoH 预设且精确核对名称、SPKI 和叶证书摘要。同事务恢复复用原身份、request ID 与引用；
 绑定后的原签名 Invite 仅经私有认证交付，验证后替换引用。取得 View 后改用当前 View 的认证解析器；
-两条连接共用平台 socket 保护，Android 活跃 VPN 还用所选 underlying Network 解析 bootstrap host。
+两条连接共用平台 socket 保护，Android 活跃 VPN 的 bootstrap DoH 同样使用受保护 underlay socket。
 Android HostAdapter 在本机执行投影启用 libbox 的平台接口控制，使其 TCP/UDP underlay socket 实际调用
 `VpnService.protect`，否则隧道自身会重新进入 VPN。私有配置/报告使用的认证 Endpoint IP 还须以精确
 `/32` 或 `/128` 从 capture 中排除；这是从同一 View 单向派生的本机路由输入，不授予 Service 权限。
@@ -262,6 +263,10 @@ Android 私有配置/报告的 Go socket 与 DNS 查询同样使用活跃 VpnSer
 所得 IP，原 TLS 名称及 SPKI 保持；不把可能变化的域名答案当成永久 TUN 排除。纯渲染不查询 DNS，
 字面 Endpoint 仍产生上述精确排除。未配置解析器的具名入口与资源明确失败，不借系统 resolver 或 hosts。
 解析器来自 Invite 的初始设备配置或随后普通 device.put；业务权限变化不应无意移除未编辑的 DNS 配置。
+裸 IP 继续使用原 UDP/53 与截断后的 TCP/53；DoH 只经指定字面 IP 的 HTTPS POST 查询，校验证书 IP 身份与 DNS 问答对应关系，拒绝重定向、异常状态、类型、长度和截断。
+共享 Go 连接最多并发两个解析器、每个同时查询 A/AAAA，沿原总期限与取消清理；加密端点失败只尝试同一认证集合中的加密备用。
+数据面将同一集合派生为原 DNS server 值和物理 outbound 的 DNS Lookup 规则；除最后一个之外使用接受 IPv4/IPv6 全地址的响应条件，使查询错误继续到下一解析器。
+这些条件仅筛选 DNS 响应，不产生业务路由或 ACL；普通业务仍须匹配其 Service。原 IP 集合的渲染不变。
 Linux WG 管理邻接的域名同样只由 adapter 使用这些认证解析器查询，纯资源投影不查询网络。发起端在安装前
 将结果转为精确 IP:port，原生数据面的对应 peer 按认证公钥消费该结果；不能只把地址留在所有权投影中，
 仍将原域名交给子进程再次解析。旧路径已先解析成功却在数据面启动时重复解析失败，造成整个共享接收器退出；
@@ -1094,7 +1099,7 @@ Linux 的具体映射不增加领域概念：`/var/lib/loom-device/state.json` �
 `RuntimeCandidate` 配置和 selector 回读投影。唯一正式 unit `loom-client.service` 运行
 `loom client run`；access 数据面子进程必须先进入专用 network namespace，再启动精确签名包中的 sing-box、
 应用共享纯核心给出的候选、逐项回读 selector，
-再以一次真实 TCP/TLS 与 UDP/DNS 业务结果形成 Observation。第一次失败只触发一次由相同纯函数得出的
+再以保留原域名的真实 HTTPS 业务结果形成 Observation。WG 内部 DNS 与独立链路检查按各自范围单独回读。第一次失败只触发一次由相同纯函数得出的
 必要 fallback；同一网络代已有有效结果时重启不重复采样。
 
 TUN worker 在与 PID 1 或原 underlay 相同的 network namespace 中拒绝启动。监督进程保留原网络，
@@ -1208,8 +1213,8 @@ Direct 的平台校验器拒绝已经支持的认证候选，也不能重复添�
 未知字段、不安全 TLS、失效或循环 detour 与扩宽的 capture 仍须拒绝。派生值只随受监督子进程存在，停止后删除，
 重启从原 LKG 重建；UI 与签名报告继续回读真实 selector，不从配置文件推定连接成功。
 应用纯核心提出的候选后读取 Clash selector 的真实值。只有逐 scope 回读均映射到当前 LKG 的同名候选时才形成
-Selection；apply 成功但回读缺失、不一致或指向未授权 outbound 时不更新 Selection。TCP connect/TLS 成功、
-TCP 业务失败、UDP/DNS 成功或失败分别产生保留 action/scope 的真实 Observation；本机 listener、自检、ICMP、
+Selection；apply 成功但回读缺失、不一致或指向未授权 outbound 时不更新 Selection。HTTPS 业务与独立传输检查的
+成功或失败分别产生保留 action/scope 的真实 Observation；未单独执行的 UDP/DNS 保持未验证。本机 listener、自检、ICMP、
 授权声明和 UI 颜色都不能产生 `available`。
 
 Installed、Portable TUN 与 Portable Mixed 只是 HostAdapter/交付差异：Installed 由 SCM 服务持有 machine DPAPI
@@ -1263,7 +1268,7 @@ Windows profile decoder 只接受现行 DPAPI envelope、Ed25519 身份及认证
 11. **Windows 严格 wire 与恢复**：`platform=windows` 缺 RuntimeProfile，或含未知/缺失/多余字段、重复键、
     非规范 JSON、错误候选映射时服务端拒绝；重启从同一 DPAPI LKG 派生相同候选，Selection 仍只来自 readback。
 12. **Windows 最小原生闭环**：Installed x64 用一个 profile 完成 UI invite → claim/resume → DPAPI → runtime →
-    selector readback → TCP 与 UDP/DNS → 一个 unavailable 候选 → 同出口 fallback → 签名 report/readback；再按同一
+    selector readback → 原域名 HTTPS 与独立链路检查 → 一个 unavailable 候选 → 同出口 fallback → 签名 report/readback；再按同一
     adapter 契约抽样 Portable TUN/Mixed 的 capture、清理和持久差异，不建立 Edition × 模式 × 协议矩阵。
 13. **共享业务探测**：一份规范 HTTPS 目标池只投影所选有效 allow Policy 对应的 Service matcher 覆盖的目标；
     不同设备/Service/Policy 范围分别探测、分别选路，一个成功不使另一个变绿。空投影只使相应业务

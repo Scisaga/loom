@@ -105,14 +105,12 @@ func (options Options) probeForService(view control.DeviceView, scope string) Pr
 					return nil
 				}
 				probes[target] = probe
-			} else if len(view.DNSServers) > 0 {
+			} else {
 				probes[target] = func(ctx context.Context) ProbeResult {
 					if options.captureNamespace != nil {
 						return namespaceBusinessProbe(ctx, options.captureNamespace, target)
 					}
-					value := businessProbe(ctx, view.DNSServers[0], target)
-					value.Action = "https_request"
-					return value
+					return ProbeResult{Action: "https_request", Description: "isolated capture namespace is unavailable"}
 				}
 			}
 		}

@@ -11,6 +11,7 @@ import (
 
 	"loom/internal/clientmodel"
 	"loom/internal/control"
+	"loom/internal/netx"
 )
 
 // AccessProjection is a one-way execution input. It never decodes authority,
@@ -144,6 +145,9 @@ func ValidateOverlayUnderlay(view control.DeviceView) error {
 // WithManagedDNS projects the authenticated per-device resolver addresses into
 // a disposable runtime. It cannot change the certified business selectors.
 func WithManagedDNS(config string, addresses []string, access bool) (string, error) {
+	if err := netx.ValidateDNSResolvers(addresses); err != nil {
+		return "", err
+	}
 	if len(addresses) == 0 {
 		return config, nil
 	}
@@ -178,7 +182,8 @@ func WithManagedDNS(config string, addresses []string, access bool) (string, err
 		servers, _ := dns["servers"].([]any)
 		for i, address := range addresses {
 			tag := fmt.Sprintf("loom-resolver-%d", i)
-			server := map[string]any{"tag": tag, "address": "udp://" + net.JoinHostPort(address, "53"), "detour": "loom-underlay-dns"}
+			resolver, _ := netx.ParseDNSResolver(address)
+			server := map[string]any{"tag": tag, "address": resolver.RuntimeAddress(), "detour": "loom-underlay-dns"}
 			seen := false
 			for _, raw := range servers {
 				value, ok := raw.(map[string]any)
@@ -199,6 +204,28 @@ func WithManagedDNS(config string, addresses []string, access bool) (string, err
 			}
 		}
 		dns["servers"], dns["final"], dns["strategy"], dns["independent_cache"] = servers, "loom-resolver-0", "prefer_ipv4", true
+		if len(addresses) > 1 && strings.HasPrefix(addresses[0], "https://") {
+			physical := []string{}
+			for _, outbound := range outbounds {
+				if outbound["type"] == "direct" && outbound["detour"] == nil {
+					tag, _ := outbound["tag"].(string)
+					physical = append(physical, tag)
+				}
+			}
+			rules, _ := dns["rules"].([]any)
+			for _, rule := range control.ManagedResolverRules(addresses, physical) {
+				encoded, _ := json.Marshal(rule)
+				found := false
+				for _, existing := range rules {
+					body, _ := json.Marshal(existing)
+					found = found || string(encoded) == string(body)
+				}
+				if !found {
+					rules = append(rules, rule)
+				}
+			}
+			dns["rules"] = rules
+		}
 		document["dns"], _ = json.Marshal(dns)
 		var route map[string]json.RawMessage
 		if err := json.Unmarshal(document["route"], &route); err != nil {

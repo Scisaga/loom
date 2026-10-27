@@ -71,12 +71,15 @@ func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
 	if probe := windowsBusinessProbe(view, "service:demo-service"); probe == nil {
 		t.Fatal("single authorized target unavailable")
 	}
-	for _, missing := range []string{"dns", "target"} {
+	withoutDNS := view
+	withoutDNS.DNSServers = nil
+	if windowsBusinessProbe(withoutDNS, "service:demo-service") == nil {
+		t.Fatal("remote name resolution requires no client DNS target")
+	}
+	for _, missing := range []string{"target"} {
 		t.Run(missing, func(t *testing.T) {
 			input := view
 			switch missing {
-			case "dns":
-				input.DNSServers = nil
 			case "target":
 				input.BusinessProbeTargets = nil
 

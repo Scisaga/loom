@@ -290,12 +290,12 @@ func windowsProbeTargets(view control.DeviceView, scope string) (string, []strin
 }
 func windowsBusinessProbe(view control.DeviceView, scope string) clientadapter.Probes {
 	_, targets := windowsProbeTargets(view, scope)
-	if len(targets) == 0 || len(view.DNSServers) == 0 {
+	if len(targets) == 0 {
 		return nil
 	}
 	probes := clientadapter.Probes{}
 	for _, target := range targets {
-		probe, err := clientadapter.BusinessProbe("127.0.0.1:1080", view.DNSServers[0], target)
+		probe, err := clientadapter.HTTPSBusinessProbe("127.0.0.1:1080", target)
 		if err != nil {
 			return nil
 		}

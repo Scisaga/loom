@@ -7,6 +7,8 @@ import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.profiles.ProfileStorage
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.vpn.LoomVpnService
+import io.github.scisaga.loom.vpn.ConnectionPhase
+import io.github.scisaga.loom.vpn.VpnRuntime
 import io.github.scisaga.loomcore.Loomcore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -324,10 +326,14 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun fail(profileId: String, store: ManagedProfileStore, prefix: String, error: Throwable) {
+        val accepted = runCatching { store.acceptedViewDigest() }.getOrDefault("")
+        val runtime = VpnRuntime.status.value
+        val preparationFailed = accepted.isNotEmpty() && (runCatching { store.loadCurrent() }.isFailure ||
+            runtime.phase == ConnectionPhase.ERROR && runtime.requestedProfileId == profileId)
         statusSink(profileId).value = EnrollmentStatus(
             EnrollmentPhase.ERROR,
-            "$prefix：${error.message ?: error.javaClass.simpleName}",
-            viewDigest = runCatching { store.acceptedViewDigest() }.getOrDefault(""),
+            "${if (preparationFailed) "已加入，认证配置已保存；运行未就绪" else if (accepted.isNotEmpty()) "已加入；$prefix" else prefix}：${error.message ?: error.javaClass.simpleName}",
+            viewDigest = accepted,
             possiblePermissionRestoration = runCatching { store.possiblePermissionRestoration() }.getOrDefault(false),
             canAbandonPending = runCatching { store.acceptedViewDigest().isEmpty() && store.state() != null }.getOrDefault(false),
         )

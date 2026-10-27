@@ -74,7 +74,7 @@ client pins its SPKI and proves the device key before HTTP is available.
 one deterministic choice for each authorized Service scope. Kotlin only applies that choice and
 publishes selector readback. Missing, expired, and prior-network results remain
 `unknown`; Direct never receives a synthetic measurement. A selected non-Direct
-candidate receives the minimum real DNS+HTTPS checks available for the authorized Service
+candidate receives the minimum real HTTPS checks, retaining the original domain through the selected path, for the authorized Service
 and network generation. Each result binds the actual target and candidate; a success
 for one Service does not establish another Service's health.
 If the selected candidate is unavailable, the model may choose one same-exit fallback and

@@ -15,7 +15,6 @@ class BusinessProbeScopeTest {
         val application = AppliedRoute(mapOf("demo-service" to "demo-policy"), listOf(selected))
         val input = serviceBusinessProbeInputs(profile, application, "demo-network").single()
         assertEquals(selected, input.selector)
-        assertEquals("192.0.2.53", input.dns)
         assertEquals("https://web.example/health", input.target)
         assertTrue(serviceBusinessProbeInputs(profile.copy(businessProbeTargets = emptyList()), application, "demo-network").isEmpty())
         assertEquals(listOf("https://web.example/", "https://api.example/"), serviceBusinessProbeInputs(profile.copy(businessProbeTargets = listOf(ServiceProbeTargets("demo-service", listOf("https://web.example/", "https://api.example/")))), application, "demo-network").map { it.target })
@@ -31,6 +30,6 @@ class BusinessProbeScopeTest {
         val blocked = application.copy(blockedScopes = listOf("service:demo-other"))
         assertEquals(listOf(input), serviceBusinessProbeInputs(twoProfile, blocked, "demo-network"))
         assertEquals("reject", blocked.execution().last().candidate)
-        assertTrue(serviceBusinessProbeInputs(profile.copy(dns = emptyList()), application, "demo-network").isEmpty())
+        assertEquals(listOf(input), serviceBusinessProbeInputs(profile.copy(dns = emptyList()), application, "demo-network"))
     }
 }

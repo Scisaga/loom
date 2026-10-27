@@ -697,6 +697,18 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 	if business := effectiveOperation(op); business.Operation == "policy.put" && business.Payload.(NetworkPolicy).Action != "allow" {
 		return Submission{}, errors.New("current Policies only express explicit allow")
 	}
+	if business := effectiveOperation(op); business.Operation == "invite.issue" {
+		invite := business.Payload.(Invite)
+		if len(invite.DNSServers) == 0 {
+			required, err := InvitationDNSRequired(a.projection, invite)
+			if err != nil {
+				return Submission{}, err
+			}
+			if required {
+				return Submission{}, errors.New("dns_servers: configure DNS resolvers for named control or transport endpoints before issuing the invitation")
+			}
+		}
+	}
 	// Historical signed references to deny retain their original meaning during
 	// replay. Only the current signer prevents adding or retaining such grants.
 	var policyIDs []string

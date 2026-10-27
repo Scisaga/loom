@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -25,7 +24,6 @@ func androidConnectedIPv4Prefixes(body []byte, resources ...control.TransportRes
 // saved runtime state. It is installed before capture and removed after close.
 type AndroidSocketProtector interface {
 	ProtectSocket(fd int64) bool
-	ResolveHost(host string) (string, error)
 }
 
 var androidUnderlay struct {
@@ -56,33 +54,9 @@ func androidNetworkContext() context.Context {
 		if err != nil {
 			return nil, err
 		}
-		androidUnderlay.RLock()
-		protector := androidUnderlay.protector
-		androidUnderlay.RUnlock()
-		if net.ParseIP(host) != nil || protector == nil {
-			return dialer.DialContext(ctx, network, address)
+		if net.ParseIP(host) == nil {
+			return nil, errors.New("Android underlay requires a resolved literal address")
 		}
-		resolved, err := protector.ResolveHost(host)
-		if err != nil || len(resolved) == 0 || len(resolved) > 4096 {
-			return nil, errors.New("Android underlay DNS failed")
-		}
-		addresses := strings.Split(resolved, "\n")
-		if len(addresses) > 64 {
-			return nil, errors.New("Android underlay DNS exceeds limit")
-		}
-		for _, address := range addresses {
-			if ip := net.ParseIP(address); ip == nil || ip.String() != address {
-				return nil, errors.New("Android underlay DNS returned an invalid address")
-			}
-		}
-		var failures []error
-		for _, address := range addresses {
-			connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(address, port))
-			if err == nil {
-				return connection, nil
-			}
-			failures = append(failures, err)
-		}
-		return nil, errors.Join(failures...)
+		return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
 	})
 }

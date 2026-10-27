@@ -70,6 +70,35 @@ func TestWindowsCapturePreservesAuthorizationAndDoesNotInventDNS(t *testing.T) {
 	}
 }
 
+func TestWindowsDoHDerivationRetainsAuthorizationAndEncryptedAlternatives(t *testing.T) {
+	source, _ := pathPlanFixture(t)
+	before, _ := decodeWindowsConfig(source)
+	resolvers := []string{"https://192.0.2.53/dns-query", "https://192.0.2.54/dns-query"}
+	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile} {
+		body, err := DeriveWindowsRuntimeConfig(source, profile, resolvers, nil)
+		if err != nil {
+			t.Fatal(profile, err)
+		}
+		if err := ValidateWindowsRuntimeConfig(body, profile); err != nil {
+			t.Fatal("DoH projection failed readback", profile, err)
+		}
+		derived, err := decodeWindowsConfig(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(derived.Outbounds[:len(before.Outbounds)], before.Outbounds) || derived.DNS.Servers[0].Address != resolvers[0] || derived.DNS.Servers[1].Address != resolvers[1] {
+			t.Fatal("encrypted DNS changed authorization")
+		}
+		fallback := false
+		for _, rule := range derived.DNS.Rules {
+			fallback = fallback || rule.Server == "loom-resolver-0" && len(rule.IPCIDR) == 2
+		}
+		if !fallback {
+			t.Fatal("runtime lost encrypted alternative")
+		}
+	}
+}
+
 func TestWindowsCapturePreservesIndependentHy2FirstHop(t *testing.T) {
 	base, _ := pathPlanFixture(t)
 	c, _ := decodeWindowsConfig(base)

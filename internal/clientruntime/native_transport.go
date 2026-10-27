@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"loom/internal/control"
+	"loom/internal/netx"
 )
 
 type singBoxEndpoint struct {
@@ -148,6 +149,7 @@ func validateWindowsDNS(c singBoxConfig, tags map[string]string) error {
 		return errors.New("invalid managed DNS facilities")
 	}
 	servers := map[string]bool{}
+	managed := map[int]string{}
 	for _, server := range dns.Servers {
 		if server.Tag == "" || servers[server.Tag] {
 			return errors.New("DNS server tag is duplicated")
@@ -172,11 +174,19 @@ func validateWindowsDNS(c singBoxConfig, tags map[string]string) error {
 			}
 		case strings.HasPrefix(server.Tag, "loom-resolver-"):
 			index, err := strconv.Atoi(strings.TrimPrefix(server.Tag, "loom-resolver-"))
-			host, port, e := net.SplitHostPort(strings.TrimPrefix(server.Address, "udp://"))
-			ip, pe := netip.ParseAddr(host)
-			if err != nil || index < 0 || e != nil || pe != nil || ip.String() != host || port != "53" || server.Address != "udp://"+net.JoinHostPort(host, "53") || server.Detour != "loom-underlay-dns" || tags[server.Detour] != "direct" || server.StaticRecords != nil || server.Strategy != "" {
+			value := server.Address
+			if strings.HasPrefix(value, "udp://") {
+				host, port, e := net.SplitHostPort(strings.TrimPrefix(value, "udp://"))
+				if e != nil || port != "53" {
+					return errors.New("invalid plaintext resolver")
+				}
+				value = host
+			}
+			resolver, e := netx.ParseDNSResolver(value)
+			if err != nil || index < 0 || server.Tag != "loom-resolver-"+strconv.Itoa(index) || e != nil || resolver.RuntimeAddress() != server.Address || server.Detour != "loom-underlay-dns" || tags[server.Detour] != "direct" || server.StaticRecords != nil || server.Strategy != "" {
 				return errors.New("invalid authenticated resolver")
 			}
+			managed[index] = value
 		case strings.HasPrefix(server.Tag, "wg-dns."):
 			id := strings.TrimPrefix(server.Tag, "wg-dns.")
 			host, port, err := net.SplitHostPort(strings.TrimPrefix(server.Address, "udp://"))
@@ -188,6 +198,16 @@ func validateWindowsDNS(c singBoxConfig, tags map[string]string) error {
 			return errors.New("unsupported DNS server")
 		}
 	}
+	values := make([]string, len(managed))
+	for i := range values {
+		values[i] = managed[i]
+		if values[i] == "" {
+			return errors.New("noncontiguous managed resolvers")
+		}
+	}
+	if err := netx.ValidateDNSResolvers(values); err != nil {
+		return err
+	}
 	if !servers[dns.Final] {
 		return errors.New("unknown final DNS resolver")
 	}
@@ -198,6 +218,19 @@ func validateWindowsDNS(c singBoxConfig, tags map[string]string) error {
 		for _, tag := range rule.Outbound {
 			if tags[tag] != "direct" && tags[tag] != "hysteria2" {
 				return errors.New("DNS rule references an unknown sender")
+			}
+		}
+		if len(rule.IPCIDR) > 0 {
+			index, err := strconv.Atoi(strings.TrimPrefix(rule.Server, "loom-resolver-"))
+			if err != nil || index < 0 || index >= len(values)-1 || !strings.HasPrefix(values[index], "https://") || !reflect.DeepEqual(rule.IPCIDR, []string{"0.0.0.0/0", "::/0"}) || len(rule.DomainSuffix) > 0 || len(rule.Outbound) == 0 {
+				return errors.New("invalid encrypted resolver fallback")
+			}
+			for _, tag := range rule.Outbound {
+				for _, outbound := range c.Outbounds {
+					if outbound.Tag == tag && (outbound.Type != "direct" || outbound.Detour != "") {
+						return errors.New("resolver fallback left physical underlay")
+					}
+				}
 			}
 		}
 		if len(rule.DomainSuffix) > 0 && !reflect.DeepEqual(rule.DomainSuffix, []string{"loom"}) || len(rule.Outbound) == 0 && rule.Server != "loom-overlay-dns" || rule.Server == "loom-overlay-dns" && !reflect.DeepEqual(rule.DomainSuffix, []string{"loom"}) {

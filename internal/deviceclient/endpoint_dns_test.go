@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"loom/internal/control"
+	"loom/internal/netx"
 )
 
 func TestBootstrapReferenceUsesOnlyFrozenUnderlayHostAndPreservesIdentity(t *testing.T) {
@@ -29,18 +30,23 @@ func TestBootstrapReferenceUsesOnlyFrozenUnderlayHostAndPreservesIdentity(t *tes
 	}
 	public, request := store.PublicKey(), store.ClaimRequestID()
 	var endpoints atomic.Int32
-	stopTLS := errors.New("demo endpoint reached")
+	stopTLS := errors.New("demo encrypted resolver unavailable")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	ctx = control.WithEndpointDialer(ctx, func(_ context.Context, network, address string) (net.Conn, error) {
-		if network != "tcp" || address != "demo-entry.example:443" {
-			t.Error("bootstrap changed frozen endpoint")
+		expected := false
+		for _, value := range netx.DomesticDNSResolvers() {
+			resolver, _ := netx.ParseDNSResolver(value)
+			expected = expected || address == resolver.Address
+		}
+		if network != "tcp" || !expected {
+			t.Error("bootstrap bypassed encrypted resolver or attempted host-local resolution")
 		}
 		endpoints.Add(1)
 		return nil, stopTLS
 	})
 	for _, attempt := range []func(context.Context, IdentityStore) (control.EnrollmentResponse, error){Claim, Resume} {
-		if _, err := attempt(ctx, store); !errors.Is(err, stopTLS) {
+		if _, err := attempt(ctx, store); err == nil {
 			t.Fatal(err)
 		}
 		store, err = Load(path)
@@ -48,7 +54,7 @@ func TestBootstrapReferenceUsesOnlyFrozenUnderlayHostAndPreservesIdentity(t *tes
 			t.Fatal("failed bootstrap or reopen replaced pending identity", err)
 		}
 	}
-	if endpoints.Load() != 2 {
+	if endpoints.Load() != int32(4*len(netx.DomesticDNSResolvers())) {
 		t.Fatal("unexpected endpoint attempts")
 	}
 }

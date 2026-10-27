@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"loom/internal/netx"
 )
 
 type Service struct {
@@ -172,10 +174,16 @@ func validateOptionalDNS(servers []string) error {
 	if servers != nil && len(servers) == 0 {
 		return errors.New("unconfigured device DNS must be omitted")
 	}
-	for i, value := range servers {
-		address, err := netip.ParseAddr(value)
-		if err != nil || address.Zone() != "" || address.Is4In6() || address.IsUnspecified() || address.IsMulticast() || address.String() != value || i > 0 && servers[i-1] >= value {
-			return errors.New("device DNS requires canonical uniquely sorted unicast IP addresses")
+	return validateDeviceDNS(servers)
+}
+
+func validateDeviceDNS(servers []string) error {
+	if err := netx.ValidateDNSResolvers(servers); err != nil {
+		return err
+	}
+	for i := 1; i < len(servers); i++ {
+		if servers[i-1] >= servers[i] {
+			return errors.New("device DNS resolvers must be uniquely sorted")
 		}
 	}
 	return nil

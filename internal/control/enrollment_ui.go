@@ -2,6 +2,7 @@ package control
 
 import (
 	"errors"
+	"loom/internal/netx"
 	"net/http"
 	"time"
 
@@ -46,7 +47,7 @@ func (server *Server) enrollmentOptions(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"schema": 3, "genesis_digest": server.Runtime.Config.GenesisID, "issuer_control_id": server.Runtime.Config.ControlID, "platforms": []enrollmentPlatformOption{
 		{ID: "android", Responsibilities: []string{"access"}}, {ID: "linux", Responsibilities: []string{"access", "control", "forward", "internet_egress"}}, {ID: "windows", Responsibilities: []string{"access"}},
-	}, "policies": policies, "endpoints": endpoints, "targets": projection.Targets, "ssh_targets": sshTargets})
+	}, "policies": policies, "endpoints": endpoints, "targets": projection.Targets, "ssh_targets": sshTargets, "default_dns_servers": netx.DomesticDNSResolvers()})
 }
 
 // Re-displaying an open Invite uses the same persisted signed Material. A

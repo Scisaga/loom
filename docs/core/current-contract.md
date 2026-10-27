@@ -602,9 +602,14 @@ PolicyIDs 可为空，没有 access 则必须为空。同 Service 可有多条�
 未知/冲突/悬空引用和歧义目标组合均拒绝。已分配引用后来失效，原分配仍可回读但不再产生相应权限。
 RuntimeKey 是 control 生成的 Secret32，不是设备身份私钥。
 
-设备还可带 `dns_servers:[]IP`，由同一 `device.put` 公开命令管理，表示该设备已认证的
-underlay 解析器集合；非空时按规范 IP 文本排序去重。未配置唯一表示为字段省略，显式空数组、null、
-主机名、带 zone 的地址和非规范 IP 均拒绝。这个可选值不改变已签发的省略字段字节；
+设备还可带 `dns_servers:[]Resolver`，由同一 `device.put` 公开命令管理，表示该设备已认证的
+underlay 与本机最终出网解析器集合。Resolver 是现有字段中的规范字符串值，不是新权威实体：
+裸规范单播 IP 保持原 UDP/53、截断后 TCP/53 的含义；`https://IP[:port]/path` 表示 DoH，
+IP 必须是规范单播字面地址，IPv6 使用方括号，省略默认 443 端口，其他端口为规范十进制。
+路径必须是非空的规范绝对路径；拒绝域名主机、用户信息、查询、fragment、转义别名、点路径与尾部空包装。
+集合按完整字符串排序、去重，不混用裸 IP 与 HTTPS；DoH 失败绝不降级到明文或系统解析。
+未配置唯一表示为字段省略，显式空数组、null、带 zone 的地址和非规范值均拒绝。
+这个扩展保持所有已签 IP、缺席字段与对应历史运行投影的原义和字节；
 Invite 可带相同约束的可选 `dns_servers`；首次 device.join 原样继承，省略时保持未配置。
 这让具名入口设备在一次正常加入中取得解析器，避免先加入失败再补配置；管理员按设备原有部署输入配置，
 不从 `.env`、宿主 resolver 或旧事实自动导入。
@@ -617,8 +622,9 @@ Invite 可带相同约束的可选 `dns_servers`；首次 device.join 原样继�
 最小测试覆盖设备配置的值/字节往返及未配置历史字节不变、普通管理写入与重启投影、解析失败不借
 系统 DNS/hosts 回退、真实域名设备认证及错误 TLS 身份拒绝、Android underlay socket 的 protect 回调。
 DNS 修改后新 View 使旧运行与相关观测失效；认证接受必须先持久化，执行失败仍保留新授权。
-首次 bootstrap 未持有 View，先验证完整 Invite，再只用其中已签名的 dns_servers 解析其固定签发者入口；
-未配置解析器的具名入口拒绝，字面地址不需 DNS。已绑定但未取得 View 的 claim/resume 仍使用同一 Invite，
+首次 bootstrap 未持有 View，只用客户端随签名制品交付的默认 DoH 查询短引用中的唯一 Host，
+再核对该引用的完整 TLS 身份；该预设不授予网络权限，不进入二维码，也不是 View 缺配置时的 fallback。
+字面入口不查询 DNS。已绑定但未取得 View 的 claim/resume 仍使用同一事务与身份，
 不得因失败重建身份或换入口。加入后的域名入口只使用当前 View 的解析器；两者复用同一 underlay 拨号适配，
 保留平台 socket 保护。地址是瞬时拨号参数，不能改写 EndpointGeneration 的主机名、TLS 名称、SPKI 或签名字节。
 普通改权保持原 transaction、Invite、绑定、公钥和平台；这些引用沿事实依赖可验证，不由 UI 重建。
@@ -962,7 +968,7 @@ endpoint 仅含 `host,port,server_name,spki_sha256,certificate_digest`，精确�
 1536 字节；拒绝未知/重复字段、非规范字节、压缩流、完整 BootstrapInvite URI、空白及其他包装。
 加入文件的文本适配器可移除一个末尾行尾（LF、CRLF 或 CR）；二维码/URI 解码不接受空白，
 文件适配不修改规范 URI 本身。不携带策略/规则、名字、设备身份、因果依赖或成员证明，大小不随这些内部资料增长。
-首次连接允许平台 underlay DNS 解析唯一 host，但必须核对交付的全部 TLS 身份；后续使用认证 View 的 DNS。
+首次连接仅用客户端内置 DoH 预设解析唯一 host，必须核对交付的全部 TLS 身份；后续只使用认证 View 的解析器。
 媒介 qr 的引用只用于 access；服务端以原签名 Invite 再检查职责与媒介，篡改引用不能改变授权。
 
 客户端先持久化同一设备身份的密钥、request ID 与引用，再连接 claim；服务端以原事务和常量时间短凭据
@@ -1048,7 +1054,7 @@ HostAdapter 投影，不可扩大签名 selector 的成员。无业务权限的 
 services/policies/resources/links/endpoints 均使用上述完整值，引用仅限该设备可消费范围；
 policy_ids 保留设备原分配；policies 只包含当前有效值，缺失的所选策略或缺失所属 Service 表示该权限已收口，
 不能使完整认证 View 因没有业务权限而被拒绝。运行候选、凭据或 allow 规则引用缺失值则必须拒绝；
-策略按 PolicyID 唯一，不同服务之间检查目标歧义，同服务多条策略合法。dns_servers 是规范排序 IP 集合；business_probe_targets 的项为
+策略按 PolicyID 唯一，不同服务之间检查目标歧义，同服务多条策略合法。dns_servers 是上述规范排序 Resolver 集合；business_probe_targets 的项为
 `service_id,targets:[]HTTPS_URL`，按 Service ID、URL 排序，目标须匹配该 Service 且设备所选策略 allow。
 无适用目标保留空集合，不能填入硬编码公网目标。expected_components 的项为
 `component_id,platform,version,artifact_digest`，按组件和平台排序；发布记录的验签仍需其独立契约。

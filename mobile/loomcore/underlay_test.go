@@ -34,14 +34,8 @@ func TestAndroidPlatformPrefixesDistinguishUnknownAndExcludeOwnCapture(t *testin
 }
 
 type testAndroidProtector struct {
-	calls   int
-	lookups int
-	allow   bool
-}
-
-func (p *testAndroidProtector) ResolveHost(host string) (string, error) {
-	p.lookups++
-	return "127.0.0.1", nil
+	calls int
+	allow bool
 }
 
 func (p *testAndroidProtector) ProtectSocket(fd int64) bool { p.calls++; return p.allow && fd >= 0 }
@@ -63,15 +57,11 @@ func TestAndroidPrivateSocketsUseProtectAndRejectProtectionFailure(t *testing.T)
 	}
 	conn.Close()
 	_, port, _ := net.SplitHostPort(listener.Addr().String())
-	named, err := control.EndpointDialer(ctx)(ctx, "tcp", net.JoinHostPort("demo-entry.example", port))
-	if err != nil {
-		t.Fatal(err)
+	if named, err := control.EndpointDialer(ctx)(ctx, "tcp", net.JoinHostPort("demo-entry.example", port)); err == nil {
+		named.Close()
+		t.Fatal("unresolved hostname bypassed the certified resolver")
 	}
-	named.Close()
-	if protector.lookups != 1 {
-		t.Fatal("bootstrap hostname bypassed underlay DNS")
-	}
-	if protector.calls != 2 {
+	if protector.calls != 1 {
 		t.Fatal("private socket bypassed platform protection")
 	}
 	protector.allow = false

@@ -423,6 +423,9 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	}
 	releaseSnapshot()
 	waitChromeEvaluation(t, debug, `document.querySelector('#enrollment-form [name=endpoint]')?.options.length>0&&document.querySelector('#connection').title.includes('local writes available')`)
+	if chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form'),defaults=JSON.parse(f.dataset.options).default_dns_servers;return defaults?.length===2&&defaults.every(v=>v.startsWith('https://'))&&f.elements.dns_servers.value===defaults.join('\n')})()`) != true {
+		t.Fatal("new invitation requires extra DNS input or did not preserve reviewed encrypted defaults")
+	}
 	transactionID, ok := chromeDo(t, debug, `document.querySelector('#enrollment-form').dataset.transactionId`).(string)
 	if !ok {
 		t.Fatal("browser form has no stable transaction ID")

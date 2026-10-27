@@ -123,7 +123,7 @@ func enroll(ctx context.Context, store IdentityStore, resume bool) (control.Enro
 		if refErr != nil {
 			return control.EnrollmentResponse{}, refErr
 		}
-		connection, start, err = control.DialInvitation(ctx, reference)
+		connection, start, err = control.DialInvitation(withCertifiedDNS(ctx, netx.DomesticDNSResolvers()), reference)
 		if err != nil {
 			return control.EnrollmentResponse{}, err
 		}

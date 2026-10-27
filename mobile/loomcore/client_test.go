@@ -114,6 +114,54 @@ func TestExplicitCurrentAndroidViewImportKeepsIdentityAndForwardChecks(t *testin
 	}
 }
 
+func TestAndroidAcceptedConfigurationRecoversDNSWithoutReplacingIdentity(t *testing.T) {
+	nameEntry := func(p *control.Projection) { p.EndpointGenerations[0].Host = "demo-entry.example" }
+	old, _ := androidFixture(t, 7, false, nameEntry)
+	old.ReportSequence = 12
+	body, err := deviceclient.EncodeIdentityState(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAndroidDeviceState(body); err != nil {
+		t.Fatal("execution failure invalidated accepted identity", err)
+	}
+	if _, err := AndroidDeviceProfile(body); err == nil {
+		t.Fatal("missing DNS executed named endpoint")
+	}
+	newState, _ := androidFixture(t, 8, false, nameEntry, func(p *control.Projection) {
+		p.DeviceAuthorizations[0].DNSServers = []string{"https://192.0.2.53/dns-query"}
+	})
+	view, err := control.CanonicalEncode(newState.LKG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := AcceptAndroidCertifiedView(body, view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := decodeState(accepted)
+	if err != nil || state.PrivateKey != old.PrivateKey || state.PublicKey != old.PublicKey || state.ClaimRequestID != old.ClaimRequestID || state.ReportSequence != 12 {
+		t.Fatal("repair replaced identity or progress", err)
+	}
+	projected, err := AndroidDeviceProfile(accepted)
+	if err != nil {
+		t.Fatal("repaired profile unavailable", err)
+	}
+	var profile androidProfile
+	if json.Unmarshal(projected, &profile) != nil || !strings.Contains(profile.Config, "https://192.0.2.53/dns-query") || strings.Contains(profile.Config, "udp://192.0.2.53:53") {
+		t.Fatal("runtime ignored certified encryption")
+	}
+	if err := ValidateAndroidDeviceState(accepted); err != nil {
+		t.Fatal("reopened state rejected", err)
+	}
+	for _, input := range []struct{ candidate, target string }{{"demo-unknown", "https://demo.example/"}, {state.LKG.View.Routes[0].ID, "https://other.example/"}} {
+		if request, err := NewAndroidBusinessRequest(accepted, input.candidate, input.target); err == nil {
+			request.Cancel()
+			t.Fatal("probe expanded Service authorization")
+		}
+	}
+}
+
 func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
 	state, body := androidFixture(t, 7, false)
 	profileBody, err := AndroidDeviceProfile(body)

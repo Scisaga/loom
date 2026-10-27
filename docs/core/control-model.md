@@ -901,12 +901,18 @@ flowchart TD
 
 ## 9. DNS overlay
 
-解析器地址沿现有设备授权配置：管理员在设备详情设置规范 IP 集合，`device.put` 将其作为可选
+解析器沿现有设备授权配置：管理员在设备详情设置规范 IP 或字面 IP DoH URL 集合，`device.put` 将其作为可选
 `dns_servers` 签名保存；各设备可保留原部署中不同的解析器。它是 DeviceAuthorization 的配置值，
 没有额外身份、store 或完成状态；删除此值会使具名传输和入网后的具名控制入口缺少可信解析位置。
 wire/持久采用现行契约的可选非空集合，DeviceView 投影为既有 `dns_servers` 数组，runtime 只作
 DNS 拨号和本机配置，设备管理页面回读同一值。省略表示未配置，更新与冲突复用设备事实规则；
 不静默改用宿主 DNS。认证配置变更先持久化，再重建运行；重启不复活旧解析器配置。
+
+两种传输的规范值与混用拒绝见[解析器契约](current-contract.md#servicepolicy-与设备授权)。
+新邀请草稿预填内置加密配置，操作者可在原高级设置修改，签发才成为该 Invite 的认证值；
+原邀请和设备编辑绝不补写预设。预设没有网络级权威、独立 store 或生命周期。
+后续普通 device.put 修改同一配置；国内或境外业务分别在实际最终出口解析，Direct 在本机解析，
+不从域名地域或 DNS 答案另造授权。基础设施 DoH socket 只属于解析组件，不给普通业务增加访问权限。
 
 control 只签发精确 `.loom` 名称的 A/AAAA 地址记录；拒绝通配符、其他域名、同名冲突、显式占用保留名 `control.loom` 和覆盖公网 DNS。DNS resolver 地址是运行配置，和 overlay 权威记录不同。记录从有效 NetworkIntent 投影到设备；解析结果不授予 Service 或 Policy 权限。引导及 underlay/control 端点不能依赖尚未取得的 overlay DNS，避免自举循环；不能接管开发宿主初始 namespace 的 DNS。
 

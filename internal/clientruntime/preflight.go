@@ -53,6 +53,7 @@ type singBoxDNS struct {
 }
 
 type singBoxDNSRule struct {
+	IPCIDR       []string `json:"ip_cidr,omitempty"`
 	Outbound     []string `json:"outbound,omitempty"`
 	Inbound      []string `json:"inbound,omitempty"`
 	QueryType    []string `json:"query_type,omitempty"`

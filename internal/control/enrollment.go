@@ -398,11 +398,8 @@ func (view DeviceView) Validate() error {
 	if view.RuntimeProfile != nil && view.RuntimeProfile.Validate() != nil {
 		return errors.New("device view runtime is invalid")
 	}
-	for index, address := range view.DNSServers {
-		ip, err := netip.ParseAddr(address)
-		if err != nil || ip.Zone() != "" || ip.String() != address || index > 0 && view.DNSServers[index-1] >= address {
-			return errors.New("device DNS addresses are invalid or not uniquely sorted")
-		}
+	if err := validateDeviceDNS(view.DNSServers); err != nil {
+		return err
 	}
 	return validateDeviceViewAuthorization(view)
 }

@@ -148,11 +148,13 @@ class CertifiedRuntimeInstrumentedTest {
             }
             error(label)
         }
-        fun mark(name: String) {
+        fun mark(name: String, connected: Boolean = true) {
             compose.waitForIdle()
-            compose.onNodeWithTag("connection-toggle").assertTextEquals("断开")
-            if (routing.status(profileID).value.currentPaths.isEmpty()) {
-                compose.onNodeWithText("当前没有已选业务路径").assertIsDisplayed()
+            if (connected) {
+                compose.onNodeWithTag("connection-toggle").assertTextEquals("断开")
+                if (routing.status(profileID).value.currentPaths.isEmpty()) {
+                    compose.onNodeWithText("当前没有已选业务路径").assertIsDisplayed()
+                }
             }
             // Only this opt-in demo fixture exports public continuity checks.
             // Never write the private key, Invite or complete protected state.
@@ -270,6 +272,78 @@ class CertifiedRuntimeInstrumentedTest {
         await("private join or protected restart must restore the certified profile") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
         connect()
         website()
+        if (args.getString("demoDNSRepair") == "true") {
+            require(independentServices)
+            await("domain probes must use the final exit resolver without client resolvers", 120) {
+                routing.status(profileID).value.currentPaths.size == serviceCount &&
+                    routing.status(profileID).value.currentPaths.all { it.state == "available" }
+            }
+            mark("demo-dns-before.json")
+            val original = JSONObject(File(directory, "demo-dns-before.json").readText())
+            val previous = enrollment.status(profileID).value.viewDigest
+            await("controller must publish a named resource without client resolvers") {
+                File(directory, "demo-dns-missing").isFile
+            }
+            compose.onNodeWithTag("tab-configuration").performClick()
+            if (enrollment.status(profileID).value.phase != EnrollmentPhase.ERROR) click("refresh-config")
+            await("failed runtime preparation must retain the newly accepted View") {
+                val status = enrollment.status(profileID).value
+                status.phase == EnrollmentPhase.ERROR && status.viewDigest.isNotEmpty() && status.viewDigest != previous &&
+                    ManagedProfileStore(context, profileID).acceptedViewDigest() == status.viewDigest
+            }
+            assertTrue(enrollment.status(profileID).value.detail.contains("已加入"))
+            assertTrue(enrollment.status(profileID).value.detail.contains("运行未就绪"))
+            assertFalse(enrollment.status(profileID).value.canAbandonPending)
+            assertTrue(VpnRuntime.status.value.activeProfileId.isEmpty())
+            mark("demo-dns-failed.json", connected = false)
+            if (args.getString("demoDNSRuntimeFailure") == "true") {
+                // End the original reconnect intent before independently
+                // exercising a startup failure and an explicit user retry.
+                ContextCompat.startForegroundService(context,
+                    Intent(context, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_DISCONNECT))
+                await("normal disconnect must clear reconnect intent") {
+                    !VpnConnectionPreference(context).desiredConnected() &&
+                        VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED
+                }
+            }
+            await("controller must repair the same device authorization") { File(directory, "demo-dns-repaired").isFile }
+            compose.onNodeWithText("重新检查").performScrollTo().performClick()
+            await("retry must sync the same accepted identity") { enrollment.status(profileID).value.phase == EnrollmentPhase.READY }
+            if (args.getString("demoDNSRuntimeFailure") == "true") {
+                compose.onNodeWithTag("tab-connection").performClick()
+                click("connection-toggle")
+                await("failed DoH startup must retain enrollment without an active VPN") {
+                    VpnRuntime.status.value.phase == ConnectionPhase.ERROR && VpnRuntime.status.value.activeProfileId.isEmpty()
+                }
+                assertEquals(EnrollmentPhase.READY, enrollment.status(profileID).value.phase)
+                mark("demo-dns-start-failed.json", connected = false)
+                await("controller must restore the same encrypted resolver") { File(directory, "demo-dns-available").isFile }
+            }
+            connect()
+            await("encrypted underlay DNS and final exit business must execute", 120) {
+                routing.status(profileID).value.currentPaths.size == serviceCount &&
+                    routing.status(profileID).value.currentPaths.all { it.state == "available" } && business()
+            }
+            mark("demo-dns-recovered.json")
+            val recovered = JSONObject(File(directory, "demo-dns-recovered.json").readText())
+            for (field in listOf("profile_id", "public_key_sha256", "platform", "authenticated_latch")) {
+                assertEquals("DNS repair must preserve $field", original.get(field), recovered.get(field))
+            }
+            assertTrue(BigInteger(recovered.getString("report_sequence")) >= BigInteger(original.getString("report_sequence")))
+            val latest = recovered.getJSONArray("high_water")
+            val byKey = (0 until latest.length()).associate { latest.getJSONObject(it).getString("key_id") to latest.getJSONObject(it) }
+            val earlier = original.getJSONArray("high_water")
+            for (index in 0 until earlier.length()) {
+                val old = earlier.getJSONObject(index)
+                val next = checkNotNull(byKey[old.getString("key_id")])
+                assertTrue(BigInteger(next.getString("sequence")) >= BigInteger(old.getString("sequence")))
+            }
+            await("controller must verify the repaired signed report") { File(directory, "demo-dns-finish").isFile }
+            click("connection-toggle")
+            await("normal stop must release the repaired VPN") { VpnRuntime.status.value.phase == ConnectionPhase.DISCONNECTED }
+            await("controller must read the stopped signed report") { File(directory, "demo-dns-stopped").isFile }
+            return
+        }
         if (args.getString("demoBusinessUI") == "true") {
             require(independentServices)
             await("business rows must retain each actual authorized target", 120) {

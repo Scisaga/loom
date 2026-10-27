@@ -71,7 +71,6 @@ internal data class AppliedSelector(
 internal data class BusinessProbeInput(
     val selector: AppliedSelector,
     val networkGeneration: String,
-    val dns: String,
     val target: String,
 )
 
@@ -88,13 +87,12 @@ internal fun serviceBusinessProbeInputs(
     application: AppliedRoute?,
     networkGeneration: String,
 ): List<BusinessProbeInput> {
-    val dns = profile.dns.firstOrNull() ?: return emptyList()
     val groups = profile.businessProbeTargets.associateBy { it.serviceID }
     return application?.selectors.orEmpty().sortedBy { it.selector }.flatMap { selected ->
         val group = groups.values.singleOrNull {
             selected.selector == "service:${it.serviceID}" || selected.selector == "local_network:${it.serviceID}"
         } ?: return@flatMap emptyList()
-        group.targets.map { target -> BusinessProbeInput(selected, networkGeneration, dns, target) }
+        group.targets.map { target -> BusinessProbeInput(selected, networkGeneration, target) }
     }
 }
 

@@ -177,6 +177,23 @@ class ManagedProfileStoreTest {
         assertThrows(IllegalStateException::class.java) { unexecutable.clearUncompletedIdentity() }
     }
 
+    @Test
+    fun resolverPreparationFailureKeepsAcceptedIdentityForSameProfileRepair() {
+        val storage = MemoryStorage()
+        val accepted = "demo-accepted-identity-without-resolver".encodeToByteArray()
+        val repaired = "demo-same-identity-with-encrypted-resolver".encodeToByteArray()
+        val handle = ManagedProfileStore(storage, profileId, {}, { _, _ -> }, { "demo-digest" }, project = { bytes ->
+            check(!bytes.contentEquals(accepted)) { "resource hostname requires authenticated DNS" }
+            ManagedProfile("demo-device", "Demo", "demo-digest", "[]", "{}", "[]", "demo-record")
+        })
+        assertThrows(IllegalStateException::class.java) { handle.acceptCertified(accepted) }
+        assertArrayEquals(accepted, handle.state())
+        assertThrows(IllegalStateException::class.java) { handle.clearUncompletedIdentity() }
+        handle.acceptCertified(repaired)
+        assertArrayEquals(repaired, handle.state())
+        assertEquals("demo-device", handle.loadCurrent()!!.nodeID)
+    }
+
     private fun store(
         storage: ProfileByteStore,
         validate: (ByteArray) -> Unit = {},

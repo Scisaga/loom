@@ -41,7 +41,8 @@ APPROVED_PUBLIC_IPS = {
     "9.9.9.9",       # Quad9 DNS, used by resolver tests.
     "119.29.29.29",  # DNSPod resolver explicitly selected by example SSOT.
     "140.82.112.0",  # Published GitHub service range used in a UI example.
-    "223.5.5.5",     # AliDNS resolver explicitly selected by example SSOT.
+    "223.5.5.5",     # AliDNS public resolver in the reviewed invitation preset.
+    "223.6.6.6",     # AliDNS encrypted alternate in the same preset.
 }
 
 DOMAIN = re.compile(

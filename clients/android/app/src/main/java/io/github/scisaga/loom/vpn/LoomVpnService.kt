@@ -35,6 +35,7 @@ import io.github.scisaga.loom.R
 import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.enrollment.ManagedProfile
+import io.github.scisaga.loom.enrollment.ManagedProfileStore
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.route.RouteManager
 import kotlinx.coroutines.CoroutineScope
@@ -124,15 +125,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         runningService = this
         io.github.scisaga.loomcore.Loomcore.setAndroidSocketProtector(
             object : io.github.scisaga.loomcore.AndroidSocketProtector {
-                override fun resolveHost(host: String): String {
-                    val network = selectedUnderlyingNetwork ?: connectivity.allNetworks.firstOrNull {
-                        val capabilities = connectivity.getNetworkCapabilities(it)
-                        capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == true &&
-                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    } ?: error("No underlying network for enrollment DNS")
-                    return network.getAllByName(host).mapNotNull { it.hostAddress }.distinct().joinToString("\n")
-                }
-
                 override fun protectSocket(fd: Long): Boolean {
                     if (!protect(fd.toInt())) return false
                     val network = selectedUnderlyingNetwork ?: return true
@@ -378,7 +370,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     for (attempt in 0..1) {
                         var nextBatch = emptyList<io.github.scisaga.loom.route.BusinessProbeInput>()
                         for ((index, input) in batch.withIndex()) {
-                            val result = NetworkProbe.run(input.dns, input.target, probeSession)
+                            val state = checkNotNull(ManagedProfileStore(this@LoomVpnService, profileId).state()) { "设备身份不存在" }
+                            val result = NetworkProbe.run(state, input.selector.candidate, input.target, probeSession)
                             nextBatch = lifecycle.withLock {
                                 if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||
                                     !connectionWanted(profileId)
@@ -412,7 +405,16 @@ class LoomVpnService : VpnService(), PlatformInterface {
         sessionID++
         val candidate = Libbox.newService(config, this)
         boxService = candidate
-        candidate.start()
+        try {
+            candidate.start()
+        } catch (error: Throwable) {
+            // Box.Start closes its instance before returning a startup error.
+            // Close the wrapper too, then let closeResources release our TUN
+            // and monitors without attempting to close that instance again.
+            runCatching { candidate.close() }.onFailure { Log.w(TAG, "close failed startup wrapper", it) }
+            boxService = null
+            throw error
+        }
     }
 
     private fun startReporter(profileID: String) {
@@ -460,8 +462,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 VpnRuntime.update(stopped)
             } else {
                 VpnRuntime.transform { it.copy(phase = ConnectionPhase.STOPPING, detail = "正在释放网络资源…") }
-                closeResources()
-                VpnRuntime.update(stopped)
+                val cleanup = runCatching { closeResources() }
+                if (cleanup.isSuccess) VpnRuntime.update(stopped)
+                else Log.e(TAG, "stop tunnel cleanup remains unconfirmed", cleanup.exceptionOrNull())
             }
         } finally {
             // The periodic reporter ended with this runtime. The application
