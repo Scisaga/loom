@@ -60,6 +60,7 @@ func TestWebChromeDeviceSectionsAndPolicyTags(t *testing.T) {
 			t.Fatalf("select all toolbar overflowed or overlapped at %d px", width)
 		}
 	}
+	assertPolicyPickerPresentationChrome(t, debug, "#device-policy-form")
 	chromeDo(t, debug, `(()=>{window.confirm=()=>false;demoDraft.querySelector('[name=responsibility][value=access]').click();return true})()`)
 	if chromeDo(t, debug, `demoDraft.querySelector('[name=responsibility][value=access]').checked&&demoDraft.querySelector('[value=demo-replacement-policy]').checked`) != true {
 		t.Fatal("removing access discarded policies without confirmation")

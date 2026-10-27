@@ -380,9 +380,9 @@ main {max-width:1586px;padding:28px 24px 24px}
 .policy-tags:empty {display:none}
 .policy-picker>details {flex:1;min-width:140px}
 .policy-picker summary {display:flex;justify-content:space-between;color:var(--dim);font-size:12px;line-height:28px;cursor:pointer;list-style:none;white-space:nowrap}
-.policy-picker:has(>details[open]) {flex-wrap:nowrap}
+.policy-picker:has(>details[open]) {flex-wrap:nowrap;border-bottom-left-radius:0;border-bottom-right-radius:0}
 .policy-picker:has(>details[open]) .policy-tags {display:none}
-.policy-picker .node-picker-popup {left:0;right:0;top:100%;z-index:20;max-height:min(360px,50vh);overflow:auto;scrollbar-gutter:stable}
+.policy-picker .node-picker-popup {left:-1px;right:-1px;top:100%;z-index:20;max-height:min(360px,50vh);overflow:auto;scrollbar-gutter:stable;border-top-left-radius:0;border-top-right-radius:0}
 .policy-picker-toolbar {display:flex;align-items:center;gap:8px;position:sticky;top:0;z-index:1;background:white;box-shadow:0 -12px 0 12px white;margin-bottom:8px}
 .policy-picker-toolbar>[data-policy-search] {flex:1;min-width:0;height:36px}
 .policy-picker-toolbar>button {flex:none;min-width:128px;padding:8px 10px;font-size:12px;white-space:nowrap}
@@ -398,6 +398,12 @@ main {max-width:1586px;padding:28px 24px 24px}
 .selected-policy-summary {border-top:1px solid var(--line);padding:24px 0;margin-top:20px;font-size:14px}
 .selected-policy-summary p,.selected-policy-summary small {font-size:12px;color:var(--dim);line-height:1.7}
 .selected-policy-summary button {display:block;border:0;color:var(--ok);background:none;font-size:12px;padding:10px 0 0}
+.policy-summary-heading {display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 8px}
+.policy-summary-heading h3 {font-size:14px;margin:0}
+.policy-summary-list {max-height:min(480px,55vh);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.policy-summary-list>.selected-policy-summary {margin:0;padding:16px 0;border-top:0;border-bottom:1px solid var(--line)}
+.policy-summary-pagination {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;margin:0;font-size:12px;color:var(--dim)}
+.policy-summary-pagination>button {min-width:76px;min-height:32px;padding:6px 10px;font-size:12px}
 .policy-runtime {display:block;margin-top:8px;max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .policy-runtime small {display:block;font-size:12px;color:var(--dim);line-height:1.6}
 .policy-runtime>a {display:inline-block;margin-top:4px;font-size:12px}

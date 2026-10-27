@@ -74,17 +74,35 @@ export function syncPolicyChoices(form,services,canCopy=false,context={}){
  button.disabled=!remaining;button.textContent=all?'All '+eligible.length+' selected':'Select all policies';
  picker.querySelector('[data-policy-picker-label]').textContent=all&&selected.length===eligible.length?'All '+selected.length+' policies selected':selected.length?selected.length+' policies selected':'Find a policy…';
  picker.querySelector('.policy-tags').innerHTML=selected.map(input=>selectedTag(input.value,input.closest('label').dataset.policyLabel)).join('');
- form.querySelector('[data-selected-policy-summary]').innerHTML=selected.map(input=>{
+ const summary=form.querySelector('[data-selected-policy-summary]'),summaries=selected.map(input=>{
   const p=policies.find(p=>p.id===input.value),s=services.find(s=>s.id===p?.service_id);
   if(!p||!s||input.hasAttribute('data-policy-unavailable'))return `<section class="selected-policy-summary bad">${esc(input.closest('label').dataset.policyLabel)} · unavailable. Remove or review this reference before submitting.</section>`;
   const scope=v=>v?.mode==='any'?'unrestricted':v?.mode==='none'?'none':list(v?.node_ids).join(', '),rule=p.action==='deny'?'Deny this service':s.kind==='local_network'?`Fixed LAN gateway ${s.local_network.gateway_node_id} · entry ${scope(p.entry_scope)} · transit ${scope(p.relay_scope)}`:`${p.allow_direct?'Direct, or ':''}entry ${scope(p.entry_scope)} · transit ${scope(p.relay_scope)} · exit ${scope(p.exit_scope)}`,targets=s.kind==='local_network'?s.local_network.virtual_prefix+' → '+s.local_network.local_prefix:list(s.matchers).map(v=>(v.kind==='dns_suffix'?'.':'')+v.value).join(' + ');
   return `<section class="selected-policy-summary"><div class="sectionhead"><span class="mono">${esc(p.name||p.id)}</span><span>${esc(s.name||s.id)} · ${s.kind==='local_network'?'Shared LAN':'Internet'}</span><a href="/policies?policy=${encodeURIComponent(p.id)}" data-nav>View rules →</a></div><p>${esc(rule)}</p><small class="mono">${esc(targets)}</small>${policyRuntimeHTML(p,context,true,true)}${canCopy?`<button type="button" data-copy-policy="${esc(p.id)}">Copy for this device</button>`:''}</section>`;
- }).join('')||'<p class="dim policy-empty">Join only · no business access.</p>';
+ }).join('');
+ summary.innerHTML=summaries?`<div class="policy-summary-heading"><h3>Selected policy details</h3><span class="tiny dim" data-policy-summary-range></span></div><div class="policy-summary-list" data-policy-summary-list role="region" aria-label="Selected policy details" tabindex="0">${summaries}</div><nav class="policy-summary-pagination" aria-label="Selected policy pages"><button type="button" data-policy-summary-page="-1">Previous</button><span data-policy-summary-page-status role="status" aria-live="polite"></span><button type="button" data-policy-summary-page="1">Next</button></nav>`:'<p class="dim policy-empty">Join only · no business access.</p>';
+ showPolicySummaryPage(summary,Number(summary.dataset.page)||0);
  const count=form.querySelector('[data-device-selection-count]');if(count){const roles=[...form.querySelectorAll('[name=responsibility]:checked')].length,serviceIDs=new Set(selected.map(input=>policies.find(p=>p.id===input.value)?.service_id).filter(Boolean));count.textContent=roles+' roles · '+selected.length+' policies · '+serviceIDs.size+' services'}
+}
+function showPolicySummaryPage(summary,page){
+ const rows=[...summary.querySelectorAll('.selected-policy-summary')],pages=Math.max(1,Math.ceil(rows.length/3)),current=Math.max(0,Math.min(Math.floor(page)||0,pages-1));
+ summary.dataset.page=String(current);if(!rows.length)return;
+ const start=current*3,end=Math.min(start+3,rows.length);
+ rows.forEach((row,index)=>row.hidden=index<start||index>=end);
+ summary.querySelector('[data-policy-summary-range]').textContent=`${start+1}–${end} of ${rows.length}`;
+ summary.querySelector('[data-policy-summary-page-status]').textContent=`Page ${current+1} of ${pages}`;
+ summary.querySelector('[data-policy-summary-page="-1"]').disabled=current===0;
+ summary.querySelector('[data-policy-summary-page="1"]').disabled=current===pages-1;
+ summary.querySelector('.policy-summary-pagination').hidden=pages===1;
+ summary.querySelector('[data-policy-summary-list]').scrollTop=0;
+}
+export function policyPickerOutsideClick(event){
+ for(const details of document.querySelectorAll('.policy-picker>details[open]'))if(!details.parentElement.contains(event.target))details.open=false;
 }
 export function policyPickerInput(event){const input=event.target.closest('[data-policy-search]');if(!input)return;for(const row of input.closest('.policy-picker').querySelectorAll('[data-policy-option]'))row.hidden=!row.dataset.policyOption.toLowerCase().includes(input.value.toLowerCase())}
 export function policyPickerClick(event){
- const button=event.target.closest('[data-policy-remove],[data-policy-select-all]');if(!button)return false;
+ const button=event.target.closest('[data-policy-remove],[data-policy-select-all],[data-policy-summary-page]');if(!button)return false;
+ if(button.hasAttribute('data-policy-summary-page')){const summary=button.closest('[data-selected-policy-summary]');showPolicySummaryPage(summary,Number(summary.dataset.page)+Number(button.dataset.policySummaryPage));return true}
  const picker=button.closest('.policy-picker');
  if(button.hasAttribute('data-policy-select-all')){
   const inputs=[...picker.querySelectorAll('[name=policy_id]:enabled:not(:checked)')];

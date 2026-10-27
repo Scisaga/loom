@@ -1,6 +1,6 @@
 import{applyLive}from'./live.js';
 import {nodePickerHTML,pickerInput,pickerChange,pickerClick} from './selection.js';
-import {policyChoicesHTML,syncPolicyChoices,policyRuntimeHTML,refreshPolicyRuntime,policyPickerInput,policyPickerClick,policyPickerKey} from './policy-selection.js';
+import {policyChoicesHTML,syncPolicyChoices,policyRuntimeHTML,refreshPolicyRuntime,policyPickerInput,policyPickerClick,policyPickerKey,policyPickerOutsideClick} from './policy-selection.js';
 import {releasesHTML,deviceVersionsHTML} from './releases.js';
 import {createConfigurationReview} from './configuration.js';
 import {hy2TransferHTML,hy2FirstHopRows} from './hy2-transfer.js';
@@ -821,6 +821,7 @@ document.addEventListener('submit',async event=>{
 });
 document.addEventListener('input',event=>{policyPickerInput(event);if(event.target.matches('[name=lifetime_hours]')){const form=event.target.closest('#enrollment-form');form.querySelector('[data-invitation-summary]').textContent=event.target.value+' hours · '+controlName(JSON.parse(form.dataset.options).issuer_control_id)}});
 document.addEventListener('keydown',policyPickerKey);
+document.addEventListener('click',policyPickerOutsideClick,true);
 let reconnectDelay=1000;
 function connectLive(){
  const scheme=location.protocol==='https:'?'wss:':'ws:',socket=new WebSocket(`${scheme}//${location.host}/api/control/ui/live`,'loom.control.ui');let base=null;
