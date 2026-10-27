@@ -25,6 +25,13 @@ leave business status unknown without preventing an active VPN. These Android
 catalog rules differ from Windows, which adds a new profile to its list only
 after joining and saving. See the [profile model](../../docs/clients/android-profile-model.md).
 
+Scan opens a centered camera dialog over the current page. The square camera
+viewport has no surrounding card; the underlying page keeps its scroll position
+and pauses interaction. Close, outside tap and Back dismiss the dialog and release
+its camera use cases. Permission and camera errors stay within the viewport.
+Dismissed sessions cannot deliver queued scan results; accepted results continue
+through the existing profile invitation import.
+
 Each profile stores one policy choice per Service in its existing protected
 preference. The control grants a set of available policies; multiple policies for
 the same Service are allowed. A new Service with one policy is initialized once;

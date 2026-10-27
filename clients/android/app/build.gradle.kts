@@ -48,8 +48,8 @@ android {
         applicationId = "io.github.scisaga.loom"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.5.6"
+        versionCode = 14
+        versionName = "0.5.7"
 
         buildConfigField("String", "LOOM_SOURCE_COMMIT", "\"$sourceCommit\"")
         buildConfigField("String", "LOOM_AAR_SHA256", "\"$aarSha256\"")

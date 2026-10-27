@@ -139,9 +139,7 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                         onRename = actions.onRenameProfile,
                         onDelete = actions.onDeleteProfile,
                     )
-                    if (state.scanning) {
-                        InviteScanner(onScanned = actions.onScanned, onCancel = actions.onCancelScan)
-                    } else if (state.join.phase == EnrollmentPhase.READY) {
+                    if (state.join.phase == EnrollmentPhase.READY) {
                         JoinedDeviceCard(viewedProfile, state.join) {
                             actions.onRefreshEnrollment(viewedProfile.id)
                         }
@@ -186,5 +184,8 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                 }
             }
         }
+    }
+    if (state.scanning) {
+        InviteScanner(onScanned = actions.onScanned, onCancel = actions.onCancelScan)
     }
 }

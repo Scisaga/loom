@@ -14,4 +14,9 @@ class InviteScannerLayoutTest {
     fun wideScreenViewportIsCappedAtReadableSquare() {
         assertEquals(420.dp, scannerViewportEdge(680.dp))
     }
+
+    @Test
+    fun landscapeViewportFitsTheAvailableHeight() {
+        assertEquals(280.dp, scannerViewportEdge(780.dp, 280.dp))
+    }
 }
