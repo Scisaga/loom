@@ -603,12 +603,22 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		return err
 	}
 	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
-	config, err = clientadapter.WithLocalNetworkBoundary(config, connected)
+	var localNetworks []control.LocalNetworkPrefix
+	for _, service := range lkg.View.Services {
+		mapping := service.LocalNetwork
+		if mapping != nil && mapping.GatewayNodeID == lkg.View.DeviceID && mapping.LocalPrefix == mapping.VirtualPrefix {
+			if networks, err := collectLocalNetworks(ctx, lkg.View); err == nil && networks != nil {
+				localNetworks = *networks
+			}
+			break
+		}
+	}
+	config, err = clientadapter.WithLocalNetworkBoundary(config, connected, localNetworks...)
 	if err != nil {
 		return err
 	}
 	if serverConfig != "" {
-		serverConfig, err = clientadapter.WithLocalNetworkBoundary(serverConfig, connected)
+		serverConfig, err = clientadapter.WithLocalNetworkBoundary(serverConfig, connected, localNetworks...)
 		if err != nil {
 			return err
 		}

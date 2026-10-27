@@ -29,6 +29,16 @@ func localNetworkWriteFixture(t *testing.T) (*Server, ed25519.PrivateKey) {
 
 func reportLocalNetworks(t *testing.T, server *Server, key ed25519.PrivateKey, sequence U64, prefixes []string) DeviceReport {
 	t.Helper()
+	sort.Strings(prefixes)
+	networks := make([]LocalNetworkPrefix, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		networks = append(networks, LocalNetworkPrefix{Prefix: prefix, LAN: prefix == "192.0.2.0/24"})
+	}
+	return reportLocalNetworkValues(t, server, key, sequence, networks)
+}
+
+func reportLocalNetworkValues(t *testing.T, server *Server, key ed25519.PrivateKey, sequence U64, networks []LocalNetworkPrefix) DeviceReport {
+	t.Helper()
 	view, err := ProjectDeviceView(server.Runtime.Authority.Snapshot(), "demo-gateway")
 	if err != nil {
 		t.Fatal(err)
@@ -37,11 +47,7 @@ func reportLocalNetworks(t *testing.T, server *Server, key ed25519.PrivateKey, s
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(prefixes)
-	networks := make([]LocalNetworkPrefix, 0, len(prefixes))
-	for _, prefix := range prefixes {
-		networks = append(networks, LocalNetworkPrefix{Prefix: prefix, LAN: prefix == "192.0.2.0/24"})
-	}
+	sort.Slice(networks, func(i, j int) bool { return networks[i].Prefix < networks[j].Prefix })
 	report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: view.NetworkID, DeviceID: view.DeviceID, ReportSequence: sequence, ViewDigest: digest, NetworkGeneration: "demo-network-generation", ReportedAt: server.now().UnixMilli(), Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{}, LocalNetworks: &networks, Runtime: RuntimeReadback{State: "unknown"}}, key)
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +57,48 @@ func reportLocalNetworks(t *testing.T, server *Server, key ed25519.PrivateKey, s
 		t.Fatal("authenticated prefix report failed", response.Body.String())
 	}
 	return report
+}
+
+func TestLocalNetworkIdentityAllocationPersistsAndOnlyExemptsItsGatewayLAN(t *testing.T) {
+	server, key := localNetworkWriteFixture(t)
+	networks := []LocalNetworkPrefix{{Prefix: "10.64.8.0/24", LAN: true}}
+	reportLocalNetworkValues(t, server, key, 1, networks)
+	request := LocalNetworkAllocationRequest{Schema: 3, RequestID: "demo-identity-allocation", ID: "demo-lan", Name: "Demo LAN", GatewayNodeID: "demo-gateway", LocalPrefix: networks[0].Prefix}
+	response := localNetworkAdminHTTP(t, server, "/api/control/services/local-network-allocation", request)
+	operation, err := DecodeOperation(response.Body.Bytes())
+	if response.Code != http.StatusOK || err != nil {
+		t.Fatal("identity preview failed", response.Body.String(), err)
+	}
+	if operation.Payload.(Service).LocalNetwork.VirtualPrefix != request.LocalPrefix {
+		t.Fatal("the gateway's authenticated source was unnecessarily translated")
+	}
+	if response := localNetworkAdminHTTP(t, server, "/api/control/operations", operation); response.Code != http.StatusOK {
+		t.Fatal("identity mapping did not persist through the normal operation", response.Body.String())
+	}
+	reportLocalNetworkValues(t, server, key, 2, networks)
+	before := server.Runtime.Authority.Frontier()
+	if err := server.reconcileLocalNetworks(context.Background()); err != nil || !reflect.DeepEqual(before, server.Runtime.Authority.Frontier()) {
+		t.Fatal("the gateway's own source triggered an automatic reallocation", err)
+	}
+	root := server.Runtime.Authority.root
+	server.Runtime.Close()
+	server.Runtime, err = OpenRuntime(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Runtime.Close() })
+	if actual := currentLocalNetwork(t, server, request.ID); !reflect.DeepEqual(actual, operation.Payload) {
+		t.Fatal("identity mapping was lost on restart")
+	}
+	networks = append(networks, LocalNetworkPrefix{Prefix: "10.64.0.0/16"})
+	reportLocalNetworkValues(t, server, key, 3, networks)
+	if err := server.reconcileLocalNetworks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	actual := currentLocalNetwork(t, server, request.ID).LocalNetwork
+	if actual.VirtualPrefix == request.LocalPrefix || actual.AllocationAttempt != 1 || !actual.Enabled {
+		t.Fatal("a distinct overlapping gateway interface inherited the own-source exemption")
+	}
 }
 
 func localNetworkAdminHTTP(t *testing.T, server *Server, path string, value any) *httptest.ResponseRecorder {

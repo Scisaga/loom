@@ -109,12 +109,16 @@ func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
 func TestRealLocalNetworkProjectedSegmentsAndWithdrawal(t *testing.T) {
 	testRealNativeProjectedSegments(t, true)
 }
+func TestRealLocalNetworkIdentityProjectedSegmentsAndWithdrawal(t *testing.T) {
+	testRealNativeProjectedSegments(t, true, false, false, true)
+}
 func TestRealNativeSharedResourcePeers(t *testing.T) { testRealNativeProjectedSegments(t, false, true) }
 func TestRealNativeResolvedManagementEndpoint(t *testing.T) {
 	testRealNativeProjectedSegments(t, false, false, true)
 }
 func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	namedPeer := len(shared) > 1 && shared[1]
+	identityLAN := len(shared) > 2 && shared[2]
 	executable := os.Getenv("LOOM_LINUX_MIXED_EXECUTABLE")
 	if executable == "" {
 		t.Skip("set LOOM_LINUX_MIXED_EXECUTABLE in a fresh network namespace")
@@ -144,14 +148,21 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	}
 	business := "192.0.2.80"
 	if lan {
-		virtual, err := control.AllocateLocalNetworkPrefix(p.NetworkID, "demo-service", 0, "192.0.2.0/24", nil)
+		local := "192.0.2.0/24"
+		if identityLAN {
+			local = "10.64.8.0/24"
+			if out, err := exec.Command("ip", "address", "add", "10.64.8.80/32", "dev", "lo").CombinedOutput(); err != nil {
+				t.Fatalf("isolated LAN target: %v %s", err, out)
+			}
+		}
+		virtual, err := control.AllocateLocalNetworkPrefix(p.NetworkID, "demo-service", 0, local, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		host := virtual.Addr().As4()
 		host[3] = 80
 		business = netip.AddrFrom4(host).String()
-		p.NetworkIntent.Services[0] = control.Service{ID: "demo-service", Name: "Demo LAN", Kind: "local_network", LocalNetwork: &control.LocalNetwork{GatewayNodeID: "demo-exit", LocalPrefix: "192.0.2.0/24", VirtualPrefix: virtual.String(), Enabled: true}}
+		p.NetworkIntent.Services[0] = control.Service{ID: "demo-service", Name: "Demo LAN", Kind: "local_network", LocalNetwork: &control.LocalNetwork{GatewayNodeID: "demo-exit", LocalPrefix: local, VirtualPrefix: virtual.String(), Enabled: true}}
 		p.NetworkIntent.Policies[0].ExitScope = nil
 		p.NetworkIntent.Policies[0].AllowDirect = nil
 		p.NetworkIntent.Policies[0].LocalEgressDevices = nil

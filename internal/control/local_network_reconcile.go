@@ -32,6 +32,9 @@ func reportedLocalNetworkConflicts(projection Projection, reports []DeviceReport
 			}
 			virtual, _ := netip.ParsePrefix(service.LocalNetwork.VirtualPrefix)
 			for _, text := range *report.LocalNetworks {
+				if report.DeviceID == service.LocalNetwork.GatewayNodeID && text.LAN && text.Prefix == service.LocalNetwork.LocalPrefix && text.Prefix == service.LocalNetwork.VirtualPrefix {
+					continue
+				}
 				prefix, _ := netip.ParsePrefix(text.Prefix)
 				if virtual.Overlaps(prefix) {
 					conflicts[service.ID] = true

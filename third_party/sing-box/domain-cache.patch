@@ -2013,7 +2013,7 @@
 +	local, le := netip.ParsePrefix(options.PrefixMapping.LocalPrefix)
 +	if ve != nil || le != nil || !virtual.Addr().Is4() || !local.Addr().Is4() || virtual != virtual.Masked() || local != local.Masked() ||
 +		virtual.String() != options.PrefixMapping.VirtualPrefix || local.String() != options.PrefixMapping.LocalPrefix ||
-+		virtual.Bits() != local.Bits() || virtual.Bits() < 8 || !privateMappingPrefix(virtual) || !local.Addr().IsGlobalUnicast() || virtual.Overlaps(local) ||
++		virtual.Bits() != local.Bits() || virtual.Bits() < 8 || !privateMappingPrefix(virtual) || !local.Addr().IsGlobalUnicast() || virtual.Overlaps(local) && !(virtual == local && virtual.Addr().As4()[0] == 10) ||
 +		options.Detour != "" || options.OverrideAddress != "" || options.OverridePort != 0 {
 +		return nil, errors.New("invalid direct prefix mapping")
 +	}
@@ -2147,7 +2147,7 @@
 +}
 --- /dev/null
 +++ b/protocol/direct/prefix_mapping_test.go
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,132 @@
 +package direct
 +
 +import (
@@ -2252,6 +2252,32 @@
 +		if err != nil || M.SocksaddrFromNet(address) != virtual || len(underlay.packets.replies) != 0 {
 +			t.Fatal("UDP reply was injected or exposed the physical address", err)
 +		}
++	}
++}
++
++func TestIdentityPrefixMappingKeepsAddressAndUDPPeer(t *testing.T) {
++	underlay := &demoMappingUnderlay{packets: &demoMappingPackets{}}
++	prefix := netip.MustParsePrefix("10.64.8.0/24")
++	d := &prefixMappingDialer{underlay: underlay, virtual: prefix, local: prefix}
++	target := M.ParseSocksaddr("10.64.8.17:443")
++	ctx := context.Background()
++	_, _ = d.DialContext(ctx, "tcp", target)
++	if underlay.destination != target {
++		t.Fatal("identity mapping changed the physical TCP target")
++	}
++	conn, err := d.ListenPacket(ctx, target)
++	if err != nil || underlay.destination != target {
++		t.Fatal("identity mapping changed the physical UDP target", err)
++	}
++	if _, err := conn.WriteTo([]byte("demo request"), target.UDPAddr()); err != nil || M.SocksaddrFromNet(underlay.packets.written) != target {
++		t.Fatal("identity UDP mapping changed its destination", err)
++	}
++	if _, err := conn.WriteTo([]byte("demo request"), M.ParseSocksaddr("10.64.8.18:443").UDPAddr()); err == nil {
++		t.Fatal("identity UDP session accepted a different destination")
++	}
++	underlay.destination = M.Socksaddr{}
++	if _, err := d.DialContext(ctx, "tcp", M.ParseSocksaddr("10.64.9.17:443")); err == nil || underlay.destination.IsValid() {
++		t.Fatal("identity mapping dialed outside its authorized prefix")
 +	}
 +}
 

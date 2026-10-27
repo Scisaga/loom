@@ -30,7 +30,7 @@ var localNetworkPools = []netip.Prefix{
 	netip.MustParsePrefix("192.168.0.0/16"),
 }
 
-var errNoLocalNetworkPrefix = errors.New("no nonconflicting private prefix can fit the local network")
+var errNoLocalNetworkPrefix = errors.New("no nonconflicting prefix in 10.0.0.0/8 can fit the local network")
 
 func localNetworkPrefix(text string) (netip.Prefix, error) {
 	prefix, err := netip.ParsePrefix(text)
@@ -50,8 +50,8 @@ func (value LocalNetwork) Validate() error {
 func ValidateLocalNetworkPrefixes(localText, virtualText string) error {
 	local, localErr := localNetworkPrefix(localText)
 	virtual, virtualErr := localNetworkPrefix(virtualText)
-	if localErr != nil || virtualErr != nil || local.Bits() != virtual.Bits() || local.Overlaps(virtual) {
-		return errors.New("local and virtual prefixes must be disjoint canonical IPv4 prefixes of equal length")
+	if localErr != nil || virtualErr != nil || local.Bits() != virtual.Bits() || local.Overlaps(virtual) && !(local == virtual && localNetworkPools[0].Contains(virtual.Addr())) {
+		return errors.New("local and virtual prefixes must be canonical IPv4 prefixes of equal length, disjoint or identical inside 10.0.0.0/8")
 	}
 	for _, pool := range localNetworkPools {
 		if virtual.Bits() >= pool.Bits() && pool.Contains(virtual.Addr()) {
@@ -100,6 +100,23 @@ func AllocateLocalNetworkPrefix(networkID, serviceID string, attempt int, localT
 	if err != nil || ValidateID(networkID) != nil || ValidateID(serviceID) != nil || attempt < 0 || attempt > 3 {
 		return netip.Prefix{}, errors.New("local network allocation input is invalid")
 	}
+	for _, block := range excluded {
+		if !block.IsValid() || !block.Addr().Is4() || block != block.Masked() {
+			return netip.Prefix{}, errors.New("allocation exclusions must be masked IPv4 prefixes")
+		}
+	}
+	if attempt == 0 {
+		address := local.Addr().As4()
+		address[0] = 10
+		preferred := netip.PrefixFrom(netip.AddrFrom4(address), local.Bits())
+		available := true
+		for _, block := range excluded {
+			available = available && !preferred.Overlaps(block)
+		}
+		if available {
+			return preferred, nil
+		}
+	}
 	type interval struct{ first, last uint64 }
 	type poolSlots struct {
 		base uint64
@@ -107,21 +124,17 @@ func AllocateLocalNetworkPrefix(networkID, serviceID string, attempt int, localT
 	}
 	size := uint64(1) << (32 - local.Bits())
 	blocks := append(append([]netip.Prefix{}, excluded...), local)
-	for _, value := range []string{"172.19.0.0/30", "192.0.2.0/30", "198.18.0.0/15"} {
-		blocks = append(blocks, netip.MustParsePrefix(value))
-	}
 	var pools []poolSlots
 	var count uint64
-	for _, pool := range localNetworkPools {
+	// Other private pools remain valid for immutable, previously signed values.
+	// New allocations always use the 10/8 pool.
+	for _, pool := range localNetworkPools[:1] {
 		if pool.Bits() > local.Bits() {
 			continue
 		}
 		base, end := ipv4Number(pool.Addr()), prefixLast(pool)
 		occupied := []interval{}
 		for _, block := range blocks {
-			if !block.IsValid() || !block.Addr().Is4() || block != block.Masked() {
-				return netip.Prefix{}, errors.New("allocation exclusions must be masked IPv4 prefixes")
-			}
 			if !pool.Overlaps(block) {
 				continue
 			}
@@ -202,7 +215,7 @@ func LocalNetworkConflicts(intent NetworkIntent) map[string]bool {
 				continue
 			}
 			local, _ := netip.ParsePrefix(other.LocalNetwork.LocalPrefix)
-			if virtual.Overlaps(local) {
+			if virtual.Overlaps(local) && !(other.ID == service.ID && virtual == local) {
 				conflicts[service.ID] = true
 			}
 			if other.ID != service.ID {

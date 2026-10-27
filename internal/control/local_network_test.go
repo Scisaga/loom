@@ -106,6 +106,67 @@ func TestLocalNetworkAllocationExclusionAndExhaustion(t *testing.T) {
 	}
 }
 
+func TestLocalNetworkAllocationPrefersSourceInsideTenPool(t *testing.T) {
+	for _, tc := range []struct{ local, want string }{
+		{"10.64.8.0/24", "10.64.8.0/24"},
+		{"192.0.2.0/24", "10.0.2.0/24"},
+		{"192.0.0.0/16", "10.0.0.0/16"},
+		{"192.0.2.17/32", "10.0.2.17/32"},
+		{"192.0.0.0/8", "10.0.0.0/8"},
+	} {
+		allocated, err := AllocateLocalNetworkPrefix("demo-network", "demo-lan", 0, tc.local, nil)
+		if err != nil || allocated.String() != tc.want || ValidateLocalNetworkPrefixes(tc.local, tc.want) != nil {
+			t.Fatal("source network bits or length changed", tc, allocated, err)
+		}
+	}
+	preferred := netip.MustParsePrefix("10.64.8.0/24")
+	for _, excluded := range [][]netip.Prefix{
+		{preferred},
+		{netip.MustParsePrefix("10.64.8.128/25")},
+		{netip.MustParsePrefix("10.64.0.0/16")},
+	} {
+		allocated, err := AllocateLocalNetworkPrefix("demo-network", "demo-lan", 0, preferred.String(), excluded)
+		duplicate, duplicateErr := AllocateLocalNetworkPrefix("demo-network", "demo-lan", 0, preferred.String(), append(excluded, excluded...))
+		if err != nil || duplicateErr != nil || allocated != duplicate || !localNetworkPools[0].Contains(allocated.Addr()) || allocated.Overlaps(excluded[0]) || allocated == preferred {
+			t.Fatal("preferred collision did not produce a deterministic disjoint 10 prefix", allocated, err)
+		}
+	}
+	if _, err := AllocateLocalNetworkPrefix("demo-network", "demo-lan", 0, "192.0.2.0/24", localNetworkPools[:1]); err == nil {
+		t.Fatal("exhausting 10/8 fell back to another private pool")
+	}
+	for _, invalid := range []netip.Prefix{{}, netip.MustParsePrefix("2001:db8::/64"), netip.MustParsePrefix("192.0.2.1/24")} {
+		if _, err := AllocateLocalNetworkPrefix("demo-network", "demo-lan", 0, preferred.String(), []netip.Prefix{invalid}); err == nil {
+			t.Fatal("preferred candidate bypassed invalid exclusion validation")
+		}
+	}
+	for _, prefix := range []string{"172.16.8.0/24", "192.168.8.0/24"} {
+		if ValidateLocalNetworkPrefixes("192.0.2.0/24", prefix) != nil || ValidateLocalNetworkPrefixes(prefix, prefix) == nil {
+			t.Fatal("historical disjoint mappings changed or non-10 identity mapping was accepted")
+		}
+		original := []byte(`{"id":"demo-lan","kind":"local_network","local_network":{"allocation_attempt":0,"enabled":true,"gateway_node_id":"demo-gateway","local_prefix":"192.0.2.0/24","virtual_prefix":"` + prefix + `"},"name":"Demo LAN"}`)
+		var service Service
+		if err := DecodeCanonical(original, &service, contractTestLimits); err != nil {
+			t.Fatal("historical private mapping no longer decodes", err)
+		}
+		if encoded, err := CanonicalEncode(service); err != nil || !bytes.Equal(encoded, original) {
+			t.Fatal("historical private mapping bytes changed", err)
+		}
+	}
+	service := localNetworkTestService(t, "demo-network", "demo-lan", "demo-gateway")
+	service.LocalNetwork.LocalPrefix, service.LocalNetwork.VirtualPrefix = preferred.String(), preferred.String()
+	intent := EmptyNetworkIntent()
+	intent.Services = []Service{service}
+	if len(LocalNetworkConflicts(intent)) != 0 {
+		t.Fatal("gateway's own identical source was treated as an external conflict")
+	}
+	other := localNetworkTestService(t, "demo-network", "demo-other", "demo-other-gateway")
+	other.LocalNetwork.VirtualPrefix = preferred.String()
+	intent.Services = append(intent.Services, other)
+	if conflicts := LocalNetworkConflicts(intent); !conflicts[service.ID] || !conflicts[other.ID] {
+		t.Fatal("identity source exemption hid another Service's virtual overlap")
+	}
+}
+
 func localNetworkProjectionFixture(t *testing.T) Projection {
 	p := relayProjectionFixture(t)
 	p.DeviceAuthorizations[1].Responsibilities = []string{"forward"}

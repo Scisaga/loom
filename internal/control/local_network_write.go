@@ -96,6 +96,9 @@ func localNetworkAllocation(projection Projection, reports []DeviceReport, reque
 	excluded := []netip.Prefix{}
 	for _, current := range latest {
 		for _, text := range *current.LocalNetworks {
+			if current.DeviceID == gateway.ID && text.LAN && text.Prefix == request.LocalPrefix {
+				continue
+			}
 			prefix, _ := netip.ParsePrefix(text.Prefix)
 			excluded = append(excluded, prefix)
 		}
@@ -110,8 +113,10 @@ func localNetworkAllocation(projection Projection, reports []DeviceReport, reque
 		if err := reference("service", service.ID, true); err != nil {
 			return Operation{}, err
 		}
-		local, _ := netip.ParsePrefix(service.LocalNetwork.LocalPrefix)
-		excluded = append(excluded, local)
+		if service.ID != request.ID || service.LocalNetwork.GatewayNodeID != gateway.ID || service.LocalNetwork.LocalPrefix != request.LocalPrefix {
+			local, _ := netip.ParsePrefix(service.LocalNetwork.LocalPrefix)
+			excluded = append(excluded, local)
+		}
 		if service.ID != request.ID {
 			virtual, _ := netip.ParsePrefix(service.LocalNetwork.VirtualPrefix)
 			excluded = append(excluded, virtual)

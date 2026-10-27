@@ -76,7 +76,7 @@ func linuxSourceBuildInstructions(version string) []byte {
 	instructions, _, _ := strings.Cut(sourceBuildInstructions, " Wintun is")
 	// Signed build instructions belong to the immutable artifact coordinate,
 	// even after another artifact becomes the current Linux target.
-	if version == "1.11.4-loom.13" || version == "1.11.4-loom.14" {
+	if version == "1.11.4-loom.13" || version == "1.11.4-loom.14" || version == "1.11.4-loom.15" {
 		instructions = strings.Replace(instructions, "bash scripts/build-dataplane.sh", "bash scripts/build-dataplane.sh linux/amd64 linux/arm64", 1)
 		instructions = strings.Replace(instructions, "the four deterministic executables", "the two deterministic Linux executables", 1)
 	}

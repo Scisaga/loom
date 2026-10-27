@@ -799,7 +799,25 @@ main {max-width:1586px;padding:28px 24px 24px}
 .intent-actions>[role=alert]:empty,.page-services .service-save>[role=alert]:empty {display:none}
 .intent-actions .primary,.page-services .service-save .primary {background:#248f66;border-color:#248f66;min-width:180px;min-height:42px}
 .page-services #lan-save-hint:not([hidden]) {display:block;margin-top:6px;color:var(--fg)}
-.page-services [data-lan-allocate] {justify-self:start}
+.lan-fields {display:grid;gap:12px;border-top:1px solid var(--line);padding:22px 0 24px}
+.lan-network-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.service-editor .lan-network-fields .field {margin:0;min-width:0}
+.lan-report {font-size:12px;line-height:1.6;margin:0}
+.lan-mapping-card {border:1px solid var(--line);border-radius:8px;background:#f7faf8;padding:18px 20px;margin-top:4px;min-width:0}
+.lan-mapping-head,.lan-mapping-foot {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.lan-mapping-head {margin-bottom:18px}
+.lan-mapping-head h3 {font-size:13px;font-weight:600;margin:0}
+.lan-enable {display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);cursor:pointer}
+.lan-enable input {margin:0}
+.lan-mapping-labels,.lan-mapping {display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);gap:10px}
+.lan-mapping-labels {font-size:11px;color:var(--dim);margin-bottom:5px}
+.lan-mapping-labels>:last-child {grid-column:3}
+.lan-mapping {font-size:17px;line-height:1.6;overflow-wrap:anywhere}
+.lan-mapping-arrow {color:var(--dim);text-align:center}
+.lan-mapping-summary {font-size:12px;line-height:1.6;margin:8px 0 12px}
+.lan-mapping-foot {border-top:1px solid var(--line);padding-top:12px;min-height:31px}
+.lan-mapping-foot small,.lan-service-note {font-size:12px;line-height:1.6}
+.lan-mapping-foot button {padding:4px 0;border:0;background:transparent;color:var(--ok);font-size:12px}
 .page-services #service-form [type=submit]:disabled {cursor:not-allowed}
 .intent-actions>a:not(.button),.intent-actions>button:not(.primary),.page-services .service-save>a:not(.button) {color:var(--dim)}
 .intent-danger {display:flex;align-items:baseline;flex-wrap:wrap;gap:16px;border-top:1px solid var(--line);padding:22px 0;margin-top:10px}
@@ -891,6 +909,10 @@ main {max-width:1586px;padding:28px 24px 24px}
  .service-item {padding-top:12px;padding-bottom:12px}
  .catalog-help {padding-top:16px}
  .service-identity,.dns-editor-fields,.probe-editor-fields {grid-template-columns:1fr;gap:0}
+ .lan-network-fields {grid-template-columns:1fr;gap:14px}
+ .lan-mapping-card {padding:16px 14px}
+ .lan-mapping {font-size:14px;gap:6px}
+ .lan-mapping-labels {gap:6px}
  .service-editor>.sectionhead>span {margin-left:0}
  .service-matcher-row {grid-template-columns:minmax(0,1fr) 130px;gap:8px 12px}
  .service-matcher-row button {grid-column:2;margin-bottom:8px}

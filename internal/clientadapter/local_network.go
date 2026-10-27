@@ -87,7 +87,7 @@ func UnderlayNetworkReport(prefixes *[]string) *[]control.LocalNetworkPrefix {
 // WithLocalNetworkBoundary is a one-way local restriction. Missing underlay
 // readback blocks LAN scopes; it never disables unrelated Internet services.
 // It only changes process configuration, never host routes or signed input.
-func WithLocalNetworkBoundary(config string, connected *[]string) (string, error) {
+func WithLocalNetworkBoundary(config string, connected *[]string, localNetworks ...control.LocalNetworkPrefix) (string, error) {
 	var document map[string]any
 	if err := json.Unmarshal([]byte(config), &document); err != nil {
 		return "", err
@@ -111,6 +111,34 @@ func WithLocalNetworkBoundary(config string, connected *[]string) (string, error
 			underlay = append(underlay, prefix)
 		}
 	}
+	// Only a gateway's final, range-checked dialer can use its own identical
+	// physical LAN. Local access selectors and capture remain restricted.
+	gatewayLocal := map[string]bool{}
+	for _, raw := range array(document["outbounds"]) {
+		outbound, _ := raw.(map[string]any)
+		mapping, _ := outbound["prefix_mapping"].(map[string]any)
+		virtual, _ := mapping["virtual_prefix"].(string)
+		if outbound["type"] != "direct" || virtual == "" || mapping["local_prefix"] != virtual || connected == nil {
+			continue
+		}
+		physical, nonPhysical := false, false
+		for _, network := range localNetworks {
+			if network.Prefix == virtual {
+				physical = physical || network.LAN
+				nonPhysical = nonPhysical || !network.LAN
+			}
+		}
+		prefix, err := netip.ParsePrefix(virtual)
+		if err != nil || !physical || nonPhysical {
+			continue
+		}
+		exact, otherOverlap := false, false
+		for _, local := range underlay {
+			exact = exact || prefix == local
+			otherOverlap = otherOverlap || prefix.Overlaps(local) && prefix != local
+		}
+		gatewayLocal[virtual] = exact && !otherOverlap
+	}
 	blocked := []string{}
 	for _, text := range prefixes {
 		prefix, err := netip.ParsePrefix(text)
@@ -126,12 +154,20 @@ func WithLocalNetworkBoundary(config string, connected *[]string) (string, error
 		}
 	}
 	if len(blocked) > 0 {
+		globalBlocked, localBlocked := []string{}, []string{}
+		for _, prefix := range blocked {
+			if gatewayLocal[prefix] {
+				localBlocked = append(localBlocked, prefix)
+			} else {
+				globalBlocked = append(globalBlocked, prefix)
+			}
+		}
 		blockedTags := map[string]bool{}
 		for _, raw := range array(document["outbounds"]) {
 			outbound, _ := raw.(map[string]any)
 			mapping, _ := outbound["prefix_mapping"].(map[string]any)
 			prefix, _ := mapping["virtual_prefix"].(string)
-			if slices.Contains(blocked, prefix) {
+			if slices.Contains(globalBlocked, prefix) {
 				tag, _ := outbound["tag"].(string)
 				blockedTags[tag] = true
 			}
@@ -183,7 +219,7 @@ func WithLocalNetworkBoundary(config string, connected *[]string) (string, error
 				for name, addresses := range records {
 					for _, text := range stringArray(addresses) {
 						address, _ := netip.ParseAddr(text)
-						for _, prefix := range blocked {
+						for _, prefix := range globalBlocked {
 							if netip.MustParsePrefix(prefix).Contains(address) {
 								delete(records, name)
 							}
@@ -210,8 +246,26 @@ func WithLocalNetworkBoundary(config string, connected *[]string) (string, error
 		if index == len(rules) {
 			index = 0
 		}
-		guard := map[string]any{"ip_cidr": blocked, "outbound": "reject"}
-		rules = append(rules[:index], append([]any{guard}, rules[index:]...)...)
+		guards := []any{}
+		if len(globalBlocked) > 0 {
+			guards = append(guards, map[string]any{"ip_cidr": globalBlocked, "outbound": "reject"})
+		}
+		if len(localBlocked) > 0 {
+			inbounds := []string{}
+			for _, raw := range array(document["inbounds"]) {
+				inbound, _ := raw.(map[string]any)
+				switch inbound["type"] {
+				case "tun", "mixed", "socks", "http":
+					if tag, _ := inbound["tag"].(string); tag != "" {
+						inbounds = append(inbounds, tag)
+					}
+				}
+			}
+			if len(inbounds) > 0 {
+				guards = append(guards, map[string]any{"inbound": inbounds, "ip_cidr": localBlocked, "outbound": "reject"})
+			}
+		}
+		rules = append(rules[:index], append(guards, rules[index:]...)...)
 		route["rules"] = rules
 	}
 	guarded, err := json.Marshal(document)

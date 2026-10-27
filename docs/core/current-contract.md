@@ -571,7 +571,8 @@ Matcher 是 `kind,value` 两字段：`dns_exact` 精确主机、`dns_suffix` 域
 局域网 Service 恰为 `id,name,kind="local_network",local_network`；不能带 `matchers`。
 `local_network` 是同一 Service 的值，恰含 `gateway_node_id,local_prefix,virtual_prefix,allocation_attempt,enabled`。
 网关为非 `direct` 的 NodeID；两个前缀均为规范、已掩码的 IPv4 CIDR，长度相同且至少 /8，
-本地前缀须为单播网络，虚拟前缀完整位于 RFC 1918 空间且不与本地前缀重叠。
+本地前缀须为单播网络，虚拟前缀完整位于 RFC 1918 空间；两者须不相交，或精确相等且位于 `10.0.0.0/8`。
+新的分配只产生 10 段地址，首次优先保留源前缀除第一段外的网络位；历史其他 RFC 1918 映射的规范值与签名字节保持原义。
 `allocation_attempt` 是 0 至 3 的整数，0 表示首次分配，1 至 3 表示本轮重分配；`enabled` 是显式布尔值。
 禁用保留地址与授权引用供审阅，但不产生运行权限。服务种类不能在原 ID 上改变；互联网原件的四个字段
 及其签名字节不变。LAN 的地址、启用与尝试数在同一普通事实中原子改变，不增加映射实体或恢复日志。
@@ -587,7 +588,7 @@ id/service_id 为 ID、name 为 Text、allow_direct 为布尔值、local_egress_
 不符均拒绝。已有互联网 Policy 的 false 和空集合仍显式编码，不能因新增 LAN 分支改变旧签名字节。
 LAN Policy 不增加另一个网关字段；固定终点只来自 Service。`max_hops` 对两种 Policy 保持原有可选语义。
 
-LAN 首次分配及人工重试由 control 的只读分配入口返回完整 Service 和所审阅的依赖，随后沿原
+LAN 首次分配由 Web 选择网关与源网段后自动请求，人工重试复用同一只读分配入口，返回完整 Service 和所审阅的依赖，随后沿原
 `service.put` 提交。预览不是预留，不能赋权；提交重新核对网关、最新且与当前 View 匹配的认证前缀报告、排除集合和精确
 分配结果，陈旧预览拒绝，操作者重新审阅。其事实的历史验证只依赖规范值及签名的设备依赖，
 不依赖可过期的报告或后来变化的地址池。普通 Service 改名、禁用保留原映射；改变映射或明确重新启用

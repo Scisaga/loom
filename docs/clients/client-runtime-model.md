@@ -530,8 +530,11 @@ control 签发的 `local_network` Service 值给出稳定映射 ID、网关节�
 现有原生传输已在接收节点终止 TCP/UDP。LAN 的最终网关因此在获授权的 direct 拨号器内完成
 等长前缀转换：配置 `prefix_mapping:{virtual_prefix,local_prefix}` 只由该 Service 单向生成，
 保留主机位与目的端口。接入和中继仍传递原始虚拟目标，只有固定网关可转换；不能同时设置 detour
-或单地址/端口 override。物理连接由网关本机发起，LAN 回包自然回到同一 socket，不需安装宿主 NAT
-或允许 LAN 主动连接 overlay。UDP 每个会话只允许原始目标及其对应回复，不能借已建立 socket
+或单地址/端口 override。物理连接由网关本机发起，LAN 回包自然回到同一 socket，不需安装宿主 NAT。
+两个前缀精确相等且在 10 段时，转换保持目标地址，范围、端口与接收授权检查照常执行。
+网关仅在当前物理 LAN 读回精确吻合时允许该最终拨号；本机 access 仍排除这一 underlay 网段，
+其他设备或范围不同的相交前缀继续失败关闭。
+不允许 LAN 主动连接 overlay。UDP 每个会话只允许原始目标及其对应回复，不能借已建立 socket
 发送到范围外地址或从另一 LAN 主机注入数据；TCP 半关闭须保留返回方向。
 域名解析结果仍须处于虚拟前缀，转换层拒绝未解析名称、IPv6 和范围外地址。该执行配置是可再生投影，
 不改变 schema 3，不产生新的传输协议、密钥或权限；所有授权仍由原 Service/Policy 的接收规则承担。
