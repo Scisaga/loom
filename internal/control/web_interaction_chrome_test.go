@@ -212,11 +212,14 @@ func TestWebChromeServicePolicyAndStaleDraft(t *testing.T) {
 	if len(projection.NetworkIntent.Services) != 1 {
 		t.Fatal("browser command did not persist Service")
 	}
+	if len(projection.NetworkIntent.Policies) != 1 || projection.NetworkIntent.Policies[0].ID != "demo-web-service-default" || projection.NetworkIntent.Policies[0].Name != "Demo Web-Default" || projection.NetworkIntent.Policies[0].AllowDirect == nil || !*projection.NetworkIntent.Policies[0].AllowDirect {
+		t.Fatal("new internet service did not create its default access policy")
+	}
 	// Navigate using the existing SPA, then create a Policy referencing its fact.
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/policies?new=1');dispatchEvent(new PopStateEvent('popstate'));const f=document.querySelector('#policy-form');f.elements.id.value='demo-web-policy';f.elements.name.value='Demo Policy';f.requestSubmit();return true})()`)
-	waitChromeEvaluation(t, debug, `document.querySelectorAll('.service-item').length===1&&document.querySelector('.service-item').textContent.includes('Demo Policy')`)
+	waitChromeEvaluation(t, debug, `document.querySelector('.service-item[href="/policies?policy=demo-web-policy"]')?.textContent.includes('Demo Policy')`)
 	projection = runtime.Authority.Snapshot()
-	if len(projection.NetworkIntent.Policies) != 1 || projection.NetworkIntent.Policies[0].ServiceID != "demo-web-service" {
+	if len(projection.NetworkIntent.Policies) != 2 || projection.NetworkIntent.Policies[0].ServiceID != "demo-web-service" {
 		t.Fatal("browser Policy did not resolve Service")
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/services?service=demo-web-service');dispatchEvent(new PopStateEvent('popstate'));window.demoDraft=document.querySelector('#service-form');window.demoName=demoDraft.elements.name;demoName.value='Unsaved demo';demoName.focus();demoName.setSelectionRange(2,5);return true})()`)
@@ -245,7 +248,7 @@ func TestWebChromeServicePolicyAndStaleDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.Snapshot().NetworkIntent.Services[0].Name != "Demo concurrent" || len(reopened.Snapshot().NetworkIntent.Policies) != 1 {
+	if reopened.Snapshot().NetworkIntent.Services[0].Name != "Demo concurrent" || len(reopened.Snapshot().NetworkIntent.Policies) != 2 {
 		t.Fatal("browser or stale retry changed durable results")
 	}
 }

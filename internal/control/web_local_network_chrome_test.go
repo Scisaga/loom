@@ -27,6 +27,15 @@ func TestWebChromeLocalNetworkWriteReadRestart(t *testing.T) {
 	if !want.LocalNetwork.Enabled || want.Name != "Local-Demo office" {
 		t.Fatal("browser failed to persist the complete LAN identity and mapping")
 	}
+	var defaults []NetworkPolicy
+	for _, policy := range server.Runtime.Authority.Snapshot().NetworkIntent.Policies {
+		if policy.ServiceID == want.ID {
+			defaults = append(defaults, policy)
+		}
+	}
+	if len(defaults) != 1 || defaults[0].ID != want.ID+"-default" || defaults[0].Name != want.Name+"-Default" || defaults[0].EntryScope.Mode != "any" || defaults[0].RelayScope.Mode != "any" || defaults[0].ExitScope != nil || defaults[0].AllowDirect != nil || defaults[0].LocalEgressDevices != nil {
+		t.Fatal("new LAN service did not create a gateway-only default policy")
+	}
 	chromeDo(t, browser, `document.querySelector('a[href="/policies?new=1&service=local-demo-browser-lan"]').click();true`)
 	waitChromeEvaluation(t, browser, `document.querySelector('#policy-form')&&document.querySelector('[data-policy-internet]').hidden`)
 	chromeDo(t, browser, `(()=>{const f=document.querySelector('#policy-form');f.elements.id.value='demo-browser-lan-policy';f.elements.name.value='Demo office access';f.requestSubmit();return true})()`)
@@ -72,6 +81,9 @@ func TestWebChromeLocalNetworkAutomaticPreviewRaceRetryAndLayout(t *testing.T) {
 	waitChromeEvaluation(t, browser, `document.querySelector('#service-form')?.elements.local_prefix.options.length===3`)
 	chromeDo(t, browser, `(()=>{window.demoFetch=window.fetch;window.demoPending=[];window.fetch=async(url,options={})=>{if(!String(url).endsWith('/local-network-allocation'))return demoFetch(url,options);const copy={...options};delete copy.signal;const response=await demoFetch(url,copy);return new Promise(resolve=>demoPending.push(()=>resolve(response)))};const f=document.querySelector('#service-form');f.elements.id.value='demo-auto-lan';f.elements.name.value='Demo office';f.elements.local_prefix.value='10.64.8.0/24';f.elements.local_prefix.dispatchEvent(new Event('change',{bubbles:true}));return true})()`)
 	waitChromeEvaluation(t, browser, `demoPending.length===1&&document.querySelector('#service-form [type=submit]').disabled`)
+	if chromeDo(t, browser, `document.querySelector('.lan-mapping-card').classList.contains('is-loading')&&getComputedStyle(document.querySelector('[data-lan-state]'),'::before').animationName==='request-spin'`) != true {
+		t.Fatal("pending LAN preview did not show its local waiting animation")
+	}
 	chromeDo(t, browser, `(()=>{const f=document.querySelector('#service-form');f.elements.local_prefix.value='192.0.2.0/24';f.elements.local_prefix.dispatchEvent(new Event('change',{bubbles:true}));return true})()`)
 	waitChromeEvaluation(t, browser, `demoPending.length===2`)
 	chromeDo(t, browser, `demoPending[1]();true`)

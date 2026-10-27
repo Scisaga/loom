@@ -798,6 +798,18 @@ main {max-width:1586px;padding:28px 24px 24px}
 .intent-actions>[role=alert],.page-services .service-save>[role=alert] {flex:0 0 100%;overflow-wrap:anywhere;color:var(--bad)}
 .intent-actions>[role=alert]:empty,.page-services .service-save>[role=alert]:empty {display:none}
 .intent-actions .primary,.page-services .service-save .primary {background:#248f66;border-color:#248f66;min-width:180px;min-height:42px}
+.intent-editor.is-submitting {position:relative}
+.intent-editor.is-submitting>:not(.submission-overlay) {opacity:.65}
+.submission-overlay {position:absolute;inset:0;z-index:5;display:flex;align-items:flex-start;justify-content:center;padding:24px;background:rgba(255,255,255,.2);border-radius:inherit;cursor:progress}
+.submission-message {position:sticky;top:calc(50vh - 28px);display:flex;align-items:center;gap:12px;max-width:100%;padding:16px 20px;border:1px solid var(--line);border-radius:10px;background:white;box-shadow:0 6px 24px rgba(25,55,40,.08);font-size:14px;color:var(--fg)}
+.request-spinner,.lan-mapping-card.is-loading [data-lan-state]::before {display:inline-block;flex:0 0 auto;width:18px;height:18px;border:2px solid rgba(36,143,102,.2);border-top-color:var(--ok);border-radius:50%;animation:request-spin .8s linear infinite}
+button .request-spinner {width:15px;height:15px;margin-right:8px;border-color:rgba(255,255,255,.35);border-top-color:currentColor}
+.lan-mapping-card.is-loading [data-lan-state] {display:inline-flex;align-items:center;gap:8px}
+.lan-mapping-card.is-loading [data-lan-state]::before {content:'';width:12px;height:12px}
+@keyframes request-spin {to {transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce) {
+ .request-spinner,.lan-mapping-card.is-loading [data-lan-state]::before {animation:none}
+}
 .page-services #lan-save-hint:not([hidden]) {display:block;margin-top:6px;color:var(--fg)}
 .lan-fields {display:grid;gap:12px;border-top:1px solid var(--line);padding:22px 0 24px}
 .lan-network-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}

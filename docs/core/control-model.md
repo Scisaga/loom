@@ -696,6 +696,19 @@ NetworkPolicy 定义“对这个服务允许怎样访问”：**每条 Policy �
 属于 `demo-office`，目标始终是该局域网 Service 的固定网关。新增 Service 或仅创建 Policy
 都不扩大设备权限；只有设备授权选择该 Policy 后，它才参与该设备的业务投影。
 
+Web 新建 Service 的一次保存意图还包括为它创建一条普通默认访问 Policy。先沿原 `service.put`
+保存服务，再以其返回的精确 MaterialID 为依赖沿原 `policy.put` 保存策略；两者仍是独立稳定对象，
+不增加 Service 内嵌 Policy、默认标记、绑定表或协议。默认策略使用所选服务的 ID/名称前缀，避让已占用
+Policy ID；LAN 默认允许到固定网关的不限入口/转发，互联网沿新 Policy 草稿默认允许 Direct 及不限受管路径。
+已有 Service 的编辑或历史请求不补建策略，也不自动分配到设备。
+
+浏览器保留原 Service 提交字节及其派生 Policy 提交字节，重复点击与不变重试不重新签发事实。
+Service 已保存而 Policy 响应未确认时不回退服务，保留精确请求供重试，并允许打开已保存服务查看；
+此时修改原草稿须先重开已保存服务，不能将待确认请求换成另一意图。并发占用候选 Policy ID 或服务
+依赖已变化时严格拒绝，不覆盖已有策略或改用未经审阅的依赖。浏览器离开不撤销已经提交的保存意图，
+完成只更新回读与通知，不夺回导航。普通 CLI 与已签原件保持原单对象操作语义。
+domain、wire、persistent 仍为两种原规范值；运行时只消费有效策略和显式设备分配，UI 等待是可删除的在途草稿。
+
 ### 策略身份与访问规则
 
 ServiceID、PolicyID 和 DeviceID 都是稳定身份。Policy 创建时必须选定有效 Service；**已有 Policy
