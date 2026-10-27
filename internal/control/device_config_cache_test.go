@@ -71,7 +71,7 @@ func TestDeviceConfigCacheBoundsTypedAndEncodedOutputs(t *testing.T) {
 	for i := 0; i < 24; i++ {
 		key := deviceConfigKey{device: "demo-" + strconv.Itoa(i)}
 		if _, err := cache.get(context.Background(), key, true, func() (*deviceConfigValue, error) {
-			return &deviceConfigValue{body: make([]byte, 128<<10)}, nil
+			return &deviceConfigValue{body: make([]byte, 4<<20)}, nil
 		}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -94,6 +94,31 @@ func TestDeviceConfigCacheBoundsTypedAndEncodedOutputs(t *testing.T) {
 	}
 	if builds != 2 || cache.items[oversized] != nil || cache.bytes > deviceConfigCacheBytes {
 		t.Fatal("oversized output entered the cache")
+	}
+}
+
+func TestDeviceConfigCacheReusesMultiMegabyteWorkingSet(t *testing.T) {
+	var cache deviceConfigCache
+	var builds int
+	values := map[string]*deviceConfigValue{}
+	for range 3 {
+		for i := range 6 {
+			key := deviceConfigKey{revision: 1, device: "demo-serving-" + strconv.Itoa(i)}
+			value, err := cache.get(context.Background(), key, true, func() (*deviceConfigValue, error) {
+				builds++
+				return &deviceConfigValue{body: make([]byte, 4<<20)}, nil
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prior := values[key.device]; prior != nil && value != prior {
+				t.Fatal("an unchanged serving configuration was rebuilt")
+			}
+			values[key.device] = value
+		}
+	}
+	if builds != 6 || cache.bytes > deviceConfigCacheBytes {
+		t.Fatal("the bounded configuration cache lost its ordinary working set", builds, cache.bytes)
 	}
 }
 

@@ -11,7 +11,10 @@ import (
 	"sync"
 )
 
-const deviceConfigCacheBytes = 2 << 20
+// A serving node's complete typed View and canonical output can exceed 4 MiB.
+// Keep an ordinary network's working set within one bounded, disposable LRU;
+// otherwise every snapshot and configuration read repeats the same projection.
+const deviceConfigCacheBytes = 64 << 20
 const deviceConfigBuilds = 2
 
 var errDeviceConfigChanged = errors.New("authenticated device configuration inputs changed")
