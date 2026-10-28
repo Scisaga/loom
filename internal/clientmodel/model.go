@@ -312,6 +312,9 @@ func SelectWithLinks(routes []RouteCandidate, observations []Observation, resour
 		if leftRank == 1 && hopAvailable[left.ID] != hopAvailable[right.ID] {
 			return hopAvailable[left.ID]
 		}
+		if leftRank == 1 && len(left.Chain) != len(right.Chain) {
+			return len(left.Chain) < len(right.Chain)
+		}
 		return left.ID < right.ID
 	})
 	selected := eligible[0]

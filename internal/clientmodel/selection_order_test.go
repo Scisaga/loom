@@ -5,6 +5,37 @@ import (
 	"time"
 )
 
+func TestUnknownFirstAttemptPrefersFewerHopsWithoutOverridingEvidenceOrCurrent(t *testing.T) {
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	const target = "https://demo-web.example/probe"
+	routes := []RouteCandidate{
+		{ID: "demo-a-relay", Scope: "service:demo-web", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, PolicyID: "demo-policy"},
+		{ID: "demo-z-one-hop", Scope: "service:demo-web", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, PolicyID: "demo-policy"},
+	}
+	preference := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-web", PolicyID: "demo-policy"}}}
+	for _, tc := range []struct {
+		name, current, result, want string
+	}{
+		{"cold start", "", "", "demo-z-one-hop"},
+		{"retain actual current", "demo-a-relay", "", "demo-a-relay"},
+		{"real relay success", "", "available", "demo-a-relay"},
+		{"failed relay excluded", "demo-a-relay", "unavailable", "demo-z-one-hop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var observations []Observation
+			if tc.result != "" {
+				observations = append(observations, Observation{CandidateID: routes[0].ID, Scope: routes[0].Scope, NetworkGeneration: "demo-network", Target: target, Action: "https_request", Result: tc.result, ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)})
+			}
+			for _, order := range [][]RouteCandidate{routes, {routes[1], routes[0]}} {
+				selected, err := Select(order, observations, nil, preference, tc.current, "demo-network", now, target)
+				if err != nil || selected.CandidateID != tc.want {
+					t.Fatalf("selected %s, want %s: %v", selected.CandidateID, tc.want, err)
+				}
+			}
+		})
+	}
+}
+
 func TestSelectionOrderWithMissingAndComparableMetrics(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	const target = "https://demo-web.example/probe"
