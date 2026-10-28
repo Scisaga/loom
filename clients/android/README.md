@@ -15,7 +15,7 @@ unchanged. Interrupted enrollment reuses its key and request ID.
 
 ## Normal user flow
 
-Android keeps at least one named local profile, which may not have joined yet.
+Android keeps zero or more named local profiles, which may not have joined yet.
 Create or select a profile, import its access Invite through the file or QR UI,
 then complete the private join using that profile's identity. Browsing or renaming
 a profile does not switch the running VPN. An explicit connect/switch action
@@ -24,6 +24,9 @@ active profile. Business observations follow separately, so absent probe targets
 leave business status unknown without preventing an active VPN. These Android
 catalog rules differ from Windows, which adds a new profile to its list only
 after joining and saving. See the [profile model](../../docs/clients/android-profile-model.md).
+The final disconnected profile can be deleted. The empty catalog remains empty
+after restart and offers an explicit Add action; it never recreates a deleted
+identity. First installation still offers its initial empty profile for scanning.
 
 Scan opens a centered camera dialog over the current page. The square camera
 viewport has no surrounding card; the underlying page keeps its scroll position
@@ -183,10 +186,10 @@ The production Compose tree is the sole rendering source for native visual
 regression screenshots. `LoomHomeRoute` owns
 `StateFlow`, managers, Android permissions, and side effects;
 `LoomHomeScreen` consumes only an immutable UI projection and is shared by the
-Activity and screenshot fixtures. The ten approved, committed references are rendered
+Activity and screenshot fixtures. The twelve committed references are rendered
 by Compose screenshot alpha16 at Chinese/light/`412×915dp`/font scale 1.0.
-The set includes `connection-business-failed`. The complete Android and Windows
-gallery was approved together, recorded by the native renderers, and strictly verified.
+The set includes `connection-business-failed` and the empty configuration and
+connection pages. References come from the native renderers and are strictly verified.
 
 The editable [Android SVGs](../../assets/client/android/) express target behavior.
 The connection error scene keeps an accepted configuration while VPN startup fails;

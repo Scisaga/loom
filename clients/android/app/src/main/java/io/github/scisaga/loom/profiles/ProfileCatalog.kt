@@ -23,14 +23,23 @@ data class ProfileIndex(
     val viewedProfileId: String,
 ) {
     init {
-        require(profiles.isNotEmpty()) { "配置目录不能为空" }
         require(profiles.map(ConnectionProfile::id).distinct().size == profiles.size) { "配置标识重复" }
         require(profiles.map(ConnectionProfile::name).distinct().size == profiles.size) { "配置名称重复" }
-        require(profiles.any { it.id == viewedProfileId }) { "当前查看的配置不存在" }
+        require(if (profiles.isEmpty()) viewedProfileId.isEmpty() else profiles.any { it.id == viewedProfileId }) {
+            "当前查看的配置不存在"
+        }
     }
 
-    val viewed: ConnectionProfile
-        get() = profiles.first { it.id == viewedProfileId }
+    val viewed: ConnectionProfile?
+        get() = profiles.firstOrNull { it.id == viewedProfileId }
+
+    fun withoutProfile(id: String): ProfileIndex {
+        check(profiles.any { it.id == id }) { "配置已不存在" }
+        val remaining = profiles.filterNot { it.id == id }
+        val viewed = viewedProfileId.takeIf { selected -> remaining.any { it.id == selected } }
+            ?: remaining.firstOrNull()?.id.orEmpty()
+        return ProfileIndex(remaining, viewed)
+    }
 }
 
 /** Local profile identifiers only namespace protected host state; they are never wire device IDs. */
@@ -115,12 +124,7 @@ class ProfileCatalog private constructor(context: Context) {
     @Synchronized
     fun removeIndex(id: String): ProfileIndex {
         requireContains(id)
-        check(mutableState.value.profiles.size > 1) { "至少保留一个连接配置" }
-        val remaining = mutableState.value.profiles.filterNot { it.id == id }
-        val viewed = mutableState.value.viewedProfileId.takeIf { selected ->
-            remaining.any { it.id == selected }
-        } ?: remaining.first().id
-        return ProfileIndex(remaining, viewed).also(::publish)
+        return mutableState.value.withoutProfile(id).also(::publish)
     }
 
     @Synchronized

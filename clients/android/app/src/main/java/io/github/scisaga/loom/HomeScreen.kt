@@ -78,10 +78,11 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
         bottomBar = { HomeTabBar(state.selectedTab, actions.onTabSelected) },
     ) { contentPadding ->
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
-            LoomHeader(headerProfile.name, status)
-            if (state.join.possiblePermissionRestoration || state.activePermissionRestorationWarning) {
+            LoomHeader(headerProfile?.name.orEmpty(), status)
+            if ((viewedProfile != null && state.join.possiblePermissionRestoration) ||
+                (activeProfile != null && state.activePermissionRestorationWarning)) {
                 val affectedProfiles = buildList {
-                    if (state.join.possiblePermissionRestoration) add(viewedProfile)
+                    if (viewedProfile != null && state.join.possiblePermissionRestoration) add(viewedProfile)
                     if (state.activePermissionRestorationWarning && activeProfile != null) add(activeProfile)
                 }.distinctBy { it.id }.joinToString("、") { it.name }
                 Text(
@@ -98,36 +99,43 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                     scrollState = connectionScroll,
                     modifier = Modifier.weight(1f),
                 ) {
-                    ConnectionCard(
-                        status = status,
-                        viewedProfile = viewedProfile,
-                        activeProfile = activeProfile,
-                        requestedProfile = requestedProfile,
-                        hasManagedProfile = hasManagedProfile,
-                        onChoose = actions.onChooseProfile,
-                        onConnect = { actions.onConnect(viewedProfile.id) },
-                        onDisconnect = actions.onDisconnect,
-                    )
-                    if (!hasManagedProfile) {
-                        OutlinedButton(
-                            onClick = { actions.onTabSelected(HomeTab.CONFIGURATION) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("go-to-enrollment"),
-                        ) {
-                            Text("前往配置加入网络")
+                    if (viewedProfile == null) {
+                        ProfilesCard(
+                            profiles, status, actions.onViewProfile, actions.onAddProfile,
+                            actions.onRenameProfile, actions.onDeleteProfile,
+                        )
+                    } else {
+                        ConnectionCard(
+                            status = status,
+                            viewedProfile = viewedProfile,
+                            activeProfile = activeProfile,
+                            requestedProfile = requestedProfile,
+                            hasManagedProfile = hasManagedProfile,
+                            onChoose = actions.onChooseProfile,
+                            onConnect = { actions.onConnect(viewedProfile.id) },
+                            onDisconnect = actions.onDisconnect,
+                        )
+                        if (!hasManagedProfile) {
+                            OutlinedButton(
+                                onClick = { actions.onTabSelected(HomeTab.CONFIGURATION) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("go-to-enrollment"),
+                            ) {
+                                Text("前往配置加入网络")
+                            }
                         }
+                        CurrentPathCard(
+                            paths = state.activeRoute.currentPaths,
+                            running = state.activeRoute.running && status.phase == ConnectionPhase.CONNECTED,
+                            profileName = activeProfile?.name.orEmpty(),
+                            businessEvidence = state.activeRoute.businessEvidence,
+                            evidenceTime = state.evidenceTime,
+                        )
                     }
-                    CurrentPathCard(
-                        paths = state.activeRoute.currentPaths,
-                        running = state.activeRoute.running && status.phase == ConnectionPhase.CONNECTED,
-                        profileName = activeProfile?.name.orEmpty(),
-                        businessEvidence = state.activeRoute.businessEvidence,
-                        evidenceTime = state.evidenceTime,
-                    )
                 }
 
                 HomeTab.CONFIGURATION -> HomePage(
                     title = "配置",
-                    subtitle = enrollmentSummary(state.join),
+                    subtitle = if (viewedProfile == null) "添加连接配置后扫码加入网络" else enrollmentSummary(state.join),
                     scrollState = configurationScroll,
                     modifier = Modifier.weight(1f),
                 ) {
@@ -139,31 +147,33 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                         onRename = actions.onRenameProfile,
                         onDelete = actions.onDeleteProfile,
                     )
-                    if (state.join.phase == EnrollmentPhase.READY) {
-                        JoinedDeviceCard(viewedProfile, state.join) {
-                            actions.onRefreshEnrollment(viewedProfile.id)
+                    if (viewedProfile != null) {
+                        if (state.join.phase == EnrollmentPhase.READY) {
+                            JoinedDeviceCard(viewedProfile, state.join) {
+                                actions.onRefreshEnrollment(viewedProfile.id)
+                            }
+                        } else {
+                            EnrollmentCard(
+                                profile = viewedProfile,
+                                status = state.join,
+                                onScan = actions.onStartScan,
+                                onImportFile = { actions.onImportFile(viewedProfile.id) },
+                                onRetry = { actions.onRetryEnrollment(viewedProfile.id) },
+                                onRefresh = { actions.onRefreshEnrollment(viewedProfile.id) },
+                                onAbandonPending = { actions.onAbandonEnrollment(viewedProfile.id) },
+                            )
                         }
-                    } else {
-                        EnrollmentCard(
-                            profile = viewedProfile,
-                            status = state.join,
-                            onScan = actions.onStartScan,
-                            onImportFile = { actions.onImportFile(viewedProfile.id) },
-                            onRetry = { actions.onRetryEnrollment(viewedProfile.id) },
-                            onRefresh = { actions.onRefreshEnrollment(viewedProfile.id) },
-                            onAbandonPending = { actions.onAbandonEnrollment(viewedProfile.id) },
+                        ServicePolicyCard(state.route) { serviceID, policyID ->
+                            actions.onSelectRoute(viewedProfile.id, serviceID, policyID)
+                        }
+                        Text(
+                            "配置身份、签名运行配置与连接模式均保存在本机受保护存储中。",
+                            color = Muted,
+                            fontSize = 12.sp,
                         )
-                    }
-                    ServicePolicyCard(state.route) { serviceID, policyID ->
-                        actions.onSelectRoute(viewedProfile.id, serviceID, policyID)
-                    }
-                    Text(
-                        "配置身份、签名运行配置与连接模式均保存在本机受保护存储中。",
-                        color = Muted,
-                        fontSize = 12.sp,
-                    )
-                    if (!state.notificationsAllowed) {
-                        NotificationPermissionCard(actions.onOpenNotificationSettings)
+                        if (!state.notificationsAllowed) {
+                            NotificationPermissionCard(actions.onOpenNotificationSettings)
+                        }
                     }
                 }
 
@@ -176,7 +186,7 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                     NetworkEvidenceCard(
                         status,
                         if (status.activeProfileId.isNotBlank()) state.activeRoute else state.route,
-                        activeProfile?.name ?: viewedProfile.name,
+                        activeProfile?.name ?: viewedProfile?.name ?: "尚无连接配置",
                         status.deviceName.ifBlank { state.join.deviceName },
                         state.diagnostics,
                         state.evidenceTime,

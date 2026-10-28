@@ -167,7 +167,7 @@ class MainActivity : ComponentActivity() {
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        enrollment.initialize(catalog.state.value.viewedProfileId)
+        catalog.state.value.viewedProfileId.takeIf(String::isNotEmpty)?.let(enrollment::initialize)
         setContent {
             LoomHomeRoute(
                 catalog = catalog,
@@ -230,7 +230,6 @@ class MainActivity : ComponentActivity() {
     private fun deleteProfile(profileId: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
-                check(catalog.state.value.profiles.size > 1) { "至少保留一个连接配置" }
                 val runtime = VpnRuntime.status.value
                 check(
                     runtime.phase !in setOf(
@@ -246,9 +245,11 @@ class MainActivity : ComponentActivity() {
                     throw error
                 }
                 val preference = VpnConnectionPreference(this@MainActivity)
-                if (preference.profileId() == profileId) preference.save(false, next.viewedProfileId)
+                if (preference.profileId() == profileId || next.profiles.isEmpty()) {
+                    preference.save(false, next.viewedProfileId)
+                }
                 VpnRuntime.transform { current ->
-                    if (profileId in setOf(current.requestedProfileId, current.activeProfileId)) {
+                    if (next.profiles.isEmpty() || profileId in setOf(current.requestedProfileId, current.activeProfileId)) {
                         VpnStatus(alwaysOn = current.alwaysOn)
                     } else {
                         current
@@ -256,7 +257,7 @@ class MainActivity : ComponentActivity() {
                 }
                 enrollment.removeProfile(profileId)
                 RouteManager.get(this@MainActivity).removeProfile(profileId)
-                enrollment.initialize(next.viewedProfileId)
+                if (next.viewedProfileId.isNotEmpty()) enrollment.initialize(next.viewedProfileId)
             }.onFailure {
                 withContext(Dispatchers.Main) {
                     profileError = it.message ?: it.javaClass.simpleName
@@ -298,17 +299,27 @@ private fun LoomHomeRoute(
     val status by VpnRuntime.status.collectAsStateWithLifecycle()
     val profiles by catalog.state.collectAsStateWithLifecycle()
     val viewedProfile = profiles.viewed
-    val enrollmentStatus = remember(viewedProfile.id) { enrollment.status(viewedProfile.id) }
-    val join by enrollmentStatus.collectAsStateWithLifecycle()
+    val viewedProfileId = profiles.viewedProfileId
+    val enrollmentStatus = remember(viewedProfileId) {
+        viewedProfileId.takeIf(String::isNotEmpty)?.let(enrollment::status)
+    }
+    val join = enrollmentStatus?.collectAsStateWithLifecycle()?.value
+        ?: EnrollmentStatus(EnrollmentPhase.NOT_JOINED, "尚无连接配置")
     val context = LocalContext.current
     val routeManager = remember(context) { RouteManager.get(context) }
-    val viewedRouteStatus = remember(viewedProfile.id) { routeManager.status(viewedProfile.id) }
-    val route by viewedRouteStatus.collectAsStateWithLifecycle()
-    val activeRouteId = status.activeProfileId.ifBlank { viewedProfile.id }
-    val activeRouteStatus = remember(activeRouteId) { routeManager.status(activeRouteId) }
-    val activeRoute by activeRouteStatus.collectAsStateWithLifecycle()
-    val activeEnrollmentStatus = remember(activeRouteId) { enrollment.status(activeRouteId) }
-    val activeJoin by activeEnrollmentStatus.collectAsStateWithLifecycle()
+    val viewedRouteStatus = remember(viewedProfileId) {
+        viewedProfileId.takeIf(String::isNotEmpty)?.let(routeManager::status)
+    }
+    val route = viewedRouteStatus?.collectAsStateWithLifecycle()?.value ?: RouteStatus()
+    val activeRouteId = status.activeProfileId.takeIf(catalog::contains).orEmpty().ifBlank { viewedProfileId }
+    val activeRouteStatus = remember(activeRouteId) {
+        activeRouteId.takeIf(String::isNotEmpty)?.let(routeManager::status)
+    }
+    val activeRoute = activeRouteStatus?.collectAsStateWithLifecycle()?.value ?: RouteStatus()
+    val activeEnrollmentStatus = remember(activeRouteId) {
+        activeRouteId.takeIf(String::isNotEmpty)?.let(enrollment::status)
+    }
+    val activeJoin = activeEnrollmentStatus?.collectAsStateWithLifecycle()?.value ?: EnrollmentStatus()
     var diagnostics by remember { mutableStateOf("正在检查…") }
     var scanning by remember { mutableStateOf(false) }
     var profileSheet by remember { mutableStateOf(false) }
@@ -329,7 +340,10 @@ private fun LoomHomeRoute(
             delay(Duration.between(now, next).toMillis().coerceAtLeast(1))
         }
     }
-    LaunchedEffect(viewedProfile.id) { enrollment.initialize(viewedProfile.id) }
+    LaunchedEffect(viewedProfileId) {
+        scanning = false
+        if (viewedProfileId.isNotEmpty()) enrollment.initialize(viewedProfileId) else profileSheet = false
+    }
     LaunchedEffect(Unit) {
         diagnostics = withContext(Dispatchers.IO) {
             runCatching {
@@ -372,10 +386,10 @@ private fun LoomHomeRoute(
                 onDeleteProfile = { deleting = it },
                 onScanned = {
                     scanning = false
-                    enrollment.importInvite(viewedProfile.id, it)
+                    if (catalog.contains(viewedProfileId)) enrollment.importInvite(viewedProfileId, it)
                 },
                 onCancelScan = { scanning = false },
-                onStartScan = { scanning = true },
+                onStartScan = { if (viewedProfile != null) scanning = true },
                 onImportFile = onImportFile,
                 onRetryEnrollment = enrollment::retry,
                 onRefreshEnrollment = enrollment::refreshConfiguration,
@@ -460,6 +474,22 @@ internal fun LoomTheme(content: @Composable () -> Unit) {
             onPrimary = Color.White,
             background = Paper,
             surface = Color.White,
+            surfaceTint = Color.Transparent,
+            surfaceVariant = CardTint,
+            surfaceContainerLowest = Color.White,
+            surfaceContainerLow = CardTint,
+            surfaceContainer = Color.White,
+            surfaceContainerHigh = Color.White,
+            surfaceContainerHighest = Paper,
+            primaryContainer = Color(0xFFEAF6F0),
+            onPrimaryContainer = Ink,
+            secondary = LoomGreen,
+            onSecondary = Color.White,
+            secondaryContainer = Color(0xFFEAF6F0),
+            onSecondaryContainer = Ink,
+            onBackground = Ink,
+            outline = Color(0xFFADBDB2),
+            outlineVariant = Color(0xFFDDE7E0),
             onSurface = Ink,
             onSurfaceVariant = Muted,
         ),
@@ -516,7 +546,7 @@ internal fun LoomHeader(profileName: String, status: VpnStatus) {
         )
         Column(Modifier.padding(start = 9.dp).offset(y = (-4).dp).weight(1f)) {
             Text(
-                "LOOM · $profileName",
+                if (profileName.isEmpty()) "LOOM" else "LOOM · $profileName",
                 color = Ink,
                 fontSize = 18.sp,
                 lineHeight = 20.sp,

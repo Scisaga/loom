@@ -188,6 +188,24 @@ fun configurationNotJoined() {
 }
 
 @PreviewTest
+@Preview(name = "configuration-empty", widthDp = 412, heightDp = 915, locale = "zh-rCN", fontScale = 1.0f)
+@Composable
+fun configurationEmpty() {
+    LoomTheme {
+        LoomHomeScreen(homeState(HomeTab.CONFIGURATION, profiles = ProfileIndex(emptyList(), "")))
+    }
+}
+
+@PreviewTest
+@Preview(name = "connection-empty", widthDp = 412, heightDp = 915, locale = "zh-rCN", fontScale = 1.0f)
+@Composable
+fun connectionEmpty() {
+    LoomTheme {
+        LoomHomeScreen(homeState(HomeTab.CONNECTION, profiles = ProfileIndex(emptyList(), "")))
+    }
+}
+
+@PreviewTest
 @Preview(name = "configuration-ready-multiple-profiles", widthDp = 412, heightDp = 915, locale = "zh-rCN", fontScale = 1.0f)
 @Composable
 fun configurationReadyMultipleProfiles() {

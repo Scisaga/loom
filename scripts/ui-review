@@ -14,6 +14,7 @@ readonly java_home=/usr/lib/jvm/java-17-openjdk-amd64
 readonly android_home=/opt/android-sdk
 
 readonly -a android_scenes=(
+  configuration-empty
   configuration-join-error
   configuration-not-joined
   configuration-ready-multiple-profiles
@@ -21,6 +22,7 @@ readonly -a android_scenes=(
   connection-business-failed
   connection-disconnected-unjoined
   connection-error
+  connection-empty
   diagnostics-connected
   notification-warning
   profile-picker

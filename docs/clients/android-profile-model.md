@@ -42,10 +42,10 @@ requested。active 只能由真实 VPN 结果单向产生，不能由 catalog �
    保持 `unknown`，不阻断 active，也不把 active 当成业务健康。
 5. 切换先停止旧运行时，再使用新 `id` 走同一连接链；认证或运行时应用失败停留在新配置的错误状态，
    不跨配置自动恢复旧连接，也不建立多 VPN manager 或切换状态机。
-6. 正在 requested/active 的行必须先断开才能删除，最后一行不能删除。删除先取消并等待该行的本机工作，
+6. 正在 requested/active 的行必须先断开才能删除；断开后可以删除任意行，包括最后一行。删除先取消并等待该行的本机工作，
    再原子提交不再可见的 catalog，
    再删除该 `id` 命名空间中的身份、候选 LKG、偏好和观测；崩溃残留不得再被加载。
-7. catalog 不为空；`viewed_profile_id` 必须引用其中唯一行；ID 和名称都不重复；
+7. catalog 可以为空。空目录的 `viewed_profile_id` 恰为 `""`，非空目录的该值必须引用其中唯一行；ID 和名称都不重复；
    名称是 1–64 个字符的规范 Unicode 且不含控制字符。
 
 ## 跨层对应
@@ -53,7 +53,7 @@ requested。active 只能由真实 VPN 结果单向产生，不能由 catalog �
 | 事实 | Domain | Wire | Persistent | Runtime | UI |
 |---|---|---|---|---|---|
 | catalog 行 | `id + name` | 无对外 wire；Android 内部 Intent 只传已验证 `profile_id` | 受保护的规范 catalog JSON | 只读行集合 | 配置列表、选择器、重命名 |
-| viewed | catalog 中一个 `id` | 无 | 与 catalog 同步提交 | Compose 当前编辑输入 | 单选标记；不声称已连接 |
+| viewed | catalog 中一个 `id`，空目录时缺席 | 无 | 与 catalog 同步提交，缺席规范编码为 `""` | Compose 当前编辑输入或空投影 | 单选标记或添加配置入口；不声称已连接 |
 | 配置内容 | 该 `id` 关联的现有身份/LKG/Preference | 仍使用私有 Enrollment/config/report wire，不传 catalog 名称 | `p.<id>.*` 受保护槽 | 按 `id` 显式加载 | 加入、配置版本和选路偏好 |
 | requested | 用户想运行的 catalog `id` | 内部 VPN Intent 中的 `profile_id` | 与 `desired_connected` 原子保存 | 启动/恢复调用的显式输入 | “正在连接 <name>” |
 | active | 已被宿主真实消费的 catalog `id` | 无权威 wire | 不持久化为运行事实 | VPN 成功后的只读投影 | 标题和“当前连接 <name>” |
@@ -67,6 +67,9 @@ load(save(AndroidProfileCatalog))      = AndroidProfileCatalog
 ```
 
 未知字段、重复键、非规范 JSON、非规范 ID/名称、重复 ID 和悬空 viewed 都失败关闭。
+空目录也使用同一 schema 1 本机 catalog 编码；既有非空目录字节不变。空目录只能搭配空 viewed，
+不接受空目录中的悬空 ID，也不接受非空目录缺少 viewed。删除最后一行提交这一空值，清除该行的连接意图，
+再清理该行命名空间。重启读取已有空目录，不生成替代配置或恢复已删除身份；用户明确点击“添加”后才创建新行。
 名称到 UI 及 requested/active 到标题都是单向投影，不必也不得从 UI 标题反解运行事实。
 
 ## 恢复与失败语义
@@ -102,6 +105,10 @@ LAN 冲突检查的本机接口地址由 Android Java `NetworkInterface` 只读�
 现行槽完整迁移后一次映射到 `primary`；迁移后 requested ID 缺失、非法或已删除时必须拒绝恢复，
 不得用 viewed 代替。
 
+空目录在连接页和配置页显示添加入口，不初始化 Enrollment 或选路的空 ID，不显示扫码、连接及刷新旧配置的操作。
+顶部显示应用名称；新建配置后继续走现有扫码加入链。配置行菜单、选择面板及确认弹窗使用同一浅色中性表面、
+绿色选择强调及明确的删除颜色，不沿用组件默认的异色背景；菜单仍保留重命名、断开前禁止删除及取消行为。
+
 进程重启时恢复 catalog 和被保存的 requested ID，但 active 仍为空；只有重走认证 LKG、
 运行时应用和 selector 回读后才重新产生 active；后续业务检查只更新该 Service 的观测状态。
 配置失败保留该行和其认证 LKG，显示明确错误；
@@ -125,10 +132,10 @@ libbox 启动失败已经结束本次实例，平台继续释放自己的 TUN �
 
 最小测试集只覆盖风险等价类：
 
-1. catalog 规范编解码往返及重复、悬空、非规范值拒绝；
+1. 非空与空 catalog 的规范编解码往返及重复、悬空、非规范值拒绝；删除最后一行并重启仍为空，随后可新建；
 2. 现行 schema 3 旧单槽在 catalog 提交前完整复制回读，提交后不再读旧键；1、2 号或不完整
    旧槽保全原始字节和 floor/latch，不能产生可运行的 `primary`；
-3. 真机沿正式入口验证 A/B 隔离、显式切换、重启回读和安全删除，不回读哈希。
+3. 真机沿正式入口验证 A/B 隔离、显式切换、重启回读和安全删除；空列表可操作，菜单可关闭且颜色与页面一致，不回读哈希。
 
 ## 禁止恢复
 

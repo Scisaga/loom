@@ -73,12 +73,14 @@ Windows 原生截图场景集中复用生产 `portableGUI`、真实 Win32 控件
 
 ## 场景集合与环境
 
-当前已提交的 Android 原生基准有十个场景，固定为中文、浅色、`fontScale=1.0`、`412×915dp`：
+当前 Android 原生基准有十二个场景，固定为中文、浅色、`fontScale=1.0`、`412×915dp`：
 
 - `connection-disconnected-unjoined`
 - `connection-connected-auto`
 - `connection-business-failed`
 - `connection-error`
+- `connection-empty`
+- `configuration-empty`
 - `configuration-not-joined`
 - `configuration-ready-multiple-profiles`
 - `configuration-join-error`
@@ -98,7 +100,7 @@ Windows 原生截图场景集中复用生产 `portableGUI`、真实 Win32 控件
 - `viewport-bottom`
 - `fixed-tun`
 
-以上十九项已获用户整组批准，经 `record all` 由生产原生 renderer 更新并严格逐像素复验。
+其中原有十九项已获用户整组批准，经 `record all` 由生产原生 renderer 更新并严格逐像素复验。
 Android 包含逐目标失败依据，Windows 包含首次空态；场景集合及全部像素相同。证据见
 `deploy/evidence/2026-10-13-ui-baselines/result.json` 与[场景对照](prototype-review.md)。
 这不是目标场景数量上限，也不替代实际业务或实体终验；不得复制 SVG 充当 PNG 基准。

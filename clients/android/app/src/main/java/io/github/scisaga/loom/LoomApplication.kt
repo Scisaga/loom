@@ -22,6 +22,6 @@ class LoomApplication : Application() {
             },
         )
         val viewedProfileId = ProfileCatalog.get(this).state.value.viewedProfileId
-        EnrollmentManager.get(this).initialize(viewedProfileId)
+        if (viewedProfileId.isNotEmpty()) EnrollmentManager.get(this).initialize(viewedProfileId)
     }
 }
