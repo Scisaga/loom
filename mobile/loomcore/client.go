@@ -43,6 +43,10 @@ type androidProfile struct {
 }
 
 func decodeState(body []byte) (deviceclient.State, error) {
+	return androidStateReads.decode(body, decodeAndroidIdentity)
+}
+
+func decodeAndroidIdentity(body []byte) (deviceclient.State, error) {
 	state, err := deviceclient.DecodeIdentityState(body)
 	if err == nil && state.Platform != "android" {
 		err = errors.New("identity belongs to another platform")

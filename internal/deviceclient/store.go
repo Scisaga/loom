@@ -46,6 +46,10 @@ type State struct {
 	Preference          *clientmodel.Preference      `json:"preference,omitempty"`
 }
 
+// Clone copies owned authority values without validating or authorizing them.
+// Callers must still use the ordinary authentication and advance boundaries.
+func (state State) Clone() State { return cloneOwnedAuthority(state) }
+
 // NewIdentityState is shared with encrypted mobile storage. The caller creates
 // the identity once and durably saves this value before making a claim.
 func NewIdentityState(invite control.BootstrapInvite, platform string, private ed25519.PrivateKey, claimRequestID string) (State, error) {
