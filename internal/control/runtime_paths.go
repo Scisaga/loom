@@ -77,30 +77,108 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	edges := append([]NetworkLink{}, links...)
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	// Build the graph once. Each search visits a node at most once; dense
+	// unrestricted policies must not enumerate every simple-path permutation.
+	adjacent := map[string][]NetworkLink{}
+	endpoints := map[string]bool{}
+	for _, resource := range ordered {
+		if policy.permitsEndpoint(service, resource.OwnerNodeID) {
+			endpoints[resource.OwnerNodeID] = true
+		}
+	}
+	for _, link := range edges {
+		if _, _, _, err := linkResources(link, resources); err == nil {
+			adjacent[link.FromNodeID] = append(adjacent[link.FromNodeID], link)
+		}
+	}
+	destinations := make([]string, 0, len(endpoints))
+	for node := range endpoints {
+		destinations = append(destinations, node)
+	}
+	sort.Strings(destinations)
+	type partial struct {
+		chain []string
+		hops  []TransportResource
+		links []NetworkLink
+	}
+	extend := func(path partial, link NetworkLink) partial {
+		return partial{
+			append(append([]string{}, path.chain...), link.ToNodeID),
+			append(append([]TransportResource{}, path.hops...), resources[link.ResourceID]),
+			append(append([]NetworkLink{}, path.links...), link),
+		}
+	}
+	shortest := func(start partial, destination, excluded string) (partial, bool) {
+		if policy.MaxHops > 0 && len(start.chain) > policy.MaxHops {
+			return partial{}, false
+		}
+		visited := map[string]bool{source: true}
+		for _, node := range start.chain {
+			visited[node] = true
+		}
+		queue := []partial{start}
+		for head := 0; head < len(queue); head++ {
+			path := queue[head]
+			last := path.chain[len(path.chain)-1]
+			if last == destination {
+				return path, true
+			}
+			if policy.MaxHops > 0 && len(path.chain) >= policy.MaxHops || len(path.chain) > 1 && !policy.RelayScope.Allows(last) {
+				continue
+			}
+			for _, link := range adjacent[last] {
+				if link.ID == excluded || visited[link.ToNodeID] {
+					continue
+				}
+				visited[link.ToNodeID] = true
+				queue = append(queue, extend(path, link))
+			}
+		}
+		return partial{}, false
+	}
+	less := func(a, b partial) bool {
+		if len(a.links) != len(b.links) {
+			return len(a.links) < len(b.links)
+		}
+		for i := range a.links {
+			if a.links[i].ID != b.links[i].ID {
+				return a.links[i].ID < b.links[i].ID
+			}
+		}
+		return false
+	}
 	result := []transportPath{}
-	var walk func([]string, []TransportResource, []NetworkLink, bool) error
-	walk = func(chain []string, hops []TransportResource, pathLinks []NetworkLink, local bool) error {
-		last := chain[len(chain)-1]
-		if len(hops) > 0 && policy.permitsEndpoint(service, last) {
-			candidate, err := pathCandidate(service, policy, chain, hops, pathLinks, local, resources, records)
-			if err != nil {
-				return err
-			}
-			result = append(result, transportPath{candidate: candidate, hops: append([]TransportResource{}, hops...), links: append([]NetworkLink{}, pathLinks...), local: local})
+	add := func(path partial, local bool) error {
+		candidate, err := pathCandidate(service, policy, path.chain, path.hops, path.links, local, resources, records)
+		if err == nil {
+			result = append(result, transportPath{candidate: candidate, hops: path.hops, links: path.links, local: local})
 		}
-		if policy.MaxHops > 0 && len(chain) >= policy.MaxHops || len(chain) > 1 && !policy.RelayScope.Allows(last) {
-			return nil
-		}
-		for _, link := range edges {
-			if link.FromNodeID != last || containsString(chain, link.ToNodeID) || link.ToNodeID == source {
+		return err
+	}
+	generate := func(start partial, local bool) error {
+		for _, destination := range destinations {
+			primary, found := shortest(start, destination, "")
+			if !found {
 				continue
 			}
-			_, _, target, err := linkResources(link, resources)
-			if err != nil {
-				continue
-			}
-			if err = walk(append(append([]string{}, chain...), link.ToNodeID), append(append([]TransportResource{}, hops...), target), append(append([]NetworkLink{}, pathLinks...), link), local); err != nil {
+			if err := add(primary, local); err != nil {
 				return err
+			}
+			var backup partial
+			// Every different path omits at least one primary edge. Searching
+			// with each such edge removed finds the shortest different path,
+			// without enumerating paths. The fixed local first segment defines
+			// its own group and is not removed here.
+			for _, link := range primary.links[len(start.links):] {
+				alternative, ok := shortest(start, destination, link.ID)
+				if ok && (backup.chain == nil || less(alternative, backup)) {
+					backup = alternative
+				}
+			}
+			if backup.chain != nil {
+				if err := add(backup, local); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -119,13 +197,19 @@ func transportPaths(source string, localForward bool, service Service, policy Ne
 		} else if resource.Kind != "hysteria2" || resource.LinkOnly {
 			continue
 		}
-		if err := walk([]string{resource.OwnerNodeID}, []TransportResource{resource}, []NetworkLink{}, false); err != nil {
+		if err := generate(partial{[]string{resource.OwnerNodeID}, []TransportResource{resource}, []NetworkLink{}}, false); err != nil {
 			return nil, err
 		}
 	}
 	if localForward && policy.EntryScope.Allows(source) {
-		if err := walk([]string{source}, []TransportResource{}, []NetworkLink{}, true); err != nil {
-			return nil, err
+		for _, link := range adjacent[source] {
+			if link.ToNodeID == source {
+				continue
+			}
+			start := extend(partial{chain: []string{source}, hops: []TransportResource{}, links: []NetworkLink{}}, link)
+			if err := generate(start, true); err != nil {
+				return nil, err
+			}
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].candidate.ID < result[j].candidate.ID })

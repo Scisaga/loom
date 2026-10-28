@@ -59,7 +59,7 @@ function returnFromPolicy(value,accepted,reviewedTargets){
  if(value){
   const form=policyParent.form,policies=JSON.parse(form.dataset.policies).filter(p=>p.id!==value.id),targets=JSON.parse(form.dataset.targets),selected=[...form.querySelectorAll('[name=policy_id]:checked')].map(e=>e.value);
   policies.push(value);policies.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
-  for(const [kind,id]of [['policy',value.id],['service',value.service_id]]){const target=list(kind==='policy'?accepted.snapshot.targets:reviewedTargets).find(t=>t.target_kind===kind&&t.target_id===id);if(!target||target.deleted||target.conflicted||kind==='policy'&&(target.material_ids.length!==1||target.material_ids[0]!==accepted.material_id))throw Error('Policy saved, but its current rules are unavailable or changed. Review it before assigning.');const index=targets.findIndex(t=>t.target_kind===kind&&t.target_id===id);if(index<0)targets.push(target);else targets[index]=target}
+  for(const [kind,id]of [['policy',value.id],['service',value.service_id]]){const target=list(kind==='policy'?[accepted.target]:reviewedTargets).find(t=>t.target_kind===kind&&t.target_id===id);if(!target||target.deleted||target.conflicted||kind==='policy'&&(target.material_ids.length!==1||target.material_ids[0]!==accepted.material_id))throw Error('Policy saved, but its current rules are unavailable or changed. Review it before assigning.');const index=targets.findIndex(t=>t.target_kind===kind&&t.target_id===id);if(index<0)targets.push(target);else targets[index]=target}
   form.dataset.policies=JSON.stringify(policies);form.dataset.targets=JSON.stringify(targets);
   form.querySelector('[data-policy-choices]').innerHTML=policyChoices([...selected,value.id],policies,form.dataset.deviceId||'');
   syncDevicePolicyChoices(form);
@@ -646,13 +646,15 @@ function operationBody(operation,payload,requestId,dependencies){
 async function submitOperation(operation,body){
  if(!canOperate(operation))throw Error(`Operation ${operation} is unavailable for this credential.`);
  const result=await api('/api/control/operations',{method:'POST',headers:{'Content-Type':'application/json'},body});
- await refresh(false);return result;
+ if(operation==='invite.issue')void refresh().catch(error=>toast('Invitation saved; network view refresh failed: '+error.message,true));
+ else await refresh(false);
+ return result;
 }
 async function operate(operation,payload,requestId=crypto.randomUUID(),dependencies=[]){return submitOperation(operation,operationBody(operation,payload,requestId,dependencies))}
 async function saveDefaultServicePolicy(form,service,accepted){
  if(!form.submission.defaultPolicy){
-  const target=list(accepted.snapshot?.targets).find(value=>value.target_kind==='service'&&value.target_id===service.id);
-  if(!target||target.deleted||target.conflicted||target.material_ids.length!==1||target.material_ids[0]!==accepted.material_id)throw Error('Service saved, but its current definition changed. Reopen the service to review its policy.');
+  const target=accepted.target;
+  if(!target||target.target_kind!=='service'||target.target_id!==service.id||target.deleted||target.conflicted||target.material_ids.length!==1||target.material_ids[0]!==accepted.material_id)throw Error('Service saved, but its current definition changed. Reopen the service to review its policy.');
   const policy={...suggestPolicyIdentity(service,JSON.parse(form.dataset.targets)),service_id:service.id,action:'allow',entry_scope:{mode:'any',node_ids:[]},relay_scope:{mode:'any',node_ids:[]}};
   if(service.kind==='internet')Object.assign(policy,{exit_scope:{mode:'any',node_ids:[]},allow_direct:true,local_egress_devices:[]});
   form.submission.defaultPolicy=operationBody('policy.put',policy,JSON.parse(form.submission.body).request_id+'-default-policy',[accepted.material_id]);

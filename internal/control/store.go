@@ -124,6 +124,8 @@ type Authority struct {
 	certificates []ControlCertificate
 	blocked      error
 	projection   Projection
+	// Bounded, disposable successful causal validation of these exact inputs.
+	projectionGraph *materialGraph
 	// Decoded immutable originals, bounded by the last successful disk read.
 	// These values are private; every hit still hashes the actual file bytes.
 	decodedMaterials map[string]Material
@@ -368,14 +370,17 @@ func (a *Authority) reloadLocked() (retErr error) {
 		a.decodedMaterials = decoded
 		return nil
 	}
-	projection, err := Project(genesis, certificates, materials)
+	graph, err := newMaterialGraph(genesis, certificates, materials)
 	if err != nil {
 		return err
 	}
+	graph.reuseValidated(a.projectionGraph)
+	projection := graph.project()
 	if err := syncControlDirectory(filepath.Join(a.root, "materials")); err != nil {
 		return err
 	}
 	a.genesis, a.materials, a.projection, a.certificates = genesis, materials, projection, certificates
+	a.projectionGraph = reusableMaterialGraph(graph)
 	a.deviceConfigRevision++
 	a.decodedMaterials = decoded
 	return nil
@@ -598,19 +603,22 @@ func (a *Authority) PutMaterial(body []byte) (string, error) {
 	if material.Operation == "genesis" {
 		return "", errors.New("another genesis cannot replace the fixed network")
 	}
-	admissionErr := ValidateAdmission(material, a.genesis, a.certificates, a.materials)
-	if admissionErr != nil && !errors.Is(admissionErr, ErrMissingDependencies) && !errors.Is(admissionErr, ErrMaterialEquivocation) {
-		return "", admissionErr
-	}
 	next := append(append([]Material{}, a.materials...), material)
-	projection, err := Project(a.genesis, a.certificates, next)
+	graph, err := newMaterialGraph(a.genesis, a.certificates, next)
 	if err != nil {
 		return "", err
 	}
+	graph.reuseValidated(a.projectionGraph)
+	admissionErr := graph.validate(id)
+	if admissionErr != nil && !errors.Is(admissionErr, ErrMissingDependencies) && !errors.Is(admissionErr, ErrMaterialEquivocation) {
+		return "", admissionErr
+	}
+	projection := graph.project()
 	if err := putControlBytes(path, body); err != nil {
 		return "", err
 	}
 	a.materials, a.projection = next, projection
+	a.projectionGraph = reusableMaterialGraph(graph)
 	a.deviceConfigRevision++
 	if errors.Is(admissionErr, ErrMaterialEquivocation) {
 		return id, admissionErr
@@ -857,23 +865,26 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 	if err != nil {
 		return Submission{}, err
 	}
-	if err := ValidateAdmission(material, a.genesis, a.certificates, a.materials); err != nil {
-		return Submission{}, err
-	}
 	next := append(append([]Material{}, a.materials...), material)
-	projection, err := Project(a.genesis, a.certificates, next)
+	graph, err := newMaterialGraph(a.genesis, a.certificates, next)
 	if err != nil {
 		return Submission{}, err
 	}
+	graph.reuseValidated(a.projectionGraph)
 	body, id, err := EncodeMaterial(material)
 	if err != nil {
 		return Submission{}, err
 	}
+	if err := graph.validate(id); err != nil {
+		return Submission{}, err
+	}
+	projection := graph.project()
 	path, _ := a.materialPath(id)
 	if err := putControlBytes(path, body); err != nil {
 		return Submission{}, err
 	}
 	a.materials, a.projection = next, projection
+	a.projectionGraph = reusableMaterialGraph(graph)
 	a.deviceConfigRevision++
 	return Submission{MaterialID: id, Projection: cloneAuthorityProjection(projection)}, nil
 }

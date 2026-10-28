@@ -151,6 +151,13 @@ class RouteManager private constructor(context: Context) {
         true
     }
 
+    internal suspend fun checkConfiguration(profileId: String, profile: ManagedProfile) = operation.withLock {
+        val runtime = runtime(profileId)
+        ensureNetworkGeneration(profileId, runtime)
+        evaluate(profileId, runtime, profile, emptyMap())
+        Unit
+    }
+
     internal suspend fun applyToRunning(profileId: String, profile: ManagedProfile): AppliedRoute = operation.withLock {
         val runtime = runtime(profileId)
         ensureNetworkGeneration(profileId, runtime)
@@ -158,9 +165,11 @@ class RouteManager private constructor(context: Context) {
         // target and execution input is unchanged. No such projection exists yet.
         protected.put(ProfileStorage.observations(profileId), "[]".encodeToByteArray())
         runtime.mutableStatus.value = runtime.mutableStatus.value.copy(busy = true, detail = "正在应用候选并读回 selector…")
-        val initial = evaluate(profileId, runtime, profile, runtime.actual)
         val client = SelectorClient(profile.config)
-        val current = client.readCurrent(initial.execution())
+        val scopes = JSONArray(profile.serviceScopes).strings().map {
+            AppliedSelector(it, "reject", emptyList(), "", "unknown")
+        }
+        val current = client.readCurrent(scopes)
         val desired = evaluate(profileId, runtime, profile, current)
         client.apply(desired.execution())
         val readback = client.readCurrent(desired.execution())
@@ -180,7 +189,7 @@ class RouteManager private constructor(context: Context) {
                 val available = runtime.runningProfile ?: runtime.availableProfile ?: return@withLock
                 var savedDesired: AppliedRoute? = null
                 try {
-                    val state = checkNotNull(ManagedProfileStore(applicationContext, profileId).state())
+                    val state = checkNotNull(ManagedProfileStore.get(applicationContext, profileId).state())
                     val previous = checkNotNull(protected.get(ProfileStorage.routePreference(profileId)))
                     val preference = Loomcore.chooseAndroidPolicy(state, previous, serviceID, policyID)
                     protected.put(ProfileStorage.routePreference(profileId), preference)
@@ -240,7 +249,7 @@ class RouteManager private constructor(context: Context) {
     }
 
     internal suspend fun refreshLinkObservations(profileId: String, profile: ManagedProfile) {
-        val identity = ManagedProfileStore(applicationContext, profileId)
+        val identity = ManagedProfileStore.get(applicationContext, profileId)
         val body = identity.state() ?: return
         val response = runCatching { Loomcore.fetchAndroidLinkObservations(body) }.getOrElse {
             Log.w("Loom", "中继观测读取不可用；保留原样本截止时间")
@@ -257,7 +266,7 @@ class RouteManager private constructor(context: Context) {
     }
 
     internal suspend fun sampleAlternateBusiness(profileId: String, profile: ManagedProfile) {
-        val identity = ManagedProfileStore(applicationContext, profileId)
+        val identity = ManagedProfileStore.get(applicationContext, profileId)
         val state = identity.state() ?: return
         val input = operation.withLock {
             val runtime = runtime(profileId)
@@ -424,7 +433,7 @@ class RouteManager private constructor(context: Context) {
         current: Map<String, String>,
     ): AppliedRoute {
         if (runtime.preferenceViewDigest != profile.viewDigest) {
-            val state = checkNotNull(ManagedProfileStore(applicationContext, profileId).state())
+            val state = checkNotNull(ManagedProfileStore.get(applicationContext, profileId).state())
             val preference = Loomcore.reconcileAndroidPreference(state, protected.get(ProfileStorage.routePreference(profileId)) ?: ByteArray(0))
             protected.put(ProfileStorage.routePreference(profileId), preference)
             check(protected.get(ProfileStorage.routePreference(profileId))?.contentEquals(preference) == true)

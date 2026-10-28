@@ -877,6 +877,45 @@ func Project(genesis Material, configs []ControlCertificate, materials []Materia
 	if err != nil {
 		return Projection{}, err
 	}
+	return graph.project(), nil
+}
+
+// Only successful causal validation is reusable. New membership, equivocation
+// or a missing original can invalidate that result; newly satisfied dependencies
+// must retry failures. The final effective projection is always recomputed.
+func (graph *materialGraph) reuseValidated(previous *materialGraph) {
+	if previous == nil || graph.genesisID != previous.genesisID ||
+		!reflect.DeepEqual(graph.chain, previous.chain) || !reflect.DeepEqual(graph.forks, previous.forks) {
+		return
+	}
+	for id := range previous.facts {
+		if _, found := graph.facts[id]; !found {
+			return
+		}
+	}
+	for id, checked := range previous.checked {
+		if checked && previous.failures[id] == nil {
+			graph.checked[id] = true
+			graph.ancestors[id] = previous.ancestors[id]
+		}
+	}
+}
+
+func reusableMaterialGraph(graph *materialGraph) *materialGraph {
+	if len(graph.facts) > 4096 {
+		return nil
+	}
+	entries := 0
+	for _, ancestors := range graph.ancestors {
+		entries += len(ancestors)
+		if entries > 1<<20 {
+			return nil
+		}
+	}
+	return graph
+}
+
+func (graph *materialGraph) project() Projection {
 	valid, pending := []string{}, []string{}
 	invalid := []MaterialRejection{}
 	suspended := map[string][]string{}
@@ -918,7 +957,7 @@ func Project(genesis Material, configs []ControlCertificate, materials []Materia
 		projection.Frontier = append(projection.Frontier, prefix)
 	}
 	sort.Slice(projection.Frontier, func(i, j int) bool { return projection.Frontier[i].KeyID < projection.Frontier[j].KeyID })
-	return projection, nil
+	return projection
 }
 
 type targetFact struct {

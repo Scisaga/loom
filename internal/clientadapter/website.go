@@ -38,6 +38,10 @@ func WebsiteAccessFor(view control.DeviceView, addresses []string) (WebsiteAcces
 	if err := view.Validate(); err != nil {
 		return WebsiteAccess{}, err
 	}
+	return websiteAccessFor(view, addresses)
+}
+
+func websiteAccessFor(view control.DeviceView, addresses []string) (WebsiteAccess, error) {
 	if len(view.WebEndpoints) == 0 {
 		if len(addresses) != 0 {
 			return WebsiteAccess{}, errors.New("website addresses have no certified entry")

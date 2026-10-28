@@ -172,13 +172,14 @@ func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.We
 		return nil, errors.New("device has no accepted LKG")
 	}
 	view := state.LKG.View
-	routes, _, err := clientadapter.AccessProjection(view)
+	// A local management secret is not a Service credential and never travels
+	// in DeviceView. It has a separate purpose and is bound to this device key.
+	secret := androidLocalRuntimeSecret(state)
+	routes, raw, err := clientadapter.AccessRuntimeProjection(view, secret, websites...)
 	if err != nil {
 		return nil, err
 	}
-	// A local management secret is not a Service credential and never travels
-	// in DeviceView. It has a separate purpose and is bound to this device key.
-	config, err := androidRuntimeConfig(view, androidLocalRuntimeSecret(state), websites...)
+	config, err := androidHostConfig(view, raw, secret, websites...)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +202,11 @@ func androidRuntimeConfig(view control.DeviceView, secret string, websites ...cl
 	if err != nil {
 		return "", err
 	}
+	return androidHostConfig(view, raw, secret, websites...)
+}
+
+func androidHostConfig(view control.DeviceView, raw, secret string, websites ...clientadapter.WebsiteAccess) (string, error) {
+	var err error
 	raw, err = clientadapter.WithBlockedSelectors(raw)
 	if err != nil {
 		return "", err

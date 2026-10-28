@@ -118,11 +118,11 @@ func TestWebProbeTargetFormalWriteReadbackRestartAndWithdrawal(t *testing.T) {
 	}
 	var accepted struct {
 		MaterialID string      `json:"material_id"`
-		Snapshot   WebSnapshot `json:"snapshot"`
+		Target     TargetState `json:"target"`
 	}
 	response = localNetworkAdminHTTP(t, server, "/api/control/operations", op)
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &accepted) != nil || accepted.MaterialID == "" || len(accepted.Snapshot.BusinessProbeTargets) != 1 {
-		t.Fatal("normal operation did not return the accepted pool", response.Body.String())
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &accepted) != nil || accepted.MaterialID == "" || accepted.Target.TargetID != target.ID || len(read().BusinessProbeTargets) != 1 {
+		t.Fatal("normal operation and snapshot did not read back the accepted pool", response.Body.String())
 	}
 	if submitAuthority(t, server.Runtime, op).MaterialID != accepted.MaterialID {
 		t.Fatal("unchanged probe request retry created another fact")

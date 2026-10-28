@@ -141,6 +141,39 @@ func TestInviteQRSizeDoesNotGrowWithPrivateInvitation(t *testing.T) {
 	}
 }
 
+func TestInviteOperationReadbackContainsOnlyItsOwnTargetAndDelivery(t *testing.T) {
+	f := newEndpointFixture(t)
+	target, _ := f.server.Runtime.Authority.Snapshot().CurrentTarget("endpoint", f.endpoint.ID)
+	invite := Invite{ID: "demo-quick-qr", GenesisDigest: f.server.Config.GenesisID, IssuerControlID: f.server.Config.ControlID,
+		DeviceID: "demo-quick-device", Name: "Demo quick invitation", Responsibilities: []string{"access"}, PolicyIDs: []string{}, Medium: "qr", Endpoint: f.endpoint, ExpiresAt: f.clock.Load() + 60000}
+	op := Operation{Schema: 3, RequestID: "demo-quick-request", Operation: "invite.issue", TargetKind: "invite", TargetID: invite.ID, Dependencies: target.MaterialIDs, Payload: invite}
+	body, err := EncodeOperation(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first []byte
+	for range 2 {
+		response := httptest.NewRecorder()
+		f.server.AdminHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/control/operations", bytes.NewReader(body)))
+		var result map[string]json.RawMessage
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil {
+			t.Fatal("ordinary invitation failed", response.Code)
+		}
+		if len(result) != 4 || result["snapshot"] != nil || result["invite"] == nil || result["target"] == nil {
+			t.Fatal("write readback expanded into global state")
+		}
+		var state TargetState
+		var id string
+		if json.Unmarshal(result["target"], &state) != nil || json.Unmarshal(result["material_id"], &id) != nil || state.TargetKind != "invite" || state.TargetID != invite.ID || len(state.MaterialIDs) != 1 || state.MaterialIDs[0] != id {
+			t.Fatal("operation lost its exact causal readback")
+		}
+		if first != nil && !bytes.Equal(first, response.Body.Bytes()) {
+			t.Fatal("same request retry changed delivery")
+		}
+		first = append([]byte{}, response.Body.Bytes()...)
+	}
+}
+
 // A synthetic counterpart to a production invitation whose dense data made
 // both the Go and Android default readers choose a false finder pattern.
 func TestInviteQRCodeSelectsReadableStandardSize(t *testing.T) {

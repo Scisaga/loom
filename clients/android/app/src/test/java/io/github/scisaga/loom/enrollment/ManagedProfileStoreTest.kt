@@ -13,6 +13,34 @@ class ManagedProfileStoreTest {
     private val stateKey = ProfileStorage.state(profileId)
 
     @Test
+    fun unchangedReadsReuseProjectionButChangedDamagedAndRemovedBytesDoNot() {
+        val storage = MemoryStorage()
+        var validations = 0
+        var projections = 0
+        val handle = ManagedProfileStore(storage, profileId,
+            validate = { validations++; check(it.decodeToString() != "demo-damaged") },
+            checkAdvance = { _, _ -> }, authenticatedView = { it.decodeToString() },
+            project = { bytes -> projections++; ManagedProfile("demo-device", "Demo", bytes.decodeToString(), "[]", "{}", "[]", "demo-record") },
+        )
+        storage.put(stateKey, "demo-first".encodeToByteArray())
+        repeat(5) { handle.state(); handle.acceptedViewDigest(); handle.loadCurrent() }
+        assertEquals(1, validations)
+        assertEquals(1, projections)
+        // Mutation of a returned byte array must not poison the cache key.
+        handle.state()!!.fill(0)
+        storage.put(stateKey, "demo-second".encodeToByteArray())
+        assertEquals("demo-second", handle.loadCurrent()!!.viewDigest)
+        assertEquals(2, projections)
+        storage.put(stateKey, "demo-damaged".encodeToByteArray())
+        repeat(2) { assertThrows(IllegalStateException::class.java) { handle.loadCurrent() } }
+        storage.remove(stateKey)
+        assertNull(handle.loadCurrent())
+        storage.put(stateKey, "demo-second".encodeToByteArray())
+        assertEquals("demo-second", handle.loadCurrent()!!.viewDigest)
+        assertEquals(3, projections)
+    }
+
+    @Test
     fun currentCertifiedFileImportKeepsServiceChoicesAndDoesNotCreateMigrationEvidence() {
         val storage = MemoryStorage()
         val original = "demo-current-identity".encodeToByteArray()

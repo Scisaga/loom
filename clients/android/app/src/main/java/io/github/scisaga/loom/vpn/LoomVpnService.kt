@@ -300,6 +300,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
         check(websiteNetwork == null || preparationNetwork() == websiteNetwork) { "准备网站入口时底层网络已变化，请重试" }
         ensureConnectionWanted(profileID)
         Libbox.checkConfig(prepared.config)
+        routing.checkConfiguration(profileID, prepared)
+        ensureConnectionWanted(profileID)
         activate(prepared.config)
         check(websiteNetwork == null || selectedUnderlyingNetwork == websiteNetwork) { "启动网站入口时底层网络已变化，请重试" }
         ensureConnectionWanted(profileID)
@@ -370,7 +372,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     for (attempt in 0..1) {
                         var nextBatch = emptyList<io.github.scisaga.loom.route.BusinessProbeInput>()
                         for ((index, input) in batch.withIndex()) {
-                            val state = checkNotNull(ManagedProfileStore(this@LoomVpnService, profileId).state()) { "设备身份不存在" }
+                            val state = checkNotNull(ManagedProfileStore.get(this@LoomVpnService, profileId).state()) { "设备身份不存在" }
                             val result = NetworkProbe.run(state, input.selector.candidate, input.target, probeSession)
                             nextBatch = lifecycle.withLock {
                                 if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||

@@ -3,6 +3,7 @@ package loomcore
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -68,7 +69,7 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 	var preference clientmodel.Preference
 	current := map[string]string{}
 	if err := decodeStrictJSON(routesBody, 1<<20, &routes); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Android route projection: %w", err)
 	}
 	if len(observationsBody) == 0 {
 		observationsBody = []byte("[]")

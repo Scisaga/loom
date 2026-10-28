@@ -11,8 +11,11 @@ import (
 // decodeStrictJSON reads disposable host measurements and execution inputs.
 // Authoritative values always use control/deviceclient canonical codecs.
 func decodeStrictJSON(body []byte, maximum int, target any) error {
-	if len(body) == 0 || len(body) > maximum {
-		return fmt.Errorf("JSON size must be between 1 and %d bytes", maximum)
+	if len(body) == 0 {
+		return errors.New("JSON input is empty (0 bytes)")
+	}
+	if len(body) > maximum {
+		return fmt.Errorf("JSON input is %d bytes; limit is %d bytes", len(body), maximum)
 	}
 	if err := rejectDuplicateJSONKeys(body); err != nil {
 		return err

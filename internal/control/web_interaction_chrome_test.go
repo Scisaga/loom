@@ -433,8 +433,13 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	chromeDo(t, debug, `(()=>{const f=document.querySelector('#enrollment-form');f.elements.device_id.value='demo-browser-device';f.elements.name.value='Demo browser device';f.elements.dns_servers.value='192.0.2.53';f.querySelector('.policy-picker details').open=true;f.querySelector('[data-policy-select-all]').click();f.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#enrollment-status').textContent==='Demo response interrupted'`)
 	beforeRetry := server.Runtime.Authority.Frontier()
+	chromeDo(t, debug, `(()=>{window.demoFetchBeforeQR=window.fetch;window.demoQRSnapshotReads=0;window.fetch=(url,...args)=>{if(String(url).includes('/api/control/ui/snapshot')){demoQRSnapshotReads++;return new Promise(resolve=>{window.demoReleaseQRSnapshot=()=>resolve(demoFetchBeforeQR(url,...args))})}return demoFetchBeforeQR(url,...args)};return true})()`)
 	chromeDo(t, debug, `(()=>{window.demoOriginalNow=Date.now;Date.now=()=>demoOriginalNow()+5000;document.querySelector('#enrollment-form').requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `location.pathname.startsWith('/devices/invites/')&&document.querySelector('#device-enrollment [data-enrollment-state]')?.textContent==='open'&&document.querySelector('#device-enrollment img.qr')?.naturalWidth>0`)
+	if chromeDo(t, debug, `(()=>{window.fetch=demoFetchBeforeQR;const pending=demoQRSnapshotReads===1&&typeof demoReleaseQRSnapshot==='function';demoReleaseQRSnapshot();return pending})()`) != true {
+		t.Fatal("QR issuance did not finish independently of its pending network refresh")
+	}
+	waitChromeEvaluation(t, debug, `!!document.querySelector('a[data-nav][href="/devices/demo-browser-device"]')`)
 	chromeDo(t, debug, `(()=>{Date.now=demoOriginalNow;return true})()`)
 	inviteRequestsMu.Lock()
 	sameRequest := len(inviteRequests) == 2 && bytes.Equal(inviteRequests[0], inviteRequests[1])

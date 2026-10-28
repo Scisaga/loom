@@ -86,6 +86,23 @@ internal class ManagedProfileStore internal constructor(
     private val policyPreferenceEvidenceKey = ProfileStorage.policyPreferenceEvidence(profileId)
     private val preferenceKey = ProfileStorage.routePreference(profileId)
 
+    // Disposable reads only. Every use first re-reads the encrypted record and
+    // compares all bytes, including report sequence and authentication floor.
+    private var cachedBytes: ByteArray? = null
+    private var cachedProfile: ManagedProfile? = null
+    private var profileRead = false
+    private var cachedDigest: String? = null
+    private var cachedRisk: Boolean? = null
+
+    private fun forgetRead() {
+        cachedBytes?.fill(0)
+        cachedBytes = null
+        cachedProfile = null
+        profileRead = false
+        cachedDigest = null
+        cachedRisk = null
+    }
+
     // Explicit import supports ordinary current Views and the finite one-time
     // cutover. Startup and background refresh use only the current decoder.
     fun importCertifiedView(replacement: ByteArray): ManagedProfile = synchronized(stateLock) {
@@ -147,8 +164,21 @@ internal class ManagedProfileStore internal constructor(
     fun state(): ByteArray? = synchronized(stateLock) {
         // Preserve pre-change pending bytes as evidence. They cannot silently become a
         // second LKG or be discarded when they may contain a later revocation floor.
-        check(protected.get(candidateKey) == null) { "存在旧待激活材料；须先验证前向迁移，原始资料已保留" }
-        protected.get(stateKey)?.also(validate)
+        try {
+            check(protected.get(candidateKey) == null) { "存在旧待激活材料；须先验证前向迁移，原始资料已保留" }
+            val body = protected.get(stateKey)
+            if (body == null || cachedBytes?.contentEquals(body) != true) {
+                forgetRead()
+                if (body != null) {
+                    validate(body)
+                    cachedBytes = body.copyOf()
+                }
+            }
+            body
+        } catch (error: Throwable) {
+            forgetRead()
+            throw error
+        }
     }
 
     fun saveState(body: ByteArray) = synchronized(stateLock) {
@@ -157,6 +187,10 @@ internal class ManagedProfileStore internal constructor(
         if (previous != null) checkAdvance(body, previous)
         protected.put(stateKey, body)
         check(protected.get(stateKey)?.contentEquals(body) == true) { "设备状态持久化回读不一致" }
+        if (cachedBytes?.contentEquals(body) != true) {
+            forgetRead()
+            cachedBytes = body.copyOf()
+        }
     }
 
     fun acceptCertified(body: ByteArray): ManagedProfile = synchronized(stateLock) {
@@ -164,10 +198,17 @@ internal class ManagedProfileStore internal constructor(
         saveState(body)
         // Removing access can legitimately remove RuntimeProfile. Authentication
         // remains durable even when this host has nothing it can execute.
-        checkNotNull(project(body)) { "认证配置已保存；没有可执行的 access 配置" }
+        checkNotNull(loadCurrent()) { "认证配置已保存；没有可执行的 access 配置" }
     }
 
-    fun loadCurrent(): ManagedProfile? = synchronized(stateLock) { state()?.let(project) }
+    fun loadCurrent(): ManagedProfile? = synchronized(stateLock) {
+        val body = state() ?: return@synchronized null
+        if (!profileRead) {
+            cachedProfile = project(body)
+            profileRead = true
+        }
+        cachedProfile
+    }
 
     // Caller holds the VPN lifecycle lock; network I/O must not run while
     // holding the encrypted identity store lock or during a UI projection.
@@ -183,8 +224,14 @@ internal class ManagedProfileStore internal constructor(
         transform(current).also(::saveState)
     }
 
-    fun acceptedViewDigest(): String = synchronized(stateLock) { state()?.let(authenticatedView).orEmpty() }
-    fun possiblePermissionRestoration(): Boolean = synchronized(stateLock) { state()?.let(restorationRisk) ?: false }
+    fun acceptedViewDigest(): String = synchronized(stateLock) {
+        val body = state() ?: return@synchronized ""
+        cachedDigest ?: authenticatedView(body).also { cachedDigest = it }
+    }
+    fun possiblePermissionRestoration(): Boolean = synchronized(stateLock) {
+        val body = state() ?: return@synchronized false
+        cachedRisk ?: restorationRisk(body).also { cachedRisk = it }
+    }
 
     fun certifiedViewDigest(body: ByteArray): String {
         validate(body)
@@ -194,9 +241,11 @@ internal class ManagedProfileStore internal constructor(
     fun clearUncompletedIdentity() = synchronized(stateLock) {
         check(acceptedViewDigest().isEmpty()) { "设备已有正式 LKG，不会删除身份" }
         protected.remove(stateKey)
+        forgetRead()
     }
 
     fun clear() = synchronized(stateLock) {
+        forgetRead()
         protected.remove(candidateKey)
         protected.remove(stateKey)
     }
@@ -210,6 +259,18 @@ internal class ManagedProfileStore internal constructor(
         // All handles address the same encrypted records. Instance locks cannot
         // prevent a report reservation from being overwritten by an older refresh.
         private val stateLock = Any()
+        private val readers = LinkedHashMap<String, ManagedProfileStore>(4, 0.75f, true)
+
+        fun get(context: Context, profileId: String): ManagedProfileStore = synchronized(stateLock) {
+            readers[profileId] ?: ManagedProfileStore(context, profileId).also { store ->
+                readers[profileId] = store
+                if (readers.size > 4) {
+                    val oldest = readers.entries.first()
+                    oldest.value.forgetRead()
+                    readers.remove(oldest.key)
+                }
+            }
+        }
     }
 }
 

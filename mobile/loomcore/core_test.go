@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+func TestRouteInputDiagnosticsDistinguishEmptyAndOversizedProjection(t *testing.T) {
+	for _, sample := range []struct {
+		body []byte
+		want string
+	}{
+		{nil, "Android route projection: JSON input is empty (0 bytes)"},
+		{make([]byte, (1<<20)+1), "Android route projection: JSON input is 1048577 bytes; limit is 1048576 bytes"},
+	} {
+		_, err := EvaluateAndroidRoutes(sample.body, nil, nil, nil, "demo-generation", "2030-01-01T00:00:00Z", nil, nil, nil, nil)
+		if err == nil || err.Error() != sample.want {
+			t.Fatal("lost input origin or actual size", err)
+		}
+	}
+}
+
 func testPolicyPreference() ([]byte, error) {
 	return control.CanonicalEncode(clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-lan", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}})
 }

@@ -17,9 +17,6 @@ import (
 // AccessProjection is a one-way execution input. It never decodes authority,
 // signs facts, persists a second view, or supplies fields missing from a view.
 func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, clientmodel.RuntimeProfile, error) {
-	if err := view.Validate(); err != nil {
-		return nil, clientmodel.RuntimeProfile{}, err
-	}
 	if view.RuntimeProfile == nil || !slices.Contains(view.Responsibilities, "access") {
 		return nil, clientmodel.RuntimeProfile{}, errors.New("view has no access runtime")
 	}
@@ -27,20 +24,19 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 	if err != nil {
 		return nil, clientmodel.RuntimeProfile{}, err
 	}
+	linkRefs := map[string]clientmodel.LinkSampleRef{}
+	for _, link := range view.Links {
+		spec, err := control.LinkSpecDigest(view, link.ID)
+		if err != nil {
+			return nil, clientmodel.RuntimeProfile{}, err
+		}
+		linkRefs[link.ID] = clientmodel.LinkSampleRef{LinkID: link.ID, DeviceID: link.FromNodeID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, fmt.Sprint(link.ProbeTarget.Port)), Action: link.ProbeTarget.Action}
+	}
 	routes := make([]clientmodel.RouteCandidate, 0, len(view.Routes))
 	for _, route := range view.Routes {
 		candidate := clientmodel.RouteCandidate{ID: route.ID, PolicyID: route.PolicyID, FinalExit: route.FinalExit, Chain: append([]string{}, route.NodeChain...), Scope: route.Scope}
 		for _, id := range route.LinkIDs {
-			for _, link := range view.Links {
-				if link.ID != id {
-					continue
-				}
-				spec, err := control.LinkSpecDigest(view, id)
-				if err != nil {
-					return nil, clientmodel.RuntimeProfile{}, err
-				}
-				candidate.RelayLinks = append(candidate.RelayLinks, clientmodel.LinkSampleRef{LinkID: id, DeviceID: link.FromNodeID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, fmt.Sprint(link.ProbeTarget.Port)), Action: link.ProbeTarget.Action})
-			}
+			candidate.RelayLinks = append(candidate.RelayLinks, linkRefs[id])
 		}
 		if probe, found := probes[route.ID]; found {
 			candidate.FirstHop = &clientmodel.ResourceSampleRef{ResourceID: probe.Resource.ID, SpecDigest: probe.SpecDigest, Target: probe.Target(), Action: probe.Action()}
@@ -55,17 +51,33 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 // adapters must complete this value before passing it to a process. It remains
 // disposable and must never replace the signed RuntimeProfile.
 func ManagedRuntimeConfig(view control.DeviceView, secret string, websites ...WebsiteAccess) (string, error) {
+	_, config, err := AccessRuntimeProjection(view, secret, websites...)
+	return config, err
+}
+
+// AccessRuntimeProjection validates the certified View once for both selection
+// and host execution. Its private helpers never accept unvalidated inputs.
+func AccessRuntimeProjection(view control.DeviceView, secret string, websites ...WebsiteAccess) ([]clientmodel.RouteCandidate, string, error) {
+	routes, _, err := AccessProjection(view)
+	if err != nil {
+		return nil, "", err
+	}
+	config, err := managedRuntimeConfig(view, secret, websites...)
+	return routes, config, err
+}
+
+func managedRuntimeConfig(view control.DeviceView, secret string, websites ...WebsiteAccess) (string, error) {
 	if len(websites) > 1 {
 		return "", errors.New("runtime has more than one website execution input")
 	}
 	var website WebsiteAccess
 	if len(websites) == 1 {
 		website = websites[0]
-		if _, err := WebsiteAccessFor(view, website.Addresses); err != nil || len(view.WebEndpoints) > 0 && website.Port != view.WebEndpoints[0].Port {
+		if _, err := websiteAccessFor(view, website.Addresses); err != nil || len(view.WebEndpoints) > 0 && website.Port != view.WebEndpoints[0].Port {
 			return "", errors.New("website execution differs from the certified entry projection")
 		}
 	}
-	config, err := AccessRuntimeSource(view, secret)
+	config, err := runtimeSource(view, secret, true)
 	if err != nil {
 		return "", err
 	}
@@ -86,7 +98,7 @@ func AccessRuntimeSource(view control.DeviceView, secret string) (string, error)
 	if _, _, err := AccessProjection(view); err != nil {
 		return "", err
 	}
-	return RuntimeSource(view, secret, true)
+	return runtimeSource(view, secret, true)
 }
 
 // RuntimeSource adds only local listeners and diagnostics to the one certified
@@ -95,6 +107,10 @@ func RuntimeSource(view control.DeviceView, secret string, access bool) (string,
 	if err := view.Validate(); err != nil {
 		return "", err
 	}
+	return runtimeSource(view, secret, access)
+}
+
+func runtimeSource(view control.DeviceView, secret string, access bool) (string, error) {
 	if view.RuntimeProfile == nil || secret == "" || access && !slices.Contains(view.Responsibilities, "access") {
 		return "", errors.New("runtime profile, role or local API secret is missing")
 	}

@@ -551,12 +551,10 @@ func (server *Server) operation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	snapshot := buildWebSnapshot(result.Projection, true, localAdmin(r), server.Runtime.Writable(), server.expectedReleaseSets(result.Projection)...)
-	server.memberSnapshot(&snapshot)
-	snapshot.EndpointCertificates = webEndpointCertificates(server.Runtime.Authority.root, server.Config.ControlID, result.Projection, server.now())
-	server.websiteSnapshot(&snapshot, r, result.Projection)
-	snapshot.PolicyInvites = projectWebPolicyInvites(result.Projection, server.now())
-	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "snapshot": snapshot}
+	// Operation readback concerns this fact, not every device's executable
+	// configuration. The ordinary snapshot/live entry owns the network view.
+	target, _ := result.Projection.CurrentTarget(operation.TargetKind, operation.TargetID)
+	response := map[string]any{"material_id": result.MaterialID, "status": "accepted", "target": target}
 	if extra != nil && extra.Invite != "" {
 		response["invite"] = extra.Invite
 	}

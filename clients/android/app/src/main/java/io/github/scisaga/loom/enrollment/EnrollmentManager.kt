@@ -348,7 +348,7 @@ class EnrollmentManager private constructor(context: Context) {
 
     private fun store(profileId: String): ManagedProfileStore {
         requireProfileId(profileId)
-        return ManagedProfileStore(appContext, profileId)
+        return ManagedProfileStore.get(appContext, profileId)
     }
 
     private fun requireProfileId(profileId: String) {
