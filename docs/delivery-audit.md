@@ -42,7 +42,17 @@
 `5083595f` 托管续验确认上述两项已消失，Linux 普通／race 仅剩新 user namespace 无权重开
 PID 1 namespace 的夹具失败；现由父进程固定打开真实初始 namespace 并传入继承句柄，
 保持隔离门禁及权限不变。原四个真实激活子例与三个 namespace 边界用例普通／race 已通过，
-无跳过；托管最终结果仍须读取对应修正提交的实际工作流。
+无跳过。后续 `f687ffea` 的[主 CI](https://github.com/Scisaga/loom/actions/runs/42206384032)
+四个 Job 全部成功，完整普通／race、Windows 原生及固定来源原生数据面检查通过；按包汇总
+日志不抵扣逐例 opt-in 或实体机／生产验收。
+
+随后补齐同下一跳的 Forward 定向原生实测：正式 Linux Run 保持唯一 access 候选及签名 LKG，
+两资源的真实报文延迟反转后，独立 Link 测量驱动 forward 的 CAS 与回读从 Hy2 切至 WG；新流
+使用 WG，原 Hy2 tracker 与旧流保持。最终测试源普通／race 各在独立 user／net／mount
+namespace 完整通过，无跳过或 race 诊断，终态及签名报告原件保留。此前测试夹具编码错误、
+取证缺口及原始失败也保留，详见[定向续验](progress.md#同下一跳-forward-的真实测量反转续验)。
+这是本机隔离业务验收；真实 control 报告持久化／重启、多个 forward 的实网链及实体机／
+生产仍待验证，不能从该用例扩大结论。
 
 ## 当前目标与尚未闭合的实现
 

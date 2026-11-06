@@ -213,6 +213,48 @@ Linux 普通／race 的 socket 长度和程序执行问题消失，均只剩原�
 根 build 已通过。新修改的定向 race 已通过，本次不重复本地全库 race，继续由新提交的托管
 完整 race 验证，详见该目录 `short/summary.json`。
 
+夹具修正提交 `f687ffea14065f6ba714b073ffffbc076ab8f4af` 已推送，其
+[主 CI](https://github.com/Scisaga/loom/actions/runs/42206384032)四个 Job 全部成功：根普通／
+race、Windows 原生检查、固定来源的原生数据面检查均通过。普通／race 的 linuxclient 包
+分别实际执行 7.112／63.021 秒，日志不是 cached；非 verbose 输出不提供逐用例 PASS／SKIP
+明细，不据此声称每个 opt-in 用例均执行。完整日志与状态保存在
+`out/current-review-postpush/ci-f687-final-status.json` 及同目录对应日志。
+
+### 同下一跳 Forward 的真实测量反转续验
+
+新增显式 opt-in 的
+`TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP`。正式 Linux Run 使用
+持久签名 LKG 和唯一不变的本地 access 候选；forward 在同一 Policy、最终出口和下一跳的
+WG／Hy2 两个实际资源之间选路。测试只改变隔离 namespace 中 UDP 代理的真实报文延迟，
+不写入观测或 selector；默认测量节奏、两次新样本确认和最小切换间隔保持。
+
+最终源码普通与 race 二进制分别在 fresh user／network／mount namespace 实跑，均通过，
+无跳过或 race 诊断。地址生成前核对隔离、仅 loopback 和无外部路由；两条 Link 的资源、
+规格、action、target 和网络代独立核对。每个资源均保留两次反转后的实际样本；签名报告由
+测试接收端完成 TLS／设备 challenge 认证、验签并保存原件。forward 的出口 choices 首选
+从 Hy2 变为 WG，revision 同时改变；access 的唯一候选／Policy／targets 与签名 View 摘要不变。
+连接回读同时保留原 Hy2 tracker 和新 WG tracker 的排他实际链，旧 TCP 持续返回应用数据。
+
+首次编译的局部遮蔽错误、首轮测试接收端使用 `any` 导致规范编码拒绝的自然超时失败，及
+中间轮终态文件被 TempDir 清理抢先删除的取证缺口全部保留。修正仅在新增测试夹具：使用
+精确结构类型、完整保留所有接收端口直至代理端口分配结束、同步发布不可变 LKG，并通过
+标准 `-test.outputdir` 直接保存终态原件。最终源码重新编译后普通／race 各完整重跑，
+没有提高预算、改生产权限或添加 fallback。
+
+执行入口为 `go test -c` 与 `go test -race -c` 构建 linuxclient 测试二进制，再经
+`unshare --user --map-root-user --net --mount --propagation private --fork` 执行该精确用例；
+`LOOM_LINUX_MIXED_EXECUTABLE` 指向已审阅 `.27` 数据面，标准 outputdir 指向 owner-only
+私有证据目录。实际完整命令及逐轮结果位于
+`deploy/evidence/2026-11-06-native-forward-f687ffea/commands.txt` 与 `review-summary.json`；
+最终两轮为 `run-80on1m7g`／`run-phzasfbr`，源文件摘要
+`9210260cc255d1b4c17f85e316f3750559516a5d428a28cbfa4aeba216322bc2`。
+各轮原生进程均退出、无残留，规则及宿主结构排除 IPv6 expires 自然倒计时后保持。
+
+本次闭合的是本机隔离的实际传输、测量、Forward CAS 和新旧业务流；测试报告接收端不抵扣
+真实 control authority 的报告接收持久化／重启，也不覆盖独立 access 经多个 forward 的链、
+实际异网位置、Android／ARM64 实体机或生产迁移。新测试默认无显式输入时保持 opt-in 跳过，
+上述通过结论来自两次显式原生执行，不由默认根测试推定。
+
 ## 操作者指定的端口占用与可用范围修正
 
 2026-11-04，操作者确认一台节点的指定端口已由其他程序使用，并重申原先提供的完整可用范围。
