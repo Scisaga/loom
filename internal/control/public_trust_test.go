@@ -135,10 +135,10 @@ func TestPublicTrustAuthenticatedViewRestartExportAndRemoval(t *testing.T) {
 	if err := VerifyDeviceViewEnvelope(view, trusted); err != nil {
 		t.Fatal("root projection is not authenticated", err)
 	}
-	if !reflect.DeepEqual(view.View.Routes, before.View.Routes) || !reflect.DeepEqual(view.View.RuntimeProfile, before.View.RuntimeProfile) || view.View.DevicePublicKey != before.View.DevicePublicKey {
+	if !reflect.DeepEqual(testDeviceExecution(view.View).Routes, testDeviceExecution(before.View).Routes) || !reflect.DeepEqual(testDeviceExecution(view.View).RuntimeProfile, testDeviceExecution(before.View).RuntimeProfile) || view.View.DevicePublicKey != before.View.DevicePublicKey {
 		t.Fatal("website root changed business permissions or device identity")
 	}
-	web := buildWebSnapshot(server.Runtime.Authority.Snapshot(), true, true, true)
+	web := testWebSnapshotWithIntent(server.Runtime.Authority.Snapshot(), true, true, true)
 	if !reflect.DeepEqual(web.PublicTrust, []PublicTrust{value}) {
 		t.Fatal("normal UI omitted the persisted root")
 	}

@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func TestWebSnapshotRedactsSecretsAndPreservesPolicyReferences(t *testing.T) {
 	}
 	projection.DeviceAuthorizations = []DeviceAuthorization{{ID: "demo-node-a", Name: "Demo control access", Platform: "linux", Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-deleted-policy"}, DistributionURLs: []string{}, RuntimeKey: "demo-private-runtime-value", TransactionID: "demo-transaction", DevicePublicKey: "demo-private-binding-value"}}
 	projection.Targets = []TargetState{{TargetKind: "device", TargetID: "demo-node-a", MaterialIDs: []string{materialTestID(t, fixture.genesis)}}}
-	snapshot := buildWebSnapshot(projection, true, true, true)
+	snapshot := testWebSnapshotWithIntent(projection, true, true, true)
 	body, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +30,7 @@ func TestWebSnapshotRedactsSecretsAndPreservesPolicyReferences(t *testing.T) {
 	if len(device.Roles) != 2 || device.Roles[0] != "access" || device.Roles[1] != "control" || len(device.PolicyIDs) != 1 || device.PolicyIDs[0] != "demo-deleted-policy" {
 		t.Fatal("projection lost member/ordinary separation or retained policy IDs")
 	}
-	readonly := buildWebSnapshot(projection, true, true, false)
+	readonly := testWebSnapshotWithIntent(projection, true, true, false)
 	if !readonly.Capabilities.Admin || len(readonly.Capabilities.Operations) != 0 || readonly.UIState.LocalWritable {
 		t.Fatal("credential manufactured local signing availability")
 	}
@@ -40,12 +41,12 @@ func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 	projection.DeviceAuthorizations[0].Responsibilities = []string{"access", "internet_egress"}
 	projection.NetworkIntent.Policies[0].AllowDirect = new(false)
 	projection.NetworkIntent.Policies[0].LocalEgressDevices = new([]string{"demo-access"})
-	snapshot := buildWebSnapshot(projection, true, true, true)
-	if len(snapshot.Paths) != 1 || snapshot.Paths[0].FinalExit != "demo-access" || len(snapshot.Paths[0].Chain) != 0 || snapshot.Paths[0].Selected || snapshot.Paths[0].Availability != "unknown" {
+	snapshot := testWebSnapshotWithIntent(projection, true, true, true)
+	if len(snapshot.Paths) != 1 || snapshot.Paths[0].FinalExit != "demo-access" || !reflect.DeepEqual(snapshot.Paths[0].Chain, []string{"demo-access"}) || snapshot.Paths[0].Selected || snapshot.Paths[0].Availability != "unknown" {
 		t.Fatal("unmeasured local candidate disappeared or acquired a selection/health assertion")
 	}
-	report := DeviceReport{DeviceID: "demo-access", NetworkGeneration: "demo-generation", ReportedAt: 1000, ViewDigest: "demo-digest", Runtime: RuntimeReadback{State: "running", AppliedViewDigest: "demo-digest"}, PolicyChoices: new([]PolicyChoice{{ServiceID: "demo-service", PolicyID: "demo-policy"}}), Selections: []ReportSelection{{ServiceID: "demo-service", PolicyID: "demo-policy", CandidateID: snapshot.Paths[0].CandidateID}}, Observations: []Observation{}}
-	projectWebObservations(&snapshot, []DeviceReport{report}, time.UnixMilli(2000))
+	report := DeviceReport{DeviceID: "demo-access", NetworkGeneration: "demo-generation", ReportedAt: 1000, ViewDigest: "demo-digest", Runtime: RuntimeReadback{State: "running", AppliedViewDigest: "demo-digest"}, PolicyID: "demo-policy", Selections: []ReportSelection{{ServiceID: "demo-service", PolicyID: "demo-policy", CandidateID: snapshot.Paths[0].CandidateID}}, Observations: []Observation{}}
+	testProjectWebObservations(&snapshot, []DeviceReport{report}, time.UnixMilli(2000))
 	if !snapshot.Paths[0].Selected || snapshot.Paths[0].Availability != "unknown" {
 		t.Fatal("selector readback without a business probe was lost or manufactured health")
 	}
@@ -53,8 +54,8 @@ func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 	report.Observations = []Observation{observation}
 	for _, expiry := range []int64{3000, 4102444800000} {
 		report.Observations[0].ValidUntil = expiry
-		readback := buildWebSnapshot(projection, true, true, true)
-		projectWebObservations(&readback, []DeviceReport{report}, time.UnixMilli(2000))
+		readback := testWebSnapshotWithIntent(projection, true, true, true)
+		testProjectWebObservations(&readback, []DeviceReport{report}, time.UnixMilli(2000))
 		if readback.Paths[0].Availability != "unknown" || !readback.Paths[0].Selected {
 			t.Fatal("device-provided expiry manufactured current health or lost the reported selection")
 		}
@@ -70,14 +71,14 @@ func TestWebReportDoesNotManufactureGlobalBusinessHealth(t *testing.T) {
 	other := observation
 	other.Target, other.Result = "https://other.example/", "unavailable"
 	report.Observations = append(report.Observations, other)
-	multiple := buildWebSnapshot(projection, true, true, true)
-	projectWebObservations(&multiple, []DeviceReport{report}, time.UnixMilli(2000))
+	multiple := testWebSnapshotWithIntent(projection, true, true, true)
+	testProjectWebObservations(&multiple, []DeviceReport{report}, time.UnixMilli(2000))
 	if len(multiple.Paths) != 1 || multiple.Paths[0].Availability != "unknown" {
 		t.Fatal("multiple measurements duplicated the path or invented a reduction rule")
 	}
 	projection.NetworkIntent.Policies[0].Action = "deny"
-	withdrawn := buildWebSnapshot(projection, true, true, true)
-	projectWebObservations(&withdrawn, []DeviceReport{report}, time.UnixMilli(2000))
+	withdrawn := testWebSnapshotWithIntent(projection, true, true, true)
+	testProjectWebObservations(&withdrawn, []DeviceReport{report}, time.UnixMilli(2000))
 	if len(withdrawn.Paths) != 0 {
 		t.Fatal("an observation manufactured a withdrawn path")
 	}
@@ -89,7 +90,7 @@ func TestWebRelayProjectionPreservesBothOriginalResourceIdentities(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := buildWebSnapshot(projection, true, true, true)
+	snapshot := testWebSnapshotWithIntent(projection, true, true, true)
 	if len(snapshot.Links) != len(derived) {
 		t.Fatal("drawing projection changed the directional candidate inventory")
 	}
@@ -112,4 +113,17 @@ func TestWebRelayProjectionPreservesBothOriginalResourceIdentities(t *testing.T)
 			t.Fatal("UI projection lost an original direction", original.ID)
 		}
 	}
+}
+
+// Pure UI scenarios provide their explicitly supplied report samples; formal
+// handlers exercise the original index instead of treating omission as deletion.
+func testProjectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now time.Time) {
+	measurements := map[string][]WebObservation{}
+	for _, report := range reports {
+		_, until := webReportTime(report, now)
+		for _, sample := range report.Observations {
+			measurements[report.DeviceID] = append(measurements[report.DeviceID], WebObservation{Observation: sample, CurrentUntil: webObservationUntil(report, sample, until, now)})
+		}
+	}
+	projectWebObservations(snapshot, reports, measurements, now)
 }

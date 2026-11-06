@@ -40,7 +40,7 @@ type reportCacheIdentity struct {
 }
 
 type reportCacheRuntimeKey struct {
-	state, appliedViewDigest, errorCode string
+	state, appliedViewDigest, permissionViewDigest, errorCode string
 }
 
 type reportCacheRuntime struct {
@@ -223,14 +223,14 @@ func (store *ObservationStore) rememberVerifiedRuntime(id, key string, report De
 	}
 	value := element.Value.(*reportCacheEntry)
 	identityKey := reportCacheIdentityKey{reportOwner{report.NetworkID, report.DeviceID}, key}
-	runtimeKey := reportCacheRuntimeKey{report.Runtime.State, report.Runtime.AppliedViewDigest, report.Runtime.ErrorCode}
+	runtimeKey := reportCacheRuntimeKey{report.Runtime.State, report.Runtime.AppliedViewDigest, report.Runtime.PermissionViewDigest, report.Runtime.ErrorCode}
 	cache.lru.MoveToFront(element)
 	if value.identity != nil && value.runtime != nil && value.identity.value == identityKey && value.runtime.value == runtimeKey {
 		return
 	}
 	cache.release(value)
 	identityCost := reportCachePoolCost + reportCacheStringCost(report.NetworkID) + reportCacheStringCost(report.DeviceID) + reportCacheStringCost(key)
-	runtimeCost := reportCachePoolCost + reportCacheStringCost(report.Runtime.State) + reportCacheStringCost(report.Runtime.AppliedViewDigest) + reportCacheStringCost(report.Runtime.ErrorCode)
+	runtimeCost := reportCachePoolCost + reportCacheStringCost(report.Runtime.State) + reportCacheStringCost(report.Runtime.AppliedViewDigest) + reportCacheStringCost(report.Runtime.PermissionViewDigest) + reportCacheStringCost(report.Runtime.ErrorCode)
 	for {
 		extra := 0
 		if cache.identities[identityKey] == nil {
@@ -253,7 +253,7 @@ func (store *ObservationStore) rememberVerifiedRuntime(id, key string, report De
 	}
 	runtime := cache.runtimes[runtimeKey]
 	if runtime == nil {
-		owned := reportCacheRuntimeKey{strings.Clone(report.Runtime.State), strings.Clone(report.Runtime.AppliedViewDigest), strings.Clone(report.Runtime.ErrorCode)}
+		owned := reportCacheRuntimeKey{strings.Clone(report.Runtime.State), strings.Clone(report.Runtime.AppliedViewDigest), strings.Clone(report.Runtime.PermissionViewDigest), strings.Clone(report.Runtime.ErrorCode)}
 		runtime = &reportCacheRuntime{value: owned, cost: runtimeCost}
 		cache.runtimes[owned] = runtime
 		cache.bytes += runtimeCost
@@ -307,7 +307,7 @@ func (store *ObservationStore) originalRuntimeKeysWithCodecAndKey(raw []byte, id
 		}
 		if ed25519.Verify(ed25519.PublicKey(public), message, signature) {
 			store.rememberVerifiedRuntime(id, key, report)
-			return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, key, nil
+			return referenceOf(report), RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, PermissionViewDigest: report.Runtime.PermissionViewDigest, ErrorCode: report.Runtime.ErrorCode}, key, nil
 		}
 	}
 	return reportReference{}, RuntimeReadback{}, "", errors.New("no historical identity verifies report")
@@ -332,7 +332,7 @@ func (store *ObservationStore) cachedOriginalRuntime(id string, keys []string) (
 	cache.lru.MoveToFront(element)
 	identity, runtime := value.identity.value, value.runtime.value
 	return reportReference{NetworkID: identity.owner.network, DeviceID: identity.owner.device, ReportSequence: value.sequence},
-		RuntimeReadback{State: runtime.state, AppliedViewDigest: runtime.appliedViewDigest, ErrorCode: runtime.errorCode}, identity.verifiedKey, true
+		RuntimeReadback{State: runtime.state, AppliedViewDigest: runtime.appliedViewDigest, PermissionViewDigest: runtime.permissionViewDigest, ErrorCode: runtime.errorCode}, identity.verifiedKey, true
 }
 
 // Only reorder an existing key in a caller-owned query copy. The accepted set

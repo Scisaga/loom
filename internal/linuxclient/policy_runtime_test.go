@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/proxy"
+	"loom/internal/clientmodel"
 	"loom/internal/control"
+
+	"golang.org/x/net/proxy"
 )
 
 // All sockets, processes and workloads stay in the dedicated test namespace.
@@ -92,7 +94,7 @@ func TestOfficialLinuxMixedPerServicePolicyChoice(t *testing.T) {
 		t.Helper()
 		for {
 			status, err := ReadStatus(options.Status)
-			if err == nil && status.Runtime == "running" && status.ViewDigest == digest && status.Preference.Policy("demo-service") == policy && len(status.Selections) == count {
+			if err == nil && status.Runtime == "running" && status.ViewDigest == digest && status.Preference.PolicyID == policy && len(status.Selections) == count {
 				return status
 			}
 			select {
@@ -107,7 +109,7 @@ func TestOfficialLinuxMixedPerServicePolicyChoice(t *testing.T) {
 		}
 	}
 	initial := wait(view.ViewDigest, "", 1)
-	if initial.Preference.Policy("demo-service-b") != "demo-policy-domestic" {
+	if initial.Preference.PolicyID != "demo-policy-domestic" {
 		t.Fatal("singleton Service was not initialized")
 	}
 	dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:1080", nil, &net.Dialer{Timeout: time.Second})
@@ -147,12 +149,12 @@ func TestOfficialLinuxMixedPerServicePolicyChoice(t *testing.T) {
 	check(domesticConnection)
 	var previousAPI net.Conn
 	for _, policy := range []string{"demo-policy", "demo-policy-alt"} {
-		if err := SelectPolicy(options.LocalState, "demo-network", view.View, "demo-service", policy); err != nil {
+		if err := store.SetPreference(clientmodel.Preference{Schema: 3, PolicyID: policy}); err != nil {
 			t.Fatal(err)
 		}
 		reload <- syscall.SIGHUP
 		status := wait(view.ViewDigest, policy, 2)
-		if status.Preference.Policy("demo-service-b") != "demo-policy-domestic" {
+		if status.Preference.PolicyID != "demo-policy-domestic" {
 			t.Fatal("policy choice changed another Service")
 		}
 		for _, selected := range status.Selections {
@@ -186,14 +188,11 @@ func TestOfficialLinuxMixedPerServicePolicyChoice(t *testing.T) {
 	}
 	stopped = true
 	local, err := loadLocalState(options.LocalState, "demo-network", revoked.ViewDigest)
-	if err != nil || local.Preference.Policy("demo-service") != "" {
+	if err != nil || local.Preference.PolicyID != "" {
 		t.Fatal("revoked policy was restored", err)
 	}
-	if _, err := ReconcilePolicyChoices(options.LocalState, "demo-network", revoked.View); err != nil {
-		t.Fatal(err)
-	}
 	local, err = loadLocalState(options.LocalState, "demo-network", revoked.ViewDigest)
-	if err != nil || local.Preference.Policy("demo-service") != "" {
+	if err != nil || local.Preference.PolicyID != "" {
 		t.Fatal("restart automatically selected the remaining policy", err)
 	}
 }

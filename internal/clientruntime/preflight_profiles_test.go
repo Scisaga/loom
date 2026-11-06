@@ -3,212 +3,192 @@ package clientruntime
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"loom/internal/clientadapter"
+	"loom/internal/control"
 )
 
-func TestWindowsCaptureAcceptsOnlyTheExistingLocalRejection(t *testing.T) {
-	source, _ := pathPlanFixture(t)
-	blocked, err := clientadapter.WithBlockedSelectors(string(source))
+func TestWindowsCurrentViewProjectionAcrossCaptureProfiles(t *testing.T) {
+	for _, transports := range [][]string{nil, {"wireguard"}, {"hysteria2"}, {"hysteria2", "wireguard"}} {
+		view := windowsViewFixture(t, transports...)
+		view.DNSServers = []string{"https://192.0.2.53/dns-query", "https://192.0.2.54/dns-query"}
+		view.DNSRecords = []control.DNSRecord{{ID: "demo-dns", Name: "demo-dependency.loom", Addresses: []string{"192.0.2.20"}}}
+		source, err := clientadapter.AccessRuntimeSource(view, "demo-api")
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err = clientadapter.WithBlockedSelectors(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		original := runtimeDocument(t, []byte(source))
+		viewBytes, _ := control.CanonicalEncode(view)
+		for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableTUNProfile, WindowsPortableMixedProfile} {
+			config, err := DeriveWindowsRuntimeConfig(view, profile, "demo-api", clientadapter.WebsiteAccess{}, new([]string{}))
+			if err != nil {
+				t.Fatal(transports, profile, err)
+			}
+			derived := runtimeDocument(t, config.Bytes())
+			if !reflect.DeepEqual(derived["endpoints"], original["endpoints"]) {
+				t.Fatal("capture rewrote native WireGuard execution")
+			}
+			outbounds := derived["outbounds"].([]any)
+			if len(outbounds) < len(original["outbounds"].([]any)) || !reflect.DeepEqual(outbounds[:len(original["outbounds"].([]any))], original["outbounds"]) {
+				t.Fatal("capture changed native access, transport or Policy permission")
+			}
+			route, baseRoute := derived["route"].(map[string]any), original["route"].(map[string]any)
+			prefix := 2
+			if profile != WindowsPortableMixedProfile {
+				prefix++
+			}
+			if route["final"] != "reject" || !reflect.DeepEqual(route["rules"].([]any)[prefix:], baseRoute["rules"]) {
+				t.Fatal("capture changed business dispatch or final rejection")
+			}
+			tunCount := 0
+			for _, raw := range derived["inbounds"].([]any) {
+				inbound := raw.(map[string]any)
+				if inbound["type"] == "tun" {
+					tunCount++
+				}
+				if inbound["type"] == "mixed" && (inbound["listen"] != "127.0.0.1" || inbound["listen_port"] != float64(1080)) {
+					t.Fatal("Mixed escaped loopback")
+				}
+			}
+			wantTUN := 1
+			if profile == WindowsPortableMixedProfile {
+				wantTUN = 0
+			}
+			if tunCount != wantTUN {
+				t.Fatal("wrong capture profile")
+			}
+			dns := derived["dns"].(map[string]any)
+			if dns["final"] != "loom-resolver-0" {
+				t.Fatal("certified DNS was lost")
+			}
+			resolvers, record := 0, false
+			for _, raw := range dns["servers"].([]any) {
+				server := raw.(map[string]any)
+				if server["address"] == "local" {
+					t.Fatal("system DNS fallback appeared")
+				}
+				if server["address"] == view.DNSServers[0] || server["address"] == view.DNSServers[1] {
+					resolvers++
+					if server["detour"] != "loom-underlay-dns" {
+						t.Fatal("resolver left its physical underlay")
+					}
+				}
+				if server["address"] == "loom-static" {
+					record = reflect.DeepEqual(server["static_records"].(map[string]any)["demo-dependency.loom"], []any{"192.0.2.20"})
+				}
+			}
+			if resolvers != 2 || !record {
+				t.Fatal("certified resolver alternatives or overlay record were lost")
+			}
+			copy := config.Bytes()
+			clear(copy)
+			if err := config.validate(); err != nil {
+				t.Fatal("a mutable copy changed supervisor input", err)
+			}
+			if executable := os.Getenv("LOOM_SING_BOX_EXECUTABLE"); executable != "" {
+				if err := PreflightWindowsRuntime(context.Background(), executable, config, filepath.Join(t.TempDir(), "runtime")); err != nil {
+					t.Fatal(transports, profile, err)
+				}
+			}
+			config.Clear()
+			if config.validate() == nil {
+				t.Fatal("cleared projection remained executable")
+			}
+		}
+		after, _ := control.CanonicalEncode(view)
+		if !bytes.Equal(viewBytes, after) {
+			t.Fatal("capture mutated its certified View")
+		}
+	}
+}
+
+func TestWindowsConstructionRejectsInvalidAuthorityAndExecutionInputs(t *testing.T) {
+	for _, change := range []func(*control.DeviceView){
+		func(v *control.DeviceView) { v.Schema++ },
+		func(v *control.DeviceView) { v.Platform = "linux" },
+		func(v *control.DeviceView) { v.Responsibilities = []string{} },
+		func(v *control.DeviceView) { v.Services[0].RestrictToProbeTargets = nil },
+		func(v *control.DeviceView) { v.Services[0].RestrictToProbeTargets = new(true) },
+		func(v *control.DeviceView) { v.DNSServers = []string{"demo-resolver.example"} },
+	} {
+		view := windowsViewFixture(t)
+		change(&view)
+		if _, err := DeriveWindowsRuntimeConfig(view, WindowsPortableMixedProfile, "demo-api", clientadapter.WebsiteAccess{}, nil); err == nil {
+			t.Fatal("invalid View acquired a Windows runtime")
+		}
+	}
+	view := windowsViewFixture(t)
+	for _, profile := range []WindowsRuntimeProfile{"", "demo-other"} {
+		if _, err := DeriveWindowsRuntimeConfig(view, profile, "demo-api", clientadapter.WebsiteAccess{}, nil); err == nil {
+			t.Fatal("unsupported capture profile accepted")
+		}
+	}
+	if _, err := DeriveWindowsRuntimeConfig(view, WindowsPortableMixedProfile, "", clientadapter.WebsiteAccess{}, nil); err == nil {
+		t.Fatal("missing local API authentication accepted")
+	}
+	if (WindowsRuntimeConfig{}).validate() == nil {
+		t.Fatal("unconstructed runtime became executable")
+	}
+}
+
+func TestWindowsWebsiteIsDerivedFromTheCertifiedEntry(t *testing.T) {
+	view := windowsViewFixture(t)
+	website := clientadapter.WebsiteAccess{Port: 8443, Addresses: []string{"192.0.2.20", "2001:db8::20"}}
+	if _, err := DeriveWindowsRuntimeConfig(view, WindowsPortableMixedProfile, "demo-api", website, nil); err == nil {
+		t.Fatal("unauthorized website route accepted")
+	}
+	trust := windowsWebsiteTrust(t)
+	view.PublicTrust = []control.PublicTrust{trust}
+	view.WebEndpoints = []control.EndpointGeneration{{ID: "demo-web", Generation: 1, OwnerControlID: "demo-control", Host: "192.0.2.20", Port: website.Port, ServerName: "control.loom", WebsiteTrustID: trust.ID, SPKISHA256: "sha256:" + string(bytes.Repeat([]byte{'1'}, 64)), CertificateDigest: "sha256:" + string(bytes.Repeat([]byte{'1'}, 64)), Modes: []string{"web"}, State: "serving"}}
+	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableTUNProfile, WindowsPortableMixedProfile} {
+		config, err := DeriveWindowsRuntimeConfig(view, profile, "demo-api", website, new([]string{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		document := runtimeDocument(t, config.Bytes())
+		rule := document["route"].(map[string]any)["rules"].([]any)[0].(map[string]any)
+		if !reflect.DeepEqual(rule["domain"], []any{"control.loom"}) || !reflect.DeepEqual(rule["port"], []any{float64(website.Port)}) || rule["network"] != "tcp" || rule["outbound"] != "website-underlay" {
+			t.Fatal("website route broadened")
+		}
+		if profile != WindowsPortableMixedProfile {
+			capture := document["inbounds"].([]any)[1].(map[string]any)
+			if !reflect.DeepEqual(capture["route_exclude_address"], []any{"192.0.2.20/32", "2001:db8::20/128"}) {
+				t.Fatal("website underlay entered TUN")
+			}
+		}
+		config.Clear()
+	}
+	website.Port++
+	if _, err := DeriveWindowsRuntimeConfig(view, WindowsPortableMixedProfile, "demo-api", website, nil); err == nil {
+		t.Fatal("changed website port accepted")
+	}
+}
+
+// The constructor cannot ingest arbitrary native JSON. Unknown native fields
+// are still rejected by the exact executor, whose diagnostics stay suppressed.
+func TestWindowsNativeCheckRejectsUnknownCurrentFields(t *testing.T) {
+	executable := os.Getenv("LOOM_SING_BOX_EXECUTABLE")
+	if executable == "" {
+		t.Skip("requires the exact native data-plane executable")
+	}
+	config, err := DeriveWindowsRuntimeConfig(windowsViewFixture(t), WindowsPortableMixedProfile, "demo-api", clientadapter.WebsiteAccess{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile} {
-		body, err := DeriveWindowsRuntimeConfig([]byte(blocked), profile, nil, nil)
-		if err != nil {
-			t.Fatal(profile, err)
-		}
-		config, err := decodeWindowsConfig(body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, outbound := range config.Outbounds {
-			if outbound.Type == "selector" && outbound.Default != clientadapter.BlockedSelection {
-				t.Fatal("capture derivation lost fail-closed startup")
-			}
-		}
-		// A different unrecognized position cannot borrow the rejection exception.
-		invalid := bytes.ReplaceAll(body, []byte(`"reject"`), []byte(`"demo-unknown-block"`))
-		if ValidateWindowsRuntimeConfig(invalid, profile) == nil {
-			t.Fatal("unknown selector block was accepted")
-		}
-	}
-}
-
-func TestWindowsCapturePreservesAuthorizationAndDoesNotInventDNS(t *testing.T) {
-	source, _ := pathPlanFixture(t)
-	original := bytes.Clone(source)
-	signed, _ := decodeWindowsConfig(source)
-	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile} {
-		t.Run(string(profile), func(t *testing.T) {
-			body, err := DeriveWindowsRuntimeConfig(source, profile, nil, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			c, _ := decodeWindowsConfig(body)
-			prefix := 1
-			if profile != WindowsPortableMixedProfile {
-				prefix = 2
-			}
-			if c.DNS != nil || !reflect.DeepEqual(c.Outbounds, signed.Outbounds) || c.Route.Final != "reject" || !reflect.DeepEqual(c.Route.Rules[prefix:], signed.Route.Rules) || !bytes.Equal(source, original) {
-				t.Fatal("capture changed authenticated authorization or invented DNS")
-			}
-			if ValidateWindowsSingBox(body) == nil {
-				t.Fatal("derived capture accepted as source")
-			}
-			if err := ValidateWindowsRuntimeConfig(body, profile); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestWindowsDoHDerivationRetainsAuthorizationAndEncryptedAlternatives(t *testing.T) {
-	source, _ := pathPlanFixture(t)
-	before, _ := decodeWindowsConfig(source)
-	resolvers := []string{"https://192.0.2.53/dns-query", "https://192.0.2.54/dns-query"}
-	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile} {
-		body, err := DeriveWindowsRuntimeConfig(source, profile, resolvers, nil)
-		if err != nil {
-			t.Fatal(profile, err)
-		}
-		if err := ValidateWindowsRuntimeConfig(body, profile); err != nil {
-			t.Fatal("DoH projection failed readback", profile, err)
-		}
-		derived, err := decodeWindowsConfig(body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(derived.Outbounds[:len(before.Outbounds)], before.Outbounds) || derived.DNS.Servers[0].Address != resolvers[0] || derived.DNS.Servers[1].Address != resolvers[1] {
-			t.Fatal("encrypted DNS changed authorization")
-		}
-		fallback := false
-		for _, rule := range derived.DNS.Rules {
-			fallback = fallback || rule.Server == "loom-resolver-0" && len(rule.IPCIDR) == 2
-		}
-		if !fallback {
-			t.Fatal("runtime lost encrypted alternative")
-		}
-	}
-}
-
-func TestWindowsCapturePreservesIndependentHy2FirstHop(t *testing.T) {
-	base, _ := pathPlanFixture(t)
-	c, _ := decodeWindowsConfig(base)
-	// Capture consumes already authenticated authorization. The native live
-	// test supplies a real signed View and verifies these CA bytes with Hy2.
-	tls := &singBoxTLS{Enabled: true, ServerName: "demo.example", Certificate: []string{"demo CA PEM"}}
-	entry := singBoxOutbound{Type: "hysteria2", Tag: "demo-entry", Server: "demo-entry.example", ServerPort: 443,
-		Password: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("a", 32))), TLS: tls}
-	exit := entry
-	exit.Tag, exit.Server = "demo-candidate", "192.0.2.10"
-	c.Outbounds = append(c.Outbounds[:1], entry, exit, c.Outbounds[2])
-	source, _ := json.Marshal(c)
-	for _, profile := range []WindowsRuntimeProfile{WindowsPortableMixedProfile, WindowsInstalledProfile, WindowsPortableTUNProfile} {
-		body, err := DeriveWindowsRuntimeConfig(source, profile, []string{"192.0.2.53"}, nil)
-		if err != nil {
-			t.Fatal(profile, err)
-		}
-		derived, err := decodeWindowsConfig(body)
-		servers := 2 // Authenticated underlay plus the closed .loom namespace.
-		if profile != WindowsPortableMixedProfile {
-			servers++
-		}
-		if err != nil || !reflect.DeepEqual(derived.Outbounds[:len(c.Outbounds)], c.Outbounds) ||
-			len(derived.DNS.Servers) != servers || derived.DNS.Servers[0].Address != "udp://192.0.2.53:53" {
-			t.Fatal("Windows capture changed Hy2 credentials, trust, chain or certified DNS", err)
-		}
-	}
-	for _, change := range []func(*singBoxConfig){
-		func(c *singBoxConfig) { c.Outbounds[1].TLS.Insecure = true },
-		func(c *singBoxConfig) { c.Outbounds[1].TLS.DisableSNI = true },
-		func(c *singBoxConfig) { c.Outbounds[1].TLS.Certificate = nil },
-		func(c *singBoxConfig) { c.Outbounds[1].TLS.CertificatePath = "demo-ca.pem" },
-		func(c *singBoxConfig) { c.Outbounds[1].BindInterface = "demo-interface" },
-		func(c *singBoxConfig) { c.Outbounds[1].Detour = "demo-candidate" },
-		func(c *singBoxConfig) { c.Outbounds[2].Detour = "dns-underlay" },
-		func(c *singBoxConfig) { c.Outbounds[2].Detour = "service:demo-service" },
-	} {
-		changed, _ := decodeWindowsConfig(source)
-		change(&changed)
-		body, _ := json.Marshal(changed)
-		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, []string{"192.0.2.53"}, nil); err == nil {
-			t.Fatal("accepted broadened or recursive transport")
-		}
-	}
-}
-func TestWindowsRejectsOldRuntimeFacilities(t *testing.T) {
-	source, _ := pathPlanFixture(t)
-	for _, change := range []func(*singBoxConfig){
-		func(c *singBoxConfig) { c.DNS = &singBoxDNS{Servers: []singBoxDNSServer{{Address: "192.0.2.53"}}} },
-		func(c *singBoxConfig) { c.Route.Final = "block" },
-		func(c *singBoxConfig) {
-			c.Outbounds[1].TLS = &singBoxTLS{Enabled: true, CertificatePath: `C:\demo\ca.crt`}
-		},
-		func(c *singBoxConfig) { c.Outbounds[1].OverrideAddress = "192.0.2.1" },
-		func(c *singBoxConfig) {
-			c.Route.Rules = append([]singBoxRule{windowsMixedSniffRule()}, c.Route.Rules...)
-		},
-	} {
-		c, _ := decodeWindowsConfig(source)
-		change(&c)
-		body, _ := json.Marshal(c)
-		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, nil, nil); err == nil {
-			t.Fatal("legacy or broadened source accepted")
-		}
-	}
-}
-
-func TestWindowsWGAccessPreservesNativeUserSpaceTransportAcrossDeliveries(t *testing.T) {
-	source, _ := pathPlanFixture(t)
-	c, _ := decodeWindowsConfig(source)
-	key := bytes.Repeat([]byte{8}, 32)
-	key[31] = 64
-	endpoint := singBoxEndpoint{Type: "wireguard", Tag: "wg-shared", System: false,
-		Address: []string{"fdab::2/128"}, PrivateKey: base64.StdEncoding.EncodeToString(key),
-		SourceRoutes: []singBoxSourceRoute{{Source: "fdab::2", Destination: "fdab:1::/64"}},
-		Peers: []singBoxEndpointPeer{{Address: "192.0.2.10", Port: 51820,
-			PublicKey:  base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)),
-			AllowedIPs: []string{"fdab:1::/64", "fdab:2::1/128"}}}}
-	c.Endpoints = []singBoxEndpoint{endpoint}
-	c.Outbounds[1] = singBoxOutbound{Type: "direct", Tag: "demo-candidate", Detour: endpoint.Tag, Inet6BindAddress: "fdab::2"}
-	source, _ = json.Marshal(c)
-	for _, profile := range []WindowsRuntimeProfile{WindowsPortableMixedProfile, WindowsInstalledProfile, WindowsPortableTUNProfile} {
-		body, err := DeriveWindowsRuntimeConfig(source, profile, []string{"192.0.2.53"}, nil)
-		if err != nil {
-			t.Fatal(profile, err)
-		}
-		got, err := decodeWindowsConfig(body)
-		if err != nil || len(got.Outbounds) < len(c.Outbounds) || !reflect.DeepEqual(got.Outbounds[:len(c.Outbounds)], c.Outbounds) || !reflect.DeepEqual(got.Endpoints, c.Endpoints) {
-			t.Fatal("Windows capture changed the independent WG sender", err)
-		}
-		if executable := os.Getenv("LOOM_SING_BOX_EXECUTABLE"); executable != "" {
-			if err := PreflightWindowsRuntime(context.Background(), executable, body, filepath.Join(t.TempDir(), "runtime"), profile); err != nil {
-				t.Fatal(profile, err)
-			}
-		}
-	}
-	for _, change := range []func(*singBoxConfig){
-		func(c *singBoxConfig) { c.Endpoints[0].System = true },
-		func(c *singBoxConfig) { c.Endpoints[0].Peers[0].AllowedIPs = []string{"0.0.0.0/0"} },
-		func(c *singBoxConfig) { c.Endpoints[0].Address = []string{"fdab::2/64"} },
-		func(c *singBoxConfig) { c.Outbounds[1].Detour = "demo-candidate" },
-		func(c *singBoxConfig) { c.Outbounds[1].Inet6BindAddress = "fdab::3" },
-		func(c *singBoxConfig) { c.Endpoints[0].PrivateKey = "demo-invalid" },
-		func(c *singBoxConfig) { c.Outbounds[1].Type = "hysteria2" },
-	} {
-		bad, _ := decodeWindowsConfig(source)
-		change(&bad)
-		body, _ := json.Marshal(bad)
-		if _, err := DeriveWindowsRuntimeConfig(body, WindowsPortableMixedProfile, nil, nil); err == nil {
-			t.Fatal("accepted a host interface, invalid source or nested Hy2")
-		}
+	defer config.Clear()
+	document := runtimeDocument(t, config.Bytes())
+	document["outbounds"].([]any)[0].(map[string]any)["demo_unknown_field"] = true
+	body, _ := json.Marshal(document)
+	if RunSingBoxCheck(context.Background(), executable, body, filepath.Join(t.TempDir(), "runtime")) == nil {
+		t.Fatal("unknown native field accepted")
 	}
 }

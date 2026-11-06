@@ -57,6 +57,7 @@ internal data class HomeUiActions(
     val onRefreshEnrollment: (String) -> Unit = {},
     val onAbandonEnrollment: (String) -> Unit = {},
     val onSelectRoute: (String, String, String) -> Unit = { _, _, _ -> },
+    val onRebuildService: (String, String) -> Unit = { _, _ -> },
     val onOpenNotificationSettings: () -> Unit = {},
 )
 
@@ -149,9 +150,12 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                     )
                     if (viewedProfile != null) {
                         if (state.join.phase == EnrollmentPhase.READY) {
-                            JoinedDeviceCard(viewedProfile, state.join) {
-                                actions.onRefreshEnrollment(viewedProfile.id)
-                            }
+                            JoinedDeviceCard(
+                                profile = viewedProfile,
+                                status = state.join,
+                                onRefresh = { actions.onRefreshEnrollment(viewedProfile.id) },
+                                onImportFile = { actions.onImportFile(viewedProfile.id) },
+                            )
                         } else {
                             EnrollmentCard(
                                 profile = viewedProfile,
@@ -163,7 +167,7 @@ internal fun LoomHomeScreen(state: HomeUiState, actions: HomeUiActions = HomeUiA
                                 onAbandonPending = { actions.onAbandonEnrollment(viewedProfile.id) },
                             )
                         }
-                        ServicePolicyCard(state.route) { serviceID, policyID ->
+                        ServicePolicyCard(state.route, onRebuild = { serviceID -> actions.onRebuildService(viewedProfile.id, serviceID) }) { serviceID, policyID ->
                             actions.onSelectRoute(viewedProfile.id, serviceID, policyID)
                         }
                         Text(

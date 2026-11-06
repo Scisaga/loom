@@ -21,6 +21,7 @@ func projectWebDevices(projection Projection, releases ...ReleaseSet) []Device {
 	for _, authorization := range projection.DeviceAuthorizations {
 		device := byID[authorization.ID]
 		device.ID, device.Name, device.Platform = authorization.ID, authorization.Name, authorization.Platform
+		device.WireGuardPublicKey = authorization.WireGuardPublicKey
 		device.Roles = append(device.Roles, authorization.Responsibilities...)
 		sort.Strings(device.Roles)
 		device.Authorized, device.Availability, device.Enrollment = true, "unknown", "completed"
@@ -76,6 +77,7 @@ func projectWebDevices(projection Projection, releases ...ReleaseSet) []Device {
 				// These remain explicitly revoked public settings. An Invite's
 				// original values must not replace later reviewed configuration.
 				device.Name = value.Name
+				device.WireGuardPublicKey = value.WireGuardPublicKey
 				device.Roles = append([]string{}, value.Responsibilities...)
 				for _, member := range projection.Config.Members {
 					if member.NodeID == device.ID {
@@ -126,14 +128,25 @@ func projectWebPaths(projection Projection, releases ...ReleaseSet) []Path {
 	})
 }
 
-func projectWebPathsUsing(projection Projection, viewFor func(string) (DeviceView, error)) []Path {
+func projectWebPathsUsing(projection Projection, viewFor func(string) (DeviceView, error), reports ...DeviceReport) []Path {
+	selected := map[string][]string{}
+	for _, report := range reports {
+		selected[report.DeviceID] = report.SelectedPolicyIDs()
+	}
 	paths := []Path{}
 	for _, device := range projection.DeviceAuthorizations {
+		if len(selected[device.ID]) == 0 {
+			continue
+		}
 		view, err := viewFor(device.ID)
 		if err != nil {
 			continue
 		}
-		for _, candidate := range view.Routes {
+		execution, err := ProjectDeviceCandidates(view, selected[device.ID])
+		if err != nil {
+			continue
+		}
+		for _, candidate := range execution.Routes {
 			transport := ""
 			for _, resource := range view.Resources {
 				if resource.ID == candidate.FirstResourceID {
@@ -141,15 +154,19 @@ func projectWebPathsUsing(projection Projection, viewFor func(string) (DeviceVie
 				}
 			}
 			targets := []string{}
-			for _, set := range view.BusinessProbeTargets {
+			for _, set := range execution.BusinessProbeTargets {
 				if set.ServiceID == candidate.ServiceID {
 					targets = append(targets, set.Targets...)
 				}
 			}
-			paths = append(paths, Path{CandidateID: candidate.ID, Device: device.ID, Scope: candidate.Scope,
+			chain, linkIDs, estimateErr := CandidateTopologyEstimate(execution, candidate)
+			if estimateErr != nil {
+				continue
+			}
+			paths = append(paths, Path{PathBasis: "topology", CandidateID: candidate.ID, Device: device.ID, Scope: candidate.Scope,
 				ServiceID: candidate.ServiceID, PolicyID: candidate.PolicyID, SpecDigest: candidate.SpecDigest, FirstResourceID: candidate.FirstResourceID,
-				FirstTransport: transport, LinkIDs: append([]string{}, candidate.LinkIDs...), Targets: targets,
-				FinalExit: candidate.FinalExit, Chain: append([]string{}, candidate.NodeChain...), Availability: "unknown"})
+				FirstTransport: transport, LinkIDs: linkIDs, Targets: targets,
+				FinalExit: candidate.FinalExit, Chain: chain, Availability: "unknown"})
 		}
 	}
 	sort.Slice(paths, func(i, j int) bool {
@@ -174,27 +191,31 @@ func projectWebLinks(projection Projection) []Link {
 	if err != nil {
 		return []Link{}
 	}
+	specs, err := projectionLinkSpecs(projection)
+	if err != nil {
+		return []Link{}
+	}
 	for _, link := range links {
 		if !senders[link.FromNodeID] || !receivers[link.ToNodeID] {
 			continue
 		}
-		from, to, _, err := linkResources(link, resources)
+		_, to, _, err := linkResources(link, resources)
 		if err != nil {
 			continue
 		}
-		spec, err := nativeLinkSpecDigest(link, from, to)
-		if err != nil {
+		spec := specs[link.ID]
+		if spec == "" {
 			continue
 		}
-		result = append(result, Link{ID: link.ID, FromResourceID: link.FromResourceID, ResourceID: link.ResourceID, SpecDigest: spec, From: link.FromNodeID, To: link.ToNodeID, Transport: "wireguard", Authorized: true, Availability: "unknown"})
+		result = append(result, Link{ID: link.ID, FromResourceID: link.FromResourceID, ResourceID: link.ResourceID, SpecDigest: spec, From: link.FromNodeID, To: link.ToNodeID, Transport: to.Kind, Authorized: true, Availability: "unknown"})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
 }
 
-// The caller supplies reports already checked against the current signed view.
-// Receipt is not a liveness proof; per-service observations are shown separately.
-func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now time.Time) {
+// Runtime comes from current reports; samples come from the shared original
+// index. Receipt is not liveness and report omission does not delete a sample.
+func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, measurements map[string][]WebObservation, now time.Time) {
 	for index := range snapshot.Devices {
 		device := &snapshot.Devices[index]
 		for _, report := range reports {
@@ -212,16 +233,9 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 			}
 			runtime := report.Runtime
 			device.Evidence = &DeviceEvidence{Freshness: freshness, CurrentUntil: until, ReportedAt: device.LastReportAt, ReportSequence: report.ReportSequence, ViewDigest: report.ViewDigest, NetworkGeneration: report.NetworkGeneration, Selections: append([]ReportSelection{}, report.Selections...), Runtime: &runtime, Components: append([]ComponentReadback{}, report.Components...)}
-			for _, sample := range report.Observations {
-				device.Evidence.Measurements = append(device.Evidence.Measurements, WebObservation{Observation: sample, CurrentUntil: webObservationUntil(report, sample, until, now)})
-			}
-			if report.Preference != nil {
-				preference := *report.Preference
-				device.Evidence.Preference = &preference
-			}
-			if report.PolicyChoices != nil {
-				device.Evidence.PolicyChoices = new(append([]PolicyChoice{}, (*report.PolicyChoices)...))
-			}
+			device.Evidence.Measurements = append([]WebObservation{}, measurements[device.ID]...)
+			device.Evidence.PolicyID = report.PolicyID
+			device.Evidence.LANPolicyIDs = report.LANPolicyIDs
 			if report.LocalNetworks != nil {
 				device.Evidence.LocalNetworks = new(append([]LocalNetworkPrefix{}, (*report.LocalNetworks)...))
 			}
@@ -233,17 +247,13 @@ func projectWebObservations(snapshot *WebSnapshot, reports []DeviceReport, now t
 					continue
 				}
 				for _, selection := range report.Selections {
-					if (path.Scope == "service:"+selection.ServiceID || path.Scope == "local_network:"+selection.ServiceID) && path.CandidateID == selection.CandidateID && selection.PolicyID == path.PolicyID && report.PolicyChoices != nil && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
+					if (path.Scope == "service:"+selection.ServiceID || path.Scope == "local_network:"+selection.ServiceID) && path.CandidateID == selection.CandidateID && selection.PolicyID == path.PolicyID && report.SelectedPolicy(selection.ServiceID) == path.PolicyID && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
 						path.Selected = true
 					}
 				}
 				path.Availability, path.CurrentUntil = "unknown", 0
-				if report.PolicyChoices != nil {
-					for _, choice := range *report.PolicyChoices {
-						if choice.ServiceID == path.ServiceID && choice.PolicyID == path.PolicyID {
-							path.Availability, path.CurrentUntil = webPathAvailability(*path, device.Evidence.Measurements, now)
-						}
-					}
+				if report.SelectedPolicy(path.ServiceID) == path.PolicyID {
+					path.Availability, path.CurrentUntil = webPathAvailability(*path, device.Evidence.Measurements, now)
 				}
 			}
 			for linkIndex := range snapshot.Links {

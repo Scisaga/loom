@@ -21,11 +21,8 @@ export function policyPathOptions(projection,deviceID,policy,now,reviewedTargets
  if(report.freshness==='clock_unknown'||Date.parse(report.reported_at)>now+5000)return unknown('Device report time needs checking.');
  if(!reportIsCurrent(report,now))return unknown('Device report has expired.');
  if(report.runtime?.state!=='running'||!report.view_digest||report.runtime.applied_view_digest!==report.view_digest)return unknown('No running, applied configuration report.');
- const choices=report.policy_choices;
- if(!Array.isArray(choices))return unknown('Client policy choice was not reported.');
- const choice=choices.find(v=>v.service_id===current.service_id);
- if(!choice?.policy_id)return unknown('Waiting for the client to select a policy for this Service.');
- if(choice.policy_id!==policy.id)return unknown('This Policy is available but is not selected by this client.');
+ if(!report.policy_id)return unknown('Waiting for the client to select a Policy.');
+ if(report.policy_id!==policy.id)return unknown('This Policy is available but is not selected by this client.');
  const mode=current.name||current.id;
  const paths=list(projection.paths).filter(v=>v.device===deviceID&&v.service_id===current.service_id&&v.policy_id===policy.id);
  if(!paths.length)return unknown(mode+': no candidate in the current projection.');

@@ -44,6 +44,74 @@ staged_platform_public_key="$stage_root/platform-signing.pub"
 install -m 0644 "$platform_public_key" "$staged_platform_public_key"
 platform_public_key_value=$(tr -d '\r\n' < "$staged_platform_public_key")
 
+# Derive the build coordinate from the current component implementation. Verify
+# both staged architectures before compiling any application edition.
+cat > "$stage_root/verify-current-windows.go" <<'GO'
+package main
+
+import (
+	"crypto/ed25519"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"strings"
+
+	"loom/internal/clientcomponent"
+)
+
+func main() {
+	if len(os.Args) == 1 {
+		fmt.Println(clientcomponent.DataPlaneVersion)
+		return
+	}
+	if err := verify(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func verify() error {
+	if len(os.Args) != 4 {
+		return fmt.Errorf("expected public key and both staged component packages")
+	}
+	publicBody, err := os.ReadFile(os.Args[1])
+	if err != nil {
+		return err
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(publicBody)))
+	if err != nil || len(publicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("invalid trusted platform public key")
+	}
+	for i, arch := range []string{"amd64", "arm64"} {
+		body, err := os.ReadFile(os.Args[i+2])
+		if err != nil {
+			return err
+		}
+		verified, err := clientcomponent.Verify(body, ed25519.PublicKey(publicKey))
+		if err != nil {
+			return fmt.Errorf("windows/%s component: %w", arch, err)
+		}
+		if verified.Manifest.OS != "windows" || verified.Manifest.Version != clientcomponent.DataPlaneVersion || verified.Manifest.Arch != arch {
+			return fmt.Errorf("windows/%s component must be current version %s; got %s/%s/%s", arch,
+				clientcomponent.DataPlaneVersion, verified.Manifest.OS, verified.Manifest.Version, verified.Manifest.Arch)
+		}
+	}
+	return nil
+}
+GO
+go build -trimpath -o "$stage_root/verify-current-windows" "$stage_root/verify-current-windows.go"
+component_version=$("$stage_root/verify-current-windows")
+for arch in amd64 arm64; do
+  component="$component_root/loom-windows-dataplane-${component_version}-${arch}.zip"
+  if [[ ! -f "$component" ]]; then
+    echo "missing signed Windows data plane: $component" >&2
+    exit 1
+  fi
+  install -m 0644 "$component" "$stage_root/windows-dataplane-${arch}.zip"
+done
+"$stage_root/verify-current-windows" "$staged_platform_public_key" \
+  "$stage_root/windows-dataplane-amd64.zip" "$stage_root/windows-dataplane-arm64.zip"
+
 archive_bundle() {
   local source_dir=$1
   local archive=$2
@@ -112,15 +180,7 @@ install_module_notices() {
 }
 
 for arch in amd64 arm64; do
-  component="$component_root/loom-windows-dataplane-1.11.4-loom.12-${arch}.zip"
-  if [[ ! -f "$component" ]]; then
-    echo "missing signed Windows data plane: $component" >&2
-    exit 1
-  fi
   staged_component="$stage_root/windows-dataplane-${arch}.zip"
-  install -m 0644 "$component" "$staged_component"
-  go run ./cmd/loom client verify-windows -archive "$staged_component" \
-    -pubkey "$staged_platform_public_key" -arch "$arch" >/dev/null
   for edition in installed portable-mixed portable-tun; do
     artifact="loom-client-windows-${edition}-${arch}"
     bundle_dir="$stage_root/$artifact"

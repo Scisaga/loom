@@ -80,7 +80,7 @@ func TestEventRuntimeMessagePreservesSignedCanonicalFields(t *testing.T) {
 		Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
 	optional := base
 	optional.WireGuardCounters = &WireGuardCounters{Interface: wireGuardSharedCredential, Epoch: strings.Repeat("0", 32), ObservedAt: 1, Peers: []WireGuardPeerCounter{}}
-	optional.Preference = &ReportPreference{Mode: "fixed_exit", Exit: "demo-exit"}
+	optional.PolicyID = "demo-policy"
 	networks := []LocalNetworkPrefix{{Prefix: "192.0.2.0/24", LAN: true}}
 	optional.LocalNetworks = &networks
 	for _, item := range []struct {

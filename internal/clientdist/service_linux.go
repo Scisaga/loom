@@ -15,7 +15,18 @@ const defaultInstallState = "/var/lib/loom-device/state.json"
 // Exact management Link endpoints need a system TUN even when application
 // capture uses Mixed. This does not grant initial-namespace application capture.
 func needsManagementTUN(view control.DeviceView) bool {
-	for _, link := range view.Links {
+	links, err := control.DerivedViewLinks(view)
+	if err != nil {
+		return false
+	}
+	resources := map[string]control.TransportResource{}
+	for _, resource := range view.Resources {
+		resources[resource.ID] = resource
+	}
+	for _, link := range links {
+		if resources[link.ResourceID].Kind != "wireguard" || resources[link.FromResourceID].Kind != "wireguard" {
+			continue
+		}
 		if link.FromNodeID == view.DeviceID || link.ToNodeID == view.DeviceID {
 			return true
 		}

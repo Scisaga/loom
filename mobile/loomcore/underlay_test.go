@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,17 +12,15 @@ import (
 )
 
 func TestAndroidPlatformPrefixesDistinguishUnknownAndExcludeOwnCapture(t *testing.T) {
-	local := []string{"198.51.100.2/32"}
-	resources := []control.TransportResource{{Authentication: control.ResourceAuthentication{LocalAddresses: &local}}}
 	for _, tc := range []struct {
 		body string
 		want *[]string
 	}{
 		{`null`, nil},
 		{`[]`, new([]string{})},
-		{`["192.0.2.1/30","198.51.100.2/32","203.0.113.7/24","203.0.113.8/24"]`, new([]string{"203.0.113.0/24"})},
+		{`["192.0.2.1/30","198.51.100.2/32","203.0.113.7/24","203.0.113.8/24"]`, new([]string{"198.51.100.2/32", "203.0.113.0/24"})},
 	} {
-		got, err := androidConnectedIPv4Prefixes([]byte(tc.body), resources...)
+		got, err := androidConnectedIPv4Prefixes([]byte(tc.body))
 		if err != nil || !reflect.DeepEqual(got, tc.want) {
 			t.Fatal("platform prefix projection lost unknown/empty or own-address boundary", err)
 		}
@@ -34,11 +33,14 @@ func TestAndroidPlatformPrefixesDistinguishUnknownAndExcludeOwnCapture(t *testin
 }
 
 type testAndroidProtector struct {
-	calls int
+	calls atomic.Int64
 	allow bool
 }
 
-func (p *testAndroidProtector) ProtectSocket(fd int64) bool { p.calls++; return p.allow && fd >= 0 }
+func (p *testAndroidProtector) ProtectSocket(fd int64) bool {
+	p.calls.Add(1)
+	return p.allow && fd >= 0
+}
 
 func TestAndroidPrivateSocketsUseProtectAndRejectProtectionFailure(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -61,7 +63,7 @@ func TestAndroidPrivateSocketsUseProtectAndRejectProtectionFailure(t *testing.T)
 		named.Close()
 		t.Fatal("unresolved hostname bypassed the certified resolver")
 	}
-	if protector.calls != 1 {
+	if protector.calls.Load() != 1 {
 		t.Fatal("private socket bypassed platform protection")
 	}
 	protector.allow = false

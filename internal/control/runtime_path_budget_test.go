@@ -8,7 +8,23 @@ import (
 	"slices"
 	"sort"
 	"testing"
+
+	"loom/protocol"
 )
+
+func TestNativeCandidateIdentityMatchesCanonicalUTF8AndEscapes(t *testing.T) {
+	service, policy := `demo-服务"<`, `demo-policy\&`
+	choice := protocol.RouteChoice{EntryNodeID: "demo-入口😀", FirstResourceID: "demo-resource>", FinalExit: "demo-exit\u2028value"}
+	const expected = "sha256:53f757a8d32707b8a9c63875eac6b3a6009013d4f56e20b72401f581b806ce7b"
+	native, err := protocol.CandidateID(service, policy, choice)
+	if err != nil || native != expected {
+		t.Fatal("native identity changed canonical UTF-8 or escaping", err)
+	}
+	domain, err := digestContractValue("loom-candidate-id-v3\x00", map[string]any{"service_id": service, "policy_id": policy, "entry_node_id": choice.EntryNodeID, "first_resource_id": choice.FirstResourceID, "final_exit": choice.FinalExit})
+	if err != nil || domain != expected {
+		t.Fatal("domain and native canonical identity diverged", err)
+	}
+}
 
 func denseRelayProjection(t *testing.T) Projection {
 	t.Helper()
@@ -25,57 +41,70 @@ func denseRelayProjection(t *testing.T) Projection {
 	p.NetworkIntent.Policies[0].MaxHops = 0
 	sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
 	sort.Slice(p.DeviceAuthorizations, func(i, j int) bool { return p.DeviceAuthorizations[i].ID < p.DeviceAuthorizations[j].ID })
+	registerTestWireGuardIdentities(t, &p)
 	return p
 }
 
-func TestDensePolicyGeneratesBoundedPathsAndMatchingReceiverPermissions(t *testing.T) {
+func TestDensePolicyUsesOneEntryExitChoiceAndStableForwardPermissions(t *testing.T) {
 	p := denseRelayProjection(t)
 	access, err := ProjectDeviceView(p, "demo-access")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Ten possible public entries, with one direct exit and two paths for
-	// every other entry. This graph has factorially many legal simple paths.
-	if len(access.Routes) != 19 {
-		t.Fatalf("dense graph produced %d candidates", len(access.Routes))
+	if len(testDeviceExecution(access).Routes) != 10 {
+		t.Fatalf("entry/exit choices expanded complete paths: %d", len(testDeviceExecution(access).Routes))
 	}
-	groups := map[string]int{}
-	for _, r := range access.Routes {
-		if len(r.NodeChain) > 3 {
-			t.Fatal("dense graph retained unnecessary detours")
+	groups := map[string]bool{}
+	for _, route := range testDeviceExecution(access).Routes {
+		if groups[route.FirstResourceID] {
+			t.Fatal("one entry/exit generated several chain identities")
 		}
-		groups[r.FirstResourceID]++
-		if groups[r.FirstResourceID] > 2 {
-			t.Fatal("unbounded entry/exit group")
-		}
+		groups[route.FirstResourceID] = true
 	}
 	exit, err := ProjectDeviceView(p, "demo-exit")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(exit.InboundCredentials) != len(access.Routes) {
-		t.Fatal("sender and receiver candidate sets differ")
-	}
-	for _, r := range access.Routes {
-		found := false
-		for _, permission := range exit.InboundCredentials {
-			if permission.Candidate.ID == r.ID {
-				found = true
+	forwards := func(view DeviceView) []TransportCredential {
+		result := []TransportCredential{}
+		for _, credential := range view.TransportCredentials {
+			for _, node := range view.Nodes {
+				if node.ID == credential.SenderID && slices.Contains(node.Responsibilities, "forward") {
+					result = append(result, credential)
+				}
 			}
 		}
-		if !found {
-			t.Fatal("candidate has no receiver authorization")
-		}
+		return result
 	}
+	original := forwards(exit)
+	added := p.DeviceAuthorizations[0]
+	added.ID = "demo-new-access"
+	added.Responsibilities = []string{"access"}
+	added.PolicyIDs = []string{p.NetworkIntent.Policies[0].ID}
+	added.WireGuardPublicKey, err = DerivedWireGuardPublicKey(p.NetworkID, added)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.DeviceAuthorizations = append(p.DeviceAuthorizations, added)
+	next, err := ProjectDeviceView(p, "demo-exit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(original, forwards(next)) {
+		t.Fatal("new access expanded or rotated shared forward permissions")
+	}
+	if len(next.TransportCredentials) != len(exit.TransportCredentials)+1 {
+		t.Fatal("new access did not add only its public receiving permission")
+	}
+	p.DeviceAuthorizations = p.DeviceAuthorizations[:len(p.DeviceAuthorizations)-1]
 	slices.Reverse(p.NetworkIntent.Resources)
 	slices.Reverse(p.DeviceAuthorizations)
 	shuffled, err := ProjectDeviceView(p, "demo-access")
 	if err != nil || !reflect.DeepEqual(shuffled, access) {
-		t.Fatal("input order changed projection", err)
+		t.Fatal("input order changed the projection", err)
 	}
 }
-
-func TestPathBudgetRetainsSparseLongChainsAndEnforcesConstraints(t *testing.T) {
+func TestTopologyRetainsLongPathsAndExplicitConstraintsWithoutNewChainCredentials(t *testing.T) {
 	p := denseRelayProjection(t)
 	policy, service := p.NetworkIntent.Policies[0], p.NetworkIntent.Services[0]
 	policy.EntryScope = PolicyScope{Mode: "only", NodeIDs: []string{"demo-entry"}}
@@ -92,57 +121,54 @@ func TestPathBudgetRetainsSparseLongChainsAndEnforcesConstraints(t *testing.T) {
 			}
 		}
 	}
-	paths, err := transportPaths("demo-access", false, service, policy, p.NetworkIntent.Resources, sparse)
-	if err != nil || len(paths) != 1 || !reflect.DeepEqual(paths[0].candidate.NodeChain, chain) {
-		t.Fatal("only necessary long path was removed", err, len(paths))
+	stable, err := ProjectDeviceView(p, "demo-access")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := testDeviceExecution(stable)
+	view.Policies = []NetworkPolicy{policy}
+	view.Links = sparse
+
+	routes, err := candidateEntries(view, service, policy)
+	if err != nil || len(routes) != 1 {
+		t.Fatal("necessary long path was removed", len(routes), err)
+	}
+	actual, _, err := CandidateTopologyEstimate(view, routes[0])
+	if err != nil || !reflect.DeepEqual(actual, chain) {
+		t.Fatal("topology estimate lost the permitted long chain", actual, err)
 	}
 	policy.MaxHops = len(chain) - 1
-	paths, err = transportPaths("demo-access", false, service, policy, p.NetworkIntent.Resources, sparse)
-	if err != nil || len(paths) != 0 {
-		t.Fatal("explicit hop bound ignored", err)
+	if next, err := candidateEntries(view, service, policy); err != nil || len(next) != 0 {
+		t.Fatal("explicit hop bound was ignored", err)
 	}
 	policy.MaxHops = 0
 	policy.RelayScope = PolicyScope{Mode: "none", NodeIDs: []string{}}
-	paths, err = transportPaths("demo-access", false, service, policy, p.NetworkIntent.Resources, sparse)
-	if err != nil || len(paths) != 0 {
-		t.Fatal("relay restriction ignored", err)
-	}
-	policy.RelayScope = PolicyScope{Mode: "any", NodeIDs: []string{}}
-	paths, err = transportPaths("demo-relay-1", false, service, policy, p.NetworkIntent.Resources, sparse)
-	if err != nil || len(paths) != 0 {
-		t.Fatal("path loops through its originating device", err)
+	if next, err := candidateEntries(view, service, policy); err != nil || len(next) != 0 {
+		t.Fatal("relay scope was ignored", err)
 	}
 }
-
-func TestPathBackupIsShortestDifferentAuthorizedPath(t *testing.T) {
+func TestChangingRelayWitnessDoesNotChangeEntryExitIdentityOrCredential(t *testing.T) {
 	p := denseRelayProjection(t)
-	policy, service := p.NetworkIntent.Policies[0], p.NetworkIntent.Services[0]
-	policy.EntryScope = PolicyScope{Mode: "only", NodeIDs: []string{"demo-entry"}}
-	links, err := DerivedNetworkLinks(p)
-	if err != nil {
+	p.NetworkIntent.Policies[0].EntryScope = PolicyScope{Mode: "only", NodeIDs: []string{"demo-entry"}}
+	view, err := ProjectDeviceView(p, "demo-access")
+	if err != nil || len(testDeviceExecution(view).Routes) != 1 {
 		t.Fatal(err)
 	}
-	paths, err := transportPaths("demo-access", false, service, policy, p.NetworkIntent.Resources, links)
-	if err != nil || len(paths) != 2 {
-		t.Fatal("missing bounded backup", err, len(paths))
-	}
-	var primary, backup transportPath
-	for _, p := range paths {
-		if len(p.links) == 1 {
-			primary = p
-		} else {
-			backup = p
-		}
-	}
-	if len(backup.links) != 2 {
-		t.Fatal("backup is not shortest")
-	}
-	links = slices.DeleteFunc(links, func(link NetworkLink) bool { return link.ID == primary.links[0].ID })
-	next, err := transportPaths("demo-access", false, service, policy, p.NetworkIntent.Resources, links)
-	if err != nil {
+	candidate := testDeviceExecution(view).Routes[0]
+	_, links, err := CandidateTopologyEstimate(testDeviceExecution(view), candidate)
+	if err != nil || len(links) != 1 {
 		t.Fatal(err)
 	}
-	if !slices.ContainsFunc(next, func(p transportPath) bool { return p.candidate.ID == backup.candidate.ID }) {
-		t.Fatal("backup vanished when primary edge was withdrawn")
+	changed := testDeviceExecution(view)
+	changed.Links = slices.DeleteFunc(slices.Clone(changed.Links), func(link NetworkLink) bool {
+		return link.FromNodeID == candidate.EntryNodeID && link.ToNodeID == candidate.FinalExit
+	})
+	_, alternative, err := CandidateTopologyEstimate(changed, candidate)
+	if err != nil || len(alternative) < 2 {
+		t.Fatal("available relay alternative was lost", err)
+	}
+	next, err := candidateEntries(changed, changed.Services[0], changed.Policies[0])
+	if err != nil || len(next) != 1 || next[0].ID != candidate.ID || next[0].SpecDigest != candidate.SpecDigest {
+		t.Fatal("relay selection rotated stable permission identity", err)
 	}
 }

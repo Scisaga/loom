@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"loom/internal/clientadapter"
+	"loom/internal/clientmodel"
+	"loom/internal/control"
 )
 
 // AndroidBusinessRequest belongs to one existing host probe session. Cancellation
@@ -19,20 +21,28 @@ type AndroidBusinessRequest struct {
 	target    string
 }
 
-func NewAndroidBusinessRequest(body []byte, candidate, target string) (*AndroidBusinessRequest, error) {
+func NewAndroidBusinessRequest(body []byte, candidate, target, generation string) (*AndroidBusinessRequest, error) {
+	if control.ValidateID(generation) != nil {
+		return nil, errors.New("business measurement requires its underlay generation")
+	}
 	state, err := decodeState(body)
 	if err != nil || state.LKG == nil {
 		return nil, errors.New("business probe requires an accepted View")
 	}
-	service := ""
-	for _, route := range state.LKG.View.Routes {
+	execution, err := control.ProjectDeviceCandidates(state.LKG.View, clientmodel.MeasurementPolicies(androidPreference(state)))
+	if err != nil {
+		return nil, err
+	}
+	service, selectorScope := "", ""
+	for _, route := range execution.Routes {
 		if route.ID == candidate {
 			service = route.ServiceID
+			selectorScope = clientmodel.CandidateSelectorScope(clientmodel.RouteCandidate{Scope: route.Scope})
 			break
 		}
 	}
 	allowed := false
-	for _, group := range state.LKG.View.BusinessProbeTargets {
+	for _, group := range execution.BusinessProbeTargets {
 		if group.ServiceID == service && slices.Contains(group.Targets, target) {
 			allowed = true
 		}
@@ -40,13 +50,13 @@ func NewAndroidBusinessRequest(body []byte, candidate, target string) (*AndroidB
 	if service == "" || !allowed {
 		return nil, errors.New("business probe differs from certified Service and candidate")
 	}
-	ctx, cancel := context.WithTimeout(androidNetworkContext(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(clientadapter.WithMeasurementNetwork(androidNetworkContext(), generation), 8*time.Second)
 	ctx, err = clientadapter.NativeDiagnosticContext(ctx, androidLocalRuntimeSecret(state), nil)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	return &AndroidBusinessRequest{ctx: ctx, cancel: cancel, candidate: candidate, target: target}, nil
+	return &AndroidBusinessRequest{ctx: clientadapter.WithCandidateScope(ctx, selectorScope), cancel: cancel, candidate: candidate, target: target}, nil
 }
 
 func (request *AndroidBusinessRequest) Cancel() { request.cancel() }
@@ -54,6 +64,9 @@ func (request *AndroidBusinessRequest) Cancel() { request.cancel() }
 func (request *AndroidBusinessRequest) Run() ([]byte, error) {
 	defer request.cancel()
 	result := clientadapter.ProbeCandidateBusiness(request.ctx, request.candidate, request.target)
+	if result.Deferred {
+		return nil, clientadapter.ErrMeasurementDeferred
+	}
 	if errors.Is(request.ctx.Err(), context.Canceled) {
 		return nil, context.Canceled
 	}

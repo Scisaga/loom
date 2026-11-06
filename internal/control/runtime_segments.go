@@ -3,15 +3,24 @@ package control
 import (
 	"errors"
 	"fmt"
-	"net"
 	"net/netip"
 	"sort"
 	"strings"
 
 	"loom/internal/netx"
+	"loom/protocol"
 )
 
 const LinkProbeInbound = "loom-link-probe"
+const AccessSelectorScope = "access"
+const InternetEgressOutboundTag = "loom-internet-egress"
+
+func serviceEgressOutboundTag(service Service) string {
+	if service.Kind == "internet" {
+		return InternetEgressOutboundTag
+	}
+	return "egress:" + service.ID
+}
 
 // ManagedResolverRules uses existing DNS Lookup response rules to try the
 // configured encrypted alternatives. The address limits accept both families;
@@ -29,12 +38,11 @@ func ManagedResolverRules(servers, outbounds []string) []map[string]any {
 }
 
 func ResourceInboundTag(resourceID string) string { return "resource:" + resourceID }
-func WireGuardBaseTag(resourceID string) string   { return "wg-base." + resourceID }
 
 // This builder is a disposable pure projection. It owns no accepted state,
 // phase, cache or independent permission; the one signed View is its input.
 type segmentedRuntime struct {
-	view        DeviceView
+	view        DeviceExecution
 	credentials map[string]string
 	resources   map[string]TransportResource
 	outbounds   []any
@@ -54,7 +62,21 @@ func (r *segmentedRuntime) addOutbound(value map[string]any) error {
 	return nil
 }
 
-func (r *segmentedRuntime) addServiceEgress(service Service, tag string) error {
+func (r *segmentedRuntime) addInternetEgress() error {
+	if r.tags[InternetEgressOutboundTag] {
+		return nil
+	}
+	return r.addOutbound(map[string]any{"type": "direct", "tag": InternetEgressOutboundTag, "public_internet": true})
+}
+
+func (r *segmentedRuntime) addServiceEgress(service Service) error {
+	if service.Kind == "internet" {
+		return r.addInternetEgress()
+	}
+	tag := serviceEgressOutboundTag(service)
+	if r.tags[tag] {
+		return nil
+	}
 	value := map[string]any{"type": "direct", "tag": tag}
 	if mapping := service.LocalNetwork; mapping != nil {
 		if !mapping.Enabled || mapping.GatewayNodeID != r.view.DeviceID {
@@ -73,36 +95,130 @@ func (r *segmentedRuntime) useSender(resourceID string) error {
 	if resource.Kind != "wireguard" || resource.OwnerNodeID == r.view.DeviceID {
 		return errors.New("WG sender has no distinct receiving resource")
 	}
-	if _, _, err := sharedWireGuardIdentity(r.view, r.credentials); err != nil {
+	if _, _, err := sharedWireGuardIdentity(r.view.DeviceView, r.credentials); err != nil {
 		return err
 	}
 	r.sources[resourceID] = map[string]bool{}
 	return nil
 }
 
-func (r *segmentedRuntime) addWG(permission InboundCredential, tag string) error {
-	if permission.SenderID != r.view.DeviceID {
-		return errors.New("runtime cannot send as another device")
+func ForwardSelectorTag(policyID string) string { return "forward:" + policyID }
+func ForwardSegmentTag(resourceID string) (string, error) {
+	if ValidateID(resourceID) != nil {
+		return "", errors.New("invalid transport resource")
 	}
-	if err := r.useSender(permission.ResourceID); err != nil {
-		return err
+	id, err := digestContractValue("loom-transport-outbound-v3\x00", map[string]any{"resource_id": resourceID})
+	return "transport:" + id, err
+}
+func (r *segmentedRuntime) ensureTransport(resourceID string) (string, error) {
+	resource, ok := r.resources[resourceID]
+	if !ok || resource.OwnerNodeID == r.view.DeviceID {
+		return "", errors.New("resource has no remote transport")
 	}
-	tagEndpoint, public, err := sharedWireGuardIdentity(r.view, r.credentials)
+	tag, err := ForwardSegmentTag(resourceID)
 	if err != nil {
-		return err
+		return "", err
 	}
-	address, err := WireGuardPacketSource(r.view.NetworkID, permission, public)
+	if r.tags[tag] {
+		return tag, nil
+	}
+	authentication, err := senderAuthenticationDigest(r.view.DeviceView, resource, r.credentials[resource.ID])
 	if err != nil {
-		return err
+		return "", err
 	}
-	r.sources[permission.ResourceID][address.String()+"/128"] = true
-	if err := r.addOutbound(map[string]any{"type": "direct", "tag": tag, "detour": tagEndpoint, "inet6_bind_address": address.String()}); err != nil {
-		return err
+	if resource.Kind == "hysteria2" {
+		credential := r.credentials[resource.ID]
+		if credential == "" {
+			return "", errors.New("resource has no authenticated sender credential")
+		}
+		value, err := hy2Outbound(RouteCandidate{ID: tag}, resource, credential)
+		if err != nil {
+			return "", err
+		}
+		value["execution"] = map[string]any{"policy_id": "", "authentication_digest": authentication}
+		return tag, r.addOutbound(value)
 	}
-	r.dnsRules = append(r.dnsRules, map[string]any{"outbound": []string{tag}, "server": "wg-dns." + permission.ResourceID})
+	if resource.Kind != "wireguard" {
+		return "", errors.New("unsupported transport")
+	}
+	if err = r.useSender(resourceID); err != nil {
+		return "", err
+	}
+	endpoint, public, err := sharedWireGuardIdentity(r.view.DeviceView, r.credentials)
+	if err != nil {
+		return "", err
+	}
+	address, err := WireGuardAccessAddress(resource, public)
+	if err != nil {
+		return "", err
+	}
+	r.sources[resourceID][address.String()+"/128"] = true
+	value := map[string]any{"type": "direct", "tag": tag, "detour": endpoint, "inet6_bind_address": address.String(), "execution": map[string]any{"policy_id": "", "authentication_digest": authentication}}
+	return tag, r.addOutbound(value)
+}
+func (r *segmentedRuntime) forwarding() error {
+	for _, policy := range r.view.Policies {
+		if policy.Action != "allow" {
+			continue
+		}
+		for _, exit := range policyExitNodes(r.view, policy.ID) {
+			if exit == r.view.DeviceID {
+				for _, service := range r.view.Services {
+					if service.ID == policy.ServiceID {
+						if err := r.addServiceEgress(service); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+		if !containsString(r.view.Responsibilities, "forward") {
+			continue
+		}
+		hop, err := HopPolicyProjection(r.view, policy)
+		if err != nil {
+			return err
+		}
+		hop.Origins = []string{}
+		// This selector orders subsequent hops after receiver admission. The
+		// complete source and receiver projections retain the actual entry
+		// permission; this required but unused traversal field grants nothing.
+		hop.EntryScope = protocol.PolicyScope{Mode: "any", NodeIDs: []string{}}
+		members := []string{"reject"}
+		nodes := map[string]string{}
+		bindings := map[string]string{}
+		for _, link := range ForwardingLinks(r.view, policy) {
+			tag, err := r.ensureTransport(link.ResourceID)
+			if err != nil {
+				return err
+			}
+
+			members = append(members, tag)
+			nodes[tag] = link.ToNodeID
+			bindings[tag] = policy.ID
+		}
+		sort.Strings(members[1:])
+		choices := map[string][]string{}
+		for _, exit := range policyExitNodes(r.view, policy.ID) {
+			distances := relayDistances(r.view.Links, policy, exit)
+			tags := []string{}
+			for tag, node := range nodes {
+				if _, exists := distances[node]; exists && (node == exit || policy.RelayScope.Allows(node)) {
+					tags = append(tags, tag)
+				}
+			}
+			sort.Slice(tags, func(i, j int) bool {
+				a, b := distances[nodes[tags[i]]], distances[nodes[tags[j]]]
+				return a < b || a == b && tags[i] < tags[j]
+			})
+			choices[exit] = tags
+		}
+		if err = r.addOutbound(map[string]any{"type": "selector", "tag": ForwardSelectorTag(policy.ID), "outbounds": members, "default": "reject", "candidate_policies": bindings, "hop": map[string]any{"policy": hop, "node_id": r.view.DeviceID, "nodes": nodes, "exit_choices": choices}}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
-
 func (r *segmentedRuntime) incoming() ([]any, error) {
 	dnsRules := []any{}
 	for _, resource := range r.view.Resources {
@@ -111,217 +227,136 @@ func (r *segmentedRuntime) incoming() ([]any, error) {
 		}
 		tag := ResourceInboundTag(resource.ID)
 		if resource.Kind == "wireguard" {
-			dns, err := WireGuardAccessAddress(resource, "")
-			if err != nil {
-				return nil, err
-			}
-			allowed := []string{}
-			for _, peer := range r.view.WireGuardPeers {
-				if peer.ResourceID != resource.ID {
-					continue
-				}
-				base, err := WireGuardAccessAddress(resource, peer.PublicKey)
-				if err != nil {
-					return nil, err
-				}
-				allowed = append(allowed, base.String()+"/128")
-				for _, permission := range r.view.InboundCredentials {
-					if permission.ResourceID != resource.ID || permission.SenderID != peer.DeviceID {
-						continue
-					}
-					source, err := WireGuardPacketSource(r.view.NetworkID, permission, peer.PublicKey)
-					if err != nil {
-						return nil, err
-					}
-					allowed = append(allowed, source.String()+"/128")
-				}
-			}
-			sort.Strings(allowed)
-			if len(allowed) > 0 {
-				r.rules = append(r.rules, map[string]any{"inbound": []string{tag}, "source_ip_cidr": allowed, "ip_cidr": []string{dns.String() + "/128"}, "port": []int{53}, "action": "hijack-dns"})
-			}
-			dnsRules = append(dnsRules, map[string]any{"inbound": []string{tag}, "query_type": []string{"AAAA"}, "server": "wg-execution-dns"}, map[string]any{"inbound": []string{tag}, "server": "loom-runtime-deny-dns"})
+			tag = WireGuardEndpointTag
 		}
-		for _, permission := range r.view.InboundCredentials {
-			if permission.ResourceID != resource.ID {
-				continue
-			}
-			path, index, err := permissionPath(r.view, permission)
-			if err != nil {
-				return nil, err
-			}
-			scope := map[string]any{"inbound": []string{tag}}
-			if resource.Kind == "hysteria2" {
-				user, err := InboundCredentialUser(permission)
-				if err != nil {
-					return nil, err
-				}
-				scope["auth_user"] = []string{user}
-			} else {
-				public := ""
-				for _, peer := range r.view.WireGuardPeers {
-					if peer.ResourceID == resource.ID && peer.DeviceID == permission.SenderID {
-						public = peer.PublicKey
-					}
-				}
-				source, err := WireGuardPacketSource(r.view.NetworkID, permission, public)
-				if err != nil {
-					return nil, err
-				}
-				scope["source_ip_cidr"] = []string{source.String() + "/128"}
-			}
-			outbound := "resource-egress"
-			if index+1 < len(path.hops) {
-				next := permission
-				next.ResourceID, next.ReceiverNodeID, next.SenderID, next.Credential = path.hops[index+1].ID, path.hops[index+1].OwnerNodeID, r.view.DeviceID, ""
-				user, err := InboundCredentialUser(next)
-				if err != nil {
-					return nil, err
-				}
-				outbound = "segment:" + user
-				if err := r.addWG(next, outbound); err != nil {
-					return nil, err
-				}
-			} else {
-				var service Service
-				for _, value := range r.view.Services {
-					if value.ID == permission.ServiceID {
-						service = value
-					}
-				}
-				if service.LocalNetwork != nil {
-					outbound = "local-network-egress:" + service.ID
-				}
-				if !r.tags[outbound] {
-					if err := r.addServiceEgress(service, outbound); err != nil {
-						return nil, err
-					}
-				}
-			}
-			for _, set := range []struct {
-				matchers []ServiceMatcher
-				outbound string
-			}{{permission.ExcludedTargets, "reject"}, {permission.AllowedTargets, outbound}} {
-				for _, matcher := range set.matchers {
-					r.rules = append(r.rules, map[string]any{"type": "logical", "mode": "and", "rules": []any{scope, matcherRule(matcher)}, "outbound": set.outbound})
-				}
-			}
-		}
+
+		// Business execution is admitted by the native receiver, not target-only
+		// ACL rows for expanded complete paths. Raw incoming business is rejected.
 		r.rules = append(r.rules, map[string]any{"inbound": []string{tag}, "outbound": "reject"})
 	}
 	for _, link := range r.view.Links {
-		if link.FromNodeID != r.view.DeviceID {
-			continue
-		}
-		if err := r.useSender(link.ResourceID); err != nil {
-			return nil, err
+		if link.FromNodeID == r.view.DeviceID && r.resources[link.ResourceID].Kind == "wireguard" {
+			if _, err := r.ensureTransport(link.ResourceID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return dnsRules, nil
 }
-
 func (r *segmentedRuntime) access(services map[string]Service, policies map[string]NetworkPolicy) error {
-	ids := []string{}
-	for id := range services {
-		for _, policy := range policies {
-			if policy.ServiceID == id {
-				ids = append(ids, id)
-				break
-			}
+	entries := map[string]any{}
+	nodes := viewNodes(r.view.DeviceView)
+	self := nodes[r.view.DeviceID]
+	for _, resource := range r.view.Resources {
+		if resource.OwnerNodeID == r.view.DeviceID || !senderMayAuthenticate(r.view, self, resource) {
+			continue
 		}
+		tag, err := r.ensureTransport(resource.ID)
+		if err != nil {
+			return err
+		}
+		node := nodes[resource.OwnerNodeID]
+		authentication, err := senderAuthenticationDigest(r.view.DeviceView, resource, r.credentials[resource.ID])
+		if err != nil {
+			return err
+		}
+		entries[resource.ID] = map[string]any{"node_id": node.ID, "outbound": tag, "authentication_digest": authentication, "access_enabled": resource.Kind == "wireguard" && resource.AccessEnabled || resource.Kind == "hysteria2" && !resource.LinkOnly, "forward": containsString(node.Responsibilities, "forward"), "internet_egress": containsString(node.Responsibilities, "internet_egress")}
 	}
-	sort.Strings(ids)
-	for left := range ids {
-		for right := left + 1; right < len(ids); right++ {
-			r.rules = append(r.rules, map[string]any{"type": "logical", "mode": "and", "rules": []any{serviceRule(services[ids[left]], r.view.DNSRecords...), serviceRule(services[ids[right]], r.view.DNSRecords...)}, "outbound": "reject"})
+	groups := map[string][]NetworkPolicy{AccessSelectorScope: {}}
+	for _, policy := range policies {
+		if policy.Action != "allow" {
+			continue
 		}
+		service := services[policy.ServiceID]
+		scope := AccessSelectorScope
+		if service.Kind == "local_network" {
+			scope = service.Scope()
+		}
+		groups[scope] = append(groups[scope], policy)
 	}
-	byService := map[string][]string{}
-	for index, candidate := range r.view.Routes {
-		service, exists := services[candidate.ServiceID]
-		policy, assigned := policies[candidate.PolicyID]
-		if candidate.Validate() != nil || !exists || !assigned || policy.ServiceID != candidate.ServiceID || policy.Action != "allow" || index > 0 && r.view.Routes[index-1].ID >= candidate.ID {
-			return errors.New("certified candidates are invalid, duplicated or unassigned")
-		}
-		if candidate.FirstResourceID == "" {
-			allowed := candidate.FinalExit == "direct" && policy.permitsDirect() || candidate.FinalExit == r.view.DeviceID && containsString(r.view.Responsibilities, "internet_egress") && policy.permitsLocalEgress(r.view.DeviceID)
-			if service.LocalNetwork != nil {
-				allowed = candidate.FinalExit == r.view.DeviceID && policy.permitsEndpoint(service, r.view.DeviceID) && policy.EntryScope.Allows(r.view.DeviceID) && containsString(r.view.Responsibilities, "forward")
+	scopes := []string{}
+	for scope := range groups {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	for _, scope := range scopes {
+		values := []any{}
+		egress := map[string]string{}
+		forward := map[string]string{}
+		members := map[string]bool{"reject": true}
+		graphNodes := []string{}
+		graphEdges := []protocol.DirectedHop{}
+		serviceID, kind := "", "internet"
+		sort.Slice(groups[scope], func(i, j int) bool { return groups[scope][i].ID < groups[scope][j].ID })
+		for _, policy := range groups[scope] {
+			service := services[policy.ServiceID]
+			if service.Kind == "local_network" {
+				serviceID, kind = service.ID, service.Kind
 			}
-			want, err := localCandidate(service, policy, candidate.FinalExit, r.view.DNSRecords...)
-			if !allowed || err != nil || !sameContractValue(want, candidate) {
-				return errors.New("local candidate has no current permission")
-			}
-			if err := r.addServiceEgress(service, candidate.ID); err != nil {
-				return err
-			}
-		} else {
-			path, err := candidateTransportPath(r.view, r.view.DeviceID, service, policy, candidate)
+			value, err := executionPolicyProjection(r.view, policy)
 			if err != nil {
 				return err
 			}
-			if path.local && !containsString(r.view.Responsibilities, "forward") {
-				return errors.New("local Link origin has no forwarding responsibility")
+			hop := value["policy"].(protocol.HopPolicy)
+			graphNodes, graphEdges = hop.Nodes, hop.Edges
+			// Source permissions carry one graph, not one copy per Policy.
+			raw := map[string]any{"policy_id": hop.PolicyID, "service_id": hop.ServiceID, "kind": hop.Kind, "origins": []string{r.view.DeviceID}, "exits": hop.Exits, "entry_scope": hop.EntryScope, "relay_scope": hop.RelayScope, "max_hops": hop.MaxHops}
+			value["policy"] = raw
+			values = append(values, value)
+			if value["allow_direct"] == true || value["local_egress"] == true {
+				tag := serviceEgressOutboundTag(service)
+				if err = r.addServiceEgress(service); err != nil {
+					return err
+				}
+				egress[service.ID] = tag
+				members[tag] = true
 			}
-			first := path.hops[0]
-			if first.Kind == "hysteria2" {
-				outbound, err := hy2Outbound(candidate, first, r.credentials[candidate.ID])
-				if err != nil {
-					return err
-				}
-				if err := r.addOutbound(outbound); err != nil {
-					return err
-				}
-			} else {
-				permission := pathPermission(path, 0, r.view.DeviceID, policy, service, []ServiceMatcher{})
-				if err := r.addWG(permission, candidate.ID); err != nil {
-					return err
-				}
+			tag := ForwardSelectorTag(policy.ID)
+			if r.tags[tag] {
+				forward[policy.ID] = tag
+				members[tag] = true
 			}
 		}
-		byService[service.ID] = append(byService[service.ID], candidate.ID)
-	}
-	for _, id := range ids {
-		members := append([]string{"reject"}, byService[id]...)
-		scope := services[id].Scope()
-		if err := r.addOutbound(map[string]any{"type": "selector", "tag": scope, "outbounds": members, "default": "reject"}); err != nil {
+		for _, raw := range entries {
+			entry := raw.(map[string]any)
+			members[entry["outbound"].(string)] = true
+		}
+		tags := []string{}
+		for tag := range members {
+			tags = append(tags, tag)
+		}
+		sort.Strings(tags)
+		access := map[string]any{"node_id": r.view.DeviceID, "forward": containsString(r.view.Responsibilities, "forward"), "kind": kind, "service_id": serviceID, "policies": values, "nodes": graphNodes, "edges": graphEdges, "entries": entries, "egress_outbounds": egress, "forward_outbounds": forward}
+		if err := r.addOutbound(map[string]any{"type": "selector", "tag": scope, "outbounds": tags, "default": "reject", "access": access}); err != nil {
 			return err
 		}
-		rule := serviceRule(services[id], r.view.DNSRecords...)
-		rule["outbound"] = scope
+	}
+	// LAN is independently authorized and routed before the Internet default.
+	ids := []string{}
+	for id := range services {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		service := services[id]
+		if service.Kind != "local_network" || groups[service.Scope()] == nil {
+			continue
+		}
+		rule := captureServiceRule(service, r.view.DNSRecords...)
+		rule["outbound"] = service.Scope()
 		r.rules = append(r.rules, rule)
 	}
+	r.rules = append(r.rules, map[string]any{"public_internet": true, "outbound": AccessSelectorScope})
 	return nil
 }
-
 func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 	document := map[string]any{"outbounds": r.outbounds, "route": map[string]any{"rules": r.rules, "final": "reject"}}
-	probeRules := []any{}
-	services := map[string]Service{}
-	for _, service := range r.view.Services {
-		services[service.ID] = service
+	owned, receiving, ownedErr := ownedWireGuard(r.view.Resources, r.view.DeviceID)
+	if ownedErr != nil {
+		return nil, ownedErr
 	}
-	selectedServices := map[string]bool{}
-	for _, policy := range r.view.Policies {
-		if containsString(r.view.PolicyIDs, policy.ID) {
-			selectedServices[policy.ServiceID] = true
-		}
-	}
-	for _, candidate := range r.view.Routes {
-		scope := map[string]any{"inbound": []string{LinkProbeInbound}, "auth_user": []string{candidate.ID}}
-		for _, service := range r.view.Services {
-			if service.ID == candidate.ServiceID || !selectedServices[service.ID] {
-				continue
-			}
-			probeRules = append(probeRules, map[string]any{"type": "logical", "mode": "and", "rules": []any{scope, serviceRule(service, r.view.DNSRecords...)}, "outbound": "reject"})
-		}
-		probeRules = append(probeRules, map[string]any{"type": "logical", "mode": "and", "rules": []any{scope, serviceRule(services[candidate.ServiceID], r.view.DNSRecords...)}, "outbound": candidate.ID})
-	}
-	if len(r.sources) == 0 && len(incomingDNS) == 0 {
-		probeRules = append(probeRules, map[string]any{"inbound": []string{LinkProbeInbound}, "outbound": "reject"})
-		document["route"].(map[string]any)["rules"] = append(probeRules, r.rules...)
-		return document, nil
-	}
+	// Business DNS belongs to the node's actual sockets, including Hy2-only
+	// receivers. It cannot depend on the presence of a measurement SOCKS rule.
 	servers := []any{map[string]any{"tag": "loom-runtime-deny-dns", "address": "rcode://refused"}}
 	final := "loom-runtime-deny-dns"
 	if len(r.view.DNSServers) > 0 {
@@ -353,55 +388,28 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 			r.dnsRules = append(r.dnsRules, map[string]any{"outbound": physical, "server": final})
 		}
 	}
-	ids := []string{}
-	for id := range r.sources {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
 	endpoints := []any{}
-	_, hasOwned, err := ownedWireGuard(r.view.Resources, r.view.DeviceID)
-	if err != nil {
-		return nil, err
-	}
-	var endpointTag, senderPublic string
-	if len(ids) > 0 || hasOwned {
+	if len(r.sources) > 0 || receiving {
 		shared, err := sharedWireGuardEndpoint(r.view, r.credentials, r.sources)
 		if err != nil {
 			return nil, err
 		}
+		if receiving {
+			execution, err := WireGuardAccessAddress(owned, "")
+			if err != nil {
+				return nil, err
+			}
+			projection, err := ReceiverExecutionOptions(r.view.DeviceView, owned.ID)
+			if err != nil {
+				return nil, err
+			}
+			shared["execution_address"], shared["execution"] = execution.String(), projection
+		}
 		endpoints = append(endpoints, shared)
-		endpointTag, senderPublic, err = sharedWireGuardIdentity(r.view, r.credentials)
-		if err != nil {
-			return nil, err
-		}
 	}
-	for _, id := range ids {
-		resource := r.resources[id]
-		base, err := WireGuardAccessAddress(resource, senderPublic)
-		if err != nil {
-			return nil, err
-		}
-		if err := r.addOutbound(map[string]any{"type": "direct", "tag": WireGuardBaseTag(id), "detour": endpointTag, "inet6_bind_address": base.String()}); err != nil {
-			return nil, err
-		}
-		dns, err := WireGuardAccessAddress(resource, "")
-		if err != nil {
-			return nil, err
-		}
-		probeRules = append(probeRules, map[string]any{"inbound": []string{LinkProbeInbound}, "auth_user": []string{id}, "ip_cidr": []string{dns.String() + "/128"}, "port": []int{53}, "outbound": WireGuardBaseTag(id)})
-		servers = append(servers, map[string]any{"tag": "wg-dns." + id, "address": "udp://" + net.JoinHostPort(dns.String(), "53"), "detour": WireGuardBaseTag(id), "strategy": "ipv6_only"})
-	}
-	probeRules = append(probeRules, map[string]any{"inbound": []string{LinkProbeInbound}, "outbound": "reject"})
-	document["route"].(map[string]any)["rules"] = append(probeRules, r.rules...)
 	dns := map[string]any{"servers": servers, "rules": append(r.dnsRules, incomingDNS...), "final": final, "independent_cache": true}
-	if len(incomingDNS) > 0 {
-		servers = append(servers, map[string]any{"tag": "wg-execution-dns", "address": "fakeip"})
-		dns["servers"] = servers
-		resource, found, err := ownedWireGuard(r.view.Resources, r.view.DeviceID)
-		if err != nil || !found {
-			return nil, errors.New("execution DNS has no shared receiving resource")
-		}
-		pool, err := WireGuardTargetPrefix(r.view.NetworkID, resource)
+	if receiving {
+		pool, err := WireGuardTargetPrefix(r.view.NetworkID, owned)
 		if err != nil {
 			return nil, err
 		}
@@ -411,7 +419,7 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 				if matcher.Kind == "ip_prefix" {
 					prefix, _ := netip.ParsePrefix(matcher.Value)
 					if pool.Contains(prefix.Addr()) && prefix.Bits() >= pool.Bits() {
-						return nil, errors.New("Service target overlaps execution DNS addresses")
+						return nil, errors.New("Service target overlaps execution registration addresses")
 					}
 				}
 			}
@@ -421,19 +429,20 @@ func (r *segmentedRuntime) finish(incomingDNS []any) (map[string]any, error) {
 	return document, nil
 }
 
-func renderSegmentedRuntime(view DeviceView, credentials map[string]string) ([]RouteCandidate, *RuntimeProfile, error) {
-	services, policies, err := servicePermissionValues(view)
+func renderSegmentedRuntime(view DeviceExecution, credentials map[string]string) ([]RouteCandidate, *RuntimeProfile, error) {
+	services, policies, err := servicePermissionValues(view.DeviceView)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := validateViewResources(view); err != nil {
+	if err := validateStableView(view.DeviceView); err != nil {
 		return nil, nil, err
 	}
 	access := containsString(view.Responsibilities, "access")
-	if !access && (len(view.PolicyIDs) != 0 || len(view.Routes) != 0) {
+	if !access && (len(view.SelectedPolicyIDs) != 0 || len(view.Routes) != 0) {
 		return nil, nil, errors.New("non-access node has access permissions")
 	}
-	if !access && len(view.Resources) == 0 {
+	probeDuty := hasEgressProbeDuty(view.DeviceView)
+	if !access && len(view.Resources) == 0 && !probeDuty {
 		return []RouteCandidate{}, nil, nil
 	}
 	r := &segmentedRuntime{view: view, credentials: credentials, resources: map[string]TransportResource{}, outbounds: []any{}, rules: []any{}, dnsRules: []any{}, sources: map[string]map[string]bool{}, tags: map[string]bool{}}
@@ -441,6 +450,14 @@ func renderSegmentedRuntime(view DeviceView, credentials map[string]string) ([]R
 		r.resources[resource.ID] = resource
 	}
 	if err := r.addOutbound(map[string]any{"type": "block", "tag": "reject"}); err != nil {
+		return nil, nil, err
+	}
+	if probeDuty {
+		if err := r.addInternetEgress(); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := r.forwarding(); err != nil {
 		return nil, nil, err
 	}
 	incomingDNS, err := r.incoming()
@@ -462,3 +479,5 @@ func renderSegmentedRuntime(view DeviceView, credentials map[string]string) ([]R
 	}
 	return append([]RouteCandidate{}, view.Routes...), &RuntimeProfile{Kind: "sing_box", Config: string(body)}, nil
 }
+
+func mustTransportTag(resource string) string { tag, _ := ForwardSegmentTag(resource); return tag }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"loom/protocol"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestHTTPSelectorReadsBoundedCandidateMetadata(t *testing.T) {
-	const scope = "service:demo-service"
+	const scope = "access"
 	const secret = "demo-local-secret"
 	for _, test := range []struct {
 		name       string
@@ -29,14 +30,7 @@ func TestHTTPSelectorReadsBoundedCandidateMetadata(t *testing.T) {
 				candidates[i] = fmt.Sprintf("sha256:%064x", i+1)
 			}
 			selected := candidates[len(candidates)-1]
-			body, err := json.Marshal(struct {
-				All     []string `json:"all"`
-				History []any    `json:"history"`
-				Name    string   `json:"name"`
-				Now     string   `json:"now"`
-				Type    string   `json:"type"`
-				UDP     bool     `json:"udp"`
-			}{candidates, []any{}, scope, selected, "Selector", true})
+			body, err := json.Marshal(map[string]any{"all": candidates, "history": []any{}, "name": scope, "now": selected, "type": "Selector", "udp": true, "revision": "1", "targets": map[string]string{}, "policy_id": "demo-policy", "choices": map[string]protocol.RouteChoice{selected: {FinalExit: "direct"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,14 +50,12 @@ func TestHTTPSelectorReadsBoundedCandidateMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			transport := selector.client.Transport.(*http.Transport)
-			defer transport.CloseIdleConnections()
-			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			selector.SetDialer(func(ctx context.Context, network, address string) (net.Conn, error) {
 				if address != "127.0.0.1:61800" {
 					return nil, fmt.Errorf("unexpected selector dial target")
 				}
 				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
-			}
+			})
 			value, err := selector.Read(context.Background(), scope)
 			if test.accepted {
 				if err != nil || value != selected {

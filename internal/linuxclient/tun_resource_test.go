@@ -35,7 +35,7 @@ func TestIsolatedTUNNamedResourcePreservesAuthenticationAndResolver(t *testing.T
 	resourceView.Resources[0].DialHost = "demo-relay.example"
 	p.NetworkIntent.Resources = resourceView.Resources
 	view, err := control.ProjectDeviceView(p, access.ID)
-	if err != nil || len(view.Routes) != 1 || view.Routes[0].FirstResourceID == "" {
+	if err != nil || len(testDeviceExecution(view).Routes) != 1 || testDeviceExecution(view).Routes[0].FirstResourceID == "" {
 		t.Fatal("fixture has no certified remote resource", err)
 	}
 	before, err := control.CanonicalEncode(view)
@@ -47,7 +47,7 @@ func TestIsolatedTUNNamedResourcePreservesAuthenticationAndResolver(t *testing.T
 		t.Fatal("named resource cannot enter the isolated TUN runtime", err)
 	}
 	var original, actual map[string]any
-	if json.Unmarshal([]byte(view.RuntimeProfile.Config), &original) != nil || json.Unmarshal([]byte(config), &actual) != nil {
+	if json.Unmarshal([]byte(testDeviceExecution(view).RuntimeProfile.Config), &original) != nil || json.Unmarshal([]byte(config), &actual) != nil {
 		t.Fatal("invalid runtime projection")
 	}
 	byTag := map[string]map[string]any{}
@@ -72,8 +72,12 @@ func TestIsolatedTUNNamedResourcePreservesAuthenticationAndResolver(t *testing.T
 	if byTag["loom-underlay-dns"]["netns"] != tunUnderlayReference {
 		t.Fatal("resource DNS could recurse into capture")
 	}
-	dns := actual["dns"].(map[string]any)["servers"].([]any)[0].(map[string]any)
-	if dns["address"] != "udp://192.0.2.53:53" || dns["detour"] != "loom-underlay-dns" {
+	foundResolver := false
+	for _, raw := range actual["dns"].(map[string]any)["servers"].([]any) {
+		server := raw.(map[string]any)
+		foundResolver = foundResolver || server["tag"] == "loom-resolver-0" && server["address"] == "udp://192.0.2.53:53" && server["detour"] == "loom-underlay-dns"
+	}
+	if !foundResolver {
 		t.Fatal("resource resolution stopped using the authenticated resolver")
 	}
 	after, err := control.CanonicalEncode(view)
@@ -81,7 +85,12 @@ func TestIsolatedTUNNamedResourcePreservesAuthenticationAndResolver(t *testing.T
 		t.Fatal("local capture rewrote the authority")
 	}
 	view.DNSServers = []string{}
-	if _, _, err := generationConfigs(view, "demo-api-secret", nil, "tun", nil); err == nil {
-		t.Fatal("named resource accepted implicit system resolution")
+	noResolver, _, err := generationConfigs(view, "demo-api-secret", nil, "tun", nil)
+	if err != nil {
+		t.Fatal("an optional named candidate blocked runtime construction", err)
+	}
+	var denied map[string]any
+	if json.Unmarshal([]byte(noResolver), &denied) != nil || denied["dns"].(map[string]any)["final"] != "loom-runtime-deny-dns" {
+		t.Fatal("named candidate acquired an implicit system resolver")
 	}
 }

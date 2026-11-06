@@ -3,8 +3,10 @@ package linuxclient
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
+	"loom/internal/clientmodel"
 	"loom/internal/control"
 )
 
@@ -18,68 +20,36 @@ func bridgeHybridCapture(capture, server string, view control.DeviceView, secret
 	if json.Unmarshal([]byte(capture), &local) != nil || json.Unmarshal([]byte(server), &host) != nil || secret == "" {
 		return "", "", errors.New("hybrid capture bridge inputs are invalid")
 	}
-	routes := map[string]control.RouteCandidate{}
-	for _, candidate := range view.Routes {
-		routes[candidate.ID] = candidate
-	}
-	users := []any{}
-	forward := []any{}
-	hostRoute := host["route"].(map[string]any)
-	hostRules := hostRoute["rules"].([]any)
-	for _, candidate := range view.Routes {
-		users = append(users, map[string]any{"username": candidate.ID, "password": secret})
-		var boundary map[string]any
-		for _, raw := range hostRules {
-			rule := raw.(map[string]any)
-			if rule["outbound"] == candidate.Scope {
-				boundary = map[string]any{}
-				for key, value := range rule {
-					if key != "outbound" {
-						boundary[key] = value
-					}
-				}
-				break
-			}
-		}
-		if boundary == nil {
-			return "", "", errors.New("capture Candidate has no certified Service rule")
-		}
-		forward = append(forward, map[string]any{"type": "logical", "mode": "and", "rules": []any{map[string]any{"inbound": []string{captureBridgeTag}, "auth_user": []string{candidate.ID}}, boundary}, "outbound": candidate.ID})
+	// The host process owns the shared native source selectors. The isolated
+	// capture conveys only the original target and its independent scope.
+	users, forward := []any{}, []any{}
+	scopes := clientmodel.SelectorScopes(view)
+	for _, scope := range scopes {
+		users = append(users, map[string]any{"username": scope, "password": secret})
+		forward = append(forward, map[string]any{"inbound": []string{captureBridgeTag}, "auth_user": []string{scope}, "outbound": scope})
 	}
 	forward = append(forward, map[string]any{"inbound": []string{captureBridgeTag}, "outbound": "reject"})
-	// Keep the signed ambiguity rejects before per-Candidate forwarding.
-	index := len(hostRules)
-	for i, raw := range hostRules {
-		outbound, _ := raw.(map[string]any)["outbound"].(string)
-		if strings.HasPrefix(outbound, "service:") || strings.HasPrefix(outbound, "local_network:") {
-			index = i
-			break
-		}
-	}
-	next := append([]any{}, hostRules[:index]...)
-	next = append(next, forward...)
-	next = append(next, hostRules[index:]...)
-	hostRoute["rules"] = next
-	if len(users) > 0 {
-		inbounds, _ := host["inbounds"].([]any)
-		host["inbounds"] = append(inbounds, map[string]any{"type": "socks", "tag": captureBridgeTag, "listen": "127.0.0.1", "listen_port": 61802, "users": users})
-	}
+	hostRoute := host["route"].(map[string]any)
+	hostRules := hostRoute["rules"].([]any)
+	hostRoute["rules"] = append(forward, hostRules...)
+	inbounds, _ := host["inbounds"].([]any)
+	host["inbounds"] = append(inbounds, map[string]any{"type": "socks", "tag": captureBridgeTag, "listen": "127.0.0.1", "listen_port": 61802, "users": users})
 	outbounds := []any{}
 	for _, raw := range local["outbounds"].([]any) {
 		outbound := raw.(map[string]any)
 		tag, _ := outbound["tag"].(string)
-		if _, found := routes[tag]; found {
+		if slices.Contains(scopes, tag) {
 			outbounds = append(outbounds, map[string]any{"type": "socks", "tag": tag, "server": "127.0.0.1", "server_port": 61802, "version": "5", "username": tag, "password": secret})
 			continue
 		}
-		if tag == "resource-egress" || strings.HasPrefix(tag, "local-network-egress:") || strings.HasPrefix(tag, "segment:") || strings.HasPrefix(tag, "wg-base.") {
+		if outbound["execution"] != nil || outbound["hop"] != nil || strings.HasPrefix(tag, "transport:") || strings.HasPrefix(tag, "egress:") || strings.HasPrefix(tag, "forward:") || strings.HasPrefix(tag, "wg-base.") {
 			continue
 		}
 		outbounds = append(outbounds, outbound)
 	}
 	local["outbounds"] = outbounds
 	delete(local, "endpoints")
-	inbounds := []any{}
+	inbounds = []any{}
 	for _, raw := range local["inbounds"].([]any) {
 		if raw.(map[string]any)["tag"] != control.LinkProbeInbound {
 			inbounds = append(inbounds, raw)

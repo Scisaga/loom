@@ -36,8 +36,8 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := webRelayLink(t, p, "demo-entry", "demo-exit")
-	reverse := webRelayLink(t, p, "demo-exit", "demo-entry")
+	link := testDerivedLink(t, p, "demo-entry", "demo-exit")
+	reverse := testDerivedLink(t, p, "demo-exit", "demo-entry")
 	sharedID := link.ID
 	if reverse.ID < sharedID {
 		sharedID = reverse.ID
@@ -87,8 +87,8 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 		for j := range values {
 			values[j].TXBytes = U64(i) * 1048576
 		}
-		observations := []Observation{{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: linkSpec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-underlay", Result: "unavailable", ObservedAt: observed.UnixMilli(), ValidUntil: observed.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(3000))}}
-		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: p.NetworkID, DeviceID: view.DeviceID, ReportSequence: U64(i + 1), ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: observed.UnixMilli(), Selections: []ReportSelection{}, Observations: observations, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest, Resources: &resources}, WireGuardCounters: &WireGuardCounters{Interface: tag, Epoch: strings.Repeat("a", 32), ObservedAt: at.UnixMilli(), Peers: values}}, key)
+		observations := []Observation{{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: linkSpec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_echo", NetworkGeneration: "demo-underlay", Result: "unavailable", ObservedAt: observed.UnixMilli(), ValidUntil: observed.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(3000))}}
+		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: p.NetworkID, DeviceID: view.DeviceID, ReportSequence: U64(i + 1), ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: observed.UnixMilli(), PolicyID: "demo-policy", Selections: []ReportSelection{}, Observations: observations, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest, Resources: &resources}, WireGuardCounters: &WireGuardCounters{Interface: tag, Epoch: strings.Repeat("a", 32), ObservedAt: at.UnixMilli(), Peers: values}}, key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +108,7 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	reverseDigest, _ := DeviceViewDigest(reverseView)
 	reverseResources := resourcesFor(reverseView)
 	reverseReport, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: p.NetworkID, DeviceID: reverseView.DeviceID, ReportSequence: 1, ViewDigest: reverseDigest, NetworkGeneration: "demo-reverse-underlay", ReportedAt: now.UnixMilli(), Selections: []ReportSelection{}, Components: []ComponentReadback{},
-		Observations: []Observation{{Level: "link", LinkID: reverse.ID, ResourceID: reverse.ResourceID, SpecDigest: reverseSpec, Target: net.JoinHostPort(reverse.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-reverse-underlay", Result: "available", ObservedAt: now.UnixMilli(), ValidUntil: now.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(100)), RoundTripMS: new(int64(57))}},
+		Observations: []Observation{{Level: "link", LinkID: reverse.ID, ResourceID: reverse.ResourceID, SpecDigest: reverseSpec, Target: net.JoinHostPort(reverse.ProbeTarget.Host, "53"), Action: "wireguard_echo", NetworkGeneration: "demo-reverse-underlay", Result: "available", ObservedAt: now.UnixMilli(), ValidUntil: now.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(100)), RoundTripMS: new(int64(57))}},
 		Runtime:      RuntimeReadback{State: "running", AppliedViewDigest: reverseDigest, Resources: &reverseResources}}, reverseKey)
 	if err != nil || verifyCurrentReport(reverseReport, p) != nil {
 		t.Fatal("reverse fixture must be a separately authenticated direction", err)
@@ -128,8 +128,18 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	clock.Store(now.UnixMilli())
 	server := &Server{Runtime: &Runtime{Authority: authority, Reports: store}, Now: func() time.Time { return time.UnixMilli(clock.Load()) }}
 	var refused atomic.Bool
+	var nonWGRequests atomic.Int64
+	nonWG := map[string]bool{}
+	for _, link := range projectWebLinks(p) {
+		if link.Transport != "wireguard" {
+			nonWG[link.ID] = true
+		}
+	}
 	normal := server.AdminHandler()
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/control/ui/traffic-history" && nonWG[r.URL.Query().Get("link")] {
+			nonWGRequests.Add(1)
+		}
 		if refused.Load() && r.URL.Path == "/api/control/ui/traffic-history" {
 			http.Error(w, "demo read unavailable", http.StatusServiceUnavailable)
 			return
@@ -139,7 +149,7 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	defer httpServer.Close()
 	debug := openCommandChrome(t, httpServer.URL+"/devices/demo-entry")
 	waitChromeEvaluation(t, debug, `document.querySelectorAll('[data-traffic-scope="device:demo-entry"] .wg-traffic-hour').length===48`)
-	if chromeDo(t, debug, `(()=>{const root=document.querySelector('[data-traffic-scope="device:demo-entry"]');return root.querySelectorAll('[data-traffic-metric="rx"][data-traffic-value="0"]').length===1&&root.querySelectorAll('[data-traffic-value="unknown"]').length===46&&root.textContent.includes('1.0 MiB')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const root=document.querySelector('[data-traffic-scope="device:demo-entry"]');return root.querySelectorAll('[data-traffic-metric="rx"][data-traffic-value="0"]').length===1&&root.querySelectorAll('[data-traffic-value="unknown"]').length===46&&root.textContent.includes('1.0 MiB')&&root.title.includes('Observed WG portion')&&root.title.includes('not application usage')})()`) != true {
 		t.Fatal("measured zero, unknown hours, or exact deltas were lost")
 	}
 	refused.Store(true)
@@ -154,7 +164,7 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if chromeDo(t, debug, `document.querySelector('[data-link-row="`+sharedID+`"]').textContent.includes('Shared WG peer')`) != true {
 		t.Fatal("shared Link counters look like exclusive service bytes")
 	}
-	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="`+sharedID+`"]'),ids=JSON.parse(row.dataset.linkIds);return document.querySelectorAll('[data-connection-row]').length===1&&ids.includes('`+link.ID+`')&&ids.includes('`+reverse.ID+`')&&row.querySelectorAll('.link-total').length===1&&row.querySelector('.link-total').textContent==='1.0 MiB'&&row.querySelectorAll('[data-shared-peer-traffic]').length===1&&row.querySelectorAll('[data-traffic-scope]').length===1&&row.lastElementChild.textContent.includes('counted once')&&row.querySelector('[data-link-status="`+link.ID+`"]').textContent.includes('unavailable')&&row.querySelector('[data-link-status="`+reverse.ID+`"]').textContent.includes('available')&&document.querySelector('.topology-heading .topology-observation-summary').textContent.includes('1 connections')&&document.querySelector('.topology-heading .topology-observation-summary').textContent.includes('2 directions')&&document.querySelector('.topology-edge-card thead').textContent.includes('WG SENT')&&!document.querySelector('.topology-edge-card thead').textContent.includes('TRANSFER')})()`) != true {
+	if chromeDo(t, debug, `(()=>{const row=document.querySelector('[data-link-row="`+sharedID+`"]'),ids=JSON.parse(row.dataset.linkIds),matching=[...document.querySelectorAll('[data-connection-row]')].filter(value=>JSON.parse(value.dataset.linkIds).some(id=>id==='`+link.ID+`'||id==='`+reverse.ID+`'));return matching.length===1&&ids.length===2&&ids.includes('`+link.ID+`')&&ids.includes('`+reverse.ID+`')&&row.querySelectorAll('.link-total').length===1&&row.querySelector('.link-total').textContent==='1.0 MiB'&&row.querySelectorAll('[data-shared-peer-traffic]').length===1&&row.querySelectorAll('[data-traffic-scope]').length===1&&row.lastElementChild.textContent.includes('counted once')&&row.querySelector('[data-link-status="`+link.ID+`"]').textContent.includes('unavailable')&&row.querySelector('[data-link-status="`+reverse.ID+`"]').textContent.includes('available')&&document.querySelector('.topology-edge-card thead').textContent.includes('WG SENT')&&!document.querySelector('.topology-edge-card thead').textContent.includes('TRANSFER')})()`) != true {
 		t.Fatal("relay candidates, failed WG DNS and shared sent packet totals lost their independent scopes")
 	}
 	chromeDo(t, debug, `document.querySelector('[data-topology-link="`+sharedID+`"]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));true`)
@@ -179,8 +189,11 @@ func TestWebChromeTrafficOriginalCountersUnknownAndRetry(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{window.demoSharedScope=document.querySelector('.topology-traffic-card [data-traffic-scope]').dataset.trafficScope;document.querySelector('button[data-topology-direction="`+reverse.ID+`"]').click();return document.querySelector('.topology-traffic-card [data-traffic-scope]').dataset.trafficScope===demoSharedScope&&document.querySelector('.topology-traffic-card .metric').textContent==='1.0 MiB'&&new URLSearchParams(location.search).get('link')==='`+reverse.ID+`'})()`) != true {
 		t.Fatal("direction switching duplicated or re-scoped the shared peer counters")
 	}
-	if chromeDo(t, debug, `!document.querySelector('[data-traffic-retry],[data-link-history-retry]')`) != true {
+	if chromeDo(t, debug, `!document.querySelector('[data-selected-link="`+sharedID+`"] [data-traffic-retry],[data-link-row="`+sharedID+`"] [data-traffic-retry],[data-link-history-retry="`+link.ID+`"],[data-link-history-retry="`+reverse.ID+`"]')`) != true {
 		t.Fatal("successful topology history retained manual refresh controls")
+	}
+	if nonWGRequests.Load() != 0 || chromeDo(t, debug, `(()=>{const rows=[...document.querySelectorAll('[data-connection-row]')].filter(row=>!JSON.parse(row.dataset.linkIds).includes('`+link.ID+`')&&!JSON.parse(row.dataset.linkIds).includes('`+reverse.ID+`'));return rows.length>0&&rows.every(row=>row.querySelector('.link-total').textContent==='—'&&row.textContent.includes('WG counters not applicable')&&!row.querySelector('[data-traffic-scope],[data-traffic-retry]'))})()`) != true {
+		t.Fatal("a non-WG direction requested WG history or displayed invented zero/retry")
 	}
 	if chromeDo(t, debug, `(async()=>{const {trafficHistoryRequest,trafficSummary,trafficRates}=await import('/assets/traffic-history.js'),p=await(await fetch('/api/control/ui/snapshot')).json(),scope='link:`+link.ID+`',request=trafficHistoryRequest(p,scope),data=await(await fetch(request.url)).json(),entry={key:request.key,version:request.version,data},initial=trafficSummary(p,scope,entry),device=p.devices.find(d=>d.id==='demo-entry');device.last_report_at=new Date(Date.parse(device.last_report_at)+1).toISOString();const pending=trafficSummary(p,scope,entry);p.links.find(l=>l.id==='`+link.ID+`').spec_digest='sha256:'+ 'f'.repeat(64);return trafficRates(initial,Date.now()).some(v=>v.text.includes('0.139 Mbps'))&&pending.known&&trafficRates(pending,Date.now()).every(v=>v.text.includes('Unknown'))&&trafficSummary(p,scope,entry).data===null})()`) != true {
 		t.Fatal("refreshing a report must preserve scoped history without reusing a current rate or a replaced Link")

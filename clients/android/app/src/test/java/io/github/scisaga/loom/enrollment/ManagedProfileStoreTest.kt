@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.security.MessageDigest
 
 class ManagedProfileStoreTest {
     private val profileId = ProfileStorage.PRIMARY_ID
@@ -41,7 +42,7 @@ class ManagedProfileStoreTest {
     }
 
     @Test
-    fun currentCertifiedFileImportKeepsServiceChoicesAndDoesNotCreateMigrationEvidence() {
+    fun currentCertifiedFileImportKeepsIdentityChoiceAndRetiresSeparatePreference() {
         val storage = MemoryStorage()
         val original = "demo-current-identity".encodeToByteArray()
         val next = "demo-forward-identity".encodeToByteArray()
@@ -59,7 +60,8 @@ class ManagedProfileStoreTest {
         handle.importCertifiedView(byteArrayOf(1))
         assertEquals(true, checked)
         assertArrayEquals(next, handle.state())
-        assertArrayEquals(choice, storage.get(ProfileStorage.routePreference(profileId)))
+        assertNull(storage.get(ProfileStorage.routePreference(profileId)))
+        assertArrayEquals(choice, storage.get(evidenceKey(ProfileStorage.policyPreferenceEvidence(profileId), choice)))
         assertNull(storage.get(ProfileStorage.policyIdentityEvidence(profileId)))
         assertNull(storage.get(ProfileStorage.policyPreferenceEvidence(profileId)))
     }
@@ -86,34 +88,34 @@ class ManagedProfileStoreTest {
     }
 
     @Test
-    fun policyImportRetriesBetweenPreferenceAndIdentityWritesAndPreservesLaterChoice() {
+    fun policyImportKeepsOriginalsAndRetriesThroughTheFormalImportEntry() {
         val storage = MemoryStorage()
         val original = "demo-historical-identity".encodeToByteArray()
         val legacy = "demo-old-preference".encodeToByteArray()
-        val current = "demo-current-identity".encodeToByteArray()
-        val converted = "demo-current-preference".encodeToByteArray()
+        val current = "demo-current-identity-with-choice".encodeToByteArray()
         val preferenceKey = ProfileStorage.routePreference(profileId)
         storage.put(stateKey, original)
         storage.put(preferenceKey, legacy)
         val handle = ManagedProfileStore(storage, profileId,
-            validate = { check(!it.contentEquals(original)) }, checkAdvance = { next, expected -> assertArrayEquals(expected, next) },
+            validate = { check(!it.contentEquals(original)) }, checkAdvance = { _, _ -> },
             authenticatedView = { "demo-digest" }, project = { bytes -> ManagedProfile("demo-device", "Demo", "demo-digest", "[]", "{}", "[]", bytes.decodeToString()) },
             replacePolicy = { before, _, preference -> assertArrayEquals(original, before); assertArrayEquals(legacy, preference); current },
-            migratePreference = { _, _, _ -> converted },
+            acceptImportedView = { before, _ -> before },
         )
         storage.dropKey = stateKey
-        assertThrows(IllegalStateException::class.java) { handle.replacePolicySelection(byteArrayOf(1)) }
+        assertThrows(IllegalStateException::class.java) { handle.importCertifiedView(byteArrayOf(1)) }
         assertArrayEquals(original, storage.get(stateKey))
-        assertArrayEquals(converted, storage.get(preferenceKey))
+        assertArrayEquals(legacy, storage.get(preferenceKey))
         storage.dropKey = null
-        handle.replacePolicySelection(byteArrayOf(1))
-        val laterChoice = "demo-user-choice-after-migration".encodeToByteArray()
-        storage.put(preferenceKey, laterChoice)
-        handle.replacePolicySelection(byteArrayOf(1))
-        assertArrayEquals(laterChoice, storage.get(preferenceKey))
-        assertArrayEquals(original, storage.get(ProfileStorage.policyIdentityEvidence(profileId)))
-        assertArrayEquals(legacy, storage.get(ProfileStorage.policyPreferenceEvidence(profileId)))
+        handle.importCertifiedView(byteArrayOf(1))
         assertArrayEquals(current, handle.state())
+        assertNull(storage.get(preferenceKey))
+        val later = "demo-current-identity-with-later-choice".encodeToByteArray()
+        storage.put(stateKey, later)
+        handle.importCertifiedView(byteArrayOf(1))
+        assertArrayEquals(later, handle.state())
+        assertArrayEquals(original, storage.get(evidenceKey(ProfileStorage.policyIdentityEvidence(profileId), original)))
+        assertArrayEquals(legacy, storage.get(evidenceKey(ProfileStorage.policyPreferenceEvidence(profileId), legacy)))
     }
 
     @Test
@@ -234,6 +236,13 @@ class ManagedProfileStoreTest {
                 "native-runtime-not-started", "[]", bytes.decodeToString(),
             )
         }, replaceTransport = replaceTransport)
+
+    private fun evidenceKey(prefix: String, original: ByteArray): String {
+        val hash = MessageDigest.getInstance("SHA-256")
+        hash.update(prefix.encodeToByteArray())
+        hash.update(0.toByte())
+        return hash.digest(original).joinToString("") { "%02x".format(it) }
+    }
 
     private class MemoryStorage : ProfileByteStore {
         private val records = mutableMapOf<String, ByteArray>()

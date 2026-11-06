@@ -21,7 +21,7 @@ func TestWebChromeHY2TransferHasOwnCurrentScopeAndUnknownExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	probes, err := FirstHopProbes(view)
+	probes, err := FirstHopProbes(testDeviceExecution(view))
 	if err != nil || len(probes) != 1 {
 		t.Fatal("fixture needs one actual first-hop scope", err)
 	}

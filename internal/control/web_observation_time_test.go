@@ -43,7 +43,7 @@ func TestWebObservationKeepsOriginalDeadlineAndScope(t *testing.T) {
 	}{
 		{"excessive success window", func(_ *DeviceReport, s *Observation) { s.ValidUntil++ }},
 		{"failure window", func(_ *DeviceReport, s *Observation) { s.Result = "unavailable" }},
-		{"link window", func(_ *DeviceReport, s *Observation) { s.Level = "link" }},
+		{"excessive link window", func(_ *DeviceReport, s *Observation) { s.Level = "link"; s.ValidUntil++ }},
 		{"future sample", func(_ *DeviceReport, s *Observation) {
 			s.ObservedAt = at.Add(5*time.Second + time.Millisecond).UnixMilli()
 		}},
@@ -59,6 +59,13 @@ func TestWebObservationKeepsOriginalDeadlineAndScope(t *testing.T) {
 				t.Fatal("out-of-window or unrelated sample became current")
 			}
 		})
+	}
+	for _, level := range []string{"resource", "link", "egress"} {
+		qualified := sample
+		qualified.Level = level
+		if webObservationUntil(report, qualified, reportUntil, at) != reportUntil {
+			t.Fatal("segmented sample lifetime was confused with its refresh cycle", level)
+		}
 	}
 	sample.Result, sample.ValidUntil = "unavailable", at.Add(30*time.Second).UnixMilli()
 	if webObservationUntil(report, sample, reportUntil, at.Add(30*time.Second-time.Millisecond)) != sample.ValidUntil ||
@@ -102,18 +109,17 @@ func TestWebPathUsesEveryMatchingTargetWithoutBorrowingResourceSuccess(t *testin
 func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testing.T) {
 	fixture, _, projection := deviceContractFixture(t)
 	target := "https://demo-service.example/probe"
-	projection.NetworkIntent.BusinessProbeTargets = []BusinessProbeTarget{{ID: "demo-probe", URL: target}}
+	projection.NetworkIntent.Services[0].ProbeURLs = []string{target}
 	view, err := ProjectDeviceView(projection, "demo-access")
 	if err != nil {
 		t.Fatal(err)
 	}
 	digest, _ := DeviceViewDigest(view)
 	at := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	route := view.Routes[0]
+	route := testDeviceExecution(view).Routes[0]
 	report := DeviceReport{Schema: 3, NetworkID: projection.NetworkID, DeviceID: view.DeviceID, ReportSequence: 1,
 		ViewDigest: digest, NetworkGeneration: "demo-network", ReportedAt: at.UnixMilli(),
-		Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{},
-		PolicyChoices: new([]PolicyChoice{{ServiceID: route.ServiceID, PolicyID: route.PolicyID}}), Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}},
+		Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}, PolicyID: route.PolicyID, Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}},
 		Observations: []Observation{{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, Target: target, Action: "https_request", SpecDigest: route.SpecDigest,
 			NetworkGeneration: "demo-network", Result: "available", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(10 * time.Minute).UnixMilli()}}}
 	root := t.TempDir()
@@ -140,8 +146,8 @@ func TestWebTimeProjectionPreservesSignedHistoryAcrossExpiryAndRestart(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		snapshot := buildWebSnapshot(projection, true, true, true)
-		projectWebObservations(&snapshot, store.Verified(projection), now)
+		snapshot := testWebSnapshotWithIntent(projection, true, true, true)
+		testProjectWebObservations(&snapshot, store.Verified(projection), now)
 		return snapshot
 	}
 	put()

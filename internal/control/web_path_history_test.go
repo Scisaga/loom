@@ -17,18 +17,22 @@ func TestWebPathPreservesSameExitRouteIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	paths := projectWebPaths(projection)
+	paths := testWebSnapshotWithIntent(projection, true, true, true).Paths
 	seen := 0
 	for _, path := range paths {
 		if path.Device != view.DeviceID {
 			continue
 		}
-		for _, route := range view.Routes {
+		for _, route := range testDeviceExecution(view).Routes {
 			if route.ID != path.CandidateID {
 				continue
 			}
+			chain, linkIDs, err := CandidateTopologyEstimate(testDeviceExecution(view), route)
+			if err != nil {
+				t.Fatal(err)
+			}
 			seen++
-			if path.ServiceID != route.ServiceID || path.SpecDigest != route.SpecDigest || path.FirstResourceID != route.FirstResourceID || path.FirstTransport != "hysteria2" || !reflect.DeepEqual(path.LinkIDs, route.LinkIDs) || !reflect.DeepEqual(path.Chain, route.NodeChain) || path.FinalExit != route.FinalExit {
+			if path.ServiceID != route.ServiceID || path.SpecDigest != route.SpecDigest || path.FirstResourceID != route.FirstResourceID || path.FirstTransport != "hysteria2" || !reflect.DeepEqual(path.LinkIDs, linkIDs) || !reflect.DeepEqual(path.Chain, chain) || path.FinalExit != route.FinalExit {
 				t.Fatal("same-exit routes lost the first resource, transport, ordered link scope or specification")
 			}
 		}
@@ -41,10 +45,10 @@ func TestWebPathPreservesSameExitRouteIdentity(t *testing.T) {
 func TestWebPathHistoryUsesOriginalScopedSignedSamples(t *testing.T) {
 	fixture, _, projection := deviceContractFixture(t)
 	view, err := ProjectDeviceView(projection, "demo-access")
-	if err != nil || len(view.Routes) != 1 {
+	if err != nil || len(testDeviceExecution(view).Routes) != 1 {
 		t.Fatal("Direct fixture unavailable", err)
 	}
-	route := view.Routes[0]
+	route := testDeviceExecution(view).Routes[0]
 	digest, _ := DeviceViewDigest(view)
 	now := time.Date(2026, 1, 2, 12, 30, 0, 0, time.UTC)
 	hour := now.Truncate(time.Hour)

@@ -59,8 +59,9 @@ func (codec *contractCodec) encodeCapacity(value any, capacity int) ([]byte, err
 }
 
 // DecodeCanonical accepts only exact, typed contract bytes. The output is not
-// changed on failure. Maps and interfaces are not decoding schemas: they cannot
-// specify the exact permitted field set. Optional fields use omitempty; all
+// changed on failure. Struct fields are exact; typed string-key maps describe
+// dynamic-key collections, while interface-valued maps remain forbidden.
+// Optional fields use omitempty; all
 // other fields must occur, even when their value is false, zero, or an empty set.
 func DecodeCanonical(body []byte, out any, limits ContractDecodeLimits) error {
 	return newContractCodec().decode(body, out, limits)
@@ -126,6 +127,11 @@ func (codec *contractCodec) inspectTypeIn(value reflect.Type, seen map[reflect.T
 	}
 	switch value.Kind() {
 	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return codec.inspectTypeIn(value.Elem(), seen)
+	case reflect.Map:
+		if value.Key().Kind() != reflect.String || contractCustomMethods(value.Key()) {
+			return errors.New("contract map requires exact string keys")
+		}
 		return codec.inspectTypeIn(value.Elem(), seen)
 	case reflect.Struct:
 		if plan.fieldsErr != nil {
@@ -420,6 +426,26 @@ func (codec *contractCodec) assign(source any, destination reflect.Value) error 
 		return nil
 	}
 	switch destination.Kind() {
+	case reflect.Map:
+		object, ok := source.(map[string]any)
+		if !ok {
+			return errors.New("contract map must be an object")
+		}
+		result := reflect.MakeMapWithSize(destination.Type(), len(object))
+		for name, child := range object {
+			if !contractJSONKey(name) {
+				return errors.New("contract map key is invalid")
+			}
+			key := reflect.New(destination.Type().Key()).Elem()
+			key.SetString(name)
+			value := reflect.New(destination.Type().Elem()).Elem()
+			if err := codec.assign(child, value); err != nil {
+				return err
+			}
+			result.SetMapIndex(key, value)
+		}
+		destination.Set(result)
+		return nil
 	case reflect.Struct:
 		object, ok := source.(map[string]any)
 		if !ok {

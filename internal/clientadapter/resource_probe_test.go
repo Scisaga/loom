@@ -3,6 +3,7 @@ package clientadapter
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -18,11 +19,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sagernet/quic-go/http3"
 	"loom/internal/control"
+	"loom/protocol"
+
+	"github.com/sagernet/quic-go"
+	"github.com/sagernet/quic-go/http3"
 )
 
-func resourceProbeFixture(t *testing.T) (control.DeviceView, tls.Certificate, time.Time) {
+func resourceProbeFixture(t *testing.T, kinds ...string) (control.DeviceView, tls.Certificate, time.Time) {
 	t.Helper()
 	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
@@ -45,7 +49,7 @@ func resourceProbeFixture(t *testing.T) (control.DeviceView, tls.Certificate, ti
 	p := control.Projection{NetworkID: "demo-network", NetworkIntent: control.EmptyNetworkIntent()}
 	for _, id := range []string{"demo-a", "demo-b", "demo-c"} {
 		any := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
-		p.NetworkIntent.Services = append(p.NetworkIntent.Services, control.Service{ID: id, Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: id + ".example"}}})
+		p.NetworkIntent.Services = append(p.NetworkIntent.Services, control.Service{ID: id, Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)})
 		p.NetworkIntent.Policies = append(p.NetworkIntent.Policies, control.NetworkPolicy{ID: id, ServiceID: id, Name: "Demo policy", Action: "allow", EntryScope: any, RelayScope: any, ExitScope: new(any), AllowDirect: new(true), LocalEgressDevices: new([]string{})})
 		authorization.PolicyIDs = append(authorization.PolicyIDs, id)
 	}
@@ -54,7 +58,29 @@ func resourceProbeFixture(t *testing.T) (control.DeviceView, tls.Certificate, ti
 		p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, control.TransportResource{ID: id, Kind: "hysteria2", OwnerNodeID: owner.ID, ListenerID: id,
 			DialHost: "192.0.2.10", DialPort: 443, Authentication: control.ResourceAuthentication{ServerName: &name, CACertificates: &trust}})
 	}
+	if len(kinds) == 1 && kinds[0] == "wireguard" {
+		private, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		public := base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes())
+		p.NetworkIntent.Resources = []control.TransportResource{{ID: "demo-resource-a", Kind: "wireguard", OwnerNodeID: owner.ID, ListenerID: "demo-wg", AccessEnabled: true,
+			DialHost: "192.0.2.10", DialPort: 51820, Authentication: control.ResourceAuthentication{PublicKey: &public, LocalAddresses: new([]string{"192.0.2.10/32"})}}}
+	}
 	p.DeviceAuthorizations = []control.DeviceAuthorization{authorization, owner}
+	for i := range p.DeviceAuthorizations {
+		value := &p.DeviceAuthorizations[i]
+		public, err := control.DerivedWireGuardPublicKey(p.NetworkID, *value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, resource := range p.NetworkIntent.Resources {
+			if resource.Kind == "wireguard" && resource.OwnerNodeID == value.ID {
+				public = *resource.Authentication.PublicKey
+			}
+		}
+		value.WireGuardPublicKey = public
+	}
 	view, err := control.ProjectDeviceView(p, authorization.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -62,108 +88,35 @@ func resourceProbeFixture(t *testing.T) (control.DeviceView, tls.Certificate, ti
 	return view, tls.Certificate{Certificate: [][]byte{der}, PrivateKey: private}, at
 }
 
-func TestFirstHopSamplesDeduplicateParallelizeAndKeepOriginalWindows(t *testing.T) {
+func TestAdmissionSpecsSeparatePolicyBindingsAndRetainOnlyMatchingDependencies(t *testing.T) {
 	view, _, at := resourceProbeFixture(t)
-	selected, direct := []string{}, []string{}
-	for _, route := range view.Routes {
-		if route.FinalExit == "direct" {
-			direct = append(direct, route.ID)
-		} else if route.ServiceID == "demo-c" && route.FirstResourceID == "demo-resource-b" || route.ServiceID != "demo-c" && route.FirstResourceID == "demo-resource-a" {
-			selected = append(selected, route.ID)
-		}
+	probes, err := control.FirstHopProbes(testDeviceExecution(view))
+	if err != nil || len(probes) != 2 {
+		t.Fatal("each actual Policy credential needs its own admission proof", err)
 	}
-	if len(selected) != 3 {
-		t.Fatal("fixture lost its shared resource")
+	original := []control.Observation{}
+	for _, probe := range probes {
+		original = append(original, control.Observation{Level: "resource", ResourceID: probe.Resource.ID,
+			Target: probe.Target(), Action: probe.Action(), SpecDigest: probe.SpecDigest,
+			NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(time.Minute).UnixMilli()})
 	}
-	var calls atomic.Int32
-	started, release := make(chan struct{}, 2), make(chan struct{})
-	probe := func(ctx context.Context, resource control.ResourceProbe, _ []string, _ time.Time) (*control.HY2Transfer, error) {
-		calls.Add(1)
-		started <- struct{}{}
-		select {
-		case <-release:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		if resource.Resource.ID == "demo-resource-b" {
-			return &control.HY2Transfer{DurationNS: 1, RXBytes: 4, TXBytes: 8}, errors.New("demo authentication rejected")
-		}
-		return &control.HY2Transfer{DurationNS: 1, RXBytes: 4, TXBytes: 8}, nil
+	retained := RetainResourceObservations(probes, original, "demo-underlay")
+	if !reflect.DeepEqual(retained, original) {
+		t.Fatal("reuse changed original samples")
 	}
-	type outcome struct {
-		values []control.Observation
-		err    error
-	}
-	finished := make(chan outcome, 1)
-	go func() {
-		values, err := observeFirstHops(context.Background(), view, selected, nil, "demo-underlay", func() time.Time { return at }, probe)
-		finished <- outcome{values, err}
-	}()
-	for range 2 {
-		select {
-		case <-started:
-		case <-time.After(time.Second):
-			close(release)
-			t.Fatal("independent resources did not start in parallel")
-		}
-	}
-	close(release)
-	first := <-finished
-	if first.err != nil || len(first.values) != 2 || calls.Load() != 2 || first.values[0].Result != "available" || first.values[1].Result != "unavailable" {
-		t.Fatal("shared resource sampled twice or scope results were mixed", first.err)
-	}
-	if first.values[0].HY2Transfer == nil || first.values[1].HY2Transfer != nil {
-		t.Fatal("successful input was dropped or failed transfer became measured throughput")
-	}
-	if first.values[0].ValidUntil != at.Add(10*time.Minute).UnixMilli() || first.values[1].ValidUntil != at.Add(30*time.Second).UnixMilli() {
-		t.Fatal("new samples have wrong retry windows")
-	}
-	noProbe := func(context.Context, control.ResourceProbe, []string, time.Time) (*control.HY2Transfer, error) {
-		t.Error("valid or unneeded resource was sampled")
-		return nil, nil
-	}
-	retained, err := observeFirstHops(context.Background(), view, selected, first.values, "demo-underlay", func() time.Time { return at.Add(29 * time.Second) }, noProbe)
-	if err != nil || !reflect.DeepEqual(first.values, retained) {
-		t.Fatal("reuse changed original time or failure", err)
-	}
-	if values, err := observeFirstHops(context.Background(), view, direct, nil, "demo-underlay", func() time.Time { return at }, noProbe); err != nil || len(values) != 0 {
-		t.Fatal("Direct acquired transport observations", err)
-	}
-	var retries atomic.Int32
-	retry := func(_ context.Context, resource control.ResourceProbe, _ []string, _ time.Time) (*control.HY2Transfer, error) {
-		if resource.Resource.ID != "demo-resource-b" {
-			t.Error("unexpired success was retried")
-		}
-		retries.Add(1)
-		return nil, nil
-	}
-	next, err := observeFirstHops(context.Background(), view, selected, retained, "demo-underlay", func() time.Time { return at.Add(30 * time.Second) }, retry)
-	if err != nil || retries.Load() != 1 || next[1].Result != "available" || !reflect.DeepEqual(next[0], first.values[0]) {
-		t.Fatal("expired failure could not recover without replacing good sample", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if values, err := observeFirstHops(ctx, view, selected, nil, "demo-underlay", func() time.Time { return at }, noProbe); err == nil || len(values) != 0 {
-		t.Fatal("cancelled operation manufactured samples")
-	}
-	expired, err := observeFirstHops(context.Background(), view, direct, first.values, "demo-underlay", func() time.Time { return at.Add(time.Hour) }, noProbe)
-	if err != nil || !reflect.DeepEqual(expired, first.values) {
-		t.Fatal("expiry deleted the last actual attempt needed for fair retries", err)
-	}
-	probes, _ := control.FirstHopProbes(view)
-	if len(RetainResourceObservations(probes, first.values, "demo-other-network")) != 0 {
-		t.Fatal("old network cache survived")
+	if len(RetainResourceObservations(probes, original, "demo-other-underlay")) != 0 {
+		t.Fatal("old network samples survived")
 	}
 	probes[0].SpecDigest = "sha256:" + strings.Repeat("2", 64)
-	unchanged := RetainResourceObservations(probes, first.values, "demo-underlay")
-	if err != nil || len(unchanged) != 1 || !reflect.DeepEqual(unchanged[0], first.values[1]) {
-		t.Fatal("one changed resource invalidated an unrelated sample or kept its old result", err)
+	unchanged := RetainResourceObservations(probes, original, "demo-underlay")
+	if len(unchanged) != len(original)-1 || !reflect.DeepEqual(unchanged, original[1:]) {
+		t.Fatal("changed resource kept its old sample or invalidated another resource")
 	}
 }
 
 func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) {
 	view, certificate, at := resourceProbeFixture(t)
-	probes, _ := control.FirstHopProbes(view)
+	probes, _ := control.FirstHopProbes(testDeviceExecution(view))
 	probe := probes[0]
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -171,7 +124,25 @@ func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) 
 	}
 	defer listener.Close()
 	var requests atomic.Int32
-	server := &http3.Server{TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := &http3.Server{StreamHijacker: func(kind http3.FrameType, _ quic.ConnectionTracingID, stream quic.Stream, err error) (bool, error) {
+		if kind != protocol.Hy2FrameType || err != nil {
+			return false, nil
+		}
+		go func() {
+			defer stream.Close()
+			body, err := protocol.ReadFrame(stream, 1024)
+			if err != nil {
+				return
+			}
+			request, err := protocol.UnmarshalRequest(body, 1)
+			if err != nil || request.Operation != protocol.AdmissionEcho {
+				return
+			}
+			response, _ := (protocol.Response{Nonce: request.Nonce, Status: protocol.Accepted}).Marshal()
+			_ = protocol.WriteFrame(stream, response)
+		}()
+		return true, nil
+	}, TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/auth" || r.Header.Get("Hysteria-Auth") != probe.Credential {
 			w.WriteHeader(404)
 			return
@@ -207,12 +178,16 @@ func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) 
 			}
 			attempt, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
-			transfer, err := probeFirstHop(attempt, value, nil, at)
+			measured, err := probeFirstHop(attempt, value, nil, at)
+			transfer := measured.transfer
 			if (err == nil) != test.good {
 				t.Fatalf("actual authenticated outcome: %v", err)
 			}
 			if test.good && (transfer == nil || transfer.RXBytes == 0 || transfer.TXBytes == 0 || transfer.DurationNS <= 0) || !test.good && transfer != nil {
 				t.Fatal("authentication bytes were missing or a failed login manufactured throughput")
+			}
+			if test.good && measured.roundTripMS == nil || !test.good && measured.roundTripMS != nil {
+				t.Fatal("RTT was missing from an authenticated login or exposed from a failed one")
 			}
 		})
 	}

@@ -20,6 +20,8 @@ type memberCall struct {
 	direct    *memberDirectCheck
 	trial     bool
 	nextCheck time.Time
+	// A disposable hint for this member, never a replicated fact cursor.
+	notifiedRevision uint64
 }
 
 type memberDirectCheck struct {

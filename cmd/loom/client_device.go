@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"time"
 
+	"loom/internal/clientmodel"
 	"loom/internal/control"
 	"loom/internal/deviceclient"
 )
@@ -133,7 +134,7 @@ func cmdClientSync(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("authenticated device view saved; runtime application requires separate readback: device=%s view=%s endpoints=%d routes=%d\n", envelope.View.DeviceID, envelope.ViewDigest, len(envelope.View.Endpoints), len(envelope.View.Routes))
+	fmt.Printf("authenticated device view saved; runtime application requires separate readback: device=%s view=%s endpoints=%d policies=%d\n", envelope.View.DeviceID, envelope.ViewDigest, len(envelope.View.Endpoints), len(envelope.View.PolicyIDs))
 	return nil
 }
 
@@ -205,8 +206,12 @@ func cmdClientInspect(args []string) error {
 	}{PossiblePermissionRestoration: store.PossiblePermissionRestoration(), Joined: lkg != nil, DeviceID: identity.DeviceID, Candidates: []control.RouteCandidate{}}
 	if lkg != nil {
 		result.DeviceID, result.ViewDigest, result.FactFrontier = lkg.View.DeviceID, lkg.ViewDigest, lkg.FactFrontier
-		result.Endpoints, result.Routes = len(lkg.View.Endpoints), len(lkg.View.Routes)
-		result.Candidates = append(result.Candidates, lkg.View.Routes...)
+		execution, err := control.ProjectDeviceCandidates(lkg.View, clientmodel.MeasurementPolicies(store.Preference()))
+		if err != nil {
+			return err
+		}
+		result.Endpoints, result.Routes = len(lkg.View.Endpoints), len(execution.Routes)
+		result.Candidates = append(result.Candidates, execution.Routes...)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }

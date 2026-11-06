@@ -4,13 +4,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"loom/internal/control"
 	"sort"
 	"strings"
 )
 
-// ServiceConnectionIDs projects the data plane's actual connection chains.
-// It never infers ownership from a destination, an exit, or a shared resource.
-func ServiceConnectionIDs(body []byte, scopes []string) ([]string, error) {
+// ServiceConnectionIDs selects the pinned Service within its actual source
+// scope. Shared access chains alone cannot identify an older connection's Service.
+func ServiceConnectionIDs(body []byte, serviceID, scope string) ([]string, error) {
+	if control.ValidateID(serviceID) != nil || scope != "access" && scope != "local_network:"+serviceID || len(body) == 0 || len(body) > 8<<20 {
+		return nil, errors.New("invalid Service connection request")
+	}
 	var snapshot struct {
 		Connections json.RawMessage `json:"connections"`
 	}
@@ -18,24 +22,29 @@ func ServiceConnectionIDs(body []byte, scopes []string) ([]string, error) {
 		return nil, err
 	}
 	var connections []struct {
-		ID     string   `json:"id"`
-		Chains []string `json:"chains"`
+		ID       string   `json:"id"`
+		Chains   []string `json:"chains"`
+		Metadata struct {
+			ServiceID string `json:"serviceID"`
+		} `json:"metadata"`
 	}
 	if len(snapshot.Connections) == 0 || json.Unmarshal(snapshot.Connections, &connections) != nil {
 		return nil, errors.New("Service connection snapshot is missing or invalid")
-	}
-	wanted := map[string]bool{}
-	for _, scope := range scopes {
-		wanted[scope] = true
 	}
 	ids := []string{}
 	seen := map[string]bool{}
 	for _, connection := range connections {
 		matches := false
-		for _, scope := range connection.Chains {
-			matches = matches || wanted[scope]
+		for _, chain := range connection.Chains {
+			matches = matches || chain == scope
 		}
 		if !matches {
+			continue
+		}
+		if control.ValidateID(connection.Metadata.ServiceID) != nil {
+			return nil, errors.New("source connection is missing its pinned Service")
+		}
+		if connection.Metadata.ServiceID != serviceID {
 			continue
 		}
 		id := connection.ID

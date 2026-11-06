@@ -118,9 +118,3 @@ export function targetDependencies(targets,kind,id,required=false){
   if(required&&(!target||target.deleted||target.conflicted))throw Error(`${kind} ${id} is unavailable in this reviewed draft.`);
   return list(target?.material_ids);
 }
-export function parseMatchers(text){
-  return String(text).split(/\n/).map(v=>v.trim()).filter(Boolean).map(line=>{
-    const parts=line.split(/\s+/);if(parts.length!==2||!['dns_exact','dns_suffix','ip_prefix'].includes(parts[0]))throw Error('Use one “kind value” matcher per line.');
-    return {kind:parts[0],value:parts[1]};
-  }).sort((a,b)=>a.kind<b.kind?-1:a.kind>b.kind?1:a.value<b.value?-1:a.value>b.value?1:0);
-}

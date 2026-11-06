@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"loom/internal/control"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,13 +39,9 @@ func equalRouteOptions(left, right []portableRouteOption) bool {
 	return true
 }
 
-func windowsRouteOptions(view control.DeviceView, preferences ...clientmodel.Preference) ([]portableRouteOption, error) {
+func windowsRouteOptions(view control.DeviceView, preference clientmodel.Preference, hidden map[string]int64, now time.Time) ([]portableRouteOption, error) {
 	if err := view.Validate(); err != nil {
 		return nil, err
-	}
-	preference := clientmodel.EmptyPreference()
-	if len(preferences) == 1 {
-		preference = preferences[0]
 	}
 	preference, err := clientmodel.ReconcilePreference(preference, view)
 	if err != nil {
@@ -56,11 +53,17 @@ func windowsRouteOptions(view control.DeviceView, preferences ...clientmodel.Pre
 			if policy.ServiceID != service.ID || policy.Action != "allow" {
 				continue
 			}
-			next, err := clientmodel.ChoosePolicy(preference, view, service.ID, policy.ID)
+			next, err := clientmodel.ChoosePolicy(preference, view, policy.ID)
 			if err != nil {
 				continue
 			}
-			selected := preference.Policy(service.ID) == policy.ID
+			selected := preference.PolicyForScope(service.Scope()) == policy.ID
+			if service.Kind == "internet" {
+				selected = preference.PolicyID == policy.ID
+			}
+			if !selected && service.Kind == "internet" && hidden[policy.ID] > now.UnixMilli() {
+				continue
+			}
 			label := service.Name + " / " + policy.Name
 			if selected {
 				label += " ✓"
@@ -76,6 +79,40 @@ func windowsRouteOptions(view control.DeviceView, preferences ...clientmodel.Pre
 		return a.PolicyID < b.PolicyID
 	})
 	return options, nil
+}
+
+type windowsRouteVisibilityKey struct{}
+type windowsRouteVisibility func(string, map[string]int64)
+
+func withWindowsRouteVisibility(ctx context.Context, publish windowsRouteVisibility) context.Context {
+	return context.WithValue(ctx, windowsRouteVisibilityKey{}, publish)
+}
+
+func publishWindowsRouteVisibility(ctx context.Context, view *control.DeviceViewEnvelope, state *clientadapter.State) {
+	if publish, ok := ctx.Value(windowsRouteVisibilityKey{}).(windowsRouteVisibility); ok {
+		local := []control.Observation{}
+		for _, samples := range [][]control.Observation{state.LocalMeasurements, state.ResourceObservations} {
+			for _, sample := range samples {
+				if sample.Level == "egress" {
+					local = append(local, sample)
+				}
+			}
+		}
+		hidden, err := control.HiddenInternetPolicies(view.View, "", state.LinkObservations, local, state.NetworkGeneration, time.Now())
+		if err == nil {
+			publish(view.ViewDigest, hidden)
+		}
+	}
+}
+
+func (app *portableGUI) routeHiddenForView(viewDigest string) map[string]int64 {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.routeHiddenViewDigest != viewDigest || app.runCancel == nil {
+		app.routeHidden, app.routeHiddenViewDigest = nil, ""
+		return nil
+	}
+	return maps.Clone(app.routeHidden)
 }
 func windowsRuntimeSelector(root, viewDigest string) (*clientadapter.HTTPSelector, error) {
 	status, err := readWindowsRuntimeStatus(root)
@@ -130,7 +167,7 @@ func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uin
 	if err != nil || store.LKG() == nil {
 		return errors.New("DPAPI profile 暂不可读")
 	}
-	options, err := windowsRouteOptions(store.LKG().View, store.Preference())
+	options, err := windowsRouteOptions(store.LKG().View, store.Preference(), app.routeHiddenForView(store.LKG().ViewDigest), time.Now())
 	if err != nil {
 		return err
 	}
@@ -196,27 +233,25 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) (r
 	if err != nil || store.LKG() == nil {
 		return errors.New("无法读取 DPAPI profile")
 	}
-	options, err := windowsRouteOptions(store.LKG().View, store.Preference())
+	options, err := windowsRouteOptions(store.LKG().View, store.Preference(), nil, time.Now())
 	if err != nil || routeOptionIndex(options, preference) < 0 {
 		return errors.New("策略未获当前签名配置授权")
 	}
 	previous := store.Preference()
 	changedScopes := map[string]bool{}
-	for _, choice := range preference.Services {
-		if previous.Policy(choice.ServiceID) != choice.PolicyID {
-			for _, service := range store.LKG().View.Services {
-				if service.ID == choice.ServiceID {
-					changedScopes[service.Scope()] = true
-				}
-			}
-		}
+	for _, scope := range clientmodel.ChangedSelectorScopes(previous, preference) {
+		changedScopes[scope] = true
 	}
 	if err := store.SetPreference(preference); err != nil {
 		return err
 	}
 	defer func() {
 		app.mu.Lock()
-		app.routeOptions, _ = windowsRouteOptions(store.LKG().View, preference)
+		hidden := app.routeHidden
+		if app.routeHiddenViewDigest != store.LKG().ViewDigest {
+			hidden = nil
+		}
+		app.routeOptions, _ = windowsRouteOptions(store.LKG().View, preference, hidden, time.Now())
 		app.routeSelected = routeOptionIndex(app.routeOptions, preference)
 		app.routeBusy = false
 		app.routeDetail = ""
@@ -240,12 +275,11 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) (r
 		lkg := store.LKG()
 		selector, selectErr := windowsRuntimeSelector(app.root, lkg.ViewDigest)
 		if selectErr == nil {
+			_, selectErr = clientadapter.RejectSelections(app.ctx, selector, clientmodel.ChangedSelectorScopes(previous, preference))
+		}
+		if selectErr == nil {
 			selectErr = func() error {
-				routes, _, err := clientadapter.AccessProjection(lkg.View)
-				if err != nil {
-					return err
-				}
-				scopes, byScope, err := clientadapter.Scopes(routes, clientmodel.ServiceScopes(lkg.View)...)
+				routes, _, err := clientadapter.AccessProjection(lkg.View, clientmodel.MeasurementPolicies(preference))
 				if err != nil {
 					return err
 				}
@@ -260,33 +294,17 @@ func (app *portableGUI) setRoutePreference(preference clientmodel.Preference) (r
 				if status.NetworkGeneration != generation {
 					status.Observations, status.ResourceObservations = nil, nil
 				}
-				linkState := clientadapter.State{}
-				refreshWindowsLinkObservations(app.ctx, store, lkg, &linkState)
-				desired := map[string]string{}
-				for _, scope := range scopes {
-					if !changedScopes[scope] {
-						continue
-					}
-					current, readErr := selector.Read(app.ctx, scope)
-					if readErr != nil {
-						return readErr
-					}
-					_, targets := windowsProbeTargets(lkg.View, scope)
-					choice, chooseErr := clientmodel.SelectWithLinks(byScope[scope], status.Observations, status.ResourceObservations, linkState.LinkObservations, preference, current, generation, time.Now(), targets...)
-					if errors.Is(chooseErr, clientmodel.ErrNoUsableCandidate) {
-						desired[scope] = clientadapter.BlockedSelection
-						continue
-					}
-					if chooseErr != nil {
-						return chooseErr
-					}
-					desired[scope] = choice.CandidateID
-				}
-				_, err = clientadapter.ApplySelections(app.ctx, selector, desired)
+				linkState := clientadapter.State{Preference: preference, NetworkGeneration: generation,
+					Observations: status.Observations, ResourceObservations: status.ResourceObservations}
+				refreshWindowsLinkObservations(app.ctx, store, lkg, &linkState, nil)
+				_, err = activateWindowsServices(app.ctx, selector, lkg.View, routes, linkState, false)
 				return err
 			}()
 		}
 		if selectErr != nil {
+			if errors.Is(selectErr, clientadapter.ErrSelectionSuperseded) {
+				return selectErr
+			}
 			confirmed := false
 			if selector != nil {
 				scopes := []string{}

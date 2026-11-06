@@ -165,6 +165,22 @@ func openObservationStore(root string, historicalKeys func() (map[reportOwner]st
 			err = store.withDatabase(context.Background(), true, ensureReportTreeIndex)
 		}
 	}
+	if err == nil {
+		ready := false
+		err = store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+			child := tx.Bucket(reportIndexBucket).Bucket(reportMeasurementBucket)
+			ready = child != nil
+			if ready && child.Sequence() != 0 {
+				return errors.New("measurement locations have an independent sequence")
+			}
+			return nil
+		})
+		if err == nil && !ready {
+			err = store.withDatabase(context.Background(), true, func(tx *bolt.Tx) error {
+				return ensureReportMeasurementIndex(context.Background(), tx)
+			})
+		}
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -301,6 +317,9 @@ func (store *ObservationStore) mergeReports(ctx context.Context, reports []Devic
 			if err := indexReport(tx, key, report); err != nil {
 				return err
 			}
+			if err := indexReportMeasurements(tx, key, report); err != nil {
+				return err
+			}
 			if err := indexReportCounters(tx, key, report, keys[owner]); err != nil {
 				return err
 			}
@@ -430,8 +449,44 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 	if err := verifyWireGuardCounters(report.WireGuardCounters, view); err != nil {
 		return err
 	}
-	if (report.Preference != nil || report.PolicyChoices != nil) && !containsString(view.Responsibilities, "access") {
-		return errors.New("routing preference report requires an access device")
+	if report.Preference != nil || report.PolicyChoices != nil {
+		return errors.New("current reports use one selected Policy, not historical routing preferences")
+	}
+	if report.PolicyID != "" {
+		if !containsString(view.Responsibilities, "access") || !containsString(view.PolicyIDs, report.PolicyID) {
+			return errors.New("reported policy is outside the device's access grants")
+		}
+		allowed := false
+		for _, policy := range view.Policies {
+			allowed = allowed || policy.ID == report.PolicyID && policy.Action == "allow"
+		}
+		if !allowed {
+			return errors.New("reported policy is not an allowed current Policy")
+		}
+	}
+	servicesByID := map[string]Service{}
+	for _, service := range view.Services {
+		servicesByID[service.ID] = service
+	}
+	for serviceID, policyID := range report.LANPolicyIDs {
+		allowed := containsString(view.Responsibilities, "access") && containsString(view.PolicyIDs, policyID) && servicesByID[serviceID].Kind == "local_network"
+		matched := false
+		for _, policy := range view.Policies {
+			matched = matched || policy.ID == policyID && policy.ServiceID == serviceID && policy.Action == "allow"
+		}
+		if !allowed || !matched {
+			return errors.New("reported LAN choice is outside independent access grants")
+		}
+	}
+	if report.PolicyID != "" {
+		for _, policy := range view.Policies {
+			if policy.ID == report.PolicyID && servicesByID[policy.ServiceID].Kind != "internet" {
+				return errors.New("current Internet Policy names a LAN permission")
+			}
+		}
+	}
+	if len(report.Selections) > 0 && report.PolicyID == "" && len(report.LANPolicyIDs) == 0 {
+		return errors.New("selected routes require the current Policy")
 	}
 	owned := map[string]TransportResource{}
 	for _, resource := range view.Resources {
@@ -456,36 +511,49 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 	} else if len(owned) != 0 && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
 		return errors.New("running resource execution has no listener and ACL readback")
 	}
-	routes := map[string]RouteCandidate{}
-	for _, route := range view.Routes {
-		routes[route.ID] = route
+	execution, err := ProjectDeviceCandidates(view, report.SelectedPolicyIDs())
+	if err != nil {
+		return err
 	}
-	if report.PolicyChoices != nil {
-		for _, choice := range *report.PolicyChoices {
-			if choice.PolicyID == "" {
-				continue // Initialized records can outlive a revoked Service.
-			}
-			granted := false
-			for _, policy := range view.Policies {
-				granted = granted || policy.ID == choice.PolicyID && policy.ServiceID == choice.ServiceID && policy.Action == "allow" && containsString(view.PolicyIDs, policy.ID)
-			}
-			if !granted {
-				return errors.New("reported policy choice is outside the current authorization")
-			}
-		}
+	routes := map[string]RouteCandidate{}
+	for _, route := range execution.Routes {
+		routes[route.ID] = route
 	}
 	for _, selection := range report.Selections {
 		route, found := routes[selection.CandidateID]
-		if !found || route.ServiceID != selection.ServiceID || selection.PolicyID != "" && route.PolicyID != selection.PolicyID {
+		if !found || route.ServiceID != selection.ServiceID || route.PolicyID != selection.PolicyID || route.PolicyID != report.SelectedPolicy(route.ServiceID) {
 			return errors.New("report selection is outside the current view")
 		}
 	}
+	egressProbes, err := EgressProbes(view)
+	if err != nil {
+		return err
+	}
+	egressSpecs := map[string]bool{}
+	for _, probe := range egressProbes {
+		egressSpecs[probe.SpecDigest+"\x00"+probe.Target] = true
+	}
+	linkSpecs, err := LinkSpecifications(view)
+	if err != nil {
+		return err
+	}
+	links := map[string]NetworkLink{}
+	for _, link := range execution.Links {
+		links[link.ID] = link
+	}
 	var resourceProbes []ResourceProbe
 	for _, observation := range report.Observations {
+		if observation.Level == "egress" {
+			allowed := egressSpecs[observation.SpecDigest+"\x00"+observation.Target]
+			if !allowed {
+				return errors.New("egress observation is outside the source's current responsibility and Service permission")
+			}
+			continue
+		}
 		if observation.Level == "resource" {
 			if resourceProbes == nil {
 				var err error
-				resourceProbes, err = FirstHopProbes(view)
+				resourceProbes, err = FirstHopProbes(execution)
 				if err != nil {
 					return err
 				}
@@ -496,8 +564,9 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 			continue
 		}
 		if observation.Level == "link" {
-			if err := verifyLinkObservation(observation, view); err != nil {
-				return err
+			link, found := links[observation.LinkID]
+			if !found || link.FromNodeID != view.DeviceID || !matchesNativeLinkObservation(observation, link, linkSpecs[link.ID]) {
+				return errors.New("Link observation is outside the current source specification")
 			}
 			continue
 		}
@@ -506,7 +575,7 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 			return errors.New("report observation specification is outside the current view")
 		}
 		allowed := false
-		for _, set := range view.BusinessProbeTargets {
+		for _, set := range execution.BusinessProbeTargets {
 			if set.ServiceID == observation.ServiceID {
 				for _, target := range set.Targets {
 					allowed = allowed || target == observation.Target
@@ -518,4 +587,21 @@ func verifyReportViewFields(report DeviceReport, view DeviceView) error {
 		}
 	}
 	return nil
+}
+
+// SelectedPolicyIDs is a disposable ordered inventory of explicit selections.
+func (report DeviceReport) SelectedPolicyIDs() []string {
+	values := map[string]bool{}
+	if report.PolicyID != "" {
+		values[report.PolicyID] = true
+	}
+	for _, id := range report.LANPolicyIDs {
+		values[id] = true
+	}
+	result := make([]string, 0, len(values))
+	for id := range values {
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result
 }

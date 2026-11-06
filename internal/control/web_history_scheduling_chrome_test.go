@@ -35,7 +35,7 @@ func TestWebChromeHistoryProgressDuringReportUpdates(t *testing.T) {
 	// Stable authorization with a changing last-report marker is a UI input.
 	// History still comes from the real empty original-report collection.
 	projection := func() WebSnapshot {
-		value := buildWebSnapshot(p, true, true, true)
+		value := testWebSnapshotWithIntent(p, true, true, true)
 		for i := range value.Devices {
 			value.Devices[i].LastReportAt = time.Now().UTC().Format(time.RFC3339Nano)
 			if revoked.Load() {

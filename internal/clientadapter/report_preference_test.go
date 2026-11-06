@@ -1,24 +1,29 @@
 package clientadapter
 
 import (
-	"testing"
-
 	"loom/internal/clientmodel"
 	"loom/internal/control"
+	"testing"
 )
 
-func TestReportedPreferenceRequiresRealLocalInputOnlyForAccess(t *testing.T) {
-	view := control.DeviceView{Responsibilities: []string{"control"}}
-	if value, err := ReportedPolicyChoices(view, clientmodel.Preference{}); err != nil || value != nil {
-		t.Fatal("pure control acquired an access preference", err)
+func TestReportedPolicyIsOneGrantedChoiceIndependentOfAvailability(t *testing.T) {
+	view := control.DeviceView{Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, Services: []control.Service{{ID: "demo-service", Kind: "internet", RestrictToProbeTargets: new(false)}}, Policies: []control.NetworkPolicy{{ID: "demo-policy", ServiceID: "demo-service", Action: "allow"}}}
+	if _, err := ReportedPolicyID(view, clientmodel.Preference{}); err == nil {
+		t.Fatal("missing setting accepted")
 	}
-	view.Responsibilities = []string{"access"}
-	if _, err := ReportedPolicyChoices(view, clientmodel.Preference{}); err == nil {
-		t.Fatal("missing local setting manufactured Auto")
+	if id, err := ReportedPolicyID(view, clientmodel.EmptyPreference()); err != nil || id != "" {
+		t.Fatal("pending selection manufactured a policy", err)
 	}
-	pref := clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
-	value, err := ReportedPolicyChoices(view, pref)
-	if err != nil || value == nil || len(*value) != 1 || (*value)[0].PolicyID != "demo-policy" {
-		t.Fatal("revoked candidate availability erased local intent", err)
+	pref := clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}
+	if id, err := ReportedPolicyID(view, pref); err != nil || id != pref.PolicyID {
+		t.Fatal("availability erased the granted choice", err)
+	}
+	view.PolicyIDs = []string{}
+	if _, err := ReportedPolicyID(view, pref); err == nil {
+		t.Fatal("revoked choice reported")
+	}
+	view.Responsibilities = []string{"control"}
+	if id, err := ReportedPolicyID(view, clientmodel.EmptyPreference()); err != nil || id != "" {
+		t.Fatal("control acquired an access choice", err)
 	}
 }

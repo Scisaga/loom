@@ -29,8 +29,8 @@ func TestSnapshotConfigReusePreservesBlockedAndUnsignedReadability(t *testing.T)
 		if err != nil {
 			t.Fatal("readable projection failed", err)
 		}
-		if len(value.Paths) == 0 {
-			t.Fatal("fixture lost its paths")
+		if len(value.Paths) != 0 {
+			t.Fatal("snapshot invented a current Policy without a device report")
 		}
 		return value
 	}
@@ -76,7 +76,7 @@ func (ctx *snapshotEnteredContext) Done() <-chan struct{} {
 }
 
 func TestSnapshotConfigReuseRejectsAnInputChangeWhileWaiting(t *testing.T) {
-	server, invite, _, claim, _, _ := enrollmentAuthorityFixture(t)
+	server, invite, _, claim, private, _ := enrollmentAuthorityFixture(t)
 	if enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)).Code != http.StatusOK {
 		t.Fatal("join failed")
 	}
@@ -88,6 +88,11 @@ func TestSnapshotConfigReuseRejectsAnInputChangeWhileWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: value.view.NetworkID, DeviceID: invite.DeviceID, ReportSequence: 1, ViewDigest: value.digest, NetworkGeneration: "demo-network", ReportedAt: server.now().UnixMilli(), PolicyID: value.view.PolicyIDs[0], Selections: []ReportSelection{}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "stopped"}, Components: []ComponentReadback{}}, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testSetObservationReports(t, server.Runtime.Reports, []DeviceReport{report}, value.view.DevicePublicKey)
 	cache := &request.authority.deviceConfigs
 	cache.mu.Lock()
 	cache.items = nil

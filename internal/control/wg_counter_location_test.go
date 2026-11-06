@@ -5,11 +5,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	bolt "go.etcd.io/bbolt"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 func TestCounterLocationsKeepOutsideWindowForksAndRejectMissingRows(t *testing.T) {

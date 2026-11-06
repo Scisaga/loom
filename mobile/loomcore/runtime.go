@@ -3,127 +3,183 @@ package loomcore
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"sort"
+	"strings"
 	"time"
 
 	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
 	"loom/internal/control"
+	"loom/internal/deviceclient"
+	"loom/protocol"
 )
 
 type runtimeApplication struct {
-	Schema        int                    `json:"schema"`
-	PolicyChoices []control.PolicyChoice `json:"policy_choices"`
-	Selections    []runtimeSelection     `json:"selections"`
-	BlockedScopes []string               `json:"blocked_scopes"`
+	Schema             int                                    `json:"schema"`
+	PolicyID           string                                 `json:"policy_id,omitempty"`
+	ServiceID          string                                 `json:"service_id,omitempty"`
+	Selections         []runtimeSelection                     `json:"selections"`
+	BlockedScopes      []string                               `json:"blocked_scopes"`
+	Memory             map[string]clientmodel.SelectionMemory `json:"memory"`
+	LANPolicyIDs       map[string]string                      `json:"lan_policy_ids,omitempty"`
+	NativeObservations []clientmodel.Observation              `json:"native_observations"`
+	NativeFixedExit    bool                                   `json:"native_fixed_exit"`
 }
 
 type runtimeSelection struct {
-	Selector  string   `json:"selector"`
-	Candidate string   `json:"candidate"`
-	FinalExit string   `json:"final_exit"`
-	Chain     []string `json:"chain,omitempty"`
-	State     string   `json:"state"`
+	PolicyID          string                          `json:"policy_id"`
+	Choices           map[string]protocol.RouteChoice `json:"choices"`
+	ExpectedPolicyID  string                          `json:"expected_policy_id"`
+	ExpectedChoices   map[string]protocol.RouteChoice `json:"expected_choices"`
+	ExpectedRevision  string                          `json:"expected_revision"`
+	Selector          string                          `json:"selector"`
+	Candidate         string                          `json:"candidate"`
+	FinalExit         string                          `json:"final_exit"`
+	Chain             []string                        `json:"chain,omitempty"`
+	State             string                          `json:"state"`
+	Targets           map[string]string               `json:"targets"`
+	ExpectedCandidate string                          `json:"expected_candidate"`
+	ExpectedTargets   map[string]string               `json:"expected_targets"`
+	ForceCAS          bool                            `json:"force_cas"`
 }
 
-// EvaluateAndroidRoutes applies one Preference to every authorized scope. It performs no I/O.
-func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, currentBody []byte,
-	generation, nowRFC3339 string, targetsBody, resourcesBody, linksBody, scopesBody []byte) ([]byte, error) {
-	var links []control.DeviceLinkObservation
-	if len(linksBody) > 0 {
-		if err := decodeStrictJSON(linksBody, 4<<20, &links); err != nil {
+// EvaluateAndroidRoutes computes from the current protected identity. Graphs,
+// candidates, Policy and target scopes remain in Go instead of crossing the
+// host bridge as repeated per-Policy JSON. It performs no I/O or state writes.
+func EvaluateAndroidRoutes(stateBody, observationsBody, currentBody []byte,
+	generation string, nowMS int64, resourcesBody, linksBody, memoryBody []byte, monotonicMS int64, nativeBody, nativeEventsBody []byte) ([]byte, error) {
+	identity, err := decodeState(stateBody)
+	if err != nil {
+		return nil, err
+	}
+	if identity.LKG == nil {
+		return nil, errors.New("no accepted Android authorization")
+	}
+	preference := androidPreference(identity)
+	selected := clientmodel.MeasurementPolicies(preference)
+	view := identity.LKG.View
+	routes, graphs, err := clientadapter.AccessRoutingInputs(view, selected)
+	if err != nil {
+		return nil, err
+	}
+	state, current, err := decodeAndroidRoutingSamples(observationsBody, currentBody, resourcesBody, linksBody, memoryBody, generation)
+	if err != nil {
+		return nil, err
+	}
+	state.Preference, state.Graphs = preference, graphs
+	state.NativeExecutionSpec, err = clientadapter.NativeExecutionSpec(view, routes, graphs, preference.PolicyID)
+	if err != nil {
+		return nil, err
+	}
+	if len(nativeBody) > 0 {
+		if err := decodeStrictJSON(nativeBody, clientadapter.NativeObservationReadbackLimit, &state.NativeObservations); err != nil {
 			return nil, err
 		}
 	}
-	var resources []control.Observation
-	if len(resourcesBody) > 0 {
-		if err := decodeStrictJSON(resourcesBody, clientadapter.ResourceObservationCacheLimit, &resources); err != nil {
-			return nil, err
-		}
+	if len(nativeEventsBody) == 0 || !clientadapter.NativeBindingMatches(state.SelectionMemory[control.AccessSelectorScope], current[control.AccessSelectorScope], generation, state.NativeExecutionSpec) {
+		nativeEventsBody = []byte(`{"observations":[]}`)
 	}
-	var groups []control.ServiceProbeTargets
-	if len(targetsBody) > 0 {
-		if err := decodeStrictJSON(targetsBody, 1<<20, &groups); err != nil {
-			return nil, err
-		}
+	state.NativeObservations, err = clientadapter.ConsumeNativeObservations(nativeEventsBody, state, routes, time.UnixMilli(nowMS))
+	if err != nil {
+		return nil, err
 	}
-	targetsByScope := map[string][]string{}
-	for _, group := range groups {
-		if control.ValidateID(group.ServiceID) != nil {
-			return nil, errors.New("invalid Service probe group")
+	targets := map[string][]string{}
+	for _, policy := range view.Policies {
+		if policy.ID != preference.PolicyID {
+			continue
 		}
-		if _, exists := targetsByScope["service:"+group.ServiceID]; exists {
-			return nil, errors.New("duplicate Service probe group")
-		}
-		for _, target := range group.Targets {
-			if control.ValidateHTTPSURL(target) != nil {
-				return nil, errors.New("invalid Service probe target")
+		for _, service := range view.Services {
+			if service.ID == policy.ServiceID {
+				targets[service.Scope()] = service.ProbeURLs
+				break
 			}
 		}
-		targetsByScope["service:"+group.ServiceID], targetsByScope["local_network:"+group.ServiceID] = group.Targets, group.Targets
+		break
 	}
-	var routes []clientmodel.RouteCandidate
-	var measured []androidObservation
-	var observations []clientmodel.Observation
-	var preference clientmodel.Preference
-	current := map[string]string{}
-	if err := decodeStrictJSON(routesBody, 1<<20, &routes); err != nil {
-		return nil, fmt.Errorf("Android route projection: %w", err)
+	return evaluateAndroidRouting(routes, state, current, clientmodel.SelectorScopes(view), targets, nowMS, monotonicMS)
+}
+
+func decodeAndroidRoutingSamples(observationsBody, currentBody, resourcesBody, linksBody, memoryBody []byte, generation string) (clientadapter.State, map[string]clientmodel.Selection, error) {
+	state := clientadapter.State{NetworkGeneration: generation}
+	current := map[string]clientmodel.Selection{}
+	if len(linksBody) > 0 {
+		if err := decodeStrictJSON(linksBody, androidMeasurementSnapshotLimit, &state.LinkObservations); err != nil {
+			return state, nil, err
+		}
+	}
+	if len(resourcesBody) > 0 {
+		if err := decodeStrictJSON(resourcesBody, clientadapter.ResourceObservationCacheLimit, &state.ResourceObservations); err != nil {
+			return state, nil, err
+		}
 	}
 	if len(observationsBody) == 0 {
 		observationsBody = []byte("[]")
 	}
+	var measured []androidObservation
 	if err := decodeStrictJSON(observationsBody, 1<<20, &measured); err != nil {
-		return nil, err
+		return state, nil, err
 	}
 	for _, item := range measured {
 		metric := int64(0)
 		if item.MetricMillis != nil {
 			metric = *item.MetricMillis
 		}
-		observations = append(observations, clientmodel.Observation{CandidateID: item.CandidateID, Target: item.Target, NetworkGeneration: item.NetworkGeneration, Scope: item.Scope, Result: item.Result, Action: item.Action, ObservedAt: item.ObservedAt, ValidUntil: item.ValidUntil, MetricMillis: metric})
-	}
-	if len(preferenceBody) == 0 {
-		preferenceBody, _ = control.CanonicalEncode(clientmodel.EmptyPreference())
-	}
-	if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
-		return nil, err
+		state.Observations = append(state.Observations, clientmodel.Observation{CandidateID: item.CandidateID, Target: item.Target, NetworkGeneration: item.NetworkGeneration, Scope: item.Scope, Result: item.Result, Action: item.Action, ObservedAt: item.ObservedAt, ValidUntil: item.ValidUntil, MetricMillis: metric})
 	}
 	if len(currentBody) > 0 {
 		if err := decodeStrictJSON(currentBody, 1<<20, &current); err != nil {
-			return nil, err
+			return state, nil, err
 		}
 	}
-	now, err := time.Parse(time.RFC3339, nowRFC3339)
-	if err != nil || now.UTC().Format(time.RFC3339) != nowRFC3339 {
+	if len(memoryBody) > 0 {
+		if err := decodeStrictJSON(memoryBody, 1<<20, &state.SelectionMemory); err != nil {
+			return state, nil, err
+		}
+	}
+	return state, current, nil
+}
+
+func evaluateAndroidRouting(routes []clientmodel.RouteCandidate, state clientadapter.State, current map[string]clientmodel.Selection, explicitScopes []string, targetsByScope map[string][]string, nowMS, monotonicMS int64) ([]byte, error) {
+	now := time.UnixMilli(nowMS)
+	if nowMS <= 0 || now.Year() > 9999 {
 		return nil, errors.New("invalid selection time")
 	}
-	byScope := map[string][]clientmodel.RouteCandidate{}
-	var explicitScopes []string
-	if len(scopesBody) > 0 {
-		if err := decodeStrictJSON(scopesBody, 1<<20, &explicitScopes); err != nil {
-			return nil, err
-		}
+	routes, err := clientmodel.EstimateRoutePaths(routes, state.Graphs, state.ResourceObservations, state.LinkObservations, state.NetworkGeneration, now.UTC())
+	if err != nil {
+		return nil, err
 	}
-	for _, scope := range explicitScopes {
-		byScope[scope] = []clientmodel.RouteCandidate{}
+	scopes, byScope, err := clientadapter.Scopes(routes, explicitScopes...)
+	if err != nil {
+		return nil, err
 	}
+	application := runtimeApplication{Schema: 3, PolicyID: state.Preference.PolicyID, LANPolicyIDs: state.Preference.LANPolicyIDs, Selections: []runtimeSelection{}, BlockedScopes: []string{}, Memory: map[string]clientmodel.SelectionMemory{}, NativeObservations: state.NativeObservations}
 	for _, route := range routes {
-		if err := route.Validate(); err != nil {
-			return nil, err
+		if route.PolicyID == state.Preference.PolicyID {
+			application.NativeFixedExit = route.FixedExit
+			break
 		}
-		byScope[route.Scope] = append(byScope[route.Scope], route)
-
 	}
-	scopes := make([]string, 0, len(byScope))
-	for scope := range byScope {
-		scopes = append(scopes, scope)
+	var selectedTargets []string
+	for _, route := range routes {
+		if route.PolicyID == state.Preference.PolicyID {
+			_, application.ServiceID, _ = strings.Cut(route.Scope, ":")
+			selectedTargets = targetsByScope[route.Scope]
+			break
+		}
 	}
-	sort.Strings(scopes)
-	application := runtimeApplication{Schema: 3, PolicyChoices: append([]control.PolicyChoice{}, preference.Services...), Selections: []runtimeSelection{}, BlockedScopes: []string{}}
 	for _, scope := range scopes {
-		selection, err := clientmodel.SelectWithLinks(byScope[scope], observations, resources, links, preference, current[scope], generation, now.UTC(), targetsByScope[scope]...)
+		actual := current[scope]
+		actual.Scope = scope
+		if actual.Choices == nil {
+			actual.Choices = map[string]protocol.RouteChoice{}
+		}
+		if actual.Targets == nil {
+			actual.Targets = map[string]string{}
+		}
+		scopeTargets := selectedTargets
+		if scope != control.AccessSelectorScope {
+			scopeTargets = nil
+		}
+		selection, nextMemory, err := clientmodel.ChooseWithNativeStability(byScope[scope], state.Observations, state.NativeObservations, state.ResourceObservations, state.LinkObservations, clientmodel.PolicyForSelector(state.Preference, scope), actual, state.SelectionMemory[scope], state.NetworkGeneration, now.UTC(), monotonicMS, clientmodel.DefaultPerformanceRule, scopeTargets...)
 		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 			application.BlockedScopes = append(application.BlockedScopes, scope)
 			continue
@@ -131,9 +187,15 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 		if err != nil {
 			return nil, err
 		}
+		forceCAS := scope == control.AccessSelectorScope && state.NativeExecutionSpec != "" && !clientadapter.NativeBindingMatches(state.SelectionMemory[scope], actual, state.NetworkGeneration, state.NativeExecutionSpec)
+		if scope == control.AccessSelectorScope && state.NativeExecutionSpec != "" {
+			nextMemory.NativeBinding = &clientmodel.NativeBinding{NetworkGeneration: state.NetworkGeneration, ExecutionSpec: state.NativeExecutionSpec}
+			nextMemory, _ = clientadapter.RefreshNativeHealth(nextMemory, state.NativeObservations, now)
+		}
+		application.Memory[scope] = nextMemory
 		var chain []string
 		var finalExit string
-		state := "unknown"
+		observationState := "unknown"
 		for _, route := range byScope[scope] {
 			if route.ID == selection.CandidateID {
 				chain = append([]string(nil), route.Chain...)
@@ -141,12 +203,12 @@ func EvaluateAndroidRoutes(routesBody, observationsBody, preferenceBody, current
 				break
 			}
 		}
-		state, err = clientmodel.ObservationState(observations, selection.CandidateID, scope, generation, targetsByScope[scope], now)
+		observationState, err = clientmodel.ObservationState(state.Observations, selection.CandidateID, scope, state.NetworkGeneration, scopeTargets, now)
 		if err != nil {
 			return nil, err
 		}
-		application.Selections = append(application.Selections, runtimeSelection{Selector: scope,
-			Candidate: selection.CandidateID, FinalExit: finalExit, Chain: chain, State: state})
+		application.Selections = append(application.Selections, runtimeSelection{Selector: scope, PolicyID: selection.PolicyID, Choices: selection.Choices, ExpectedPolicyID: actual.PolicyID, ExpectedChoices: actual.Choices,
+			Candidate: selection.CandidateID, FinalExit: finalExit, Chain: chain, State: observationState, Targets: selection.Targets, ExpectedCandidate: actual.CandidateID, ExpectedTargets: actual.Targets, ExpectedRevision: actual.Revision, ForceCAS: forceCAS})
 	}
 	return json.Marshal(application)
 }
@@ -165,43 +227,103 @@ func AndroidCachedResourceObservations(body []byte, identity, generation string)
 	return json.Marshal(values)
 }
 
-// ReconcileAndroidPreference initializes choices from the authenticated identity only.
-func ReconcileAndroidPreference(stateBody, preferenceBody []byte) ([]byte, error) {
-	state, err := decodeState(stateBody)
-	if err != nil {
-		return nil, err
-	}
-	if state.LKG == nil {
-		return nil, errors.New("no authenticated Android configuration")
-	}
-	preference := clientmodel.EmptyPreference()
-	if len(preferenceBody) != 0 {
-		if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 4096}); err != nil {
+// MergeAndroidResourceObservations consumes a completion delta using the public
+// cache binding. Actual selection still checks the current execution specs.
+func MergeAndroidResourceObservations(previous, completed []byte, identity, generation string) ([]byte, error) {
+	values := []control.Observation{}
+	var err error
+	if len(previous) != 0 {
+		values, err = clientadapter.ReadResourceObservationCache(previous, identity, generation)
+		if err != nil {
 			return nil, err
 		}
 	}
-	next, err := clientmodel.ReconcilePreference(preference, state.LKG.View)
+	updates, err := clientadapter.ReadResourceObservationCache(completed, identity, generation)
 	if err != nil {
 		return nil, err
 	}
-	return control.CanonicalEncode(next)
+	return clientadapter.EncodeResourceObservationCache(identity, clientadapter.MergeNodeMeasurements(values, updates))
 }
 
-func ChooseAndroidPolicy(stateBody, preferenceBody []byte, serviceID, policyID string) ([]byte, error) {
+// AndroidPreference is a read-only projection of the sole identity record.
+func AndroidPreference(stateBody []byte) ([]byte, error) {
+	state, err := decodeState(stateBody)
+	if err != nil {
+		return nil, err
+	}
+	if state.LKG == nil || state.Preference == nil {
+		return nil, errors.New("no authenticated Android configuration")
+	}
+	return control.CanonicalEncode(*state.Preference)
+}
+
+// ChooseAndroidPolicy updates the one identity value; callers persist and read
+// back these bytes through the normal identity store before applying selectors.
+func ChooseAndroidPolicy(stateBody []byte, policyID string) ([]byte, error) {
+	state, err := decodeState(stateBody)
+	if err != nil {
+		return nil, err
+	}
+	if state.LKG == nil || state.Preference == nil {
+		return nil, errors.New("no authenticated Android configuration")
+	}
+	next, err := clientmodel.ChoosePolicy(*state.Preference, state.LKG.View, policyID)
+	if err != nil {
+		return nil, err
+	}
+	state.Preference = &next
+	return deviceclient.EncodeIdentityState(state)
+}
+
+// ConfirmAndroidSelectionMemory is called only after complete native readback.
+// This disposable value is never committed to the protected identity record.
+func ConfirmAndroidSelectionMemory(memoryBody, selectionBody []byte, monotonicMS int64) ([]byte, error) {
+	var memory map[string]clientmodel.SelectionMemory
+	var actual clientmodel.Selection
+	if err := decodeStrictJSON(memoryBody, 1<<20, &memory); err != nil {
+		return nil, err
+	}
+	if err := decodeStrictJSON(selectionBody, 1<<20, &actual); err != nil {
+		return nil, err
+	}
+	scopeMemory, exists := memory[actual.Scope]
+	if !exists || !clientmodel.ValidSelectorScope(actual.Scope) {
+		return nil, errors.New("selection has no proposed scope memory")
+	}
+	next, err := clientmodel.ConfirmSelection(scopeMemory, actual, monotonicMS)
+	if err != nil {
+		return nil, err
+	}
+	if scopeMemory.NativeBinding != nil {
+		next = clientadapter.BindNativeSelection(next, actual, scopeMemory.NativeBinding.NetworkGeneration, scopeMemory.NativeBinding.ExecutionSpec)
+	}
+	memory[actual.Scope] = next
+	return json.Marshal(memory)
+}
+
+// AndroidSelectedRoutes derives choices from the current saved intent without
+// serializing a new native configuration or changing authorization progress.
+func AndroidSelectedRoutes(stateBody []byte) ([]byte, error) {
 	state, err := decodeState(stateBody)
 	if err != nil {
 		return nil, err
 	}
 	if state.LKG == nil {
-		return nil, errors.New("no authenticated Android configuration")
+		return nil, errors.New("no accepted Android authorization")
 	}
-	var preference clientmodel.Preference
-	if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 4096}); err != nil {
-		return nil, err
-	}
-	next, err := clientmodel.ChoosePolicy(preference, state.LKG.View, serviceID, policyID)
+	routes, err := clientadapter.AccessCandidates(state.LKG.View, clientmodel.MeasurementPolicies(androidPreference(state)))
 	if err != nil {
 		return nil, err
 	}
-	return control.CanonicalEncode(next)
+	return json.Marshal(routes)
+}
+
+// ServiceConnectionIDs projects the native snapshot's pinned Service ownership.
+// It performs no I/O, changes no preference and grants no network permission.
+func ServiceConnectionIDs(body []byte, serviceID, scope string) ([]byte, error) {
+	ids, err := clientadapter.ServiceConnectionIDs(body, serviceID, scope)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(ids)
 }

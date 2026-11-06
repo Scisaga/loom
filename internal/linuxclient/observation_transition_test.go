@@ -24,14 +24,16 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 	}{
 		{name: "display name", change: func(v *control.DeviceView) { v.Name = "Demo renamed device" }, wantA: true, wantB: true},
 		{name: "candidate specification", change: func(v *control.DeviceView) { v.Policies[0].Name = "Demo revised policy" }, wantB: true},
-		{name: "business target", change: func(v *control.DeviceView) { v.BusinessProbeTargets[0].Targets[0] = "https://demo-a.example/other" }, wantB: true},
+		{name: "business target", change: func(v *control.DeviceView) {
+			v.Services[0].ProbeURLs[0] = "https://demo-a.example/other"
+		}, wantB: true},
 		{name: "resolver", change: func(v *control.DeviceView) { v.DNSServers = []string{"192.0.2.54"} }},
 		{name: "withdrawn service", change: func(v *control.DeviceView) {
 			v.Policies[0].Action = "deny"
-			v.BusinessProbeTargets = v.BusinessProbeTargets[1:]
+			v.Services[0].ProbeURLs = nil
 		}, wantB: true},
 		{name: "multiple targets", change: func(v *control.DeviceView) {
-			v.BusinessProbeTargets[0].Targets = append(v.BusinessProbeTargets[0].Targets, "https://demo-a.example/other")
+			v.Services[0].ProbeURLs = append(v.Services[0].ProbeURLs, "https://demo-a.example/other")
 		}, wantA: true, wantB: true},
 		{name: "restart without prior view", lostPrior: true},
 		{name: "old targetless cache", cache: func(s *LocalState) {
@@ -63,11 +65,12 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 				v.PolicyIDs = []string{"demo-a", "demo-b"}
 				v.Services, v.Policies = []control.Service{}, []control.NetworkPolicy{}
 				for _, id := range v.PolicyIDs {
-					v.Services = append(v.Services, control.Service{ID: id, Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: id + ".example"}}})
+					v.Services = append(v.Services, control.Service{ID: id, Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)})
 					v.Policies = append(v.Policies, control.NetworkPolicy{ID: id, Name: "Demo policy", ServiceID: id, Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})})
 				}
 				v.DNSServers = []string{"192.0.2.53"}
-				v.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-a", Targets: []string{"https://demo-a.example/"}}, {ServiceID: "demo-b", Targets: []string{"https://demo-b.example/"}}}
+				v.Services[0].ProbeURLs = []string{"https://demo-a.example/"}
+				v.Services[1].ProbeURLs = []string{"https://demo-b.example/"}
 				if sequence == 8 && test.change != nil {
 					test.change(v)
 				} else if sequence == 8 {
@@ -82,12 +85,12 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(t.TempDir(), "runtime.json")
-			state, err := loadLocalStateForView(path, "demo-network", store.LKG(), nil)
+			state, err := loadLocalStateForView(path, "demo-network", store.LKG(), nil, store.Preference())
 			if err != nil {
 				t.Fatal(err)
 			}
 			at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-			for _, route := range previous.View.Routes {
+			for _, route := range testDeviceExecution(previous.View).Routes {
 				outcome := "available"
 				if route.ServiceID == "demo-b" {
 					outcome = "unavailable"
@@ -102,8 +105,8 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 			}
 			// A CLI write after the runtime took its old snapshot must survive
 			// the cache transition under the same existing file lock.
-			preference := clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
-			if err := SetPreference(path, state.NetworkGeneration, preference); err != nil {
+			preference := clientmodel.Preference{Schema: 3, PolicyID: "demo-a"}
+			if err := store.SetPreference(preference); err != nil {
 				t.Fatal(err)
 			}
 			if changed, err := acceptCertifiedView(store, next); err != nil || !changed {
@@ -117,17 +120,21 @@ func TestAcceptedViewPreservesOnlyUnchangedBusinessEvidence(t *testing.T) {
 			if test.newNetwork {
 				generation = "demo-next-network"
 			}
-			actual, err := loadLocalStateForView(path, generation, store.LKG(), prior)
+			actual, err := loadLocalStateForView(path, generation, store.LKG(), prior, store.Preference())
 			if err != nil {
 				t.Fatal(err)
 			}
 			wanted := []clientmodel.Observation{}
 			for _, observation := range state.Observations {
-				if observation.Scope == "service:demo-a" && test.wantA || observation.Scope == "service:demo-b" && test.wantB {
+				if observation.Scope == "service:demo-a" && test.wantA && store.Preference().PolicyID == "demo-a" {
 					wanted = append(wanted, observation)
 				}
 			}
-			if !reflect.DeepEqual(actual.Observations, wanted) || !actual.Preference.Equal(preference) || actual.ObservationViewDigest != next.ViewDigest || actual.NetworkGeneration != generation {
+			expectedPreference, prefErr := clientmodel.ReconcilePreference(preference, next.View)
+			if prefErr != nil {
+				t.Fatal(prefErr)
+			}
+			if !reflect.DeepEqual(actual.Observations, wanted) || !store.Preference().Equal(expectedPreference) || actual.ObservationViewDigest != next.ViewDigest || actual.NetworkGeneration != generation {
 				t.Fatal("transition lost valid evidence/preference or retained changed evidence")
 			}
 			restarted, err := deviceclient.Load(identityPath)

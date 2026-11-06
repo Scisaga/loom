@@ -26,9 +26,10 @@ import (
 	"testing"
 	"time"
 
+	"loom/internal/control"
+
 	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/sys/unix"
-	"loom/internal/control"
 )
 
 func TestOfficialIsolatedTUNApplicationLifecycle(t *testing.T) { testOfficialIsolatedTUN(t, false) }
@@ -209,7 +210,8 @@ func testOfficialIsolatedTUN(t *testing.T, overlay bool) {
 		v.Endpoints[0].Host = "127.0.0.1"
 		v.Endpoints[0].Port = 1
 		if len(v.Services) != 0 {
-			v.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{fmt.Sprintf("https://%s:%d/", businessHost, port)}}}
+			v.Services[0].ProbeURLs = []string{fmt.Sprintf("https://%s:%d/", businessHost, port)}
+
 		}
 	})
 	if err := store.SaveLKG(makeView(7, true)); err != nil {

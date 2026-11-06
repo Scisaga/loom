@@ -46,9 +46,9 @@ class ProbeSession {
 
 /** Runs the original domain through the authenticated candidate entry. */
 object NetworkProbe {
-    suspend fun run(state: ByteArray, candidate: String, httpsTarget: String, session: ProbeSession = ProbeSession()): ProbeResult =
+    suspend fun run(state: ByteArray, candidate: String, httpsTarget: String, generation: String, session: ProbeSession = ProbeSession()): ProbeResult =
         withContext(Dispatchers.IO) {
-            val request = Loomcore.newAndroidBusinessRequest(state, candidate, httpsTarget)
+            val request = Loomcore.newAndroidBusinessRequest(state, candidate, httpsTarget, generation)
             val cancellation = Closeable { request.cancel() }
             check(session.attach(cancellation)) { "探测已取消" }
             try {

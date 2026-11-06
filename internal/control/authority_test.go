@@ -49,7 +49,7 @@ func authorityFixture(t *testing.T) (string, NodeConfig, Material) {
 	return root, NodeConfig{Schema: 3, NetworkID: "demo-network", ControlID: member.ControlID, NodeID: member.NodeID, GenesisID: id, SigningKeyFile: keyFile}, genesis
 }
 func authorityService(id, request string) Operation {
-	return Operation{Schema: 3, RequestID: request, Operation: "service.put", TargetKind: "service", TargetID: id, Dependencies: []string{}, Payload: Service{ID: id, Name: "Demo service", Kind: "internet", Matchers: []ServiceMatcher{{Kind: "dns_exact", Value: id + ".example"}}}}
+	return Operation{Schema: 3, RequestID: request, Operation: "service.put", TargetKind: "service", TargetID: id, Dependencies: []string{}, Payload: materialTestService(id)}
 }
 func submitAuthority(t *testing.T, runtime *Runtime, op Operation) Submission {
 	t.Helper()

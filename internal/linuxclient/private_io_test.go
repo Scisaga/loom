@@ -1,6 +1,7 @@
 package linuxclient
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -84,7 +85,7 @@ func TestRuntimeReportUploadCoalescesPendingSnapshotsAndCancels(t *testing.T) {
 func TestReportConfirmationCannotOverwriteNewerReadback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	status := Status{Schema: 3, DeviceID: "demo-device", ViewDigest: control.ReleaseDigest([]byte("demo-view")),
-		FactFrontier: []control.FactFrontier{}, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}},
+		FactFrontier: []control.FactFrontier{}, Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"},
 		Runtime: "running", NetworkGeneration: "demo-old-network", Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}}
 	previous := &runtimeReportAttempt{status: status}
 	status.NetworkGeneration = "demo-new-network"
@@ -107,9 +108,22 @@ func TestReportConfirmationCannotOverwriteNewerReadback(t *testing.T) {
 	if err != nil || !actual.Reported || actual.NetworkGeneration != current.status.NetworkGeneration || current.status.Reported {
 		t.Fatal("current confirmation was lost or mutated its immutable snapshot", err)
 	}
+	actual.Reported = false
+	actual.Selections = []SelectionStatus{{Scope: "access", CandidateID: "demo-new-path", Targets: map[string]string{}}}
+	if err := WriteStatus(path, actual); err != nil {
+		t.Fatal(err)
+	}
+	before, _ = os.ReadFile(path)
+	if err := writeReportConfirmation(path, current, runtimeReportResult{attempt: current}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("old ACK overwrote newer same-network local route optimization")
+	}
 }
 
-func TestPrivateRefreshCancelsForAcceptedRevocationAndPersistenceFailure(t *testing.T) {
+func TestPrivateRefreshInterruptsWorkForRevocationAndStopsForPersistenceFailure(t *testing.T) {
 	for _, failure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "revocation", true: "persistence"}[failure], func(t *testing.T) {
 			store, path, makeView := linuxAcceptanceFixture(t)
@@ -130,29 +144,49 @@ func TestPrivateRefreshCancelsForAcceptedRevocationAndPersistenceFailure(t *test
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+			work, interrupt := context.WithCancel(ctx)
+			defer interrupt()
 			requests := make(chan struct{}, 1)
 			notices := make(chan string, 1)
 			failures := make(chan error, 1)
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				refreshPrivateConfiguration(ctx, stale, requests, notices, failures, cancel)
+				refreshPrivateConfiguration(ctx, stale, requests, notices, failures, cancel, interrupt)
 			}()
 			requests <- struct{}{}
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Second):
-				t.Fatal("accepted change or persistence failure did not cancel old execution")
-			}
-			<-done
-			err = <-failures
-			want := errCertifiedViewChanged
 			if failure {
-				want = errCertifiedPersistence
+				select {
+				case <-ctx.Done():
+				case <-time.After(time.Second):
+					t.Fatal("persistence failure did not cancel execution")
+				}
+				<-done
+				if err = <-failures; !errors.Is(err, errCertifiedPersistence) {
+					t.Fatal("private refresh lost its persistence failure", err)
+				}
+				return
 			}
-			if !errors.Is(err, want) || !failure && !reflect.DeepEqual(stale.LKG(), &next) {
-				t.Fatal("private refresh lost accepted authority or failure semantics", err)
+			select {
+			case <-notices:
+			case <-time.After(time.Second):
+				t.Fatal("accepted change did not wake the runtime apply owner")
 			}
+			select {
+			case <-work.Done():
+			case <-time.After(time.Second):
+				t.Fatal("accepted change left old measurement work blocking its application")
+			}
+			if ctx.Err() != nil || !reflect.DeepEqual(stale.LKG(), &next) {
+				t.Fatal("accepted revocation destroyed execution before local apply or lost authority")
+			}
+			select {
+			case err := <-failures:
+				t.Fatal("accepted change was reported as a runtime failure", err)
+			default:
+			}
+			cancel()
+			<-done
 		})
 	}
 }

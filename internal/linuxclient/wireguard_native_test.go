@@ -21,12 +21,18 @@ import (
 	"time"
 
 	"loom/internal/clientadapter"
+	"loom/internal/clientmodel"
 	"loom/internal/control"
+	"loom/protocol"
 )
 
-func nativeProjectionFixture(t *testing.T) (control.Projection, map[string]string, string, time.Time) {
+func nativeProjectionFixture(t *testing.T, lifetime ...time.Duration) (control.Projection, map[string]string, string, time.Time) {
 	t.Helper()
-	hy2, input, at := resourceExecutionFixture(t, time.Now())
+	validity := time.Minute
+	if len(lifetime) > 0 {
+		validity = lifetime[0]
+	}
+	hy2, input, at := resourceExecutionFixtureWithLifetime(t, time.Now(), validity)
 	digest := "sha256:" + strings.Repeat("1", 64)
 	p := control.Projection{NetworkID: "demo-network", NetworkIntent: control.EmptyNetworkIntent()}
 	keys := map[string]string{}
@@ -44,6 +50,11 @@ func nativeProjectionFixture(t *testing.T) (control.Projection, map[string]strin
 		}
 		p.DeviceAuthorizations = append(p.DeviceAuthorizations, control.DeviceAuthorization{ID: id, Name: id, Platform: "linux", DevicePublicKey: public, Responsibilities: roles, PolicyIDs: policies, DistributionURLs: []string{}, RuntimeKey: public, TransactionID: "demo-join", InviteMaterialID: digest, BindingMaterialID: digest})
 		if id == "demo-access" {
+			registered, err := control.DerivedWireGuardPublicKey(p.NetworkID, p.DeviceAuthorizations[len(p.DeviceAuthorizations)-1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.DeviceAuthorizations[len(p.DeviceAuthorizations)-1].WireGuardPublicKey = registered
 			continue
 		}
 		seed[0] &= 248
@@ -51,6 +62,7 @@ func nativeProjectionFixture(t *testing.T) (control.Projection, map[string]strin
 		seed[31] |= 64
 		key, _ := ecdh.X25519().NewPrivateKey(seed[:])
 		wgPublic := base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
+		p.DeviceAuthorizations[len(p.DeviceAuthorizations)-1].WireGuardPublicKey = wgPublic
 		address, host, port := "192.0.2.51/32", "192.0.2.11", 51821
 		if id == "demo-exit" {
 			address, host, port = "192.0.2.52/32", "192.0.2.12", 51822
@@ -68,10 +80,11 @@ func nativeProjectionFixture(t *testing.T) (control.Projection, map[string]strin
 	p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, resource)
 	sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
 	p.NetworkIntent.Links = []control.NetworkLink{}
-	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo-service.loom"}, {Kind: "ip_prefix", Value: "192.0.2.80/32"}}}}
+	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}}
 	p.NetworkIntent.DNSRecords = []control.DNSRecord{{ID: "demo-record", Name: "demo-service.loom", Addresses: []string{"192.0.2.80"}}}
 	any := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
 	p.NetworkIntent.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: control.PolicyScope{Mode: "only", NodeIDs: []string{"demo-entry"}}, RelayScope: any, ExitScope: new(control.PolicyScope{Mode: "only", NodeIDs: []string{"demo-exit"}}), MaxHops: 2, LocalEgressDevices: new([]string{}), AllowDirect: new(false)}}
+	addFixtureWGListeners(t, input, p.NetworkIntent.Resources)
 	return p, keys, input, at
 }
 
@@ -84,7 +97,7 @@ func TestNativeProjectionKeepsOneSessionAndSeparatesIsolatedCapture(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	executions, err := prepareHY2Executions(view, input, at)
+	executions, err := prepareResourceExecutions(view, input, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +116,11 @@ func TestNativeProjectionKeepsOneSessionAndSeparatesIsolatedCapture(t *testing.T
 	}
 }
 
-func TestRealNativeProjectedSegmentsAndManagementReturnPath(t *testing.T) {
+func TestRealNativeProjectedSegmentsWithoutImplicitHostAccess(t *testing.T) {
 	testRealNativeProjectedSegments(t, false)
+}
+func TestRealNativeMixedFamilyProjectedBusinessAndOwnership(t *testing.T) {
+	testRealNativeProjectedSegments(t, false, false, false, false, true)
 }
 func TestRealLocalNetworkProjectedSegmentsAndWithdrawal(t *testing.T) {
 	testRealNativeProjectedSegments(t, true)
@@ -113,12 +129,13 @@ func TestRealLocalNetworkIdentityProjectedSegmentsAndWithdrawal(t *testing.T) {
 	testRealNativeProjectedSegments(t, true, false, false, true)
 }
 func TestRealNativeSharedResourcePeers(t *testing.T) { testRealNativeProjectedSegments(t, false, true) }
-func TestRealNativeResolvedManagementEndpoint(t *testing.T) {
+func TestRealNativeCertifiedSenderDNS(t *testing.T) {
 	testRealNativeProjectedSegments(t, false, false, true)
 }
 func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	namedPeer := len(shared) > 1 && shared[1]
 	identityLAN := len(shared) > 2 && shared[2]
+	mixedAddresses := len(shared) > 3 && shared[3]
 	executable := os.Getenv("LOOM_LINUX_MIXED_EXECUTABLE")
 	if executable == "" {
 		t.Skip("set LOOM_LINUX_MIXED_EXECUTABLE in a fresh network namespace")
@@ -136,7 +153,18 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 	}
 	p, keys, input, at := nativeProjectionFixture(t)
+	if mixedAddresses {
+		for index := range p.NetworkIntent.Resources {
+			if p.NetworkIntent.Resources[index].ID == "demo-exit-wg" {
+				p.NetworkIntent.Resources[index].Authentication.LocalAddresses = new([]string{"2001:db8::52/128"})
+			}
+		}
+	}
 	if namedPeer {
+		if out, err := exec.Command("ip", "address", "add", "192.0.2.53/32", "dev", "lo").CombinedOutput(); err != nil {
+			t.Fatalf("isolated certified DNS input: %v %s", err, out)
+		}
+		serveNativePeerTestDNS(t)
 		for i := range p.DeviceAuthorizations {
 			p.DeviceAuthorizations[i].DNSServers = []string{"192.0.2.53"}
 		}
@@ -147,6 +175,9 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 	}
 	business := "192.0.2.80"
+	if mixedAddresses {
+		business = isolatedPublicFixtureAddress(t).String()
+	}
 	if lan {
 		local := "192.0.2.0/24"
 		if identityLAN {
@@ -162,7 +193,7 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		host := virtual.Addr().As4()
 		host[3] = 80
 		business = netip.AddrFrom4(host).String()
-		p.NetworkIntent.Services[0] = control.Service{ID: "demo-service", Name: "Demo LAN", Kind: "local_network", LocalNetwork: &control.LocalNetwork{GatewayNodeID: "demo-exit", LocalPrefix: local, VirtualPrefix: virtual.String(), Enabled: true}}
+		p.NetworkIntent.Services[0] = control.Service{ID: "demo-service", Name: "Demo LAN", Kind: "local_network", LocalNetwork: &control.LocalNetwork{GatewayNodeID: "demo-exit", LocalPrefix: local, VirtualPrefix: virtual.String(), Enabled: true}, RestrictToProbeTargets: new(false)}
 		p.NetworkIntent.Policies[0].ExitScope = nil
 		p.NetworkIntent.Policies[0].AllowDirect = nil
 		p.NetworkIntent.Policies[0].LocalEgressDevices = nil
@@ -170,7 +201,6 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		p.NetworkIntent.DNSRecords[0].Addresses = []string{business}
 		p.NetworkIntent.DNSRecords[0].ServiceID = "demo-service"
 	}
-	managementPeers := []string{"demo-entry"}
 	if len(shared) > 0 && shared[0] {
 		for index, id := range []string{"demo-other-a", "demo-other-b"} {
 			seed := sha256.Sum256([]byte(id))
@@ -181,6 +211,7 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 			device.Name = id
 			device.DevicePublicKey = public
 			device.RuntimeKey = public
+			device.WireGuardPublicKey = public
 			p.DeviceAuthorizations = append(p.DeviceAuthorizations, device)
 			local := []string{fmt.Sprintf("192.0.2.%d/32", 53+index)}
 			resource := control.TransportResource{ID: id + "-wg", Kind: "wireguard", OwnerNodeID: id, ListenerID: id + "-wg", DialHost: fmt.Sprintf("192.0.2.%d", 13+index), DialPort: 51823 + index, Authentication: control.ResourceAuthentication{PublicKey: &public, LocalAddresses: &local}}
@@ -190,24 +221,15 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 				t.Fatal(err)
 			}
 			keys[id] = path
-			managementPeers = append(managementPeers, id)
 		}
 		sort.Slice(p.DeviceAuthorizations, func(i, j int) bool { return p.DeviceAuthorizations[i].ID < p.DeviceAuthorizations[j].ID })
 		sort.Slice(p.NetworkIntent.Resources, func(i, j int) bool { return p.NetworkIntent.Resources[i].ID < p.NetworkIntent.Resources[j].ID })
 	}
 	scope := p.NetworkIntent.Services[0].Scope()
+	if p.NetworkIntent.Services[0].Kind == "internet" {
+		scope = "access"
+	}
 
-	// Exercise the older-kernel rule even when this test host supports live
-	// TUN renames. All actual interface operations remain in this test netns.
-	ip, err := exec.LookPath("ip")
-	if err != nil {
-		t.Fatal(err)
-	}
-	strictIP := filepath.Join(t.TempDir(), "ip")
-	wrapper := fmt.Sprintf("#!/usr/bin/python3\nimport json,os,subprocess,sys\nip=%q\na=sys.argv[1:]\nif len(a)==6 and a[:3]==['link','set','dev'] and a[4]=='name':\n v=json.loads(subprocess.check_output([ip,'-json','link','show','dev',a[3]]))[0]\n if 'UP' in v['flags']:sys.exit(2)\nos.execv(ip,[ip]+a)\n", ip)
-	if err := os.WriteFile(strictIP, []byte(wrapper), 0700); err != nil {
-		t.Fatal(err)
-	}
 	cacheRoot := t.TempDir()
 	logs := map[string]string{}
 	start := func(name, config string) (*exec.Cmd, chan error, func()) {
@@ -248,13 +270,14 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		t.Cleanup(stop)
 		return command, done, stop
 	}
-	render := func(id string, system bool) (control.DeviceView, string, *wireGuardTransaction) {
+	addFixtureWGListeners(t, input, p.NetworkIntent.Resources)
+	render := func(id string) (control.DeviceView, string, *wireGuardTransaction) {
 		t.Helper()
 		view, err := control.ProjectDeviceView(p, id)
 		if err != nil {
 			t.Fatal(id, err)
 		}
-		executions, err := prepareHY2Executions(view, input, at)
+		executions, err := prepareResourceExecutions(view, input, at)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -262,35 +285,9 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		if err != nil {
 			t.Fatal(id, err)
 		}
-		wg := wireGuardExecution{}
+		wg := fixtureWGReceiver(t, view, executions)
 		var tx *wireGuardTransaction
-		if system {
-			wg, _, err = projectWireGuard(view)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if namedPeer {
-				wg, err = resolveWireGuardEndpoints(context.Background(), wg, wireGuardExecution{}, view.DNSServers, nativePeerTestDNS(t))
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			options := Options{Config: filepath.Join(t.TempDir(), "runtime.json"), IP: strictIP}
-			options.defaults()
-			tx, err = prepareNativeWireGuard(view, wg, options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = tx.saveOwnership(); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := tx.Cleanup(); err != nil {
-					t.Error(err)
-				}
-			})
-		}
-		config, err = appendNativeReceivers(config, view, wg, tx, keys[id])
+		config, err = appendNativeWireGuard(config, view, wg, tx, keys[id])
 		if err != nil {
 			t.Fatal(id, err)
 		}
@@ -310,9 +307,12 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 		return view, config, tx
 	}
-	exitView, exitConfig, tx := render("demo-exit", true)
-	if len(shared) > 0 && shared[0] && (len(tx.owned) != 1 || len(tx.owned[0].peerLinks()) != 3) {
-		t.Fatal("three neighbors did not share exactly one native interface")
+	exitView, exitConfig, tx := render("demo-exit")
+	var receiverDocument struct {
+		Endpoints []map[string]any `json:"endpoints"`
+	}
+	if json.Unmarshal([]byte(exitConfig), &receiverDocument) != nil || len(receiverDocument.Endpoints) != 1 || receiverDocument.Endpoints[0]["system"] == true || receiverDocument.Endpoints[0]["host_sources"] != nil {
+		t.Fatal("independent native receiver created host management facilities")
 	}
 	exitProcess, exitDone, stopExit := start("exit", exitConfig)
 	defer func() {
@@ -323,33 +323,21 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	exitExecutions, err := prepareHY2Executions(exitView, input, at)
+	exitExecutions, err := prepareResourceExecutions(exitView, input, at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A TUN fd appears before the child has finished configuring its original
-	// name. Its owned WG listener is the existing post-initialization readback.
-	if err := waitTransportResources(ctx, exitView, exitExecutions, exitProcess.Process.Pid, func() time.Time { return at }, exitDone); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.activateNative(ctx, exitProcess.Process.Pid, exitDone); err != nil {
-		for _, owned := range tx.owned {
-			addresses, _ := interfaceAddresses(tx.options.IP, owned.link.Interface)
-			t.Logf("fixture addresses actual=%v wanted=%v", addresses, owned.localAddresses())
-		}
-		t.Fatal(err)
-	}
-	if err := waitTransportResources(ctx, exitView, nil, exitProcess.Process.Pid, time.Now, exitDone); err != nil {
+	if err := waitTransportResources(ctx, exitView, exitExecutions, exitProcess.Process.Pid, time.Now, exitDone); err != nil {
 		t.Fatal("native listener readback", err)
 	}
-	readback, err := readTransportResources(ctx, exitView, nil, exitProcess.Process.Pid, time.Now())
+	readback, err := readTransportResources(ctx, exitView, exitExecutions, exitProcess.Process.Pid, time.Now())
 	if err != nil || len(readback) != 1 || readback[0].Validate() != nil || readback[0].PublicKey == "" || readback[0].CertificateDigest != "" {
 		t.Fatal("native resource identity readback", err)
 	}
-	if _, err := readTransportResources(ctx, exitView, nil, os.Getpid(), time.Now()); err == nil {
+	if _, err := readTransportResources(ctx, exitView, exitExecutions, os.Getpid(), time.Now()); err == nil {
 		t.Fatal("unrelated process was accepted as native receiver")
 	}
-	entryView, entryConfig, entryTransaction := render("demo-entry", namedPeer)
+	entryView, entryConfig, entryTransaction := render("demo-entry")
 	entryProcess, entryDone, stopEntryProcess := start("entry", entryConfig)
 	stopEntry := func() {
 		stopEntryProcess()
@@ -360,18 +348,16 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 	}
 	if namedPeer {
-		entryExecutions, err := prepareHY2Executions(entryView, input, at)
+		entryExecutions, err := prepareResourceExecutions(entryView, input, at)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := waitTransportResources(ctx, entryView, entryExecutions, entryProcess.Process.Pid, func() time.Time { return at }, entryDone); err != nil {
 			t.Fatal(err)
 		}
-		if err := entryTransaction.activateNative(ctx, entryProcess.Process.Pid, entryDone); err != nil {
-			t.Fatal(err)
-		}
+
 	}
-	client, clientConfig, _ := render("demo-access", false)
+	client, clientConfig, _ := render("demo-access")
 	_, _, stopAccess := start("access", clientConfig)
 	listener, err := net.Listen("tcp", "0.0.0.0:18080")
 	if err != nil {
@@ -386,6 +372,16 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	}
 	if err := waitSelector(ctx, selector, []string{scope}); err != nil {
 		t.Fatal(err)
+	}
+	selectCandidate := func(candidate control.RouteCandidate) error {
+		previous, err := selector.ReadSelection(ctx, scope)
+		if err != nil {
+			return err
+		}
+		choice := protocol.RouteChoice{EntryNodeID: candidate.EntryNodeID, FirstResourceID: candidate.FirstResourceID, FinalExit: candidate.FinalExit}
+		_, err = selector.ApplySelection(ctx, previous, clientmodel.Selection{Scope: scope, PolicyID: candidate.PolicyID, CandidateID: candidate.ID,
+			Targets: map[string]string{}, Choices: map[string]protocol.RouteChoice{candidate.ID: choice}})
+		return err
 	}
 	proxyURL, _ := url.Parse("http://127.0.0.1:1080")
 	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL), DisableKeepAlives: true}
@@ -403,16 +399,20 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		lastRequestError = fmt.Sprintf("status=%d read=%v body=%q", response.StatusCode, err, body)
 		return err == nil && string(body) == "demo-business"
 	}
-	if len(client.Routes) != 2 {
+	if len(testDeviceExecution(client).Routes) != 2 {
 		t.Fatal("WG and Hy2 first hops did not coexist")
 	}
-	for _, candidate := range client.Routes {
-		if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
+	for _, candidate := range testDeviceExecution(client).Routes {
+		if err := selectCandidate(candidate); err != nil {
 			t.Fatal(err)
 		}
-		for _, host := range []string{business, "demo-service.loom"} {
+		hosts := []string{business}
+		if !mixedAddresses {
+			hosts = append(hosts, "demo-service.loom")
+		}
+		for _, host := range hosts {
 			if !request(host) {
-				t.Fatal("projected business path failed", candidate.FirstResourceID, host)
+				t.Fatal("projected business path failed", candidate.FirstResourceID)
 			}
 		}
 		if request("192.0.2.81") || request("192.0.2.52") {
@@ -425,35 +425,10 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	}
 	for _, r := range client.Resources {
 		if r.ID == "demo-entry-wg" {
-			if roundTrip, err := clientadapter.ProbeWireGuard(diagnostic, client.NetworkID, r); err != nil || roundTrip <= 0 {
+			if roundTrip, err := clientadapter.ProbeWireGuard(diagnostic, client.NetworkID, r); err != nil || roundTrip == nil || *roundTrip <= 0 {
 				t.Fatal("native first hop diagnostic", err)
 			}
 		}
-	}
-	// Stop the entry before testing its fixed key with an independent standard
-	// kernel peer. Two simultaneous owners would cause WG endpoint roaming.
-	stopEntry()
-	for peerIndex, peerID := range managementPeers {
-		private, _, _ := nativePrivateKey(keys[peerID])
-		var peerResource, target control.TransportResource
-		for _, r := range p.NetworkIntent.Resources {
-			if r.ID == peerID+"-wg" {
-				peerResource = r
-			}
-			if r.ID == "demo-exit-wg" {
-				target = r
-			}
-		}
-		if namedPeer {
-			// This independent kernel fixture needs the same known test DNS
-			// answer; it does not use the application's runtime adapter.
-			target.DialHost = "192.0.2.12"
-		}
-		nativeManagementPeer(t, peerIndex, private, peerResource, target)
-	}
-
-	if err := tx.readbackNative(); err != nil {
-		t.Fatal(err)
 	}
 	stopEntry()
 	if info, err := os.Stat(filepath.Join(cacheRoot, "entry.json."+clientadapter.TUNDNSCache)); err != nil || info.Size() == 0 {
@@ -465,7 +440,7 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	if err := waitSelector(ctx, selector, []string{scope}); err != nil {
 		t.Fatal(err)
 	}
-	if err := selector.Set(ctx, client.Routes[0].Scope, client.Routes[0].ID); err != nil {
+	if err := selectCandidate(testDeviceExecution(client).Routes[0]); err != nil {
 		t.Fatal(err)
 	}
 	recovered := false
@@ -494,8 +469,8 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		if err := waitSelector(ctx, selector, []string{scope}); err != nil {
 			t.Fatal(err)
 		}
-		for _, candidate := range client.Routes {
-			if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
+		for _, candidate := range testDeviceExecution(client).Routes {
+			if err := selectCandidate(candidate); err != nil {
 				t.Fatal(err)
 			}
 			if request(business) || request("demo-service.loom") {
@@ -509,8 +484,8 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 		// A new data plane defaults to reject until the client selects an
 		// authorized path. Exercise both independent first hops after recovery.
-		for _, candidate := range client.Routes {
-			if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
+		for _, candidate := range testDeviceExecution(client).Routes {
+			if err := selectCandidate(candidate); err != nil {
 				t.Fatal(err)
 			}
 			for _, host := range []string{business, "demo-service.loom"} {
@@ -522,10 +497,10 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 	}
 	stopEntry()
 	p.DeviceAuthorizations[0].PolicyIDs = []string{}
-	_, revoked, _ := render("demo-entry", false)
+	_, revoked, _ := render("demo-entry")
 	start("entry", revoked)
-	for _, candidate := range client.Routes {
-		if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
+	for _, candidate := range testDeviceExecution(client).Routes {
+		if err := selectCandidate(candidate); err != nil {
 			t.Fatal(err)
 		}
 		if request(business) {
@@ -533,53 +508,4 @@ func testRealNativeProjectedSegments(t *testing.T, lan bool, shared ...bool) {
 		}
 	}
 	fmt.Fprintln(io.Discard, "native segmented transport verified")
-}
-
-// The kernel WG socket stays in this test's underlay namespace while its
-// interface moves into a child namespace. A host-local route cannot fake the
-// management round trip, and no extra Loom sender instance is constructed.
-func nativeManagementPeer(t *testing.T, index int, private string, peer, target control.TransportResource) {
-	t.Helper()
-	child := exec.Command("unshare", "--net", "--", "sleep", "120")
-	if err := child.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { child.Process.Kill(); child.Wait() }()
-	pid := fmt.Sprint(child.Process.Pid)
-	for deadline := time.Now().Add(time.Second); ; {
-		mine, _ := os.Readlink("/proc/self/ns/net")
-		other, _ := os.Readlink("/proc/" + pid + "/ns/net")
-		if other != "" && mine != other {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("management peer namespace not ready")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	name := fmt.Sprintf("demo-mgmt%d", index)
-	run := func(args ...string) {
-		t.Helper()
-		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
-			t.Fatalf("isolated management setup: %v %s", err, out)
-		}
-	}
-	run("ip", "link", "add", name, "type", "wireguard")
-	defer exec.Command("ip", "link", "delete", name).Run()
-	public, _ := base64.RawURLEncoding.DecodeString(*target.Authentication.PublicKey)
-	command := exec.Command("wg", "set", name, "private-key", "/dev/stdin", "peer", base64.StdEncoding.EncodeToString(public), "endpoint", net.JoinHostPort(target.DialHost, fmt.Sprint(target.DialPort)), "allowed-ips", (*target.Authentication.LocalAddresses)[0])
-	command.Stdin = strings.NewReader(private + "\n")
-	if out, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("isolated WG peer: %v %s", err, out)
-	}
-	run("ip", "link", "set", name, "netns", pid)
-	run("nsenter", "-t", pid, "-n", "ip", "link", "set", "lo", "up")
-	run("nsenter", "-t", pid, "-n", "ip", "address", "add", (*peer.Authentication.LocalAddresses)[0], "dev", name)
-	run("nsenter", "-t", pid, "-n", "ip", "link", "set", name, "up")
-	run("nsenter", "-t", pid, "-n", "ip", "route", "add", (*target.Authentication.LocalAddresses)[0], "dev", name)
-	address := strings.Split((*target.Authentication.LocalAddresses)[0], "/")[0]
-	out, err := exec.Command("nsenter", "-t", pid, "-n", "curl", "--noproxy", "*", "--fail", "--silent", "--max-time", "3", "http://"+address+":18080/demo").CombinedOutput()
-	if err != nil || string(out) != "demo-business" {
-		t.Fatal("original management identity lost its WG return path", err)
-	}
 }

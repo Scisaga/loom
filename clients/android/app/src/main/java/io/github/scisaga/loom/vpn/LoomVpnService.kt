@@ -6,7 +6,6 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
-import android.net.IpPrefix
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -15,6 +14,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.Settings
 import android.system.OsConstants
 import android.util.Log
@@ -36,25 +36,32 @@ import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.ManagedProfileStore
+import io.github.scisaga.loom.enrollment.privateCall
 import io.github.scisaga.loom.profiles.ProfileCatalog
 import io.github.scisaga.loom.route.RouteManager
+import io.github.scisaga.loomcore.Loomcore
+import io.github.scisaga.loomcore.AndroidDeviceRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.net.InetSocketAddress
-import java.net.InetAddress
 import java.net.NetworkInterface
+import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONObject
@@ -105,6 +112,9 @@ internal class UnderlyingPublicationTracker<T> {
 class LoomVpnService : VpnService(), PlatformInterface {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lifecycle get() = configurationLifecycle
+    // Permission writes are ordered without making lifecycle/report/stop wait
+    // for native I/O. Resource preparation never owns this lock.
+    private val permissionUpdates = Mutex()
     private val monitors = ConcurrentHashMap<InterfaceUpdateListener, UnderlyingMonitor>()
     private val underlyingPublicationLock = Any()
     private val underlyingPublication = UnderlyingPublicationTracker<Network>()
@@ -112,13 +122,160 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
     private var reportJob: Job? = null
-    private var probeJob: Job? = null
-    @Volatile private var activeProbe: ProbeSession? = null
+    @Volatile private var measurementWakeups: Channel<Unit>? = null
     @Volatile private var sessionID = 0L
     @Volatile private var desiredProfileId = ""
     @Volatile private var runtimeProfileId = ""
     @Volatile private var selectedUnderlyingNetwork: Network? = null
     @Volatile private var activeManagedProfile: ManagedProfile? = null
+    @Volatile private var activeSourceConfig: String? = null
+    @Volatile private var runtimeResourcesReady = false
+    @Volatile private var runtimePermissionCurrent = false
+    private var resourceRetryJob: Job? = null
+    @Volatile private var resourceRetryRequest: AndroidDeviceRequest? = null
+    @Volatile private var permissionRequest: AndroidDeviceRequest? = null
+
+    private data class RuntimeOwner(
+        val session: Long,
+        val profileID: String,
+        val box: BoxService,
+        val profile: ManagedProfile,
+        val source: String,
+    )
+
+    private fun ownsRuntime(owner: RuntimeOwner): Boolean =
+        runningService === this && sessionID == owner.session && boxService === owner.box &&
+            runtimeProfileId == owner.profileID && activeManagedProfile?.recordID == owner.profile.recordID &&
+            activeSourceConfig == owner.source && connectionWanted(owner.profileID)
+
+    private fun runtimeOwner(profileID: String): RuntimeOwner? {
+        val profile = activeManagedProfile ?: return null
+        val source = activeSourceConfig ?: return null
+        val box = boxService ?: return null
+        if (runtimeProfileId != profileID || !connectionWanted(profileID)) return null
+        return RuntimeOwner(sessionID, profileID, box, profile, source)
+    }
+
+    private suspend fun applyRuntimeAuthorization(owner: RuntimeOwner, source: String): RuntimeAuthorizationResult? =
+        permissionUpdates.withLock {
+            if (!currentCoroutineContext().isActive || !ownsRuntime(owner)) return@withLock null
+            val request: AndroidDeviceRequest = Loomcore.newAndroidRuntimeAuthorizationRequest(owner.source, source, owner.profile.config)
+            permissionRequest = request
+            try {
+                if (!currentCoroutineContext().isActive || !ownsRuntime(owner)) return@withLock null
+                parseRuntimeAuthorization(privateCall(request::run, request::cancel).decodeToString())
+            } finally {
+                request.cancel()
+                if (permissionRequest === request) permissionRequest = null
+            }
+        }
+
+    private suspend fun retryRuntimeResources(profileID: String, prepared: RuntimeAuthorizationResult? = null,
+        initializePermission: Boolean = false) = lifecycle.withLock {
+        if ((!initializePermission && !shouldRetryRuntimeResources(runtimePermissionCurrent, runtimeResourcesReady)) ||
+            runtimeResourcesReady || resourceRetryJob?.isActive == true) return@withLock
+        val owner = runtimeOwner(profileID) ?: return@withLock
+        resourceRetryJob = scope.launch {
+            var request: AndroidDeviceRequest? = null
+            try {
+                val result = prepared ?: if (initializePermission) {
+                    applyRuntimeAuthorization(owner, owner.source) ?: return@launch
+                } else run {
+                    val currentRequest: AndroidDeviceRequest = Loomcore.newAndroidRuntimeResourcesRequest(owner.source, owner.profile.config)
+                    request = currentRequest
+                    val accepted = lifecycle.withLock {
+                        if (!ownsRuntime(owner) || runtimeResourcesReady || !isActive) false
+                        else { resourceRetryRequest = currentRequest; true }
+                    }
+                    if (!accepted) return@launch
+                    parseRuntimeAuthorization(privateCall(currentRequest::run, currentRequest::cancel).decodeToString())
+                }
+                val next = lifecycle.withLock {
+                    if (!ownsRuntime(owner) || !isActive) return@withLock null
+                    if (!result.retainExecution) {
+                        runtimePermissionCurrent = false
+                        VpnRuntime.transform { it.copy(phase = ConnectionPhase.ERROR, detail = "当前权限未确认；运行将安全停止") }
+                        scope.launch { stopTunnel(preserveFailure = true) }
+                        return@withLock null
+                    }
+                    runtimePermissionCurrent = true
+                    owner.profile.copy(config = result.config).also { activeManagedProfile = it }
+                } ?: return@launch
+                confirmRetainedRuntime(owner, next, result.resourcesReady)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (initializePermission) {
+                    lifecycle.withLock {
+                        if (ownsRuntime(owner)) {
+                            runtimePermissionCurrent = false
+                            VpnRuntime.transform { it.copy(phase = ConnectionPhase.ERROR, detail = "初始权限未确认；运行将安全停止") }
+                            scope.launch { stopTunnel(preserveFailure = true) }
+                        }
+                    }
+                } else {
+                    // Permission was confirmed before this resource-only request.
+                    // A missing component cannot authorize tearing down valid flows.
+                    Log.w(TAG, "按需资源尚未确认；保留当前运行并等待重试")
+                }
+            } finally {
+                request?.cancel()
+                if (resourceRetryRequest === request) resourceRetryRequest = null
+            }
+        }
+    }
+
+    private suspend fun confirmRetainedRuntime(owner: RuntimeOwner, next: ManagedProfile, resourcesReady: Boolean) {
+        if (!lifecycle.withLock {
+                if (!ownsRuntime(owner)) false else { runtimeResourcesReady = resourcesReady; true }
+            }) return
+        try {
+            RouteManager.get(this).acceptRetainedRuntime(owner.profileID, next) { ownsRuntime(owner) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Log.w(TAG, "当前运行尚未完成选择回读；保留连接并等待重试")
+            lifecycle.withLock {
+                if (ownsRuntime(owner)) runtimeResourcesReady = false
+            }
+            return
+        }
+        val current = lifecycle.withLock {
+            if (!ownsRuntime(owner)) return@withLock null
+            if (VpnRuntime.status.value.phase != ConnectionPhase.STARTING) {
+                VpnRuntime.transform { it.copy(viewDigest = next.viewDigest, deviceName = next.deviceName,
+                    detail = if (runtimeResourcesReady) "已连接" else "权限已确认；所需路径准备中") }
+            }
+            runtimeOwner(owner.profileID)
+        } ?: return
+        // The reporter may have sampled before the initial runningProfile was
+        // installed. Wake its existing loop instead of restarting its children.
+        requestFirstHopMeasurement(owner.profileID)
+        confirmFirstSelection(current)
+    }
+
+    private suspend fun confirmFirstSelection(owner: RuntimeOwner, isCurrent: () -> Boolean = { true }) {
+        try {
+            confirmInitialSelection(
+                lifecycle,
+                ready = { RouteManager.get(this).hasInitialSelection(owner.profileID, owner.profile) },
+                isCurrent = {
+                    isCurrent() && ownsRuntime(owner) && activeManagedProfile === owner.profile && runtimePermissionCurrent &&
+                        VpnRuntime.status.value.let { it.phase == ConnectionPhase.STARTING && it.requestedProfileId == owner.profileID }
+                },
+                connected = {
+                    RouteManager.get(this).confirmInitialSelection(owner.profileID, owner.profile) {
+                        connected(owner.profileID, owner.profile,
+                            if (runtimeResourcesReady) "认证配置已应用并读回" else "已选路径；其余资源准备中", runtimeResourcesReady)
+                    }
+                },
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Log.w(TAG, "首条选择尚未确认；继续测量并等待实际回读")
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -222,7 +379,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     private suspend fun startTunnel(profileID: String) = lifecycle.withLock {
         if (!connectionWanted(profileID)) return@withLock
-        if (boxService != null && runtimeProfileId == profileID && VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) return@withLock
+        if (canReuseVpnRuntime(boxService != null, runtimeProfileId == profileID,
+                activeManagedProfile != null, VpnRuntime.status.value.phase)) return@withLock
         val cleanup = runCatching { if (boxService != null || tunnel != null) closeResources() }
         if (cleanup.isFailure) {
             desiredProfileId = ""
@@ -252,12 +410,18 @@ class LoomVpnService : VpnService(), PlatformInterface {
         startForeground(NOTIFICATION_ID, foregroundNotification("正在连接…"))
         try {
             if (boxService != null || tunnel != null) closeResources()
+            runtimeProfileId = profileID
             val profile = checkNotNull(EnrollmentManager.get(this).currentProfile(profileID)) {
                 "请先通过私有 Enrollment 完成正式入网"
             }
             val prepared = activateCertified(profileID, profile)
             ensureConnectionWanted(profileID)
-            connected(profileID, prepared, "认证配置已应用并读回")
+            activeManagedProfile = prepared
+            runtimePermissionCurrent = false
+            runtimeResourcesReady = false
+            VpnRuntime.transform { it.copy(detail = "VPN 已建立；正在准备首条路径…") }
+            startReporter(profileID)
+            scope.launch { retryRuntimeResources(profileID, initializePermission = true) }
         } catch (error: Throwable) {
             Log.e(TAG, "start tunnel", error)
             val cleanupError = runCatching { closeResources() }.exceptionOrNull()
@@ -299,15 +463,16 @@ class LoomVpnService : VpnService(), PlatformInterface {
         check(prepared.viewDigest == profile.viewDigest) { "准备运行时认证配置已变化" }
         check(websiteNetwork == null || preparationNetwork() == websiteNetwork) { "准备网站入口时底层网络已变化，请重试" }
         ensureConnectionWanted(profileID)
-        Libbox.checkConfig(prepared.config)
+        val nativeBase = Loomcore.androidNativeResourceBase(prepared.config)
+        Libbox.checkConfig(nativeBase)
         routing.checkConfiguration(profileID, prepared)
         ensureConnectionWanted(profileID)
-        activate(prepared.config)
+        activate(nativeBase)
         check(websiteNetwork == null || selectedUnderlyingNetwork == websiteNetwork) { "启动网站入口时底层网络已变化，请重试" }
         ensureConnectionWanted(profileID)
-        routing.applyToRunning(profileID, prepared)
-        // Runtime/selector readback establishes active before the independent probe.
-        // Missing or ambiguous target scopes remain unknown.
+        activeSourceConfig = profile.config
+        // The same Box owns cancellable first-route reconciliation after the
+        // lifecycle lock is released. A base VPN is not path readiness.
         return prepared
     }
 
@@ -333,7 +498,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         if (!connectionWanted(profileID)) throw CancellationException("连接请求已取消或已切换")
     }
 
-    private fun connected(profileID: String, profile: ManagedProfile, detail: String) {
+    private fun connected(profileID: String, profile: ManagedProfile, detail: String, resourcesReady: Boolean) {
         ensureConnectionWanted(profileID)
         VpnRuntime.update(
             VpnStatus(
@@ -350,56 +515,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
         )
         updateNotification("已连接 · $detail")
         activeManagedProfile = profile
-        startBusinessProbe(profileID, profile)
-        startReporter(profileID)
+        runtimeResourcesReady = resourcesReady
+        runtimePermissionCurrent = true
     }
 
     @Synchronized
-    private fun startBusinessProbe(profileId: String, profile: ManagedProfile, restart: Boolean = false) {
-        if (activeManagedProfile?.recordID != profile.recordID || runtimeProfileId != profileId) return
-        if (probeJob?.isActive == true && !restart) return
-        activeProbe?.cancel()
-        probeJob?.cancel()
-        val probeSession = ProbeSession()
-        activeProbe = probeSession
-        val runtimeSession = sessionID
-        probeJob = scope.launch {
-            try {
-                val routing = RouteManager.get(this@LoomVpnService)
-                val inputs = routing.businessProbeInputs(profileId, profile)
-                for (serviceInputs in inputs.groupBy { it.selector.selector }.values) {
-                    var batch = serviceInputs
-                    for (attempt in 0..1) {
-                        var nextBatch = emptyList<io.github.scisaga.loom.route.BusinessProbeInput>()
-                        for ((index, input) in batch.withIndex()) {
-                            val state = checkNotNull(ManagedProfileStore.get(this@LoomVpnService, profileId).state()) { "设备身份不存在" }
-                            val result = NetworkProbe.run(state, input.selector.candidate, input.target, probeSession)
-                            nextBatch = lifecycle.withLock {
-                                if (runtimeSession != sessionID || activeManagedProfile?.recordID != profile.recordID ||
-                                    !connectionWanted(profileId)
-                                ) return@launch
-                                routing.recordBusinessOutcome(profileId, profile, input, result,
-                                    allowFallback = attempt == 0, finishBatch = index == batch.lastIndex) {
-                                    VpnRuntime.transform {
-                                        it.copy(dnsProbe = "${input.target} · ${result.dns}", httpsProbe = "${input.target} · ${result.https}")
-                                    }
-                                }
-                            }
-                        }
-                        if (nextBatch.isEmpty()) break
-                        batch = nextBatch
-                    }
-                }
-            } catch (_: CancellationException) {
-                // A changed View/network invalidates this observation, not the accepted LKG.
-            } catch (error: Throwable) {
-                Log.w(TAG, "business observation incomplete", error)
-            } finally {
-                if (activeProbe === probeSession) activeProbe = null
-            }
-        }
-    }
-
     private fun activate(config: String) {
         // libbox can register its interface monitor synchronously from start().
         // Publish the new generation first so those callbacks belong to this
@@ -421,40 +541,98 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     private fun startReporter(profileID: String) {
         reportJob?.cancel()
+        val wakeups = Channel<Unit>(Channel.CONFLATED)
+        val reportWakeups = Channel<Unit>(Channel.CONFLATED)
+        val measurementCheckMillis = Loomcore.androidMeasurementCheckIntervalMillis().also { check(it > 0) }
+        measurementWakeups = wakeups
         val reporterSession = sessionID
+        fun activeSession(): Boolean = reporterSession == sessionID && boxService != null && runtimeProfileId == profileID &&
+            VpnRuntime.status.value.phase in setOf(ConnectionPhase.STARTING, ConnectionPhase.CONNECTED)
         reportJob = scope.launch {
             val reporter = HealthReporter(this@LoomVpnService, profileID)
+            launch {
+                RouteManager.get(this@LoomVpnService).status(profileID).collect {
+                    if (!activeSession() || VpnRuntime.status.value.phase != ConnectionPhase.STARTING) return@collect
+                    runtimeOwner(profileID)?.let { owner -> confirmFirstSelection(owner) }
+                }
+            }
+            // Reports and authenticated refreshes do not await measurement.
+            // All children belong to this VPN session and cancel with it.
+            launch {
+                runtimeReportLoop(reportWakeups, REPORT_INTERVAL_MS, measurementCheckMillis,
+                    elapsedMillis = SystemClock::elapsedRealtime, current = { activeSession() }) {
+                    val reportedProfile = activeManagedProfile?.recordID
+                    val reportedReady = runtimeResourcesReady
+                    val report = runCatching { reporter.send() }
+                    if (isActive && activeSession() && activeManagedProfile?.recordID == reportedProfile && runtimeResourcesReady == reportedReady) {
+                        VpnRuntime.transform { it.copy(trustedReport = if (report.isSuccess) "签名上报成功" else "失败；将重试") }
+                    }
+                }
+            }
+            launch {
+                // Local TCP results have a short failure lifetime. Consume
+                // them independently of reports and remote measurement work.
+                while (isActive && reporterSession == sessionID) {
+                    delay(5_000L)
+                    if (!activeSession()) break
+                    retryRuntimeResources(profileID)
+                    activeManagedProfile?.let { profile ->
+                        runCatching { RouteManager.get(this@LoomVpnService).refreshNativeObservations(profileID,profile) }
+                            .onFailure { Log.w(TAG,"本机连接结果未应用；下轮重读",it) }
+                    }
+                }
+            }
+            launch {
+                var round = 0L
+                while (isActive && reporterSession == sessionID) {
+                    if (!activeSession()) break
+                    // Await outside the operation lock. The current VPN owns
+                    // cancellation, including the underlying private socket.
+                    val confirmed = EnrollmentManager.get(this@LoomVpnService)
+                        .refreshConfigurationInBackground(profileID, round++)
+                    if (!confirmed) delay(5_000L)
+                }
+            }
+            launch {
+                while (isActive && reporterSession == sessionID) {
+                    if (!activeSession()) break
+                    activeManagedProfile?.let { profile ->
+                        val routing = RouteManager.get(this@LoomVpnService)
+                        routing.refreshLinkObservations(profileID, profile)
+                        if (!isActive || reporterSession != sessionID) return@launch
+                        runCatching { routing.refreshFromMeasurements(profileID, profile) }
+                            .onFailure { Log.w(TAG,"共享测量推荐未应用；下轮重读",it) }
+                    }
+                    delay(REPORT_INTERVAL_MS)
+                }
+            }
             while (isActive && reporterSession == sessionID) {
-                val status = VpnRuntime.status.value
-                if (status.phase != ConnectionPhase.CONNECTED) return@launch
+                if (!activeSession()) break
+                val roundStarted = SystemClock.elapsedRealtime()
+                var checkFrom = roundStarted
+                // A choice only wakes this VPN-owned loop; rapid choices
+                // coalesce and never start another sampler in application scope.
+                wakeups.tryReceive()
                 activeManagedProfile?.let { profile ->
                     val routing = RouteManager.get(this@LoomVpnService)
-                    routing.refreshLinkObservations(profileID, profile)
+                    val completedAt = routing.sampleFirstHops(profileID, profile) { reportWakeups.trySend(Unit) }
                     if (!isActive || reporterSession != sessionID) return@launch
-                    routing.sampleAlternateBusiness(profileID, profile)
-                    if (!isActive || reporterSession != sessionID) return@launch
-                    startBusinessProbe(profileID, profile)
+                    if (completedAt != null) {
+                        checkFrom = completedAt
+                    }
+                    runCatching { routing.refreshFromMeasurements(profileID, profile) }
+                        .onFailure { Log.w(TAG,"本机测量推荐未应用；下轮重读",it) }
                 }
-                // A failed sample can expire before the next report interval.
-                // Finish this round before reading selections and observations.
-                probeJob?.join()
-                if (!isActive || reporterSession != sessionID) return@launch
-                val report = runCatching { reporter.send() }
-                if (!isActive || reporterSession != sessionID) return@launch
-                if (report.isSuccess) {
-                    VpnRuntime.transform { it.copy(trustedReport = "签名上报成功") }
-                } else {
-                    VpnRuntime.transform { it.copy(trustedReport = "失败；将重试") }
-                }
-                // Authenticated updates persist first and always attempt to stop old
-                // execution; runtime failure cannot reinstate the previous authority.
-                EnrollmentManager.get(this@LoomVpnService).refreshConfigurationInBackground(profileID)
-                delay(REPORT_INTERVAL_MS)
+                val remaining = (measurementCheckMillis - (SystemClock.elapsedRealtime() - checkFrom)).coerceAtLeast(1)
+                withTimeoutOrNull(remaining) { wakeups.receive() }
             }
         }
     }
 
-    private suspend fun stopTunnel(stopStartId: Int? = null, preserveFailure: Boolean = false) = lifecycle.withLock {
+    private suspend fun stopTunnel(stopStartId: Int? = null, preserveFailure: Boolean = false,
+        expectedRuntime: RuntimeOwner? = null) = lifecycle.withLock {
+        if (expectedRuntime != null && (sessionID != expectedRuntime.session || boxService !== expectedRuntime.box ||
+                runtimeProfileId != expectedRuntime.profileID)) return@withLock
         if (stopStartId != null && desiredProfileId.isNotBlank()) return@withLock
         val stoppedProfileId = runtimeProfileId
         val stopped = VpnRuntime.status.value.takeIf { preserveFailure && it.phase == ConnectionPhase.ERROR }
@@ -487,14 +665,20 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private suspend fun closeResources() {
         val stoppedProfileId = runtimeProfileId
         sessionID++
+        runtimeResourcesReady = false
+        runtimePermissionCurrent = false
+        permissionRequest?.cancel()
+        resourceRetryRequest?.cancel()
+        val pendingResources = resourceRetryJob
+        pendingResources?.cancel()
+        resourceRetryJob = null
+        resourceRetryRequest = null
         reportJob?.cancel()
         reportJob = null
+        measurementWakeups = null
         synchronized(this) {
             activeManagedProfile = null
-            activeProbe?.cancel()
-            activeProbe = null
-            probeJob?.cancel()
-            probeJob = null
+            activeSourceConfig = null
         }
         monitors.entries.toList().forEach { (listener, monitor) ->
             removeUnderlyingMonitor(listener, monitor)
@@ -503,6 +687,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
         synchronized(underlyingPublicationLock) { underlyingPublication.clear() }
         val boxClosed = runCatching { boxService?.close() }
         val tunnelClosed = runCatching { tunnel?.close() }
+        // No permission writer acquires lifecycle while holding this mutex.
+        // Cancellation reaches native I/O; joining the mutex proves Run exited.
+        permissionUpdates.withLock { }
+        pendingResources?.join()
         if (boxClosed.isSuccess) boxService = null
         if (tunnelClosed.isSuccess) tunnel = null
         val routingStopped = runCatching {
@@ -554,10 +742,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
         builderUnderlying?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
 
-        val addressFamilies = addAddresses(builder, options)
+        addAddresses(builder, options)
         if (options.autoRoute) {
             options.dnsServerAddress?.value?.takeIf { it.isNotBlank() }?.let(builder::addDnsServer)
-            addRoutes(builder, options, addressFamilies)
+            addRoutes(builder, options)
         }
         val descriptor = checkNotNull(builder.establish()) { "android: VPN permission revoked while opening TUN" }
         synchronized(underlyingPublicationLock) { underlyingPublication.builderBound(builderUnderlying) }
@@ -566,68 +754,31 @@ class LoomVpnService : VpnService(), PlatformInterface {
         return descriptor.fd
     }
 
-    private fun addAddresses(builder: Builder, options: TunOptions): TunAddressFamilies {
-        var hasIPv4 = false
+    private fun addAddresses(builder: Builder, options: TunOptions) {
         val ipv4 = options.inet4Address
         while (ipv4.hasNext()) ipv4.next().also {
-            hasIPv4 = true
             builder.addAddress(it.address(), it.prefix())
         }
-        var hasIPv6 = false
         val ipv6 = options.inet6Address
         while (ipv6.hasNext()) ipv6.next().also {
-            hasIPv6 = true
             builder.addAddress(it.address(), it.prefix())
         }
-        return TunAddressFamilies(ipv4 = hasIPv4, ipv6 = hasIPv6)
     }
 
-    private fun addRoutes(builder: Builder, options: TunOptions, families: TunAddressFamilies) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            var hasIPv4Route = false
-            val ipv4 = options.inet4RouteAddress
-            while (ipv4.hasNext()) ipv4.next().also {
-                hasIPv4Route = true
-                builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
-            }
-            if (requiresDefaultRoute(families.ipv4, hasIPv4Route)) builder.addRoute("0.0.0.0", 0)
-
-            var hasIPv6Route = false
-            val ipv6 = options.inet6RouteAddress
-            while (ipv6.hasNext()) ipv6.next().also {
-                hasIPv6Route = true
-                builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
-            }
-            if (requiresDefaultRoute(families.ipv6, hasIPv6Route)) builder.addRoute("::", 0)
-
-            val exclude4 = options.inet4RouteExcludeAddress
-            while (exclude4.hasNext()) exclude4.next().also {
-                builder.excludeRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
-            }
-            val exclude6 = options.inet6RouteExcludeAddress
-            while (exclude6.hasNext()) exclude6.next().also {
-                builder.excludeRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
-            }
-        } else {
-            var hasIPv4Route = false
-            val ipv4 = options.inet4RouteRange
-            while (ipv4.hasNext()) ipv4.next().also {
-                hasIPv4Route = true
-                builder.addRoute(it.address(), it.prefix())
-            }
-            if (requiresDefaultRoute(families.ipv4, hasIPv4Route)) builder.addRoute("0.0.0.0", 0)
-
-            var hasIPv6Route = false
-            val ipv6 = options.inet6RouteRange
-            while (ipv6.hasNext()) ipv6.next().also {
-                hasIPv6Route = true
-                builder.addRoute(it.address(), it.prefix())
-            }
-            if (requiresDefaultRoute(families.ipv6, hasIPv6Route)) builder.addRoute("::", 0)
+    private fun addRoutes(builder: Builder, options: TunOptions) {
+        // libbox has already subtracted exclusions from the positively selected
+        // capture ranges. Use that same result on every Android version: sending
+        // exclusions again can reject loopback prefixes in Builder.excludeRoute.
+        // An empty family has no captured routes; it must not become a default.
+        val ipv4 = options.inet4RouteRange
+        while (ipv4.hasNext()) ipv4.next().also {
+            builder.addRoute(it.address(), it.prefix())
+        }
+        val ipv6 = options.inet6RouteRange
+        while (ipv6.hasNext()) ipv6.next().also {
+            builder.addRoute(it.address(), it.prefix())
         }
     }
-
-    private data class TunAddressFamilies(val ipv4: Boolean, val ipv6: Boolean)
 
     override fun useProcFS(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
 
@@ -791,26 +942,47 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 val recordID = profile.recordID
                 scope.launch {
                     runCatching {
-                        lifecycle.withLock {
+                        val owner = lifecycle.withLock {
                             if (callbackSession != sessionID ||
                                 runtimeProfileId != profileID ||
                                 activeManagedProfile?.recordID != recordID ||
                                 selectedUnderlyingNetwork != selected.network ||
                                 !connectionWanted(profileID)
-                            ) return@withLock
-                            val routing = RouteManager.get(this@LoomVpnService)
-                            val generationChanged = routing.beginNetworkGeneration(profileID, networkGenerationIdentity(selected.network))
-                            if (refreshLocalNetwork || generationChanged && profile.requiresUnderlayReadback) {
+                            ) return@withLock null
+                            runtimeOwner(profileID)
+                        } ?: return@runCatching
+                        val routing = RouteManager.get(this@LoomVpnService)
+                        val isCurrent = { ownsRuntime(owner) && selectedUnderlyingNetwork == selected.network }
+                        val generationChanged = routing.beginNetworkGeneration(
+                            profileID, networkGenerationIdentity(selected.network), isCurrent,
+                        )
+                        if (refreshLocalNetwork || generationChanged && profile.requiresUnderlayReadback) {
+                            lifecycle.withLock {
+                                if (!isCurrent()) return@withLock
                                 // Refresh website exclusions and LAN conflict boundaries
                                 // before replacing capture on this physical network.
                                 startTunnelLocked(profileID)
-                                return@withLock
                             }
-                            if (generationChanged) {
-                                routing.applyToRunning(profileID, profile)
+                            return@runCatching
+                        }
+                        if (generationChanged) {
+                            val apply = lifecycle.withLock {
+                                if (!isCurrent() || !runtimePermissionCurrent) false
+                                else { runtimeResourcesReady = false; true }
+                            }
+                            if (!apply) return@runCatching
+                            // Selection may prepare a missing sender. It must not
+                            // hold the lock used by stop or report snapshots.
+                            routing.applyToRunning(profileID, owner.profile) {
+                                isCurrent() && runtimePermissionCurrent
+                            }
+                            val current = lifecycle.withLock {
+                                if (!isCurrent() || !runtimePermissionCurrent) return@withLock null
                                 VpnRuntime.transform { it.copy(dnsProbe = "未知：网络已变化", httpsProbe = "未知：网络已变化") }
-                                startBusinessProbe(profileID, profile, restart = true)
-                            }
+                                startReporter(profileID)
+                                runtimeOwner(profileID)
+                            } ?: return@runCatching
+                            confirmFirstSelection(current, isCurrent)
                         }
                     }.onFailure { Log.w(TAG, "network-generation route apply failed", it) }
                 }
@@ -1059,82 +1231,175 @@ class LoomVpnService : VpnService(), PlatformInterface {
         private val configurationLifecycle = Mutex()
         @Volatile private var runningService: LoomVpnService? = null
 
-        internal fun stopUnverifiablePolicySelection(profileId: String) {
+        internal fun requestFirstHopMeasurement(profileId: String) {
             val service = runningService ?: return
-            // Schedule after the caller releases the route lock. Normal stop
-            // owns VPN cleanup and the final signed runtime report.
-            service.scope.launch {
-                if (service.runtimeProfileId != profileId) return@launch
-                VpnRuntime.transform { it.copy(phase = ConnectionPhase.ERROR, detail = "服务拒绝状态未确认；运行已停止") }
-                service.stopTunnel(preserveFailure = true)
+            if (service.runtimeProfileId == profileId) service.measurementWakeups?.trySend(Unit)
+        }
+
+        internal fun requestRuntimeResourceRetry(profileId: String) {
+            val service = runningService ?: return
+            service.scope.launch { service.retryRuntimeResources(profileId) }
+        }
+
+        internal suspend fun runtimeResourcesPending(profileId: String, profile: ManagedProfile) {
+            val service = runningService ?: return
+            val owner = service.runtimeOwner(profileId)?.takeIf { it.profile === profile } ?: return
+            val current = configurationLifecycle.withLock {
+                if (!service.ownsRuntime(owner) || service.activeManagedProfile !== profile) false
+                else { service.runtimeResourcesReady = false; true }
+            }
+            if (current) service.scope.launch { service.retryRuntimeResources(profileId) }
+        }
+
+        private fun parseRuntimeAuthorization(body: String): RuntimeAuthorizationResult {
+            val value = JSONObject(body)
+            check(value.keys().asSequence().toSet() == setOf("supported", "permission_current", "resources_ready", "config")) {
+                "运行应用返回了未知字段"
+            }
+            check(listOf("supported", "permission_current", "resources_ready").all { value.get(it) is Boolean }) {
+                "运行应用结果不是布尔值"
+            }
+            check(value.get("config") is String) { "运行应用结果缺少规范配置" }
+            return RuntimeAuthorizationResult(
+                supported = value.getBoolean("supported"),
+                permissionCurrent = value.getBoolean("permission_current"),
+                resourcesReady = value.getBoolean("resources_ready"),
+                config = value.getString("config"),
+            )
+        }
+
+        internal suspend fun stopUnverifiablePolicySelection(profileId: String,
+            commitIfCurrent: suspend (() -> Unit) -> Boolean) {
+            val service = runningService ?: return
+            val owner = service.runtimeOwner(profileId) ?: return
+            // lifecycle→operation: the caller commits this stop intention while
+            // its exact input still owns the call. No selector I/O runs here.
+            val committed = configurationLifecycle.withLock {
+                if (!service.ownsRuntime(owner)) false else commitIfCurrent {
+                    service.desiredProfileId = ""
+                    service.runtimePermissionCurrent = false
+                    service.runtimeResourcesReady = false
+                    // A new connect must replace this failed Box rather than
+                    // mistaking its projected STARTING UI for a reusable run.
+                    service.activeManagedProfile = null
+                    VpnRuntime.transform { it.copy(phase = ConnectionPhase.ERROR, detail = "服务拒绝状态未确认；运行已停止") }
+                }
+            }
+            if (committed) service.scope.launch {
+                service.stopTunnel(preserveFailure = true, expectedRuntime = owner)
             }
         }
 
-        internal suspend fun <T> withRuntimeReport(profileId: String, send: suspend (JSONObject) -> T): T =
-            configurationLifecycle.withLock {
+        internal suspend fun <T> withRuntimeReport(profileId: String, send: suspend (JSONObject, Instant) -> T): T {
+            return withRuntimeReportSnapshot(configurationLifecycle, capture = {
                 val service = runningService
                 val status = VpnRuntime.status.value
                 val active = service?.activeManagedProfile?.takeIf {
                     service.runtimeProfileId == profileId && service.boxService != null &&
-                        status.phase == ConnectionPhase.CONNECTED && status.activeProfileId == profileId
+                        (status.phase == ConnectionPhase.CONNECTED && status.activeProfileId == profileId ||
+                            status.phase == ConnectionPhase.STARTING && status.requestedProfileId == profileId)
                 }
                 val runtime = JSONObject().put("state", "stopped").put("applied_view_digest", "").put("error_code", "")
-                when {
-                    active != null -> runtime.put("state", "running").put("applied_view_digest", active.viewDigest)
-                    status.phase == ConnectionPhase.ERROR && status.requestedProfileId == profileId ->
-                        runtime.put("state", "error").put("error_code", "runtime_apply_failed")
+                val permissionView = runtimeReportPermissionViewDigest(active?.viewDigest, service?.runtimePermissionCurrent == true)
+                if (permissionView.isNotEmpty()) runtime.put("permission_view_digest", permissionView)
+                val state = runtimeReportState(active != null, service?.runtimeResourcesReady == true && permissionView.isNotEmpty(),
+                    status.phase == ConnectionPhase.ERROR && status.requestedProfileId == profileId)
+                runtime.put("state", state)
+                when (state) {
+                    "running" -> runtime.put("applied_view_digest", checkNotNull(active).viewDigest)
+                    "unknown" -> runtime.put("error_code", "runtime_apply_pending")
+                    "error" -> runtime.put("error_code", "runtime_apply_failed")
                 }
-                send(runtime)
+                runtime to Instant.now()
+            }) { snapshot ->
+            // The immutable observation keeps its capture time even if its
+            // signed report is sent after a stop or another accepted View.
+                send(snapshot.first, snapshot.second)
             }
+        }
 
         internal suspend fun acceptConfiguration(profileId: String, persist: () -> ManagedProfile): ManagedProfile =
-            configurationLifecycle.withLock {
-                withContext(NonCancellable) {
+            withContext(NonCancellable) {
+                data class AcceptedWork(val service: LoomVpnService?, val profile: ManagedProfile,
+                    val owner: RuntimeOwner?, val ready: Boolean, val sameExecution: Boolean, val reconnect: Boolean,
+                    val priorResources: Job?)
+                val work = configurationLifecycle.withLock {
                     val service = runningService
                     val appliesToRunning = service?.runtimeProfileId == profileId
                     val reconnect = service?.connectionWanted(profileId) == true
-                    val (accepted, stopped) = acceptAuthorityAndStopRuntime(persist) {
-                        if (appliesToRunning) {
-                            VpnRuntime.update(
-                                VpnStatus(
-                                    phase = ConnectionPhase.STARTING,
-                                    detail = "正在停止旧运行以应用认证配置…",
-                                    requestedProfileId = profileId,
-                                    alwaysOn = service!!.alwaysOnEnabled(),
-                                ),
-                            )
-                            service.closeResources()
-                        }
+                    val (accepted, cleanup) = acceptAuthorityAndStopRuntime(persist, canRetainExecution = { true }) {
+                        if (appliesToRunning) checkNotNull(service).closeResources()
                     }
-                    if (accepted.isFailure || stopped.isFailure) {
+                    if (accepted.isFailure || cleanup.isFailure) {
                         if (appliesToRunning || reconnect) {
-                            if (service!!.connectionWanted(profileId)) {
-                                service.desiredProfileId = ""
-                                VpnConnectionPreference(service).save(false, profileId)
-                            }
-                            val authority = if (accepted.isSuccess) "认证配置已保存" else "认证配置未完成保存"
-                            val failure = stopped.exceptionOrNull() ?: accepted.exceptionOrNull()
-                            VpnRuntime.update(
-                                VpnStatus(
-                                    phase = ConnectionPhase.ERROR,
-                                    detail = "$authority；运行已停止请求：${failure?.message ?: failure?.javaClass?.simpleName}",
-                                    requestedProfileId = profileId,
-                                    alwaysOn = service.alwaysOnEnabled(),
-                                ),
-                            )
+                            checkNotNull(service).desiredProfileId = ""
+                            VpnConnectionPreference(service).save(false, profileId)
+                            VpnRuntime.update(VpnStatus(phase = ConnectionPhase.ERROR, requestedProfileId = profileId,
+                                detail = "认证配置或运行清理未完成；运行已停止请求", alwaysOn = service.alwaysOnEnabled()))
                             EnrollmentManager.get(service).reportRuntimeOutcome(profileId)
-                            if (service.desiredProfileId.isBlank()) {
-                                service.stopForegroundCompat()
-                                service.stopSelf()
-                            }
+                            service.stopForegroundCompat()
+                            service.stopSelf()
                         }
-                        stopped.exceptionOrNull()?.let { Log.e(TAG, "previous runtime cleanup failed after authority write", it) }
-                    } else if (reconnect) {
-                        service!!.scope.launch { service.startTunnel(profileId) }
+                        cleanup.getOrThrow()
+                        accepted.getOrThrow()
                     }
-                    // A runtime cleanup error never rolls back or rejects accepted authority.
-                    accepted.getOrThrow()
+                    val profile = accepted.getOrThrow()
+                    val owner = service?.runtimeOwner(profileId)
+                    val ready = service?.runtimeResourcesReady == true
+                    val same = owner != null && profile.executionDigest.isNotEmpty() &&
+                        profile.executionDigest == owner.profile.executionDigest && service.runtimePermissionCurrent
+                    val priorResources = if (owner != null) service.resourceRetryJob else null
+                    if (owner != null) {
+                        service.resourceRetryRequest?.cancel()
+                        service.resourceRetryJob?.cancel()
+                        service.runtimePermissionCurrent = false
+                        service.runtimeResourcesReady = false
+                    }
+                    AcceptedWork(service, profile, owner, ready, same, reconnect, priorResources)
                 }
+                work.priorResources?.join()
+                val service = work.service
+                val owner = work.owner
+                if (service == null || owner == null) {
+                    if (service != null && work.reconnect) service.scope.launch { service.startTunnel(profileId) }
+                    return@withContext work.profile
+                }
+                // The native permission I/O and resource preparation never own
+                // the Android lifecycle lock. Stop can close this exact Box.
+                val result = runCatching {
+                    if (work.sameExecution) RuntimeAuthorizationResult(true, true, work.ready, owner.profile.config)
+                    else service.applyRuntimeAuthorization(owner, work.profile.config)
+                }.getOrNull() ?: RuntimeAuthorizationResult(false, false, false, "")
+                var retained = false
+                configurationLifecycle.withLock {
+                    if (!service.ownsRuntime(owner)) return@withLock
+                    if (!result.retainExecution) {
+                        // Only an unconfirmed permission or genuinely unsupported
+                        // facility requires the original safe replacement path.
+                        VpnRuntime.transform { it.copy(phase = ConnectionPhase.STARTING, detail = "正在安全应用当前认证配置…") }
+                        service.closeResources()
+                        if (work.reconnect) service.scope.launch { service.startTunnel(profileId) }
+                    } else {
+                        // Preserve the running profile's object identity for a
+                        // same-View frontier update; routing owns that reference.
+                        val next = if (work.sameExecution && work.profile.recordID == owner.profile.recordID) owner.profile
+                            else work.profile.copy(config = result.config)
+                        service.activeManagedProfile = next
+                        service.activeSourceConfig = work.profile.config
+                        service.runtimePermissionCurrent = true
+                        VpnRuntime.transform { it.copy(viewDigest = next.viewDigest, deviceName = next.deviceName,
+                            detail = "权限已确认；正在准备所需路径") }
+                        service.runtimeResourcesReady = work.sameExecution && work.ready &&
+                            work.profile.recordID == owner.profile.recordID
+                        retained = !service.runtimeResourcesReady
+                    }
+                }
+                // Route readback and pool I/O run in the VPN session after
+                // returning authority acceptance to the enrollment operation.
+                if (retained) service.retryRuntimeResources(profileId, result)
+                // Same-View resource retries remain independent of accepting
+                // signed authority; no failed resource can roll it back.
+                work.profile
             }
 
         private const val TAG = "LoomVpnService"
@@ -1148,10 +1413,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
     }
 }
 
-internal fun requiresDefaultRoute(hasAddress: Boolean, hasExplicitRoute: Boolean): Boolean =
-    hasAddress && !hasExplicitRoute
 
 internal fun vpnServiceRestartMode(desiredConnected: Boolean): Int =
     if (desiredConnected) android.app.Service.START_STICKY else android.app.Service.START_NOT_STICKY
 
 internal fun shouldOfferAppDisconnect(alwaysOn: Boolean): Boolean = !alwaysOn
+
+internal fun canReuseVpnRuntime(hasBox: Boolean, sameProfile: Boolean, hasManagedProfile: Boolean, phase: ConnectionPhase): Boolean =
+    hasBox && sameProfile && hasManagedProfile && phase in setOf(ConnectionPhase.STARTING, ConnectionPhase.CONNECTED)

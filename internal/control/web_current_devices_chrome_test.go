@@ -55,7 +55,7 @@ func TestWebChromeCurrentDevicesFollowSignedLifecycle(t *testing.T) {
 					}
 				}
 			}
-			snapshot := buildWebSnapshot(projection, true, true, true)
+			snapshot := testWebSnapshotWithIntent(projection, true, true, true)
 			body, err := json.Marshal(snapshot)
 			if err != nil {
 				t.Fatal(err)

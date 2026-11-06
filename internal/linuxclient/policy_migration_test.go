@@ -18,7 +18,7 @@ func TestPolicyPreferenceMigrationKeepsOriginalAndLaterChoiceOnRetry(t *testing.
 	if err := os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	pref := clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
+	pref := clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}
 	next, err := PreparePolicyMigration(original, pref, "demo-current", "sha256:"+strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
@@ -33,8 +33,9 @@ func TestPolicyPreferenceMigrationKeepsOriginalAndLaterChoiceOnRetry(t *testing.
 	if !bytes.Equal(original, saved) {
 		t.Fatal("historical preference bytes changed")
 	}
-	next.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-user-selected-policy"}}}
-	if err := atomicJSON(path, next); err != nil {
+	next.Observations = []clientmodel.Observation{{CandidateID: "demo-later-sample", Scope: "access", NetworkGeneration: next.NetworkGeneration,
+		Result: "available", Action: "https_request", Target: "https://demo.example/", ObservedAt: "2030-01-01T00:00:00Z", ValidUntil: "2030-01-01T00:01:00Z"}}
+	if err := SaveLocalState(path, next); err != nil {
 		t.Fatal(err)
 	}
 	reviewed, err := PreparePolicyMigration(original, pref, "demo-current", next.ObservationViewDigest)
@@ -45,8 +46,8 @@ func TestPolicyPreferenceMigrationKeepsOriginalAndLaterChoiceOnRetry(t *testing.
 		t.Fatal(err)
 	}
 	var current LocalState
-	if err := readStrict(path, 1<<20, &current); err != nil || current.Preference.Policy("demo-service") != "demo-user-selected-policy" {
-		t.Fatal("retry replaced a later user choice", err)
+	if err := readStrict(path, 1<<20, &current.observationCache); err != nil || len(current.Observations) != 1 || current.Observations[0].CandidateID != "demo-later-sample" {
+		t.Fatal("retry replaced a later cache update", err)
 	}
 	if err := CommitPolicyMigration(path, evidence, []byte("different original"), reviewed); err == nil {
 		t.Fatal("retry accepted unrelated evidence")

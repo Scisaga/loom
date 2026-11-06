@@ -3,13 +3,16 @@
 本目录是 Loom 的唯一设计入口，规定业务模型、协议、持久化、运行时和界面的统一语义；
 [实施状态](progress.md)记录正式入口验收历史，[产品交付对账](delivery-audit.md)归并当前结果和具体缺项。
 
-用户明确要求与现行模型确定目标行为，三端原型表达对应交互和视觉；已有实现、原生截图和历史验收
-用于核对有效能力、回归风险及实现差距，不反向限定目标。原型与模型的差异须在设计审查中明确修订。
+用户当前仍有效的明确要求决定目标，核心模型据此修订，三端原型表达对应交互和视觉；已有实现、
+原生截图和历史验收只用于核对有效能力、回归风险及迁移差距。不得把现状当成必须保留的设计，
+也不得把常见产品的业务假设补进本项目。工作顺序和判定依据见 [AGENTS.md](../AGENTS.md#需求决定目标现状只说明迁移起点)。
+用户纠正后应直接替换受影响的设计文字，旧代码和旧测试记为待改实现，不能反过来否定纠正。
 原型完成不表示功能已经实现，以下概览均描述目标能力，实际结果以[实施状态](progress.md)为准。
 
 WG 与 Hy2 必须可以独立承担传输，禁止为了复用权限代码把 Hy2 套在 WG 内，或让 WG 依赖 Hy2。
-当前源码及生产执行已完成原生传输替换，先前全局偏好版本的实际业务、控制事实与报告、全部 control 的页面及重启回读已按记录范围验证；原普通 WG 启用方案已被用户否决，不能继续部署。
-纠偏边界与尚未完成的替换见[传输实现纠偏](progress.md#传输实现纠偏)。
+先前全局偏好版本的生产业务、页面及重启验收属于历史记录，不能证明当前工作项的独立传输、
+逐段授权与运行更新已经闭环；原普通 WG 启用方案已被用户否决，不能继续部署。
+当前纠偏边界与尚未完成的替换见[传输实现纠偏](progress.md#传输实现纠偏)及[当前交付缺口](delivery-audit.md)。
 
 ## 功能概览
 
@@ -17,8 +20,8 @@ WG 与 Hy2 必须可以独立承担传输，禁止为了复用权限代码把 Hy
 |---|---|
 | 管理网络节点 | 同一节点组合承担 access、forward、internet_egress、control；单个与多个 control 使用同一治理规则，见[控制模型](core/control-model.md) |
 | 添加和管理设备 | 按职责通过二维码、SSH 或脚本交付邀请；同事务恢复加入，后续改权与身份替换分开，见[加入模型](core/enrollment-endpoint-model.md) |
-| 授予服务访问 | Service 定义目标，Policy 固定所属服务并可复用，设备获授可选策略集合，客户端按服务选择；共享修改与单设备替换分开，见[服务与策略](core/control-model.md#8-servicepolicy偏好与业务探测) |
-| 选择访问路径 | 每服务选择一条获授策略，策略内复用 Direct、一跳与同出口中继候选；一跳与同出口中继并存，实际选择与业务结果分别回读，见[客户端运行模型](clients/client-runtime-model.md) |
+| 授予服务访问 | 互联网 Service 保存预期访问服务的探测网址及“是否仅允许这些目标”开关；Policy 固定所属 Service，设备获授可选策略集合，见[当前业务基线](core/control-model.md#服务与策略的当前业务基线) |
+| 选择访问路径 | 客户端当前选择一条互联网 Policy，同时确定 Service；access 选入口，forward 在相同 Policy 和最终出口约束内继续选路，见[客户端运行模型](clients/client-runtime-model.md) |
 | 访问私有名称与局域网 | 精确 `.loom` DNS、固定网关和虚拟 IPv4 前缀；授权设备主动访问 LAN，见[DNS overlay](core/control-model.md#9-dns-overlay)与[共享局域网](core/control-model.md#10-共享局域网映射) |
 | 使用客户端 | Android 多配置与单 VPN；Windows Installed、Portable TUN、Portable Mixed；Linux 显式代理与隔离 access，见[Android](../clients/android/README.md)、[Windows](../clients/windows/README.md)及[Linux](operations/linux-client-install.md) |
 | 观察和维护网络 | 设备、拓扑、服务路径、策略、事件、成员、管理员和证书统一管理，见[Web 投影](clients/web-ui-projection.md)与[管理员访问](operations/admin-access.md) |
@@ -33,14 +36,17 @@ WG 与 Hy2 必须可以独立承担传输，禁止为了复用权限代码把 Hy
 节点可组合承担 `access`、`forward`、`internet_egress`、`control` 四项职责；不受管的目标地址不是节点。
 单个或多个 control 使用同一模型：任一有效 control 签发普通事实并以 CRDT 差量同步；control 成员表
 变化由旧成员多数签名。设备通过受限引导与私有认证通道加入、取得配置并报告。
-客户端按服务选择获授权策略，策略内的 Direct、一跳及中继复用同一候选模型；授权与真实可用性分开。Web 只投影认证状态和运行观测。
+客户端当前选择一条获授权的互联网 Policy，由它唯一确定所属 Service；LAN 保持独立授权。
+当前 Policy 内的 Direct、一跳及中继由真实观测优选，授权与真实可用性分开。Web 只投影认证状态和运行观测。
 `TransportResource` 可供多个接入会话和自动派生的中继段复用；中继图由有效节点职责与资源确定，
 不要求管理员配置节点对。Service/Policy 限定允许路径，真实网络与业务测量决定当前选择；新 access 不生成专属 WG 接口，
-首跳与中继分别保留稳定身份和真实观测。Service 定义访问目标，Policy 固定属于一个 Service，
-保存显式允许及路径规则，并可被多台节点复用。节点的 PolicyIDs 授权可选集合，同一服务可有多条；客户端按服务选择当前策略；
-同一服务在不同节点上可使用不同策略。未设置路径限制明确表示“不限”，未分配策略则没有该服务权限。
-共享策略在 Policies 管理；只改单节点时编辑它的可选集合，或复制策略后增加到集合；不替客户端决定当前使用的策略。共享 HTTPS 探测目标按
-策略所属 Service 与节点有效权限过滤，服务关系、ACL 和界面摘要均从同一授权投影。
+首跳与中继分别保留稳定身份和真实观测。互联网 Service 的网址用于测量预期业务，限制开关关闭时
+允许普通互联网，开启时才将这些目标投影为访问边界；不另设 Destinations 或 Probe 对象。
+Policy 固定属于一个 Service，保存允许及路径规则，并可被多台节点复用。PolicyIDs 是设备可选集合，
+与客户端当前唯一选择分开；选择 Policy 即选择 Service，不先给实际请求做国内/国外 Service 分类。
+未设置路径限制明确表示“不限”，未分配策略不授予业务权限。
+共享策略在 Policies 管理；只改单节点时编辑它的可选集合，或复制策略后增加到集合；不替客户端决定当前使用的策略。
+探测网址直接保存在 Service，相同测量按来源、规格及网络代复用；不从样本名称或结果制造地域规则或访问权限。
 LAN mapping 属于局域网 Service，Services 统一管理，节点详情按网关显示它提供的服务。
 精确 `.loom` DNS 及经 control 签发的局域网映射属于同一 `NetworkIntent`。
 离网管理员通过 SSH 转发访问指定 control 的回环 Web 入口；已接入设备通过网络 DNS 的

@@ -173,7 +173,7 @@ func TestWebChromeReaddUsesPermanentDeletionAndExactInvitationRetry(t *testing.T
 		t.Fatal("replacement failed to join through the real bootstrap transport")
 	}
 	view, err := server.deviceEnvelope("demo-readded-device")
-	if err != nil || view.View.DevicePublicKey != newClaim.DevicePublicKey || len(view.View.Routes) != 0 || view.View.RuntimeProfile == nil {
+	if err != nil || view.View.DevicePublicKey != newClaim.DevicePublicKey || len(testDeviceExecution(view.View).Routes) != 0 || testDeviceExecution(view.View).RuntimeProfile == nil {
 		t.Fatal("new identity did not obtain its deny-only runtime configuration", err)
 	}
 	if _, err := server.deviceEnvelope(invite.DeviceID); err == nil {

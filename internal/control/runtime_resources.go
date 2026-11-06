@@ -3,115 +3,10 @@ package control
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"sort"
-	"strings"
 )
-
-func oneHopCandidate(service Service, policy NetworkPolicy, resource TransportResource, records ...DNSRecord) (RouteCandidate, error) {
-	identity := map[string]any{"service_id": service.ID, "policy_id": policy.ID, "first_resource_id": resource.ID, "node_chain": []string{resource.OwnerNodeID}, "link_ids": []string{}, "final_exit": resource.OwnerNodeID}
-	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
-	if err != nil {
-		return RouteCandidate{}, err
-	}
-	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{resource}, "links": []NetworkLink{}}, service, records))
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, PolicyID: policy.ID, FirstResourceID: resource.ID, NodeChain: []string{resource.OwnerNodeID}, LinkIDs: []string{}, FinalExit: resource.OwnerNodeID}, err
-}
-
-func inboundCredentialOrder(value InboundCredential) string {
-	return strings.Join([]string{value.DeviceID, value.ServiceID, value.PolicyID, value.Candidate.ID, value.ResourceID, value.ReceiverNodeID, value.SenderID}, "\x00")
-}
-
-func InboundCredentialUser(value InboundCredential) (string, error) {
-	if err := value.Validate(); err != nil {
-		return "", err
-	}
-	return digestContractValue("loom-inbound-user-v3\x00", map[string]any{"device_id": value.DeviceID, "service_id": value.ServiceID, "policy_id": value.PolicyID, "candidate_id": value.Candidate.ID, "resource_id": value.ResourceID, "receiver_node_id": value.ReceiverNodeID, "sender_id": value.SenderID})
-}
-
-func InboundACLDigest(view DeviceView, resourceID string) (string, error) {
-	values := []any{}
-	for _, value := range view.InboundCredentials {
-		if value.ResourceID == resourceID {
-			values = append(values, value)
-		}
-	}
-	for _, value := range view.WireGuardPeers {
-		if value.ResourceID == resourceID {
-			values = append(values, value)
-		}
-	}
-	return digestContractValue("loom-inbound-acl-v3\x00", values)
-}
-
-// Private transport keys are the only inputs recovered from the signed
-// profile. Every nonsecret execution field is rebuilt from the certified View.
-func profileCredentials(view DeviceView) (map[string]string, error) {
-	result := map[string]string{}
-	if view.RuntimeProfile == nil {
-		return result, nil
-	}
-	var document struct {
-		Outbounds []struct {
-			Type     string `json:"type"`
-			Tag      string `json:"tag"`
-			Password string `json:"password"`
-		} `json:"outbounds"`
-		Endpoints []struct {
-			Type       string `json:"type"`
-			Tag        string `json:"tag"`
-			PrivateKey string `json:"private_key"`
-		} `json:"endpoints"`
-	}
-	if err := json.Unmarshal([]byte(view.RuntimeProfile.Config), &document); err != nil {
-		return nil, errors.New("runtime credential projection is invalid")
-	}
-	for _, outbound := range document.Outbounds {
-		if outbound.Type != "hysteria2" {
-			continue
-		}
-		if _, duplicate := result[outbound.Tag]; duplicate || ValidatePublicKey(outbound.Password) != nil {
-			return nil, errors.New("runtime credentials are duplicated or invalid")
-		}
-		result[outbound.Tag] = outbound.Password
-	}
-	for _, endpoint := range document.Endpoints {
-		if endpoint.Type != "wireguard" {
-			return nil, errors.New("runtime endpoint is unsupported")
-		}
-		if _, duplicate := result[endpoint.Tag]; duplicate {
-			return nil, errors.New("runtime sender keys are duplicated")
-		}
-
-		owned, hasOwned, err := ownedWireGuard(view.Resources, view.DeviceID)
-		if err != nil {
-			return nil, err
-		}
-		expectedTag := wireGuardSharedCredential
-		if hasOwned {
-			expectedTag = ResourceInboundTag(owned.ID)
-		}
-		if endpoint.Tag != expectedTag {
-			return nil, errors.New("runtime WG endpoint is not shared")
-		}
-		if _, duplicate := result[wireGuardSharedCredential]; duplicate {
-			return nil, errors.New("duplicate shared WG identity")
-		}
-		if hasOwned {
-			if endpoint.PrivateKey != "" {
-				return nil, errors.New("fixed WG private key must remain local")
-			}
-		} else {
-			if _, err := wireGuardAccessPrivate(endpoint.PrivateKey); err != nil {
-				return nil, err
-			}
-		}
-		result[wireGuardSharedCredential] = endpoint.PrivateKey
-	}
-	return result, nil
-}
 
 func sameContractValue(left, right any) bool {
 	a, err := CanonicalEncode(left)
@@ -120,348 +15,6 @@ func sameContractValue(left, right any) bool {
 	}
 	b, err := CanonicalEncode(right)
 	return err == nil && bytes.Equal(a, b)
-}
-
-func permissionPath(view DeviceView, permission InboundCredential) (transportPath, int, error) {
-	var service Service
-	var policy NetworkPolicy
-	for _, value := range view.Services {
-		if value.ID == permission.ServiceID {
-			service = value
-		}
-	}
-	for _, value := range view.Policies {
-		if value.ID == permission.PolicyID {
-			policy = value
-		}
-	}
-	if permission.Validate() != nil || policy.Action != "allow" || policy.ValidateForService(service) != nil || !sameContractValue(service.TargetMatchers(view.DNSRecords...), permission.AllowedTargets) {
-		return transportPath{}, 0, errors.New("inbound permission has no matching Service or Policy")
-	}
-	path, err := candidateTransportPath(view, permission.DeviceID, service, policy, permission.Candidate)
-	if err != nil {
-		return transportPath{}, 0, err
-	}
-	for i, resource := range path.hops {
-		if resource.ID != permission.ResourceID {
-			continue
-		}
-		want := pathPermission(path, i, permission.DeviceID, policy, service, permission.ExcludedTargets, view.DNSRecords...)
-		if want.SenderID != permission.SenderID || want.ReceiverNodeID != permission.ReceiverNodeID {
-			return transportPath{}, 0, errors.New("inbound permission skipped its exact predecessor")
-		}
-		return path, i, nil
-	}
-	return transportPath{}, 0, errors.New("inbound resource is outside the candidate")
-}
-
-func validateViewResources(view DeviceView) error {
-	resources := map[string]TransportResource{}
-	wgOwners := map[string]bool{}
-	for i, resource := range view.Resources {
-		if resource.Validate() != nil || validateCurrentTransportPayload(resource) != nil || (resource.Kind != "wireguard" && resource.Kind != "hysteria2") || i > 0 && view.Resources[i-1].ID >= resource.ID {
-			return errors.New("view resources are invalid or not uniquely sorted")
-		}
-		if resource.OwnerNodeID == view.DeviceID && !containsString(view.Responsibilities, "internet_egress") && !containsString(view.Responsibilities, "forward") {
-			return errors.New("owned resource has no serving responsibility")
-		}
-		if resource.Kind == "wireguard" {
-			if wgOwners[resource.OwnerNodeID] {
-				return errors.New("node has multiple WG resources; explicit consolidation required")
-			}
-			wgOwners[resource.OwnerNodeID] = true
-		}
-		resources[resource.ID] = resource
-	}
-	for i, link := range view.Links {
-		if i > 0 && view.Links[i-1].ID >= link.ID {
-			return errors.New("view Links are not uniquely sorted")
-		}
-		from, to, _, err := linkResources(link, resources)
-		if err != nil {
-			return err
-		}
-		derived, err := derivedNetworkLink(view.NetworkID, from, to)
-		if err != nil || !sameContractValue(link, derived) {
-			return errors.New("view Link differs from its deterministic resource projection")
-		}
-	}
-	policies := map[string]NetworkPolicy{}
-	for _, policy := range view.Policies {
-		policies[policy.ID] = policy
-	}
-	passwords := map[string]bool{}
-	for i, permission := range view.InboundCredentials {
-		resource, exists := resources[permission.ResourceID]
-		if !exists || permission.ReceiverNodeID != view.DeviceID || resource.OwnerNodeID != view.DeviceID || i > 0 && inboundCredentialOrder(view.InboundCredentials[i-1]) >= inboundCredentialOrder(permission) {
-			return errors.New("inbound permission has no uniquely ordered owned receiver")
-		}
-		path, index, err := permissionPath(view, permission)
-		if err != nil {
-			return err
-		}
-		if index == len(path.hops)-1 {
-			role := "internet_egress"
-			if permission.Candidate.Scope == "local_network:"+permission.ServiceID {
-				role = "forward"
-			}
-			if !containsString(view.Responsibilities, role) {
-				return errors.New("final receiver lacks its Service endpoint responsibility")
-			}
-		} else if !containsString(view.Responsibilities, "forward") {
-			return errors.New("intermediate receiver has no forwarding responsibility")
-		}
-		if resource.Kind == "hysteria2" {
-			if index != 0 || path.local || permission.SenderID != permission.DeviceID || ValidatePublicKey(permission.Credential) != nil {
-				return errors.New("Hy2 may only terminate a first-hop business session")
-			}
-			key := resource.ID + "\x00" + permission.Credential
-			if passwords[key] {
-				return errors.New("Hy2 resource has duplicated passwords")
-			}
-			passwords[key] = true
-		} else if permission.Credential != "" {
-			return errors.New("WireGuard permission cannot carry a proxy credential")
-		}
-	}
-	return validateWireGuardAccessPeers(view, resources, policies)
-}
-
-func projectViewResources(projection Projection, view *DeviceView) (map[string]string, error) {
-	services := executableServices(projection)
-	policies := map[string]NetworkPolicy{}
-	devices := map[string]DeviceAuthorization{}
-	for _, value := range projection.NetworkIntent.Policies {
-		policies[value.ID] = value
-	}
-	for _, value := range projection.DeviceAuthorizations {
-		devices[value.ID] = value
-	}
-	allResources := []TransportResource{}
-	resources := map[string]TransportResource{}
-	for _, resource := range projection.NetworkIntent.Resources {
-		if err := validateCurrentTransportPayload(resource); err != nil {
-			return nil, errors.New("current resources require explicit forward replacement before a new View can be issued")
-		}
-		owner, found := devices[resource.OwnerNodeID]
-		if !found || (!containsString(owner.Responsibilities, "internet_egress") && !containsString(owner.Responsibilities, "forward")) {
-			continue
-		}
-		if resource.Kind != "hysteria2" && resource.Kind != "wireguard" {
-			continue
-		}
-		if err := resource.Validate(); err != nil {
-			return nil, err
-		}
-		resources[resource.ID] = resource
-		allResources = append(allResources, resource)
-	}
-	links, err := DerivedNetworkLinks(projection)
-	if err != nil {
-		return nil, err
-	}
-	visibleResources := map[string]TransportResource{}
-	visibleLinks := map[string]NetworkLink{}
-	visibleServices := map[string]Service{}
-	visiblePolicies := map[string]NetworkPolicy{}
-	permissions := map[string]InboundCredential{}
-	peers := map[string]WireGuardAccessPeer{}
-	credentials := map[string]string{}
-	view.Routes = []RouteCandidate{}
-	for _, value := range view.Services {
-		visibleServices[value.ID] = value
-	}
-	for _, value := range view.Policies {
-		visiblePolicies[value.ID] = value
-	}
-	addLink := func(link NetworkLink) {
-		visibleLinks[link.ID] = link
-		visibleResources[link.FromResourceID] = resources[link.FromResourceID]
-		visibleResources[link.ResourceID] = resources[link.ResourceID]
-	}
-	addSender := func(sender string, resource TransportResource) error {
-		if view.DeviceID != sender && view.DeviceID != resource.OwnerNodeID {
-			return nil
-		}
-		private, peer, err := deriveWireGuardAccess(projection.NetworkID, devices[sender], resource, allResources...)
-		if err != nil {
-			return err
-		}
-
-		if fixed, found, err := ownedWireGuard(allResources, sender); err != nil {
-			return err
-		} else if found {
-			visibleResources[fixed.ID] = fixed
-		}
-		if view.DeviceID == sender {
-			if prior, found := credentials[wireGuardSharedCredential]; found && prior != private {
-				return errors.New("WG sender identity is ambiguous")
-			}
-			credentials[wireGuardSharedCredential] = private
-		}
-		if view.DeviceID == resource.OwnerNodeID {
-			peers[wireGuardPeerOrder(peer)] = peer
-		}
-		return nil
-	}
-	for _, resource := range allResources {
-		if resource.OwnerNodeID == view.DeviceID && (resource.Kind == "hysteria2" && !resource.LinkOnly || resource.Kind == "wireguard" && resource.AccessEnabled) {
-			visibleResources[resource.ID] = resource
-		}
-	}
-	for _, link := range links {
-		if link.FromNodeID == view.DeviceID || link.ToNodeID == view.DeviceID {
-			addLink(link)
-			if err := addSender(link.FromNodeID, resources[link.ResourceID]); err != nil {
-				return nil, err
-			}
-		}
-	}
-	for _, source := range projection.DeviceAuthorizations {
-		if !containsString(source.Responsibilities, "access") {
-			continue
-		}
-		for _, policyID := range source.PolicyIDs {
-			policy, assigned := policies[policyID]
-			service, present := services[policy.ServiceID]
-			if !assigned || !present || policy.Action != "allow" || policy.ValidateForService(service) != nil {
-				continue
-			}
-			if source.ID == view.DeviceID {
-				exits := []string{}
-				if policy.permitsDirect() {
-					exits = append(exits, "direct")
-				}
-				if containsString(source.Responsibilities, "internet_egress") && policy.permitsLocalEgress(source.ID) {
-					exits = append(exits, source.ID)
-				}
-				if service.LocalNetwork != nil && policy.permitsEndpoint(service, source.ID) && policy.EntryScope.Allows(source.ID) && containsString(source.Responsibilities, "forward") {
-					exits = append(exits, source.ID)
-				}
-				for _, exit := range exits {
-					candidate, err := localCandidate(service, policy, exit, view.DNSRecords...)
-					if err != nil {
-						return nil, err
-					}
-					view.Routes = append(view.Routes, candidate)
-				}
-			}
-			paths, err := transportPaths(source.ID, containsString(source.Responsibilities, "forward"), service, policy, allResources, links, projectDNSRecords(projection.NetworkIntent.DNSRecords)...)
-			if err != nil {
-				return nil, err
-			}
-			excluded := []ServiceMatcher{}
-			for _, otherID := range source.PolicyIDs {
-				otherPolicy, ok := policies[otherID]
-				otherService, exists := services[otherPolicy.ServiceID]
-				if ok && exists && otherService.ID != service.ID {
-					excluded = append(excluded, otherService.TargetMatchers()...)
-				}
-			}
-			sort.Slice(excluded, func(i, j int) bool { return serviceMatcherLess(excluded[i], excluded[j]) })
-			unique := excluded[:0]
-			for _, matcher := range excluded {
-				if len(unique) == 0 || unique[len(unique)-1] != matcher {
-					unique = append(unique, matcher)
-				}
-			}
-			for _, path := range paths {
-				endpointRole := "internet_egress"
-				if service.Kind == "local_network" {
-					endpointRole = "forward"
-				}
-				if !containsString(devices[path.candidate.FinalExit].Responsibilities, endpointRole) {
-					continue
-				}
-				valid := true
-				for _, node := range path.candidate.NodeChain[:len(path.candidate.NodeChain)-1] {
-					valid = valid && containsString(devices[node].Responsibilities, "forward")
-				}
-				if !valid {
-					continue
-				}
-				visible := source.ID == view.DeviceID
-				for _, hop := range path.hops {
-					visible = visible || hop.OwnerNodeID == view.DeviceID
-				}
-				if !visible {
-					continue
-				}
-				if source.ID == view.DeviceID {
-					view.Routes = append(view.Routes, path.candidate)
-				}
-				for _, hop := range path.hops {
-					visibleResources[hop.ID] = hop
-				}
-				for _, link := range path.links {
-					addLink(link)
-				}
-				for index, resource := range path.hops {
-					permission := pathPermission(path, index, source.ID, policy, service, unique, view.DNSRecords...)
-					if resource.Kind == "wireguard" {
-						if err := addSender(permission.SenderID, resource); err != nil {
-							return nil, err
-						}
-					} else if source.ID == view.DeviceID || resource.OwnerNodeID == view.DeviceID {
-						auth, err := digestContractValue("loom-resource-auth-v3\x00", resource.Authentication)
-						if err != nil {
-							return nil, err
-						}
-						root, err := base64.RawURLEncoding.DecodeString(source.RuntimeKey)
-						if err != nil {
-							return nil, errors.New("invalid credential root")
-						}
-						credential, err := DeriveServiceCredential(root, ServiceCredentialBinding{NetworkID: projection.NetworkID, DeviceID: source.ID, ServiceID: service.ID, PolicyID: policy.ID, ResourceID: resource.ID, ResourceAuthDigest: auth, ReceiverNodeID: resource.OwnerNodeID, Purpose: "service-auth", CandidateID: path.candidate.ID, SenderID: source.ID})
-						clear(root)
-						if err != nil {
-							return nil, err
-						}
-						permission.Credential = credential
-						if source.ID == view.DeviceID {
-							credentials[path.candidate.ID] = credential
-						}
-					}
-					if resource.OwnerNodeID == view.DeviceID {
-						permissions[inboundCredentialOrder(permission)] = permission
-						visibleServices[service.ID] = service
-						visiblePolicies[policy.ID] = policy
-					}
-				}
-			}
-		}
-	}
-	view.Resources, view.Links, view.Services, view.Policies, view.InboundCredentials = []TransportResource{}, []NetworkLink{}, []Service{}, []NetworkPolicy{}, []InboundCredential{}
-	view.WireGuardPeers = nil
-	for _, value := range peers {
-		view.WireGuardPeers = append(view.WireGuardPeers, value)
-	}
-	for _, value := range visibleResources {
-		view.Resources = append(view.Resources, value)
-	}
-	for _, value := range visibleLinks {
-		view.Links = append(view.Links, value)
-	}
-	for _, value := range visibleServices {
-		view.Services = append(view.Services, value)
-	}
-	for _, value := range visiblePolicies {
-		view.Policies = append(view.Policies, value)
-	}
-	for _, value := range permissions {
-		view.InboundCredentials = append(view.InboundCredentials, value)
-	}
-	sort.Slice(view.WireGuardPeers, func(i, j int) bool {
-		return wireGuardPeerOrder(view.WireGuardPeers[i]) < wireGuardPeerOrder(view.WireGuardPeers[j])
-	})
-	sort.Slice(view.Resources, func(i, j int) bool { return view.Resources[i].ID < view.Resources[j].ID })
-	sort.Slice(view.Links, func(i, j int) bool { return view.Links[i].ID < view.Links[j].ID })
-	sort.Slice(view.Services, func(i, j int) bool { return view.Services[i].ID < view.Services[j].ID })
-	sort.Slice(view.Policies, func(i, j int) bool { return view.Policies[i].ID < view.Policies[j].ID })
-	sort.Slice(view.Routes, func(i, j int) bool { return view.Routes[i].ID < view.Routes[j].ID })
-	sort.Slice(view.InboundCredentials, func(i, j int) bool {
-		return inboundCredentialOrder(view.InboundCredentials[i]) < inboundCredentialOrder(view.InboundCredentials[j])
-	})
-	return credentials, nil
 }
 
 func HY2TrustPEM(resource TransportResource) ([]string, error) {
@@ -486,5 +39,154 @@ func hy2Outbound(candidate RouteCandidate, resource TransportResource, credentia
 	}
 	return map[string]any{"type": "hysteria2", "tag": candidate.ID, "server": resource.DialHost, "server_port": resource.DialPort,
 		"password": credential, "tls": map[string]any{"enabled": true, "server_name": *resource.Authentication.ServerName,
-			"certificate": certificates, "insecure": false, "disable_sni": false}}, nil
+			"certificate": certificates}}, nil
+}
+
+// InboundACLDigest binds stable permissions, not transient recommendations or
+// unrestricted probe URLs. It is a runtime readback, never another authority.
+func InboundACLDigest(view DeviceView, resourceID string) (string, error) {
+	credentials := []TransportCredential{}
+	for _, value := range view.TransportCredentials {
+		if value.ResourceID == resourceID {
+			credentials = append(credentials, value)
+		}
+	}
+	services := []Service{}
+	for _, service := range view.Services {
+		services = append(services, executionService(service))
+	}
+	return digestContractValue("loom-inbound-acl-v3\x00", map[string]any{"resource_id": resourceID, "nodes": executionNodes(view), "self_responsibilities": view.Responsibilities, "self_policy_ids": view.PolicyIDs, "services": services, "policies": view.Policies, "credentials": credentials})
+}
+func projectViewResources(projection Projection, view *DeviceView) error {
+	devices := map[string]DeviceAuthorization{}
+	for _, device := range projection.DeviceAuthorizations {
+		devices[device.ID] = device
+	}
+	services := executableServices(projection)
+	resources := []TransportResource{}
+	for _, resource := range projection.NetworkIntent.Resources {
+		if validateCurrentTransportPayload(resource) != nil {
+			return errors.New("resource requires explicit forward replacement")
+		}
+		owner, found := devices[resource.OwnerNodeID]
+		if !found || !containsString(owner.Responsibilities, "forward") && !containsString(owner.Responsibilities, "internet_egress") {
+			continue
+		}
+		if resource.Validate() != nil {
+			return errors.New("invalid current resource")
+		}
+		if resource.Kind == "wireguard" && owner.WireGuardPublicKey != *resource.Authentication.PublicKey {
+			return errors.New("WG resource requires its registered owner identity")
+		}
+		resources = append(resources, resource)
+	}
+	sort.Slice(resources, func(i, j int) bool { return resources[i].ID < resources[j].ID })
+	serving := containsString(view.Responsibilities, "forward") || containsString(view.Responsibilities, "internet_egress")
+	relevant := map[string]bool{}
+	usedServices := map[string]bool{}
+	// Qualification comes from current device responsibilities, never names.
+	for _, policy := range projection.NetworkIntent.Policies {
+		service, found := services[policy.ServiceID]
+		if !found || policy.ValidateForService(service) != nil {
+			continue
+		}
+		final := policy.Action == "allow" && (service.Kind == "internet" && containsString(view.Responsibilities, "internet_egress") || service.Kind == "local_network" && containsString(view.Responsibilities, "forward")) && policy.permitsEndpoint(service, view.DeviceID)
+		if containsString(view.PolicyIDs, policy.ID) || serving && policy.Action == "allow" && (final || containsString(view.Responsibilities, "forward") && (policy.EntryScope.Allows(view.DeviceID) || policy.RelayScope.Allows(view.DeviceID))) {
+			relevant[policy.ID] = true
+			usedServices[service.ID] = true
+		}
+	}
+	view.Services = []Service{}
+	view.Policies = []NetworkPolicy{}
+	view.Resources = []TransportResource{}
+	view.Nodes = []ViewNode{}
+	view.TransportCredentials = []TransportCredential{}
+	for _, service := range projection.NetworkIntent.Services {
+		if usedServices[service.ID] {
+			view.Services = append(view.Services, service)
+		}
+	}
+	for _, policy := range projection.NetworkIntent.Policies {
+		if relevant[policy.ID] {
+			view.Policies = append(view.Policies, policy)
+		}
+	}
+	sort.Slice(view.Services, func(i, j int) bool { return view.Services[i].ID < view.Services[j].ID })
+	sort.Slice(view.Policies, func(i, j int) bool { return view.Policies[i].ID < view.Policies[j].ID })
+	if containsString(view.Responsibilities, "access") || serving {
+		view.Resources = resources
+	}
+	var wg *TransportResource
+	for i := range view.Resources {
+		if view.Resources[i].Kind == "wireguard" {
+			wg = &view.Resources[i]
+			break
+		}
+	}
+	for _, device := range projection.DeviceAuthorizations {
+		ids := []string{}
+		for _, id := range device.PolicyIDs {
+			if relevant[id] {
+				ids = append(ids, id)
+			}
+		}
+		visible := device.ID == view.DeviceID || containsString(device.Responsibilities, "forward") || containsString(device.Responsibilities, "internet_egress") || serving && containsString(device.Responsibilities, "access") && len(ids) > 0
+		if !visible {
+			continue
+		}
+		node := ViewNode{WireGuardPublicKey: device.WireGuardPublicKey, DNSServers: append([]string(nil), device.DNSServers...), ID: device.ID, Responsibilities: append([]string{}, device.Responsibilities...), PolicyIDs: ids}
+		for _, member := range projection.Config.Members {
+			if member.NodeID == device.ID && !containsString(node.Responsibilities, "control") {
+				node.Responsibilities = append(node.Responsibilities, "control")
+			}
+		}
+		sort.Strings(node.Responsibilities)
+		if wg != nil && device.ID == view.DeviceID && device.WireGuardPublicKey != "" {
+			private, _, err := deriveWireGuardAccess(view.NetworkID, device, *wg)
+			if err != nil {
+				return err
+			}
+			view.WireGuardPrivateKey = private
+		}
+		if device.ID != view.DeviceID {
+			view.Nodes = append(view.Nodes, node)
+		}
+	}
+	sort.Slice(view.Nodes, func(i, j int) bool { return view.Nodes[i].ID < view.Nodes[j].ID })
+	facts, err := executionFacts(*view)
+	if err != nil {
+		return err
+	}
+	for _, resource := range view.Resources {
+		if resource.Kind != "hysteria2" {
+			continue
+		}
+		auth, err := digestContractValue("loom-resource-auth-v3\x00", resource.Authentication)
+		if err != nil {
+			return err
+		}
+		for id, node := range viewNodes(*view) {
+			if id != view.DeviceID && resource.OwnerNodeID != view.DeviceID || !senderMayAuthenticate(facts, node, resource) {
+				continue
+			}
+			source, found := devices[id]
+			if !found {
+				return errors.New("transport sender lacks its current identity material")
+			}
+			key, err := base64.RawURLEncoding.DecodeString(source.RuntimeKey)
+			if err != nil {
+				return err
+			}
+			credential, err := DeriveTransportCredential(key, TransportCredentialBinding{NetworkID: view.NetworkID, SenderID: id, ResourceID: resource.ID, ResourceAuthDigest: auth, ReceiverNodeID: resource.OwnerNodeID, Purpose: "transport-auth"})
+			clear(key)
+			if err != nil {
+				return err
+			}
+			view.TransportCredentials = append(view.TransportCredentials, TransportCredential{ResourceID: resource.ID, SenderID: id, Credential: credential})
+		}
+	}
+	sort.Slice(view.TransportCredentials, func(i, j int) bool {
+		return transportCredentialOrder(view.TransportCredentials[i]) < transportCredentialOrder(view.TransportCredentials[j])
+	})
+	return nil
 }

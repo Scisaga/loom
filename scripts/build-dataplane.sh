@@ -10,8 +10,8 @@ fi
 declare -A requested_targets=()
 for target in "$@"; do
     case "$target" in
-        linux/amd64|linux/arm64) ;;
-        *) echo "the current data-plane revision is approved for Linux targets only" >&2; exit 1 ;;
+        linux/amd64|linux/arm64|windows/amd64|windows/arm64) ;;
+        *) echo "unsupported data-plane target" >&2; exit 1 ;;
     esac
     if [[ ${requested_targets[$target]+present} ]]; then
         echo "duplicate data-plane build target" >&2
@@ -27,7 +27,9 @@ tags="with_gvisor,with_quic,with_wireguard,with_ech,with_utls,with_clash_api,htt
 build_pids=()
 artifacts=()
 for target in "$@"; do
-    artifacts+=("sing-box-${target%/*}-${target#*/}")
+    artifact="sing-box-${target%/*}-${target#*/}"
+    if [[ ${target%/*} == windows ]]; then artifact+=".exe"; fi
+    artifacts+=("$artifact")
     (
     target_os=${target%/*}
     target_arch=${target#*/}
@@ -35,7 +37,7 @@ for target in "$@"; do
     if [[ "$target_os" == windows ]]; then extension=".exe"; fi
     env GOWORK=off GOTOOLCHAIN=go1.27.0 CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" \
         go -C "$source_dir" build -trimpath -buildvcs=false -tags "$tags" \
-        -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.11.4-loom.15 -s -w -buildid=' \
+        -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.11.4-loom.26 -s -w -buildid=' \
         -o "$output_dir/sing-box-$target_os-$target_arch$extension" ./cmd/sing-box
     echo "built data plane $target"
     ) &

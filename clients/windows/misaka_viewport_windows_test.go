@@ -8,8 +8,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"golang.org/x/sys/windows"
 	"loom/internal/clientmodel"
+
+	"golang.org/x/sys/windows"
 )
 
 // §7.2：只使用合成窗口和演示路径，验证原生视口、键盘和组合框的实际行为。
@@ -132,7 +133,7 @@ func TestGUIMisakaViewportComboCentersAndOpensMultipleRows(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	for index := 0; index < 7; index++ {
 		name := fmt.Sprintf("demo-exit-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "境外 API / " + name, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "境外 API / " + name, Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}})
 	}
 	app.routeSelected = 1
 	app.renderControls()
@@ -277,7 +278,7 @@ func TestGUIMisakaViewportPassesCoveredResizeEdgesToRoot(t *testing.T) {
 
 func TestGUIMisakaViewportFixedTUNActualHintCapture(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "国内站点 / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
+	app.routeOptions = append(app.routeOptions, portableRouteOption{Label: "国内站点 / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}})
 	app.routeSelected = 1
 	app.paths = app.paths[:1]
 	app.detail = "系统 TUN 已启用；本地 HTTP/SOCKS 代理：127.0.0.1:1080。"

@@ -40,8 +40,8 @@ func TestSnapshotColdReadDoesNotMaterializeDeviceConfiguration(t *testing.T) {
 		for _, device := range snapshot.Devices {
 			found = found || device.ID == invite.DeviceID && device.Authorized
 		}
-		if !found || len(snapshot.Paths) == 0 {
-			t.Fatal("cold snapshot lost the current authorized path projection")
+		if !found || len(snapshot.Paths) != 0 {
+			t.Fatal("pending device lost authorization or acquired an unreported Policy selection")
 		}
 	}
 	read()
@@ -53,8 +53,8 @@ func TestSnapshotColdReadDoesNotMaterializeDeviceConfiguration(t *testing.T) {
 		materialized = materialized || len(item.Value.(*deviceConfigEntry).value.body) != 0
 	}
 	cache.mu.Unlock()
-	if entries == 0 || materialized {
-		t.Fatal("reading the UI did not retain a view-only computation")
+	if entries != 0 || materialized {
+		t.Fatal("reading a pending device generated private configuration")
 	}
 
 	response := enrollmentHTTP(t, server, "/device/config", map[string]any{"schema": 3}, tunnelIdentity{Mode: "device", DeviceID: invite.DeviceID})

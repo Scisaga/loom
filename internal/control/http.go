@@ -35,6 +35,7 @@ var staticFiles embed.FS
 const controlHTTPBodyLimit = 8 << 20
 
 type Server struct {
+	measurements  []measurementSnapshot
 	Runtime       *Runtime
 	Channel       *PrivateChannel
 	Config        NodeConfig
@@ -355,7 +356,7 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 	authority := server.Runtime.Authority
 	authority.mu.RLock()
 	projection := cloneAuthorityProjection(authority.projection)
-	input := deviceConfigInputs{authority.deviceConfigRevision, authority.projection, ControlProof{Genesis: authority.genesis, Successors: authority.certificates}}
+	input := deviceConfigInputs{authority.deviceConfigRevision, authority.projection, ControlProof{Genesis: authority.genesis, Successors: authority.certificates}, authority.deviceConfigChanged}
 	authority.mu.RUnlock()
 	var currentRelease ReleaseSet
 	var releaseErr error
@@ -427,12 +428,35 @@ func (server *Server) snapshotValue(r *http.Request) (WebSnapshot, error) {
 		}
 		projectWebLastReportTimes(&snapshot, latest, projection)
 		reports := []DeviceReport{}
+		queries := []reportMeasurementQuery{}
 		for _, report := range latest {
 			if verifyCurrentReportUsingDigest(report, projection, viewForDigest) == nil {
 				reports = append(reports, report)
+				view, _, err := viewForDigest(report.DeviceID)
+				if err != nil {
+					return WebSnapshot{}, err
+				}
+				items, err := ownMeasurementQueries(view, report)
+				if err != nil {
+					return WebSnapshot{}, err
+				}
+				queries = append(queries, items...)
 			}
 		}
-		projectWebObservations(&snapshot, reports, server.now())
+		samples, err := server.Runtime.Reports.latestMeasurements(r.Context(), projection.NetworkID, queries, server.now())
+		if err != nil {
+			return WebSnapshot{}, err
+		}
+		measurements := map[string][]WebObservation{}
+		displayUntil := map[string]int64{}
+		for _, report := range reports {
+			_, displayUntil[report.DeviceID] = webReportTime(report, server.now())
+		}
+		for _, sample := range samples {
+			measurements[sample.DeviceID] = append(measurements[sample.DeviceID], WebObservation{Observation: sample.Observation, CurrentUntil: min(sample.CurrentUntil, displayUntil[sample.DeviceID])})
+		}
+		snapshot.Paths = projectWebPathsUsing(projection, viewFor, reports...)
+		projectWebObservations(&snapshot, reports, measurements, server.now())
 	}
 	if server.Releases != nil {
 		if releaseErr != nil {

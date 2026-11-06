@@ -1,8 +1,9 @@
 # Loom Linux 客户端安装
 
 本文面向 `linux/amd64` 的原生安装与 `linux/arm64` 的制品核验。Linux 与 Android 复用
-[客户端运行时最小模型](../clients/client-runtime-model.md)：每服务所选策略内的 Direct、一跳和中继使用同一候选模型；策略选择保存在
-`Preference.services`，实际路径来自 sing-box selector 回读，授权、保存的选择与实际应用分别回读。
+[客户端运行时最小模型](../clients/client-runtime-model.md)：当前选择一条互联网 Policy，Service 随之确定，
+在该策略内持续选路。旧 Preference.services 与按服务 CLI 是待迁移实现；不能把它们当成目标要求。
+新偏好及逐跳执行的字段级替换尚未完成，以下既有命令不能代替新模型已接线、运行或验收的证据。
 
 > **执行边界：** access TUN 只在专用 network namespace 中运行。默认开发入口仍为 Mixed。
 > installer 显式接收 `--capture mixed` 或 `--capture tun`；后者由同一 agent 创建隔离数据面，应用须从
@@ -163,7 +164,7 @@ installer 在激活前拒绝尚存的旧权威路径、迁移 overlay、旧 unit
    systemd：四个旧 unit 不再运行、启用或可加载，旧源路径和 overlay 不再是正常入口。
    唯一正式 unit 不引用这些路径；再次重启并回读纯认证运行配置、真实业务和签名报告。
 
-installer 不自动处理上述旧部署；本轮人工指定精确制品的正式替换已完成对应归档、删旧及回读。
+installer 不自动处理上述旧部署；历史人工指定精确制品的替换按当次证据记录归档、删旧及回读，不代表本轮文档任务获准再次执行。
 归档失败、摘要不符、旧入口仍可加载
 或新路径尚不能承担原业务时，保留证据并报告具体阻碍，不以 `exact=true` 单项结果宣称完成。
 清理不 flush 共享 route/rule/firewall，也不重新启用初始 namespace access TUN。
@@ -171,14 +172,17 @@ installer 不自动处理上述旧部署；本轮人工指定精确制品的正�
 
 ## 正式运行与回读
 
-以下描述正式运行的回读要求。本轮已启用显式 Mixed/service 运行方式，精确制品及现场结果保存在受保护部署证据。
+以下描述正式运行的回读要求。历史已验收的 Mixed/service 方式及精确制品以受保护证据为准，当前部署状态须重新读回。
 
 开发 CLI 默认 Mixed，也可显式选择 `loom client preflight -capture mixed` 和 `loom client run -capture mixed`。
 有 access 职责时，该入口把唯一受管 TUN 输入派生为回环 HTTP/SOCKS listener，保留原输入
 标签、路由匹配、selector 与候选身份。Mixed capture 本身不创建 TUN、路由或 DNS 接管；
-节点另有认证 WG 中继资源时，由 HostAdapter 安装其精确接口、peer、地址与主机路由，并持久记录本 generation
-的可删除所有权凭据。hybrid 可同时消费 Hy2 与 WG 资源，纯服务节点不启动这份 access listener。业务请求必须显式使用本机代理，普通宿主流量
-不进入它；单 scope、单认证 HTTPS 目标及认证 DNS 已明确时，探测也必须经过同一 SOCKS 入口。
+节点另有认证 WG 中继资源时，共享用户态 endpoint 按当前权限与有限工作集消费 peer 和来源绑定，
+不从业务资源创建宿主接口、地址、管理返回路由或任意宿主管理权限。hybrid 可同时消费 Hy2 与 WG 资源，
+纯服务节点不启动这份 access listener。业务请求必须显式使用本机代理，普通宿主流量
+不进入它。access 的完整路径校准使用当前 Policy 下的候选诊断入口；出口网址测量由本节点
+worker 经[受信本机物理 I/O](../core/current-contract.md#本机出口测量的物理-io)执行，保留认证
+DNS 和平台 underlay 绑定。两者均受节点统一预算限制，不能由探测样本缩减普通互联网权限。
 端口占用时不得停止其他进程来完成验证。该方式不抵扣隔离 TUN 或自动安装包验收；正式部署仍逐项验证宿主不变量。
 
 承载一跳 Hy2 的节点额外传入 `-resource-inputs /path/to/demo-resource-inputs.json`，文件形状与
@@ -210,31 +214,30 @@ sudo loom client exec -- curl --fail https://demo-service.example/
 
 `exec` 核对服务端的 UID 与精确 Loom 制品；服务端核对调用 UID 及其持有的独立应用树。应用使用单独 PID/mount namespace，
 仅在其中设置 DNS，并在执行前清空 capability。正常停止、数据面崩溃、agent 或 exec 退出都会
-终止所拥有的应用树；原应用不跨 generation 自动重启。新授权生效前先结束旧应用与旧数据面，
+终止所拥有的应用树；原应用不跨 generation 自动重启。完整权限确认后，单纯发送资源和 forward 图变化在同实例内应用，不为此结束整个应用树；
+真实捕获设施变化确需更换 generation 时，先完成旧应用与旧数据面的精确停止。
 失败保留已接受身份、授权和发布 floor。数据面停止后 agent 可保留认证修复通道，不能报告 running。
 `config.json.resolv.conf` 是可删除重建的本代 DNS 投影，清理只移除 inode 核对一致的文件；
 它不是宿主 resolver 或新的配置权威。systemd 使用既有 RuntimeDirectory 清理崩溃后的临时文件。
 
-WG 新接口先以不可碰撞的临时名称创建，取得 ifindex 并设置所有权 alias 后才改成资源规定的名称；
-不假定创建命令会保留 alias。`config.json.wg-ownership` 只保存本 generation 的清理凭据，不是网络权威。
-正常退出与 `client cleanup` 均按名称、ifindex、alias、peer 和精确路由 compare-and-delete；
-缺少所有权、对象已被替换或清理失败时保持 failed/inactive，不重启反复施加。SIGKILL 后由 systemd
-终止同 cgroup 的子进程，再执行相同清理；未知接口、共享 route/rule 和宿主 resolver 不在清理范围。
+现行 WG 业务投影不创建宿主 TUN 或管理路由；原身份、固定私钥、本机监听端口与 peer 来源
+校验继续成立。已有 underlay SSH／WG／LAN、认证 Endpoint、DNS 与代理不得因新增或撤下
+业务资源被改写。历史 `config.json.wg-ownership` 仅保存旧 generation 的清理凭据；
+正常退出与 `client cleanup` 仍按名称、ifindex、alias、peer 和精确路由 compare-and-delete。
+缺少所有权、对象已被替换或清理失败时保持 failed/inactive，不重启反复施加。SIGKILL 后由
+systemd 终止同 cgroup 的子进程，再执行相同精确清理；未知接口、共享 route/rule 和宿主
+resolver 不在清理范围。历史接口初始化、改名与地址恢复事故记录不作为当前业务启动步骤。
 
 `loom-client.service` 每次启动都从安装时指定的 state（默认 `/var/lib/loom-device/state.json`）重新验证成员证明、事实前沿与完整 LKG，
 再将 RuntimeProfile 投影到
 `/run/loom-client/config.json` 并启动同一 release 内的 sing-box。控制面暂时离线时继续使用 LKG；
 不存在公开 config、旧 pull 或 v1 fallback。
 
-偏好通过唯一 CLI 入口修改：
-
-```bash
-sudo loom client policy list
-sudo loom client policy select demo-service demo-policy
-```
-
-命令只持久化 `Preference` 并重载同一 service。service 使用共享纯核心选择候选、应用 selector 并读回；
-随后执行一次真实 TCP/TLS 与 UDP/DNS 业务检查。首次失败时只尝试一次同一所选策略内的必要 fallback，不改选其他策略。
+当前目标是选择一条互联网 Policy，并由它确定 Service。现有 client policy list 可用于只读
+核对旧实现的可选集合与偏好；旧的 client policy select <ServiceID> <PolicyID> 是待替换写入口，
+不能继续把其参数结构当作新模型要求，也不在这里提供它作为新模型的操作示例。
+新选择入口、偏好 wire 和前向替换未完成前，不能宣称当前目标已由 CLI 接通。
+运行在同一 Policy 内先使用可用路径，再持续测量和优化；没有固定一次失败后只试一次的业务预算。
 
 实际 Selection、当前网络代和有限 Observation 从正常入口回读：
 

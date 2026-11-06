@@ -30,7 +30,7 @@ func TestWebChromeOverviewSharesProgressiveTrafficAndRecoversReads(t *testing.T)
 	var revoked atomic.Bool
 	var reportVersion atomic.Int64
 	projection := func() WebSnapshot {
-		value := buildWebSnapshot(p, true, true, true)
+		value := testWebSnapshotWithIntent(p, true, true, true)
 		for i := range value.Devices {
 			value.Devices[i].LastReportAt = now.Add(time.Duration(reportVersion.Load()) * time.Second).Format(time.RFC3339Nano)
 			if revoked.Load() && value.Devices[i].ID == "demo-entry" {

@@ -4,16 +4,9 @@ import (
 	"errors"
 	"net/netip"
 	"sort"
-)
 
-// Each hop terminates its transport and receives business TCP/UDP. A local
-// hybrid starts at its next WG receiver without dialing its own listener.
-type transportPath struct {
-	candidate RouteCandidate
-	hops      []TransportResource
-	links     []NetworkLink
-	local     bool
-}
+	"loom/protocol"
+)
 
 func WGResourceAddress(resource TransportResource) (netip.Addr, error) {
 	if resource.Validate() != nil || resource.Kind != "wireguard" || len(*resource.Authentication.LocalAddresses) != 1 {
@@ -25,268 +18,286 @@ func WGResourceAddress(resource TransportResource) (netip.Addr, error) {
 	}
 	return prefix.Addr(), nil
 }
-
 func linkResources(link NetworkLink, resources map[string]TransportResource) (TransportResource, TransportResource, TransportResource, error) {
 	from, to := resources[link.FromResourceID], resources[link.ResourceID]
-	a, ea := WGResourceAddress(from)
-	b, eb := WGResourceAddress(to)
-	dns, ed := WireGuardAccessAddress(to, "")
-	if link.Validate() != nil || link.ProbeTarget.Action != "wireguard_dns" || ea != nil || eb != nil || ed != nil || a == b || a.BitLen() != b.BitLen() ||
-		from.AccessHY2ResourceID != "" || from.OwnerNodeID != link.FromNodeID || to.OwnerNodeID != link.ToNodeID || link.ProbeTarget.ResourceID != to.ID || link.ProbeTarget.Host != dns.String() {
-		return from, to, to, errors.New("Link does not bind two independent WG resources and execution DNS")
+	if link.Validate() != nil || to.ID == "" || to.OwnerNodeID != link.ToNodeID || to.Validate() != nil || link.ProbeTarget.ResourceID != to.ID || link.FromResourceID != "" && (from.ID == "" || from.OwnerNodeID != link.FromNodeID) {
+		return from, to, to, errors.New("directed link lacks its native receiving resource")
+	}
+	if to.Kind == "wireguard" {
+		address, err := WireGuardAccessAddress(to, "")
+		if err != nil || link.ProbeTarget.Action != "wireguard_echo" || link.ProbeTarget.Host != address.String() || link.ProbeTarget.Port != 53 {
+			return from, to, to, errors.New("WG link lacks its exact execution entry")
+		}
+	} else if to.Kind != "hysteria2" || link.ProbeTarget.Action != "hysteria2_echo" || link.ProbeTarget.Host != to.DialHost || link.ProbeTarget.Port != to.DialPort {
+		return from, to, to, errors.New("Hy2 link lacks its exact native receiver")
 	}
 	return from, to, to, nil
 }
-
-func pathCandidate(service Service, policy NetworkPolicy, chain []string, hops []TransportResource, links []NetworkLink, local bool, resources map[string]TransportResource, records []DNSRecord) (RouteCandidate, error) {
-	if len(chain) == 1 && !local {
-		return oneHopCandidate(service, policy, hops[0], records...)
-	}
-	first := hops[0].ID
-	ids := []string{}
-	used := map[string]TransportResource{}
-	for _, resource := range hops {
-		used[resource.ID] = resource
-	}
-	for _, link := range links {
-		ids = append(ids, link.ID)
-		for _, id := range []string{link.FromResourceID, link.ResourceID} {
-			used[id] = resources[id]
-		}
-	}
-	values := []TransportResource{}
-	for _, resource := range used {
-		values = append(values, resource)
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
-	identity := map[string]any{"service_id": service.ID, "policy_id": policy.ID, "first_resource_id": first, "node_chain": chain, "link_ids": ids, "final_exit": chain[len(chain)-1]}
-	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
+func candidateForEntry(service Service, policy NetworkPolicy, entry string, resource TransportResource, exit string, records ...DNSRecord) (RouteCandidate, error) {
+	identity := map[string]any{"service_id": service.ID, "policy_id": policy.ID, "entry_node_id": entry, "first_resource_id": resource.ID, "final_exit": exit}
+	id, err := protocol.CandidateID(service.ID, policy.ID, protocol.RouteChoice{EntryNodeID: entry, FirstResourceID: resource.ID, FinalExit: exit})
 	if err != nil {
 		return RouteCandidate{}, err
 	}
-	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": values, "links": links}, service, records))
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, PolicyID: policy.ID, FirstResourceID: first, NodeChain: append([]string{}, chain...), LinkIDs: ids, FinalExit: chain[len(chain)-1]}, err
+	values := []TransportResource{}
+	if resource.ID != "" {
+		values = append(values, resource)
+	}
+	specification := map[string]any{"identity": identity, "service_boundary": service.TargetMatchers(records...), "policy": policy, "resources": values}
+	if service.LocalNetwork != nil {
+		specification["local_network"] = *service.LocalNetwork
+	}
+	spec, err := digestContractValue("loom-candidate-spec-v3\x00", specification)
+	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, PolicyID: policy.ID, EntryNodeID: entry, FirstResourceID: resource.ID, FinalExit: exit}, err
+}
+func policyExitNodes(view DeviceExecution, id string) []string {
+	for _, value := range view.PolicyExits {
+		if value.PolicyID == id {
+			return value.NodeIDs
+		}
+	}
+	return nil
+}
+func hasAccessGrant(view DeviceExecution, device, policy string) bool {
+	index := sort.Search(len(view.AccessGrants), func(i int) bool {
+		return view.AccessGrants[i].DeviceID > device || view.AccessGrants[i].DeviceID == device && view.AccessGrants[i].PolicyID >= policy
+	})
+	return index < len(view.AccessGrants) && view.AccessGrants[index] == (AccessGrant{DeviceID: device, PolicyID: policy})
 }
 
-func transportPaths(source string, localForward bool, service Service, policy NetworkPolicy, values []TransportResource, links []NetworkLink, records ...DNSRecord) ([]transportPath, error) {
-	resources := map[string]TransportResource{}
-	for _, resource := range values {
-		resources[resource.ID] = resource
-	}
-	ordered := append([]TransportResource{}, values...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
-	edges := append([]NetworkLink{}, links...)
-	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
-	// Build the graph once. Each search visits a node at most once; dense
-	// unrestricted policies must not enumerate every simple-path permutation.
-	adjacent := map[string][]NetworkLink{}
-	endpoints := map[string]bool{}
-	for _, resource := range ordered {
-		if policy.permitsEndpoint(service, resource.OwnerNodeID) {
-			endpoints[resource.OwnerNodeID] = true
+// HopPolicyProjection is a pure receiving/graph value from the one signed View.
+// It creates no node type, route registry or independently editable relation.
+func HopPolicyProjection(view DeviceExecution, policy NetworkPolicy) (protocol.HopPolicy, error) {
+	var service Service
+	for _, value := range view.Services {
+		if value.ID == policy.ServiceID {
+			service = value
 		}
 	}
-	for _, link := range edges {
-		if _, _, _, err := linkResources(link, resources); err == nil {
-			adjacent[link.FromNodeID] = append(adjacent[link.FromNodeID], link)
+	if policy.Action != "allow" || policy.ValidateForService(service) != nil {
+		return protocol.HopPolicy{}, errors.New("Policy has no executable Service")
+	}
+	nodes := map[string]bool{}
+	for id, node := range viewNodes(view.DeviceView) {
+		if containsString(node.Responsibilities, "forward") || containsString(node.Responsibilities, "internet_egress") {
+			nodes[id] = true
 		}
 	}
-	destinations := make([]string, 0, len(endpoints))
-	for node := range endpoints {
-		destinations = append(destinations, node)
-	}
-	sort.Strings(destinations)
-	type partial struct {
-		chain []string
-		hops  []TransportResource
-		links []NetworkLink
-	}
-	extend := func(path partial, link NetworkLink) partial {
-		return partial{
-			append(append([]string{}, path.chain...), link.ToNodeID),
-			append(append([]TransportResource{}, path.hops...), resources[link.ResourceID]),
-			append(append([]NetworkLink{}, path.links...), link),
+	value := protocol.HopPolicy{PolicyID: policy.ID, ServiceID: policy.ServiceID, Kind: service.Kind, Origins: []string{}, Exits: append([]string{}, policyExitNodes(view, policy.ID)...), Nodes: []string{}, EntryScope: policy.EntryScope, RelayScope: policy.RelayScope, MaxHops: policy.MaxHops, Edges: []protocol.DirectedHop{}}
+	for _, grant := range view.AccessGrants {
+		if grant.PolicyID == policy.ID {
+			value.Origins = append(value.Origins, grant.DeviceID)
 		}
 	}
-	shortest := func(start partial, destination, excluded string) (partial, bool) {
-		if policy.MaxHops > 0 && len(start.chain) > policy.MaxHops {
-			return partial{}, false
-		}
-		visited := map[string]bool{source: true}
-		for _, node := range start.chain {
-			visited[node] = true
-		}
-		queue := []partial{start}
-		for head := 0; head < len(queue); head++ {
-			path := queue[head]
-			last := path.chain[len(path.chain)-1]
-			if last == destination {
-				return path, true
-			}
-			if policy.MaxHops > 0 && len(path.chain) >= policy.MaxHops || len(path.chain) > 1 && !policy.RelayScope.Allows(last) {
-				continue
-			}
-			for _, link := range adjacent[last] {
-				if link.ID == excluded || visited[link.ToNodeID] {
-					continue
-				}
-				visited[link.ToNodeID] = true
-				queue = append(queue, extend(path, link))
-			}
-		}
-		return partial{}, false
+	for node := range nodes {
+		value.Nodes = append(value.Nodes, node)
 	}
-	less := func(a, b partial) bool {
-		if len(a.links) != len(b.links) {
-			return len(a.links) < len(b.links)
+	sort.Strings(value.Nodes)
+	sort.Strings(value.Origins)
+	edges := map[protocol.DirectedHop]bool{}
+	for _, link := range view.Links {
+		edge := protocol.DirectedHop{From: link.FromNodeID, To: link.ToNodeID}
+		if !edges[edge] {
+			value.Edges = append(value.Edges, edge)
+			edges[edge] = true
 		}
-		for i := range a.links {
-			if a.links[i].ID != b.links[i].ID {
-				return a.links[i].ID < b.links[i].ID
+	}
+	sort.Slice(value.Edges, func(i, j int) bool {
+		a, b := value.Edges[i], value.Edges[j]
+		return a.From < b.From || a.From == b.From && a.To < b.To
+	})
+	if len(value.Nodes) == 0 {
+		return value, nil
+	}
+	return value, value.Validate()
+}
+
+// Reverse topology is shared by every entry for an exit. It proves only that
+// an allowed sequence can be generated, never reachability or measured cost.
+func relayDistances(links []NetworkLink, policy NetworkPolicy, exit string) map[string]int {
+	reverse := map[string][]string{}
+	for _, link := range links {
+		if link.ToNodeID == exit || policy.RelayScope.Allows(link.ToNodeID) {
+			reverse[link.ToNodeID] = append(reverse[link.ToNodeID], link.FromNodeID)
+		}
+	}
+	distances := map[string]int{exit: 0}
+	queue := []string{exit}
+	for head := 0; head < len(queue); head++ {
+		node := queue[head]
+		for _, from := range reverse[node] {
+			if _, seen := distances[from]; !seen {
+				distances[from] = distances[node] + 1
+				queue = append(queue, from)
 			}
 		}
-		return false
 	}
-	result := []transportPath{}
-	add := func(path partial, local bool) error {
-		candidate, err := pathCandidate(service, policy, path.chain, path.hops, path.links, local, resources, records)
+	return distances
+}
+func candidateEntries(view DeviceExecution, service Service, policy NetworkPolicy) ([]RouteCandidate, error) {
+	result := []RouteCandidate{}
+	if !hasAccessGrant(view, view.DeviceID, policy.ID) {
+		return result, nil
+	}
+	add := func(entry string, resource TransportResource, exit string) error {
+		value, err := candidateForEntry(service, policy, entry, resource, exit, view.DNSRecords...)
 		if err == nil {
-			result = append(result, transportPath{candidate: candidate, hops: path.hops, links: path.links, local: local})
+			result = append(result, value)
 		}
 		return err
 	}
-	generate := func(start partial, local bool) error {
-		for _, destination := range destinations {
-			primary, found := shortest(start, destination, "")
-			if !found {
-				continue
-			}
-			if err := add(primary, local); err != nil {
-				return err
-			}
-			var backup partial
-			// Every different path omits at least one primary edge. Searching
-			// with each such edge removed finds the shortest different path,
-			// without enumerating paths. The fixed local first segment defines
-			// its own group and is not removed here.
-			for _, link := range primary.links[len(start.links):] {
-				alternative, ok := shortest(start, destination, link.ID)
-				if ok && (backup.chain == nil || less(alternative, backup)) {
-					backup = alternative
-				}
-			}
-			if backup.chain != nil {
-				if err := add(backup, local); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	for _, resource := range ordered {
-		if resource.OwnerNodeID == source || !policy.EntryScope.Allows(resource.OwnerNodeID) || resource.AccessHY2ResourceID != "" {
-			continue
-		}
-		if resource.Kind == "wireguard" {
-			if !resource.AccessEnabled {
-				continue
-			}
-			if _, err := WireGuardAccessAddress(resource, ""); err != nil {
-				return nil, err
-			}
-		} else if resource.Kind != "hysteria2" || resource.LinkOnly {
-			continue
-		}
-		if err := generate(partial{[]string{resource.OwnerNodeID}, []TransportResource{resource}, []NetworkLink{}}, false); err != nil {
+	if service.Kind == "internet" && policy.permitsDirect() {
+		if err := add("", TransportResource{}, "direct"); err != nil {
 			return nil, err
 		}
 	}
-	if localForward && policy.EntryScope.Allows(source) {
-		for _, link := range adjacent[source] {
-			if link.ToNodeID == source {
+	for _, exit := range policyExitNodes(view, policy.ID) {
+		if exit == view.DeviceID {
+			local := service.Kind == "internet" && containsString(view.Responsibilities, "internet_egress") && policy.permitsLocalEgress(view.DeviceID) || service.Kind == "local_network" && containsString(view.Responsibilities, "forward") && policy.EntryScope.Allows(view.DeviceID)
+			if local {
+				if err := add(view.DeviceID, TransportResource{}, exit); err != nil {
+					return nil, err
+				}
+			}
+		}
+		distances := relayDistances(view.Links, policy, exit)
+		allowed := func(entry string) bool {
+			distance, found := distances[entry]
+			return found && policy.EntryScope.Allows(entry) && (policy.MaxHops == 0 || distance+1 <= policy.MaxHops)
+		}
+		if exit != view.DeviceID && containsString(view.Responsibilities, "forward") && allowed(view.DeviceID) {
+			if err := add(view.DeviceID, TransportResource{}, exit); err != nil {
+				return nil, err
+			}
+		}
+		for _, resource := range view.Resources {
+			if resource.OwnerNodeID == view.DeviceID || !allowed(resource.OwnerNodeID) || resource.AccessHY2ResourceID != "" {
 				continue
 			}
-			start := extend(partial{chain: []string{source}, hops: []TransportResource{}, links: []NetworkLink{}}, link)
-			if err := generate(start, true); err != nil {
+			if resource.Kind == "wireguard" && !resource.AccessEnabled || resource.Kind == "hysteria2" && resource.LinkOnly || resource.Kind != "wireguard" && resource.Kind != "hysteria2" {
+				continue
+			}
+			if resource.Kind == "wireguard" && view.WireGuardPublicKey == "" {
+				continue
+			}
+			if err := add(resource.OwnerNodeID, resource, exit); err != nil {
 				return nil, err
 			}
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].candidate.ID < result[j].candidate.ID })
-	for i := 1; i < len(result); i++ {
-		if result[i-1].candidate.ID == result[i].candidate.ID {
-			return nil, errors.New("transport candidate identities are ambiguous")
-		}
-	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
 }
 
-func candidateTransportPath(view DeviceView, origin string, service Service, policy NetworkPolicy, candidate RouteCandidate) (transportPath, error) {
-	reject := errors.New("candidate does not match its authorized transport path")
-	chain := candidate.NodeChain
-	if candidate.Validate() != nil || len(chain) == 0 || !policy.EntryScope.Allows(chain[0]) || !policy.permitsEndpoint(service, candidate.FinalExit) || policy.MaxHops > 0 && len(chain) > policy.MaxHops {
-		return transportPath{}, reject
+// CandidateTopologyEstimate is a display/cold-start witness. It is not an
+// authorization chain, a measured fastest path or a command to downstream hops.
+func CandidateTopologyEstimate(view DeviceExecution, candidate RouteCandidate) ([]string, []string, error) {
+	if candidate.FinalExit == "direct" {
+		return []string{}, []string{}, nil
 	}
-	resources := map[string]TransportResource{}
-	for _, resource := range view.Resources {
-		resources[resource.ID] = resource
-	}
-	links := map[string]NetworkLink{}
-	for _, link := range view.Links {
-		links[link.ID] = link
-	}
-	path := transportPath{local: chain[0] == origin, hops: []TransportResource{}, links: []NetworkLink{}}
-	if !path.local {
-		first, found := resources[candidate.FirstResourceID]
-		if !found || first.OwnerNodeID != chain[0] || first.Validate() != nil || first.AccessHY2ResourceID != "" {
-			return transportPath{}, reject
+	var policy NetworkPolicy
+	for _, value := range view.Policies {
+		if value.ID == candidate.PolicyID {
+			policy = value
 		}
-		if first.Kind == "wireguard" {
-			if !first.AccessEnabled {
-				return transportPath{}, reject
+	}
+	distances := relayDistances(view.Links, policy, candidate.FinalExit)
+	if _, exists := distances[candidate.EntryNodeID]; !exists {
+		return nil, nil, errors.New("candidate entry has no permitted topology to its exit")
+	}
+	nodes := []string{candidate.EntryNodeID}
+	links := []string{}
+	for nodes[len(nodes)-1] != candidate.FinalExit {
+		current := nodes[len(nodes)-1]
+		var selected NetworkLink
+		for _, link := range view.Links {
+			distance, exists := distances[link.ToNodeID]
+			if link.FromNodeID == current && exists && distance+1 == distances[current] && (link.ToNodeID == candidate.FinalExit || policy.RelayScope.Allows(link.ToNodeID)) && (selected.ID == "" || link.ID < selected.ID) {
+				selected = link
 			}
-		} else if first.Kind != "hysteria2" || first.LinkOnly {
-			return transportPath{}, reject
 		}
-		path.hops = append(path.hops, first)
-	}
-	// The supplied candidate already names its entire path. Verify those exact
-	// edges, then recompute its complete identity/spec. Enumerating every other
-	// path for each permission turns ordinary View validation into a graph scan
-	// repeated once per candidate and does not strengthen authorization.
-	for i, id := range candidate.LinkIDs {
-		link, found := links[id]
-		if !found || link.FromNodeID != chain[i] || link.ToNodeID != chain[i+1] || chain[i+1] == origin || i > 0 && !policy.RelayScope.Allows(chain[i]) {
-			return transportPath{}, reject
+		if selected.ID == "" {
+			return nil, nil, errors.New("candidate topology witness is incomplete")
 		}
-		_, _, target, err := linkResources(link, resources)
-		if err != nil {
-			return transportPath{}, err
-		}
-		path.hops = append(path.hops, target)
-		path.links = append(path.links, link)
+		nodes = append(nodes, selected.ToNodeID)
+		links = append(links, selected.ID)
 	}
-	if len(path.hops) == 0 {
-		return transportPath{}, reject
-	}
-	want, err := pathCandidate(service, policy, chain, path.hops, path.links, path.local, resources, view.DNSRecords)
-	if err != nil || !sameContractValue(want, candidate) {
-		return transportPath{}, reject
-	}
-	path.candidate = want
-	return path, nil
+	return nodes, links, nil
 }
 
-func pathPermission(path transportPath, index int, origin string, policy NetworkPolicy, service Service, excluded []ServiceMatcher, records ...DNSRecord) InboundCredential {
-	position := index
-	if path.local {
-		position++
+// policyDistances shares a reverse topology traversal across all entries or
+// receiving neighbors. It never uses a measured result as an authorization.
+func policyDistances(view DeviceExecution, policy NetworkPolicy, forbidden string) map[string]int {
+	seeds := map[string]bool{}
+	distances := map[string]int{}
+	queue := []string{}
+	for _, exit := range policyExitNodes(view, policy.ID) {
+		if exit != forbidden {
+			seeds[exit] = true
+			distances[exit] = 0
+			queue = append(queue, exit)
+		}
 	}
-	sender := origin
-	if position > 0 {
-		sender = path.candidate.NodeChain[position-1]
+	reverse := map[string][]string{}
+	for _, link := range view.Links {
+		if link.FromNodeID != forbidden && link.ToNodeID != forbidden {
+			reverse[link.ToNodeID] = append(reverse[link.ToNodeID], link.FromNodeID)
+		}
 	}
-	resource := path.hops[index]
-	return InboundCredential{DeviceID: origin, ServiceID: service.ID, PolicyID: policy.ID, Candidate: path.candidate, SenderID: sender,
-		ResourceID: resource.ID, ReceiverNodeID: resource.OwnerNodeID, AllowedTargets: append([]ServiceMatcher{}, service.TargetMatchers(records...)...), ExcludedTargets: append([]ServiceMatcher{}, excluded...)}
+	for head := 0; head < len(queue); head++ {
+		node := queue[head]
+		if !seeds[node] && !policy.RelayScope.Allows(node) {
+			continue
+		}
+		for _, from := range reverse[node] {
+			if _, seen := distances[from]; !seen {
+				distances[from] = distances[node] + 1
+				queue = append(queue, from)
+			}
+		}
+	}
+	return distances
+}
+func policyCanReceive(view DeviceExecution, policy NetworkPolicy, node string) bool {
+	distance, found := policyDistances(view, policy, "")[node]
+	return found && (policy.MaxHops == 0 || distance+1 <= policy.MaxHops)
+}
+
+// Compiled only for this pure continuation projection. Retaining a transport
+// facility is not entry/relay admission; source and receivers check the full
+// current connection path before using it.
+func segmentEligibility(view DeviceExecution) func(NetworkPolicy, NetworkLink) bool {
+	cached := map[string]map[string]int{}
+	return func(policy NetworkPolicy, link NetworkLink) bool {
+		key := policy.ID + "\x00" + link.FromNodeID
+		distances, found := cached[key]
+		if !found {
+			distances = policyDistances(view, policy, link.FromNodeID)
+			cached[key] = distances
+		}
+		if link.ToNodeID == link.FromNodeID {
+			return false
+		}
+		if !containsString(policyExitNodes(view, policy.ID), link.ToNodeID) && !policy.RelayScope.Allows(link.ToNodeID) {
+			return false
+		}
+		distance, found := distances[link.ToNodeID]
+		return found && (policy.MaxHops == 0 || distance+2 <= policy.MaxHops)
+	}
+}
+
+// ForwardingLinks is the shared pure projection of this node's next hops.
+// Rendering and performance decisions consume it without decoding runtime JSON.
+func ForwardingLinks(view DeviceExecution, policy NetworkPolicy) []NetworkLink {
+	result := []NetworkLink{}
+	if policy.Action != "allow" || !containsString(view.Responsibilities, "forward") {
+		return result
+	}
+	eligible := segmentEligibility(view)
+	for _, link := range view.Links {
+		if link.FromNodeID == view.DeviceID && eligible(policy, link) {
+			result = append(result, link)
+		}
+	}
+	return result
 }

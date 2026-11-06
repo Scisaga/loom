@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+
+	"loom/protocol"
 )
 
 const (
@@ -154,9 +156,21 @@ func (response EnrollmentResponse) Validate() error {
 }
 
 type ReportSelection struct {
+	Target      string `json:"target,omitempty"`
 	ServiceID   string `json:"service_id"`
 	PolicyID    string `json:"policy_id,omitempty"`
 	CandidateID string `json:"candidate_id"`
+}
+
+func validReportSelectionTarget(value string) bool {
+	if value == "" {
+		return true
+	}
+	if _, _, _, err := protocol.ParseConnectionTargetKey(value); err == nil {
+		return true
+	}
+	// Historical signed targets retain their generic network scope and bytes.
+	return ValidateConnectionTarget(value) == nil
 }
 
 // ReportPreference is a signed, read-only sample of the device's local setting.
@@ -181,10 +195,11 @@ func (value ReportPreference) Validate() error {
 }
 
 type RuntimeReadback struct {
-	State             string              `json:"state"`
-	AppliedViewDigest string              `json:"applied_view_digest"`
-	ErrorCode         string              `json:"error_code"`
-	Resources         *[]ResourceReadback `json:"resources,omitempty"`
+	State                string              `json:"state"`
+	AppliedViewDigest    string              `json:"applied_view_digest"`
+	PermissionViewDigest string              `json:"permission_view_digest,omitempty"`
+	ErrorCode            string              `json:"error_code"`
+	Resources            *[]ResourceReadback `json:"resources,omitempty"`
 }
 
 type ResourceReadback struct {
@@ -234,6 +249,10 @@ func (runtime RuntimeReadback) Validate() error {
 	if runtime.State == "running" && (runtime.AppliedViewDigest == "" || runtime.ErrorCode != "") {
 		return errors.New("running readback requires an applied digest and no error")
 	}
+	if runtime.PermissionViewDigest != "" && (ValidateDigest(runtime.PermissionViewDigest) != nil ||
+		runtime.State != "running" && runtime.State != "unknown" || runtime.State == "running" && runtime.PermissionViewDigest != runtime.AppliedViewDigest) {
+		return errors.New("permission readback requires the current running or partially applied instance")
+	}
 	if runtime.Resources != nil {
 		if runtime.State != "running" || len(*runtime.Resources) == 0 {
 			return errors.New("resource readback requires actual running resources")
@@ -245,6 +264,13 @@ func (runtime RuntimeReadback) Validate() error {
 		}
 	}
 	return nil
+}
+
+// HasCurrentPermissions confirms only complete native permission application.
+// It cannot prove a resource set, chosen path or successful business request.
+func (runtime RuntimeReadback) HasCurrentPermissions(viewDigest string) bool {
+	return ValidateDigest(viewDigest) == nil && (runtime.State == "running" && runtime.AppliedViewDigest == viewDigest ||
+		runtime.State == "unknown" && runtime.PermissionViewDigest == viewDigest)
 }
 
 type Observation struct {
@@ -265,7 +291,7 @@ type Observation struct {
 	HY2Transfer       *HY2Transfer `json:"hy2_transfer,omitempty"`
 }
 
-// HY2Transfer is the actual UDP payload exchange of one authenticated first-hop
+// HY2Transfer is the actual UDP payload exchange of one authenticated segment
 // probe. Direction is relative to the reporting device; it is not capacity.
 type HY2Transfer struct {
 	DurationNS int64 `json:"duration_ns"`
@@ -274,41 +300,63 @@ type HY2Transfer struct {
 }
 
 func (observation Observation) Validate() error {
-	if ValidateDigest(observation.SpecDigest) != nil || ValidateID(observation.NetworkGeneration) != nil || !validateTime(observation.ObservedAt) || !validateTime(observation.ValidUntil) || observation.ObservedAt >= observation.ValidUntil || observation.DurationMS != nil && *observation.DurationMS < 0 {
+	if ValidateID(observation.NetworkGeneration) != nil || !validateTime(observation.ObservedAt) || !validateTime(observation.ValidUntil) || observation.ObservedAt >= observation.ValidUntil || observation.DurationMS != nil && *observation.DurationMS < 0 {
 		return errors.New("observation identity or time is invalid")
 	}
-	if value := observation.RoundTripMS; value != nil && (*value < 0 || observation.Level != "link" || observation.Action != "wireguard_dns" || observation.Result != "available" || observation.DurationMS == nil || *value > *observation.DurationMS) {
-		return errors.New("round trip requires a successful native Link probe within its complete duration")
+	if value := observation.RoundTripMS; value != nil && (*value < 0 || observation.Level != "link" && observation.Level != "resource" ||
+		observation.Action != "wireguard_dns" && observation.Action != "wireguard_echo" && observation.Action != "hysteria2_echo" && (observation.Level != "resource" || observation.Action != "hysteria2_tls") ||
+		observation.Result != "available" || observation.DurationMS == nil || *value > *observation.DurationMS) {
+		return errors.New("round trip requires a successful authenticated segment measurement within its complete duration")
 	}
 	if value := observation.HY2Transfer; value != nil && (value.DurationNS <= 0 || value.RXBytes == 0 || value.TXBytes == 0 ||
-		observation.Level != "resource" || observation.Action != "hysteria2_tls" || observation.Result != "available" ||
+		observation.Level != "resource" && observation.Level != "link" || (observation.Action != "hysteria2_echo" && (observation.Level != "resource" || observation.Action != "hysteria2_tls")) || observation.Result != "available" ||
 		observation.DurationMS == nil || value.DurationNS/1_000_000 > *observation.DurationMS) {
-		return errors.New("Hy2 transfer requires actual bytes and time within a successful first-hop authentication")
+		return errors.New("Hy2 transfer requires actual bytes and time within a successful segment authentication")
 	}
 	switch observation.Result {
 	case "available", "unavailable", "unknown":
 	default:
 		return errors.New("observation result is invalid")
 	}
+	return validateObservationSpec(observation)
+}
+
+// Specifications can be queried without manufacturing a result or sample time.
+func validateObservationSpec(observation Observation) error {
+	if ValidateDigest(observation.SpecDigest) != nil {
+		return errors.New("observation specification digest is invalid")
+	}
 	switch observation.Level {
+	case "egress":
+		if observation.ServiceID != "" || observation.CandidateID != "" || observation.ResourceID != "" || observation.LinkID != "" || observation.Action != "https_request" || ValidateHTTPSURL(observation.Target) != nil {
+			return errors.New("egress observation must contain only its shared request specification")
+		}
 	case "service":
 		if ValidateID(observation.ServiceID) != nil || ValidateDigest(observation.CandidateID) != nil || observation.ResourceID != "" || observation.LinkID != "" || observation.Action != "https_request" || ValidateHTTPSURL(observation.Target) != nil {
 			return errors.New("service observation is invalid")
 		}
 	case "link":
+		if observation.Action == "hysteria2_echo" {
+			host, port, err := net.SplitHostPort(observation.Target)
+			number, portErr := strconv.Atoi(port)
+			if ValidateID(observation.LinkID) != nil || ValidateID(observation.ResourceID) != nil || observation.ServiceID != "" || observation.CandidateID != "" || err != nil || !contractHost(host) || portErr != nil || number < 1 || number > 65535 || net.JoinHostPort(host, strconv.Itoa(number)) != observation.Target {
+				return errors.New("Hy2 link observation is invalid")
+			}
+			return nil
+		}
 		target, err := netip.ParseAddrPort(observation.Target)
 		if ValidateID(observation.LinkID) != nil || ValidateID(observation.ResourceID) != nil || observation.ServiceID != "" || observation.CandidateID != "" ||
-			(observation.Action != "hysteria2_tls" && observation.Action != "wireguard_dns") || err != nil || target.Port() == 0 || target.String() != observation.Target || !target.Addr().IsGlobalUnicast() || target.Addr().Zone() != "" {
+			(observation.Action != "hysteria2_tls" && observation.Action != "hysteria2_echo" && observation.Action != "wireguard_dns" && observation.Action != "wireguard_echo") || err != nil || target.Port() == 0 || target.String() != observation.Target || !target.Addr().IsGlobalUnicast() || target.Addr().Zone() != "" {
 			return errors.New("Link observation is invalid")
 		}
-		if observation.Action == "wireguard_dns" && (target.Port() != 53 || !target.Addr().Is6() || !target.Addr().IsPrivate()) {
+		if (observation.Action == "wireguard_dns" || observation.Action == "wireguard_echo") && (target.Port() != 53 || !target.Addr().Is6() || !target.Addr().IsPrivate()) {
 			return errors.New("native Link observation has no exact execution DNS target")
 		}
 	case "resource":
 		host, port, err := net.SplitHostPort(observation.Target)
 		number, portErr := strconv.Atoi(port)
 		if ValidateID(observation.ResourceID) != nil || observation.ServiceID != "" || observation.CandidateID != "" || observation.LinkID != "" ||
-			(observation.Action != "hysteria2_tls" && observation.Action != "wireguard_dns") || err != nil || !contractHost(host) || portErr != nil || number < 1 || number > 65535 ||
+			(observation.Action != "hysteria2_tls" && observation.Action != "hysteria2_echo" && observation.Action != "wireguard_dns" && observation.Action != "wireguard_echo") || err != nil || !contractHost(host) || portErr != nil || number < 1 || number > 65535 ||
 			net.JoinHostPort(host, strconv.Itoa(number)) != observation.Target {
 			return errors.New("resource observation is invalid")
 		}
@@ -347,6 +395,8 @@ func ValidateReportObservations(observations []Observation, networkGeneration st
 }
 
 type DeviceReport struct {
+	LANPolicyIDs      map[string]string     `json:"lan_policy_ids,omitempty"`
+	PolicyID          string                `json:"policy_id,omitempty"`
 	WireGuardCounters *WireGuardCounters    `json:"wireguard_counters,omitempty"`
 	Schema            int                   `json:"schema"`
 	NetworkID         string                `json:"network_id"`
@@ -367,6 +417,12 @@ type DeviceReport struct {
 
 func (report DeviceReport) unsigned() map[string]any {
 	value := map[string]any{"schema": report.Schema, "network_id": report.NetworkID, "device_id": report.DeviceID, "report_sequence": report.ReportSequence, "view_digest": report.ViewDigest, "network_generation": report.NetworkGeneration, "reported_at": report.ReportedAt, "selections": report.Selections, "observations": report.Observations, "runtime": report.Runtime, "components": report.Components}
+	if report.PolicyID != "" {
+		value["policy_id"] = report.PolicyID
+	}
+	if report.LANPolicyIDs != nil {
+		value["lan_policy_ids"] = report.LANPolicyIDs
+	}
 	if report.WireGuardCounters != nil {
 		value["wireguard_counters"] = *report.WireGuardCounters
 	}
@@ -386,11 +442,27 @@ func (report DeviceReport) validateFields() error {
 	if report.Schema != 3 || ValidateID(report.NetworkID) != nil || ValidateID(report.DeviceID) != nil || report.DeviceID == "direct" || report.ReportSequence == 0 || ValidateDigest(report.ViewDigest) != nil || ValidateID(report.NetworkGeneration) != nil || !validateTime(report.ReportedAt) || report.Selections == nil || report.Observations == nil || report.Components == nil || report.Runtime.Validate() != nil {
 		return errors.New("device report is invalid")
 	}
+	if report.Runtime.PermissionViewDigest != "" && report.Runtime.PermissionViewDigest != report.ViewDigest {
+		return errors.New("permission readback belongs to another reported View")
+	}
 	if report.WireGuardCounters != nil && (report.WireGuardCounters.Validate() != nil || report.Runtime.State != "running" || report.Runtime.AppliedViewDigest != report.ViewDigest) {
 		return errors.New("WG counters require the actual applied running instance")
 	}
 	if report.Preference != nil && report.Preference.Validate() != nil {
 		return errors.New("device report preference is invalid")
+	}
+	if report.LANPolicyIDs != nil {
+		if len(report.LANPolicyIDs) == 0 || report.PolicyChoices != nil || report.Preference != nil {
+			return errors.New("invalid independent LAN choices")
+		}
+		for service, policy := range report.LANPolicyIDs {
+			if ValidateID(service) != nil || ValidateID(policy) != nil {
+				return errors.New("invalid LAN choice identity")
+			}
+		}
+	}
+	if report.PolicyID != "" && (ValidateID(report.PolicyID) != nil || report.PolicyChoices != nil || report.Preference != nil) {
+		return errors.New("current Policy cannot be combined with historical preferences")
 	}
 	if report.PolicyChoices != nil && (ValidatePolicyChoices(*report.PolicyChoices) != nil || report.Preference != nil) {
 		return errors.New("invalid or ambiguous current policy choices")
@@ -407,7 +479,7 @@ func (report DeviceReport) validateFields() error {
 		}
 	}
 	for index, selection := range report.Selections {
-		if ValidateID(selection.ServiceID) != nil || ValidateDigest(selection.CandidateID) != nil || selection.PolicyID != "" && ValidateID(selection.PolicyID) != nil || report.PolicyChoices != nil && selection.PolicyID == "" || index > 0 && report.Selections[index-1].ServiceID >= selection.ServiceID {
+		if ValidateID(selection.ServiceID) != nil || ValidateDigest(selection.CandidateID) != nil || selection.PolicyID != "" && ValidateID(selection.PolicyID) != nil || report.PolicyChoices != nil && selection.PolicyID == "" || !validReportSelectionTarget(selection.Target) || (report.PolicyID != "" || report.LANPolicyIDs != nil) && selection.PolicyID != report.SelectedPolicy(selection.ServiceID) || index > 0 && report.Selections[index-1].ServiceID+"\x00"+report.Selections[index-1].Target >= selection.ServiceID+"\x00"+selection.Target {
 			return errors.New("report selections are invalid or not uniquely sorted")
 		}
 	}
@@ -445,6 +517,16 @@ func (report DeviceReport) Verify(publicKey string) error {
 	return verifyContractSignature(reportDomain, report.unsigned(), report.Signature, publicKey)
 }
 func SignDeviceReport(report DeviceReport, private ed25519.PrivateKey) (DeviceReport, error) {
+	if report.Preference != nil || report.PolicyChoices != nil || len(report.Selections) > 0 && report.PolicyID == "" {
+		return DeviceReport{}, errors.New("new reports require one current Policy; historical preferences cannot be signed")
+	}
+	for _, selection := range report.Selections {
+		if selection.Target != "" {
+			if _, _, _, err := protocol.ParseConnectionTargetKey(selection.Target); err != nil {
+				return DeviceReport{}, errors.New("new reports require network-qualified target selections")
+			}
+		}
+	}
 	if len(private) != ed25519.PrivateKeySize {
 		return DeviceReport{}, errors.New("report signing key is invalid")
 	}
@@ -470,4 +552,12 @@ func (response DeviceReportResponse) Validate() error {
 		return errors.New("report response is invalid")
 	}
 	return nil
+}
+
+// SelectedPolicy samples current local intent; it never grants that intent.
+func (report DeviceReport) SelectedPolicy(serviceID string) string {
+	if policy := report.LANPolicyIDs[serviceID]; policy != "" {
+		return policy
+	}
+	return report.PolicyID
 }

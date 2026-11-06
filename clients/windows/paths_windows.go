@@ -44,10 +44,11 @@ type windowsPathDisplay struct {
 // Business text is a one-way projection of the original authorized samples.
 // It is never parsed into a decision, report, or persisted client identity.
 func windowsBusinessDetails(view control.DeviceView, status windowsRuntimeStatus, scope, selected string, now time.Time) string {
-	_, targets := windowsProbeTargets(view, scope)
+	_, targets := windowsProbeTargets(view, status.Preference.PolicyForScope(scope))
 	allowed := map[string]bool{}
-	for _, route := range view.Routes {
-		if route.Scope == scope {
+	execution, _ := control.ProjectDeviceCandidates(view, clientmodel.MeasurementPolicies(status.Preference))
+	for _, route := range execution.Routes {
+		if route.PolicyID == status.Preference.PolicyForScope(scope) {
 			allowed[route.ID] = true
 		}
 	}
@@ -170,18 +171,20 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 			now := time.Now()
 			byID := map[string]string{}
 			if loadErr == nil && store.LKG() != nil {
-				for _, route := range store.LKG().View.Routes {
+				execution, _ := control.ProjectDeviceCandidates(store.LKG().View, clientmodel.MeasurementPolicies(store.Preference()))
+				for _, route := range execution.Routes {
+					nodes, _, _ := control.CandidateTopologyEstimate(execution, route)
 					chain := "本机 → 目标（直连）"
-					if route.FinalExit != "direct" && len(route.NodeChain) == 0 {
+					if route.FinalExit != "direct" && len(nodes) == 0 {
 						chain = "本机（出口 " + route.FinalExit + "）→ 目标"
-					} else if len(route.NodeChain) > 0 {
-						chain = "本机 → " + strings.Join(route.NodeChain, " → ") + " → 目标"
+					} else if len(nodes) > 0 {
+						chain = "拓扑估计：本机 → " + strings.Join(nodes, " → ") + " → 目标"
 					}
 					byID[route.ID] = chain
 				}
 			}
 			for _, selection := range status.Selections {
-				_, targets := windowsProbeTargets(store.LKG().View, selection.Scope)
+				_, targets := windowsProbeTargets(store.LKG().View, selection.PolicyID)
 				result, stateErr := clientmodel.ObservationState(status.Observations, selection.CandidateID, selection.Scope, status.NetworkGeneration, targets, time.Now())
 				if stateErr != nil {
 					result = "unknown"

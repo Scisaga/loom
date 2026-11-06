@@ -83,13 +83,14 @@ func cmdClientPreflight(args []string) error {
 	singBox := fs.String("sing-box", defaultLinuxSingBox, "exact packaged sing-box executable")
 	capture := fs.String("capture", "mixed", "tun (supervised isolated applications) or mixed (explicit loopback proxy)")
 	resources := fs.String("resource-inputs", "", "protected local server listener/TLS input file")
+	wgKey := fs.String("wireguard-private-key", "/etc/wireguard/node.key", "protected WireGuard private key file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("client preflight does not accept positional arguments")
 	}
-	if err := linuxclient.PreflightResources(*state, *singBox, *capture, *resources); err != nil {
+	if err := linuxclient.PreflightResources(*state, *singBox, *capture, *resources, *wgKey); err != nil {
 		return err
 	}
 	fmt.Println("Linux certified LKG and sing-box preflight passed")
@@ -113,15 +114,14 @@ func cmdClientPolicy(args []string) error {
 	fs := flag.NewFlagSet("client policy", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	state := fs.String("state", defaultDeviceState, "atomic device identity/LKG state")
-	local := fs.String("runtime-state", defaultLinuxLocalState, "protected policy choice state")
 	unit := fs.String("unit", "loom-client.service", "formal Linux client service")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) != 1 || rest[0] != "list" {
-		if len(rest) != 3 || rest[0] != "select" {
-			return errors.New("用法: loom client policy [flags] <list|select ServiceID PolicyID>")
+		if len(rest) != 2 || rest[0] != "select" {
+			return errors.New("用法: loom client policy [flags] <list|select PolicyID>")
 		}
 	}
 	store, err := deviceclient.Load(*state)
@@ -132,29 +132,25 @@ func cmdClientPolicy(args []string) error {
 	if lkg == nil || lkg.View.Platform != "linux" {
 		return errors.New("Linux device has no certified view")
 	}
-	generation, err := linuxclient.NetworkGeneration()
-	if err != nil {
-		return err
-	}
-	current, err := linuxclient.ReconcilePolicyChoices(*local, generation, lkg.View)
-	if err != nil {
-		return err
-	}
 	if rest[0] == "list" {
 		services, policies := clientmodel.PolicyOptions(lkg.View)
 		return json.NewEncoder(os.Stdout).Encode(struct {
 			Services []control.Service       `json:"services"`
 			Policies []control.NetworkPolicy `json:"policies"`
-			Choices  []control.PolicyChoice  `json:"policy_choices"`
-		}{services, policies, current.Preference.Services})
+			PolicyID string                  `json:"policy_id,omitempty"`
+		}{services, policies, store.Preference().PolicyID})
 	}
-	if err := linuxclient.SelectPolicy(*local, generation, lkg.View, rest[1], rest[2]); err != nil {
+	preference, err := clientmodel.ChoosePolicy(store.Preference(), lkg.View, rest[1])
+	if err != nil {
+		return err
+	}
+	if err := store.SetPreference(preference); err != nil {
 		return err
 	}
 	if output, err := exec.Command("systemctl", "reload", *unit).CombinedOutput(); err != nil {
 		return fmt.Errorf("policy choice saved but service reload failed: %w: %s", err, string(output))
 	}
-	fmt.Println("Service policy choice saved; verify actual application with client status")
+	fmt.Println("Policy choice saved; verify actual application with client status")
 	return nil
 }
 

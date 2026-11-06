@@ -1,181 +1,19 @@
 package linuxclient
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
-	"time"
-
 	"loom/internal/clientadapter"
 )
 
-type profileControl struct {
-	Experimental struct {
-		ClashAPI struct {
-			ExternalController string `json:"external_controller"`
-			Secret             string `json:"secret"`
-		} `json:"clash_api"`
-	} `json:"experimental"`
-}
-
-type Selector interface {
-	Read(context.Context, string) (string, error)
-	Set(context.Context, string, string) error
-	CloseConnections(context.Context, []string) error
-}
-
-type HTTPSelector struct {
-	secret string
-	client *http.Client
-}
+type Selector = clientadapter.Selector
+type HTTPSelector = clientadapter.HTTPSelector
 
 func NewHTTPSelector(config string) (*HTTPSelector, error) {
-	var control profileControl
-	if err := json.Unmarshal([]byte(config), &control); err != nil {
-		return nil, err
-	}
-	if control.Experimental.ClashAPI.ExternalController != "127.0.0.1:61800" ||
-		len(control.Experimental.ClashAPI.Secret) == 0 || len(control.Experimental.ClashAPI.Secret) > 4<<10 {
-		return nil, errors.New("Linux selector control is invalid")
-	}
-	for _, character := range control.Experimental.ClashAPI.Secret {
-		if character < 0x21 || character > 0x7e {
-			return nil, errors.New("Linux selector secret is invalid")
-		}
-	}
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	return &HTTPSelector{secret: control.Experimental.ClashAPI.Secret,
-		client: &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil,
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "tcp", "127.0.0.1:61800")
-			}}}}, nil
+	return clientadapter.NewHTTPSelector(config)
 }
-
-func (selector *HTTPSelector) request(ctx context.Context, method, path string, body []byte) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, method, "http://127.0.0.1:61800"+path, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+selector.secret)
-	request.Header.Set("Accept", "application/json")
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	response, err := selector.client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	maximum := int64(clientadapter.SelectorReadbackLimit)
-	if path == "/connections/" {
-		maximum = 8 << 20
-	}
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximum+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(responseBody)) > maximum || response.StatusCode < 200 || response.StatusCode > 299 {
-		return nil, fmt.Errorf("selector API returned HTTP %d", response.StatusCode)
-	}
-	return responseBody, nil
-}
-
-func (selector *HTTPSelector) Read(ctx context.Context, scope string) (string, error) {
-	body, err := selector.request(ctx, http.MethodGet, "/proxies/"+url.PathEscape(scope), nil)
-	if err != nil {
-		return "", err
-	}
-	var response struct {
-		Now string `json:"now"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if err := decoder.Decode(&response); err != nil || response.Now == "" {
-		return "", errors.New("selector readback is invalid")
-	}
-	return response.Now, nil
-}
-
-func (selector *HTTPSelector) Set(ctx context.Context, scope, candidate string) error {
-	body, _ := json.Marshal(struct {
-		Name string `json:"name"`
-	}{candidate})
-	_, err := selector.request(ctx, http.MethodPut, "/proxies/"+url.PathEscape(scope), body)
-	return err
-}
-
-func (selector *HTTPSelector) CloseConnections(ctx context.Context, scopes []string) error {
-	body, err := selector.request(ctx, http.MethodGet, "/connections/", nil)
-	if err != nil {
-		return err
-	}
-	ids, err := clientadapter.ServiceConnectionIDs(body, scopes)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if _, err := selector.request(ctx, http.MethodDelete, "/connections/"+id, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func waitSelector(ctx context.Context, selector Selector, scopes []string) error {
-	deadline := time.NewTimer(10 * time.Second)
-	defer deadline.Stop()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	var last error
-	for {
-		ready := true
-		if len(scopes) == 0 {
-			health, ok := selector.(interface{ Health(context.Context) error })
-			if !ok {
-				return errors.New("empty selection requires actual runtime API readback")
-			}
-			if err := health.Health(ctx); err != nil {
-				last, ready = err, false
-			}
-		}
-		for _, scope := range scopes {
-			if _, err := selector.Read(ctx, scope); err != nil {
-				last, ready = err, false
-				break
-			}
-		}
-		if ready {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("selector API did not become ready: %w", last)
-		case <-ticker.C:
-		}
-	}
+	return clientadapter.WaitSelector(ctx, selector, scopes)
 }
-
 func applySelections(ctx context.Context, selector Selector, desired map[string]string) (map[string]string, error) {
 	return clientadapter.ApplySelections(ctx, selector, desired)
-}
-
-func (selector *HTTPSelector) Health(ctx context.Context) error {
-	body, err := selector.request(ctx, http.MethodGet, "/version", nil)
-	if err != nil {
-		return err
-	}
-	var result struct {
-		Version string `json:"version"`
-	}
-	if json.Unmarshal(body, &result) != nil || result.Version == "" {
-		return errors.New("runtime API readback is invalid")
-	}
-	return nil
 }

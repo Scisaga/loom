@@ -53,7 +53,7 @@ func schema3Fixture(t *testing.T, platform string, changes ...func(*control.Invi
 			t.Fatal(err)
 		}
 		scope := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
-		p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo.example"}}}}
+		p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}}
 		p.NetworkIntent.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}}
 		inviteID, _ := control.MaterialID(material)
 		p.DeviceAuthorizations = []control.DeviceAuthorization{{ID: invitation.DeviceID, Name: invitation.Name, Platform: platform, DevicePublicKey: public, Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, DistributionURLs: []string{}, RuntimeKey: members[0].PublicKey, TransactionID: invitation.ID, InviteMaterialID: inviteID, BindingMaterialID: anchor}}
@@ -64,10 +64,6 @@ func schema3Fixture(t *testing.T, platform string, changes ...func(*control.Invi
 		}
 		for _, change := range changes {
 			change(&view)
-		}
-		view.Routes, view.RuntimeProfile, err = control.ProjectAccessRuntime(view)
-		if err != nil {
-			t.Fatal(err)
 		}
 		sum := sha256.Sum256([]byte(fmt.Sprintf("demo-prefix-%d", sequence)))
 		result, err := control.SignDeviceViewEnvelope(control.DeviceViewEnvelope{Schema: 3, NetworkID: "demo-network", GenesisDigest: anchor, IssuerControlID: members[1].ControlID, IssuerKeyID: keyID, ControlProof: invite.ControlProof, FactFrontier: []control.FactFrontier{{KeyID: keyID, Sequence: control.U64(sequence), TipMaterialID: "sha256:" + hex.EncodeToString(sum[:])}}, View: view}, keys[1])
@@ -154,8 +150,6 @@ func TestReloadRejectsNoncanonicalBytesDespiteMatchingOwnedValue(t *testing.T) {
 }
 func revokeView(view *control.DeviceView) {
 	view.Policies[0].Action = "deny"
-	view.BusinessProbeTargets = []control.ServiceProbeTargets{}
-	view.Routes = []control.RouteCandidate{}
 }
 
 func TestAcceptedLKGSurvivesRestartAndRejectsOldOrConflictingProgress(t *testing.T) {
@@ -173,7 +167,7 @@ func TestAcceptedLKGSurvivesRestartAndRejectsOldOrConflictingProgress(t *testing
 	if err := store.SaveLKG(revoked); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.LKG().View.Routes) != 0 {
+	if len(testDeviceExecution(store.LKG().View).Routes) != 0 {
 		t.Fatal("revoked runtime is not closed")
 	}
 	loaded, err := Load(path)

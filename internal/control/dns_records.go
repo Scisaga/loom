@@ -63,6 +63,11 @@ func projectDNSRecords(records []DNSRecord) []DNSRecord {
 // Keep old candidate digests when no relevant overlay fact exists. Only name
 // matchers consume a DNS name; an IP-only permission does not authorize it.
 func dnsCandidateSpec(value map[string]any, service Service, records []DNSRecord) map[string]any {
+	// Service probe configuration is not an execution or credential input.
+	// Keeping the existing destination-only value preserves its signed meaning.
+	if _, present := value["service"]; present {
+		value["service"] = executionService(service)
+	}
 	var relevant []DNSRecord
 	for _, record := range records {
 		if record.ServiceID == service.ID && dnsRecordForLocalNetwork(record, service) {

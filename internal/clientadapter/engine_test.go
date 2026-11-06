@@ -3,208 +3,143 @@ package clientadapter
 import (
 	"context"
 	"errors"
-	"reflect"
+	"maps"
+	"strconv"
 	"testing"
 	"time"
 
 	"loom/internal/clientmodel"
+	"loom/internal/control"
+	"loom/protocol"
 )
 
 type fakeSelector struct {
-	current map[string]string
-	readAs  string
+	snapshots         map[string]clientmodel.Selection
+	revision          control.U64
+	current           map[string]string
+	readAs            string
+	targets           map[string]string
+	elapsed           int64
+	closed            int
+	supersede         bool
+	advanceAfterApply bool
 }
 
-func (selector *fakeSelector) Read(_ context.Context, scope string) (string, error) {
-	if selector.readAs != "" {
-		return selector.readAs, nil
+func (s *fakeSelector) Read(_ context.Context, scope string) (string, error) {
+	if s.readAs != "" {
+		return s.readAs, nil
 	}
-	value, found := selector.current[scope]
-	if !found {
+	v, ok := s.current[scope]
+	if !ok {
 		return "", errors.New("missing selector")
 	}
+	return v, nil
+}
+func (s *fakeSelector) Set(ctx context.Context, scope, id string) error {
+	before, err := s.ReadSelection(ctx, scope)
+	if err != nil {
+		return err
+	}
+	_, err = s.ApplySelection(ctx, before, clientmodel.Selection{Scope: scope, CandidateID: id, Targets: map[string]string{}})
+	return err
+}
+func (s *fakeSelector) CloseConnections(context.Context, []string) error { s.closed++; return nil }
+func (s *fakeSelector) ElapsedMillis() int64                             { return s.elapsed }
+func (s *fakeSelector) ReadSelection(ctx context.Context, scope string) (clientmodel.Selection, error) {
+	id, err := s.Read(ctx, scope)
+	if err != nil {
+		return clientmodel.Selection{}, err
+	}
+	values := map[string]string{}
+	maps.Copy(values, s.targets)
+	value := s.snapshots[scope]
+	value.Scope, value.CandidateID, value.Targets, value.Revision = scope, id, values, strconv.FormatUint(uint64(s.revision), 10)
 	return value, nil
 }
-
-func (selector *fakeSelector) Set(_ context.Context, scope, candidate string) error {
-	selector.current[scope] = candidate
-	return nil
-}
-
-func (*fakeSelector) CloseConnections(context.Context, []string) error { return nil }
-
-func TestActivateUsesReadbackAndOneSameExitFallback(t *testing.T) {
-	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	routes := []clientmodel.RouteCandidate{
-		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
+func (s *fakeSelector) ApplySelection(_ context.Context, expected, desired clientmodel.Selection) (clientmodel.Selection, error) {
+	if s.supersede {
+		s.current[expected.Scope] = "demo-user-choice"
+		return clientmodel.Selection{}, ErrSelectionSuperseded
 	}
-	selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}}
-	results := []ProbeResult{{Available: false, Metric: time.Second}, {Available: true, Metric: 2 * time.Second}}
-	activation, err := Activate(context.Background(), selector, routes, State{
-		Preference:        clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}},
-		NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
-		result := results[0]
-		results = results[1:]
-		return result
-	}}, func() time.Time { return now })
+	if strconv.FormatUint(uint64(s.revision), 10) != expected.Revision || s.current[expected.Scope] != expected.CandidateID || !maps.Equal(s.targets, expected.Targets) {
+		return clientmodel.Selection{}, ErrSelectionSuperseded
+	}
+	if s.snapshots == nil {
+		s.snapshots = map[string]clientmodel.Selection{}
+	}
+	s.snapshots[desired.Scope] = desired
+	s.current[desired.Scope] = desired.CandidateID
+	s.targets = maps.Clone(desired.Targets)
+	s.revision++
+	desired.Revision = strconv.FormatUint(uint64(s.revision), 10)
+	if s.advanceAfterApply {
+		s.revision++ // A later operation reapplied the identical choice.
+	}
+	return desired, nil
+}
+func engineEvidence() (time.Time, []clientmodel.RouteCandidate, []control.Observation) {
+	at := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	routes := []clientmodel.RouteCandidate{}
+	samples := []control.Observation{}
+	for i, id := range []string{"demo-fast", "demo-slow"} {
+		spec := control.ReleaseDigest([]byte(id))
+		metric := int64(10 + i*30)
+		routes = append(routes, clientmodel.RouteCandidate{ID: engineCandidateID(id), EntryNodeID: "demo-exit", FirstResourceID: id, PolicyID: "demo-policy", FixedExit: true, SourceNode: "demo-access", Scope: "service:demo-service", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, FirstHop: &clientmodel.ResourceSampleRef{ResourceID: id, SpecDigest: spec, Target: "192.0.2.1:51820", Action: "wireguard_echo"}})
+		samples = append(samples, control.Observation{Level: "resource", ResourceID: id, SpecDigest: spec, Target: "192.0.2.1:51820", Action: "wireguard_echo", NetworkGeneration: "demo-network", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(time.Minute).UnixMilli(), Result: "available", RoundTripMS: new(metric), DurationMS: new(metric + 1)})
+	}
+	return at, routes, samples
+}
+func TestActivationWithoutProbeURLsAppliesAndReadsOnePolicy(t *testing.T) {
+	at, routes, _ := engineEvidence()
+	s := &fakeSelector{current: map[string]string{"access": "reject"}}
+	result, err := Activate(context.Background(), s, routes, State{Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}, NetworkGeneration: "demo-network"}, nil, func() time.Time { return at })
+	if err != nil || len(result.Selections) != 1 || result.Selections[0].PolicyID != "demo-policy" || result.Selections[0].State != "unknown" || len(result.State.Observations) != 0 {
+		t.Fatal("no URLs prevented connectivity or selector readback manufactured business health", result, err)
+	}
+	if s.closed != 0 {
+		t.Fatal("initial routing closed unrelated connections")
+	}
+}
+func TestStableOptimizationAffectsNewConnectionsWithoutClosingExistingOnes(t *testing.T) {
+	at, routes, samples := engineEvidence()
+	s := &fakeSelector{current: map[string]string{"access": engineCandidateID("demo-slow")}}
+	state := State{Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}, NetworkGeneration: "demo-network", ResourceObservations: samples}
+	first, err := Activate(context.Background(), s, routes, state, nil, func() time.Time { return at })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selector.current["service:demo-service"] != "relay" || len(activation.Selections) != 1 ||
-		activation.Selections[0].CandidateID != "relay" || len(activation.State.Observations) != 2 {
-		t.Fatalf("fallback did not preserve selector readback: selector=%+v activation=%+v", selector.current, activation)
+	if first.Selections[0].CandidateID != engineCandidateID("demo-slow") {
+		t.Fatal("unconfirmed improvement was applied")
+	}
+	for i := range samples {
+		samples[i].ObservedAt += 20_000
+		samples[i].ValidUntil += 20_000
+	}
+	s.elapsed = 35_000
+	second, err := Activate(context.Background(), s, routes, first.State, nil, func() time.Time { return at.Add(35 * time.Second) })
+	if err != nil || second.Selections[0].CandidateID != engineCandidateID("demo-fast") || s.closed != 0 || len(second.State.Observations) != 0 {
+		t.Fatal("sustained update closed flows or manufactured URL samples", second, err, s.closed)
+	}
+}
+func TestSupersededActivationPreservesTheNewUserSelection(t *testing.T) {
+	at, routes, samples := engineEvidence()
+	s := &fakeSelector{current: map[string]string{"access": "reject"}, supersede: true}
+	_, err := Activate(context.Background(), s, routes, State{Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}, NetworkGeneration: "demo-network", ResourceObservations: samples}, nil, func() time.Time { return at })
+	if !errors.Is(err, ErrSelectionSuperseded) || s.current["access"] != "demo-user-choice" || s.closed != 0 {
+		t.Fatal("stale optimization overwrote or closed the user choice", err)
 	}
 }
 
-func TestProbeBudgetRetainsRemainingAuthorizedPathAndRecovers(t *testing.T) {
-	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	scope := "service:demo-service"
-	target := "https://demo.example/test"
-	routes := []clientmodel.RouteCandidate{
-		{ID: "demo-a", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
-		{ID: "demo-b", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
-		{ID: "demo-c", FinalExit: "demo-exit", Chain: []string{"demo-other", "demo-exit"}, Scope: scope, PolicyID: "demo-policy"},
-	}
-	selector := &fakeSelector{current: map[string]string{scope: "demo-a"}}
-	working := "demo-c"
-	var attempts []string
-	probes := Probes{target: func(context.Context) ProbeResult {
-		candidate := selector.current[scope]
-		attempts = append(attempts, candidate)
-		return ProbeResult{Available: candidate == working, Action: "https_request"}
-	}}
-	state := State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"}
-	first, err := Activate(context.Background(), selector, routes, state, probes, func() time.Time { return at })
-	if err != nil || len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-c" ||
-		first.Selections[0].State != "unknown" || len(first.BlockedScopes) != 0 ||
-		!reflect.DeepEqual(attempts, []string{"demo-a", "demo-b"}) {
-		t.Fatal("bounded probing falsely rejected the untried authorized path", err)
-	}
-	second, err := Activate(context.Background(), selector, routes, first.State, probes, func() time.Time { return at })
-	if err != nil || len(second.Selections) != 1 || second.Selections[0].CandidateID != "demo-c" ||
-		second.Selections[0].State != "available" || !reflect.DeepEqual(attempts, []string{"demo-a", "demo-b", "demo-c"}) {
-		t.Fatal("next pass failed to test the remaining actual selection", err)
-	}
-	at = at.Add(11 * time.Minute)
-	working = "demo-a"
-	third, err := Activate(context.Background(), selector, routes, second.State, probes, func() time.Time { return at })
-	if err != nil || len(third.Selections) != 1 || third.Selections[0].CandidateID != "demo-a" ||
-		third.Selections[0].State != "available" || !reflect.DeepEqual(attempts[3:], []string{"demo-c", "demo-a"}) {
-		t.Fatal("temporary failure became a permanent path exclusion", err)
+func TestActivationDoesNotConfirmAnIdenticalChoiceAppliedByALaterOperation(t *testing.T) {
+	at, routes, samples := engineEvidence()
+	s := &fakeSelector{current: map[string]string{"access": "reject"}, advanceAfterApply: true}
+	result, err := Activate(context.Background(), s, routes, State{Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}, NetworkGeneration: "demo-network", ResourceObservations: samples}, nil, func() time.Time { return at })
+	if !errors.Is(err, ErrSelectionSuperseded) || len(result.State.SelectionMemory[control.AccessSelectorScope].Decisions) != 0 || s.closed != 0 {
+		t.Fatal("later identical operation was confirmed as this optimization", err, result.State.SelectionMemory)
 	}
 }
 
-func TestApplyRejectsMismatchedSelectorReadback(t *testing.T) {
-	selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}, readAs: "unauthorized"}
-	if _, err := ApplySelections(context.Background(), selector, map[string]string{"service:demo-service": "relay"}); err == nil {
-		t.Fatal("mismatched selector readback was accepted as Selection")
-	}
-}
-
-func TestActivateWithoutProbeKeepsActualSelectionUnknown(t *testing.T) {
-	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	routes := []clientmodel.RouteCandidate{{ID: "demo-direct", FinalExit: "direct", Scope: "service:demo-service", PolicyID: "demo-policy"}}
-	selector := &fakeSelector{current: map[string]string{"service:demo-service": "demo-direct"}}
-	activation, err := Activate(context.Background(), selector, routes, State{
-		Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"},
-		nil, func() time.Time { return now })
-	if err != nil || len(activation.Selections) != 1 || activation.Selections[0].CandidateID != "demo-direct" ||
-		activation.Selections[0].State != "unknown" || len(activation.State.Observations) != 0 {
-		t.Fatalf("runtime readback did not remain independent of business evidence: %+v, %v", activation, err)
-	}
-	failed, err := Activate(context.Background(), selector, routes, activation.State, Probes{"": func(context.Context) ProbeResult { return ProbeResult{Description: "demo business failed"} }}, func() time.Time { return now })
-	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(failed.Selections) != 0 ||
-		!reflect.DeepEqual(failed.BlockedScopes, []string{"service:demo-service"}) || selector.current["service:demo-service"] != BlockedSelection ||
-		failed.State.NetworkGeneration == "" || len(failed.State.Observations) != 1 || failed.State.Observations[0].Result != "unavailable" {
-		t.Fatalf("business failure did not retain evidence and read back its Service rejection: %+v, %v", failed, err)
-	}
-}
-
-func TestServicesProbeIndependentlyAndRecoverWithoutClearingEvidence(t *testing.T) {
-	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	routes := []clientmodel.RouteCandidate{
-		{ID: "demo-a", FinalExit: "direct", Scope: "service:demo-a", PolicyID: "demo-policy"},
-		{ID: "demo-b", FinalExit: "direct", Scope: "service:demo-b", PolicyID: "demo-policy"},
-	}
-	selector := &fakeSelector{current: map[string]string{routes[0].Scope: BlockedSelection, routes[1].Scope: BlockedSelection}}
-	calls := map[string]int{}
-	recovered := false
-	probe := func(scope string) Probes {
-		return Probes{"": func(context.Context) ProbeResult {
-			calls[scope]++
-			return ProbeResult{Available: scope == routes[0].Scope || recovered, Action: "https_request"}
-		}}
-	}
-	state := State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"}
-	first, err := ActivateServices(context.Background(), selector, routes, state, probe, func() time.Time { return now })
-	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(first.Selections) != 1 || first.Selections[0].CandidateID != "demo-a" ||
-		!reflect.DeepEqual(first.BlockedScopes, []string{routes[1].Scope}) || len(first.State.Observations) != 2 || calls[routes[0].Scope] != 1 || calls[routes[1].Scope] != 1 {
-		t.Fatal("Service outcomes were shared or one failure stopped the other Service", first, calls, err)
-	}
-	recovered = true
-	again, err := ActivateServices(context.Background(), selector, routes, first.State, probe, func() time.Time { return now.Add(29 * time.Second) })
-	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || !reflect.DeepEqual(first.State, again.State) || calls[routes[1].Scope] != 1 {
-		t.Fatal("a still-valid failure was discarded or retried", err)
-	}
-	last, err := ActivateServices(context.Background(), selector, routes, again.State, probe, func() time.Time { return now.Add(30 * time.Second) })
-	if err != nil || len(last.Selections) != 2 || len(last.BlockedScopes) != 0 || calls[routes[0].Scope] != 1 || calls[routes[1].Scope] != 2 {
-		t.Fatal("failure expiry did not restore only its Service", last, calls, err)
-	}
-	if _, err := Activate(context.Background(), selector, routes, state, probe(routes[0].Scope), func() time.Time { return now }); err == nil {
-		t.Fatal("one target measurement was accepted for two Services")
-	}
-}
-
-func TestSelectorReadbackAcceptsRuntimeStatusFieldsButRejectsAmbiguity(t *testing.T) {
-	value, err := decodeSelectorReadback([]byte(`{"type":"Selector","now":"relay","all":["one-hop","relay"],"history":[]}`))
-	if err != nil || value != "relay" {
-		t.Fatalf("real selector response = %q, %v", value, err)
-	}
-	for _, body := range []string{`{"type":"Selector"}`, `{"now":"relay"}{"now":"one-hop"}`} {
-		if _, err := decodeSelectorReadback([]byte(body)); err == nil {
-			t.Fatalf("invalid selector response accepted: %s", body)
-		}
-	}
-}
-
-func TestCancellationDoesNotBecomeBusinessFailure(t *testing.T) {
-	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	routes := []clientmodel.RouteCandidate{
-		{ID: "one-hop", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
-		{ID: "relay", FinalExit: "demo-exit", Chain: []string{"demo-relay", "demo-exit"}, Scope: "service:demo-service", PolicyID: "demo-policy"},
-	}
-	for _, cancelOnFallback := range []bool{false, true} {
-		name := "first probe"
-		if cancelOnFallback {
-			name = "fallback probe"
-		}
-		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			selector := &fakeSelector{current: map[string]string{"service:demo-service": "one-hop"}}
-			calls := 0
-			activation, err := Activate(ctx, selector, routes, State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: "demo-policy"}, {ServiceID: "demo-b", PolicyID: "demo-policy"}, {ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"}, Probes{"": func(context.Context) ProbeResult {
-				calls++
-				if !cancelOnFallback || calls == 2 {
-					cancel()
-				}
-				return ProbeResult{Description: "demo probe interrupted"}
-			}}, func() time.Time { return now })
-			expectedCalls := 1
-			expectedCandidate := "one-hop"
-			if cancelOnFallback {
-				expectedCalls, expectedCandidate = 2, "relay"
-			}
-			if !errors.Is(err, context.Canceled) || calls != expectedCalls ||
-				len(activation.State.Observations) != expectedCalls-1 ||
-				len(activation.Selections) != 1 || activation.Selections[0].CandidateID != expectedCandidate ||
-				activation.Selections[0].State != "unknown" {
-				t.Fatalf("cancelled probe invented business evidence: activation=%+v calls=%d err=%v", activation, calls, err)
-			}
-			if cancelOnFallback && (activation.State.Observations[0].CandidateID != "one-hop" || activation.State.Observations[0].Result != "unavailable") {
-				t.Fatalf("earlier real failure was lost: %+v", activation.State.Observations)
-			}
-		})
-	}
+func engineCandidateID(resource string) string {
+	value, _ := protocol.CandidateID("demo-service", "demo-policy", protocol.RouteChoice{EntryNodeID: "demo-exit", FirstResourceID: resource, FinalExit: "demo-exit"})
+	return value
 }

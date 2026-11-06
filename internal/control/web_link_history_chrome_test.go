@@ -59,7 +59,7 @@ func TestWebChromeLinkHistoryScopeRefreshAndNavigation(t *testing.T) {
 	reports := []DeviceReport{}
 	for index, state := range []string{"unavailable", "available", "available"} {
 		at := now.Add(-[]time.Duration{time.Hour, 5 * time.Second, 0}[index])
-		sample := Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns",
+		sample := Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_echo",
 			NetworkGeneration: "demo-generation", Result: state, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(100))}
 		if state == "available" {
 			sample.RoundTripMS = new(int64(0))

@@ -79,10 +79,16 @@ func PrepareReportIndex(ctx context.Context, root, adminSocket string, options .
 			}
 		}
 		if mode.Verify {
-			return verifyReportCounters(ctx, tx, keys)
+			if err := verifyReportCounters(ctx, tx, keys); err != nil {
+				return err
+			}
+			return verifyReportMeasurements(ctx, tx, keys)
 		}
 		if mode.Rebuild {
-			return rebuildReportCounters(ctx, tx, keys)
+			if err := rebuildReportCounters(ctx, tx, keys); err != nil {
+				return err
+			}
+			return rebuildReportMeasurements(ctx, tx, keys)
 		}
 		if err := ensureReportIndexes(tx); err != nil {
 			return err
@@ -91,6 +97,9 @@ func PrepareReportIndex(ctx context.Context, root, adminSocket string, options .
 			return err
 		}
 		if err := ensureReportEventIndex(ctx, tx); err != nil {
+			return err
+		}
+		if err := ensureReportMeasurementIndex(ctx, tx); err != nil {
 			return err
 		}
 		child := tx.Bucket(reportIndexBucket).Bucket(reportCountersBucket)

@@ -28,7 +28,7 @@ func accessWireGuardOutbounds(t *testing.T, view DeviceView) []map[string]any {
 	var document struct {
 		Endpoints []map[string]any `json:"endpoints"`
 	}
-	if err := json.Unmarshal([]byte(view.RuntimeProfile.Config), &document); err != nil {
+	if err := json.Unmarshal([]byte(testDeviceExecution(view).RuntimeProfile.Config), &document); err != nil {
 		t.Fatal(err)
 	}
 	var result []map[string]any
@@ -40,13 +40,63 @@ func accessWireGuardOutbounds(t *testing.T, view DeviceView) []map[string]any {
 	return result
 }
 
+func TestWireGuardAdmissionUsesExistingSourceAndExactExecutionBinding(t *testing.T) {
+	p := wireGuardAccessFixture(t)
+	view, err := ProjectDeviceView(p, "demo-access")
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution := testDeviceExecution(view)
+	probes, err := FirstHopProbes(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Outbounds []map[string]any `json:"outbounds"`
+		Endpoints []map[string]any `json:"endpoints"`
+	}
+	if err := json.Unmarshal([]byte(execution.RuntimeProfile.Config), &document); err != nil {
+		t.Fatal(err)
+	}
+	byTag := map[string]map[string]any{}
+	for _, outbound := range document.Outbounds {
+		byTag[outbound["tag"].(string)] = outbound
+	}
+	checked := 0
+	for _, probe := range probes {
+		if probe.Resource.Kind != "wireguard" {
+			continue
+		}
+		checked++
+		address, _ := WireGuardAccessAddress(probe.Resource, "")
+		source, _ := WireGuardPacketSource(probe.Resource, probe.Credential)
+		pool, _ := WireGuardTargetPrefix(view.NetworkID, probe.Resource)
+		found := false
+		for _, endpoint := range document.Endpoints {
+			for _, raw := range endpoint["source_routes"].([]any) {
+				binding := raw.(map[string]any)
+				if binding["source"] == source.String() && binding["execution"] == address.String() && binding["destination"] == pool.String() {
+					found = true
+				}
+			}
+		}
+		transport := byTag[mustTransportTag(probe.Resource.ID)]
+		if !found || transport["execution"] == nil || transport["detour"] != WireGuardEndpointTag || transport["inet6_bind_address"] != source.String() {
+			t.Fatal("diagnostic changed transport identity or bypassed the business context contract")
+		}
+	}
+	if checked == 0 {
+		t.Fatal("fixture did not exercise ordinary WG admission")
+	}
+}
+
 func TestWireGuardAccessSharesResourceAndMatchesPrivatePublicProjection(t *testing.T) {
 	p := wireGuardAccessFixture(t)
 	first, err := ProjectDeviceView(p, "demo-access")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Routes) != 3 || len(first.WireGuardPeers) != 0 {
+	if len(testDeviceExecution(first).Routes) != 3 || len(testDeviceExecution(first).WireGuardPeers) != 0 {
 		t.Fatal("WG, public Hy2 and same-exit relay did not coexist privately")
 	}
 	wg := accessWireGuardOutbounds(t, first)
@@ -54,15 +104,15 @@ func TestWireGuardAccessSharesResourceAndMatchesPrivatePublicProjection(t *testi
 		t.Fatal("ordinary access did not use one user-space WG session")
 	}
 	receiver, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(receiver.WireGuardPeers) != 2 {
+	if err != nil || len(testDeviceExecution(receiver).WireGuardPeers) != 2 {
 		t.Fatal("receiver did not obtain its one permitted peer", err)
 	}
 	private, err := wireGuardAccessPrivate(wg[0]["private_key"].(string))
-	if err != nil || base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()) != receiver.WireGuardPeers[0].PublicKey {
+	if err != nil || base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()) != testDeviceExecution(receiver).WireGuardPeers[0].PublicKey {
 		t.Fatal("client and receiver keys differ", err)
 	}
-	for _, route := range first.Routes {
-		if route.FirstResourceID == "demo-exit-wg" && (len(route.LinkIDs) != 0 || !reflect.DeepEqual(route.NodeChain, []string{"demo-exit"})) {
+	for _, route := range testDeviceExecution(first).Routes {
+		if route.FirstResourceID == "demo-exit-wg" && route.EntryNodeID != "demo-exit" {
 			t.Fatal("ordinary access invented a Link or extra node")
 		}
 	}
@@ -70,6 +120,10 @@ func TestWireGuardAccessSharesResourceAndMatchesPrivatePublicProjection(t *testi
 	second.ID = "demo-other"
 	root := sha256.Sum256([]byte("demo-other-runtime-root"))
 	second.RuntimeKey = base64.RawURLEncoding.EncodeToString(root[:])
+	second.WireGuardPublicKey, err = DerivedWireGuardPublicKey(p.NetworkID, second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p.DeviceAuthorizations = append(p.DeviceAuthorizations, second)
 	sort.Slice(p.DeviceAuthorizations, func(i, j int) bool { return p.DeviceAuthorizations[i].ID < p.DeviceAuthorizations[j].ID })
 	after, err := ProjectDeviceView(p, "demo-access")
@@ -77,7 +131,7 @@ func TestWireGuardAccessSharesResourceAndMatchesPrivatePublicProjection(t *testi
 		t.Fatal("another device changed existing access identity or runtime", err)
 	}
 	receiver, err = ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(receiver.WireGuardPeers) != 3 || receiver.WireGuardPeers[0].PublicKey == receiver.WireGuardPeers[1].PublicKey {
+	if err != nil || len(testDeviceExecution(receiver).WireGuardPeers) != 3 || testDeviceExecution(receiver).WireGuardPeers[0].PublicKey == testDeviceExecution(receiver).WireGuardPeers[1].PublicKey {
 		t.Fatal("shared resource did not separate devices", err)
 	}
 	for _, view := range []DeviceView{first, receiver} {
@@ -99,7 +153,7 @@ func TestWireGuardAccessSharesResourceAndMatchesPrivatePublicProjection(t *testi
 
 func TestWireGuardAccessServiceWithdrawalPreservesOtherServiceAndPeer(t *testing.T) {
 	p := wireGuardAccessFixture(t)
-	service := Service{ID: "demo-other-service", Name: "Demo other service", Kind: "internet", Matchers: []ServiceMatcher{{Kind: "dns_exact", Value: "other.example.test"}}}
+	service := Service{ID: "demo-other-service", Name: "Demo other service", Kind: "internet", RestrictToProbeTargets: new(false)}
 	policy := p.NetworkIntent.Policies[0]
 	policy.ID, policy.ServiceID = "demo-other-policy", service.ID
 	p.NetworkIntent.Services = append(p.NetworkIntent.Services, service)
@@ -112,31 +166,37 @@ func TestWireGuardAccessServiceWithdrawalPreservesOtherServiceAndPeer(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	bindings, err := CandidateFirstHopProbes(first)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var sharedSpec string
-	count := 0
-	for _, route := range first.Routes {
-		if route.FirstResourceID != "demo-exit-wg" {
-			continue
+	for _, policyID := range first.PolicyIDs {
+		execution, err := ProjectDeviceCandidates(first, []string{policyID})
+		if err != nil {
+			t.Fatal(err)
 		}
-		probe, found := bindings[route.ID]
-		if !found || sharedSpec != "" && probe.SpecDigest != sharedSpec {
-			t.Fatal("shared device WG identity did not bind both authorized Service paths")
+		bindings, err := CandidateFirstHopProbes(execution)
+		if err != nil {
+			t.Fatal(err)
 		}
-		sharedSpec = probe.SpecDigest
-		count++
-	}
-	if count != 2 {
-		t.Fatal("fixture did not cover shared WG credentials")
+		count := 0
+		for _, route := range execution.Routes {
+			if route.FirstResourceID != "demo-exit-wg" {
+				continue
+			}
+			probe, found := bindings[route.ID]
+			if !found || sharedSpec != "" && sharedSpec == probe.SpecDigest {
+				t.Fatal("independent Policy admission was conflated")
+			}
+			sharedSpec = probe.SpecDigest
+			count++
+		}
+		if count != 1 {
+			t.Fatal("missing selected Policy admission")
+		}
 	}
 	if len(accessWireGuardOutbounds(t, first)) != 1 {
 		t.Fatal("multiple services created competing WG sessions")
 	}
 	receiver, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(receiver.WireGuardPeers) != 2 {
+	if err != nil || len(testDeviceExecution(receiver).WireGuardPeers) != 2 {
 		t.Fatal("multiple services created duplicate peers", err)
 	}
 	for i := range p.NetworkIntent.Policies {
@@ -152,54 +212,49 @@ func TestWireGuardAccessServiceWithdrawalPreservesOtherServiceAndPeer(t *testing
 		t.Fatal("one Service withdrawal rotated shared transport")
 	}
 	restricted, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || !reflect.DeepEqual(receiver.WireGuardPeers, restricted.WireGuardPeers) || len(restricted.InboundCredentials) != 3 || restricted.InboundCredentials[0].ServiceID != service.ID {
+	if err != nil || !reflect.DeepEqual(testDeviceExecution(receiver).WireGuardPeers, testDeviceExecution(restricted).WireGuardPeers) || len(restricted.TransportCredentials) != len(receiver.TransportCredentials) {
 		t.Fatal("Service withdrawal lost other service or retained old ACL", err)
 	}
 	p.DeviceAuthorizations[0].PolicyIDs = []string{}
 	withdrawn, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(withdrawn.WireGuardPeers) != 1 || withdrawn.WireGuardPeers[0].DeviceID != "demo-entry" || len(withdrawn.InboundCredentials) != 0 {
-		t.Fatal("last permission withdrawal retained peer", err)
+	if err != nil || len(testDeviceExecution(withdrawn).WireGuardPeers) != 1 || testDeviceExecution(withdrawn).WireGuardPeers[0].DeviceID != "demo-entry" || len(testDeviceExecution(withdrawn).AccessGrants) != 0 {
+		t.Fatal("withdrawn access retained a transport peer or origin grant", err)
+	}
+	for _, permission := range withdrawn.TransportCredentials {
+		if permission.SenderID == "demo-access" {
+			t.Fatal("withdrawn origin retained an access credential")
+		}
 	}
 }
 
-func TestWireGuardAccessRejectsUnboundPeersAndTargets(t *testing.T) {
-	for name, change := range map[string]func(*DeviceView){
-		"missing":        func(v *DeviceView) { v.WireGuardPeers = nil },
-		"empty":          func(v *DeviceView) { v.WireGuardPeers = []WireGuardAccessPeer{} },
-		"extra":          func(v *DeviceView) { v.WireGuardPeers[0].DeviceID = "demo-stranger" },
-		"wrong resource": func(v *DeviceView) { v.WireGuardPeers[0].ResourceID = "demo-entry-wg" },
-		"duplicate":      func(v *DeviceView) { v.WireGuardPeers = append(v.WireGuardPeers, v.WireGuardPeers[0]) },
-		"low order": func(v *DeviceView) {
-			v.WireGuardPeers[0].PublicKey = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			v, err := ProjectDeviceView(wireGuardAccessFixture(t), "demo-exit")
-			if err != nil {
-				t.Fatal(err)
-			}
-			change(&v)
-			if v.Validate() == nil {
-				t.Fatal("accepted peer without precise permission")
-			}
-		})
+func TestWireGuardAccessRejectsAmbiguousNodeIdentitiesAndNestedTargets(t *testing.T) {
+	p := wireGuardAccessFixture(t)
+	view, err := ProjectDeviceView(p, "demo-exit")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, change := range map[string]func(*TransportResource){
-		"other node":     func(r *TransportResource) { r.AccessHY2ResourceID = "demo-entry-hy2" },
-		"missing target": func(r *TransportResource) { r.AccessHY2ResourceID = "demo-missing" },
-		"wrong kind":     func(r *TransportResource) { r.AccessHY2ResourceID = "demo-entry-wg" },
+	for _, change := range []func(*DeviceView){
+		func(v *DeviceView) { v.Nodes = append(v.Nodes, v.Nodes[0]) },
+		func(v *DeviceView) {
+			v.Nodes[0].WireGuardPublicKey = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+		},
+		func(v *DeviceView) { v.WireGuardPrivateKey = "invalid" },
 	} {
-		t.Run(name, func(t *testing.T) {
-			p := wireGuardAccessFixture(t)
-			for i := range p.NetworkIntent.Resources {
-				if p.NetworkIntent.Resources[i].ID == "demo-exit-wg" {
-					change(&p.NetworkIntent.Resources[i])
-				}
-			}
-			if _, err := ProjectDeviceView(p, "demo-access"); err == nil {
-				t.Fatal("retired WG/Hy2 coupling entered a new View")
-			}
-		})
+		clone := view
+		clone.Nodes = append([]ViewNode{}, view.Nodes...)
+		change(&clone)
+		if clone.Validate() == nil {
+			t.Fatal("ambiguous native sender identity admitted")
+		}
+	}
+	for _, resource := range p.NetworkIntent.Resources {
+		if resource.Kind != "wireguard" {
+			continue
+		}
+		resource.AccessHY2ResourceID = "demo-entry-hy2"
+		if validateCurrentTransportPayload(resource) == nil {
+			t.Fatal("restored WG dependency on Hy2")
+		}
 	}
 }
 
@@ -242,7 +297,7 @@ func TestWireGuardAccessDerivationAndAbsentFieldsAreStable(t *testing.T) {
 	}
 	view, err := ProjectDeviceView(relayProjectionFixture(t), "demo-exit")
 	body, e := CanonicalEncode(view)
-	if err != nil || e != nil || len(view.WireGuardPeers) != 1 || view.WireGuardPeers[0].DeviceID != "demo-entry" {
+	if err != nil || e != nil || len(testDeviceExecution(view).WireGuardPeers) != 1 || testDeviceExecution(view).WireGuardPeers[0].DeviceID != "demo-entry" {
 		t.Fatal("old View gained peer authority", err, e)
 	}
 	if bytes.Contains(body, []byte(private)) {

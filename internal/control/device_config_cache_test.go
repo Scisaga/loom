@@ -168,12 +168,12 @@ func TestDeviceConfigurationReusesCanonicalOutputAndAdvancesUnchangedView(t *tes
 		t.Fatal(err)
 	}
 	envelope.View.Name = "Demo caller mutation"
-	if len(envelope.View.Routes) == 0 {
+	if len(testDeviceExecution(envelope.View).Routes) == 0 {
 		t.Fatal("fixture has no route slice to exercise output ownership")
 	}
-	routeID := envelope.View.Routes[0].ID
-	envelope.View.Routes[0].ID = "demo-caller-route-mutation"
-	if current := decodedDeviceConfig(t, read()); current.View.Name == envelope.View.Name || current.View.Routes[0].ID != routeID {
+	routeID := testDeviceExecution(envelope.View).Routes[0].ID
+	testDeviceExecution(envelope.View).Routes[0].ID = "demo-caller-route-mutation"
+	if current := decodedDeviceConfig(t, read()); current.View.Name == envelope.View.Name || testDeviceExecution(current.View).Routes[0].ID != routeID {
 		t.Fatal("public envelope caller mutated the shared value")
 	}
 	prior, err := server.newDeviceConfigRequest()

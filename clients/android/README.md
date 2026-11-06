@@ -35,35 +35,54 @@ its camera use cases. Permission and camera errors stay within the viewport.
 Dismissed sessions cannot deliver queued scan results; accepted results continue
 through the existing profile invitation import.
 
-Each profile stores one policy choice per Service in its existing protected
-preference. The control grants a set of available policies; multiple policies for
-the same Service are allowed. A new Service with one policy is initialized once;
-multiple options require an explicit client choice. Revocation clears that
-Service's choice and requires reselection. Runtime failure stays within the
-chosen policy. Switching one Service leaves other Services and their connections
-unchanged. The previous global Direct / Auto / fixed-exit setting is retired.
+The client selects one current Internet Policy per active profile. That Policy
+uniquely determines its Service; the granted PolicyIDs are available choices,
+including multiple policies under one Service, not simultaneous Internet rules.
+The Service contains expected-service probe URLs and an optional restriction to
+those targets. With the restriction off, the URLs do not form an Internet allowlist.
+There is no separate Destinations editor, Probe object, or geographic classifier.
+LAN authorization remains independent. See the [current business baseline](../../docs/core/control-model.md#服务与策略的当前业务基线).
 
-Existing profiles use explicit certified-file import for the one-time forward
-replacement. The control first reasserts authorization through `device.put` and
-exports the signed View. Import retains the original identity and preference in
-protected evidence slots before replacing their existing records. Interrupted
-writes can be retried; completed retries preserve later user choices. Ordinary
-startup and background sync only decode current values. Subsequent current View
-imports use the normal identity and frontier checks without invoking migration.
+The previous per-Service preference shape requires explicit forward replacement;
+its presence in old storage, screenshots, or tests does not constrain the target.
+The current preference records one Internet Policy and independent LAN choices.
+Replacement preserves identity, signed originals, high-water/floor, latch, and
+report sequence. Implementation and physical migration acceptance are recorded
+separately in [delivery status](../../docs/delivery-audit.md); a migration helper
+does not by itself prove that an existing device has completed the transition.
+
+The existing certified-file import implements an earlier one-time replacement;
+it does not prove migration to the new single-current-Policy model. A revised
+forward replacement must preserve original protected identity and preference bytes,
+verify an actual certified fact-frontier advance, retain high-water/floor, latch,
+and report sequence, and become the only current representation. Ordinary startup
+and sync must not gain a historical runtime fallback. Normal imports of unchanged
+current values retain their identity and frontier checks.
 
 ## Shared client contract
 
+The Android TUN inbound uses gVisor by default, as defined by the
+[Android capture contract](../../docs/clients/client-runtime-model.md#android-capture-边界).
+It adapts local TCP/UDP traffic to the existing native execution path; WG and Hy2
+remain independent transports. UDP adaptation preserves the original domain/IP,
+port, and payload. There is no additional stack setting or automatic system-stack
+fallback. Enabling a stack implementation upgrade uses normal VPN stop/restart;
+performance routing changes continue to preserve existing connections.
+
 The Android app consumes a private `DeviceView` signed by an effective control,
 with a continuous control membership proof and signer fact frontier. The view
-contains the authorized route candidates and one canonical sing-box runtime
-profile. Enrollment, configuration sync, and reporting use the private device
+contains stable authorization, eligible nodes and resources, and necessary
+transport identity material. The client derives candidates and runtime inputs
+for its current Internet Policy and independent LAN choices. Measurements and
+recommendations do not change that signed View. Enrollment, configuration sync,
+and reporting use the private device
 channel defined by the [Enrollment model](../../docs/core/enrollment-endpoint-model.md).
 
 The protected Android Keystore store contains:
 
 - the Ed25519 device identity, bootstrap capability, monotonic observed-fact floor,
   control membership proof, and complete signed LKG as one state record;
-- the user's per-Service policy choices, including initialized waiting records;
+- the user's current Internet Policy choice or waiting intent, after explicit forward migration;
 - bounded business observations keyed by network generation.
 - a deletable first-hop observation cache bound to the profile identity, exact
   authorized resource inputs and network generation; original sample times survive restart.
@@ -74,25 +93,33 @@ client pins its SPKI and proves the device key before HTTP is available.
 
 `RouteCandidate.ID` maps directly to the same sing-box outbound and
 `RouteCandidate.Scope` maps directly to its selector. The shared Go model makes
-one deterministic choice for each authorized Service scope. Kotlin only applies that choice and
+choices only within the current Internet Policy. Kotlin applies those choices and
 publishes selector readback. Missing, expired, and prior-network results remain
-`unknown`; Direct never receives a synthetic measurement. A selected non-Direct
-candidate receives the minimum real HTTPS checks, retaining the original domain through the selected path, for the authorized Service
-and network generation. Each result binds the actual target and candidate; a success
-for one Service does not establish another Service's health.
-If the selected candidate is unavailable, the model may choose one same-exit fallback and
-the host performs one second business check—there is no full candidate scan.
+`unknown`; Direct never receives a synthetic measurement. Access measures its own
+qualified first hops and consumes shared directed-link and exit measurements.
+Forward nodes measure their outgoing links, and each Internet exit measures its
+applicable Service URLs. The access does not repeat the exit's URL checks across
+every complete path. Limited end-to-end calibration and actual business evidence
+retain their original target, measurement location, parameters and lifetime; a
+success for one target does not establish another target's health.
+Connection starts with an available allowed path while bounded exploration and
+segmented measurements continue. A fixed exit remains fixed through every relay;
+there is no fixed "2+1" budget or full candidate-by-URL scan. Measurement refresh,
+sample validity, and minimum performance-switch interval are separate. Performance
+switches keep existing connections and apply the preference to new connections.
 
-The normal connection and diagnostics pages display each authorized Service and
+The normal connection page shows the selected Policy and its Service. Diagnostics
+can retain explicitly scoped historical results for other Services. It displays each measured
 HTTPS target with its original candidate, result, sample time and expiry. A failed
 candidate leaving selection retains its historical explanation; missing samples
 remain unknown. UI expiry changes only the display, and normal stop or configuration
 replacement does not restore cleared samples. VPN connection and actual business
 outcomes remain separate. See the [business display projection](../../docs/clients/client-runtime-model.md#android-的业务观测展示).
 
-After selector readback, the existing report loop separately authenticates the
-public Hy2 first hops actually needed by the selection. Shared resources are
-sampled once per original validity window through protected underlay sockets.
+After runtime readback, first-hop measurement uses protected underlay sockets and
+a node-wide budget. Reporting, configuration sync, measurement, and UI operations
+must not wait behind one shared network-operation lock. Successful samples can be
+remeasured before expiry; identical in-flight work is shared.
 These resource observations enter the original signed report and management
 device page; they do not establish a Service's availability. Normal stop retains
 the diagnostic cache but reports no current resource health. Revocation, changed
@@ -117,7 +144,8 @@ an older runtime may continue only if it remains authorized by the newly
 verified View. Real DNS/HTTPS checks follow runtime application and determine business availability for their actual
 Service and network generation. Missing authorized probe targets leave that
 business scope `unknown` without blocking LKG acceptance or VPN operation;
-a real failure records `unavailable` and permits the one necessary fallback.
+a real target failure records its actual scope and can inform same-Policy recovery.
+A single URL failure does not establish whole-Internet failure.
 Process and device restart always revalidate the complete LKG and its
 anti-rollback floor before projecting a runtime profile.
 
@@ -135,8 +163,8 @@ and NDK 28.0.13004108. The AAR build pins sing-box 1.11.4 and binds libbox and
 `mobile/loomcore` into the same Go runtime:
 
 ```bash
-ANDROID_HOME=/opt/android-sdk ./scripts/build-mobile-aar.sh
-ANDROID_HOME=/opt/android-sdk ./gradlew --no-daemon --max-workers=4 \
+ANDROID_HOME=/opt/android-sdk bash ./scripts/build-mobile-aar.sh
+ANDROID_HOME=/opt/android-sdk bash ./gradlew --no-daemon --max-workers=4 \
   testDebugUnitTest lintDebug assembleDebug
 ```
 
@@ -148,7 +176,7 @@ signature, and confirms both APK native libraries are byte-identical to the
 audited AAR:
 
 ```bash
-ANDROID_HOME=/opt/android-sdk ./scripts/build-release.sh
+ANDROID_HOME=/opt/android-sdk bash ./scripts/build-release.sh
 ```
 
 The AAR and APK carry the same reviewed `assets/loom/source-provenance.json`;
@@ -199,7 +227,7 @@ has been saved. Join errors distinguish retrying the same transaction from
 abandoning local pending join data; diagnostics labels each Service, actual target,
 result and observation time. Target scenes may differ from the existing native
 PNGs or have no native counterpart. Requirements determine scene coverage, not
-the current count of nine references. SVG changes do not update production UI
+the current count of reference images. SVG changes do not update production UI
 or approve new screenshot baselines; those require implementation and native review.
 
 From the repository root run:

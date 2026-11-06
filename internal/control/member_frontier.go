@@ -10,12 +10,25 @@ import (
 const (
 	frontierProofHeader     = "Loom-Control-Proof"
 	frontierConflictsHeader = "Loom-Material-Conflicts"
+	factsChangedHeader      = "Loom-Facts-Changed"
 )
 
 func (server *Server) internalFrontier(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		http.Error(w, "fact frontier query is invalid", http.StatusBadRequest)
 		return
+	}
+	if values := r.Header.Values(factsChangedHeader); len(values) != 0 {
+		if len(values) != 1 || values[0] != "1" {
+			http.Error(w, "invalid member change hint", http.StatusBadRequest)
+			return
+		}
+		// The ordinary private handler has authenticated the current member.
+		// Only schedule the existing pull; the hint is never an authority input.
+		select {
+		case server.Runtime.wake <- struct{}{}:
+		default:
+		}
 	}
 	body, proofETag, noConflicts, err := server.Runtime.Authority.frontierRepresentation()
 	if err != nil {
@@ -75,6 +88,9 @@ func (runtime *Runtime) peerFrontier(ctx context.Context, member Member) ([]Fact
 	}
 	etag := canonicalETag(known)
 	header := http.Header{"If-None-Match": {etag}}
+	if scope, ok := ctx.Value(memberHTTPAttemptKey{}).(memberHTTPAttempt); ok && scope.factsChanged {
+		header.Set(factsChangedHeader, "1")
+	}
 	var confirmed, noConflicts bool
 	body, err := runtime.peerRead(ctx, member, http.MethodGet, "/internal/frontier", nil, header, func(response *http.Response) ([]byte, error) {
 		confirmed = len(response.Header.Values(frontierProofHeader)) == 1 && response.Header.Get(frontierProofHeader) == proofETag

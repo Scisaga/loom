@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sort"
 	"time"
+
+	"loom/internal/localconfig"
 )
 
 func (server *Server) wgPortRecoveryPrior(head Material) (TransportResource, error) {
@@ -113,8 +115,12 @@ func wgPortRecoveryHistoricalSample(p Projection, report DeviceReport, link Netw
 	if !exists || report.DeviceID != link.FromNodeID || report.NetworkID != p.NetworkID || report.Verify(identity.DevicePublicKey) != nil {
 		return ""
 	}
-	spec, err := nativeLinkSpecDigest(link, wgPortRecoveryResource(p, link.FromResourceID), wgPortRecoveryResource(p, link.ResourceID))
+	specs, err := projectionLinkSpecs(p)
 	if err != nil {
+		return ""
+	}
+	spec := specs[link.ID]
+	if spec == "" {
 		return ""
 	}
 	_, until := webReportTime(report, now)
@@ -273,6 +279,19 @@ func (server *Server) wgPortRecoveryCurrent(ctx context.Context, p Projection, r
 	if !wgPortRecoveryListener(latest[resource.OwnerNodeID], resource) {
 		return false, nil
 	}
+	if executor, ok := server.SSH.(WGPortRecoveryExecutor); ok {
+		nodes, _, err := executor.WGPortMappings()
+		if err != nil {
+			return false, err
+		}
+		mapped, err := localconfig.IngressAddress(nodes, resource.OwnerNodeID, "udp", resource.DialHost, resource.DialPort)
+		if err != nil {
+			return false, err
+		}
+		if !wgPortRecoveryListener(latest[resource.OwnerNodeID], resource, mapped) {
+			return false, nil
+		}
+	}
 	links, err := DerivedNetworkLinks(p)
 	if err != nil {
 		return false, err
@@ -304,7 +323,7 @@ func (server *Server) wgPortRecoveryDeliver(ctx context.Context, executor WGPort
 				a, _ := CanonicalEncode(current)
 				b, _ := CanonicalEncode(resource)
 				if string(a) == string(b) {
-					return executor.WGPortDeliver(ctx, view.DeviceID, envelope)
+					return executor.WGPortDeliver(ctx, view.DeviceID, envelope, resource.ID)
 				}
 			}
 		}

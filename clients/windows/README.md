@@ -12,20 +12,25 @@ enrollment and private transport are defined by
 All editions use the same enrollment, candidate, observation, and selection
 semantics.
 
-Each profile stores one policy choice per Service in its existing protected
-preference. The control grants a set of available policies; multiple policies for
-the same Service are allowed. A new Service with one policy is initialized once;
-multiple options require an explicit client choice. Revocation clears that
-Service's choice and requires reselection. Runtime failure stays within the
-chosen policy. Switching one Service leaves other Services and their connections
-unchanged. The previous global Direct / Auto / fixed-exit setting is retired.
+The client selects one current Internet Policy per active profile. That Policy
+uniquely determines its Service; the granted PolicyIDs are available choices,
+including multiple policies under one Service, not simultaneous Internet rules.
+The Service contains expected-service probe URLs and an optional restriction to
+those targets. With the restriction off, the URLs do not form an Internet allowlist.
+There is no separate Destinations editor, Probe object, or geographic classifier.
+LAN authorization remains independent. See the [current business baseline](../../docs/core/control-model.md#服务与策略的当前业务基线).
 
-Existing global preferences require the explicit `migrate-policy-selection
--state <protected-profile> -view <certified-view> -evidence <protected-original>`
-command from the exact new edition. Stop the GUI and runtime first; the command
-takes both existing execution locks and preserves the original DPAPI bytes.
-The control must reassert the authorization through `device.put` before exporting
-the replacement View. Ordinary startup and sync only accept the current shape.
+The previous per-Service preference shape is an implementation and forward-migration
+gap. Its presence in source, storage, screenshots, or tests does not constrain the
+target. New field definitions and migration are not complete; preserve existing
+identity, signed originals, high-water/floor, latch, and report sequence. Do not use
+an old migration command as proof that this new selection model is implemented.
+
+The existing `migrate-policy-selection` command converts an earlier global mode
+to the old per-Service model. It is not the migration for the current target.
+A new forward replacement must retain original protected bytes, verify an actual
+fact-frontier advance, and preserve identity and anti-rollback progress. Ordinary
+startup must not gain an old-format runtime fallback.
 
 Invitation QR codes, links and files carry only a transaction credential and
 minimal pinned TLS coordinates. They contain no policies, device names or member
@@ -58,7 +63,7 @@ The sidebar `+` action opens the import panel; **加入并保存** is the only n
 join action. First use has an empty profile list and an **添加连接配置** action;
 it does not create an empty profile automatically. The `join-empty` screenshot
 is an exceptional existing-entry comparison, not the first-use screen or a step
-after the import draft. This differs from Android's nonempty local catalog.
+after the import draft. Android can also retain an empty catalog, but creates an initial unjoined profile on first installation.
 A pending join can be resumed with the same capability, request ID,
 and identity. A profile is added to the local index only after its protected
 authority has committed. The index contains UI names, ordering, selection, and
@@ -87,14 +92,14 @@ The UI displays only projections of this authority. `RouteCandidate` becomes a
 stable. Applying a candidate is not success: `Selection` is the value returned
 by the authenticated Windows selector after the write. `Observation` is created
 only by real transport/business results—TCP with TLS where applicable and
-UDP/DNS—not by ICMP, process existence, a listener, or a UI color. One failed
-candidate may cause one same-exit fallback. Business observations bind Service,
+UDP/DNS—not by ICMP, process existence, a listener, or a UI color. Recovery stays within the current Policy and fixed-exit constraints;
+continuous bounded measurements do not stop after finding one usable path. Business observations bind Service,
 candidate, actual target and network generation; a result for one Service does
 not establish another Service's health.
 
-Each Service expands into its authorized targets, original candidate and network
-scope, result, sample time, and expiry. A rejected Service keeps its own historical
-failure evidence while other Services continue. Missing, expired, conflicting, or
+The current Policy determines the Service and optional target restriction.
+Diagnostics retain the actual target, original execution context, result, time,
+and expiry; historical results for inactive Policies are explicitly historical. Missing, expired, conflicting, or
 incorrectly bound samples cannot establish current health. The selector readback
 completion time is recorded separately in the disposable runtime status; refreshing
 the UI or waiting for a report does not replace it with a business sample time.
@@ -134,7 +139,8 @@ delete a disconnected profile in the UI to delete its identity intentionally.
 ## Runtime and security boundaries
 
 - `internal/clientjoin` strictly decodes bounded bootstrap QR images, files, or
-  text and accepts only canonical `BootstrapInvite` values.
+  text and accepts only canonical `InvitationReference` values; the full signed
+  `BootstrapInvite` is obtained through authenticated private enrollment.
 - `internal/deviceclient` owns the shared private claim/resume/sync/report wire
   and the Windows DPAPI profile store.
 - `internal/clientmodel` validates the complete runtime and projects certified
@@ -166,10 +172,17 @@ Build all editions for amd64 and arm64 on the repository host:
 bash ./scripts/build-windows-clients.sh
 ```
 
-Build the reviewed data plane with `scripts/build-dataplane.sh`, then use
-`loom client package-windows -arch <arch> -generation <generation>
--dataplane-dir out/dataplane -wintun-archive <pinned-archive>` for each architecture.
-The current package is `loom-windows-dataplane-1.11.4-loom.12-<arch>.zip`.
+Build the reviewed Windows data plane on the same repository host with
+`scripts/build-dataplane.sh windows/amd64 windows/arm64`. The script defaults to
+Linux targets when none are specified. `build-windows-clients.sh` consumes
+prebuilt, signed `loom-windows-dataplane-<version>-<arch>.zip` inputs from its
+configured component directory. It derives the required version from the current
+`clientcomponent.DataPlaneVersion` and authenticates both architectures before
+building any edition. Renaming an older signed package does not make it current.
+
+Use `loom client package-windows -arch <arch> -generation <generation>
+-dataplane-dir <verified-windows-component-directory> -wintun-archive <pinned-archive>`
+only with verified Windows inputs for that exact architecture.
 Its schema 3 manifest binds the exact source build, patch, payloads and release
 generation. The client rejects older generations, same-generation conflicting
 content, and legacy component state. An explicit replacement must preserve old
@@ -183,11 +196,12 @@ Without the explicitly configured signing inputs these are unsigned preview
 artifacts; the external Authenticode condition is tracked separately and does
 not change source/runtime acceptance.
 
-After the six ZIPs exist, build MSI databases on Windows with WiX 5:
-
-```powershell
-.\scripts\build-windows-installers.ps1 -Version 0.13.0 -Wix C:\tools\wix\wix.exe
-```
+The existing `scripts/build-windows-installers.ps1` requires PowerShell and WiX 5.
+This audit did not find a verified same-server execution path for those tools.
+That is a build-chain gap: the restricted Windows VM remains a native test executor,
+and must not become a second source/build environment. Verify the approved host
+builder before generating a new MSI; do not treat the PowerShell script's presence
+or a historical MSI as current build acceptance.
 
 The MSI builder verifies the ZIP manifest and publishes
 `out/windows-installers-SHA256SUMS` last. Increase the three-part MSI version for

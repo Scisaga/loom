@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"loom/internal/clientmodel"
 	"loom/internal/control"
@@ -61,46 +62,61 @@ func PolicyMigrationInput(path, evidence string) ([]byte, []byte, error) {
 }
 
 func PreparePolicyMigration(original []byte, preference clientmodel.Preference, generation, digest string) (LocalState, error) {
+	if err := preference.Validate(); err != nil {
+		return LocalState{}, err
+	}
 	state := defaultState(generation)
 	if len(original) > 0 {
 		decoder := json.NewDecoder(bytes.NewReader(original))
 		if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 			return LocalState{}, errors.New("historical runtime is not an object")
 		}
-		start, end := -1, -1
-		seen := map[string]bool{}
+		fields := map[string]json.RawMessage{}
 		for decoder.More() {
 			token, err := decoder.Token()
 			name, ok := token.(string)
-			if err != nil || !ok || seen[name] {
-				return LocalState{}, errors.New("duplicated historical runtime field")
+			if err != nil || !ok || fields[name] != nil {
+				return LocalState{}, errors.New("duplicate historical runtime field")
 			}
-			seen[name] = true
 			var raw json.RawMessage
 			if err := decoder.Decode(&raw); err != nil {
 				return LocalState{}, err
 			}
-			if name == "preference" {
-				end = int(decoder.InputOffset())
-				start = end - len(raw)
-			}
+			fields[name] = raw
 		}
-		if token, err := decoder.Token(); err != nil || token != json.Delim('}') || start < 0 {
-			return LocalState{}, errors.New("historical runtime preference is missing")
+		if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+			return LocalState{}, errors.New("incomplete historical runtime")
 		}
 		if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-			return LocalState{}, errors.New("trailing historical runtime bytes")
+			return LocalState{}, errors.New("trailing historical runtime input")
 		}
-		encoded, err := control.CanonicalEncode(preference)
-		if err != nil {
-			return LocalState{}, err
+		join := func() []byte {
+			keys := make([]string, 0, len(fields))
+			for name := range fields {
+				keys = append(keys, name)
+			}
+			sort.Strings(keys)
+			body := []byte{'{'}
+			for i, name := range keys {
+				if i > 0 {
+					body = append(body, ',')
+				}
+				encoded, _ := json.Marshal(name)
+				body = append(body, encoded...)
+				body = append(body, ':')
+				body = append(body, fields[name]...)
+			}
+			return append(body, '}')
 		}
-		current := append(append(append([]byte{}, original[:start]...), encoded...), original[end:]...)
-		if err := control.DecodeCanonical(current, &state, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 64, MaxItems: 100000}); err != nil {
+		if !bytes.Equal(original, join()) || fields["preference"] == nil {
+			return LocalState{}, errors.New("historical runtime preference is missing or noncanonical")
+		}
+		delete(fields, "preference")
+		if err := control.DecodeCanonical(join(), &state.observationCache, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 64, MaxItems: 100000}); err != nil {
 			return LocalState{}, err
 		}
 	}
-	state.Preference = preference
+	state.Preference = preference // transient input; never written to runtime.json
 	state.NetworkGeneration = generation
 	state.ObservationViewDigest = digest
 	state.Observations = []clientmodel.Observation{}
@@ -117,7 +133,7 @@ func CommitPolicyMigration(path, evidence string, original []byte, next LocalSta
 	}
 	return withLock(path, func() error {
 		var current LocalState
-		if readStrict(path, 1<<20, &current) == nil && current.validate() == nil && current.ObservationViewDigest == next.ObservationViewDigest {
+		if readStrict(path, 1<<20, &current.observationCache) == nil && current.validate() == nil && current.ObservationViewDigest == next.ObservationViewDigest {
 			saved, err := readPolicyMigrationBytes(evidence)
 			if err != nil || !bytes.Equal(saved, original) {
 				return errors.New("completed migration has no matching original preference evidence")
@@ -164,6 +180,6 @@ func CommitPolicyMigration(path, evidence string, original []byte, next LocalSta
 		if err != nil || !bytes.Equal(saved, original) {
 			return errors.New("original policy preference evidence differs")
 		}
-		return atomicJSON(path, next)
+		return atomicJSON(path, next.observationCache)
 	})
 }

@@ -199,8 +199,8 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 	app := &portableGUI{edition: editionInstalled, ctx: ctx, cancel: cancel,
 		state: guiConnected, joined: true, deviceID: "demo-device", root: `C:\demo-client`,
 		detail: "已连接", routeSelected: 0, routeOptions: []portableRouteOption{
-			{Label: "境外 API / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}},
-			{Label: "境外 API / 固定德国出口", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}},
+			{Label: "境外 API / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}},
+			{Label: "境外 API / 固定德国出口", Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}},
 		}}
 	hwnd, err := createPortableWindow(app)
 	if err != nil {

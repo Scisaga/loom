@@ -57,19 +57,31 @@ func (server *Server) pathHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "current device scope unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	for _, route := range view.Routes {
-		if route.ID != query.Get("candidate") || route.ServiceID != query.Get("service") {
-			continue
-		}
-		for _, set := range view.BusinessProbeTargets {
-			if set.ServiceID == route.ServiceID && containsString(set.Targets, query.Get("target")) {
-				value, err := server.Runtime.Reports.pathHistory(r.Context(), projection.NetworkID, authorization, route, query.Get("target"), server.now())
-				if err != nil {
-					http.Error(w, "original report history unavailable", http.StatusServiceUnavailable)
+	selected := []string{}
+	for _, policy := range view.Policies {
+		if policy.ServiceID == query.Get("service") && policy.Action == "allow" && containsString(view.PolicyIDs, policy.ID) {
+			// Derive one Policy at a time: a history query does not select it.
+			selected = []string{policy.ID}
+			execution, err := ProjectDeviceCandidates(view, selected)
+			if err != nil {
+				continue
+			}
+			for _, route := range execution.Routes {
+				if route.ID != query.Get("candidate") {
+					continue
+				}
+				for _, service := range view.Services {
+					if service.ID != route.ServiceID || !containsString(service.ProbeURLs, query.Get("target")) {
+						continue
+					}
+					value, err := server.Runtime.Reports.pathHistory(r.Context(), projection.NetworkID, authorization, route, query.Get("target"), server.now())
+					if err != nil {
+						http.Error(w, "original report history unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					writeJSON(w, http.StatusOK, value)
 					return
 				}
-				writeJSON(w, http.StatusOK, value)
-				return
 			}
 		}
 	}

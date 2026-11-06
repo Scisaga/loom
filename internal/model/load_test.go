@@ -1,7 +1,9 @@
 package model
 
-import "strings"
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestLoadRejectsDerivedFields 是 §2.2 与 §19"校验器应拒绝手工指定推导值"
 // 的第一道闸:严格解码让这些键根本无法被写进 SSOT。

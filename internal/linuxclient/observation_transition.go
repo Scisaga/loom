@@ -14,11 +14,13 @@ import (
 // Both envelopes come from the running daemon's accepted identity store. The
 // previous value is only a comparison input, never an execution fallback. A
 // restart without that input retains the conservative exact-view cache rule.
-func loadLocalStateForView(path, generation string, current, previous *control.DeviceViewEnvelope) (LocalState, error) {
+func loadLocalStateForView(path, generation string, current, previous *control.DeviceViewEnvelope, preference clientmodel.Preference) (LocalState, error) {
 	return loadLocalStateWithEvidence(path, generation, current.ViewDigest, func(state LocalState) ([]clientmodel.Observation, []control.Observation) {
+		state.Preference = preference
 		var resources []control.Observation
 		if sameObservationIdentity(state, previous, current) {
-			if probes, err := control.FirstHopProbes(current.View); err == nil {
+			if execution, err := control.ProjectDeviceCandidates(current.View, clientmodel.MeasurementPolicies(state.Preference)); err == nil {
+				probes, _ := control.FirstHopProbes(execution)
 				resources = clientadapter.RetainResourceObservations(probes, state.ResourceObservations, generation)
 			}
 		}
@@ -39,13 +41,20 @@ func unchangedObservations(state LocalState, previous, current *control.DeviceVi
 		return result
 	}
 	before, after := previous.View, current.View
-	oldOutbounds, newOutbounds := observationOutbounds(before.RuntimeProfile), observationOutbounds(after.RuntimeProfile)
+	oldExecution, err := control.ProjectDeviceCandidates(before, clientmodel.MeasurementPolicies(state.Preference))
+	if err != nil {
+		return result
+	}
+	newExecution, err := control.ProjectDeviceCandidates(after, clientmodel.MeasurementPolicies(state.Preference))
+	if err != nil {
+		return result
+	}
 	oldRoutes := map[string]control.RouteCandidate{}
 	newRoutes := map[string]control.RouteCandidate{}
-	for _, route := range before.Routes {
+	for _, route := range oldExecution.Routes {
 		oldRoutes[route.ID] = route
 	}
-	for _, route := range after.Routes {
+	for _, route := range newExecution.Routes {
 		newRoutes[route.ID] = route
 	}
 	for _, observation := range state.Observations {
@@ -61,8 +70,7 @@ func unchangedObservations(state LocalState, previous, current *control.DeviceVi
 			continue
 		}
 		target := observation.Target
-		if target == "" || !observationTarget(before, old.ServiceID, target) || !observationTarget(after, next.ServiceID, target) ||
-			!sameObservationOutbound(oldOutbounds, newOutbounds, observation.CandidateID) {
+		if target == "" || !observationTarget(before, old.ServiceID, target) || !observationTarget(after, next.ServiceID, target) {
 			continue
 		}
 		// These are the original samples, including failures and original
@@ -73,9 +81,9 @@ func unchangedObservations(state LocalState, previous, current *control.DeviceVi
 }
 
 func observationTarget(view control.DeviceView, serviceID, target string) bool {
-	for _, group := range view.BusinessProbeTargets {
-		if group.ServiceID == serviceID {
-			return slices.Contains(group.Targets, target)
+	for _, service := range view.Services {
+		if service.ID == serviceID {
+			return slices.Contains(service.ProbeURLs, target)
 		}
 	}
 	return false

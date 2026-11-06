@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -545,6 +546,12 @@ func (a *Authority) completeBoundAuthorizationLocked(ctx context.Context, origin
 	authorization := DeviceAuthorization{ID: invite.DeviceID, Name: invite.Name, Platform: binding.Platform, DevicePublicKey: binding.DevicePublicKey,
 		Responsibilities: responsibilities, PolicyIDs: append([]string{}, invite.PolicyIDs...), DistributionURLs: []string{}, DNSServers: append([]string(nil), invite.DNSServers...), RuntimeKey: base64.RawURLEncoding.EncodeToString(key),
 		TransactionID: invite.ID, InviteMaterialID: originalID, BindingMaterialID: bindingID}
+	clear(key)
+	public, err := DerivedWireGuardPublicKey(a.projection.NetworkID, authorization)
+	if err != nil {
+		return Submission{}, err
+	}
+	authorization.WireGuardPublicKey = public
 	return a.submitOperationLocked(ctx, Operation{Schema: 3, RequestID: enrollmentRequestID("join", invite.ID), Operation: "device.join", TargetKind: "device", TargetID: invite.DeviceID, Dependencies: sortedUniqueDependencies(dependencies), Payload: authorization}, local)
 }
 
@@ -721,23 +728,65 @@ func (server *Server) deviceConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device tunnel required", http.StatusForbidden)
 		return
 	}
-	request, err := server.newDeviceConfigRequest()
-	if err != nil {
-		http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
-		return
+	wait := time.Duration(0)
+	if values := r.Header.Values(DeviceConfigWaitHeader); len(values) != 0 {
+		seconds, err := strconv.Atoi(values[0])
+		if len(values) != 1 || err != nil || seconds < 1 || seconds > DeviceConfigWaitSeconds || strconv.Itoa(seconds) != values[0] || len(r.Header.Values(DeviceConfigDigestHeader)) != 1 || ValidateDigest(r.Header.Get(DeviceConfigDigestHeader)) != nil {
+			http.Error(w, "invalid configuration wait", http.StatusBadRequest)
+			return
+		}
+		wait = time.Duration(seconds) * time.Second
 	}
-	value, err := request.get(r.Context(), identity.DeviceID)
-	if err != nil || request.finish() != nil {
-		http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
-		return
+	deadline := time.Now().Add(wait)
+	var timeout <-chan time.Time
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		timeout = timer.C
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(DeviceConfigDigestHeader, value.configDigest)
-	if r.Header.Get(DeviceConfigDigestHeader) == value.configDigest {
-		w.WriteHeader(http.StatusNoContent)
-		return
+	for r.Context().Err() == nil {
+		request, err := server.newDeviceConfigRequest()
+		if err != nil {
+			http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		value, err := request.get(r.Context(), identity.DeviceID)
+		if err == nil {
+			err = request.finish()
+		}
+		if err != nil {
+			if errors.Is(err, errDeviceConfigChanged) && wait > 0 && time.Now().Before(deadline) {
+				continue
+			}
+			if r.Context().Err() == nil {
+				http.Error(w, "device configuration unavailable", http.StatusServiceUnavailable)
+			}
+			return
+		}
+		if r.Header.Get(DeviceConfigDigestHeader) != value.configDigest {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set(DeviceConfigDigestHeader, value.configDigest)
+			writeReportBody(w, r, value.body)
+			return
+		}
+		if wait == 0 || !time.Now().Before(deadline) {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set(DeviceConfigDigestHeader, value.configDigest)
+			if wait > 0 {
+				w.Header().Set(DeviceConfigWaitHeader, r.Header.Get(DeviceConfigWaitHeader))
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// The input and notification were captured under one lock. A write
+		// before this select closes the captured channel, so no wake is lost.
+		select {
+		case <-r.Context().Done():
+			return
+		case <-request.input.changed:
+		case <-timeout:
+		}
 	}
-	writeReportBody(w, r, value.body)
 }
 func (server *Server) deviceReport(w http.ResponseWriter, r *http.Request) {
 	identity, ok := tunnelAuth(r)

@@ -5,7 +5,9 @@
 本文定义设备取得一次受限加入资格、绑定本机密钥、领取私有配置及使用服务入口的现行语义。
 控制权威来自[控制权威模型](control-model.md)的签名 `Material`、`ControlConfig` 成员表链及确定性
 `Projection`；本模型不另建共识、成员或设备授权的权威。具体实现状态与生产切换阻碍见
-[实施状态](../progress.md)。
+[实施状态](../progress.md)。设备 PolicyIDs 只授予可选集合；客户端当前互联网 Policy 及其 Service
+关系按[当前业务基线](control-model.md#服务与策略的当前业务基线)执行，不从旧 View/偏好推导
+多个互联网 Service 同时生效。加入完成、接收端准入、运行配置应用、路径可达和实际业务成功分别回读。
 
 ## 边界与不变量
 
@@ -24,7 +26,7 @@
    完成加入后可从已同步该设备事实的其他有效 control 领取配置，设备也可由其他 control 管理。
 5. `access`、`forward`、`internet_egress`、`control` 是可组合的职责；不存在 `server` 业务角色。
    `control` 资格只由多数签名的成员表决定，Invite 中的意向本身不赋予 control 权限。
-6. `EndpointGeneration` 和签名 `DeviceView` 决定设备可使用什么；`Observation` 只说明在相应网络代
+6. 签名 DeviceView 中的授权决定可用网络能力，EndpointGeneration 决定认证控制入口坐标；`Observation` 只说明在相应网络代
    最近实际发生了什么。授权不等于可达，暂时不可达也不修改授权。
 7. 设备稳定 ID 由 Invite 指定，跨事务保持唯一：签发者拒绝与已知节点、设备或 control 成员 ID
    冲突的 Invite；不同 Invite/绑定即使各以事务 ID 为事实目标，仍按其占用的设备 ID 检查唯一性。
@@ -43,7 +45,9 @@
 已通过签发者资格、因果依赖和冲突规则校验。无多数连接时，有效 control 仍可签发普通加入与授权；
 变更 `control` 资格才需要旧成员多数签名。单个 control 的本地接受不是全网即时一致的证明。
 
-本模型自有概念为 `EndpointGeneration`、`Artifact`、`BootstrapCapability`、
+下列概念说明职责，不要求另建同名类型、DTO 或 store。Artifact 是签名发布记录所指制品的
+语义名称，BootstrapCapability 是原签名 Invite 的受限加入权限名称，均不得复制一份权威对象。
+本模型概念为 `EndpointGeneration`、`Artifact`、`BootstrapCapability`、
 `EnrollmentTransaction` 和 `DeviceView`；运行观测复用客户端模型的 `Observation`。
 `Invite`、claim、resume、证书证明及响应包是这些概念的交付值或操作，不另有生命周期。
 
@@ -489,10 +493,16 @@ UI 从 Invite 预留的 DeviceID 展示“待加入”的节点详情，并在�
 有效 Invite 或已经发起的加入；重开页面从既有事实与可验证执行结果恢复，不以浏览器计时器推进状态。
 
 普通加入在签发者验证 claim 后，由它签发并持久接受一份绑定该事务的设备授权事实；完成状态由该事实
-投影，不再请求管理员二次批准。设备授权携带签发者生成的 `RuntimeKey`：它是按设备、Service、Policy
-和用途派生数据面凭据的根密钥，**不是设备身份私钥**，不能替代设备本机 Ed25519 签名。`RuntimeKey`
+投影，不再请求管理员二次批准。设备授权携带签发者生成的 `RuntimeKey`：它是按节点和用途派生
+传输材料的根密钥，不按完整路径展开凭据，**不是设备身份私钥**，不能替代设备本机 Ed25519 签名。`RuntimeKey`
 只保存在控制事实中并在 control 间加密同步，不下发给任何设备或节点；DeviceView 只携带由它派生的凭据，
 它也不进入 Web、公开 Artifact、事件或错误日志。
+
+新加入授权同时登记按原算法派生的 `wireguard_public_key`。已有固定 WG 节点通过普通
+`device.put` 登记原私钥对应公钥，私钥不上传或重写；已有派生身份登记原算法结果。资源公钥
+必须与 owner 登记值一致，删除接收资源不更换节点发送身份。缺字段的旧签名仍按原义验签，
+当前 WG 执行必须先经显式前向登记；普通编辑省略该字段时保留现值，不能因重试、撤权后重新
+授权或重启恢复旧键。具体往返和执行边界见[现行契约](current-contract.md)。
 
 若 SSH 或脚本 Invite 意向含 `control`，claim 先绑定精确设备公钥；组合职责在提案前再签条件授权事实，
 仅在成员证书形成后投影。然后按[控制模型](control-model.md) §2.2 的轮次规则请求旧成员对绑定该 Invite/
@@ -511,11 +521,12 @@ control 可交付证书与 View。交付丢失只影响设备获知结果，不�
 
 ### `DeviceView`
 
-`DeviceView` 是面向**一个**已认证设备的私有投影，包含设备身份、职责、授权的 Service/Policy、
-Endpoint generation、可见的共享 `TransportResource` 与自动派生中继段、首跳资源、
-业务探测目标、DNS overlay 与获授权的局域网虚拟前缀。它不包含其他设备的秘密或全网事件集，
-也不成为独立治理权威。首跳不要求中继段；中继路径携带从有效节点职责与资源确定性派生的有序 LinkID。
-同一 LinkID 当前链路和资源的规范字节派生 `link_spec_digest`；规范改变使旧观测回到 `unknown`。
+`DeviceView` 是面向**一个**已认证设备的私有稳定授权投影：自身身份与职责、获准 Policy、
+Service、Policy、相关节点职责／PolicyIDs／公开身份、共享资源、必要传输材料、入口、DNS 和发布引用。
+它不交付预展开候选、links、运行 JSON、逐路径凭据或 peer/ACL 表；不交付其他节点秘密和全网事件。
+消费端从相同 LKG 和自身 Preference 派生当前互联网 Policy 与独立 LAN 的候选及运行配置；
+Service 网址用于测量，不在关闭限制时变成普通互联网白名单。完整字段以
+[稳定 View 与本机运行派生](current-contract.md#稳定-view-与本机运行派生)为准。
 
 交付 envelope 由当前有效 control 对完整 View 签名，附网络锚、从设备已固定成员表到当前成员表的
 连续多数签名证明、签发者事实前沿和 View 摘要。**签发 control** 必须先验证构成 View 的普通事实、
@@ -584,6 +595,8 @@ domain、签名 wire、persistent 与 UI 仍是原 DeviceReport；runtime 只改
 配置、持久缓存或协议版本。部署先激活接收端，再激活产生压缩请求的客户端。最小验证覆盖两种
 表示的原件与签名逐字一致、实际客户端上传、错误压缩流及双重长度限制、错误签名和失败原件保全。
 
+#### 配置领取与认证持久化
+
 配置领取请求可携带 `Loom-Config-Digest`，值为
 `SHA256("loom-device-config-digest-v3\0" || C({schema,network_id,genesis_digest,control_proof,fact_frontier,view_digest}))`，
 字段全部取自已验签的完整 LKG。View 摘要已绑定完整设备身份和业务值；证明与前沿仍参与比较，不能只比较 View。
@@ -595,6 +608,25 @@ domain、签名 wire、persistent 与 UI 仍是原 DeviceReport；runtime 只改
 正常链为持久 LKG → 认证领取 → 服务端当前配置比较 → 短确认或完整签名配置 → 原持久及运行消费 → 原页面回读。
 反例为 View 未变但事实前沿或成员证明前进：必须交付新的完整签名 envelope，不能因业务配置相同跳过认证进度。
 最小测试另覆盖该反例、不同签发成员的同配置、未持有 LKG/错误短确认拒绝及真实客户端的重启和撤权。
+
+运行中的配置跟随复用同一私有认证请求和上述摘要，增加可选 `Loom-Config-Wait` 秒数，规范整数
+范围为 1～20；必须同时携带已认证 LKG 的摘要。当前摘要不同立即交付完整签名 envelope；相同
+才在锁外有界等待认证输入变化。变化后重新检查当前设备、成员、发布引用、证明和前沿；截止
+仍相同才以 `204`、原摘要及原等待头空正文确认。取消立即结束，不把通知当作授权或应用回执。
+通知只绑定现有 Authority 输入修订，可删除重建；没有新 wire 对象、持久游标或第二份权威。
+首次加入、手动同步及没有 LKG 的请求不等待。客户端保持最多两个候选，未变响应不能压住另一
+入口的新配置；每次有界调用后轮转入口，防止固定只读前两个成员。分区中仍只交付本成员已知且
+可验真的事实，不承诺瞬时看到其他分区；已有 LKG 的启动和业务不等待配置跟随。
+跟随成功后继续等待，通道失败才有界退避；断开或换代取消实际 I/O。Android 的跟随属于当前
+VPN 调用，不另起无法取消的应用协程。节点先接受并耐久保存认证进度，再通知运行 owner 局部
+应用；测量、报告和 UI 不等待整个配置跟随。domain、签名 wire 和 persistent 均不新增字段，
+runtime 只增加在途等待及通知，UI 继续区分加入、配置接受、运行应用和实际业务。
+二十秒是这次私有配置等待的上限，受原三十秒调用总期限约束，不是探测周期、样本有效期或
+性能换路冷却。仍使用有界候选及一次性认证连接，会增加空闲配置领取的握手次数；线路字节及
+真机耗电须单独计量，不能把没有重复正文等同于没有耗电。Android 报告也复用同一可取消请求：
+先在短锁中耐久预占序列，锁外收集/签名并上传；当前调用取消要关闭实际 I/O，已占序列不退回。
+最小验证覆盖变化立即唤醒、未变截止、同 View 前沿推进、并发及取消、撤权/阻断拒绝旧确认、
+多入口未变与变化竞争，以及真实加入后的接收准入与其他设备持续连接。通知本身不算业务成功。
 
 ## 私有入口与运行时
 
@@ -687,7 +719,7 @@ LinkID 只定位当前节点职责与资源派生的中继段，不构成另一�
 
 ```text
 DeviceView           = ProjectDevice(Projection, DeviceIdentity)
-AuthorizedCandidates = Project(DeviceView)
+AuthorizedCandidates = Project(DeviceView, CurrentInternetPolicy, IndependentLANChoices)
 SelectedCandidate    = Select(AuthorizedCandidates, FreshObservations, Preference)
 ```
 

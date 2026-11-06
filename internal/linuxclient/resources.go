@@ -37,9 +37,10 @@ type ResourceInputs struct {
 
 type ResourceListenerInput struct {
 	ResourceID      string `json:"resource_id"`
-	Listen          string `json:"listen"`
-	CertificateFile string `json:"certificate_file"`
-	KeyFile         string `json:"key_file"`
+	Listen          string `json:"listen,omitempty"`
+	ListenPort      int    `json:"listen_port,omitempty"`
+	CertificateFile string `json:"certificate_file,omitempty"`
+	KeyFile         string `json:"key_file,omitempty"`
 }
 
 func (inputs ResourceInputs) Validate() error {
@@ -47,15 +48,29 @@ func (inputs ResourceInputs) Validate() error {
 		return errors.New("resource execution inputs are incomplete")
 	}
 	for index, value := range inputs.Listeners {
-		host, port, err := net.SplitHostPort(value.Listen)
-		ip, ipErr := netip.ParseAddr(host)
-		number, portErr := strconv.Atoi(port)
-		if control.ValidateID(value.ResourceID) != nil || index > 0 && inputs.Listeners[index-1].ResourceID >= value.ResourceID ||
-			err != nil || ipErr != nil || ip.Zone() != "" || ip.String() != host || portErr != nil || number < 1 || number > 65535 || net.JoinHostPort(host, strconv.Itoa(number)) != value.Listen {
-			return errors.New("resource listener identities or addresses are invalid")
+		if control.ValidateID(value.ResourceID) != nil || index > 0 && inputs.Listeners[index-1].ResourceID >= value.ResourceID {
+			return errors.New("resource listener identities are invalid")
+		}
+		if value.Listen != "" {
+			host, port, err := net.SplitHostPort(value.Listen)
+			ip, ipErr := netip.ParseAddr(host)
+			number, portErr := strconv.Atoi(port)
+			if value.ListenPort != 0 || err != nil || ipErr != nil || ip.Zone() != "" || ip.String() != host || portErr != nil || number < 1 || number > 65535 || net.JoinHostPort(host, strconv.Itoa(number)) != value.Listen {
+				return errors.New("resource listener address is invalid")
+			}
+		} else if value.ListenPort < 1 || value.ListenPort > 65535 {
+			return errors.New("resource WG listener port is invalid")
+		}
+
+		if value.Listen != "" {
+			if value.CertificateFile == "" || value.KeyFile == "" {
+				return errors.New("local Hy2 input requires both certificate and key references")
+			}
+		} else if value.CertificateFile != "" || value.KeyFile != "" {
+			return errors.New("local WG port input cannot contain TLS references")
 		}
 		for _, path := range []string{value.CertificateFile, value.KeyFile} {
-			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+			if path != "" && (!filepath.IsAbs(path) || filepath.Clean(path) != path) {
 				return errors.New("resource TLS inputs require canonical absolute file references")
 			}
 		}
@@ -63,7 +78,7 @@ func (inputs ResourceInputs) Validate() error {
 	return nil
 }
 
-type hy2Execution struct {
+type resourceExecution struct {
 	resource control.TransportResource
 	input    ResourceListenerInput
 	roots    *x509.CertPool
@@ -71,15 +86,15 @@ type hy2Execution struct {
 	acl      string
 }
 
-func prepareHY2Executions(view control.DeviceView, inputPath string, now time.Time) ([]hy2Execution, error) {
+func resourceListenerInputs(view control.DeviceView, inputPath string) ([]ResourceListenerInput, error) {
 	owned := []control.TransportResource{}
 	for _, resource := range view.Resources {
-		if resource.OwnerNodeID == view.DeviceID && resource.Kind == "hysteria2" {
+		if resource.OwnerNodeID == view.DeviceID && (resource.Kind == "hysteria2" || resource.Kind == "wireguard") {
 			owned = append(owned, resource)
 		}
 	}
 	if len(owned) == 0 {
-		return nil, nil
+		return []ResourceListenerInput{}, nil
 	}
 	if inputPath == "" {
 		return nil, errors.New("owned resources require explicit local execution inputs")
@@ -92,15 +107,89 @@ func prepareHY2Executions(view control.DeviceView, inputPath string, now time.Ti
 	for _, input := range inputs.Listeners {
 		byID[input.ResourceID] = input
 	}
-	result := make([]hy2Execution, 0, len(owned))
-	listeners := map[string]bool{}
+	result := make([]ResourceListenerInput, 0, len(owned))
+	active := []ResourceListenerInput{}
 	for _, resource := range owned {
 		input, found := byID[resource.ID]
-		if !found || listeners[input.Listen] {
-			return nil, errors.New("resource execution input is missing or a listener is duplicated")
+		if !found {
+			return nil, errors.New("resource execution input is missing")
 		}
-		listeners[input.Listen] = true
+		if resource.Kind == "wireguard" {
+			if input.Listen != "" || input.ListenPort < 1 || input.ListenPort > 65535 || input.CertificateFile != "" || input.KeyFile != "" {
+				return nil, errors.New("WG requires only its explicit local listen_port")
+			}
+		} else if input.ListenPort != 0 || input.Listen == "" || input.CertificateFile == "" || input.KeyFile == "" {
+			return nil, errors.New("Hy2 requires listen and its certificate/key, without a WG port")
+		}
+		for _, previous := range active {
+			port := input.ListenPort
+			if port == 0 {
+				port = int(netip.MustParseAddrPort(input.Listen).Port())
+			}
+			oldPort := previous.ListenPort
+			if oldPort == 0 {
+				oldPort = int(netip.MustParseAddrPort(previous.Listen).Port())
+			}
+			if port != oldPort {
+				continue
+			}
+			if input.ListenPort != 0 || previous.ListenPort != 0 {
+				return nil, errors.New("WG wildcard UDP port conflicts with another owned resource")
+			}
+			left, right := netip.MustParseAddrPort(input.Listen).Addr(), netip.MustParseAddrPort(previous.Listen).Addr()
+			if left.Is4() == right.Is4() && (left == right || left.IsUnspecified() || right.IsUnspecified()) {
+				return nil, errors.New("owned Hy2 UDP listeners overlap")
+			}
+		}
+		active = append(active, input)
+		result = append(result, input)
+	}
+	return result, nil
+}
 
+func resourceInputsDigest(inputs []ResourceListenerInput) (string, error) {
+	body, err := control.CanonicalEncode(append([]ResourceListenerInput{}, inputs...))
+	if err != nil {
+		return "", err
+	}
+	return control.ReleaseDigest(body), nil
+}
+func appliedResourceInputs(executions []resourceExecution) []ResourceListenerInput {
+	inputs := make([]ResourceListenerInput, 0, len(executions))
+	for _, execution := range executions {
+		inputs = append(inputs, execution.input)
+	}
+	return inputs
+}
+
+func prepareResourceExecutions(view control.DeviceView, inputPath string, now time.Time) ([]resourceExecution, error) {
+	inputs, err := resourceListenerInputs(view, inputPath)
+	if err != nil {
+		return nil, err
+	}
+	owned := map[string]control.TransportResource{}
+	for _, resource := range view.Resources {
+		if resource.OwnerNodeID == view.DeviceID {
+			owned[resource.ID] = resource
+		}
+	}
+	result := make([]resourceExecution, 0, len(inputs))
+	for _, input := range inputs {
+		resource := owned[input.ResourceID]
+		acl, err := control.InboundACLDigest(view, resource.ID)
+		if err != nil {
+			return nil, err
+		}
+		if resource.Kind == "wireguard" {
+			if input.CertificateFile != "" || input.KeyFile != "" {
+				return nil, errors.New("WG listener cannot consume TLS material")
+			}
+			result = append(result, resourceExecution{resource: resource, input: input, acl: acl})
+			continue
+		}
+		if input.CertificateFile == "" || input.KeyFile == "" {
+			return nil, errors.New("Hy2 listener requires its certificate and key")
+		}
 		pair, err := control.LoadTLSCertificate(input.CertificateFile, input.KeyFile)
 		if err != nil {
 			return nil, err
@@ -129,19 +218,15 @@ func prepareHY2Executions(view control.DeviceView, inputPath string, now time.Ti
 		if _, err := pair.Leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, DNSName: *resource.Authentication.ServerName, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
 			return nil, errors.New("resource certificate does not match its certified trust, name, purpose or validity")
 		}
-		acl, err := control.InboundACLDigest(view, resource.ID)
-		if err != nil {
-			return nil, err
-		}
 		password := ""
-		for _, credential := range view.InboundCredentials {
+		for _, credential := range view.TransportCredentials {
 			if credential.ResourceID == resource.ID {
 				password = credential.Credential
 				break
 			}
 		}
 
-		result = append(result, hy2Execution{resource: resource, input: input, roots: roots, password: password, acl: acl})
+		result = append(result, resourceExecution{resource: resource, input: input, roots: roots, password: password, acl: acl})
 	}
 	return result, nil
 }
@@ -159,7 +244,7 @@ func resourceMatcher(matcher control.ServiceMatcher) map[string]any {
 
 // appendHY2Runtime is pure: local material is validated before rendering, and
 // clock, randomness, filesystem and network state cannot change this output.
-func appendHY2Runtime(config string, view control.DeviceView, executions []hy2Execution) (string, error) {
+func appendHY2Runtime(config string, view control.DeviceView, executions []resourceExecution) (string, error) {
 	if len(executions) == 0 {
 		return config, nil
 	}
@@ -170,23 +255,30 @@ func appendHY2Runtime(config string, view control.DeviceView, executions []hy2Ex
 	inbounds, _ := document["inbounds"].([]any)
 
 	for _, execution := range executions {
+		if execution.resource.Kind != "hysteria2" {
+			continue
+		}
 		resource, input := execution.resource, execution.input
 		host, port, _ := net.SplitHostPort(input.Listen)
 		number, _ := strconv.Atoi(port)
 		tag := "resource:" + resource.ID
 		users := []any{}
-		for _, permission := range view.InboundCredentials {
+		for _, permission := range view.TransportCredentials {
 			if permission.ResourceID != resource.ID {
 				continue
 			}
-			user, err := control.InboundCredentialUser(permission)
+			user, err := control.TransportCredentialUser(view.NetworkID, permission)
 			if err != nil {
 				return "", err
 			}
 			users = append(users, map[string]any{"name": user, "password": permission.Credential})
 		}
 
-		inbounds = append(inbounds, map[string]any{"type": "hysteria2", "tag": tag, "listen": host, "listen_port": number, "users": users,
+		projection, err := control.ReceiverExecutionOptions(view, resource.ID)
+		if err != nil {
+			return "", err
+		}
+		inbounds = append(inbounds, map[string]any{"execution": projection, "type": "hysteria2", "tag": tag, "listen": host, "listen_port": number, "users": users,
 			"tls": map[string]any{"enabled": true, "certificate_path": input.CertificateFile, "key_path": input.KeyFile}})
 	}
 	document["inbounds"] = inbounds
@@ -230,14 +322,14 @@ func processOwnsUDP(pid int, listen string) bool {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) > 9 && fields[1] == encoded.String() && owned[fields[9]] {
+		if len(fields) > 9 && fields[1] == encoded.String() && fields[2] == strings.Repeat("0", len(ip.AsSlice())*2)+":0000" && fields[3] == "07" && owned[fields[9]] {
 			return true
 		}
 	}
 	return false
 }
 
-func (execution hy2Execution) readback(ctx context.Context, pid int, now time.Time) (control.ResourceReadback, error) {
+func (execution resourceExecution) readback(ctx context.Context, pid int, now time.Time) (control.ResourceReadback, error) {
 	if !processOwnsUDP(pid, execution.input.Listen) {
 		return control.ResourceReadback{}, executionFailure("resource_ownership", "unverified", ErrWireGuardOwnership)
 	}
@@ -281,9 +373,12 @@ func (execution hy2Execution) readback(ctx context.Context, pid int, now time.Ti
 		CertificateDigest: "sha256:" + hex.EncodeToString(digest[:]), ACLDigest: execution.acl}, nil
 }
 
-func readHY2Resources(ctx context.Context, executions []hy2Execution, pid int, now time.Time) ([]control.ResourceReadback, error) {
+func readHY2Resources(ctx context.Context, executions []resourceExecution, pid int, now time.Time) ([]control.ResourceReadback, error) {
 	values := make([]control.ResourceReadback, 0, len(executions))
 	for _, execution := range executions {
+		if execution.resource.Kind != "hysteria2" {
+			continue
+		}
 		pending, cancel := context.WithTimeout(ctx, 3*time.Second)
 		value, err := execution.readback(pending, pid, now)
 		cancel()
@@ -295,7 +390,7 @@ func readHY2Resources(ctx context.Context, executions []hy2Execution, pid int, n
 	return values, nil
 }
 
-func waitTransportResources(ctx context.Context, view control.DeviceView, executions []hy2Execution, pid int, now func() time.Time, done <-chan error) error {
+func waitTransportResources(ctx context.Context, view control.DeviceView, executions []resourceExecution, pid int, now func() time.Time, done <-chan error) error {
 	pending, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -318,7 +413,7 @@ func waitTransportResources(ctx context.Context, view control.DeviceView, execut
 // WG listener readback proves local execution ownership, not path health. The
 // receiver key was matched before starting this exact process. Only native DNS
 // and business observations assert remote transport or Service availability.
-func readTransportResources(ctx context.Context, view control.DeviceView, executions []hy2Execution, pid int, now time.Time) ([]control.ResourceReadback, error) {
+func readTransportResources(ctx context.Context, view control.DeviceView, executions []resourceExecution, pid int, now time.Time) ([]control.ResourceReadback, error) {
 	values, err := readTransportOwnership(view, executions, pid)
 	if err != nil {
 		return nil, err
@@ -339,50 +434,47 @@ func readTransportResources(ctx context.Context, view control.DeviceView, execut
 	return values, nil
 }
 
-func readTransportOwnership(view control.DeviceView, executions []hy2Execution, pid int) ([]control.ResourceReadback, error) {
-	ownedHY2 := map[string]control.TransportResource{}
+func readTransportOwnership(view control.DeviceView, executions []resourceExecution, pid int) ([]control.ResourceReadback, error) {
+	owned := map[string]control.TransportResource{}
 	for _, resource := range view.Resources {
-		if resource.OwnerNodeID == view.DeviceID && resource.Kind == "hysteria2" {
-			ownedHY2[resource.ID] = resource
+		if resource.OwnerNodeID == view.DeviceID && (resource.Kind == "hysteria2" || resource.Kind == "wireguard") {
+			owned[resource.ID] = resource
 		}
 	}
-	if len(executions) != len(ownedHY2) {
+	if len(executions) != len(owned) {
 		return nil, executionFailure("resource_acl", "rejected", errors.New("resource execution set differs from the applied configuration"))
 	}
+	values := []control.ResourceReadback{}
 	for _, execution := range executions {
-		resource, found := ownedHY2[execution.resource.ID]
+		resource, found := owned[execution.resource.ID]
 		if !found || !reflect.DeepEqual(resource, execution.resource) {
 			return nil, executionFailure("resource_acl", "rejected", errors.New("resource execution differs from the applied configuration"))
 		}
-		delete(ownedHY2, execution.resource.ID)
-		if !processOwnsUDP(pid, execution.input.Listen) {
+		delete(owned, resource.ID)
+		listen := execution.input.Listen
+		if resource.Kind == "wireguard" {
+			listen = ""
+			for _, host := range []string{"::", "0.0.0.0"} {
+				candidate := net.JoinHostPort(host, strconv.Itoa(execution.input.ListenPort))
+				if processOwnsUDP(pid, candidate) {
+					listen = candidate
+					break
+				}
+			}
+		}
+		if listen == "" || !processOwnsUDP(pid, listen) {
 			return nil, executionFailure("resource_ownership", "unverified", ErrWireGuardOwnership)
 		}
-		acl, err := control.InboundACLDigest(view, execution.resource.ID)
+		acl, err := control.InboundACLDigest(view, resource.ID)
 		if err != nil || acl != execution.acl {
 			if err == nil {
 				err = errors.New("resource ACL differs from the applied configuration")
 			}
 			return nil, executionFailure("resource_acl", "rejected", err)
 		}
-	}
-	values := []control.ResourceReadback{}
-	for _, resource := range view.Resources {
-		if resource.OwnerNodeID != view.DeviceID || resource.Kind != "wireguard" {
-			continue
+		if resource.Kind == "wireguard" {
+			values = append(values, control.ResourceReadback{ResourceID: resource.ID, ListenerID: resource.ListenerID, Listen: listen, PublicKey: *resource.Authentication.PublicKey, ACLDigest: acl})
 		}
-		listen := net.JoinHostPort("::", strconv.Itoa(resource.DialPort))
-		if !processOwnsUDP(pid, listen) {
-			listen = net.JoinHostPort("0.0.0.0", strconv.Itoa(resource.DialPort))
-			if !processOwnsUDP(pid, listen) {
-				return nil, executionFailure("resource_ownership", "unverified", ErrWireGuardOwnership)
-			}
-		}
-		acl, err := control.InboundACLDigest(view, resource.ID)
-		if err != nil {
-			return nil, executionFailure("resource_acl", "rejected", err)
-		}
-		values = append(values, control.ResourceReadback{ResourceID: resource.ID, ListenerID: resource.ListenerID, Listen: listen, PublicKey: *resource.Authentication.PublicKey, ACLDigest: acl})
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].ResourceID < values[j].ResourceID })
 	return values, nil

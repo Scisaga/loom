@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/sys/windows"
 	"loom/internal/clientmodel"
+
+	"golang.org/x/sys/windows"
 )
 
 func misakaWheelPoint(r portableRect) uintptr {
@@ -19,7 +20,7 @@ func TestGUIMisakaRouteWheelOutsidePopupScrollsPageWithoutSelecting(t *testing.T
 	app := newMisakaViewportTestWindow(t)
 	for index := 0; index < 12; index++ {
 		name := fmt.Sprintf("demo-wheel-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}})
 	}
 	app.renderControls()
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)
@@ -74,7 +75,7 @@ func TestGUIMisakaRouteWheelInsidePopupKeepsNativeListNavigation(t *testing.T) {
 	app := newMisakaViewportTestWindow(t)
 	for index := 0; index < 80; index++ {
 		name := fmt.Sprintf("demo-menu-%d", index)
-		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}})
+		app.routeOptions = append(app.routeOptions, portableRouteOption{Label: name, Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}})
 	}
 	app.renderControls()
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)

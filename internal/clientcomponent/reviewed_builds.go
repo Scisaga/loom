@@ -29,7 +29,190 @@ type reviewedArtifact struct {
 }
 
 var reviewedArtifacts = map[string]reviewedArtifact{
-	LinuxDataPlaneVersion: {
+	DataPlaneVersion: {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "31fb2fc1ca3e89222273f820ff69e74775e4aa9b9edad4a1f4fdbed368c81872",
+			"domain-cache.patch":     "c877a591af3ab5a10c68921bc4edccb181efff213c22b29cec2f9a0f53e9f736",
+			"prepare-sing-box.py":    "55f1b60df1f5748c6962c50846e7a74b9896a53f95fc45761fb32431e533c96c",
+			"source-provenance.json": "ca71fa9136f5189de74d13151aa4d5a787a37c46b38f1561479c4c573f969301",
+		},
+		linux: map[string]string{
+			"amd64": "7ce314f2e61e6d2ac7d65143c069730010dbdf18d64e92cf64c40b15270a0606",
+			"arm64": "d95a635b8ff1bb4e0391306bebf4b9c80d1f85f4af55ae4b962c4a49fe7d46f4",
+		},
+		windows: map[string]string{
+			"amd64": "d5c9846cadda28aea902a53d4dc3634ed92d9d8ab978d1af6d9bcefc6f7df562",
+			"arm64": "e7a4c592db91fff114151b2d17908fd7206238d8a697e1820cafca114311b905",
+		},
+	},
+	"1.11.4-loom.25": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "2c3c144528c10a54c6708d42155313028619f122710887a88305042c71bf91ca",
+			"domain-cache.patch":     "d6406d2368115dea670d2623f8fc096d283f579ec976156cf4fab828568e0144",
+			"prepare-sing-box.py":    "0c0599004081a3d0fbc048f678833f0fc5ab95783b9e319af959112a36ba034d",
+			"source-provenance.json": "841b97c2a1c0ae4a0ab581f8e3feb47575ac748bb01b2c45cb2455a3128fdb5e",
+		},
+		linux: map[string]string{
+			"amd64": "8d73d53b77643984673dfb656e8feea8bcc5219a0f52c4424aeefe43bed8f571",
+			"arm64": "e659aa6eb11881b3965a3ec8d90a0d125a64399e15fdbdb97a745917f6f4c755",
+		},
+		windows: map[string]string{
+			"amd64": "8b9feb004f566d200d660d134a734bb15bce2c2297f7e9d9c6d0fb4e7d86bb95",
+			"arm64": "6bfdf144e941974966d385df678ee9b82fbf272cfbb8308c4fa89eff6f40f37e",
+		},
+	},
+	"1.11.4-loom.24": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "24b333e64c0b5276e986a83cdbb31113a27e30194a2f84407d0fd393c55983a5",
+			"domain-cache.patch":     "2586ab075faa7f44c846ed92e3fe8ea73dec011903af29eaa35d4600b218c21f",
+			"prepare-sing-box.py":    "13adeed8605a8a78b7ca2dfbb786bb9ef8ec2d7a4848c66ce4a4370e744de802",
+			"source-provenance.json": "481cbeac84873994eae80048f5e88c59b13970c96f3cf23822b97fa3b54362c5",
+		},
+		linux: map[string]string{
+			"amd64": "077848fa7f785724d9b5c1269efe47d32e320175898d856d197f3e7a5e721687",
+			"arm64": "1d79ca4a2342eedd6e3310c0d49e922bf7bd816c5b6fc50b51ed99a6af84dbb1",
+		},
+		windows: map[string]string{
+			"amd64": "a7bfd733cc4467cbf526aec37c1b912ff0b91943b5fe2a125b57cb5c93acc81d",
+			"arm64": "0d44a2c7b692b3cde82a6523bc154f582ea3a42c4f270c6d656318a6e333b254",
+		},
+	},
+	"1.11.4-loom.23": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "e4ffc0ea4fe71d2dcaaaff9e669c7d8d1971b1fbbfa8b0f05f27bb161c95b0e0",
+			"domain-cache.patch":     "54d90a5ce63ee6b38e12585c5eae59ccdb8d7d40a7f808d26f1296f38e5562e0",
+			"prepare-sing-box.py":    "9fec8d7d7836cb38f7fb729704fb07df1969862c99295ae1bec2960232fb3de1",
+			"source-provenance.json": "1144ba196b4a3ce95e59bf0c73345a4eb5b159ee35cbbe0559d62890bdb44b6c",
+		},
+		linux: map[string]string{
+			"amd64": "953ddc154bf7289dd8217851b22afbc4dbdf50d3e905e7f9756deacaec53e61e",
+			"arm64": "48458d8b362b4bbc1098494177371102a445c0c472cfd5ff31d4f2ea5fe8360f",
+		},
+		windows: map[string]string{
+			"amd64": "e0579999b04640f08f2a75c9836ea3ee3b92cc43f0e9fd40294c5807a126b2ac",
+			"arm64": "4fb2fff9547e048af406074d4e5b0c6e02fd8e19fe2b7232426a642c2370b801",
+		},
+	},
+	"1.11.4-loom.22": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "a2976c2c38dabdc08c4440c5b47b16c9a697e57c2703ab162ad18c3269878eea",
+			"domain-cache.patch":     "97788a579eac907ecd35d30dae98759f3810c0669b88d576177ff89b79fc3969",
+			"prepare-sing-box.py":    "afbaa6202765f841392f877052dde5c3ecd4c765697910208945e80e64861deb",
+			"source-provenance.json": "686d69e4184aa97999aa48801a3280583ddc8ed61ebabb3b231ccd8749d8c773",
+		},
+		linux: map[string]string{
+			"amd64": "43687efb9917ef3cb134806edfe5f08adac158d9d3b9955c56eccf1733cb996b",
+			"arm64": "3d0444d8bfc15655f2c94bdcb09b7cdf8c5bd9268e065d9a6e52f0270ece2803",
+		},
+		windows: map[string]string{
+			"amd64": "edc9bf552788f48c9c0c2172a6743c07d5d464fc2b83865123ac96de3714b4f5",
+			"arm64": "cf1e9945f9f3869ee7899eb1e216f4ad9bdf92412207d8a41a7753fa7c68c4b4",
+		},
+	},
+	"1.11.4-loom.21": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "857bcf8bbe0d61153d4f4c9ee77813d8fe385d0a9ce4e4547e578d51cdd6214d",
+			"domain-cache.patch":     "90efc3c6154641b47c0771f8a93ac7c386e865b0a0082aee89ef021cd9cd1ecf",
+			"prepare-sing-box.py":    "fa02885744327f508fa41d66a0f44e9c594581d74e379a6e7ecafb9b808aa982",
+			"source-provenance.json": "6c17acaca8e205f5af9e59e803d9085fff2ffc378f4c9eab197ada07dfec7b76",
+		},
+		linux: map[string]string{
+			"amd64": "63b08e57176df999e32fb74f54d0abaef8e18d94549bd34fab2226a5c9266bb7",
+			"arm64": "2eb60c2fd8f6d5971147b7e95b15ee1044f40d1fef128a86af43830310c35760",
+		},
+		windows: map[string]string{
+			"amd64": "5df067432ac4bbc67987d630c0a760033488ec77085b8c74ad34a602afa91709",
+			"arm64": "8232657c4c65bf7a0bff93992b66927ec6d7b3411f5e25f44d104a7e338f23ef",
+		},
+	},
+	"1.11.4-loom.20": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "3e2e734f255dec972f1fa12ccfa22c2e56856794543fe0d5c9d778e518db8c83",
+			"domain-cache.patch":     "360a672ac5eb12f072bb45e3775bc0c2256e4e13665ebd91e1def401b7c779bd",
+			"prepare-sing-box.py":    "4be954909ff3d9ec23a491fb302b2ff91651b9ba510f90dedf5fb3fe678d9e3d",
+			"source-provenance.json": "a0f75e6879817e9b08b46d0aca5001469325fd02727cfd1ab74ba0fe13d55b6b",
+		},
+		linux: map[string]string{
+			"amd64": "3a78a8274954ed29a22b0fc32970260da91bc2102fb9d0d613b3fdc3f48a7ff9",
+			"arm64": "b7f41443c6715c9261067e5e8a921cd7d627622921f3b20e85f7159ddd06d868",
+		},
+		windows: map[string]string{
+			"amd64": "a478057c4e1dd0a60731e1c7492912af61a2e60f9c63e63367112e73f039ec66",
+			"arm64": "1028167ee3a2076530c55b3e66c65004ca97f6dfa5b54aa8a7c1d7783007babe",
+		},
+	},
+	"1.11.4-loom.19": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "acea82d3ad68f860adedcc25d4785fab445394749cc66e1b62fc67bfc795f950",
+			"domain-cache.patch":     "02c063c4b0561e57accf4caf60be71386e2fcaf02bd34f306dd554b8f9bbeb78",
+			"prepare-sing-box.py":    "5c86ff1bbe0d517b9e5e7982fd7b6ccc6be9ffb31680f79443cf70669bc5e348",
+			"source-provenance.json": "7c312aa44e72d650e1d9e81b1183b7180ca2aed419ce100daaa6cf04cc6cc6e7",
+		},
+		linux: map[string]string{
+			"amd64": "a7b3d716fb4d1dc34b55a01fa6136352afbba2c7aa617a491cef083d475bb926",
+			"arm64": "452723bdf82ac7361c19ab1101785d5f7faf1947434f6c767383ff352f71ffb0",
+		},
+		windows: map[string]string{
+			"amd64": "957b6cc503ca4cedce10a4cc58f26bea210a0a7bea87a001a8dbe0cc0a7d7385",
+			"arm64": "d8b9b2422089c94e16d00dac62caf578ce8b3a1a273f2b0bec277c62eeb46bfb",
+		},
+	},
+	"1.11.4-loom.18": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "c7519323bce75897e1ebe717aba474190742b2b27a9fe10eb4834c72599b5cfc",
+			"domain-cache.patch":     "76419cb88554a2bddc2b6a7014769450dd61e09c32a228ae03a67662032a68b1",
+			"prepare-sing-box.py":    "20f8b4f0235613291cc8432d94a938d6bea6ce6805076d78f1b9b311a02d7e40",
+			"build-dataplane.sh":     "bdded4d80b3f8eb5de99e25db2042aaa7ef30cb3d2555f0bb04268db75375934",
+		},
+		linux: map[string]string{
+			"amd64": "b09b0143c9714785fdf3040fb594d06ddf1aada1e8a883cb1fa8f1f4100c4424",
+			"arm64": "2bdda6a69a00fb7c65753776450db09093508cb36a2e287d870f59e64016c22e",
+		},
+	},
+	"1.11.4-loom.17": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "e1e0d46b8f5b1ed72f196f671c49e4097702ca892a5cc7f3cc9e20dca7ef8957",
+			"domain-cache.patch":     "22e49b791274a9ea43c7c28e44854d600b6b68ee41caf99f133148358300ba08",
+			"prepare-sing-box.py":    "12577123ec7eb0d0809a38a4075001f4aafca5bf84a585688b320c17557384ef",
+			"build-dataplane.sh":     "e0d0821a457748ba1438f0cc77279594dd867c35506c5548080c186931877751",
+		},
+		linux: map[string]string{
+			"amd64": "2d69ffcee12257afbf4b3be60c7abf9d1e226ebaf1a2cc31490b650500551720",
+			"arm64": "4d5264ed4e4e1427d0882cf3b5999c7ab15804e7136e8db6093048f1fbb4bced",
+		},
+		windows: map[string]string{
+			"amd64": "a5441897c14b324e300cdcf6566d474486b4e218602fff114b80f39e90cef6f4",
+			"arm64": "207e6f61eee273ae1a4c850ef0f3212944599f6a3e12b44089f39ff37a315fec",
+		},
+	},
+	"1.11.4-loom.16": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"source-provenance.json": "ac5ce934595438bed4a457fe08d592f5d743326068990be0b099b5fccd839e94",
+			"domain-cache.patch":     "d544efcaffac523270c05e7f39add00323fac1a0b7620a9e528942923e61fcb6",
+			"prepare-sing-box.py":    "3f74d433e4d2ed7a618d08eef5ab93f02e7d6908d9066f55cbc907666a7e8a43",
+			"build-dataplane.sh":     "876a0c3ebef31c75d5e22cbc757808bec1dd0541ab9d1bbe8702d39ab02106c7",
+		},
+		linux: map[string]string{
+			"amd64": "12deae970bc4763e29011f60d36a0b109dc0d9d04162e207d7722534c0408a2d",
+			"arm64": "faa9afd845c58fbebb1d060e477121a70349f8ac73560728a560c32ae5af597a",
+		},
+		windows: map[string]string{
+			"amd64": "f65897119b2cfa5acb4bf1d68bd2569cc4a0bdfa9f6f58decec45ac0ec2d2fa9",
+			"arm64": "25aa9b438d40fceb857051f80c15c85825e687a2bc5ab7df39b839eea7882ec3",
+		},
+	},
+	"1.11.4-loom.15": {
 		sources: map[string]string{
 			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
 			"source-provenance.json": "b395e22c8a84fe32bd7f93331024a11ee0ebd66fdebff1f71ecb4c3c97a4b8f7",

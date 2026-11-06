@@ -11,7 +11,6 @@ import (
 	"os"
 	"runtime"
 
-	"loom/internal/clientmodel"
 	"loom/internal/clientsecret"
 	"loom/internal/control"
 )
@@ -120,10 +119,6 @@ func openReferenceStore(path string, reference control.InvitationReference, plat
 	state, err := NewPendingIdentityState(reference, platform, private, hex.EncodeToString(request))
 	if err != nil {
 		return nil, err
-	}
-	if protector != nil {
-		preference := clientmodel.EmptyPreference()
-		state.Preference = &preference
 	}
 	if err := store.save(state, nil, false); err != nil {
 		return nil, err

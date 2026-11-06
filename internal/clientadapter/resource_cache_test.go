@@ -14,7 +14,7 @@ import (
 func resourceCacheFixture(t *testing.T) (control.DeviceViewEnvelope, []control.Observation) {
 	t.Helper()
 	view, _, at := resourceProbeFixture(t)
-	probes, err := control.FirstHopProbes(view)
+	probes, err := control.FirstHopProbes(testDeviceExecution(view))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func resourceCacheFixture(t *testing.T) (control.DeviceViewEnvelope, []control.O
 			result, window = "unavailable", 30*time.Second
 		}
 		samples = append(samples, control.Observation{Level: "resource", ResourceID: probe.Resource.ID, Target: probe.Target(),
-			Action: "hysteria2_tls", SpecDigest: probe.SpecDigest, NetworkGeneration: "demo-underlay", Result: result,
+			Action: "hysteria2_echo", SpecDigest: probe.SpecDigest, NetworkGeneration: "demo-underlay", Result: result,
 			ObservedAt: at.UnixMilli(), ValidUntil: at.Add(window).UnixMilli(), DurationMS: &duration})
 	}
 	return lkg, samples
@@ -36,32 +36,32 @@ func resourceCacheFixture(t *testing.T) (control.DeviceViewEnvelope, []control.O
 func TestResourceCacheRestoresOriginalSuccessAndFailureWindows(t *testing.T) {
 	lkg, samples := resourceCacheFixture(t)
 	samples[0].HY2Transfer = &control.HY2Transfer{DurationNS: 10_000_000, RXBytes: 2000, TXBytes: 1000}
-	body, err := EncodeResourceObservations(lkg, samples)
+	body, err := EncodeResourceObservations(lkg, samples, testPolicyIDs(lkg.View))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := DecodeResourceObservations(body, lkg, "demo-underlay")
+	restored, err := DecodeResourceObservations(body, lkg, "demo-underlay", testPolicyIDs(lkg.View))
 	if err != nil || !reflect.DeepEqual(restored, samples) {
 		t.Fatal("cache changed a result or its original time", restored, err)
 	}
-	roundTrip, err := EncodeResourceObservations(lkg, restored)
+	roundTrip, err := EncodeResourceObservations(lkg, restored, testPolicyIDs(lkg.View))
 	if err != nil || !bytes.Equal(roundTrip, body) {
 		t.Fatal("cache did not preserve canonical bytes", err)
 	}
 	lkg.View.Name = "Renamed demo device"
-	restored, err = DecodeResourceObservations(body, lkg, "demo-underlay")
+	restored, err = DecodeResourceObservations(body, lkg, "demo-underlay", testPolicyIDs(lkg.View))
 	if err != nil || !reflect.DeepEqual(restored, samples) {
 		t.Fatal("unrelated View change refreshed or removed a real sample", err)
 	}
 	lkg.View.DNSServers = []string{"192.0.2.53"}
-	if values, err := DecodeResourceObservations(body, lkg, "demo-underlay"); err != nil || len(values) != 0 {
+	if values, err := DecodeResourceObservations(body, lkg, "demo-underlay", testPolicyIDs(lkg.View)); err != nil || len(values) != 0 {
 		t.Fatal("changed execution inputs retained previous authentication", values, err)
 	}
 }
 
 func TestResourceCacheCannotCrossIdentityOrNetworkGeneration(t *testing.T) {
 	lkg, samples := resourceCacheFixture(t)
-	body, err := EncodeResourceObservations(lkg, samples)
+	body, err := EncodeResourceObservations(lkg, samples, testPolicyIDs(lkg.View))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestResourceCacheCannotCrossIdentityOrNetworkGeneration(t *testing.T) {
 		lkg        control.DeviceViewEnvelope
 		generation string
 	}{{otherRoot, "demo-underlay"}, {otherDeviceKey, "demo-underlay"}, {lkg, "demo-other-underlay"}} {
-		if values, err := DecodeResourceObservations(body, next.lkg, next.generation); err != nil || len(values) != 0 {
+		if values, err := DecodeResourceObservations(body, next.lkg, next.generation, testPolicyIDs(next.lkg.View)); err != nil || len(values) != 0 {
 			t.Fatal("diagnostic cache crossed an identity or network boundary", values, err)
 		}
 	}
@@ -81,7 +81,7 @@ func TestResourceCacheCannotCrossIdentityOrNetworkGeneration(t *testing.T) {
 
 func TestResourceCacheRejectsNoncanonicalAndAmbiguousSamples(t *testing.T) {
 	lkg, samples := resourceCacheFixture(t)
-	body, err := EncodeResourceObservations(lkg, samples)
+	body, err := EncodeResourceObservations(lkg, samples, testPolicyIDs(lkg.View))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,15 +90,15 @@ func TestResourceCacheRejectsNoncanonicalAndAmbiguousSamples(t *testing.T) {
 		bytes.Replace(body, []byte(`"schema":3`), []byte(`"schema":3,"unknown":true`), 1),
 		bytes.Replace(body, []byte(`"schema":3`), []byte(`"schema":3,"schema":3`), 1),
 	} {
-		if _, err := DecodeResourceObservations(invalid, lkg, "demo-underlay"); err == nil {
+		if _, err := DecodeResourceObservations(invalid, lkg, "demo-underlay", testPolicyIDs(lkg.View)); err == nil {
 			t.Fatal("noncanonical cache input was accepted")
 		}
 	}
-	if _, err := EncodeResourceObservations(lkg, []control.Observation{samples[0], samples[0]}); err == nil {
+	if _, err := EncodeResourceObservations(lkg, []control.Observation{samples[0], samples[0]}, testPolicyIDs(lkg.View)); err == nil {
 		t.Fatal("two samples for the same resource were stored")
 	}
 	samples[0].SpecDigest = "sha256:" + strings.Repeat("4", 64)
-	if _, err := EncodeResourceObservations(lkg, samples); err == nil {
+	if _, err := EncodeResourceObservations(lkg, samples, testPolicyIDs(lkg.View)); err == nil {
 		t.Fatal("cache writer rebound a sample to different execution inputs")
 	}
 }

@@ -39,10 +39,10 @@ func TestExplicitViewDeliveryUsesCurrentAcceptanceAndPreservesIdentity(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(reopened.LKG(), &next) || len(reopened.LKG().View.Routes) != 0 ||
+	if !reflect.DeepEqual(reopened.LKG(), &next) || len(testDeviceExecution(reopened.LKG().View).Routes) != 0 ||
 		!fixedIdentityEqual(before, reopened.state) || reopened.state.ReportSequence != before.ReportSequence ||
-		!reflect.DeepEqual(reopened.state.Preference, before.Preference) {
-		t.Fatal("explicit delivery lost revocation, identity, report sequence, or preference across restart")
+		reopened.state.Preference == nil || reopened.state.Preference.Schema != 3 || reopened.state.Preference.PolicyID != "" {
+		t.Fatal("explicit delivery lost identity/sequence or retained the withdrawn Policy across restart")
 	}
 	unchanged, err := os.ReadFile(path)
 	if err != nil {

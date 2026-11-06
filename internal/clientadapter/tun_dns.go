@@ -27,8 +27,10 @@ func WithTUNDomainDNS(config string) (string, error) {
 		return "", err
 	}
 	domains, suffixes := map[string]bool{}, map[string]bool{}
+	publicInternet := false
 	var visit func(tunDNSMatcher)
 	visit = func(rule tunDNSMatcher) {
+		publicInternet = publicInternet || rule.PublicInternet
 		for _, value := range rule.Domain {
 			domains[value] = true
 		}
@@ -42,7 +44,7 @@ func WithTUNDomainDNS(config string) (string, error) {
 	for _, rule := range route.Rules {
 		visit(rule)
 	}
-	if len(domains)+len(suffixes) == 0 {
+	if len(domains)+len(suffixes) == 0 && !publicInternet {
 		return config, nil
 	}
 	var dns map[string]json.RawMessage
@@ -93,7 +95,7 @@ func WithTUNDomainDNS(config string) (string, error) {
 	// This name always resolves to the endpoint underlay addresses, including
 	// when a business suffix rule would otherwise select every .loom record.
 	delete(domains, "control.loom")
-	if len(domains)+len(suffixes) == 0 {
+	if len(domains)+len(suffixes) == 0 && !publicInternet {
 		return config, nil
 	}
 	var existing []json.RawMessage
@@ -114,7 +116,20 @@ func WithTUNDomainDNS(config string) (string, error) {
 	if len(suffixes) > 0 {
 		matcher["domain_suffix"] = sortedDNSNames(suffixes)
 	}
-	rule, _ := json.Marshal(matcher)
+	var capture []json.RawMessage
+	if len(domains)+len(suffixes) > 0 {
+		rule, _ := json.Marshal(matcher)
+		capture = append(capture, rule)
+	}
+	if publicInternet {
+		// The synthetic answer preserves the original business name. Actual
+		// resolution and the public-address guard run at the selected exit.
+		rule, _ := json.Marshal(map[string]any{"type": "logical", "mode": "and", "rules": []any{
+			map[string]any{"inbound": []string{"tun-in"}, "query_type": []string{"A", "AAAA"}, "domain_regex": []string{`^[a-zA-Z0-9_-]+([.][a-zA-Z0-9_-]+)+[.]?$`}},
+			map[string]any{"domain_suffix": []string{"loom", "local", "localhost", "invalid", "home.arpa"}, "invert": true},
+		}, "server": "loom-tun-domain"})
+		capture = append(capture, rule)
+	}
 	// Outbound-specific segment DNS must run before local capture DNS.
 	before, after := []json.RawMessage{}, []json.RawMessage{}
 	for _, raw := range existing {
@@ -128,7 +143,7 @@ func WithTUNDomainDNS(config string) (string, error) {
 			after = append(after, raw)
 		}
 	}
-	dns["rules"], _ = json.Marshal(append(append(before, rule), after...))
+	dns["rules"], _ = json.Marshal(append(append(before, capture...), after...))
 	dns["fakeip"] = json.RawMessage(`{"enabled":true,"inet4_range":"198.18.0.0/15","inet6_range":"2001:db8:8000::/49"}`)
 	document["dns"], _ = json.Marshal(dns)
 	var experimental map[string]json.RawMessage
@@ -171,10 +186,11 @@ func WithTUNDomainDNS(config string) (string, error) {
 }
 
 type tunDNSMatcher struct {
-	Domain       []string        `json:"domain"`
-	DomainSuffix []string        `json:"domain_suffix"`
-	IPCIDR       []string        `json:"ip_cidr"`
-	Rules        []tunDNSMatcher `json:"rules"`
+	PublicInternet bool            `json:"public_internet"`
+	Domain         []string        `json:"domain"`
+	DomainSuffix   []string        `json:"domain_suffix"`
+	IPCIDR         []string        `json:"ip_cidr"`
+	Rules          []tunDNSMatcher `json:"rules"`
 }
 
 func sortedDNSNames(values map[string]bool) []string {

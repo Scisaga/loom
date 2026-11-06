@@ -3,6 +3,7 @@ package clientadapter
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -34,5 +35,47 @@ func TestTUNDomainDNSPreservesAuthorityAndSeparatesUnderlay(t *testing.T) {
 	}
 	if _, err := WithTUNDomainDNS(strings.Replace(source, `"domain_suffix":["demo.example"]`, `"ip_cidr":["198.18.0.0/24"]`, 1)); err == nil {
 		t.Fatal("accepted a concrete target inside the synthetic address pool")
+	}
+}
+
+func TestTUNOrdinaryInternetPreservesTheBusinessNameAndLocalNamespace(t *testing.T) {
+	source := `{"route":{"final":"reject","rules":[{"public_internet":true,"outbound":"service:demo-internet"}]},"dns":{"servers":[{"tag":"demo-resolver","address":"192.0.2.53"}],"rules":[{"outbound":["demo-segment"],"server":"demo-resolver"}]},"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-local"}}}`
+	body, err := WithTUNDomainDNS(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		DNS struct {
+			Rules []struct {
+				Type   string `json:"type"`
+				Mode   string `json:"mode"`
+				Server string `json:"server"`
+				Rules  []struct {
+					Inbound      []string `json:"inbound"`
+					QueryType    []string `json:"query_type"`
+					DomainRegex  []string `json:"domain_regex"`
+					DomainSuffix []string `json:"domain_suffix"`
+					Invert       bool     `json:"invert"`
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.DNS.Rules) != 2 || got.DNS.Rules[0].Server != "demo-resolver" {
+		t.Fatal("outbound resolver lost precedence")
+	}
+	rule := got.DNS.Rules[1]
+	if rule.Type != "logical" || rule.Mode != "and" || rule.Server != "loom-tun-domain" || len(rule.Rules) != 2 || !rule.Rules[1].Invert {
+		t.Fatal("public TUN names were not preserved")
+	}
+	for _, name := range []string{"loom", "local", "localhost", "invalid", "home.arpa"} {
+		if !slices.Contains(rule.Rules[1].DomainSuffix, name) {
+			t.Fatal("local namespace entered public DNS capture", name)
+		}
+	}
+	if !strings.Contains(body, `"final":"reject"`) {
+		t.Fatal("public DNS opened final")
 	}
 }

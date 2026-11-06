@@ -591,7 +591,7 @@ func install(ctx context.Context, options InstallOptions, captured *VerifiedDire
 		status, statusErr := linuxclient.ReadStatus("/run/loom-client/status.json")
 		currentStore, loadErr := deviceclient.Load(options.State)
 		if stateErr == nil && pidErr == nil && readErr == nil && state == "active" && actual == binary && statusErr == nil && loadErr == nil && currentStore.LKG() != nil && status.DeviceID == lkg.View.DeviceID && status.ViewDigest == currentStore.LKG().ViewDigest {
-			idle := currentStore.LKG().View.RuntimeProfile == nil && len(currentStore.LKG().View.InboundCredentials) == 0
+			idle := !control.HasRuntime(currentStore.LKG().View)
 			if status.Runtime == "running" || idle && status.Runtime == "stopped" {
 				break
 			}
@@ -631,7 +631,7 @@ func preflightInstallation(ctx context.Context, options InstallOptions, release 
 		// The immutable original program predates the corrected preflight. Its
 		// actual runtime already consumes resolved endpoints; use this trusted
 		// installer's current adapter without rewriting the signed original.
-		return linuxclient.PreflightResources(options.State, filepath.Join(release, "sing-box"), options.Capture, options.ResourceInputs)
+		return linuxclient.PreflightResources(options.State, filepath.Join(release, "sing-box"), options.Capture, options.ResourceInputs, "/etc/wireguard/node.key")
 	}
 	args := []string{"client", "preflight", "-state", options.State, "-sing-box", filepath.Join(release, "sing-box"), "-capture", options.Capture}
 	if options.ResourceInputs != "" {

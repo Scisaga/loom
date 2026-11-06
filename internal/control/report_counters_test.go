@@ -46,8 +46,12 @@ func TestWireGuardCountersPreserveOriginalReportsAndSignedPrecision(t *testing.T
 		t.Fatal(err)
 	}
 	body, _ := CanonicalEncode(report)
-	if decodeStoredReport(body, &decoded) != nil || !reflect.DeepEqual(decoded, report) || decoded.Verify(public) != nil {
+	if decodeStoredReport(body, &decoded) != nil || !reflect.DeepEqual(decoded, report) || decoded.Verify(public) != nil || verifyWireGuardCounters(decoded.WireGuardCounters, view) != nil {
 		t.Fatal("counter report lost original precision or signature")
+	}
+	canonical, err := CanonicalEncode(decoded)
+	if err != nil || !bytes.Equal(body, canonical) {
+		t.Fatal("the original full counter report changed its canonical signed bytes", err)
 	}
 	changed := report
 	changed.WireGuardCounters = nil
@@ -101,6 +105,40 @@ func TestWireGuardCountersPreserveOriginalReportsAndSignedPrecision(t *testing.T
 			t.Fatal("invalid optional counter accepted")
 		}
 	}
+}
+
+func TestWireGuardCounterVerificationAllowsOnlyCurrentExactPeerSubsets(t *testing.T) {
+	view, err := ProjectDeviceView(wireGuardAccessFixture(t), "demo-exit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, peers, err := WireGuardCounterBindings(view)
+	if err != nil || len(peers) < 2 {
+		t.Fatal("requires multiple currently authorized peers", err)
+	}
+	for _, observed := range [][]WireGuardPeerCounter{peers, {peers[0]}, {peers[len(peers)-1]}, {}} {
+		value := &WireGuardCounters{Interface: tag, Epoch: strings.Repeat("a", 32), ObservedAt: 1, Peers: observed}
+		if err := verifyWireGuardCounters(value, view); err != nil {
+			t.Fatal("a current subset was rejected as incomplete", err)
+		}
+	}
+	foreign := WireGuardPeerCounter{PublicKey: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("z", 32))), Links: []WireGuardCounterLink{}}
+	value := &WireGuardCounters{Interface: tag, Epoch: strings.Repeat("a", 32), ObservedAt: 1, Peers: []WireGuardPeerCounter{foreign}}
+	if err := verifyWireGuardCounters(value, view); err == nil {
+		t.Fatal("a peer outside current authorization was accepted")
+	}
+	for _, peer := range peers {
+		if len(peer.Links) == 0 {
+			continue
+		}
+		peer.Links = []WireGuardCounterLink{}
+		value.Peers = []WireGuardPeerCounter{peer}
+		if err := verifyWireGuardCounters(value, view); err == nil {
+			t.Fatal("a subset omitted its actual current Link bindings")
+		}
+		return
+	}
+	t.Fatal("fixture did not exercise exact Link bindings")
 }
 
 func TestWireGuardCounterBindingsKeepSharedPeerAndCurrentLinkScope(t *testing.T) {

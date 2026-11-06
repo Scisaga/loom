@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"loom/internal/control"
@@ -115,5 +114,5 @@ func runtimeHasLocalNetwork(view control.DeviceView) bool {
 			return true
 		}
 	}
-	return view.RuntimeProfile != nil && strings.Contains(view.RuntimeProfile.Config, `"prefix_mapping"`)
+	return false
 }

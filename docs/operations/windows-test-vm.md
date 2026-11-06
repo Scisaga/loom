@@ -106,6 +106,17 @@ sudo ./scripts/windows-test-vm.sh stop
 `endpoints` 显示当前三个 loopback endpoint，供本机工具或经 SSH 转发的 RDP/VNC viewer
 使用。不得把显示出的端口改绑到非 loopback 地址。
 
+本测试环境由开发代理维护，正常登录不是用户必须接手的步骤。代理应先核对已有本机客户端、
+受保护凭据引用和当前会话；通过正常 RDP 或受限本机控制台登录原测试账号，再调用既有交互
+执行器。凭据由专用输入适配器消费，不进入模型、命令行、截图或日志；不开启长期自动登录，
+不为连接成功放宽 NLA、证书或防火墙要求。
+
+账号密码到期时，通过 Windows 的
+[旧密码验证变更接口](https://learn.microsoft.com/en-us/windows/win32/api/lmaccess/nf-lmaccess-netuserchangepassword)
+正常续期，并原子更新原受保护引用；保留原账号 SID 和已有 DPAPI 数据。禁止用管理员强制重置
+代替该流程；[Microsoft 的 DPAPI 说明](https://learn.microsoft.com/en-us/windows/win32/seccrypto/example-c-program-using-cryptprotectdata)
+明确区分两者对既有受保护数据的影响。测试结束后回读实际结果，并恢复由代理启动的临时环境。
+
 每次测试使用受限 run ID 和独立目录。Linux 先完成源码修改、交叉构建、签名/哈希验证，
 再只传入本轮文件：
 

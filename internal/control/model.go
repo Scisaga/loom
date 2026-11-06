@@ -72,15 +72,19 @@ func (NetworkLink) materialPayload()           {}
 func (ExpectedComponent) materialPayload()     {}
 
 type DevicePut struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Responsibilities []string `json:"responsibilities"`
-	PolicyIDs        []string `json:"policy_ids"`
-	DistributionURLs []string `json:"distribution_urls"`
-	DNSServers       []string `json:"dns_servers,omitempty"`
+	WireGuardPublicKey string   `json:"wireguard_public_key,omitempty"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Responsibilities   []string `json:"responsibilities"`
+	PolicyIDs          []string `json:"policy_ids"`
+	DistributionURLs   []string `json:"distribution_urls"`
+	DNSServers         []string `json:"dns_servers,omitempty"`
 }
 
 func (value DevicePut) Validate() error {
+	if value.WireGuardPublicKey != "" && validateWireGuardPublicKey(value.WireGuardPublicKey) != nil {
+		return errors.New("registered WireGuard public key is invalid")
+	}
 	if err := validateOptionalDNS(value.DNSServers); err != nil {
 		return err
 	}
@@ -385,6 +389,12 @@ func (material Material) Validate() error { return material.validate(true) }
 func (operation Operation) Validate() error {
 	if operation.Schema != 3 || ValidateID(operation.RequestID) != nil || validateDigests(operation.Dependencies) != nil {
 		return errors.New("management operation coordinates are invalid")
+	}
+	if operation.TargetKind == "probe_target" && operation.Operation != "probe_target.delete" {
+		resolution, ok := operation.Payload.(ConflictResolution)
+		if operation.Operation != "conflict.resolve" || !ok || resolution.Action != "delete" {
+			return errors.New("probe URLs belong to Service; independent probe targets cannot be written")
+		}
 	}
 	if err := validateCurrentTransportPayload(operation.Payload); err != nil {
 		return err
@@ -1231,6 +1241,9 @@ func (graph *materialGraph) validateOperation(material Material, view Projection
 		if !found || !containsString(owner.Responsibilities, "forward") && !containsString(owner.Responsibilities, "internet_egress") {
 			return errors.New("resource owner has no transport responsibility")
 		}
+		if value.Kind == "wireguard" && owner.WireGuardPublicKey != "" && owner.WireGuardPublicKey != *value.Authentication.PublicKey {
+			return errors.New("WireGuard resource differs from its registered owner")
+		}
 		if value.AccessHY2ResourceID != "" {
 			resources := map[string]TransportResource{}
 			for _, resource := range view.NetworkIntent.Resources {
@@ -1498,6 +1511,11 @@ func (graph *materialGraph) validateDevice(material Material, view Projection, h
 		if previous.DevicePublicKey != device.DevicePublicKey || previous.RuntimeKey != device.RuntimeKey || previous.TransactionID != device.TransactionID || previous.InviteMaterialID != device.InviteMaterialID || previous.BindingMaterialID != device.BindingMaterialID || previous.Platform != device.Platform {
 			return errors.New("device update changes immutable identity, key or enrollment binding")
 		}
+		for _, id := range history {
+			if prior, ok := effectiveMaterial(graph.facts[id]).Payload.(DeviceAuthorization); ok && prior.ID == device.ID && prior.WireGuardPublicKey != "" && device.WireGuardPublicKey == "" {
+				return errors.New("device update removes its registered WireGuard identity")
+			}
+		}
 		return validateAssignedPolicies(material, view, device.PolicyIDs)
 	}
 	if previous != nil {
@@ -1597,8 +1615,11 @@ func validateAssignedPolicies(material Material, view Projection, ids []string) 
 }
 
 func serviceTargetsOverlap(left, right Service) bool {
-	for _, a := range left.TargetMatchers() {
-		for _, b := range right.TargetMatchers() {
+	if left.RestrictToProbeTargets != nil || right.RestrictToProbeTargets != nil {
+		return false
+	}
+	for _, a := range historicalServiceMatchers(left) {
+		for _, b := range historicalServiceMatchers(right) {
 			if a.Kind == "ip_prefix" || b.Kind == "ip_prefix" {
 				if a.Kind != b.Kind {
 					continue

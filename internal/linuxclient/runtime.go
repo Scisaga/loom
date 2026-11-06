@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,12 +47,10 @@ type Options struct {
 	Log                 io.Writer
 	Now                 func() time.Time
 	Generation          func() (string, error)
-	Probe               Probe
 	RefreshPoll         time.Duration
 	Reload              <-chan os.Signal
 	Capture             string
 	ResourceInputs      string
-	defaultProbe        bool
 	captureNamespace    *os.File
 }
 
@@ -69,7 +67,6 @@ func (options *Options) defaults() {
 	if options.Generation == nil {
 		options.Generation = NetworkGeneration
 	}
-	options.defaultProbe = options.Probe == nil
 	if options.RefreshPoll <= 0 {
 		options.RefreshPoll = 15 * time.Second
 	}
@@ -86,110 +83,37 @@ func (options *Options) defaults() {
 		options.WireGuardPrivateKey = "/etc/wireguard/node.key"
 	}
 }
-func (options Options) probeForService(view control.DeviceView, scope string) Probes {
-	if !options.defaultProbe {
-		if options.Probe == nil {
-			return nil
-		}
-		return Probes{"": options.Probe}
-	}
-	probes := Probes{}
-	for _, group := range view.BusinessProbeTargets {
-		if scope != "service:"+group.ServiceID && scope != "local_network:"+group.ServiceID {
-			continue
-		}
-		for _, target := range group.Targets {
-			if options.Capture == "mixed" {
-				probe, err := clientadapter.HTTPSBusinessProbe("127.0.0.1:1080", target)
-				if err != nil {
-					return nil
-				}
-				probes[target] = probe
-			} else {
-				probes[target] = func(ctx context.Context) ProbeResult {
-					if options.captureNamespace != nil {
-						return namespaceBusinessProbe(ctx, options.captureNamespace, target)
-					}
-					return ProbeResult{Action: "https_request", Description: "isolated capture namespace is unavailable"}
-				}
-			}
+func selectedProbeURLs(view control.DeviceView, preference clientmodel.Preference) []string {
+	id := clientmodel.SelectedServiceID(view, preference)
+	for _, service := range view.Services {
+		if service.ID == id {
+			return service.ProbeURLs
 		}
 	}
-	return probes
+	return nil
 }
 
-// Each Service owns its probe and fallback. Testing one destination cannot
-// colour another Service's selection or consume another Service's permission.
-func activateServices(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, probe bool) (Activation, error) {
-	return activateServicesWithLinkSamples(ctx, options, view, selector, routes, state, nil, nil, probe)
+func activateServices(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, _ bool) (Activation, error) {
+	return activateServicesWithLinkSamples(ctx, options, view, selector, routes, state, nil, nil, false)
 }
-
-func activateServicesWithLinkSamples(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, local []control.Observation, remote []control.DeviceLinkObservation, probe bool, onlyScopes ...string) (Activation, error) {
-	scopes, byScope, err := scopesFor(routes, clientmodel.ServiceScopes(view)...)
+func activateServicesWithLinkSamples(ctx context.Context, options Options, view control.DeviceView, selector Selector, routes []clientmodel.RouteCandidate, state LocalState, local []control.Observation, remote []control.DeviceLinkObservation, _ bool, onlyScopes ...string) (Activation, error) {
+	graphs, err := clientadapter.PolicyGraphs(view, clientmodel.MeasurementPolicies(state.Preference))
 	if err != nil {
 		return Activation{}, err
 	}
-	result := Activation{State: state, Selections: []SelectionStatus{}}
-	var failures []error
-	for _, scope := range scopes {
-		if onlyScopes != nil && !slices.Contains(onlyScopes, scope) {
-			actual, err := selector.Read(ctx, scope)
-			if err != nil {
-				return Activation{}, err
-			}
-			if actual == blockedSelection {
-				result.BlockedScopes = append(result.BlockedScopes, scope)
-				continue
-			}
-			found := false
-			targets := []string{}
-			for target := range options.probeForService(view, scope) {
-				targets = append(targets, target)
-			}
-			sort.Strings(targets)
-			for _, candidate := range byScope[scope] {
-				if candidate.ID != actual || candidate.PolicyID != state.Preference.Policy(strings.SplitN(scope, ":", 2)[1]) {
-					continue
-				}
-				observed, err := clientmodel.ObservationState(state.Observations, actual, scope, state.NetworkGeneration, targets, options.Now())
-				if err != nil {
-					return Activation{}, err
-				}
-				result.Selections = append(result.Selections, SelectionStatus{Scope: scope, CandidateID: actual, PolicyID: candidate.PolicyID, FinalExit: candidate.FinalExit, Chain: append([]string(nil), candidate.Chain...), State: observed})
-				found = true
-			}
-			if !found {
-				return Activation{}, errors.New("unchanged Service selector does not match its saved policy")
-			}
-			continue
-		}
-		probes := options.probeForService(view, scope)
-		if !probe {
-			for target := range probes {
-				probes[target] = nil
-			}
-		}
-		value, err := activateWithLinkSamples(ctx, selector, byScope[scope], result.State, local, remote, probes, options.Now, scope)
-		if value.State.Schema == 0 {
-			return Activation{}, err
-		}
-		result.State = value.State
-		result.Selections = append(result.Selections, value.Selections...)
-		result.BlockedScopes = append(result.BlockedScopes, value.BlockedScopes...)
-		if err != nil {
-			failures = append(failures, err)
-		}
-		if ctx.Err() != nil {
-			break
-		}
+	state.graphs = graphs
+	state.NativeExecutionSpec, err = clientadapter.NativeExecutionSpec(view, routes, graphs, state.Preference.PolicyID)
+	if err != nil {
+		return Activation{}, err
 	}
-	return result, errors.Join(failures...)
+	return activateWithLinkSamples(ctx, selector, routes, state, local, remote, selectedProbeURLs(view, state.Preference), options.Now, clientmodel.SelectorScopes(view)...)
 }
+
 func accessView(envelope *control.DeviceViewEnvelope) (*control.DeviceViewEnvelope, error) {
 	if envelope == nil || envelope.View.Platform != "linux" || envelope.Validate() != nil {
 		return nil, errors.New("Linux device has no valid runtime view")
 	}
-	if envelope.View.RuntimeProfile == nil {
+	if !control.HasRuntime(envelope.View) {
 		server := false
 		for _, role := range envelope.View.Responsibilities {
 			server = server || role == "internet_egress" || role == "forward" || role == "control"
@@ -252,13 +176,13 @@ func withIsolatedWebsiteProxy(config string) (string, error) {
 	return string(body), err
 }
 
-func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, websites ...clientadapter.WebsiteAccess) (string, error) {
+func nodeRuntimeConfig(view control.DeviceView, secret string, exclusions []string, capture string, executions []resourceExecution, websites ...clientadapter.WebsiteAccess) (string, error) {
 	if capture == "tun" && len(executions) != 0 {
 		return "", errors.New("server listeners require the separate host projection")
 	}
 	return projectNodeRuntime(view, secret, exclusions, capture, executions, slices.Contains(view.Responsibilities, "access"), websites...)
 }
-func projectNodeRuntime(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, access bool, websites ...clientadapter.WebsiteAccess) (string, error) {
+func projectNodeRuntime(view control.DeviceView, secret string, exclusions []string, capture string, executions []resourceExecution, access bool, websites ...clientadapter.WebsiteAccess) (string, error) {
 	if err := clientadapter.ValidateOverlayUnderlay(view); err != nil {
 		return "", err
 	}
@@ -266,7 +190,7 @@ func projectNodeRuntime(view control.DeviceView, secret string, exclusions []str
 	var err error
 	if access {
 		config, err = accessRuntimeConfigForCapture(view, secret, exclusions, capture, websites...)
-	} else if view.RuntimeProfile != nil {
+	} else if control.HasRuntime(view) {
 		config, err = clientadapter.RuntimeSource(view, secret, false)
 		if err == nil {
 			config, err = clientadapter.WithManagedDNS(config, view.DNSServers, false)
@@ -286,7 +210,7 @@ func projectNodeRuntime(view control.DeviceView, secret string, exclusions []str
 	if err != nil {
 		return "", err
 	}
-	return clientadapter.WithNativeProbe(config, secret)
+	return config, nil
 }
 
 func runtimeSecret() (string, error) {
@@ -298,9 +222,9 @@ func runtimeSecret() (string, error) {
 }
 func Preflight(state, executable string) error { return PreflightCapture(state, executable, "mixed") }
 func PreflightCapture(state, executable, capture string) error {
-	return PreflightResources(state, executable, capture, "")
+	return PreflightResources(state, executable, capture, "", "/etc/wireguard/node.key")
 }
-func PreflightResources(state, executable, capture, inputPath string) error {
+func PreflightResources(state, executable, capture, inputPath, keyPath string) error {
 	if err := validateCapture(capture); err != nil {
 		return err
 	}
@@ -316,7 +240,7 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	if err != nil {
 		return err
 	}
-	executions, err := prepareHY2Executions(view.View, inputPath, time.Now())
+	executions, err := prepareResourceExecutions(view.View, inputPath, time.Now())
 	if err != nil {
 		return err
 	}
@@ -330,7 +254,7 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	if err != nil {
 		return err
 	}
-	config, serverConfig, err := preflightProjectedConfigs(ctx, view.View, secret, capture, executions, website, "/etc/wireguard/node.key", nil)
+	config, serverConfig, err := preflightProjectedConfigs(view.View, secret, capture, executions, website, keyPath)
 	if err != nil {
 		return err
 	}
@@ -342,31 +266,26 @@ func PreflightResources(state, executable, capture, inputPath string) error {
 	return preflightRuntimeConfig(executable, config)
 }
 
-// Resolve the same signed WG endpoint inputs as runtime application before
-// assembling its native receiver. This only reads DNS and renders configs;
-// it neither creates an interface nor declares a peer available.
-func preflightProjectedConfigs(ctx context.Context, view control.DeviceView, secret, capture string, executions []hy2Execution, website clientadapter.WebsiteAccess, keyPath string, dial func(context.Context, string, string) (net.Conn, error)) (string, string, error) {
+// Preflight keeps sender descriptions and certified DNS inputs intact. Only
+// the bounded native resource worker resolves requested transport peers.
+func preflightProjectedConfigs(view control.DeviceView, secret, capture string, executions []resourceExecution, website clientadapter.WebsiteAccess, keyPath string) (string, string, error) {
 	config, serverConfig, err := generationConfigs(view, secret, nil, capture, executions, website)
 	if err != nil {
 		return "", "", err
 	}
-	profile, _, err := projectWireGuard(view)
-	if err != nil {
-		return "", "", err
-	}
-	profile, err = resolveWireGuardEndpoints(ctx, profile, wireGuardExecution{}, view.DNSServers, dial)
+	profile, _, err := projectWireGuard(view, executions)
 	if err != nil {
 		return "", "", err
 	}
 	if serverConfig != "" {
-		serverConfig, err = appendNativeReceivers(serverConfig, view, profile, nil, keyPath)
+		serverConfig, err = appendNativeWireGuard(serverConfig, view, profile, nil, keyPath)
 	} else {
-		config, err = appendNativeReceivers(config, view, profile, nil, keyPath)
+		config, err = appendNativeWireGuard(config, view, profile, nil, keyPath)
 	}
 	return config, serverConfig, err
 }
 
-func generationConfigs(view control.DeviceView, secret string, exclusions []string, capture string, executions []hy2Execution, websites ...clientadapter.WebsiteAccess) (string, string, error) {
+func generationConfigs(view control.DeviceView, secret string, exclusions []string, capture string, executions []resourceExecution, websites ...clientadapter.WebsiteAccess) (string, string, error) {
 	if len(websites) > 1 {
 		return "", "", errors.New("generation requires one website execution input")
 	}
@@ -429,60 +348,75 @@ func acceptCertifiedView(store deviceclient.IdentityStore, envelope control.Devi
 	return current == nil || current.ViewDigest != envelope.ViewDigest, nil
 }
 func certifiedViewChanged(ctx context.Context, store *deviceclient.Store, log io.Writer) (bool, error) {
+	pending, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	changed, _, err := refreshCertifiedView(pending, store, log, deviceclient.Fetch)
+	return changed, err
+}
+
+func refreshCertifiedView(ctx context.Context, store *deviceclient.Store, log io.Writer,
+	fetch func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error)) (bool, bool, error) {
 	before := store.LKG()
 	sameView := func() bool {
 		current := store.LKG()
 		return before != nil && current != nil && before.ViewDigest == current.ViewDigest
 	}
 	if changed, err := store.Reload(); err != nil {
-		return false, errors.Join(errCertifiedPersistence, err)
+		return false, false, errors.Join(errCertifiedPersistence, err)
 	} else if changed && !sameView() {
-		return true, nil
+		return true, true, nil
 	}
-	pending, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	envelope, err := deviceclient.Fetch(pending, store)
+	envelope, err := fetch(ctx, store)
 	if changed, readErr := store.Reload(); readErr != nil {
-		return false, errors.Join(errCertifiedPersistence, readErr)
+		return false, false, errors.Join(errCertifiedPersistence, readErr)
 	} else if current := store.LKG(); changed || before != nil && current != nil && before.Signature != current.Signature {
 		// A concurrent durable update wins over this in-flight response, even
-		// when only its authenticated frontier advanced. Retry on the next poll.
-		return !sameView(), nil
+		// when only its authenticated frontier advanced. Follow again using it.
+		return !sameView(), true, nil
 	}
 	if err != nil {
-		fmt.Fprintln(log, "private configuration refresh unavailable; retaining the accepted view")
-		return false, nil
+		if ctx.Err() == nil {
+			fmt.Fprintln(log, "private configuration refresh unavailable; retaining the accepted view")
+		}
+		return false, false, nil
 	}
-	return acceptCertifiedView(store, envelope)
+	changed, err := acceptCertifiedView(store, envelope)
+	return changed, true, err
 }
 func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activation Activation, at time.Time, components []control.ComponentReadback, readback control.RuntimeReadback, links []control.Observation, counters *control.WireGuardCounters) (control.DeviceReport, error) {
-	preference, err := clientadapter.ReportedPolicyChoices(lkg.View, activation.State.Preference)
+	preference, err := clientadapter.ReportedPolicyID(lkg.View, activation.State.Preference)
 	if err != nil {
 		return control.DeviceReport{}, err
 	}
 	selections := []control.ReportSelection{}
-	observations := append([]control.Observation{}, links...)
-	observations = append(observations, activation.State.ResourceObservations...)
-	for _, selection := range activation.Selections {
-		if readback.State != "running" {
-			break
-		}
-		for _, route := range lkg.View.Routes {
-			if route.ID == selection.CandidateID {
-				selections = append(selections, control.ReportSelection{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID})
-			}
+	complete := readback.State == "running" && readback.AppliedViewDigest == lkg.ViewDigest
+	if complete {
+		selections, err = clientadapter.ReportSelections(lkg.View, activation.State.Preference, activation.Selections)
+		if err != nil {
+			return control.DeviceReport{}, err
 		}
 	}
-	sort.Slice(selections, func(i, j int) bool { return selections[i].ServiceID < selections[j].ServiceID })
+	observations := append([]control.Observation{}, links...)
+	observations = append(observations, activation.State.ResourceObservations...)
+	if !readback.HasCurrentPermissions(lkg.ViewDigest) {
+		observations = []control.Observation{}
+	}
 	// Only an actual authenticated target sample becomes a wire observation.
 	// Targetless old caches and custom diagnostics grant no business health.
-	for _, group := range lkg.View.BusinessProbeTargets {
+	execution, err := control.ProjectDeviceCandidates(lkg.View, clientmodel.MeasurementPolicies(activation.State.Preference))
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
+	for _, group := range execution.BusinessProbeTargets {
+		if !complete {
+			break
+		}
 		for _, value := range activation.State.Observations {
 			if !slices.Contains(group.Targets, value.Target) || value.NetworkGeneration != activation.State.NetworkGeneration {
 				continue
 			}
-			for _, route := range lkg.View.Routes {
-				if route.ID != value.CandidateID || route.ServiceID != group.ServiceID || route.Scope != value.Scope || value.Action != "https_request" {
+			for _, route := range execution.Routes {
+				if route.ID != value.CandidateID || route.ServiceID != group.ServiceID || value.Scope != control.AccessSelectorScope || value.Action != "https_request" {
 					continue
 				}
 				observed, e1 := time.Parse(time.RFC3339, value.ObservedAt)
@@ -504,7 +438,11 @@ func selectionReport(ctx context.Context, lkg control.DeviceViewEnvelope, activa
 		return control.DeviceReport{}, err
 	}
 	localNetworks, _ := collectLocalNetworks(ctx, lkg.View)
-	return control.DeviceReport{ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, PolicyChoices: preference, LocalNetworks: localNetworks, WireGuardCounters: counters, Selections: selections, Observations: observations, Components: components, Runtime: readback}, nil
+	lanChoices, err := clientadapter.ReportedLANPolicyIDs(lkg.View, activation.State.Preference)
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
+	return control.DeviceReport{LANPolicyIDs: lanChoices, ReportedAt: at.UnixMilli(), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, PolicyID: preference, LocalNetworks: localNetworks, WireGuardCounters: counters, Selections: selections, Observations: observations, Components: components, Runtime: readback}, nil
 }
 func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, reported bool, readback control.RuntimeReadback) Status {
 	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: activation.State.Preference, NetworkGeneration: activation.State.NetworkGeneration, Selections: activation.Selections, Observations: activation.State.Observations, Runtime: readback.State, Reported: reported}
@@ -520,7 +458,9 @@ func runtimeStatus(lkg *control.DeviceViewEnvelope, activation Activation, repor
 	return value
 }
 
-func resourceRuntimeReadback(ctx context.Context, lkg *control.DeviceViewEnvelope, executions []hy2Execution, pid int, now time.Time,
+var errWGListenerUnconfirmed = errors.New("WG listener application is not confirmed")
+
+func resourceRuntimeReadback(ctx context.Context, lkg *control.DeviceViewEnvelope, executions []resourceExecution, pid int, now time.Time,
 	periodic bool, transaction *wireGuardTransaction) (control.RuntimeReadback, error) {
 	resources, err := readTransportResources(ctx, lkg.View, executions, pid, now)
 	if err != nil {
@@ -552,14 +492,25 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
+	executionDigest, err := control.RuntimeExecutionDigest(lkg.View)
+	if err != nil {
+		return err
+	}
+	sameExecution := func(current *control.DeviceViewEnvelope) bool {
+		if current == nil {
+			return false
+		}
+		digest, err := control.RuntimeExecutionDigest(current.View)
+		return err == nil && digest == executionDigest
+	}
 	hasAccess := slices.Contains(lkg.View.Responsibilities, "access")
-	hasRuntime := lkg.View.RuntimeProfile != nil
+	hasRuntime := control.HasRuntime(lkg.View)
 	if !hasAccess {
 		options.Capture = "mixed"
 	}
 	var routes []clientmodel.RouteCandidate
 	if hasAccess {
-		routes, _, err = clientadapter.AccessProjection(lkg.View)
+		routes, _, err = clientadapter.AccessProjection(lkg.View, clientmodel.MeasurementPolicies(store.Preference()))
 		if err != nil {
 			return err
 		}
@@ -577,7 +528,11 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 	}
-	executions, err := prepareHY2Executions(lkg.View, options.ResourceInputs, options.Now())
+	executions, err := prepareResourceExecutions(lkg.View, options.ResourceInputs, options.Now())
+	if err != nil {
+		return err
+	}
+	localInputsDigest, err := resourceInputsDigest(appliedResourceInputs(executions))
 	if err != nil {
 		return err
 	}
@@ -600,7 +555,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
-	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
+	connected, _ := clientadapter.ConnectedIPv4Prefixes()
 	var localNetworks []control.LocalNetworkPrefix
 	for _, service := range lkg.View.Services {
 		mapping := service.LocalNetwork
@@ -621,7 +576,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 	}
-	desiredWG, _, err := projectWireGuard(lkg.View)
+	desiredWG, _, err := projectWireGuard(lkg.View, executions)
 	if err != nil {
 		return err
 	}
@@ -631,10 +586,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		// A hostname-to-address projection must invalidate its old samples.
 		previousWG = desiredWG
 	}
-	wg, err := resolveWireGuardEndpoints(ctx, desiredWG, previousWG, lkg.View.DNSServers, nil)
-	if err != nil {
-		return err
-	}
+	wg := desiredWG
 	if err := (*transaction).Cleanup(); err != nil {
 		return err
 	}
@@ -644,9 +596,9 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		return err
 	}
 	if serverConfig != "" {
-		serverConfig, err = appendNativeReceivers(serverConfig, lkg.View, wg, prepared, options.WireGuardPrivateKey)
+		serverConfig, err = appendNativeWireGuard(serverConfig, lkg.View, wg, prepared, options.WireGuardPrivateKey)
 	} else {
-		config, err = appendNativeReceivers(config, lkg.View, wg, prepared, options.WireGuardPrivateKey)
+		config, err = appendNativeWireGuard(config, lkg.View, wg, prepared, options.WireGuardPrivateKey)
 	}
 	if err != nil {
 		return err
@@ -681,18 +633,11 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if website.Port != 0 && generation != websiteGeneration {
 		return errRuntimeAddressChanged
 	}
-	if !options.defaultProbe {
-		// An injected diagnostic may use a target outside the View's probe
-		// contract, so it cannot prove cross-view sample equivalence.
-		previous = nil
-	}
-	if _, err := ReconcilePolicyChoices(options.LocalState, generation, lkg.View); err != nil {
-		return err
-	}
-	local, err := loadLocalStateForView(options.LocalState, generation, lkg, previous)
+	local, err := loadLocalStateForView(options.LocalState, generation, lkg, previous, store.Preference())
 	if err != nil {
 		return err
 	}
+	local.Preference = store.Preference()
 	if !reflect.DeepEqual(previousWG, wg) {
 		local = invalidateWireGuardObservations(local, lkg.View, previousWG, wg)
 		if _, err := SaveObservations(options.LocalState, local); err != nil {
@@ -705,7 +650,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	pid := 0
 	resourcePID := 0
 	if hasRuntime {
-		if err := writeConfig(options.Config, config); err != nil {
+		if err := writeNativeResourceConfig(options.Config, config); err != nil {
 			return err
 		}
 		defer func() {
@@ -719,7 +664,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		defer runtime.UnlockOSThread()
 		if serverConfig != "" {
 			serverPath := options.Config + ".server"
-			if err := writeConfig(serverPath, serverConfig); err != nil {
+			if err := writeNativeResourceConfig(serverPath, serverConfig); err != nil {
 				return err
 			}
 			defer func() {
@@ -773,15 +718,19 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			defer options.captureNamespace.Close()
 		}
 		if hasAccess {
-			selector, err = NewHTTPSelector(config)
+			selectorConfig := config
+			if serverConfig != "" {
+				selectorConfig = serverConfig
+			}
+			selector, err = NewHTTPSelector(selectorConfig)
 			if err != nil {
 				return err
 			}
-			if options.captureNamespace != nil {
+			if options.captureNamespace != nil && serverConfig == "" {
 				httpSelector := selector.(*HTTPSelector)
-				httpSelector.client.Transport.(*http.Transport).DialContext = namespaceDialer(options.captureNamespace)
+				httpSelector.SetDialer(namespaceDialer(options.captureNamespace))
 			}
-			scopes, _, err := scopesFor(routes, clientmodel.ServiceScopes(lkg.View)...)
+			scopes, _, err := scopesFor(routes, clientmodel.SelectorScopes(lkg.View)...)
 			if err != nil {
 				return err
 			}
@@ -813,6 +762,22 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 	}
+	var forwardSelector *clientadapter.HTTPSelector
+	var forwardMemory map[string]clientmodel.SelectionMemory
+	needsSharedMeasurements := hasAccess || slices.Contains(lkg.View.Responsibilities, "forward")
+	if hasRuntime && slices.Contains(lkg.View.Responsibilities, "forward") {
+		forwardConfig := config
+		if serverConfig != "" {
+			forwardConfig = serverConfig
+		}
+		forwardSelector, err = clientadapter.NewHTTPSelector(forwardConfig)
+		if err != nil {
+			return err
+		}
+		if serverConfig == "" && options.captureNamespace != nil {
+			forwardSelector.SetDialer(namespaceDialer(options.captureNamespace))
+		}
+	}
 	components, componentErr := linuxComponentReadbacks(ctx, pid)
 	if componentErr != nil {
 		fmt.Fprintln(options.Log, "some component readbacks unavailable")
@@ -826,6 +791,16 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	reportRequests := make(chan *runtimeReportAttempt, 1)
 	reportResults := make(chan runtimeReportResult, 1)
 	var pendingReport *runtimeReportAttempt
+	var nodeMeasurements []control.Observation
+	var workMu sync.Mutex
+	var cancelWork context.CancelFunc
+	interruptWork := func() {
+		workMu.Lock()
+		defer workMu.Unlock()
+		if cancelWork != nil {
+			cancelWork()
+		}
+	}
 	var privateWorkers sync.WaitGroup
 	privateWorkers.Add(3)
 	go func() {
@@ -834,7 +809,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	}()
 	go func() {
 		defer privateWorkers.Done()
-		refreshPrivateConfiguration(ctx, store, refreshRequests, refreshNotices, privateFailures, cancelGeneration)
+		refreshPrivateConfiguration(ctx, store, refreshRequests, refreshNotices, privateFailures, cancelGeneration, interruptWork)
 	}()
 	go func() {
 		defer privateWorkers.Done()
@@ -854,25 +829,327 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		}
 	}()
 	offerLatest(refreshRequests, struct{}{})
-	if hasAccess {
+	if needsSharedMeasurements {
 		offerLatest(linkRequests, struct{}{})
 	}
 	lastPreference := clientmodel.Preference{}
-	update := func(periodic bool) error {
+	var selectionMemory map[string]clientmodel.SelectionMemory
+	var nativeObservations []clientmodel.Observation
+	var nativeActivation Activation
+	invalidateNativeWG := func() {
+		for _, route := range routes {
+			if route.PolicyID == store.Preference().PolicyID && (route.Transport == "wireguard" || route.Transport == "forward") {
+				if memory, exists := selectionMemory[control.AccessSelectorScope]; exists {
+					memory.NativeBinding = nil
+					selectionMemory[control.AccessSelectorScope] = memory
+				}
+				nativeObservations = nil
+				return
+			}
+		}
+	}
+	wgListenerConfirmed := true
+	permissionCurrent := !hasRuntime
+	resourcesReady := !hasRuntime
+	permissionReadback := func(current *control.DeviceViewEnvelope, value control.RuntimeReadback) control.RuntimeReadback {
+		if permissionCurrent && sameExecution(current) && (value.State == "running" || value.State == "unknown") {
+			value.PermissionViewDigest = current.ViewDigest
+		}
+		return value
+	}
+	resourceSource := func() string {
+		if serverConfig != "" {
+			return serverConfig
+		}
+		return config
+	}
+	reconcileResources := func(ctx context.Context) (bool, error) {
+		if !hasRuntime {
+			return true, nil
+		}
+		current, err := clientadapter.NativeDiagnosticSelector(diagnosticContext)
+		if err != nil {
+			return false, err
+		}
+		ready, resourceErr := current.ReconcileRuntimeResources(ctx, resourceSource())
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return ready && resourceErr == nil, nil
+	}
+	applyReceivingView := func(current *control.DeviceViewEnvelope) (bool, error) {
+		if current == nil {
+			return false, nil
+		}
+		nextDigest, err := control.RuntimeExecutionDigest(current.View)
+		if err != nil {
+			return false, err
+		}
+		nextExecutions, err := prepareResourceExecutions(current.View, options.ResourceInputs, options.Now())
+		if err != nil {
+			return false, err
+		}
+		desired, _, err := projectWireGuard(current.View, nextExecutions)
+		if err != nil {
+			return false, err
+		}
+		if !sameWireGuardHostInputs(desired, desiredWG) {
+			return false, nil
+		}
+		nextWG := desired
+		if nextWG.ListenPort != wg.ListenPort {
+			invalidateNativeWG()
+		}
+		// Confirm permissions independently of a requested local port change.
+		// On an uncertain retry never move a socket back to an old port just
+		// to replay permissions that are already current.
+		if !sameExecution(current) || wgListenerConfirmed {
+			authWG := nextWG
+			authExecutions := append([]resourceExecution{}, nextExecutions...)
+			if wgListenerConfirmed && wg.ListenPort != 0 {
+				authWG.ListenPort = wg.ListenPort
+				authWG.WireGuard = append([]wireGuardExecutionLink{}, nextWG.WireGuard...)
+				for i := range authWG.WireGuard {
+					authWG.WireGuard[i].ListenPort = wg.ListenPort
+				}
+				for i := range authExecutions {
+					if authExecutions[i].resource.Kind == "wireguard" {
+						authExecutions[i].input.ListenPort = wg.ListenPort
+					}
+				}
+			}
+			authConfig, authServer, err := rebuildReceivingConfigs(current.View, options, secret, exclusions, authExecutions, website, connected, localNetworks, authWG, prepared)
+			if err != nil {
+				return false, err
+			}
+			applied, err := applyReceivingConfigs(ctx, options, config, authConfig, serverConfig, authServer)
+			if err != nil || !applied.Supported || !applied.PermissionCurrent {
+				return applied.Supported && applied.PermissionCurrent, err
+			}
+			resourcesReady = applied.ResourcesReady
+			permissionCurrent = true
+			if err := prepared.updateNativeExecution(authWG); err != nil {
+				return false, errors.Join(errRuntimeCleanup, err)
+			}
+			config, serverConfig, executions = authConfig, authServer, authExecutions
+			desiredWG, wg = authWG, authWG
+			executionDigest = nextDigest
+			localInputsDigest, err = resourceInputsDigest(appliedResourceInputs(authExecutions))
+			if err != nil {
+				return false, err
+			}
+		}
+		nextConfig, nextServer, err := rebuildReceivingConfigs(current.View, options, secret, exclusions, nextExecutions, website, connected, localNetworks, nextWG, prepared)
+		if err != nil {
+			return false, err
+		}
+		if nextConfig != config || nextServer != serverConfig || !wgListenerConfirmed {
+			source := nextConfig
+			if nextServer != "" {
+				source = nextServer
+			}
+			projections, err := clientadapter.ReceivingProjections(source)
+			if err != nil {
+				return false, err
+			}
+			listeners := []clientadapter.ReceiverChange{}
+			for _, value := range projections {
+				if value.Projection["wireguard_listener"] != nil {
+					// The accepted permission is already current. A port CAS
+					// must not eagerly reinstall all authorized sender peers.
+					delete(value.Projection, "wireguard_peers")
+					listeners = append(listeners, value)
+				}
+			}
+			if len(listeners) == 0 {
+				return false, errors.New("local update changed an unsupported receiving facility")
+			}
+			selector, err := clientadapter.NewHTTPSelector(source)
+			if err != nil {
+				return false, err
+			}
+			if nextServer == "" && options.captureNamespace != nil {
+				selector.SetDialer(namespaceDialer(options.captureNamespace))
+			}
+			wgListenerConfirmed = false
+			// Invalidate the prior ACK before any socket mutation. This is the
+			// existing running projection becoming unknown, not a new phase.
+			pendingReport = nil
+			generation, err := options.Generation()
+			if err != nil {
+				return false, err
+			}
+			unknownActivation := Activation{State: LocalState{Preference: store.Preference(), NetworkGeneration: generation}}
+			unknownReadback := permissionReadback(current, control.RuntimeReadback{State: "unknown", ErrorCode: "resource_ownership"})
+			unknownStatus := runtimeStatus(current, unknownActivation, false, unknownReadback)
+			unknownStatus.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
+			if err := WriteStatus(options.Status, unknownStatus); err != nil {
+				return false, errors.Join(errRuntimeCleanup, err)
+			}
+			unknownReport, err := selectionReport(ctx, *current, unknownActivation, options.Now(), components, unknownReadback, nil, nil)
+			if err != nil {
+				return false, err
+			}
+			pendingReport = &runtimeReportAttempt{report: unknownReport, status: unknownStatus}
+			offerLatest(reportRequests, pendingReport)
+			// A full read can confirm a PUT whose response was interrupted.
+			confirmErr := selector.ConfirmReceiverChanges(ctx, listeners)
+			_, ownershipErr := readTransportOwnership(current.View, nextExecutions, resourcePID)
+			if confirmErr != nil || ownershipErr != nil {
+				// A once-confirmed hash can outlive a failed underlay rebind.
+				// Retry the desired port if the actual socket is absent too.
+				if err = selector.ApplyReceiverChanges(ctx, listeners); err != nil {
+					if confirmErr := selector.ConfirmReceiverChanges(ctx, listeners); confirmErr != nil {
+						return false, errors.Join(errWGListenerUnconfirmed, err, confirmErr)
+					}
+				}
+			}
+			if _, err := readTransportOwnership(current.View, nextExecutions, resourcePID); err != nil {
+				return false, errors.Join(errWGListenerUnconfirmed, err)
+			}
+			if nextServer != "" && nextServer != serverConfig {
+				if err := writeNativeResourceConfig(options.Config+".server", nextServer); err != nil {
+					return false, errors.Join(errRuntimeCleanup, err)
+				}
+			}
+			if nextConfig != config {
+				if err := writeNativeResourceConfig(options.Config, nextConfig); err != nil {
+					return false, errors.Join(errRuntimeCleanup, err)
+				}
+			}
+		}
+		if err := prepared.updateNativeExecution(nextWG); err != nil {
+			return false, errors.Join(errRuntimeCleanup, err)
+		}
+		config, serverConfig, executions = nextConfig, nextServer, nextExecutions
+		desiredWG, wg = desired, nextWG
+		executionDigest = nextDigest
+		localInputsDigest, err = resourceInputsDigest(appliedResourceInputs(nextExecutions))
+		wgListenerConfirmed = true
+		return true, err
+	}
+
+	applyRuntimeInputs := func(current *control.DeviceViewEnvelope) (bool, error) {
+		if current == nil {
+			return false, errCertifiedViewChanged
+		}
+		authorizationChanged := !sameExecution(current)
+		if authorizationChanged {
+			permissionCurrent, resourcesReady = false, false
+		}
+		inputs, err := resourceListenerInputs(current.View, options.ResourceInputs)
+		if err != nil && !authorizationChanged {
+			if wgListenerConfirmed {
+				fmt.Fprintln(options.Log, "local resource inputs rejected before application; current confirmed listeners retained")
+			} else {
+				fmt.Fprintln(options.Log, "local resource inputs rejected; WG execution remains unconfirmed")
+			}
+			return true, nil
+		}
+		digest, digestErr := resourceInputsDigest(inputs)
+		// The accepted View and local file are separate existing inputs.
+		// Reload after reading both so a newer sync cannot be paired with an
+		// older authorization snapshot by this work round.
+		if _, err := store.Reload(); err != nil {
+			return false, errors.Join(errCertifiedPersistence, err)
+		}
+		if latest := store.LKG(); latest == nil || latest.ViewDigest != current.ViewDigest {
+			return false, clientadapter.ErrSelectionSuperseded
+		}
+		if !authorizationChanged && err == nil && digestErr == nil && digest == localInputsDigest && wgListenerConfirmed && permissionCurrent {
+			// A successful past CAS does not prove that a later underlay
+			// rebind still owns its socket. Only WG belongs to this retry path;
+			// a separate Hy2 failure must not manufacture a WG port change.
+			for _, execution := range executions {
+				if execution.resource.Kind != "wireguard" {
+					continue
+				}
+				owned := false
+				for _, host := range []string{"::", "0.0.0.0"} {
+					if processOwnsUDP(resourcePID, net.JoinHostPort(host, strconv.Itoa(execution.input.ListenPort))) {
+						owned = true
+						break
+					}
+				}
+				if !owned {
+					wgListenerConfirmed = false
+					break
+				}
+			}
+			if wgListenerConfirmed {
+				if !resourcesReady {
+					resourcesReady, err = reconcileResources(ctx)
+				}
+				return true, err
+			}
+		}
+		applied, err := applyReceivingView(current)
+		if errors.Is(err, errWGListenerUnconfirmed) && sameExecution(current) {
+			fmt.Fprintln(options.Log, "WG listener update is unconfirmed; resource proof cleared and the existing check will reread/retry it")
+			return true, nil
+		}
+		if !authorizationChanged && !errors.Is(err, errRuntimeCleanup) && (err != nil || !applied) {
+			// A local socket change cannot authorize stopping unrelated Hy2,
+			// WG sessions or capture. Address changes need an explicit restart.
+			if wgListenerConfirmed {
+				fmt.Fprintln(options.Log, "local resource update rejected before transport application; current confirmed listeners retained (address changes require an explicit restart)")
+			} else {
+				fmt.Fprintln(options.Log, "WG listener remains unconfirmed; no running resource proof is published")
+			}
+			return true, nil
+		}
+		return applied, err
+	}
+	generationContext := ctx
+	update := func(periodic bool) (retErr error) {
+		workContext, stopWork := context.WithCancel(diagnosticContext)
+		workMu.Lock()
+		cancelWork = stopWork
+		workMu.Unlock()
+		defer func() {
+			workMu.Lock()
+			cancelWork = nil
+			workMu.Unlock()
+			if workContext.Err() != nil && generationContext.Err() == nil && !errors.Is(retErr, errCertifiedPersistence) && !errors.Is(retErr, errCertifiedViewChanged) {
+				retErr = nil
+			}
+			stopWork()
+		}()
+		ctx, diagnosticContext := workContext, workContext
+		if _, err := store.Reload(); err != nil {
+			return errors.Join(errCertifiedPersistence, err)
+		}
 		// Frontier/proof progress with the same View is durable authentication
 		// progress, not a reason to interrupt unchanged execution.
-		if current := store.LKG(); current != nil && current.ViewDigest == lkg.ViewDigest {
-			lkg = current
+		current := store.LKG()
+		// Existing checks consume both accepted authorization and local
+		// execution inputs; no independent file watcher or authority is added.
+		if applied, err := applyRuntimeInputs(current); err != nil || !applied {
+			if errors.Is(err, clientadapter.ErrSelectionSuperseded) {
+				return nil
+			}
+			return errors.Join(errCertifiedViewChanged, err)
 		}
+		if current.ViewDigest != lkg.ViewDigest {
+			generation, err := options.Generation()
+			if err != nil {
+				return err
+			}
+			if _, err := loadLocalStateForView(options.LocalState, generation, current, lkg, store.Preference()); err != nil {
+				return err
+			}
+		}
+		lkg = current
 		generation, err := options.Generation()
 		if err != nil {
 			return err
 		}
+		diagnosticContext = clientadapter.WithMeasurementNetwork(diagnosticContext, generation)
 		if website.Port != 0 && generation != websiteGeneration {
 			return errRuntimeAddressChanged
 		}
 		if runtimeHasLocalNetwork(lkg.View) {
-			current, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
+			current, _ := clientadapter.ConnectedIPv4Prefixes()
 			if !reflect.DeepEqual(current, connected) {
 				return errRuntimeAddressChanged
 			}
@@ -881,13 +1158,14 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		if err != nil {
 			return err
 		}
+		local.Preference = store.Preference()
+		local.SelectionMemory = selectionMemory
+		local.NativeObservations = nativeObservations
 		var onlyScopes []string
 		if lastPreference.Schema == 3 && !lastPreference.Equal(local.Preference) {
-			onlyScopes = []string{}
-			for _, service := range lkg.View.Services {
-				if lastPreference.Policy(service.ID) != local.Preference.Policy(service.ID) {
-					onlyScopes = append(onlyScopes, service.Scope())
-				}
+			onlyScopes = clientmodel.ChangedSelectorScopes(lastPreference, local.Preference)
+			if _, err := clientadapter.RejectSelections(ctx, selector, onlyScopes); err != nil {
+				return err
 			}
 		}
 		activation := Activation{State: local, Selections: []SelectionStatus{}}
@@ -900,33 +1178,212 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			}
 		default:
 		}
-		linkObservations, err := observeLinks(diagnosticContext, lkg.View, wg, generation, options.RefreshPoll, options.Now)
+		linkObservations := []control.Observation{}
+		for _, sample := range nodeMeasurements {
+			if sample.Level == "link" || sample.Level == "egress" {
+				linkObservations = append(linkObservations, sample)
+			}
+		}
+		currentIDs := []string{}
+		execution, err := control.ProjectDeviceCandidates(lkg.View, clientmodel.MeasurementPolicies(local.Preference))
 		if err != nil {
 			return err
 		}
 		if hasAccess {
-			currentIDs := []string{}
-			scopes, _, err := scopesFor(routes, clientmodel.ServiceScopes(lkg.View)...)
+			routes, err = clientadapter.AccessCandidates(lkg.View, clientmodel.MeasurementPolicies(local.Preference))
 			if err != nil {
 				return err
 			}
-			for _, scope := range scopes {
-				selected, err := selector.Read(ctx, scope)
+			// New connections may run immediately, before background coverage.
+			activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, false, onlyScopes...)
+			if errors.Is(err, clientadapter.ErrSelectionSuperseded) {
+				return nil
+			}
+			if errors.Is(err, clientadapter.ErrResourcesNotReady) {
+				resourcesReady = false
+			} else if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+				return err
+			}
+			local = activation.State
+			selectionMemory = activation.State.SelectionMemory
+			nativeActivation, nativeObservations = activation, activation.State.NativeObservations
+			currentIDs = clientadapter.MeasurementCandidates(activation.Selections, selectionMemory, generation)
+			readback := control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}
+			if !wgListenerConfirmed {
+				readback = control.RuntimeReadback{State: "unknown", ErrorCode: "resource_ownership"}
+			} else if !resourcesReady {
+				readback = control.RuntimeReadback{State: "unknown", ErrorCode: "resources_pending"}
+			}
+			readback = permissionReadback(lkg, readback)
+			if err := WriteStatus(options.Status, runtimeStatus(lkg, activation, false, readback)); err != nil {
+				return err
+			}
+		}
+		firstHops := map[clientmodel.ResourceSampleRef]bool{}
+		for _, route := range routes {
+			if route.FirstHop != nil {
+				firstHops[*route.FirstHop] = true
+			}
+		}
+		previousSamples := []control.Observation{}
+		for _, value := range append(append([]control.Observation{}, nodeMeasurements...), local.ResourceObservations...) {
+			ref := clientmodel.ResourceSampleRef{ResourceID: value.ResourceID, Target: value.Target, Action: value.Action, SpecDigest: value.SpecDigest}
+			if value.NetworkGeneration == generation && (value.Level != "resource" || firstHops[ref]) {
+				previousSamples = append(previousSamples, value)
+			}
+		}
+		progress := func(batch []control.Observation) error {
+			changedResource, changedLink := false, false
+			for _, value := range batch {
+				changedResource = changedResource || value.Level == "resource"
+				changedLink = changedLink || value.Level == "link"
+			}
+			// Egress URL results are reported together at round completion.
+			// They do not rerender the local access/forward graph per URL.
+			if !changedResource && !changedLink {
+				return nil
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			// UI/CLI changes can arrive while probes run. Reuse the store's
+			// authenticated-byte cache, but never apply an old preference.
+			if _, err := store.Reload(); err != nil {
+				return errors.Join(errCertifiedPersistence, err)
+			}
+			currentGeneration, err := options.Generation()
+			if err != nil {
+				return err
+			}
+			current := store.LKG()
+			if current == nil || current.ViewDigest != lkg.ViewDigest || currentGeneration != generation || !store.Preference().Equal(local.Preference) {
+				return clientadapter.ErrSelectionSuperseded
+			}
+			nodeMeasurements = clientadapter.MergeNodeMeasurements(previousSamples, batch)
+			previousSamples = nodeMeasurements
+			resources, links := []control.Observation{}, []control.Observation{}
+			for _, value := range nodeMeasurements {
+				if value.Level == "resource" {
+					resources = append(resources, value)
+				} else if value.Level == "link" || value.Level == "egress" {
+					links = append(links, value)
+				}
+			}
+			if changedLink && forwardSelector != nil {
+				nextMemory, forwardErr := forwardSelector.OptimizeForwarding(diagnosticContext, lkg.View, nodeMeasurements, remoteLinks, generation, options.Now(), forwardMemory)
+				if errors.Is(forwardErr, clientadapter.ErrResourcesNotReady) {
+					resourcesReady = false
+				} else if forwardErr != nil {
+					return forwardErr
+				} else {
+					forwardMemory = nextMemory
+				}
+			}
+			if !hasAccess || !changedResource && !changedLink {
+				return nil
+			}
+			local.ResourceObservations = resources
+			// The initial activation already built the graph for this View.
+			activation, err = activateWithLinkSamples(diagnosticContext, selector, routes, local, links, remoteLinks, selectedProbeURLs(lkg.View, local.Preference), options.Now, clientmodel.SelectorScopes(lkg.View)...)
+			if errors.Is(err, clientadapter.ErrResourcesNotReady) {
+				resourcesReady = false
+				return nil
+			}
+			if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+				return err
+			}
+			local = activation.State
+			selectionMemory = local.SelectionMemory
+			nativeActivation, nativeObservations = activation, local.NativeObservations
+			if !resourcesReady {
+				resourcesReady, err = reconcileResources(ctx)
 				if err != nil {
 					return err
 				}
-				for _, route := range routes {
-					if route.ID == selected {
-						currentIDs = append(currentIDs, selected)
-						break
-					}
+			}
+			readback := control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}
+			if !wgListenerConfirmed {
+				readback = control.RuntimeReadback{State: "unknown", ErrorCode: "resource_ownership"}
+			} else if !resourcesReady {
+				readback = control.RuntimeReadback{State: "unknown", ErrorCode: "resources_pending"}
+			}
+			readback = permissionReadback(lkg, readback)
+			return WriteStatus(options.Status, runtimeStatus(lkg, activation, false, readback))
+		}
+		forwardPriorities, err := clientadapter.ForwardMeasurementLinks(execution, forwardMemory, generation)
+		if err != nil {
+			return err
+		}
+		currentIDs = append(currentIDs, forwardPriorities...)
+		var recovery *clientadapter.TCPRecoveryInput
+		if nativeSelector, ok := selector.(*clientadapter.HTTPSelector); ok && hasAccess {
+			recovery = &clientadapter.TCPRecoveryInput{Selector: nativeSelector, Routes: routes, State: adapterState(local, linkObservations, remoteLinks)}
+			recovery.Progress = func(batch []clientmodel.Observation) error {
+				if err := ctx.Err(); err != nil {
+					return err
 				}
+				if _, err := store.Reload(); err != nil {
+					return err
+				}
+				currentGeneration, err := options.Generation()
+				if err != nil {
+					return err
+				}
+				current := store.LKG()
+				if current == nil || current.ViewDigest != lkg.ViewDigest || currentGeneration != generation || !store.Preference().Equal(local.Preference) {
+					return clientadapter.ErrSelectionSuperseded
+				}
+				local.NativeObservations, err = clientadapter.AcceptTCPRecovery(diagnosticContext, selector, recovery.State, adapterState(local, linkObservations, remoteLinks), routes, batch, options.Now)
+				if err != nil {
+					return err
+				}
+				activation, err = activateWithLinkSamples(diagnosticContext, selector, routes, local, linkObservations, remoteLinks, selectedProbeURLs(lkg.View, local.Preference), options.Now, clientmodel.SelectorScopes(lkg.View)...)
+				if errors.Is(err, clientadapter.ErrResourcesNotReady) {
+					resourcesReady = false
+					return nil
+				}
+				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+					return err
+				}
+				local = activation.State
+				selectionMemory, nativeObservations, nativeActivation = local.SelectionMemory, local.NativeObservations, activation
+				return nil
 			}
-			samples, err := clientadapter.ObserveFirstHops(diagnosticContext, lkg.View, currentIDs, local.ResourceObservations, generation, options.Now)
-			if err != nil {
-				return err
+		}
+		samples, err := clientadapter.ObserveNodeMeasurements(diagnosticContext, execution, currentIDs, previousSamples, generation, options.Now, clientadapter.DefaultMeasurementTiming, progress, recovery)
+		if errors.Is(err, clientadapter.ErrSelectionSuperseded) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		nodeMeasurements = samples
+		if forwardSelector != nil {
+			nextMemory, forwardErr := forwardSelector.OptimizeForwarding(diagnosticContext, lkg.View, samples, remoteLinks, generation, options.Now(), forwardMemory)
+			if errors.Is(forwardErr, clientadapter.ErrResourcesNotReady) {
+				resourcesReady = false
+			} else if forwardErr != nil {
+				return forwardErr
+			} else {
+				forwardMemory = nextMemory
 			}
-			local.ResourceObservations = append([]control.Observation(nil), samples...)
+		}
+
+		linkObservations = []control.Observation{}
+		reportMeasurements := []control.Observation{}
+		local.ResourceObservations = nil
+		for _, sample := range samples {
+			if sample.Level == "resource" {
+				local.ResourceObservations = append(local.ResourceObservations, sample)
+			} else {
+				reportMeasurements = append(reportMeasurements, sample)
+			}
+			if sample.Level == "link" || sample.Level == "egress" {
+				linkObservations = append(linkObservations, sample)
+			}
 		}
 		if err := (*transaction).readbackNative(); err != nil {
 			return err
@@ -938,62 +1395,70 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		if pid != 0 {
 			if hasAccess {
 				activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, false, onlyScopes...)
+				if errors.Is(err, clientadapter.ErrSelectionSuperseded) {
+					return nil
+				}
+				selectionMemory = activation.State.SelectionMemory
+				nativeActivation, nativeObservations = activation, activation.State.NativeObservations
+				pendingResources := errors.Is(err, clientadapter.ErrResourcesNotReady)
+				if pendingResources {
+					resourcesReady = false
+				}
 				if activation.State.Schema == 0 {
 					return err
 				}
-				if len(activation.Selections)+len(activation.BlockedScopes) != len(clientmodel.ServiceScopes(lkg.View)) {
+				if !pendingResources && len(activation.Selections)+len(activation.BlockedScopes) != len(clientmodel.SelectorScopes(lkg.View)) {
 					return errors.Join(err, errors.New("Service rejection could not be confirmed"))
 				}
-				if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+				if !pendingResources && err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
 					fmt.Fprintln(options.Log, "a Service selector failed; affected traffic remains rejected")
 				}
 			}
-			readback, err = resourceRuntimeReadback(ctx, lkg, executions, resourcePID, options.Now(), periodic, *transaction)
+			resourcesReady, err = reconcileResources(ctx)
 			if err != nil {
 				return err
 			}
-			if readback.State == "unknown" {
+			if hasAccess && len(activation.Selections)+len(activation.BlockedScopes) != len(clientmodel.SelectorScopes(lkg.View)) {
+				resourcesReady = false
+			}
+			if !wgListenerConfirmed {
+				// A local rebind may have closed the old socket or completed
+				// without its ACK. Neither old config nor inode reuse proves it.
+				_, _ = readTransportResources(ctx, lkg.View, executions, resourcePID, options.Now())
+				readback = control.RuntimeReadback{State: "unknown", ErrorCode: "resource_ownership"}
+			} else {
+				readback, err = resourceRuntimeReadback(ctx, lkg, executions, resourcePID, options.Now(), periodic, *transaction)
+				if err != nil {
+					return err
+				}
+			}
+			if readback.State == "unknown" && readback.ErrorCode == "resource_readback_timeout" {
 				fmt.Fprintln(options.Log, executionFailure("resource_readback", "network_timeout", errResourceReadbackTimeout))
 			}
+			if !resourcesReady && wgListenerConfirmed {
+				readback = control.RuntimeReadback{State: "unknown", ErrorCode: "resources_pending"}
+			}
 		}
+		readback = permissionReadback(lkg, readback)
 		status := runtimeStatus(lkg, activation, false, readback)
 		status.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
 		if err := WriteStatus(options.Status, status); err != nil {
 			return err
 		}
-		// Keep the actual first attempt even if its Service probe subsequently
-		// blocks the selector. Authentication and business failure are distinct.
-		selected := make([]string, 0, len(activation.Selections))
-		for _, selection := range activation.Selections {
-			selected = append(selected, selection.CandidateID)
-		}
-		if len(routes) > 0 {
-			activation, err = activateServicesWithLinkSamples(diagnosticContext, options, lkg.View, selector, routes, local, linkObservations, remoteLinks, true, onlyScopes...)
-			if activation.State.Schema == 0 {
-				return err
-			}
-			if len(activation.Selections)+len(activation.BlockedScopes) != len(clientmodel.ServiceScopes(lkg.View)) {
-				return errors.Join(err, errors.New("Service rejection could not be confirmed"))
-			}
-		}
-		for _, selection := range activation.Selections {
-			selected = append(selected, selection.CandidateID)
-		}
-		resourceObservations, err := clientadapter.ObserveFirstHops(diagnosticContext, lkg.View, selected, activation.State.ResourceObservations, generation, options.Now)
-		if err != nil {
-			return err
-		}
-		activation.State.ResourceObservations = append([]control.Observation(nil), resourceObservations...)
+
 		saved, saveErr := SaveObservations(options.LocalState, activation.State)
 		if saveErr != nil {
 			return saveErr
 		}
+		saved.SelectionMemory = selectionMemory
 		activation.State = saved
+		nativeObservations = activation.State.NativeObservations
+		nativeActivation = activation
 		var counters *control.WireGuardCounters
 		if readback.State == "running" {
 			counters, _ = clientadapter.ObserveWireGuardCounters(diagnosticContext, lkg.View, options.Now)
 		}
-		report, err := selectionReport(ctx, *lkg, activation, options.Now(), components, readback, linkObservations, counters)
+		report, err := selectionReport(ctx, *lkg, activation, options.Now(), components, readback, reportMeasurements, counters)
 		if err != nil {
 			return err
 		}
@@ -1023,10 +1488,13 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	}
 	ticker := time.NewTicker(options.RefreshPoll)
 	defer ticker.Stop()
+	nativeTicker := time.NewTicker(5 * time.Second)
+	defer nativeTicker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
+		refreshAgain := true
 		select {
 		case <-ctx.Done():
 			return nil
@@ -1036,7 +1504,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return processFailure("resource_process", err)
 		case notice := <-refreshNotices:
 			fmt.Fprint(options.Log, notice)
-			continue
+			refreshAgain = false
 		case result := <-reportResults:
 			if result.err != nil {
 				fmt.Fprintln(options.Log, "private runtime report unavailable")
@@ -1048,37 +1516,118 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			}
 			continue
 		case <-ticker.C:
+		case <-nativeTicker.C:
+			if !hasAccess || nativeActivation.State.NativeExecutionSpec == "" {
+				continue
+			}
+			current := store.LKG()
+			generation, genErr := options.Generation()
+			if genErr != nil {
+				return genErr
+			}
+			if current == nil || current.ViewDigest != lkg.ViewDigest || generation != nativeActivation.State.NetworkGeneration || !store.Preference().Equal(nativeActivation.State.Preference) {
+				if err := update(false); err != nil {
+					return err
+				}
+				continue
+			}
+			workContext, cancel := context.WithCancel(ctx)
+			workMu.Lock()
+			cancelWork = cancel
+			workMu.Unlock()
+			// The configuration worker may have accepted a replacement before
+			// registration. Never bind that old snapshot to the new authority.
+			if current := store.LKG(); current == nil || current.ViewDigest != lkg.ViewDigest {
+				cancel()
+			}
+			refreshed, needsRouting, refreshErr := clientadapter.RefreshNativeObservations(workContext, selector, routes, adapterState(nativeActivation.State, nodeMeasurements, remoteLinks), options.Now)
+			local := nativeActivation.State
+			local.NativeObservations = refreshed.NativeObservations
+			local.SelectionMemory = refreshed.SelectionMemory
+			next, nextErr := nativeActivation, refreshErr
+			if refreshErr == nil && needsRouting {
+				next, nextErr = activateWithLinkSamples(workContext, selector, routes, local, nodeMeasurements, remoteLinks, selectedProbeURLs(lkg.View, local.Preference), options.Now, clientmodel.SelectorScopes(lkg.View)...)
+			} else {
+				next.State = local
+			}
+			cancel()
+			workMu.Lock()
+			cancelWork = nil
+			workMu.Unlock()
+			if nextErr != nil && !errors.Is(nextErr, clientmodel.ErrNoUsableCandidate) {
+				if ctx.Err() != nil {
+					return nil
+				}
+				continue
+			}
+			if current := store.LKG(); current == nil || current.ViewDigest != lkg.ViewDigest {
+				continue
+			}
+			currentGeneration, generationErr := options.Generation()
+			if generationErr != nil {
+				return generationErr
+			}
+			if currentGeneration != generation || !store.Preference().Equal(next.State.Preference) {
+				continue
+			}
+			nativeActivation = next
+			selectionMemory, nativeObservations = next.State.SelectionMemory, next.State.NativeObservations
+			if !needsRouting {
+				continue
+			}
+			status, statusErr := ReadStatus(options.Status)
+			if statusErr != nil {
+				return statusErr
+			}
+			if status.ViewDigest == lkg.ViewDigest && status.NetworkGeneration == generation && status.Preference.Equal(next.State.Preference) && status.Runtime == "running" {
+				status.Selections = next.Selections
+				status.Reported = false
+				if err := WriteStatus(options.Status, status); err != nil {
+					return err
+				}
+			}
+			continue
 		case <-options.Reload:
 		}
 		if _, err := store.Reload(); err != nil {
 			return errors.Join(errCertifiedPersistence, err)
-		} else if current := store.LKG(); current == nil || current.ViewDigest != lkg.ViewDigest {
-			return errCertifiedViewChanged
 		}
-		offerLatest(refreshRequests, struct{}{})
-		if hasAccess {
+		current := store.LKG()
+		{
+			applied, err := applyRuntimeInputs(current)
+			if errors.Is(err, clientadapter.ErrSelectionSuperseded) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !applied {
+				return errCertifiedViewChanged
+			}
+		}
+		if current != nil && current.ViewDigest != lkg.ViewDigest {
+			generation, err := options.Generation()
+			if err != nil {
+				return err
+			}
+			if _, err := loadLocalStateForView(options.LocalState, generation, current, lkg, store.Preference()); err != nil {
+				return err
+			}
+			lkg = current
+		}
+		if refreshAgain {
+			offerLatest(refreshRequests, struct{}{})
+		}
+		if needsSharedMeasurements {
 			offerLatest(linkRequests, struct{}{})
 		}
-		resolved, err := resolveWireGuardEndpoints(ctx, desiredWG, wg, lkg.View.DNSServers, nil)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			fmt.Fprintln(options.Log, "authenticated WireGuard DNS refresh failed; retaining this generation's peer address")
-		} else if !reflect.DeepEqual(wg, resolved) {
-			currentGeneration, err := options.Generation()
-			if err != nil {
+		if !wgListenerConfirmed {
+			if err := update(true); err != nil {
 				return err
 			}
-			state, err := loadLocalState(options.LocalState, currentGeneration, lkg.ViewDigest)
-			if err != nil {
-				return err
-			}
-			if _, err := SaveObservations(options.LocalState, invalidateWireGuardObservations(state, lkg.View, wg, resolved)); err != nil {
-				return err
-			}
-			return errRuntimeAddressChanged
+			continue
 		}
+
 		if err := update(true); err != nil {
 			return err
 		}
@@ -1094,11 +1643,7 @@ func writeInactiveStatus(store *deviceclient.Store, options Options, state strin
 	if err != nil {
 		return Status{}, err
 	}
-	local, err := LoadLocalState(options.LocalState, generation)
-	if err != nil {
-		return Status{}, err
-	}
-	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: local.Preference, NetworkGeneration: generation, Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}, Runtime: state}
+	value := Status{Schema: 3, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, FactFrontier: lkg.FactFrontier, Preference: store.Preference(), NetworkGeneration: generation, Selections: []SelectionStatus{}, Observations: []clientmodel.Observation{}, Runtime: state}
 	value.PossiblePermissionRestoration = store.PossiblePermissionRestoration()
 	return value, WriteStatus(options.Status, value)
 }
@@ -1110,10 +1655,10 @@ func waitForRepair(ctx context.Context, store *deviceclient.Store, options Optio
 			return err
 		}
 		pending, cancel := context.WithTimeout(ctx, 20*time.Second)
-		preference, prefErr := clientadapter.ReportedPolicyChoices(store.LKG().View, status.Preference)
+		preference, prefErr := clientadapter.ReportedPolicyID(store.LKG().View, status.Preference)
 		if prefErr == nil {
 			diagnostic := safeRuntimeFailure(failure)
-			_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, PolicyChoices: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: diagnostic.operation + "_" + diagnostic.class}})
+			_ = deviceclient.Report(pending, store, control.DeviceReport{ReportedAt: options.Now().UnixMilli(), NetworkGeneration: status.NetworkGeneration, PolicyID: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: components, Runtime: control.RuntimeReadback{State: "error", ErrorCode: diagnostic.operation + "_" + diagnostic.class}})
 		}
 		cancel()
 		timer := time.NewTimer(options.RefreshPoll)
@@ -1326,6 +1871,11 @@ func checkRuntime(singBox, config string) error {
 }
 
 func preflightRuntimeConfig(singBox, config string) error {
+	base, err := clientadapter.NativeResourceBase(config)
+	if err != nil {
+		return err
+	}
+	config = base
 	if err := clientruntime.RequireTUNDNSExecutor(context.Background(), singBox, []byte(config)); err != nil {
 		return err
 	}
@@ -1342,6 +1892,14 @@ func preflightRuntimeConfig(singBox, config string) error {
 		return err
 	}
 	return checkRuntime(singBox, path)
+}
+
+func writeNativeResourceConfig(path, source string) error {
+	base, err := clientadapter.NativeResourceBase(source)
+	if err != nil {
+		return err
+	}
+	return writeConfig(path, base)
 }
 
 func stopProcess(command *exec.Cmd, done <-chan error) error {

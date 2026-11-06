@@ -16,9 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"loom/internal/control"
+
 	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/net/proxy"
-	"loom/internal/control"
 )
 
 // All listeners are loopback-only; no TUN, host DNS, routes or service changes.

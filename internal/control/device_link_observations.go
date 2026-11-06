@@ -1,15 +1,18 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"net/http"
-	"sort"
 	"time"
 )
 
 // DeviceLinkObservations is a disposable, scoped delivery of original report
 // samples. Transport authentication covers this projection; it is not authority.
 type DeviceLinkObservations struct {
+	Cursor       string                  `json:"cursor"`
+	Reset        bool                    `json:"reset"`
+	Removed      []string                `json:"removed"`
 	Schema       int                     `json:"schema"`
 	NetworkID    string                  `json:"network_id"`
 	DeviceID     string                  `json:"device_id"`
@@ -26,31 +29,59 @@ type DeviceLinkObservation struct {
 }
 
 type DeviceLinkObservationRequest struct {
+	Cursor     string `json:"cursor,omitempty"`
 	Schema     int    `json:"schema"`
 	ViewDigest string `json:"view_digest"`
 }
 
 func (v DeviceLinkObservationRequest) Validate() error {
-	if v.Schema != 3 || ValidateDigest(v.ViewDigest) != nil {
+	if v.Schema != 3 || ValidateDigest(v.ViewDigest) != nil || v.Cursor != "" && !validMeasurementCursor(v.Cursor) {
 		return errors.New("invalid link observation request")
 	}
 	return nil
 }
 
+func validMeasurementCursor(cursor string) bool {
+	if len(cursor) == 0 || len(cursor) > 128 {
+		return false
+	}
+	for _, ch := range cursor {
+		if !(ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 func (v DeviceLinkObservation) Validate() error {
-	if ValidateID(v.DeviceID) != nil || v.ReportSequence == 0 || ValidateDigest(v.ReportDigest) != nil || v.Observation.Validate() != nil || v.Observation.Level != "link" || v.CurrentUntil <= v.Observation.ObservedAt || v.CurrentUntil > v.Observation.ValidUntil {
-		return errors.New("invalid scoped link observation")
+	if ValidateID(v.DeviceID) != nil || v.ReportSequence == 0 || ValidateDigest(v.ReportDigest) != nil || v.Observation.Validate() != nil || v.CurrentUntil <= v.Observation.ObservedAt || v.CurrentUntil > v.Observation.ValidUntil {
+		return errors.New("invalid original report observation reference")
 	}
 	return nil
 }
 
 func (v DeviceLinkObservations) Validate() error {
-	if v.Schema != 3 || ValidateID(v.NetworkID) != nil || ValidateID(v.DeviceID) != nil || ValidateDigest(v.ViewDigest) != nil || v.Observations == nil {
+	if v.Schema != 3 || ValidateID(v.NetworkID) != nil || ValidateID(v.DeviceID) != nil || ValidateDigest(v.ViewDigest) != nil || v.Observations == nil || v.Removed == nil || !validMeasurementCursor(v.Cursor) || v.Reset && len(v.Removed) != 0 {
 		return errors.New("invalid link observation delivery")
 	}
 	for i, sample := range v.Observations {
-		if sample.Validate() != nil || i > 0 && v.Observations[i-1].Observation.LinkID >= sample.Observation.LinkID {
+		if sample.Validate() != nil || sample.Observation.Level != "link" && sample.Observation.Level != "egress" || i > 0 && measurementDeliveryOrder(v.Observations[i-1]) >= measurementDeliveryOrder(sample) {
 			return errors.New("link observations are not uniquely sorted")
+		}
+	}
+	for index, id := range v.Removed {
+		if ValidateDigest(id) != nil || index > 0 && v.Removed[index-1] >= id {
+			return errors.New("removed measurement items are invalid or unsorted")
+		}
+	}
+	removed := make(map[string]bool, len(v.Removed))
+	for _, id := range v.Removed {
+		removed[id] = true
+	}
+	for _, sample := range v.Observations {
+		id, err := MeasurementItemID(sample)
+		if err != nil || removed[id] {
+			return errors.New("measurement item cannot be removed and updated in one delivery")
 		}
 	}
 	return nil
@@ -71,67 +102,60 @@ func (v DeviceLinkObservations) validateForViewDigest(view DeviceView, digest st
 	if v.Validate() != nil || v.NetworkID != view.NetworkID || v.DeviceID != view.DeviceID || v.ViewDigest != digest {
 		return errors.New("link observation delivery belongs to another View")
 	}
-	links := map[string]NetworkLink{}
-	for _, link := range view.Links {
-		links[link.ID] = link
+	if len(v.Observations) == 0 {
+		return nil
 	}
+	inventory := newMeasurementInventory(view)
 	for _, sample := range v.Observations {
-		link, ok := links[sample.Observation.LinkID]
-		spec, e := LinkSpecDigest(view, link.ID)
-		if !ok || e != nil || sample.DeviceID != link.FromNodeID || !matchesNativeLinkObservation(sample.Observation, link, spec) {
-			return errors.New("link observation is outside the recipient's View")
+		if err := validateDeliveredMeasurement(view, inventory, sample); err != nil {
+			return err
 		}
+	}
+
+	return nil
+}
+
+func validateDeliveredMeasurement(view DeviceView, inventory *measurementInventory, sample DeviceLinkObservation) error {
+	if sample.Validate() != nil {
+		return errors.New("invalid delivered original sample")
+	}
+	if sample.Observation.Level == "egress" {
+		if !inventory.egressAllowed(sample.DeviceID, sample.Observation.Target) {
+			return errors.New("egress measurement is outside the recipient's allowed exit and Service request")
+		}
+		return nil
+	}
+	resource, found := inventory.byResource[sample.Observation.ResourceID]
+	if !found {
+		return errors.New("link resource is outside the recipient View")
+	}
+	link, allowed, err := inventory.link(sample.DeviceID, resource.ID)
+	if err != nil || !allowed {
+		return errors.New("link source is outside the recipient View")
+	}
+	spec, err := directedLinkSpec(view.NetworkID, link, inventory.nodes[sample.DeviceID], resource)
+	if err != nil || !matchesNativeLinkObservation(sample.Observation, link, spec) {
+		return errors.New("link observation is outside the recipient View")
 	}
 	return nil
 }
 
-func projectDeviceLinkObservations(projection Projection, recipient, requestedDigest string, reports []DeviceReport, now time.Time, viewFor func(string) (DeviceView, string, error)) (DeviceLinkObservations, error) {
-	return projectDeviceLinkObservationsUsing(projection, recipient, requestedDigest, reports, now, viewFor, func(report DeviceReport) error {
-		return verifyCurrentReportUsingDigest(report, projection, viewFor)
-	})
+// Queries use current role, resource and request specifications. The original
+// report's unrelated View fields are not part of a measurement's identity.
+func projectDeviceLinkObservations(ctx context.Context, store *ObservationStore, projection Projection, recipient, requestedDigest string, now time.Time, viewFor func(string) (DeviceView, string, error)) (DeviceLinkObservations, error) {
+	result, _, err := projectDeviceMeasurementWindow(ctx, store, projection, recipient, requestedDigest, "", now, viewFor, defaultMeasurementDeliveryBounds, nil)
+	return result, err
 }
-
-// Only the formal handler supplies a verifier reusing LatestForDevices' proof
-// of the freshly read original. The ordinary projection above still verifies
-// every supplied report independently; neither path caches dynamic health.
-func projectDeviceLinkObservationsUsing(projection Projection, recipient, requestedDigest string, reports []DeviceReport, now time.Time, viewFor func(string) (DeviceView, string, error), verify func(DeviceReport) error) (DeviceLinkObservations, error) {
-	view, digest, err := viewFor(recipient)
-	if err != nil || view.DeviceID != recipient || digest != requestedDigest {
-		return DeviceLinkObservations{}, errors.New("current device View required")
+func deviceMeasurementQueries(projection Projection, view DeviceView, viewFor func(string) (DeviceView, string, error)) ([]reportMeasurementQuery, error) {
+	page, err := deviceMeasurementQueryPage(context.Background(), projection, view, viewFor, 0, defaultMeasurementDeliveryBounds)
+	if err != nil {
+		return nil, err
 	}
-	result := DeviceLinkObservations{Schema: 3, NetworkID: view.NetworkID, DeviceID: view.DeviceID, ViewDigest: digest, Observations: []DeviceLinkObservation{}}
-	links := map[string]NetworkLink{}
-	sources := map[string]bool{}
-	for _, link := range view.Links {
-		links[link.ID] = link
-		sources[link.FromNodeID] = true
+	result := make([]reportMeasurementQuery, 0, len(page.queries))
+	for _, item := range page.queries {
+		result = append(result, item.query)
 	}
-	for _, report := range reports {
-		if !sources[report.DeviceID] || verify(report) != nil {
-			continue
-		}
-		_, reportUntil := webReportTime(report, now)
-		body, err := CanonicalEncode(report)
-		if err != nil {
-			return DeviceLinkObservations{}, err
-		}
-		for _, sample := range report.Observations {
-			link, ok := links[sample.LinkID]
-			if !ok || sample.Level != "link" || report.DeviceID != link.FromNodeID {
-				continue
-			}
-			spec, err := LinkSpecDigest(view, link.ID)
-			until := webObservationUntil(report, sample, reportUntil, now)
-			if err != nil || !matchesNativeLinkObservation(sample, link, spec) || until <= now.UnixMilli() || sample.ObservedAt > now.UnixMilli() {
-				continue
-			}
-			result.Observations = append(result.Observations, DeviceLinkObservation{DeviceID: report.DeviceID, ReportSequence: report.ReportSequence, ReportDigest: ReleaseDigest(body), CurrentUntil: until, Observation: sample})
-		}
-	}
-	sort.Slice(result.Observations, func(i, j int) bool {
-		return result.Observations[i].Observation.LinkID < result.Observations[j].Observation.LinkID
-	})
-	return result, result.validateForViewDigest(view, digest)
+	return result, nil
 }
 
 // This closure owns only successful projections and digests for one request.
@@ -196,39 +220,19 @@ func (server *Server) deviceLinkObservations(w http.ResponseWriter, r *http.Requ
 		}
 		return value.view, value.digest, nil
 	}
-	view, digest, err := viewFor(identity.DeviceID)
+	_, digest, err := viewFor(identity.DeviceID)
 	if err != nil || request.Validate() != nil || digest != request.ViewDigest {
 		http.Error(w, "current device View required", http.StatusConflict)
 		return
 	}
-	sources := map[string]string{}
-	for _, link := range view.Links {
-		if source, found := identityFor(projection, link.FromNodeID); found {
-			sources[source.ID] = source.DevicePublicKey
-		}
-	}
-	reports, err := server.Runtime.Reports.LatestForDevices(r.Context(), projection.NetworkID, sources)
-	if err != nil {
+	result, next, err := projectDeviceMeasurementWindow(r.Context(), server.Runtime.Reports, projection, identity.DeviceID, digest, request.Cursor, server.now(), viewFor, defaultMeasurementDeliveryBounds, server.measurementBase(request.Cursor, identity.DeviceID, digest))
+	if err != nil || configuration.finish() != nil {
 		http.Error(w, "link observations unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	// LatestForDevices has just checked actual bytes, position and signature
-	// under these exact current keys. Everything depending on current execution
-	// inputs and time is deliberately checked again in this request.
-	verify := func(report DeviceReport) error {
-		source, found := identityFor(projection, report.DeviceID)
-		if !found || sources[report.DeviceID] != source.DevicePublicKey || report.NetworkID != projection.NetworkID {
-			return errors.New("Link source is outside the current request")
-		}
-		view, digest, err := viewFor(report.DeviceID)
-		if err != nil || report.ViewDigest != digest {
-			return errors.New("Link source View is stale")
-		}
-		return verifyReportViewFields(report, view)
-	}
-	result, err := projectDeviceLinkObservationsUsing(projection, identity.DeviceID, digest, reports, server.now(), viewFor, verify)
-	if err != nil || configuration.finish() != nil {
-		http.Error(w, "link observations unavailable", http.StatusServiceUnavailable)
+	result, err = server.issueMeasurementDelivery(result, request.Cursor, measurementDeliveryOptions{next, defaultMeasurementDeliveryBounds})
+	if err != nil {
+		http.Error(w, "measurement delivery unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	body, err := CanonicalEncode(result)

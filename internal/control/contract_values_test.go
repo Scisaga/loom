@@ -158,11 +158,11 @@ func TestServiceMatcherExactSuffixAndIPBoundaries(t *testing.T) {
 		matches []string
 		rejects []string
 	}{
-		{ServiceMatcher{"dns_exact", "demo.example"}, []string{"demo.example"}, []string{"a.demo.example", "Demo.example", "demo.example.", "demo.example:443"}},
-		{ServiceMatcher{"dns_exact", "xn--bcher-kva.example"}, []string{"xn--bcher-kva.example"}, []string{"bücher.example"}},
-		{ServiceMatcher{"dns_suffix", "demo.example"}, []string{"demo.example", "a.demo.example"}, []string{"notdemo.example", "demo.example.invalid", ".demo.example", "*.demo.example"}},
-		{ServiceMatcher{"ip_prefix", "192.0.2.0/24"}, []string{"192.0.2.1", "192.0.2.255"}, []string{"198.51.100.1", "192.0.02.1", "::ffff:192.0.2.1", "demo.example"}},
-		{ServiceMatcher{"ip_prefix", "2001:db8::/48"}, []string{"2001:db8::1"}, []string{"2001:db8:1::1", "2001:DB8::1", "2001:db8::1%demo", "192.0.2.1"}},
+		{ServiceMatcher{Kind: "dns_exact", Value: "demo.example"}, []string{"demo.example"}, []string{"a.demo.example", "Demo.example", "demo.example.", "demo.example:443"}},
+		{ServiceMatcher{Kind: "dns_exact", Value: "xn--bcher-kva.example"}, []string{"xn--bcher-kva.example"}, []string{"bücher.example"}},
+		{ServiceMatcher{Kind: "dns_suffix", Value: "demo.example"}, []string{"demo.example", "a.demo.example"}, []string{"notdemo.example", "demo.example.invalid", ".demo.example", "*.demo.example"}},
+		{ServiceMatcher{Kind: "ip_prefix", Value: "192.0.2.0/24"}, []string{"192.0.2.1", "192.0.2.255"}, []string{"198.51.100.1", "192.0.02.1", "::ffff:192.0.2.1", "demo.example"}},
+		{ServiceMatcher{Kind: "ip_prefix", Value: "2001:db8::/48"}, []string{"2001:db8::1"}, []string{"2001:db8:1::1", "2001:DB8::1", "2001:db8::1%demo", "192.0.2.1"}},
 	} {
 		if err := test.matcher.Validate(); err != nil {
 			t.Fatal(err)
@@ -184,14 +184,14 @@ func TestServiceMatcherExactSuffixAndIPBoundaries(t *testing.T) {
 		}
 	}
 	for _, matcher := range []ServiceMatcher{
-		{"unknown", "demo.example"}, {"dns_exact", ""}, {"dns_exact", "Demo.example"},
-		{"dns_exact", "192.0.2.1"}, {"dns_exact", "demo.example."}, {"dns_suffix", ".demo.example"},
-		{"dns_exact", "192.0.02.1"}, {"dns_exact", "xn--0.example"}, {"dns_exact", "xn--a.example"},
-		{"dns_exact", "xn--abc.example"},
-		{"dns_suffix", "*.example"}, {"dns_exact", "demo..example"}, {"dns_exact", "-demo.example"},
-		{"dns_exact", "demo-.example"}, {"dns_exact", "中文.example"},
-		{"ip_prefix", "192.0.2.1/24"}, {"ip_prefix", "192.0.2.1"},
-		{"ip_prefix", "2001:0db8::/32"}, {"ip_prefix", "2001:db8::1/32"},
+		{Kind: "unknown", Value: "demo.example"}, {Kind: "dns_exact", Value: ""}, {Kind: "dns_exact", Value: "Demo.example"},
+		{Kind: "dns_exact", Value: "192.0.2.1"}, {Kind: "dns_exact", Value: "demo.example."}, {Kind: "dns_suffix", Value: ".demo.example"},
+		{Kind: "dns_exact", Value: "192.0.02.1"}, {Kind: "dns_exact", Value: "xn--0.example"}, {Kind: "dns_exact", Value: "xn--a.example"},
+		{Kind: "dns_exact", Value: "xn--abc.example"},
+		{Kind: "dns_suffix", Value: "*.example"}, {Kind: "dns_exact", Value: "demo..example"}, {Kind: "dns_exact", Value: "-demo.example"},
+		{Kind: "dns_exact", Value: "demo-.example"}, {Kind: "dns_exact", Value: "中文.example"},
+		{Kind: "ip_prefix", Value: "192.0.2.1/24"}, {Kind: "ip_prefix", Value: "192.0.2.1"},
+		{Kind: "ip_prefix", Value: "2001:0db8::/32"}, {Kind: "ip_prefix", Value: "2001:db8::1/32"},
 	} {
 		if matcher.Validate() == nil || matcher.Matches("demo.example") || matcher.Matches("192.0.2.1") {
 			t.Fatal("invalid matcher permits a target")

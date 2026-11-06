@@ -192,6 +192,27 @@ func TestContractCanonicalEncodingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestContractTypedTargetMapRoundTripAndStrictRejection(t *testing.T) {
+	for _, value := range []map[string]string{{}, {"demo-b.example:443": "demo-b", "demo-a.example:8443": "demo-a"}} {
+		body, err := CanonicalEncode(value)
+		var decoded map[string]string
+		decodeErr := DecodeCanonical(body, &decoded, contractTestLimits)
+		if err != nil || decodeErr != nil || !reflect.DeepEqual(decoded, value) {
+			t.Fatal("typed target map did not round trip", err, decodeErr, value, decoded)
+		}
+	}
+	for _, body := range []string{`null`, `{"demo.example:443":null}`, `{"demo.example:443":1}`, `{"demo.example:443":"demo-a","demo.example:443":"demo-b"}`, `{"中文":"demo-a"}`} {
+		var value map[string]string
+		if DecodeCanonical([]byte(body), &value, contractTestLimits) == nil {
+			t.Fatal("noncanonical or wrong-type target map accepted", body)
+		}
+	}
+	var untyped map[string]any
+	if DecodeCanonical([]byte(`{}`), &untyped, contractTestLimits) == nil {
+		t.Fatal("typed map support enabled loose authority decoding")
+	}
+}
+
 func TestContractDecoderRejectsAmbiguousAndNonCanonicalBytes(t *testing.T) {
 	type fixture struct {
 		Flag bool   `json:"flag"`

@@ -28,8 +28,14 @@ func TestAndroidWGAccessPreservesSharedPrivateRuntime(t *testing.T) {
 	name, trust := "demo.example", []string{base64.RawURLEncoding.EncodeToString(der)}
 	addresses := []string{"198.51.100.1/32"}
 	state, body := androidFixture(t, 7, false, func(p *control.Projection) {
+		var err error
+		p.DeviceAuthorizations[0].WireGuardPublicKey, err = control.DerivedWireGuardPublicKey(p.NetworkID, p.DeviceAuthorizations[0])
+		if err != nil {
+			t.Fatal(err)
+		}
 		owner := p.DeviceAuthorizations[0]
 		owner.ID, owner.Platform, owner.Responsibilities, owner.PolicyIDs = "demo-exit", "linux", []string{"forward", "internet_egress"}, []string{}
+		owner.WireGuardPublicKey = public
 		p.DeviceAuthorizations = append(p.DeviceAuthorizations, owner)
 		p.NetworkIntent.Policies[0].AllowDirect = new(false)
 		p.NetworkIntent.Resources = []control.TransportResource{
@@ -46,11 +52,11 @@ func TestAndroidWGAccessPreservesSharedPrivateRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	var certified, actual map[string]json.RawMessage
-	if json.Unmarshal([]byte(state.LKG.View.RuntimeProfile.Config), &certified) != nil || json.Unmarshal([]byte(profile.Config), &actual) != nil {
+	if json.Unmarshal([]byte(testDeviceExecution(state.LKG.View).RuntimeProfile.Config), &certified) != nil || json.Unmarshal([]byte(profile.Config), &actual) != nil {
 		t.Fatal("runtime projection is invalid")
 	}
 	assertRuntimeSelectorRejectionOnly(t, certified["outbounds"], actual["outbounds"])
-	if len(profile.Routes) != 2 || len(state.LKG.View.WireGuardPeers) != 0 {
+	if len(profile.Routes) != 2 || len(testDeviceExecution(state.LKG.View).WireGuardPeers) != 0 {
 		t.Fatal("Android changed WG identity or peer privacy")
 	}
 

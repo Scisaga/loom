@@ -1,6 +1,6 @@
 // Package linuxclient implements the Linux HostAdapter for the shared client
-// runtime model. It persists only the local preference and bounded observations;
-// identity and the certified LKG remain in deviceclient.Store.
+// runtime model. Only disposable observations are stored here; identity, the
+// certified LKG and the single selected Policy belong to deviceclient.Store.
 package linuxclient
 
 import (
@@ -25,13 +25,23 @@ import (
 
 const localStateSchema = 3
 
-type LocalState struct {
+// observationCache is the complete, sole persistent value in runtime.json.
+// Execution inputs never enter canonical cache encoding or decoding.
+type observationCache struct {
 	Schema                int                       `json:"schema"`
-	Preference            clientmodel.Preference    `json:"preference"`
 	NetworkGeneration     string                    `json:"network_generation"`
 	ObservationViewDigest string                    `json:"observation_view_digest,omitempty"`
 	Observations          []clientmodel.Observation `json:"observations"`
 	ResourceObservations  []control.Observation     `json:"resource_observations,omitempty"`
+}
+
+type LocalState struct {
+	graphs []clientmodel.PolicyGraph
+	observationCache
+	Preference          clientmodel.Preference
+	SelectionMemory     map[string]clientmodel.SelectionMemory
+	NativeObservations  []clientmodel.Observation
+	NativeExecutionSpec string
 }
 
 type SelectionStatus = clientadapter.SelectionStatus
@@ -55,13 +65,12 @@ type Status struct {
 }
 
 func defaultState(generation string) LocalState {
-	return LocalState{Schema: localStateSchema,
-		Preference:        clientmodel.EmptyPreference(),
-		NetworkGeneration: generation, Observations: []clientmodel.Observation{}}
+	return LocalState{observationCache: observationCache{Schema: localStateSchema,
+		NetworkGeneration: generation, Observations: []clientmodel.Observation{}}, Preference: clientmodel.EmptyPreference()}
 }
 
 func (state LocalState) validate() error {
-	if state.Schema != localStateSchema || state.Preference.Validate() != nil || state.NetworkGeneration == "" ||
+	if state.Schema != localStateSchema || state.NetworkGeneration == "" ||
 		len(state.NetworkGeneration) > 128 || strings.TrimSpace(state.NetworkGeneration) != state.NetworkGeneration {
 		return errors.New("Linux client local state is invalid")
 	}
@@ -87,9 +96,12 @@ func (state LocalState) validate() error {
 }
 
 func validateResourceObservations(values []control.Observation, generation string) error {
+	key := func(value control.Observation) string {
+		return value.ResourceID + "\x00" + value.Target + "\x00" + value.SpecDigest
+	}
 	for i, value := range values {
 		if value.Validate() != nil || value.Level != "resource" || value.NetworkGeneration != generation ||
-			i > 0 && values[i-1].ResourceID >= value.ResourceID {
+			i > 0 && key(values[i-1]) >= key(value) {
 			return errors.New("resource observations are not current and uniquely sorted")
 		}
 	}
@@ -197,12 +209,12 @@ func loadLocalStateWithEvidence(path, generation, viewDigest string, retain func
 	var result LocalState
 	err := withLock(path, func() error {
 		var state LocalState
-		if err := readStrict(path, 1<<20, &state); err != nil {
+		if err := readStrict(path, 1<<20, &state.observationCache); err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 			state = defaultState(generation)
-			if err := atomicJSON(path, state); err != nil {
+			if err := atomicJSON(path, state.observationCache); err != nil {
 				return err
 			}
 		} else if err := state.validate(); err != nil {
@@ -218,10 +230,11 @@ func loadLocalStateWithEvidence(path, generation, viewDigest string, retain func
 			state.ObservationViewDigest = viewDigest
 			state.Observations = observations
 			state.ResourceObservations = append([]control.Observation(nil), resources...)
-			if err := atomicJSON(path, state); err != nil {
+			if err := atomicJSON(path, state.observationCache); err != nil {
 				return err
 			}
 		}
+		state.Preference = clientmodel.EmptyPreference()
 		result = state
 		return nil
 	})
@@ -232,11 +245,11 @@ func SaveLocalState(path string, state LocalState) error {
 	if err := state.validate(); err != nil {
 		return err
 	}
-	return withLock(path, func() error { return atomicJSON(path, state) })
+	return withLock(path, func() error { return atomicJSON(path, state.observationCache) })
 }
 
-// SaveObservations preserves a concurrently-written Preference; the runtime
-// only owns Observation changes, while the CLI is the sole preference writer.
+// SaveObservations updates only the disposable observation cache. Preference
+// is an in-memory input from the identity store and is never serialized here.
 func SaveObservations(path string, state LocalState) (LocalState, error) {
 	if err := state.validate(); err != nil {
 		return LocalState{}, err
@@ -244,7 +257,7 @@ func SaveObservations(path string, state LocalState) (LocalState, error) {
 	var saved LocalState
 	err := withLock(path, func() error {
 		var current LocalState
-		if err := readStrict(path, 1<<20, &current); err != nil {
+		if err := readStrict(path, 1<<20, &current.observationCache); err != nil {
 			return err
 		}
 		if err := current.validate(); err != nil {
@@ -255,83 +268,17 @@ func SaveObservations(path string, state LocalState) (LocalState, error) {
 		}
 		current.Observations = append([]clientmodel.Observation{}, state.Observations...)
 		current.ResourceObservations = append([]control.Observation(nil), state.ResourceObservations...)
-		if err := atomicJSON(path, current); err != nil {
+		if err := atomicJSON(path, current.observationCache); err != nil {
 			return err
 		}
+		current.Preference = state.Preference
+		current.SelectionMemory = state.SelectionMemory
+		current.NativeObservations = state.NativeObservations
+		current.NativeExecutionSpec = state.NativeExecutionSpec
 		saved = current
 		return nil
 	})
 	return saved, err
-}
-
-func SetPreference(path, generation string, preference clientmodel.Preference) error {
-	if err := preference.Validate(); err != nil {
-		return err
-	}
-	return withLock(path, func() error {
-		var state LocalState
-		if err := readStrict(path, 1<<20, &state); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			state = defaultState(generation)
-		} else if err := state.validate(); err != nil {
-			return err
-		}
-		if state.NetworkGeneration != generation {
-			state.NetworkGeneration = generation
-			state.Observations = []clientmodel.Observation{}
-			state.ResourceObservations = nil
-		}
-		state.Preference = preference
-		return atomicJSON(path, state)
-	})
-}
-
-// ReconcilePolicyChoices writes initialization/revocation under the same lock as
-// interactive choices. Observations and unrelated Service choices are retained.
-func ReconcilePolicyChoices(path, generation string, view control.DeviceView) (LocalState, error) {
-	var result LocalState
-	err := withLock(path, func() error {
-		var current LocalState
-		if err := readStrict(path, 1<<20, &current); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			current = defaultState(generation)
-		} else if err := current.validate(); err != nil {
-			return err
-		}
-		next, err := clientmodel.ReconcilePreference(current.Preference, view)
-		if err != nil {
-			return err
-		}
-		current.Preference = next
-		if err := atomicJSON(path, current); err != nil {
-			return err
-		}
-		result = current
-		return nil
-	})
-	return result, err
-}
-
-func SelectPolicy(path, generation string, view control.DeviceView, serviceID, policyID string) error {
-	return withLock(path, func() error {
-		var current LocalState
-		if err := readStrict(path, 1<<20, &current); err != nil {
-			return err
-		}
-		if err := current.validate(); err != nil {
-			return err
-		}
-		next, err := clientmodel.ChoosePolicy(current.Preference, view, serviceID, policyID)
-		if err != nil {
-			return err
-		}
-		current.Preference = next
-		return atomicJSON(path, current)
-	})
 }
 
 func WriteStatus(path string, status Status) error {

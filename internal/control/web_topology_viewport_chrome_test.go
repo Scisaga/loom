@@ -117,7 +117,7 @@ func TestWebChromeTopologyViewportKeepsFullDetailsAndStableDiagram(t *testing.T)
 				if link.ID == reverse.ID {
 					rtt = int64(57 + index*2)
 				}
-				observations = append(observations, Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(100)), RoundTripMS: &rtt})
+				observations = append(observations, Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_echo", NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli(), DurationMS: new(int64(100)), RoundTripMS: &rtt})
 			}
 			sort.Slice(observations, func(i, j int) bool { return compareObservationOrder(observations[i], observations[j]) < 0 })
 			values := append([]WireGuardPeerCounter{}, peers...)

@@ -132,6 +132,7 @@ type Authority struct {
 	// Every replacement of authenticated inputs changes this process-local
 	// coordinate, including proof/frontier progress with an unchanged View.
 	deviceConfigRevision uint64
+	deviceConfigChanged  chan struct{}
 	deviceConfigs        deviceConfigCache
 }
 
@@ -326,7 +327,13 @@ func lockProtectedControlPath(ctx context.Context, path string) (*os.File, error
 	return file, nil
 }
 func (a *Authority) reloadLocked() (retErr error) {
-	defer func() { a.blocked = retErr }()
+	previouslyBlocked, revision := a.blocked != nil, a.deviceConfigRevision
+	defer func() {
+		a.blocked = retErr
+		if previouslyBlocked != (retErr != nil) && a.deviceConfigRevision == revision {
+			a.changedDeviceConfigLocked()
+		}
+	}()
 	entries, err := os.ReadDir(a.root)
 	if err != nil {
 		return err
@@ -381,7 +388,7 @@ func (a *Authority) reloadLocked() (retErr error) {
 	}
 	a.genesis, a.materials, a.projection, a.certificates = genesis, materials, projection, certificates
 	a.projectionGraph = reusableMaterialGraph(graph)
-	a.deviceConfigRevision++
+	a.changedDeviceConfigLocked()
 	a.decodedMaterials = decoded
 	return nil
 }
@@ -619,7 +626,7 @@ func (a *Authority) PutMaterial(body []byte) (string, error) {
 	}
 	a.materials, a.projection = next, projection
 	a.projectionGraph = reusableMaterialGraph(graph)
-	a.deviceConfigRevision++
+	a.changedDeviceConfigLocked()
 	if errors.Is(admissionErr, ErrMaterialEquivocation) {
 		return id, admissionErr
 	}
@@ -692,7 +699,7 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 		if err != nil {
 			return Submission{}, err
 		}
-		previous, err := EncodeOperation(prior)
+		previous, err := EncodeOperation(withRequestedWireGuardRegistration(prior, op))
 		if err != nil || !bytes.Equal(previous, requested) {
 			return Submission{}, errors.New("request ID is already bound to another operation")
 		}
@@ -834,6 +841,7 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 			}
 			original = &value
 		}
+		initial := original == nil
 		if original == nil {
 			identity, found := controlOnlyIdentity(a.projection, public.ID)
 			join, bound := memberBindingFor(a.projection, public.ID)
@@ -846,14 +854,53 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 			}
 			original = &DeviceAuthorization{ID: public.ID, DevicePublicKey: identity.DevicePublicKey, Platform: identity.Platform, TransactionID: join.TransactionID, InviteMaterialID: join.InviteMaterialID, BindingMaterialID: join.BindingMaterialID, RuntimeKey: base64.RawURLEncoding.EncodeToString(key)}
 			clear(key)
+		} else if current, found := authorizationFor(a.projection, public.ID); found {
+			original.WireGuardPublicKey = current.WireGuardPublicKey
+		} else if target, found := a.projection.CurrentTarget("device", public.ID); found && target.DeviceForReview != nil {
+			original.WireGuardPublicKey = target.DeviceForReview.WireGuardPublicKey
+		} else if target, found := a.projection.CurrentTarget("device", public.ID); found && target.Conflicted && public.WireGuardPublicKey == "" {
+			known := false
+			for _, id := range target.MaterialIDs {
+				value, ok := effectiveMaterial(graph.facts[id]).Payload.(DeviceAuthorization)
+				if !ok {
+					continue
+				}
+				if known && original.WireGuardPublicKey != value.WireGuardPublicKey {
+					return Submission{}, errors.New("resolve the device's registered WireGuard identity explicitly")
+				}
+				original.WireGuardPublicKey, known = value.WireGuardPublicKey, true
+			}
+			if !known {
+				return Submission{}, errors.New("conflicted device has no reviewed WireGuard identity")
+			}
 		}
 		original.Name, original.Responsibilities, original.PolicyIDs, original.DistributionURLs = public.Name,
 			append([]string{}, public.Responsibilities...), append([]string{}, public.PolicyIDs...), append([]string{}, public.DistributionURLs...)
 		original.DNSServers = append([]string(nil), public.DNSServers...)
+		if initial && public.WireGuardPublicKey == "" {
+			original.WireGuardPublicKey, err = DerivedWireGuardPublicKey(a.projection.NetworkID, *original)
+			if err != nil {
+				return Submission{}, err
+			}
+		}
+		if public.WireGuardPublicKey != "" {
+			for _, resource := range a.projection.NetworkIntent.Resources {
+				if resource.Kind == "wireguard" && resource.OwnerNodeID == public.ID && *resource.Authentication.PublicKey != public.WireGuardPublicKey {
+					return Submission{}, errors.New("registered WireGuard key differs from the node's current receiving resource")
+				}
+			}
+			original.WireGuardPublicKey = public.WireGuardPublicKey
+		}
 		payload = *original
 		if value, ok := op.Payload.(ConflictResolution); ok {
 			value.Value = payload
 			payload = value
+		}
+	}
+	if resource, ok := effectiveOperation(op).Payload.(TransportResource); ok && resource.Kind == "wireguard" {
+		owner, found := authorizationFor(a.projection, resource.OwnerNodeID)
+		if !found || owner.WireGuardPublicKey == "" || owner.WireGuardPublicKey != *resource.Authentication.PublicKey {
+			return Submission{}, errors.New("register the node's current WireGuard public key before its receiving resource")
 		}
 	}
 	material := Material{Schema: MaterialSchema, NetworkID: config.NetworkID, IssuerControlID: config.ControlID, IssuerKeyID: keyID, ControlConfigID: a.projection.ControlConfigID, Sequence: sequence + 1, PreviousMaterialID: previous, Dependencies: append([]string{}, op.Dependencies...), RequestID: op.RequestID, TargetKind: op.TargetKind, TargetID: op.TargetID, Operation: op.Operation, Payload: payload}
@@ -885,7 +932,7 @@ func (a *Authority) submitOperationLocked(ctx context.Context, op Operation, loc
 	}
 	a.materials, a.projection = next, projection
 	a.projectionGraph = reusableMaterialGraph(graph)
-	a.deviceConfigRevision++
+	a.changedDeviceConfigLocked()
 	return Submission{MaterialID: id, Projection: cloneAuthorityProjection(projection)}, nil
 }
 

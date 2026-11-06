@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"loom/internal/clientadapter"
 )
 
 const supervisorStopTimeout = 10 * time.Second
@@ -18,37 +20,37 @@ const supervisorStopTimeout = 10 * time.Second
 // Callers must pass a path returned by clientcomponent.LoadWindows. The
 // function preflights first, keeps hydrated configuration only for the child
 // lifetime, and kills the process (and on Windows its Job Object) on shutdown.
-func RunWindowsDataPlane(ctx context.Context, executable string, config []byte, runtimeDir string) (retErr error) {
-	return RunWindowsDataPlaneProfile(ctx, executable, config, runtimeDir, WindowsInstalledProfile)
-}
-
-// RunWindowsDataPlaneProfile is the process-lifecycle boundary for one exact
-// derived Windows capture profile.
-func RunWindowsDataPlaneProfile(ctx context.Context, executable string, config []byte, runtimeDir string,
-	profile WindowsRuntimeProfile) (retErr error) {
-	return RunWindowsDataPlaneProfileStarted(ctx, executable, config, runtimeDir, runtimeDir, profile, nil)
-}
-
-// §16.1：只有进程已创建且已受 Job Object 监督，宿主才可以开始启动稳定窗口。
-func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, config []byte, runtimeDir, cacheDir string,
-	profile WindowsRuntimeProfile, started func(pid int)) (retErr error) {
+// The profile is fixed by the constructor. Only a supervised child may signal
+// startup; its diagnostic output cannot expose hydrated execution secrets.
+func RunWindowsDataPlane(ctx context.Context, executable string, projection WindowsRuntimeConfig, runtimeDir, cacheDir string,
+	started func(pid int)) (retErr error) {
 	if ctx == nil {
 		return errors.New("sing-box supervisor context is nil")
 	}
-	if err := PreflightWindowsRuntime(ctx, executable, config, runtimeDir, profile); err != nil {
+	if err := PreflightWindowsRuntime(ctx, executable, projection, runtimeDir); err != nil {
 		return err
 	}
-	derived, _ := decodeWindowsConfig(config)
-	if derived.Experimental.CacheFile != nil {
+	config := projection.Bytes()
+	defer clear(config)
+	var document map[string]json.RawMessage
+	_ = json.Unmarshal(config, &document)
+	var experimental map[string]json.RawMessage
+	_ = json.Unmarshal(document["experimental"], &experimental)
+	if experimental["cache_file"] != nil {
 		if !filepath.IsAbs(cacheDir) || filepath.Clean(cacheDir) != cacheDir {
 			return errors.New("TUN DNS cache directory must be absolute and clean")
 		}
 		if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 			return err
 		}
-		derived.Experimental.CacheFile.Path = filepath.Join(cacheDir, derived.Experimental.CacheFile.Path)
+		var cache map[string]json.RawMessage
+		_ = json.Unmarshal(experimental["cache_file"], &cache)
+		cache["path"], _ = json.Marshal(filepath.Join(cacheDir, clientadapter.TUNDNSCache))
+		experimental["cache_file"], _ = json.Marshal(cache)
+		document["experimental"], _ = json.Marshal(experimental)
+		clear(config)
 		var err error
-		config, err = json.Marshal(derived)
+		config, err = json.Marshal(document)
 		if err != nil {
 			return err
 		}

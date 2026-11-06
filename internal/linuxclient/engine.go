@@ -11,7 +11,6 @@ import (
 
 type ProbeResult = clientadapter.ProbeResult
 type Probe = clientadapter.Probe
-type Probes = clientadapter.Probes
 
 const blockedSelection = clientadapter.BlockedSelection
 
@@ -28,21 +27,30 @@ func scopesFor(routes []clientmodel.RouteCandidate, scopeIDs ...string) ([]strin
 // Local persistence stays platform-owned; all Service selection and sampling
 // use the same executor as Windows and the same pure model as Android.
 func Activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state LocalState,
-	probes Probes, now func() time.Time) (Activation, error) {
-	return activateWithLinkSamples(ctx, selector, routes, state, nil, nil, probes, now)
+	targets []string, now func() time.Time) (Activation, error) {
+	return activateWithLinkSamples(ctx, selector, routes, state, nil, nil, targets, now)
 }
 
 func activateWithLinkSamples(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state LocalState,
-	local []control.Observation, remote []control.DeviceLinkObservation, probes Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
-	value, err := clientadapter.Activate(ctx, selector, routes, clientadapter.State{
-		Preference: state.Preference, NetworkGeneration: state.NetworkGeneration,
-		Observations: state.Observations, ResourceObservations: state.ResourceObservations,
-		LinkObservations:      remote,
-		LocalLinkObservations: local,
-	}, probes, now, scopeIDs...)
+	local []control.Observation, remote []control.DeviceLinkObservation, targets []string, now func() time.Time, scopeIDs ...string) (Activation, error) {
+	value, err := clientadapter.Activate(ctx, selector, routes, adapterState(state, local, remote), targets, now, scopeIDs...)
 	if value.State.NetworkGeneration == "" {
 		return Activation{}, err
 	}
 	state.Observations, state.ResourceObservations = value.State.Observations, value.State.ResourceObservations
+	state.SelectionMemory = value.State.SelectionMemory
+	state.NativeObservations = value.State.NativeObservations
 	return Activation{State: state, Selections: value.Selections, BlockedScopes: value.BlockedScopes}, err
+}
+
+func adapterState(state LocalState, local []control.Observation, remote []control.DeviceLinkObservation) clientadapter.State {
+	return clientadapter.State{
+		Graphs: state.graphs, Preference: state.Preference, NetworkGeneration: state.NetworkGeneration,
+		Observations: state.Observations, ResourceObservations: state.ResourceObservations,
+		LinkObservations:    remote,
+		LocalMeasurements:   local,
+		SelectionMemory:     state.SelectionMemory,
+		NativeObservations:  state.NativeObservations,
+		NativeExecutionSpec: state.NativeExecutionSpec,
+	}
 }

@@ -35,11 +35,8 @@ func (graph *materialGraph) revokedDeviceForReview(facts, maxima []targetFact) *
 			return nil
 		}
 		value := candidate.payload.(DeviceAuthorization)
-		reviewed = &DevicePut{ID: value.ID, Name: value.Name,
-			Responsibilities: append([]string{}, value.Responsibilities...),
-			PolicyIDs:        append([]string{}, value.PolicyIDs...),
-			DistributionURLs: append([]string{}, value.DistributionURLs...),
-			DNSServers:       append([]string(nil), value.DNSServers...)}
+		public := publicDeviceValue(value)
+		reviewed = &public
 	}
 	return reviewed
 }

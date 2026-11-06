@@ -50,6 +50,7 @@ DOMAIN = re.compile(
     r"(?:cc|cn|com|dev|io|net|org)(?![A-Za-z0-9-])",
     re.IGNORECASE,
 )
+GO_SELECTOR = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}\b")
 APPROVED_DOMAIN_BASES = {
     "aliyun.com",
     "android.com",  # Official Android XML schema namespace.
@@ -156,6 +157,80 @@ def line_number(data: bytes, offset: int) -> int:
     return data.count(b"\n", 0, offset) + 1
 
 
+def go_code_line(line: str, state: str) -> tuple[str, str]:
+    """Mask Go literals/comments without changing selector offsets."""
+    result = list(line)
+    index = 0
+    while index < len(line):
+        if state:
+            result[index] = " "
+            if state == "/*" and line.startswith("*/", index):
+                result[index:index + 2] = "  "
+                index += 2
+                state = ""
+                continue
+            if state in {'"', "'"} and line[index] == "\\":
+                result[index:index + 2] = " " * len(line[index:index + 2])
+                index += 2
+                continue
+            if state != "/*" and line[index] == state:
+                state = ""
+        elif line.startswith("//", index):
+            result[index:] = " " * (len(line) - index)
+            break
+        elif line.startswith("/*", index):
+            result[index:index + 2] = "  "
+            index += 2
+            state = "/*"
+            continue
+        elif line[index] in {'"', "'", "`"}:
+            state = line[index]
+            result[index] = " "
+        index += 1
+    return "".join(result), state
+
+
+def go_code_lines(text: str, patch: bool) -> dict[int, str]:
+    """Read code only; patch old/new sides have independent literal state."""
+    result = {}
+    old_state = new_state = ""
+    old_go = target_go = False
+    old_left = new_left = 0
+    for number, line in enumerate(text.splitlines(), 1):
+        if not patch:
+            result[number], new_state = go_code_line(line, new_state)
+            continue
+        if old_left or new_left:
+            prefix, source = line[:1], line[1:]
+            if prefix not in {" ", "+", "-"}:
+                continue
+            old_code = new_code = ""
+            if prefix in {" ", "-"}:
+                old_code, old_state = go_code_line(source, old_state)
+                old_left -= 1
+            if prefix in {" ", "+"}:
+                new_code, new_state = go_code_line(source, new_state)
+                new_left -= 1
+            if target_go:
+                code = old_code if prefix == "-" else new_code
+                if prefix == " ":
+                    code = "".join(a if a == b else " " for a, b in zip(old_code, new_code))
+                result[number] = " " + code
+        elif line.startswith("--- "):
+            old_go = line[4:].split("\t", 1)[0].endswith(".go")
+            target_go = False
+        elif line.startswith("+++ "):
+            target = line[4:].split("\t", 1)[0]
+            target_go = target.endswith(".go") or target == "/dev/null" and old_go
+        else:
+            hunk = re.match(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@", line)
+            if hunk:
+                old_left = int(hunk[1] or "1")
+                new_left = int(hunk[2] or "1")
+                old_state = new_state = ""
+    return result
+
+
 def main() -> int:
     failures: list[tuple[str, int, str]] = []
     for path in tracked_files():
@@ -172,6 +247,7 @@ def main() -> int:
 
         text = data.decode("utf-8", errors="ignore")
         dependency_metadata = relative in {"go.mod", "go.sum"}
+        go_lines = go_code_lines(text, path.suffix == ".patch") if path.suffix in {".go", ".patch"} else {}
         for line_no, line in enumerate(text.splitlines(), 1):
             # Manifest assembly versions have four parts but are not endpoints.
             ip_line = line
@@ -191,6 +267,10 @@ def main() -> int:
                 domain_line = ""
             for match in DOMAIN.finditer(domain_line):
                 value = match.group(0)
+                code = go_lines.get(line_no, "")
+                if any(selector.start() <= match.start() and match.end() <= selector.end()
+                       for selector in GO_SELECTOR.finditer(code)):
+                    continue
                 followed_by_member = (
                     match.end() + 1 < len(domain_line)
                     and domain_line[match.end()] == "."
@@ -198,6 +278,8 @@ def main() -> int:
                 )
                 inside_double_quotes = domain_line[:match.start()].count('"') % 2 == 1
                 source_identifier = path.suffix in {".cs", ".go", ".java", ".kt", ".py"} and not inside_double_quotes
+                if path.suffix == ".go":
+                    source_identifier = code[match.start():match.end()] == value
                 android_component = "android:name=" in domain_line and followed_by_member
                 if (source_identifier and any(character.isupper() for character in value)) or \
                         (followed_by_member and (source_identifier or android_component)):

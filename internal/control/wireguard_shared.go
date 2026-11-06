@@ -8,7 +8,8 @@ import (
 	"sort"
 )
 
-const wireGuardSharedCredential = "wg-shared"
+const WireGuardEndpointTag = "wg-shared"
+const wireGuardSharedCredential = WireGuardEndpointTag
 
 func ownedWireGuard(resources []TransportResource, node string) (TransportResource, bool, error) {
 	var result TransportResource
@@ -41,24 +42,22 @@ func WireGuardTargetPrefix(network string, resource TransportResource) (netip.Pr
 }
 
 func sharedWireGuardIdentity(view DeviceView, credentials map[string]string) (string, string, error) {
-	resource, found, err := ownedWireGuard(view.Resources, view.DeviceID)
-	if err != nil {
-		return "", "", err
+	if validateWireGuardPublicKey(view.WireGuardPublicKey) != nil {
+		return "", "", errors.New("WG execution requires its registered node identity")
 	}
-	if found {
-		return ResourceInboundTag(resource.ID), *resource.Authentication.PublicKey, nil
+	if encoded := credentials[wireGuardSharedCredential]; encoded != "" {
+		private, err := wireGuardAccessPrivate(encoded)
+		if err != nil || base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()) != view.WireGuardPublicKey {
+			return "", "", errors.New("WG execution key differs from its registered node identity")
+		}
 	}
-	private, err := wireGuardAccessPrivate(credentials[wireGuardSharedCredential])
-	if err != nil {
-		return "", "", err
-	}
-	return wireGuardSharedCredential, base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()), nil
+	return WireGuardEndpointTag, view.WireGuardPublicKey, nil
 }
 
 // The temporary peer accumulator is discarded after rendering. Resource and
 // permission facts remain the only source of keys, addresses and directions.
-func sharedWireGuardEndpoint(view DeviceView, credentials map[string]string, sources map[string]map[string]bool) (map[string]any, error) {
-	tag, public, err := sharedWireGuardIdentity(view, credentials)
+func sharedWireGuardEndpoint(view DeviceExecution, credentials map[string]string, sources map[string]map[string]bool) (map[string]any, error) {
+	tag, public, err := sharedWireGuardIdentity(view.DeviceView, credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -66,92 +65,56 @@ func sharedWireGuardEndpoint(view DeviceView, credentials map[string]string, sou
 	if err != nil {
 		return nil, err
 	}
-	resources := map[string]TransportResource{}
-	for _, resource := range view.Resources {
-		resources[resource.ID] = resource
-	}
 	type peerValue struct {
-		value     map[string]any
-		allowed   map[string]bool
-		direction string
+		value   map[string]any
+		allowed map[string]bool
 	}
 	peers := map[string]*peerValue{}
 	peerFor := func(key string) *peerValue {
 		if p := peers[key]; p != nil {
 			return p
 		}
-		bytes, _ := base64.RawURLEncoding.DecodeString(key)
-		p := &peerValue{value: map[string]any{"public_key": base64.StdEncoding.EncodeToString(bytes)}, allowed: map[string]bool{}}
+		raw, _ := base64.RawURLEncoding.DecodeString(key)
+		p := &peerValue{value: map[string]any{"public_key": base64.StdEncoding.EncodeToString(raw)}, allowed: map[string]bool{}}
 		peers[key] = p
 		return p
 	}
-	addresses := map[string]bool{}
-	if hasOwned {
-		dns, err := WireGuardAccessAddress(owned, "")
-		if err != nil {
-			return nil, err
-		}
-		addresses[dns.String()+"/128"] = true
-	}
-	for _, link := range view.Links {
-		if link.FromNodeID != view.DeviceID && link.ToNodeID != view.DeviceID {
-			continue
-		}
-		local, remote := resources[link.FromResourceID], resources[link.ResourceID]
-		if link.ToNodeID == view.DeviceID {
-			local, remote = remote, local
-		}
-		if !hasOwned || local.ID != owned.ID {
-			return nil, errors.New("WG Link has no shared local resource")
-		}
-		p := peerFor(*remote.Authentication.PublicKey)
-		if p.direction != "" && p.direction != link.InitiatorNodeID {
-			return nil, errors.New("WG peer has conflicting initiation directions")
-		}
-		p.direction = link.InitiatorNodeID
-		address, err := WGResourceAddress(remote)
-		if err != nil {
-			return nil, err
-		}
-		p.allowed[netip.PrefixFrom(address, address.BitLen()).String()] = true
-		// Business direction is independent of UDP initiation. Both native
-		// peers use the other's certified endpoint and can establish a session.
-		p.value["address"], p.value["port"], p.value["persistent_keepalive_interval"] = remote.DialHost, remote.DialPort, 25
-	}
-	for _, binding := range view.WireGuardPeers {
-		resource := resources[binding.ResourceID]
-		if !hasOwned || resource.ID != owned.ID {
-			return nil, errors.New("WG incoming peer has no shared local resource")
-		}
-		p := peerFor(binding.PublicKey)
-		base, err := WireGuardAccessAddress(resource, binding.PublicKey)
-		if err != nil {
-			return nil, err
-		}
-		p.allowed[base.String()+"/128"] = true
-		for _, permission := range view.InboundCredentials {
-			if permission.ResourceID != resource.ID || permission.SenderID != binding.DeviceID {
-				continue
-			}
-			source, err := WireGuardPacketSource(view.NetworkID, permission, binding.PublicKey)
-			if err != nil {
-				return nil, err
-			}
-			p.allowed[source.String()+"/128"] = true
-		}
+	// Stack defaults initialize both protocols once. Exact resource senders and
+	// the owned execution address remain separate authentication/receive values;
+	// retain their collision checks without adding them to the stack address set.
+	stackAddresses := []string{"127.0.0.1/32", "::1/128"}
+	coordinates := map[string]bool{}
+	for _, address := range stackAddresses {
+		coordinates[address] = true
 	}
 	sourceRoutes := []map[string]string{}
-	for resourceID, values := range sources {
-		resource := resources[resourceID]
-		p := peerFor(*resource.Authentication.PublicKey)
-		if p.direction == "" {
-			p.value["address"], p.value["port"] = resource.DialHost, resource.DialPort
-		}
-		prefix, err := WireGuardTargetPrefix(view.NetworkID, resource)
+	if hasOwned {
+		execution, err := WireGuardAccessAddress(owned, "")
 		if err != nil {
 			return nil, err
 		}
-		dns, err := WireGuardAccessAddress(resource, "")
+		coordinates[execution.String()+"/128"] = true
+	}
+	// Outgoing resource transports are shared by every Policy and final exit.
+	ids := []string{}
+	for id := range sources {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	byID := map[string]TransportResource{}
+	for _, resource := range view.Resources {
+		byID[resource.ID] = resource
+	}
+	for _, id := range ids {
+		resource := byID[id]
+		p := peerFor(*resource.Authentication.PublicKey)
+		p.value["address"], p.value["port"] = resource.DialHost, resource.DialPort
+		p.value["persistent_keepalive_interval"] = 25
+		execution, err := WireGuardAccessAddress(resource, "")
+		if err != nil {
+			return nil, err
+		}
+		pool, err := WireGuardTargetPrefix(view.NetworkID, resource)
 		if err != nil {
 			return nil, err
 		}
@@ -159,19 +122,29 @@ func sharedWireGuardEndpoint(view DeviceView, credentials map[string]string, sou
 		if err != nil {
 			return nil, err
 		}
-		p.allowed[dns.String()+"/128"] = true
-		if len(values) > 0 {
-			p.allowed[prefix.String()] = true
-		}
-		addresses[base.String()+"/128"] = true
-		sourceRoutes = append(sourceRoutes, map[string]string{"source": base.String(), "destination": dns.String() + "/128"})
-		for source := range values {
-			addresses[source] = true
-			address, err := netip.ParsePrefix(source)
-			if err != nil || address.Bits() != 128 {
-				return nil, errors.New("invalid WG business source")
+		p.allowed[execution.String()+"/128"], p.allowed[pool.String()] = true, true
+		coordinates[base.String()+"/128"] = true
+		sourceRoutes = append(sourceRoutes, map[string]string{"source": base.String(), "destination": pool.String(), "execution": execution.String()})
+	}
+	if hasOwned {
+		for _, peer := range view.WireGuardPeers {
+			if peer.ResourceID != owned.ID {
+				continue
 			}
-			sourceRoutes = append(sourceRoutes, map[string]string{"source": address.Addr().String(), "destination": prefix.String()})
+			p := peerFor(peer.PublicKey)
+			base, err := WireGuardAccessAddress(owned, peer.PublicKey)
+			if err != nil {
+				return nil, err
+			}
+			p.allowed[base.String()+"/128"] = true
+			// Keep the authenticated receiver peer's public dial coordinates.
+			for _, remote := range view.Resources {
+				if remote.Kind == "wireguard" && remote.OwnerNodeID == peer.DeviceID {
+					if p.value["address"] == nil {
+						p.value["address"], p.value["port"] = remote.DialHost, remote.DialPort
+					}
+				}
+			}
 		}
 	}
 	keys := []string{}
@@ -183,7 +156,7 @@ func sharedWireGuardEndpoint(view DeviceView, credentials map[string]string, sou
 	allPrefixes := map[netip.Prefix]string{}
 	for _, key := range keys {
 		if key == public {
-			return nil, errors.New("WG cannot peer with its own key")
+			return nil, errors.New("WG cannot peer with its own identity")
 		}
 		p := peers[key]
 		allowed := []string{}
@@ -194,7 +167,7 @@ func sharedWireGuardEndpoint(view DeviceView, credentials map[string]string, sou
 			}
 			for other, owner := range allPrefixes {
 				if owner != key && prefix.Overlaps(other) {
-					return nil, errors.New("WG peers have overlapping addresses")
+					return nil, errors.New("WG peer addresses overlap")
 				}
 			}
 			allPrefixes[prefix] = key
@@ -204,31 +177,26 @@ func sharedWireGuardEndpoint(view DeviceView, credentials map[string]string, sou
 		p.value["allowed_ips"] = allowed
 		peerList = append(peerList, p.value)
 	}
-	localAddresses := []string{}
-	for text := range addresses {
-		address, err := netip.ParsePrefix(text)
+	for text := range coordinates {
+		prefix, err := netip.ParsePrefix(text)
 		if err != nil {
 			return nil, err
 		}
-		for prefix := range allPrefixes {
-			if prefix.Contains(address.Addr()) {
-				return nil, errors.New("WG local source overlaps a peer address")
+		for other := range allPrefixes {
+			if other.Contains(prefix.Addr()) {
+				return nil, errors.New("WG local and peer addresses overlap")
 			}
 		}
-		localAddresses = append(localAddresses, text)
 	}
-	sort.Strings(localAddresses)
 	sort.Slice(sourceRoutes, func(i, j int) bool { return sourceRoutes[i]["source"] < sourceRoutes[j]["source"] })
 	for i := 1; i < len(sourceRoutes); i++ {
 		if sourceRoutes[i-1]["source"] == sourceRoutes[i]["source"] {
-			return nil, errors.New("WG source has multiple destinations")
+			return nil, errors.New("WG source belongs to multiple resources")
 		}
 	}
-	endpoint := map[string]any{"type": "wireguard", "tag": tag, "system": false, "address": localAddresses, "source_routes": sourceRoutes, "peers": peerList}
-	if hasOwned {
-		endpoint["listen_port"] = owned.DialPort
-	} else {
-		endpoint["private_key"] = credentials[wireGuardSharedCredential]
+	result := map[string]any{"type": "wireguard", "tag": tag, "system": false, "address": stackAddresses, "source_routes": sourceRoutes, "peers": peerList}
+	if view.WireGuardPrivateKey != "" {
+		result["private_key"] = view.WireGuardPrivateKey
 	}
-	return endpoint, nil
+	return result, nil
 }

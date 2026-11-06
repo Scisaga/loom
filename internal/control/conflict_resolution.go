@@ -136,7 +136,7 @@ func resolutionReferences(payload MaterialPayload, dependencies []string) error 
 }
 
 func publicDeviceValue(value DeviceAuthorization) DevicePut {
-	return DevicePut{ID: value.ID, Name: value.Name, Responsibilities: append([]string{}, value.Responsibilities...), PolicyIDs: append([]string{}, value.PolicyIDs...), DistributionURLs: append([]string{}, value.DistributionURLs...), DNSServers: append([]string(nil), value.DNSServers...)}
+	return DevicePut{WireGuardPublicKey: value.WireGuardPublicKey, ID: value.ID, Name: value.Name, Responsibilities: append([]string{}, value.Responsibilities...), PolicyIDs: append([]string{}, value.PolicyIDs...), DistributionURLs: append([]string{}, value.DistributionURLs...), DNSServers: append([]string(nil), value.DNSServers...)}
 }
 
 func validateResolutionTarget(material Material, view Projection) error {

@@ -20,25 +20,37 @@ func historicalPolicyState(t *testing.T, state State) []byte {
 	var identity, envelope, view map[string]json.RawMessage
 	json.Unmarshal(mustStateBytes(t, state), &identity)
 	json.Unmarshal(identity["certified_lkg"], &envelope)
-	json.Unmarshal(envelope["view"], &view)
+	view = testHistoricalView(t, state.LKG.View)
 	var routes []map[string]json.RawMessage
 	json.Unmarshal(view["routes"], &routes)
-	for _, route := range routes {
+	for index, route := range routes {
+		current := testDeviceExecution(state.LKG.View).Routes[index]
+		chain, links, err := control.CandidateTopologyEstimate(testDeviceExecution(state.LKG.View), current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.FirstResourceID == "" {
+			chain = []string{}
+			links = []string{}
+		}
+		delete(route, "entry_node_id")
 		delete(route, "policy_id")
+		route["node_chain"], _ = json.Marshal(chain)
+		route["link_ids"], _ = json.Marshal(links)
 	}
+	delete(view, "access_grants")
+	delete(view, "policy_exits")
 	view["routes"], _ = json.Marshal(routes)
-	envelope["view"], _ = json.Marshal(view)
+	envelope["view"] = testCanonicalHistoricalJSON(t, view)
 	sum := sha256.Sum256(append([]byte("loom-device-view-digest-v3\x00"), envelope["view"]...))
 	envelope["view_digest"], _ = json.Marshal("sha256:" + hex.EncodeToString(sum[:]))
 	delete(envelope, "signature")
-	unsigned, _ := json.Marshal(envelope)
+	unsigned := testCanonicalHistoricalJSON(t, envelope)
 	seed := sha256.Sum256([]byte("demo-device-control-b"))
 	envelope["signature"], _ = json.Marshal(base64.RawURLEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(seed[:]), append([]byte("loom-device-view-v3\x00"), unsigned...))))
-	identity["certified_lkg"], _ = json.Marshal(envelope)
-	if state.Preference != nil {
-		identity["preference"] = json.RawMessage(`{"mode":"auto","schema":3}`)
-	}
-	body, _ := json.Marshal(identity)
+	identity["certified_lkg"] = testCanonicalHistoricalJSON(t, envelope)
+	identity["preference"] = json.RawMessage(`{"mode":"auto","schema":3}`)
+	body := testCanonicalHistoricalJSON(t, identity)
 	return body
 }
 
@@ -71,13 +83,13 @@ func TestHistoricalRestrictionRequiresEquivalentReplacementRules(t *testing.T) {
 		{"Direct widened entry", `{"mode":"direct","schema":3}`, direct, func() control.NetworkPolicy { p := direct; p.EntryScope = unrestricted; return p }(), ""},
 		{"fixed equivalent", `{"exit":"demo-exit","mode":"fixed_exit","schema":3}`, fixed, fixed, fixed.ID},
 		{"fixed widened exit", `{"exit":"demo-exit","mode":"fixed_exit","schema":3}`, fixed, func() control.NetworkPolicy { p := fixed; p.ExitScope = &unrestricted; return p }(), ""},
-		{"fixed changed relay rules", `{"exit":"demo-exit","mode":"fixed_exit","schema":3}`, fixed, func() control.NetworkPolicy { p := fixed; p.RelayScope = none; return p }(), ""},
-		{"missing preference", "", direct, direct, ""},
+		{"fixed changed relay rules", `{"exit":"demo-exit","mode":"fixed_exit","schema":3}`, fixed, func() control.NetworkPolicy { p := fixed; p.RelayScope = none; return p }(), fixed.ID},
+		{"missing preference and sole grant", "", direct, direct, direct.ID},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			next := control.DeviceView{DeviceID: "demo-device", PolicyIDs: []string{test.current.ID}, Policies: []control.NetworkPolicy{test.current}, Services: []control.Service{service}}
 			preference, err := migratePolicyPreference(historical(test.old), []byte(test.legacy), next)
-			if err != nil || preference.Policy(service.ID) != test.want || !preference.Equal(clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: service.ID, PolicyID: test.want}}}) {
+			if err != nil || preference.PolicyID != test.want || !preference.Equal(clientmodel.Preference{Schema: 3, PolicyID: test.want}) {
 				t.Fatal("legacy restriction was widened or lost initialized waiting state", err)
 			}
 		})
@@ -112,7 +124,7 @@ func TestPolicyReplacementPreservesIdentityFloorsAndEvidence(t *testing.T) {
 		}
 	}
 	preference, err := MigratePolicySelectionFile(path, evidence, next, []byte(`{"mode":"auto","schema":3}`), nil)
-	if err != nil || preference.Policy("demo-service") != "demo-policy" {
+	if err != nil || preference.PolicyID != "demo-policy" {
 		t.Fatal("policy migration did not preserve Auto's singleton", err)
 	}
 	loaded, err := Load(path)
@@ -138,8 +150,18 @@ func TestUnprovableLegacyRestrictionBecomesPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := historicalPolicyState(t, store.state)
-	_, preference, err := ReplacePolicySelectionLKG(original, envelope(store.PublicKey(), 8), []byte(`{"exit":"demo-exit","mode":"fixed_exit","schema":3}`))
-	if err != nil || preference.Policy("demo-service") != "" || len(preference.Services) != 1 {
+	fixed := []byte(`{"exit":"demo-exit","mode":"fixed_exit","schema":3}`)
+	if _, _, err := ReplacePolicySelectionLKG(original, envelope(store.PublicKey(), 8), fixed); err == nil {
+		t.Fatal("conflicting inline and external preference originals were silently resolved")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(original, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["preference"] = fixed
+	original = joinHistoricalIdentityFields(fields)
+	_, preference, err := ReplacePolicySelectionLKG(original, envelope(store.PublicKey(), 8), fixed)
+	if err != nil || preference.PolicyID != "" {
 		t.Fatal("unprovable restriction widened permissions", err)
 	}
 }

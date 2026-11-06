@@ -100,8 +100,9 @@ Windows 原生截图场景集中复用生产 `portableGUI`、真实 Win32 控件
 - `viewport-bottom`
 - `fixed-tun`
 
-其中原有十九项已获用户整组批准，经 `record all` 由生产原生 renderer 更新并严格逐像素复验。
-Android 包含逐目标失败依据，Windows 包含首次空态；场景集合及全部像素相同。证据见
+当前文件集合共二十一项；历史整组批准和严格复验覆盖当时的十九项（Android 十项、Windows 九项），
+不能将那份记录扩展成后来全部场景的验收。新增场景的批准、渲染和实际覆盖须分别核对，
+本轮文档审计只核对文件集合，没有重录或重新执行原生渲染。十九项历史证据见
 `deploy/evidence/2026-10-13-ui-baselines/result.json` 与[场景对照](prototype-review.md)。
 这不是目标场景数量上限，也不替代实际业务或实体终验；不得复制 SVG 充当 PNG 基准。
 

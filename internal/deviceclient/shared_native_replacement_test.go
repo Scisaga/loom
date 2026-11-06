@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,7 +19,7 @@ import (
 	"loom/internal/control"
 )
 
-// The fixture contains the current shared native resource endpoint, real /64
+// The fixture contains the retired shared native resource endpoint, real /64
 // execution DNS pool and the historical six-node, eighteen-direction graph.
 // Its old executable sections remain raw signed evidence throughout migration.
 func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) (control.DeviceViewEnvelope, []byte) {
@@ -28,7 +29,7 @@ func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) 
 		t.Fatal(err)
 	}
 	anyScope := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
-	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_suffix", Value: "example"}}}}
+	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}}
 	p.NetworkIntent.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: new(anyScope), AllowDirect: new(true), LocalEgressDevices: new([]string{}), MaxHops: 2}}
 	ids := []string{state.Invite.Material.Payload.(control.Invite).DeviceID, "demo-cn-a", "demo-cn-b", "demo-edge-a", "demo-edge-b", "demo-edge-c"}
 	for i, id := range ids {
@@ -47,6 +48,7 @@ func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) 
 			t.Fatal(err)
 		}
 		wgPublic := base64.RawURLEncoding.EncodeToString(wg.PublicKey().Bytes())
+		p.DeviceAuthorizations[len(p.DeviceAuthorizations)-1].WireGuardPublicKey = wgPublic
 		addresses := []string{fmt.Sprintf("198.51.100.%d/32", i+1)}
 		p.NetworkIntent.Resources = append(p.NetworkIntent.Resources, control.TransportResource{ID: fmt.Sprintf("demo-wg-%d", i), Kind: "wireguard", OwnerNodeID: id, ListenerID: fmt.Sprintf("demo-wg-%d", i), DialHost: fmt.Sprintf("192.0.2.%d", i+1), DialPort: 51820, AccessEnabled: i != 0, Authentication: control.ResourceAuthentication{PublicKey: &wgPublic, LocalAddresses: &addresses}})
 	}
@@ -68,10 +70,11 @@ func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) 
 	for i, id := range ids {
 		positions[id] = i
 	}
-	for _, link := range view.Links {
+	for _, link := range testDeviceExecution(view).Links {
 		if (positions[link.FromNodeID] < 3) == (positions[link.ToNodeID] < 3) {
 			continue
 		}
+		link.ProbeTarget.Action = "wireguard_dns"
 		link.ID = "demo-manual-" + link.FromNodeID + "-" + link.ToNodeID
 		oldLinks = append(oldLinks, link)
 	}
@@ -84,7 +87,28 @@ func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) 
 		t.Fatal(err)
 	}
 	var historical map[string]json.RawMessage
-	json.Unmarshal(viewBody, &historical)
+	historical = testHistoricalView(t, view)
+	_ = viewBody
+	delete(historical, "access_grants")
+	delete(historical, "policy_exits")
+	var legacyRoutes []map[string]json.RawMessage
+	json.Unmarshal(historical["routes"], &legacyRoutes)
+	for index, row := range legacyRoutes {
+		candidate := testDeviceExecution(view).Routes[index]
+		chain, ids, err := control.CandidateTopologyEstimate(testDeviceExecution(view), candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if candidate.FirstResourceID == "" {
+			chain = []string{}
+			ids = []string{}
+		}
+		delete(row, "entry_node_id")
+		row["node_chain"], _ = json.Marshal(chain)
+		row["link_ids"], _ = json.Marshal(ids)
+	}
+	historical["routes"], _ = json.Marshal(legacyRoutes)
+
 	historical["links"], err = control.CanonicalEncode(oldLinks)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +116,47 @@ func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) 
 	// Remove the newly introduced candidate diagnostic rules. The existing
 	// native resource diagnostics and the complete shared endpoint remain.
 	var profile map[string]any
-	json.Unmarshal([]byte(view.RuntimeProfile.Config), &profile)
+	json.Unmarshal([]byte(testDeviceExecution(view).RuntimeProfile.Config), &profile)
+	for _, raw := range profile["outbounds"].([]any) {
+		row := raw.(map[string]any)
+		delete(row, "execution")
+		delete(row, "execution_source")
+		delete(row, "hop")
+	}
+	for _, raw := range profile["endpoints"].([]any) {
+		endpoint := raw.(map[string]any)
+		for _, resource := range view.Resources {
+			if resource.Kind == "wireguard" && resource.OwnerNodeID == view.DeviceID {
+				endpoint["tag"] = control.ResourceInboundTag(resource.ID)
+				// The retired producer bound the resource's public port locally.
+				// Preserve that historical meaning explicitly: today's renderer
+				// correctly leaves the local port to protected execution inputs.
+				endpoint["listen_port"] = resource.DialPort
+			}
+		}
+		delete(endpoint, "execution")
+		delete(endpoint, "execution_address")
+		// The retired stack bound its per-resource sender principals. Today's
+		// stable loopback anchors are a different execution shape and cannot
+		// stand in for those historical signed bytes.
+		principals := map[string]bool{}
+		for _, rawRoute := range endpoint["source_routes"].([]any) {
+			row := rawRoute.(map[string]any)
+			source, err := netip.ParseAddr(row["source"].(string))
+			if err != nil || !source.Is6() || !source.IsPrivate() {
+				t.Fatal("retired sender principal is not a private IPv6 address")
+			}
+			principals[netip.PrefixFrom(source, 128).String()] = true
+			delete(row, "execution")
+		}
+		addresses := make([]string, 0, len(principals))
+		for address := range principals {
+			addresses = append(addresses, address)
+		}
+		sort.Strings(addresses)
+		endpoint["address"] = addresses
+	}
+
 	route := profile["route"].(map[string]any)
 	rules := []any{}
 	for _, raw := range route["rules"].([]any) {
@@ -108,7 +172,13 @@ func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) 
 		rules = append(rules, raw)
 	}
 	route["rules"] = rules
-	configBody, _ := json.Marshal(profile)
+	configBody := testCanonicalHistoricalJSON(t, profile)
+	for _, resource := range view.Resources {
+		if resource.Kind == "wireguard" && resource.OwnerNodeID == view.DeviceID {
+			oldTag, _ := json.Marshal(control.ResourceInboundTag(resource.ID))
+			configBody = bytes.ReplaceAll(configBody, []byte(`"wg-shared"`), oldTag)
+		}
+	}
 	historical["runtime_profile"], err = control.CanonicalEncode(control.RuntimeProfile{Kind: "sing_box", Config: string(configBody)})
 	if err != nil {
 		t.Fatal(err)
@@ -116,11 +186,11 @@ func sharedNativeReplacementFixture(t *testing.T, state State, sequence uint64) 
 	var originalEnvelope map[string]json.RawMessage
 	body, _ := control.CanonicalEncode(envelope)
 	json.Unmarshal(body, &originalEnvelope)
-	originalEnvelope["view"], _ = json.Marshal(historical)
+	originalEnvelope["view"] = testCanonicalHistoricalJSON(t, historical)
 	sum := sha256.Sum256(append([]byte("loom-device-view-digest-v3\x00"), originalEnvelope["view"]...))
 	originalEnvelope["view_digest"], _ = json.Marshal("sha256:" + hex.EncodeToString(sum[:]))
 	delete(originalEnvelope, "signature")
-	unsigned, _ := json.Marshal(originalEnvelope)
+	unsigned := testCanonicalHistoricalJSON(t, originalEnvelope)
 	originalEnvelope["signature"], _ = json.Marshal(base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, append([]byte("loom-device-view-v3\x00"), unsigned...))))
 	old, _ := json.Marshal(originalEnvelope)
 	return envelope, old
@@ -182,7 +252,7 @@ func TestCurrentSharedNativeManualGraphMigrationPreservesProtectedIdentityAndRej
 		t.Fatal("old shared native original bytes changed", err)
 	}
 	loaded, err := Load(path)
-	if err != nil || !fixedIdentityEqual(before, loaded.state) || loaded.state.ReportSequence != before.ReportSequence || !loaded.state.AuthenticatedLatch || loaded.state.HighWater[0].Sequence != 8 || len(loaded.LKG().View.Links) != 30 {
+	if err != nil || !fixedIdentityEqual(before, loaded.state) || loaded.state.ReportSequence != before.ReportSequence || !loaded.state.AuthenticatedLatch || loaded.state.HighWater[0].Sequence != 8 || len(testDeviceExecution(loaded.LKG().View).Links) != 30 {
 		t.Fatal("migration lost identity, progress or current automatic graph", err)
 	}
 	actual, err := os.ReadFile(path)

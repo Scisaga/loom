@@ -9,7 +9,7 @@ func testDerivedLink(t *testing.T, projection Projection, from, to string) Netwo
 		t.Fatal(err)
 	}
 	for _, link := range links {
-		if link.FromNodeID == from && link.ToNodeID == to {
+		if link.FromNodeID == from && link.ToNodeID == to && link.ProbeTarget.Action == "wireguard_echo" {
 			return link
 		}
 	}

@@ -16,8 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sagernet/quic-go/http3"
 	"loom/internal/control"
+
+	"github.com/sagernet/quic-go/http3"
 )
 
 // This uses actual owned UDP sockets and QUIC/TLS in a dedicated namespace.
@@ -58,7 +59,11 @@ func TestIsolatedResourceTimeoutRecoversSameViewWithoutLosingWGOwnership(t *test
 	public := base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
 	view.Resources = append(view.Resources, control.TransportResource{ID: "demo-wg", Kind: "wireguard", OwnerNodeID: view.DeviceID, ListenerID: "demo-wg-listener",
 		DialHost: "192.0.2.11", DialPort: wg.LocalAddr().(*net.UDPAddr).Port, Authentication: control.ResourceAuthentication{PublicKey: &public}})
-	executions, err := prepareHY2Executions(view, path, now)
+	inputs.Listeners = append(inputs.Listeners, ResourceListenerInput{ResourceID: "demo-wg", ListenPort: wg.LocalAddr().(*net.UDPAddr).Port})
+	if err := atomicJSON(path, inputs); err != nil {
+		t.Fatal(err)
+	}
+	executions, err := prepareResourceExecutions(view, path, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +102,7 @@ func TestIsolatedResourceTimeoutRecoversSameViewWithoutLosingWGOwnership(t *test
 	if err != nil || recovered.State != "running" || recovered.AppliedViewDigest != lkg.ViewDigest {
 		t.Fatal("unchanged View did not recover on the next actual readback", err)
 	}
-	wrong := append([]hy2Execution{}, executions...)
+	wrong := append([]resourceExecution{}, executions...)
 	wrong[0].acl = "sha256:" + strings.Repeat("2", 64)
 	if _, err := resourceRuntimeReadback(ctx, lkg, wrong, os.Getpid(), now, true, nil); err == nil || errors.Is(err, errResourceReadbackTimeout) {
 		t.Fatal("an ACL mismatch was treated as missing observation")

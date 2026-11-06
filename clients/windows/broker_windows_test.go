@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 
@@ -51,7 +50,7 @@ func windowsFixture(t *testing.T) (control.BootstrapInvite, func(string, uint64,
 			t.Fatal(err)
 		}
 		scope := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
-		p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo.example"}}}}
+		p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}}
 		p.NetworkIntent.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}}
 		inviteID, _ := control.MaterialID(material)
 		p.DeviceAuthorizations = []control.DeviceAuthorization{{ID: invitation.DeviceID, Name: invitation.Name, Platform: "windows", DevicePublicKey: public, Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, DistributionURLs: []string{}, RuntimeKey: members[0].PublicKey, TransactionID: invitation.ID, InviteMaterialID: inviteID, BindingMaterialID: anchor}}
@@ -68,20 +67,8 @@ func windowsFixture(t *testing.T) (control.BootstrapInvite, func(string, uint64,
 		p.NetworkIntent.Services, p.NetworkIntent.Policies = view.Services, view.Policies
 		p.DeviceAuthorizations[0].Responsibilities = append([]string{}, view.Responsibilities...)
 		p.DeviceAuthorizations[0].PolicyIDs = append([]string{}, view.PolicyIDs...)
-		p.NetworkIntent.BusinessProbeTargets = []control.BusinessProbeTarget{}
-		for _, group := range view.BusinessProbeTargets {
-			for _, target := range group.Targets {
-				p.NetworkIntent.BusinessProbeTargets = append(p.NetworkIntent.BusinessProbeTargets, control.BusinessProbeTarget{ID: fmt.Sprintf("demo-probe-%d", len(p.NetworkIntent.BusinessProbeTargets)+1), URL: target})
-			}
-		}
-		sort.Slice(p.NetworkIntent.BusinessProbeTargets, func(i, j int) bool {
-			return p.NetworkIntent.BusinessProbeTargets[i].URL < p.NetworkIntent.BusinessProbeTargets[j].URL
-		})
+
 		view, err = control.ProjectDeviceView(p, invitation.DeviceID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		view.Routes, view.RuntimeProfile, err = control.ProjectAccessRuntime(view)
 		if err != nil {
 			t.Fatal(err)
 		}

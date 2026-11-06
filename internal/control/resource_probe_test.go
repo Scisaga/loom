@@ -12,79 +12,58 @@ import (
 	"time"
 )
 
-func TestFirstHopProbeUsesAuthorizedFirstCredentialAndPreservesView(t *testing.T) {
+func TestFirstHopAdmissionReusesAnEntryAcrossExitsAndSeparatesPolicies(t *testing.T) {
 	p := relayProjectionFixture(t)
 	service := p.NetworkIntent.Services[0]
-	service.ID, service.Matchers = "demo-service-other", []ServiceMatcher{{Kind: "dns_exact", Value: "other.example"}}
+	service.ID = "demo-service-other"
+	service.ProbeURLs = []string{"https://other.example/"}
 	policy := p.NetworkIntent.Policies[0]
-	policy.ID, policy.ServiceID = "demo-policy-other", service.ID
+	policy.ID = "demo-policy-other"
+	policy.ServiceID = service.ID
 	p.NetworkIntent.Services = append(p.NetworkIntent.Services, service)
 	p.NetworkIntent.Policies = append(p.NetworkIntent.Policies, policy)
 	p.DeviceAuthorizations[0].PolicyIDs = append(p.DeviceAuthorizations[0].PolicyIDs, policy.ID)
+	for index := range p.NetworkIntent.Policies {
+		p.NetworkIntent.Policies[index].ExitScope = new(PolicyScope{Mode: "any", NodeIDs: []string{}})
+	}
 	view, err := ProjectDeviceView(p, "demo-access")
 	if err != nil {
 		t.Fatal(err)
 	}
 	before, _ := CanonicalEncode(view)
-	probes, err := FirstHopProbes(view)
-	if err != nil || len(probes) != 2 || len(view.Routes) != 4 {
-		t.Fatal("shared resources did not deduplicate", err)
-	}
-	byCandidate, err := CandidateFirstHopProbes(view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	credentials, _ := profileCredentials(view)
-	matchedRoutes, differentCredentials := 0, 0
-	for _, route := range view.Routes {
-		var sampled ResourceProbe
-		for _, probe := range probes {
-			if probe.Resource.ID == route.FirstResourceID {
-				sampled = probe
+	probes := []ResourceProbe{}
+	credentials, _ := executionCredentials(view)
+	for _, policyID := range view.PolicyIDs {
+		execution, err := ProjectDeviceCandidates(view, []string{policyID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, err := FirstHopProbes(execution)
+		if err != nil || len(current) != 2 || len(execution.Routes) != 4 {
+			t.Fatal("entry admission was expanded per final exit or inactive Policy", len(current), len(execution.Routes), err)
+		}
+		probes = append(probes, current...)
+		refs, err := CandidateFirstHopProbes(execution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, route := range execution.Routes {
+			probe, found := refs[route.ID]
+			if !found || probe.PolicyID != route.PolicyID || probe.Credential != credentials[route.FirstResourceID] {
+				t.Fatal("candidate borrowed another Policy's admission proof")
 			}
 		}
-		bound, found := byCandidate[route.ID]
-		want := credentials[route.ID] == sampled.Credential
-		if found != want || found && (bound.SpecDigest != sampled.SpecDigest || bound.Credential != credentials[route.ID]) {
-			t.Fatal("one Service borrowed another credential's authentication result")
-		}
-		if found {
-			matchedRoutes++
-		} else {
-			differentCredentials++
-		}
 	}
-	if matchedRoutes != 2 || differentCredentials != 2 {
-		t.Fatal("fixture did not exercise different Service credentials on shared resources")
-	}
-	entry, _ := ProjectDeviceView(p, "demo-entry")
-	exit, _ := ProjectDeviceView(p, "demo-exit")
+	byResource := map[string]ResourceProbe{}
 	for _, probe := range probes {
-		matched := false
-		for _, receiver := range []DeviceView{entry, exit} {
-			for _, permission := range receiver.InboundCredentials {
-				matched = matched || permission.ResourceID == probe.Resource.ID && permission.Credential == probe.Credential
-			}
+		if previous, found := byResource[probe.Resource.ID]; found && previous.PolicyID != probe.PolicyID && (previous.SpecDigest == probe.SpecDigest || previous.Credential != probe.Credential) {
+			t.Fatal("Policy admission was conflated or stable sender authentication was duplicated")
 		}
-		if !matched {
-			t.Fatal("first hop borrowed a different receiver's credential")
-		}
-	}
-	for _, receiver := range []DeviceView{entry, exit} {
-		values, err := FirstHopProbes(receiver)
-		if err != nil || len(values) != 0 {
-			t.Fatal("Link-only node acquired a public first-hop probe", err)
-		}
+		byResource[probe.Resource.ID] = probe
 	}
 	after, _ := CanonicalEncode(view)
 	if !bytes.Equal(before, after) {
-		t.Fatal("derived probe changed certified bytes")
-	}
-	p.DeviceAuthorizations[0].PolicyIDs = []string{}
-	withdrawn, _ := ProjectDeviceView(p, "demo-access")
-	values, err := FirstHopProbes(withdrawn)
-	if err != nil || len(values) != 0 {
-		t.Fatal("withdrawal retained a login projection", err)
+		t.Fatal("measurement preparation rewrote a signed View")
 	}
 }
 
@@ -96,12 +75,12 @@ func TestResourceReportBindsExecutionAndRestartsAsRawEvidence(t *testing.T) {
 	}
 	p.DeviceAuthorizations[0].DevicePublicKey = base64.RawURLEncoding.EncodeToString(public)
 	view, _ := ProjectDeviceView(p, "demo-access")
-	probes, err := FirstHopProbes(view)
+	probes, err := FirstHopProbes(testDeviceExecution(view))
 	if err != nil || len(probes) != 1 {
 		t.Fatal(err)
 	}
 	probe := probes[0]
-	value := Observation{Level: "resource", ResourceID: probe.Resource.ID, Target: probe.Target(), Action: "hysteria2_tls", SpecDigest: probe.SpecDigest,
+	value := Observation{Level: "resource", ResourceID: probe.Resource.ID, Target: probe.Target(), Action: probe.Action(), SpecDigest: probe.SpecDigest,
 		NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: 1000, ValidUntil: 601000}
 	for _, change := range []func(*Observation){
 		func(v *Observation) { v.Target = "192.0.2.11:443" },
@@ -132,14 +111,14 @@ func TestResourceReportBindsExecutionAndRestartsAsRawEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		newProbes, err := FirstHopProbes(next)
+		newProbes, err := FirstHopProbes(testDeviceExecution(next))
 		if err != nil || verifyResourceObservation(value, newProbes) == nil {
 			t.Fatal("changed execution preserved an old resource sample", err)
 		}
 	}
 	digest, _ := DeviceViewDigest(view)
 	report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: p.NetworkID, DeviceID: view.DeviceID, ReportSequence: 1,
-		ViewDigest: digest, NetworkGeneration: value.NetworkGeneration, ReportedAt: 1000, Selections: []ReportSelection{},
+		ViewDigest: digest, PolicyID: probe.PolicyID, NetworkGeneration: value.NetworkGeneration, ReportedAt: 1000, Selections: []ReportSelection{},
 		Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "unknown"}, Observations: []Observation{value}}, private)
 	if err != nil || verifyCurrentReport(report, p) != nil {
 		t.Fatal("authorized resource report rejected", err)
@@ -159,8 +138,8 @@ func TestResourceReportBindsExecutionAndRestartsAsRawEvidence(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(store.Verified(p), []DeviceReport{report}) {
 		t.Fatal("resource report lost its original bytes or signature", err)
 	}
-	snapshot := buildWebSnapshot(p, true, true, true)
-	projectWebObservations(&snapshot, store.Verified(p), time.UnixMilli(report.ReportedAt))
+	snapshot := testWebSnapshotWithIntent(p, true, true, true)
+	testProjectWebObservations(&snapshot, store.Verified(p), time.UnixMilli(report.ReportedAt))
 	for _, device := range snapshot.Devices {
 		if device.ID == view.DeviceID && (device.Availability != "unknown" || device.Evidence == nil || !reflect.DeepEqual(device.Evidence.Measurements, []WebObservation{{Observation: value}})) {
 			t.Fatal("raw authentication sample became overall health or disappeared")

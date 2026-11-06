@@ -9,7 +9,9 @@ Gandi provider token。它是本机私有输入，
 及其授权来自已验证的签名事实所确定的 `Projection`；本机监听与私钥由节点受保护的运行输入提供。
 `.env` 不能创建或修改这些事实。
 
-本文只定义仓库根 `.env`。节点上的 systemd environment 和 Android 签名文件各有独立消费者与权限边界，
+本文分别定义根 .env 及其部署 YAML 引用，并说明相关专用运行输入与发布流程；这些输入各有消费者，
+不能合并为第二份业务权威。下文历史部署结果不构成当前任务授权；没有现场读回时不宣称当前生效。
+节点上的 systemd environment 和 Android 签名文件各有独立消费者与权限边界，
 不得合并进根文件。`GANDI_PAT_TOKEN` 是唯一允许直接保存的 provider secret；已有值继续保留，
 未配置时可省略，当前核心服务不会读取或使用它。
 网站根私钥由操作者在与所有 control 隔离的离线签发介质保管；它不属于 `LocalDeploymentConfig.signing_key`
@@ -71,11 +73,27 @@ LocalDeploymentConfig {
 范围为 1～65535，前后数量相同，protocol 只允许 tcp/udp，host_address 必须属于本节点。
 相同协议及公网主机的映射范围不能重叠。按 protocol、public_host、public_ports.first、purpose 排序。
 这些值只消费操作者已有的映射，不授权登录或修改 NAT、路由器、防火墙，也不赋予 Loom 职责或服务权限。
+操作者明确确认映射已经配置时，该操作史是已知事实；尚待核实的是映射读回、资源 owner、
+access_enabled/link_only、监听、认证材料和实测可达性。不得因旧实现标签或某个资源未开放首跳，
+倒推出操作者没有配置映射，也不能用端口映射本身替代节点职责、授权及真实接入验证。
+
+ingress 须保留操作者确认的完整可用范围；当前监听端口只是运行时消费结果，不能代替可用范围。
+已有文件只剩单个监听端口时，须按操作者确认的范围修复遗漏，不能仅因它未包含某个占用端口
+便认定配置正确。操作者确认已供其他程序使用的端口，须从对应节点供 Loom 使用的 ingress
+中排除：端口位于区间边界时缩短区间，位于内部时拆成两段；公网和本机端口仍按原偏移一一
+对应，其他节点的映射保持。这些修订使用原字段，不新增配置实体。
+真实节点、端口、操作者确认与现场回读保存在受保护证据中；单次未见 socket 或端口恢复的
+一周避让届满，均不能撤销操作者确认的其他程序用途。
 
 `control serve -deployment-env` 的现有执行器也消费这些映射执行
 [WG 持续失败后的端口恢复](../core/control-model.md#wg-持续失败后的端口恢复)。只有 `local_node`
 与实际 control 节点一致、共享 listener 及独立 SSH 管理身份回读成立时才可执行。只选择同公开主机的
-UDP 一对一同号映射；端口平移的映射不自动执行。它不修改 YAML，不推测外部映射，不增加 `.env` 键。
+显式 UDP 映射，按 `host_ports.first + public_port - public_ports.first` 计算本机端口；公网拨号端口
+与本机监听端口分别核对占用，不能要求二者相等。它不修改 YAML、不推测外部映射、不增加 `.env` 键。
+签名资源仍只改变公开拨号坐标；接收节点沿既有部署执行器、受保护 resource-inputs 和正式客户端入口
+应用对应本机监听。本机端口变化沿既有 reload/check 和原生接收 API 热重绑 WG UDP，
+保留 WG Device/TUN、Hy2 和其他业务连接。
+未知结果清除执行确认和资源证明，沿原检查重读/重试；保留身份与认证进度，不回写旧授权。
 共享中继参与节点的认证 View 经 SSH 与正式客户端同步入口交付，普通 access 继续沿已有私有配置刷新。
 服务的既有权限必须允许其执行正式入口；
 本机节点的设备状态目录须作为精确的可写路径，不因此放宽宿主其他目录或网络权限。
@@ -95,21 +113,20 @@ Service/Policy 限定业务路径，实时测量决定当前选择；派生 Link
 本机仅保存资源执行所需的私钥、已有证书和启动成员验证所需的受保护定位输入。
 定位输入不授予成员资格或业务权限，必须在建立资源后同认证节点身份核对，也不能倒写 Projection。
 
-WG 接收资源由同一原生数据面进程执行，固定私钥仍来自 root 持有、0600 的
-`/etc/wireguard/node.key`，启动前核对资源公钥。普通接入 peer 和业务地址仅在用户态路由器中，
-不添加宿主路由或防火墙。已有 Link 管理流量使用原精确接口地址、peer 与返回路由；新执行器
-创建并回读本 generation 的 TUN 接口及精确管理路由，不使用 auto_route、默认路由或 policy rule。
-先等待同一数据面进程实际持有 WG UDP listener，确认其内部 TUN 初始化已经完成；仅看到临时
-接口或 TUN 文件描述符不能作为改名时机，否则会与子进程按原名称配置接口竞争。
-为兼容拒绝在线改名的内核，完成进程所有权核对后，只将新建的临时接口置为 down、改为派生执行名称并
-重新置为 up，然后才添加管理返回路由；这不操作既有接口，也不改宿主网络服务。
-Linux 名称为 `loom-wg` 加网络与资源 ID 的稳定短摘要，算法及切换见
-[宿主接口名](../core/current-contract.md#linux-wg-的宿主接口名)。原签名 `listener_id`、资源身份与
-所有认证字节保持；接口名只进入可删除的运行所有权记录。预检和启动使用同一投影，不添加环境变量。
-systemd 按已认证的本节点 Link 投影 `/dev/net/tun` 设备访问；这仅满足原生管理 endpoint 的
-执行要求，Mixed 不因此获得隔离 capture 的 `CAP_SYS_ADMIN` 或初始 netns 文件描述符。
-旧内核 WG 安装器删除，只有识别旧所有权记录的 compare-and-delete 清理用于一次切换。
-已有身份、公钥与管理地址不变；未知现存对象不能被接管，清理失败保持 failed/inactive。
+WG 收发由同一原生数据面进程执行，固定私钥仍来自 root 持有、0600 的
+`/etc/wireguard/node.key`，即使没有接收资源也按节点已登记公钥核对发送身份；接收资源存在时
+其公钥也须一致。既有派生身份保持原算法，不能因资源删除改用它覆盖固定身份。普通接入 peer 和业务地址仅在用户态路由器中，
+不添加宿主路由或防火墙。普通 WG 资源、自动派生的 relay Link 和本机监听输入均不隐式
+提供任意宿主管理访问，也不投影 `system/name/host_sources/stack_address`、宿主接口名、
+管理地址或返回路由。新增发送资源由同一用户态 WG 实例及本机按需资源池消费，不因业务
+邻接增加而改写宿主网络。
+
+正式 bootstrap、配置与报告使用认证 Endpoint 和认证 DNS，`control.loom` 使用精确 website
+underlay；原有 SSH、WG、LAN、宿主 DNS 和代理路径保持。历史执行器的临时 TUN、改名、
+地址恢复和管理返回路由事故按原义保留，见[宿主接口与历史清理边界](../core/current-contract.md#linux-wg-的宿主接口名)。
+其旧 generation 所有权记录仅供严格 compare-and-delete 清理，不能据旧资源或公钥恢复运行
+fallback、接管未知对象或放宽宿主安全门禁。清理失败保持 failed/inactive，原身份、密钥、
+认证 high_water/floor、latch 与报告序列保留。
 
 Hy2 资源由节点的受保护本机证书、私钥与连接凭据引用执行，与 Gandi provider token 无关；
 认证 `TransportResource` 只携带
@@ -120,18 +137,39 @@ Hy2 资源由节点的受保护本机证书、私钥与连接凭据引用执行�
 本机成员 TLS leaf/key 的文件引用保存在受保护的 `node.json`，其成员身份仍由 `ControlConfig` 验证。
 这些都是适配器的本机执行输入，不进入根 `.env`、公开 Artifact 或 Web，也不形成资源权威。
 
-现行 Linux 一跳 Hy2 执行以 `loom client run -resource-inputs <file>` 定位一份 owner-only 规范
-schema 3 本机输入：`{"schema":3,"listeners":[...]}`，listeners 按 resource_id 排序，项恰好为
-`resource_id,listen,certificate_file,key_file`。listen 是明确 IP 与非零端口；两个文件引用为规范绝对路径。
-只有当前认证 View 中由本节点承载的资源才能消费对应项，保留的未引用定位项不启动 listener 或授予权限。
-私钥不进入认证资源；公开 CA 和校验名只来自该资源的 authentication，不从本机 trust 文件补权。
+Linux WG 与 Hy2 执行以 `loom client run -resource-inputs <file>` 定位同一份 owner-only 规范
+schema 3 本机输入：`{"schema":3,"listeners":[...]}`，listeners 按 resource_id 排序。
+WG 项恰为 `resource_id,listen_port`，本机 UDP 端口为 1～65535 的整数；不得含 listen 或 TLS 引用。
+Hy2 项仍为 `resource_id,listen,certificate_file,key_file`，listen 为规范 IP:port，TLS 文件引用为规范绝对路径；
+不得含 WG 的 listen_port。类型与 owner 只从认证 View 取得，本机不另存 kind、角色或授权。
+保留的未引用项不启动 listener 或授予权限；消费者按当前资源种类严格校验，不接受旧 WG listen 形式的运行 fallback。
+
+WG 使用原生标准共享双栈 UDP，同一个本机端口、同一 Device；不可用地址族只接受真实 EAFNOSUPPORT，
+端口被占用必须失败，不能降级另一族、隐式改随机端口或新增每 peer 的连接 socket/保活池。
+WG 端口与任何本节点 Hy2 同端口冲突，不因 Hy2 的 IP 或地址族不同而忽略；真实宿主占用仍须现场回读。
+本机监听不限制已授权的发送地址族。纯发送 WG 不要求 listener 输入，继续使用原节点身份及原生发送方式。
+WG 固定私钥仍来自原节点密钥输入，不复用 Hy2 key_file，也不更换身份。
+
+`TransportResource.dial_host/dial_port` 始终是其他节点的拨号坐标，WG 的 listen_port 与 Hy2 的 listen
+是本机受保护执行输入；`LocalDeploymentConfig.ingress` 只描述操作者已有的两端映射。
+三者职责分开，不增加权威对象或第二份网络配置。预检、实际启动、本机 socket 所有权与报告消费同一已验证输入；
+报告 listen 仍为实际持有的 socket IP:port，不能写公网端口充数，也不改变报告 schema。
+只改变公开拨号坐标不改变本机 socket/接口。本机输入摘要并入既有运行检查，端口变化先用完整 CAS
+确认新权限/peers，再以相同权限热重绑 WG UDP，保留 Device／内部用户态栈、Hy2 与其他业务连接。
+后一步失败或不确定时清除运行确认、报告 unknown，由原检查重读/重试；不宣称旧 listener 仍在运行，
+不为重放权限而隐式恢复旧端口。完整投影 hash 与真实未连接 wildcard socket 都须成立才能确认执行；
+hash 尚在而 socket 已丢失时仍要重新 Apply 明确的期望端口。不增加 watcher、store 或持久阶段。
+公开 CA 和校验名仍只来自 Hy2 resource.authentication，不从本机 trust 文件补权。
+现存 Hy2 输入保持原规范字节；已有 WG 接收节点在切换前按真实 socket 与已提供映射一次性补齐 listen_port。
+不修改签名原件、资源身份、节点密钥、认证 high_water/floor、latch 或报告序列。缺失输入失败关闭，
+不能以默认复用公开端口或旧运行 fallback 代替前向登记。
 正式启动校验证书/私钥匹配、CA、校验名、用途与有效期；资源报告再从真实 listener 的 QUIC/TLS 与认证回读。
 纯服务节点不启动 access capture；hybrid 的 server listener 留在原 underlay，显式隔离 TUN 的 access
 进程另行监督，两者消费同一认证 View。安装与部署结果见[实施状态](../progress.md)。该输入不增加根 `.env` 键。
-资源删除后未引用的本机输入仍可保留，但没有资源的纯服务节点停止数据面，只维持私有配置与报告通道。
+资源删除后未引用的本机输入仍可保留；接收资源删除只撤掉相应 listener。数据面是否仍需运行由当前 access、forward 及出口测量职责决定，不能以“没有接收资源”停止仍需发送或测量的共享实例。
 旧 generation 的进程退出须已回读后才可启动替代配置；父进程异常退出由 Linux 父死亡信号终止子进程，
 创建线程保持到子进程退出，以免 Go 线程生命周期造成误杀或遗留。Mixed capture 与 Hy2 listener 不拥有宿主
-route/rule 对象；同节点的认证 WG 资源只拥有上述精确接口路由，不取得默认路由、策略规则或其他 underlay 的所有权。
+route/rule 对象；普通 WG 资源同样不创建宿主接口路由，不取得默认路由、策略规则或其他 underlay 的所有权。
 
 正常停止可能与配置刷新并发：停止信号已经关闭数据面和它持有的 TUN 时，刷新中的运行回读
 可以发现原接口消失。退出结果先完成同 generation 的精确清理；只有清理成功且调用方已取消，

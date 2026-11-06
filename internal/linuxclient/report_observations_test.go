@@ -16,14 +16,16 @@ func TestLinuxReportFiltersAtSnapshotWithoutChangingCandidateRecovery(t *testing
 	store, _, makeView := linuxAcceptanceFixture(t, func(_ uint64, view *control.DeviceView) {
 		view.Responsibilities = []string{"access", "internet_egress"}
 		view.Policies[0].LocalEgressDevices = new([]string{view.DeviceID})
-		view.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo-service.example/a", "https://demo-service.example/b"}}}
+		view.Services[0].ProbeURLs = []string{"https://demo-service.example/a", "https://demo-service.example/b"}
+
 	})
 	lkg := makeView(7, true)
-	if len(lkg.View.Routes) != 2 {
+	if len(testDeviceExecution(lkg.View).Routes) != 2 {
 		t.Fatal("fixture must have selected and unselected candidates")
 	}
 	at := time.Date(2030, 1, 1, 0, 1, 0, 120_000_000, time.UTC)
 	state := defaultState("demo-underlay")
+	state.Preference = clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}
 	state.ObservationViewDigest = lkg.ViewDigest
 	for _, row := range []struct {
 		route           int
@@ -35,13 +37,13 @@ func TestLinuxReportFiltersAtSnapshotWithoutChangingCandidateRecovery(t *testing
 		{0, "https://demo-service.example/b", "unavailable", at.Add(-time.Minute), at.Truncate(time.Second)},
 		{1, "https://demo-service.example/b", "available", at.Add(time.Second), at.Add(time.Minute)},
 	} {
-		route := lkg.View.Routes[row.route]
-		state.Observations = append(state.Observations, clientmodel.Observation{CandidateID: route.ID, Scope: route.Scope, Target: row.target, Action: "https_request", NetworkGeneration: state.NetworkGeneration,
+		route := testDeviceExecution(lkg.View).Routes[row.route]
+		state.Observations = append(state.Observations, clientmodel.Observation{CandidateID: route.ID, Scope: control.AccessSelectorScope, Target: row.target, Action: "https_request", NetworkGeneration: state.NetworkGeneration,
 			Result: row.result, ObservedAt: row.observed.UTC().Format(time.RFC3339), ValidUntil: row.until.UTC().Format(time.RFC3339)})
 	}
 	sort.Slice(state.Observations, func(i, j int) bool { return state.Observations[i].Key() < state.Observations[j].Key() })
 	before, _ := json.Marshal(state)
-	activation := Activation{State: state, Selections: []SelectionStatus{{Scope: lkg.View.Routes[0].Scope, CandidateID: lkg.View.Routes[0].ID}}}
+	activation := Activation{State: state, Selections: []SelectionStatus{{Scope: control.AccessSelectorScope, CandidateID: testDeviceExecution(lkg.View).Routes[0].ID}}}
 	report, err := selectionReport(context.Background(), lkg, activation, at, []control.ComponentReadback{}, control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}, nil, nil)
 	if err != nil || len(report.Observations) != 2 || len(report.Selections) != 1 {
 		t.Fatal("report did not retain exactly the current candidates", err)
@@ -50,7 +52,7 @@ func TestLinuxReportFiltersAtSnapshotWithoutChangingCandidateRecovery(t *testing
 	for _, value := range report.Observations {
 		byID[value.CandidateID] = value.Result
 	}
-	if byID[lkg.View.Routes[0].ID] != "available" || byID[lkg.View.Routes[1].ID] != "unavailable" || report.ReportedAt != at.UnixMilli() {
+	if byID[testDeviceExecution(lkg.View).Routes[0].ID] != "available" || byID[testDeviceExecution(lkg.View).Routes[1].ID] != "unavailable" || report.ReportedAt != at.UnixMilli() {
 		t.Fatal("nonselected failure or frozen report time was lost")
 	}
 	after, _ := json.Marshal(state)

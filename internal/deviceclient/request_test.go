@@ -269,6 +269,72 @@ func TestReportRetriesTheSameOriginalAndReservesOnce(t *testing.T) {
 	}
 }
 
+func TestReportOmitsOnlyMeasurementsAcknowledgedByFormalTransport(t *testing.T) {
+	var acknowledged atomic.Bool
+	var lock sync.Mutex
+	sent := map[control.U64][]int{}
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		var reader io.Reader = r.Body
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			compressed, err := gzip.NewReader(r.Body)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			defer compressed.Close()
+			reader = compressed
+		}
+		body, err := io.ReadAll(reader)
+		var report control.DeviceReport
+		if err != nil || control.DecodeCanonical(body, &report, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 32, MaxItems: 1024}) != nil {
+			t.Error("report body was not canonical", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		lock.Lock()
+		sent[report.ReportSequence] = append(sent[report.ReportSequence], len(report.Observations))
+		lock.Unlock()
+		if !acknowledged.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writeDeviceResponse(t, w, control.DeviceReportResponse{Schema: 3, ReportSequence: report.ReportSequence, Status: "accepted"})
+	}
+	fixture := newDeviceRequestFixture(t, handler, handler)
+	at := time.Now().UnixMilli()
+	sample := control.Observation{Level: "service", ServiceID: "demo-service", CandidateID: control.ReleaseDigest([]byte("demo-candidate")), SpecDigest: control.ReleaseDigest([]byte("demo-spec")),
+		Target: "https://demo-service.example/delivery-ack", Action: "https_request", NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: at, ValidUntil: at + 60_000}
+	report := control.DeviceReport{NetworkGeneration: sample.NetworkGeneration, ReportedAt: at, Selections: []control.ReportSelection{}, Observations: []control.Observation{sample}, Components: []control.ComponentReadback{}, Runtime: control.RuntimeReadback{State: "stopped"}}
+	ctx, cancel := context.WithTimeout(fixture.context(context.Background()), 5*time.Second)
+	defer cancel()
+	if err := Report(ctx, fixture.store, report); err == nil {
+		t.Fatal("failed upload was acknowledged")
+	}
+	acknowledged.Store(true)
+	if err := Report(ctx, fixture.store, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := Report(ctx, fixture.store, report); err != nil {
+		t.Fatal(err)
+	}
+	lock.Lock()
+	defer lock.Unlock()
+	for sequence, want := range map[control.U64]int{1: 1, 2: 1, 3: 0} {
+		if len(sent[sequence]) == 0 {
+			t.Fatal("report did not cross the authenticated transport", sequence)
+		}
+		for _, count := range sent[sequence] {
+			if count != want {
+				t.Fatal("failed upload lost a sample or confirmed upload was repeated", sequence, count, want)
+			}
+		}
+	}
+	if fixture.store.state.ReportSequence != 3 {
+		t.Fatal("measurement deduplication changed durable report sequence")
+	}
+}
+
 func TestScopedReadsRejectPrimaryBeforeChoosingAlternative(t *testing.T) {
 	for _, operation := range []string{"link-observations", "release"} {
 		t.Run(operation, func(t *testing.T) {
@@ -279,7 +345,7 @@ func TestScopedReadsRejectPrimaryBeforeChoosingAlternative(t *testing.T) {
 					requests.Add(1)
 					view := fixture.store.LKG()
 					if operation == "link-observations" {
-						result := control.DeviceLinkObservations{Schema: 3, NetworkID: view.NetworkID, DeviceID: view.View.DeviceID, ViewDigest: view.ViewDigest, Observations: []control.DeviceLinkObservation{}}
+						result := control.DeviceLinkObservations{Cursor: "projection", Reset: true, Removed: []string{}, Schema: 3, NetworkID: view.NetworkID, DeviceID: view.View.DeviceID, ViewDigest: view.ViewDigest, Observations: []control.DeviceLinkObservation{}}
 						if primary {
 							result.DeviceID = "demo-other-device"
 						}
@@ -312,7 +378,7 @@ func TestScopedReadsRejectPrimaryBeforeChoosingAlternative(t *testing.T) {
 			})
 			var err error
 			if operation == "link-observations" {
-				_, err = FetchLinkObservations(ctx, fixture.store)
+				_, err = FetchLinkObservations(ctx, fixture.store, nil)
 			} else {
 				_, err = Release(ctx, fixture.store, "linux-amd64", func(value control.DeviceReleaseDelivery) error {
 					if value.CatalogBody != "demo-accepted" {

@@ -34,12 +34,15 @@ func LoadProtected(path string, protector clientsecret.Protector) (*ProtectedSto
 	}
 	return &ProtectedStore{Store: store}, nil
 }
-func (store *ProtectedStore) Preference() clientmodel.Preference {
+func (store *Store) Preference() clientmodel.Preference {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	return clientmodel.Preference{Schema: store.state.Preference.Schema, Services: append([]clientmodel.ServicePreference{}, store.state.Preference.Services...)}
+	if store.state.Preference == nil {
+		return clientmodel.EmptyPreference()
+	}
+	return store.state.Preference.Clone()
 }
-func (store *ProtectedStore) SetPreference(preference clientmodel.Preference) error {
+func (store *Store) SetPreference(preference clientmodel.Preference) error {
 	if err := preference.Validate(); err != nil {
 		return err
 	}

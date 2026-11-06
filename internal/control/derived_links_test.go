@@ -54,12 +54,17 @@ func TestRetiredManualLinkOriginalRemainsSignedCausalEvidence(t *testing.T) {
 	if err != nil || len(p.InvalidMaterials) != 0 {
 		t.Fatal("resource history is not admissible", err, p.InvalidMaterials)
 	}
-	links, err := DerivedNetworkLinks(p)
-	if err != nil || len(links) != 2 {
-		t.Fatal("resource history lost its automatic graph", err)
+	// Historical owners have no registered node key. Verify their originals,
+	// then register existing keys with new facts before using the current graph.
+	if _, err := DerivedNetworkLinks(p); err == nil {
+		t.Fatal("historical resources silently registered their owners")
 	}
-	link := links[0]
+	link, err := derivedNetworkLink(p.NetworkID, p.NetworkIntent.Resources[0], p.NetworkIntent.Resources[1])
+	if err != nil {
+		t.Fatal(err)
+	}
 	link.ID = "demo-original-manual-link"
+	link.ProbeTarget.Action = "wireguard_dns"
 	previous := history[len(history)-1]
 	keyID, _ := KeyID(f.members[0].PublicKey)
 	dependencies := append(append([]string{}, joinIDs...), resourceIDs...)
@@ -86,9 +91,37 @@ func TestRetiredManualLinkOriginalRemainsSignedCausalEvidence(t *testing.T) {
 	if err != nil || len(p.InvalidMaterials) != 0 || len(p.PendingMaterialIDs) != 0 || len(p.NetworkIntent.Services) != 1 {
 		t.Fatal("retired original interrupted a valid dependent signing chain", err, p.InvalidMaterials)
 	}
+	if _, err := DerivedNetworkLinks(p); err == nil {
+		t.Fatal("historical Link supplied a missing current identity")
+	}
+	all := append(append(history, original), next)
+	for _, device := range p.DeviceAuthorizations {
+		for _, resource := range p.NetworkIntent.Resources {
+			if resource.OwnerNodeID == device.ID {
+				device.WireGuardPublicKey = *resource.Authentication.PublicKey
+			}
+		}
+		target, _ := p.CurrentTarget("device", device.ID)
+		previous := all[len(all)-1]
+		registered := f.sign(t, 0, previous.Sequence+1, &previous, "demo-register-"+device.ID, "device.put", "device", device.ID, device, target.MaterialIDs...)
+		all = append(all, registered)
+	}
+	p, err = Project(f.genesis, nil, all)
+	if err != nil || len(p.InvalidMaterials) != 0 {
+		t.Fatal("explicit forward identity registration failed", err, p.InvalidMaterials)
+	}
 	current, err := DerivedNetworkLinks(p)
-	if err != nil || !reflect.DeepEqual(links, current) {
-		t.Fatal("retired original became current relay authority", err)
+	if err != nil || len(current) != 2 {
+		t.Fatal("registered resource graph did not recover", err)
+	}
+	for _, value := range current {
+		if value.ID == link.ID {
+			t.Fatal("retired original became current relay authority")
+		}
+	}
+	preserved, _, err := EncodeMaterial(decoded)
+	if err != nil || !bytes.Equal(before, preserved) {
+		t.Fatal("forward registration changed historical signed bytes", err)
 	}
 }
 
@@ -99,10 +132,10 @@ func TestAutomaticRelayGraphPreservesResourcesAndRejectsManualWrites(t *testing.
 	}
 	before, _ := CanonicalEncode(p)
 	links, err := DerivedNetworkLinks(p)
-	if err != nil || len(links) != 2 {
+	if err != nil || len(links) != 4 {
 		t.Fatal("two forwarding nodes require two automatic business directions", err)
 	}
-	if links[0].FromNodeID != links[1].ToNodeID || links[0].ToNodeID != links[1].FromNodeID || links[0].ID == links[1].ID || links[0].InitiatorNodeID != links[1].InitiatorNodeID {
+	if links[0].ID == links[1].ID {
 		t.Fatal("automatic business directions do not share one deterministic peer")
 	}
 	after, _ := CanonicalEncode(p)
@@ -111,7 +144,7 @@ func TestAutomaticRelayGraphPreservesResourcesAndRejectsManualWrites(t *testing.
 	}
 	for _, node := range []string{"demo-entry", "demo-exit"} {
 		view, err := ProjectDeviceView(p, node)
-		if err != nil || len(view.Links) != 2 || len(view.WireGuardPeers) != 1 {
+		if err != nil || len(testDeviceExecution(view).Links) != 4 || len(testDeviceExecution(view).WireGuardPeers) != 1 {
 			t.Fatal("automatic graph did not reach the shared runtime", node, err)
 		}
 		var config struct {
@@ -119,7 +152,7 @@ func TestAutomaticRelayGraphPreservesResourcesAndRejectsManualWrites(t *testing.
 				Peers []map[string]any `json:"peers"`
 			} `json:"endpoints"`
 		}
-		if json.Unmarshal([]byte(view.RuntimeProfile.Config), &config) != nil || len(config.Endpoints) != 1 || len(config.Endpoints[0].Peers) != 1 {
+		if json.Unmarshal([]byte(testDeviceExecution(view).RuntimeProfile.Config), &config) != nil || len(config.Endpoints) != 1 || len(config.Endpoints[0].Peers) != 1 {
 			t.Fatal("automatic directions duplicated WG sessions")
 		}
 		peer := config.Endpoints[0].Peers[0]
@@ -174,68 +207,41 @@ func TestAutomaticRelayGraphUsesOnlyCurrentUnambiguousIdentities(t *testing.T) {
 	p := relayProjectionFixture(t)
 	p.DeviceAuthorizations[2].Responsibilities = []string{"internet_egress"}
 	links, err := DerivedNetworkLinks(p)
-	if err != nil || len(links) != 1 || links[0].FromNodeID != "demo-exit" || links[0].ToNodeID != "demo-entry" {
+	if err != nil || len(links) != 2 || links[0].FromNodeID != "demo-exit" || links[0].ToNodeID != "demo-entry" {
 		t.Fatal("pure egress acquired forwarding rights", err)
 	}
 }
 
-func TestCurrentViewAcceptsOnlyDeterministicRelayValues(t *testing.T) {
+func TestCurrentViewDerivesLinksWithoutSigningAnExpandedGraph(t *testing.T) {
 	p := relayProjectionFixture(t)
 	view, err := ProjectDeviceView(p, "demo-entry")
-	if err != nil || len(view.Links) != 2 {
-		t.Fatal("automatic View is unavailable", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := DerivedViewLinks(view)
+	if err != nil || len(first) == 0 {
+		t.Fatal("missing directed graph", err)
 	}
 	body, err := CanonicalEncode(view)
 	var decoded DeviceView
 	if err != nil || DecodeCanonical(body, &decoded, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 100000}) != nil || !reflect.DeepEqual(view, decoded) {
-		t.Fatal("automatic View failed its current round trip", err)
+		t.Fatal("stable View roundtrip", err)
 	}
-	f, proof, _ := deviceContractFixture(t)
-	keyID, _ := KeyID(f.members[1].PublicKey)
-	envelope := DeviceViewEnvelope{Schema: 3, NetworkID: view.NetworkID, GenesisDigest: materialTestID(t, f.genesis), IssuerControlID: f.members[1].ControlID, IssuerKeyID: keyID, ControlProof: proof, FactFrontier: []FactFrontier{}, View: view}
-	if _, err := SignDeviceViewEnvelope(envelope, f.keys[1]); err != nil {
-		t.Fatal("current automatic View cannot be signed", err)
+	next, err := DerivedViewLinks(decoded)
+	if err != nil || !reflect.DeepEqual(first, next) {
+		t.Fatal("derived graph changed on recovery", err)
 	}
-	for name, change := range map[string]func(*NetworkLink){
-		"manual ID": func(link *NetworkLink) { link.ID = "demo-manual-link" },
-		"manual initiator": func(link *NetworkLink) {
-			link.InitiatorNodeID = link.FromNodeID
-			if link.InitiatorNodeID == view.Links[0].InitiatorNodeID {
-				link.InitiatorNodeID = link.ToNodeID
-			}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			changed := view
-			changed.Links = append([]NetworkLink{}, view.Links...)
-			change(&changed.Links[0])
-			if err := validateViewResources(changed); err == nil || !strings.Contains(err.Error(), "deterministic resource projection") {
-				t.Fatal("manual relay value bypassed the current View boundary", err)
-			}
-			if changed.Validate() == nil {
-				t.Fatal("current View accepted a manual relay value")
-			}
-			// Serialize raw public fields to exercise the ordinary current
-			// decoder without using a historical reader or a permissive DTO.
-			var object map[string]any
-			reader := json.NewDecoder(bytes.NewReader(body))
-			reader.UseNumber()
-			if reader.Decode(&object) != nil {
-				t.Fatal("current View fixture cannot be read")
-			}
-			object["links"].([]any)[0] = changed.Links[0]
-			raw, err := CanonicalEncode(object)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if DecodeCanonical(raw, &decoded, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 100000}) == nil {
-				t.Fatal("ordinary current decoder executed a manual relay configuration")
-			}
-			manualEnvelope := envelope
-			manualEnvelope.View = changed
-			if _, err := SignDeviceViewEnvelope(manualEnvelope, f.keys[1]); err == nil {
-				t.Fatal("current signer issued a manual relay configuration")
-			}
-		})
+	parsed, err := parseContractJSON(body, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 100000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := parsed.(map[string]any)
+	object["links"] = []any{}
+	raw := appendContractJSON(nil, object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if DecodeCanonical(raw, &decoded, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 100000}) == nil {
+		t.Fatal("manual graph became signed current authority")
 	}
 }

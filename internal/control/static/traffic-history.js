@@ -12,7 +12,7 @@ export function trafficHistoryRequest(projection,scope){
  const cut=scope.indexOf(':'),kind=scope.slice(0,cut),id=scope.slice(cut+1);let devices=[],binding='';
  if(kind==='network'&&id===projection.network_id)devices=list(projection.devices).filter(v=>v.authorized);
  else if(kind==='device'){const value=list(projection.devices).find(v=>v.id===id&&v.authorized);if(!value)return null;devices=[value]}
- else if(kind==='link'){const link=list(projection.links).find(v=>v.id===id&&v.authorized&&v.spec_digest);if(!link)return null;devices=[link.from,link.to].map(id=>list(projection.devices).find(v=>v.id===id&&v.authorized));if(devices.some(v=>!v))return null;binding=[link.from,link.to,link.resource_id,link.spec_digest]}
+ else if(kind==='link'){const link=list(projection.links).find(v=>v.id===id&&v.authorized&&v.spec_digest&&v.transport==='wireguard');if(!link)return null;devices=[link.from,link.to].map(id=>list(projection.devices).find(v=>v.id===id&&v.authorized));if(devices.some(v=>!v))return null;binding=[link.from,link.to,link.resource_id,link.spec_digest]}
  else return null;
  return {key:JSON.stringify([projection.network_id,projection.control_config_id,scope,binding,devices.map(v=>[v.id,v.authorized,list(v.dependencies)])]),version:JSON.stringify(devices.map(v=>[v.id,v.last_report_at,v.evidence?.report_sequence])),url:'/api/control/ui/traffic-history?'+new URLSearchParams({[kind]:id})};
 }
@@ -88,18 +88,18 @@ export function trafficHistoryHTML(summary,both=false,compact=false,endpoints=fa
  let contents='<small>Loading WG counters…</small>';
  if(summary.error)contents=`<small title="${esc(summary.error)}">WG traffic could not be read.</small>`;
  else if(summary.data){
-  contents=both&&compact?pairedBars(summary):`${both?`<small>RX ${trafficBytes(summary.rx)}</small>${bars(summary,'rx')}<small>TX ${trafficBytes(summary.tx)}</small>`:''}${endpoints?endpointBars(summary):bars(summary,'tx')}<small>${summary.covered}/24 hours with observed deltas${compact?'':' · partial coverage'}</small>`;
+  contents=both&&compact?pairedBars(summary):`${both?`<small>RX ${trafficBytes(summary.rx)}</small>${bars(summary,'rx')}<small>TX ${trafficBytes(summary.tx)}</small>`:''}${endpoints?endpointBars(summary):bars(summary,'tx')}<small>${summary.covered}/24 hours · observed WG portion${compact?'':' · partial coverage'}</small>`;
  }
  const aggregate=summary.total!==undefined,cutoffs=list(summary.cutoffs),first=cutoffs.length?new Date(Math.min(...cutoffs)).toISOString():'',last=cutoffs.length?new Date(Math.max(...cutoffs)).toISOString():'',sameDay=first.slice(0,10)===last.slice(0,10),clock=value=>value.slice(sameDay?11:0,19).replace('T',' '),range=first?clock(first)+(clock(first)===clock(last)?'':' – '+clock(last))+' UTC':'',cutoff=aggregate&&first?`<span title="${esc('Query cutoffs '+first+(first===last?'':' – '+last))}">Cutoffs ${esc(range)}</span>`:summary.data&&!compact?'As of '+esc(new Date(summary.data.until).toISOString()):'',coverage=aggregate?`<small>${summary.loaded} / ${summary.total} devices loaded${summary.failed?' · '+summary.failed+' failed':summary.loaded<summary.total?' · partial':''}</small>`:'';
  const retry=summary.error||summary.failed?`<button type="button" class="tiny" data-traffic-retry="${esc(summary.scope)}">Retry</button>`:'';
- return `<div class="wg-traffic ${compact?'compact':''}" data-traffic-scope="${esc(summary.scope)}"${aggregate?` data-traffic-loaded="${summary.loaded}" data-traffic-total="${summary.total}" data-traffic-failed="${summary.failed}"`:''}>${contents}${coverage}${retry||cutoff?`<small>${retry}${retry&&cutoff?' · ':''}${cutoff}</small>`:''}</div>`;
+ return `<div class="wg-traffic ${compact?'compact':''}" title="Observed WG portion, not application usage. Time coverage does not imply all peers were observed. Hy2 and Direct are excluded." data-traffic-scope="${esc(summary.scope)}"${aggregate?` data-traffic-loaded="${summary.loaded}" data-traffic-total="${summary.total}" data-traffic-failed="${summary.failed}"`:''}>${contents}${coverage}${retry||cutoff?`<small>${retry}${retry&&cutoff?' · ':''}${cutoff}</small>`:''}</div>`;
 }
 export function trafficRates(summary,now){
  return list(summary.data?.devices).map(device=>{
   const value=device.recent,valid=summary.current!==false&&value&&value.covered_ms>0&&value.last_at+180000>now;
   const thousandths=valid?integer(value.tx_bytes)*8n/BigInt(value.covered_ms):null;
   const rate=thousandths===null?'Unknown':thousandths===0n&&integer(value.tx_bytes)>0n?'<0.001 Mbps':`${thousandths/1000n}.${String(thousandths%1000n).padStart(3,'0')} Mbps`;
-  return {id:device.device_id,text:device.device_id+' TX: '+rate,detail:'Shared WG peer sent packets; includes handshakes, keepalives and encrypted overhead; forward and reverse rows share counters'+(valid?' · '+value.covered_ms/1000+' seconds · through '+new Date(value.last_at).toISOString():'')};
+  return {id:device.device_id,text:device.device_id+' TX: '+rate,detail:'Observed WG portion, not application usage; shared peer sent packets include handshakes, keepalives and encrypted overhead; forward and reverse rows share counters'+(valid?' · '+value.covered_ms/1000+' seconds · through '+new Date(value.last_at).toISOString():'')};
  });
 }
 export function trafficRatesHTML(summary,now){

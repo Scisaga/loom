@@ -73,7 +73,7 @@ func TestDirectViewUsesOnlySelectedEffectiveServicePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Routes) != 1 || view.Routes[0].FinalExit != "direct" || !strings.Contains(view.RuntimeProfile.Config, `"final":"reject"`) || !strings.Contains(view.RuntimeProfile.Config, `"outbound":"service:demo-service"`) {
+	if len(testDeviceExecution(view).Routes) != 1 || testDeviceExecution(view).Routes[0].FinalExit != "direct" || !strings.Contains(testDeviceExecution(view).RuntimeProfile.Config, `"final":"reject"`) || !strings.Contains(testDeviceExecution(view).RuntimeProfile.Config, `"outbound":"access"`) {
 		t.Fatal("Direct route does not bind service selector and default deny")
 	}
 	for _, change := range []func(*Projection){
@@ -85,24 +85,14 @@ func TestDirectViewUsesOnlySelectedEffectiveServicePermissions(t *testing.T) {
 		_, _, p := deviceContractFixture(t)
 		change(&p)
 		denied, err := ProjectDeviceView(p, "demo-access")
-		if err != nil || len(denied.Routes) != 0 || denied.RuntimeProfile == nil {
+		if err != nil || len(testDeviceExecution(denied).Routes) != 0 || testDeviceExecution(denied).RuntimeProfile == nil {
 			t.Fatalf("permission withdrawal must remain acceptable: %v", err)
 		}
-		if strings.Contains(denied.RuntimeProfile.Config, `"type":"direct"`) {
+		if strings.Contains(testDeviceExecution(denied).RuntimeProfile.Config, `"type":"direct"`) {
 			t.Fatal("withdrawal retained Direct execution")
 		}
 	}
-	injected := view
-	injected.RuntimeProfile = &RuntimeProfile{Kind: "sing_box", Config: `{"outbounds":[{"tag":"direct","type":"direct"}],"route":{"final":"direct","rules":[]}}`}
-	if injected.Validate() == nil {
-		t.Fatal("signed profile escaped authorization projection")
-	}
-	injected = view
-	injected.Routes = append([]RouteCandidate{}, view.Routes...)
-	injected.Routes[0].SpecDigest = "sha256:" + strings.Repeat("f", 64)
-	if injected.Validate() == nil {
-		t.Fatal("candidate changed without its permission spec")
-	}
+
 }
 
 func TestLocalEgressRetainsNodeIdentityAndEveryPermissionCondition(t *testing.T) {
@@ -119,11 +109,11 @@ func TestLocalEgressRetainsNodeIdentityAndEveryPermissionCondition(t *testing.T)
 	}
 	projection := fixture()
 	view, err := ProjectDeviceView(projection, "demo-access")
-	if err != nil || len(view.Routes) != 1 {
+	if err != nil || len(testDeviceExecution(view).Routes) != 1 {
 		t.Fatalf("local exit without an entry resource: %v", err)
 	}
-	local := view.Routes[0]
-	if local.FinalExit != view.DeviceID || local.FirstResourceID != "" || len(local.NodeChain) != 0 || len(local.LinkIDs) != 0 {
+	local := testDeviceExecution(view).Routes[0]
+	if local.FinalExit != view.DeviceID || local.FirstResourceID != "" || local.EntryNodeID != view.DeviceID {
 		t.Fatal("local execution lost its logical final exit or dialed back into itself")
 	}
 	body, err := CanonicalEncode(view)
@@ -133,10 +123,10 @@ func TestLocalEgressRetainsNodeIdentityAndEveryPermissionCondition(t *testing.T)
 	}
 	projection.NetworkIntent.Policies[0].AllowDirect = new(true)
 	both, err := ProjectDeviceView(projection, "demo-access")
-	if err != nil || len(both.Routes) != 2 || both.Routes[0].ID == both.Routes[1].ID {
+	if err != nil || len(testDeviceExecution(both).Routes) != 2 || testDeviceExecution(both).Routes[0].ID == testDeviceExecution(both).Routes[1].ID {
 		t.Fatalf("Direct and local exit did not coexist: %v", err)
 	}
-	for _, candidate := range both.Routes {
+	for _, candidate := range testDeviceExecution(both).Routes {
 		if candidate.FinalExit == view.DeviceID && (candidate.ID != local.ID || candidate.SpecDigest == local.SpecDigest) {
 			t.Fatal("Policy change must retain path identity and invalidate its previous observation digest")
 		}
@@ -163,11 +153,11 @@ func TestLocalEgressRetainsNodeIdentityAndEveryPermissionCondition(t *testing.T)
 			p := fixture()
 			change(&p)
 			denied, err := ProjectDeviceView(p, "demo-access")
-			if err != nil || len(denied.Routes) != 0 {
+			if err != nil || len(testDeviceExecution(denied).Routes) != 0 {
 				t.Fatalf("revoked local exit retained a path: %v", err)
 			}
-			if denied.RuntimeProfile != nil && strings.Contains(denied.RuntimeProfile.Config, `"type":"direct"`) {
-				t.Fatal("revocation retained executable outbound")
+			if testDeviceExecution(denied).RuntimeProfile != nil && strings.Contains(testDeviceExecution(denied).RuntimeProfile.Config, `"candidate_policies":{"`) {
+				t.Fatal("revocation retained an access candidate; exit diagnostics are independent")
 			}
 		})
 	}

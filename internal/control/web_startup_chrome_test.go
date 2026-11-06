@@ -22,7 +22,7 @@ func TestWebChromeOverviewNavigationStartup(t *testing.T) {
 	for _, scenario := range []string{"snapshot", "snapshot error", "pending first read", "leave before budget"} {
 		t.Run(scenario, func(t *testing.T) {
 			projection := relayProjectionFixture(t)
-			snapshot := buildWebSnapshot(projection, true, true, true)
+			snapshot := testWebSnapshotWithIntent(projection, true, true, true)
 			normal := (&Server{Runtime: &Runtime{Authority: &Authority{root: t.TempDir(), projection: projection}}}).AdminHandler()
 			now := time.Date(2030, 1, 2, 12, 30, 0, 0, time.UTC)
 			deviceCount := 0

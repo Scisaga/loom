@@ -84,9 +84,10 @@ func TestWebChromeRuntimeAndDifferentServiceResultsRemainSeparate(t *testing.T) 
 	projection.NetworkIntent.Services = append(projection.NetworkIntent.Services, materialTestService("demo-service-b"))
 	projection.NetworkIntent.Policies = append(projection.NetworkIntent.Policies, materialTestPolicy("demo-policy-b", "demo-service-b"))
 	projection.DeviceAuthorizations[0].PolicyIDs = []string{"demo-policy", "demo-policy-b"}
-	projection.NetworkIntent.BusinessProbeTargets = []BusinessProbeTarget{{ID: "demo-probe-a", URL: "https://demo-service.example/probe"}, {ID: "demo-probe-b", URL: "https://demo-service-b.example/probe"}}
+	projection.NetworkIntent.Services[0].ProbeURLs = []string{"https://demo-service.example/probe"}
+	projection.NetworkIntent.Services[1].ProbeURLs = []string{"https://demo-service-b.example/probe"}
 	view, err := ProjectDeviceView(projection, "demo-access")
-	if err != nil || len(view.Routes) != 2 || len(view.BusinessProbeTargets) != 2 {
+	if err != nil || len(testDeviceExecution(view).Routes) != 2 || len(testDeviceExecution(view).BusinessProbeTargets) != 2 {
 		t.Fatal("fixture needs two independently authorized Services", err)
 	}
 	digest, _ := DeviceViewDigest(view)
@@ -94,7 +95,7 @@ func TestWebChromeRuntimeAndDifferentServiceResultsRemainSeparate(t *testing.T) 
 	report := DeviceReport{Schema: 3, NetworkID: projection.NetworkID, DeviceID: view.DeviceID, ReportSequence: 1, ViewDigest: digest, NetworkGeneration: "demo-network", ReportedAt: now.UnixMilli(), Selections: []ReportSelection{}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
 	choices := []PolicyChoice{}
 	report.PolicyChoices = &choices
-	for _, route := range view.Routes {
+	for _, route := range testDeviceExecution(view).Routes {
 		result := "available"
 		if route.ServiceID == "demo-service-b" {
 			result = "unavailable"

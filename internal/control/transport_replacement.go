@@ -47,18 +47,18 @@ func checkSignedViewReplacement(previousBytes []byte, next DeviceViewEnvelope, t
 	// The old signed execution sections remain opaque evidence. Only the
 	// identity, member proof and authenticated progress are compared. This
 	// closed top-level boundary deliberately has no old executable DTO.
-	known := map[string]bool{"link_probe_credentials": true}
-	viewType := reflect.TypeFor[DeviceView]()
-	for i := range viewType.NumField() {
-		name, option, _ := strings.Cut(viewType.Field(i).Tag.Get("json"), ",")
-		if name == "network_id" {
-			known[name] = true
-			continue
-		}
+	// Finite retired field sets are independent of today's writable View.
+	// Reusing reflection here would silently require new fields in old signed
+	// originals whenever the current model changes.
+	known := map[string]bool{}
+	for _, name := range []string{"schema", "device_id", "name", "platform", "device_public_key", "responsibilities", "policy_ids", "services", "policies", "resources", "links", "endpoints", "dns_servers", "business_probe_targets", "routes", "inbound_credentials", "expected_components"} {
 		known[name] = true
-		if _, found := view[name]; !found && option != "omitempty" {
+		if _, found := view[name]; !found {
 			return errors.New("historical View field is missing")
 		}
+	}
+	for _, name := range []string{"network_id", "runtime_profile", "dns_records", "web_endpoints", "public_trust", "wireguard_peers", "access_grants", "policy_exits", "link_probe_credentials"} {
+		known[name] = true
 	}
 	for name := range view {
 		if !known[name] {
@@ -84,7 +84,7 @@ func checkSignedViewReplacement(previousBytes []byte, next DeviceViewEnvelope, t
 				} `json:"fakeip"`
 			} `json:"dns"`
 		}
-		recognized := policySelection && historicalPolicyCandidates(view)
+		recognized := policySelection && historicalSelectionView(view)
 		if !policySelection && ok && json.Unmarshal([]byte(config), &retired) == nil {
 			recognized = retired.DNS.FakeIP.Range == "2001:db8:8000::/49"
 			for _, endpoint := range retired.Endpoints {
@@ -92,13 +92,13 @@ func checkSignedViewReplacement(previousBytes []byte, next DeviceViewEnvelope, t
 			}
 		}
 		if !policySelection {
-			recognized = recognized || recognizeHistoricalSharedWG(view, config)
+			recognized = recognized || recognizeHistoricalSharedWG(view, config) || historicalEntryCandidates(view)
 		}
 		if !recognized {
 			return errors.New("historical View is not a retired WG projection")
 		}
 	}
-	if policySelection && !historicalPolicyCandidates(view) {
+	if policySelection && !historicalSelectionView(view) {
 		return errors.New("policy replacement requires the finite original candidate shape")
 	}
 	viewBody := appendContractJSON(nil, view)
@@ -186,6 +186,18 @@ func recognizeHistoricalSharedWG(view map[string]any, config string) bool {
 	if !ok {
 		return false
 	}
+	if view["access_grants"] != nil || view["policy_exits"] != nil {
+		return false
+	}
+	if !historicalPathCandidates(view, true) {
+		return false
+	}
+	for _, raw := range func() []any { rows, _ := document["outbounds"].([]any); return rows }() {
+		if row, ok := raw.(map[string]any); !ok || row["execution"] != nil || row["execution_source"] != nil || row["hop"] != nil {
+			return false
+		}
+	}
+
 	for key := range document {
 		if key != "outbounds" && key != "route" && key != "endpoints" && key != "dns" {
 			return false
@@ -216,7 +228,7 @@ func recognizeHistoricalSharedWG(view map[string]any, config string) bool {
 		if ValidateDigest(link.ID) == nil || i > 0 && links[i-1].ID >= link.ID {
 			return false
 		}
-		if _, _, _, err := linkResources(link, resources); err != nil {
+		if err := historicalLinkResources(link, resources); err != nil {
 			return false
 		}
 	}
@@ -368,12 +380,55 @@ func recognizeHistoricalSharedWG(view map[string]any, config string) bool {
 
 func stringContractValue(value any) string { text, _ := value.(string); return text }
 
+// Historical Services are recognized only inside explicit replacement. Their
+// original canonical values are checked without regenerating execution.
+func historicalSelectionView(view map[string]any) bool {
+	if historicalEntryCandidates(view) {
+		return true
+	}
+	if historicalPolicyCandidates(view) {
+		return true
+	}
+	values, ok := view["services"].([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range values {
+		var service Service
+		if DecodeCanonical(appendContractJSON(nil, raw), &service, ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 32, MaxItems: 100000}) != nil || service.RestrictToProbeTargets != nil || validateHistoricalService(service) != nil {
+			return false
+		}
+	}
+	routes, ok := view["routes"].([]any)
+	if !ok {
+		return false
+	}
+	if !historicalPathCandidates(view, true) {
+		return false
+	}
+	// An empty old control-only View has no changed execution semantics. The
+	// explicit identity migration still requires a strictly forward envelope.
+	if len(values) == 0 {
+		return len(routes) == 0
+	}
+	return true
+}
+
 func historicalPolicyCandidates(view map[string]any) bool {
+	return historicalPathCandidates(view, false)
+}
+
+// Exact retired full-path fields are inspected only as signed evidence. The
+// reader produces neither a current RouteCandidate nor executable permissions.
+func historicalPathCandidates(view map[string]any, policyBound bool) bool {
 	routes, ok := view["routes"].([]any)
 	if !ok {
 		return false
 	}
 	known := map[string]bool{"id": true, "spec_digest": true, "scope": true, "service_id": true, "first_resource_id": true, "node_chain": true, "link_ids": true, "final_exit": true}
+	if policyBound {
+		known["policy_id"] = true
+	}
 	for _, raw := range routes {
 		route, ok := raw.(map[string]any)
 		if !ok || len(route) != len(known) {
@@ -400,6 +455,50 @@ func historicalPolicyCandidates(view map[string]any) bool {
 				}
 			}
 		}
+	}
+	return true
+}
+
+// Former signed candidate/ACL/runtime expansion, accepted only as original
+// signature evidence. No field here can be returned to a runtime or decoder.
+func historicalEntryCandidates(view map[string]any) bool {
+	rows, ok := view["routes"].([]any)
+	if !ok {
+		return false
+	}
+	required := []string{"id", "spec_digest", "scope", "service_id", "policy_id", "entry_node_id", "first_resource_id", "final_exit"}
+	for _, raw := range rows {
+		row, ok := raw.(map[string]any)
+		if !ok || len(row) != len(required) {
+			return false
+		}
+		for _, key := range required {
+			if _, ok := row[key].(string); !ok {
+				return false
+			}
+		}
+		if ValidateDigest(row["id"].(string)) != nil || ValidateDigest(row["spec_digest"].(string)) != nil || ValidateID(row["service_id"].(string)) != nil || ValidateID(row["policy_id"].(string)) != nil {
+			return false
+		}
+		scope, service := row["scope"].(string), row["service_id"].(string)
+		if scope != "service:"+service && scope != "local_network:"+service {
+			return false
+		}
+		if ValidateID(row["final_exit"].(string)) != nil {
+			return false
+		}
+		if row["final_exit"] == "direct" {
+			if row["entry_node_id"] != "" || row["first_resource_id"] != "" {
+				return false
+			}
+		} else if ValidateID(row["entry_node_id"].(string)) != nil || row["first_resource_id"] != "" && ValidateID(row["first_resource_id"].(string)) != nil {
+			return false
+		}
+	}
+	// Empty access catalog still requires an opaque native profile. A pure
+	// control original may omit it; both advance through the same signed proof.
+	if len(rows) == 0 {
+		return view["access_grants"] != nil || view["policy_exits"] != nil
 	}
 	return true
 }

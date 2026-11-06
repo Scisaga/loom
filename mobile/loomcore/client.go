@@ -22,8 +22,12 @@ import (
 	"loom/internal/deviceclient"
 )
 
+// Shared measurement snapshots use the existing private response/cache bound.
+const androidMeasurementSnapshotLimit = control.MeasurementDeliveryLimit
+
 // This is a disposable Android host projection, never a second authority wire.
 type androidProfile struct {
+	ExecutionDigest               string                        `json:"execution_digest"`
 	Services                      []control.Service             `json:"services"`
 	Policies                      []control.NetworkPolicy       `json:"policies"`
 	Scopes                        []string                      `json:"scopes"`
@@ -163,7 +167,7 @@ func PrepareAndroidDeviceProfile(body, interfaceAddresses []byte) ([]byte, error
 	if err := json.Unmarshal(body, &profile); err != nil {
 		return nil, err
 	}
-	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses, state.LKG.View.Resources...)
+	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses)
 	profile.Config, err = clientadapter.WithLocalNetworkBoundary(profile.Config, connected)
 	if err != nil {
 		return nil, err
@@ -179,7 +183,7 @@ func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.We
 	// A local management secret is not a Service credential and never travels
 	// in DeviceView. It has a separate purpose and is bound to this device key.
 	secret := androidLocalRuntimeSecret(state)
-	routes, raw, err := clientadapter.AccessRuntimeProjection(view, secret, websites...)
+	routes, raw, err := clientadapter.AccessRuntimeProjection(view, clientmodel.MeasurementPolicies(androidPreference(state)), secret, websites...)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +196,11 @@ func androidDeviceProfile(state deviceclient.State, websites ...clientadapter.We
 		return nil, err
 	}
 	services, policies := clientmodel.PolicyOptions(view)
-	return json.Marshal(androidProfile{Services: services, Policies: policies, Scopes: clientmodel.ServiceScopes(view), PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: append([]control.ServiceProbeTargets{}, view.BusinessProbeTargets...), ResourceCacheIdentity: identity})
+	execution, err := control.RuntimeExecutionDigest(view)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(androidProfile{ExecutionDigest: execution, Services: services, Policies: policies, Scopes: clientmodel.SelectorScopes(view), PossiblePermissionRestoration: deviceclient.PossiblePermissionRestoration(state), HasWebsite: len(view.WebEndpoints) > 0, Schema: 3, NodeID: view.DeviceID, Name: view.Name, ViewDigest: state.LKG.ViewDigest, FactFrontier: state.LKG.FactFrontier, Config: config, Routes: routes, RecordID: state.LKG.ViewDigest, DNS: append([]string{}, view.DNSServers...), BusinessProbeTargets: serviceProbeTargets(view), ResourceCacheIdentity: identity})
 }
 func androidLocalRuntimeSecret(state deviceclient.State) string {
 	key, _ := base64.RawURLEncoding.DecodeString(state.PrivateKey)
@@ -246,7 +254,7 @@ func androidHostConfig(view control.DeviceView, raw, secret string, websites ...
 		prefixes = append(prefixes, prefix)
 	}
 	sort.Strings(prefixes)
-	document["inbounds"] = []any{map[string]any{"type": "tun", "tag": "tun-in", "address": []string{"192.0.2.1/30", "2001:db8::1/126"}, "mtu": 1500, "auto_route": true, "stack": "system", "route_exclude_address": prefixes}}
+	document["inbounds"] = []any{map[string]any{"type": "tun", "tag": "tun-in", "address": []string{"192.0.2.1/30", "2001:db8::1/126"}, "mtu": 1500, "auto_route": true, "stack": "gvisor", "route_exclude_address": prefixes}}
 	route := document["route"].(map[string]any)
 	// On Android this enables the existing VpnService.protect callback for
 	// libbox TCP/UDP sockets. It changes neither the signed ACL nor its grants.
@@ -264,7 +272,11 @@ func androidHostConfig(view control.DeviceView, raw, secret string, websites ...
 	if err != nil {
 		return "", err
 	}
-	return clientadapter.WithNativeProbe(captured, secret)
+	captured, err = clientadapter.WithTUNCapture(captured)
+	if err != nil {
+		return "", err
+	}
+	return captured, nil
 }
 
 // The temporary adapter has no storage and performs no execution. Kotlin owns
@@ -305,52 +317,52 @@ func (store *androidIdentity) SaveLKG(view control.DeviceViewEnvelope) error {
 func (*androidIdentity) ReserveReportSequence() (control.U64, error) {
 	return 0, errors.New("Android report reservation must be committed by the protected host store")
 }
-func AdvanceAndroidEnrollment(body []byte) ([]byte, error) {
-	state, err := decodeState(body)
-	if err != nil {
-		return nil, err
-	}
-	store := &androidIdentity{state: state}
-	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
-	defer cancel()
-	if state.LKG == nil {
-		_, err = deviceclient.Claim(ctx, store)
-	} else {
-		_, err = deviceclient.Resume(ctx, store)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return deviceclient.EncodeIdentityState(store.state)
-}
-func SyncAndroidDevice(body []byte) ([]byte, error) {
-	state, err := decodeState(body)
-	if err != nil {
-		return nil, err
-	}
-	store := &androidIdentity{state: state}
-	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
-	defer cancel()
-	if _, err := deviceclient.Sync(ctx, store); err != nil {
-		return nil, err
-	}
-	return deviceclient.EncodeIdentityState(store.state)
-}
 
-// FetchAndroidLinkObservations returns a disposable, authenticated projection
-// for this accepted View. It changes neither identity nor local report samples.
-func FetchAndroidLinkObservations(body []byte) ([]byte, error) {
+// NewAndroidLinkObservationRequest owns one private batch fetch, independently
+// cancellable from local first-hop exploration and report uploads.
+func NewAndroidLinkObservationRequest(body, previousBody []byte) (*AndroidDeviceRequest, error) {
 	state, err := decodeState(body)
 	if err != nil {
 		return nil, err
+	}
+	if state.LKG == nil {
+		return nil, errors.New("shared observations require an accepted configuration")
+	}
+	var previous *control.DeviceLinkObservations
+	if len(previousBody) > 0 {
+		var cache control.DeviceLinkObservations
+		if err := control.DecodeCanonical(previousBody, &cache, control.ContractDecodeLimits{MaxBytes: androidMeasurementSnapshotLimit, MaxDepth: 32, MaxItems: 1 << 20}); err == nil && cache.Reset && cache.ValidateForView(state.LKG.View) == nil {
+			previous = &cache
+		}
 	}
 	ctx, cancel := context.WithTimeout(androidNetworkContext(), 3*time.Second)
-	defer cancel()
-	value, err := deviceclient.FetchLinkObservations(ctx, &androidIdentity{state: state})
+	return &AndroidDeviceRequest{ctx: ctx, cancel: cancel, run: func(ctx context.Context) ([]byte, error) {
+		value, err := deviceclient.FetchLinkObservations(ctx, &androidIdentity{state: state}, previous)
+		if err != nil {
+			return nil, err
+		}
+		return encodeAndroidMeasurementSnapshot(ctx, value)
+	}}, nil
+}
+
+// The host commits these complete canonical bytes together with their cursor.
+// Fetch/Merge already checked scope and delta semantics; encoding must still
+// respect the same total bound and the original request's cancellation.
+func encodeAndroidMeasurementSnapshot(ctx context.Context, value control.DeviceLinkObservations) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	body, err := control.CanonicalEncode(value)
 	if err != nil {
 		return nil, err
 	}
-	return control.CanonicalEncode(value)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(body) > androidMeasurementSnapshotLimit {
+		return nil, errors.New("merged measurement snapshot exceeds its byte bound")
+	}
+	return body, nil
 }
 func ReserveAndroidReportSequence(body []byte) ([]byte, error) {
 	state, err := decodeState(body)
@@ -376,8 +388,9 @@ type androidObservation struct {
 	MetricMillis      *int64 `json:"metric_millis,omitempty"`
 }
 type androidSelection struct {
-	Scope       string `json:"scope"`
-	CandidateID string `json:"candidate_id"`
+	Targets     map[string]string `json:"targets"`
+	Scope       string            `json:"scope"`
+	CandidateID string            `json:"candidate_id"`
 }
 
 const androidReportTimeLayout = "2006-01-02T15:04:05.000Z"
@@ -386,13 +399,24 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if state.LKG == nil || state.ReportSequence == 0 {
 		return control.DeviceReport{}, errors.New("Android report sequence has not been reserved")
 	}
-	preference := clientmodel.EmptyPreference()
+	if state.Preference == nil {
+		return control.DeviceReport{}, errors.New("Android report has no durable current Policy preference")
+	}
+	preference := *state.Preference
 	if len(preferenceBody) > 0 {
-		if err := control.DecodeCanonical(preferenceBody, &preference, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
+		var projected clientmodel.Preference
+		if err := control.DecodeCanonical(preferenceBody, &projected, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1024}); err != nil {
 			return control.DeviceReport{}, err
 		}
+		if !projected.Equal(preference) {
+			return control.DeviceReport{}, errors.New("Android report preference differs from its durable identity")
+		}
 	}
-	reportedPreference, err := clientadapter.ReportedPolicyChoices(state.LKG.View, preference)
+	reportedPreference, err := clientadapter.ReportedPolicyID(state.LKG.View, preference)
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
+	lanChoices, err := clientadapter.ReportedLANPolicyIDs(state.LKG.View, preference)
 	if err != nil {
 		return control.DeviceReport{}, err
 	}
@@ -412,6 +436,9 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if err := decodeStrictJSON(componentsBody, 1<<20, &components); err != nil {
 		return control.DeviceReport{}, err
 	}
+	if (len(observations) > 0 || len(selections) > 0) && (runtime.State != "running" || runtime.AppliedViewDigest != state.LKG.ViewDigest) {
+		return control.DeviceReport{}, errors.New("actual selections and business samples require fully confirmed Android execution")
+	}
 	for _, component := range components {
 		if (component.ComponentID != "agent" && component.ComponentID != "sing-box") || component.Platform != androidComponentPlatform() {
 			return control.DeviceReport{}, errors.New("Android component is outside the executing platform")
@@ -421,39 +448,44 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if err != nil || now.UTC().Format(androidReportTimeLayout) != reportedAt {
 		return control.DeviceReport{}, errors.New("Android report time is not canonical")
 	}
-	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), PolicyChoices: reportedPreference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
+	report := control.DeviceReport{Schema: 3, NetworkID: state.Invite.NetworkID, DeviceID: state.LKG.View.DeviceID, ReportSequence: state.ReportSequence, ViewDigest: state.LKG.ViewDigest, NetworkGeneration: generation, ReportedAt: now.UnixMilli(), PolicyID: reportedPreference, LANPolicyIDs: lanChoices, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Runtime: runtime, Components: components}
 	if len(resourceBody) > 0 {
-		if runtime.State != "running" || runtime.AppliedViewDigest != state.LKG.ViewDigest {
-			return control.DeviceReport{}, errors.New("resource samples require the actual accepted Android runtime")
+		if !runtime.HasCurrentPermissions(state.LKG.ViewDigest) {
+			return control.DeviceReport{}, errors.New("resource samples require confirmed current Android permissions")
 		}
-		values, err := clientadapter.DecodeResourceObservations(resourceBody, *state.LKG, generation)
+		values, err := clientadapter.DecodeResourceObservations(resourceBody, *state.LKG, generation, clientmodel.MeasurementPolicies(preference))
 		if err != nil {
 			return control.DeviceReport{}, err
 		}
 		report.Observations = append(report.Observations, values...)
 	}
+	executionProjection, err := control.ProjectDeviceCandidates(state.LKG.View, clientmodel.MeasurementPolicies(preference))
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
 	routes := map[string]control.RouteCandidate{}
 	targets := map[string]map[string]bool{}
-	for _, route := range state.LKG.View.Routes {
+	for _, route := range executionProjection.Routes {
 		routes[route.ID] = route
 	}
-	for _, group := range state.LKG.View.BusinessProbeTargets {
+	for _, group := range executionProjection.BusinessProbeTargets {
 		targets[group.ServiceID] = map[string]bool{}
 		for _, target := range group.Targets {
 			targets[group.ServiceID][target] = true
 		}
 	}
+	actualSelections := []clientadapter.SelectionStatus{}
 	for _, selection := range selections {
-		route, ok := routes[selection.CandidateID]
-		if !ok || route.Scope != selection.Scope {
-			return control.DeviceReport{}, errors.New("reported selector is not authorized")
-		}
-		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID})
+		actualSelections = append(actualSelections, clientadapter.SelectionStatus{Scope: selection.Scope, CandidateID: selection.CandidateID, Targets: selection.Targets})
 	}
-	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
+	report.Selections, err = clientadapter.ReportSelections(state.LKG.View, preference, actualSelections)
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
+
 	for _, observation := range observations {
 		route, ok := routes[observation.CandidateID]
-		if !ok || route.Scope != observation.Scope || !targets[route.ServiceID][observation.Target] || observation.Action != "https_request" || observation.NetworkGeneration != generation {
+		if !ok || observation.Scope != control.AccessSelectorScope || !targets[route.ServiceID][observation.Target] || observation.Action != "https_request" || observation.NetworkGeneration != generation {
 			return control.DeviceReport{}, errors.New("reported business observation is outside its authenticated Service")
 		}
 		observed, e1 := time.Parse(time.RFC3339, observation.ObservedAt)
@@ -474,34 +506,56 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if runtime.State == "running" && runtime.AppliedViewDigest != state.LKG.ViewDigest {
 		return control.DeviceReport{}, errors.New("running report is not the actual accepted configuration")
 	}
-	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses, state.LKG.View.Resources...)
+	connected, _ := androidConnectedIPv4Prefixes(interfaceAddresses)
 	report.LocalNetworks = clientadapter.UnderlayNetworkReport(connected)
 	return control.SignDeviceReport(report, (&androidIdentity{state: state}).PrivateKey())
 }
 
-// Kotlin commits ReserveAndroidReportSequence before invoking this function.
-func PostAndroidDeviceReport(stateBody, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, interfaceAddresses []byte, networkGeneration, reportedAt string) error {
+// Kotlin commits ReserveAndroidReportSequence before creating this call. Its
+// cancellation burns that sequence; it never writes identity or retries a number.
+func NewAndroidReportRequest(stateBody, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, interfaceAddresses []byte, networkGeneration, reportedAt string) (*AndroidDeviceRequest, error) {
 	state, err := decodeState(stateBody)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	report, err := androidReport(state, preferenceBody, resourceBody, observationsBody, selectionsBody, runtimeBody, componentsBody, interfaceAddresses, networkGeneration, reportedAt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(androidNetworkContext(), 30*time.Second)
-	defer cancel()
-	if report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
-		diagnostic, diagnosticErr := clientadapter.NativeDiagnosticContext(ctx, androidLocalRuntimeSecret(state), nil)
-		if diagnosticErr == nil {
-			report.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(diagnostic, state.LKG.View, time.Now)
+	return &AndroidDeviceRequest{ctx: ctx, cancel: cancel, run: func(ctx context.Context) ([]byte, error) {
+		if report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest {
+			diagnostic, diagnosticErr := clientadapter.NativeDiagnosticContext(ctx, androidLocalRuntimeSecret(state), nil)
+			if diagnosticErr == nil {
+				report.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(diagnostic, state.LKG.View, time.Now)
+			}
 		}
-		report, err = control.SignDeviceReport(report, (&androidIdentity{state: state}).PrivateKey())
+		identity := &androidIdentity{state: state}
+		report.Observations, err = deviceclient.UnreportedObservations(report, identity.PublicKey())
 		if err != nil {
-			return err
+			return nil, err
 		}
-	}
-	return deviceclient.PostSignedReport(ctx, &androidIdentity{state: state}, report)
+		report, err = control.SignDeviceReport(report, identity.PrivateKey())
+		if err != nil {
+			return nil, err
+		}
+		return nil, deviceclient.PostSignedReport(ctx, identity, report)
+	}}, nil
 }
 
 func androidComponentPlatform() string { return "android-" + runtime.GOARCH }
+
+func serviceProbeTargets(view control.DeviceView) []control.ServiceProbeTargets {
+	values := []control.ServiceProbeTargets{}
+	for _, service := range view.Services {
+		values = append(values, control.ServiceProbeTargets{ServiceID: service.ID, Targets: append([]string{}, service.ProbeURLs...)})
+	}
+	return values
+}
+
+func androidPreference(state deviceclient.State) clientmodel.Preference {
+	if state.Preference == nil {
+		return clientmodel.EmptyPreference()
+	}
+	return *state.Preference
+}

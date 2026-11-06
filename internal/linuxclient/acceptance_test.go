@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +22,10 @@ import (
 // The same contract signer and decoder used by the daemon supply this client
 // failure test. Full bind/join and tunnel acceptance are exercised by control.
 func linuxAcceptanceFixture(t *testing.T, change ...func(uint64, *control.DeviceView)) (*deviceclient.Store, string, func(uint64, bool) control.DeviceViewEnvelope) {
+	return linuxAcceptanceProjectionFixture(t, nil, change...)
+}
+
+func linuxAcceptanceProjectionFixture(t *testing.T, project func(*control.Projection), change ...func(uint64, *control.DeviceView)) (*deviceclient.Store, string, func(uint64, bool) control.DeviceViewEnvelope) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -65,29 +68,24 @@ func linuxAcceptanceFixture(t *testing.T, change ...func(uint64, *control.Device
 		t.Fatal(err)
 	}
 	makeView := func(sequence uint64, permit bool) control.DeviceViewEnvelope {
-		view := control.DeviceView{NetworkID: config.NetworkID, Schema: 3, DeviceID: "demo-device", Name: "Demo device", Platform: "linux", DevicePublicKey: store.PublicKey(), Responsibilities: []string{"access"}, PolicyIDs: []string{}, Services: []control.Service{}, Policies: []control.NetworkPolicy{}, Resources: []control.TransportResource{}, Links: []control.NetworkLink{}, Endpoints: []control.EndpointGeneration{endpoint}, DNSServers: []string{}, BusinessProbeTargets: []control.ServiceProbeTargets{}, Routes: []control.RouteCandidate{}, InboundCredentials: []control.InboundCredential{}, ExpectedComponents: []control.ComponentReadback{}}
+		view := control.DeviceView{NetworkID: config.NetworkID, Schema: 3, DeviceID: "demo-device", Name: "Demo device", Platform: "linux", DevicePublicKey: store.PublicKey(), Responsibilities: []string{"access"}, PolicyIDs: []string{}, Services: []control.Service{}, Policies: []control.NetworkPolicy{}, Resources: []control.TransportResource{}, Endpoints: []control.EndpointGeneration{endpoint}, DNSServers: []string{}, Nodes: []control.ViewNode{}, TransportCredentials: []control.TransportCredential{}, ExpectedComponents: []control.ComponentReadback{}}
 		if permit {
 			scope := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
 			view.PolicyIDs = []string{"demo-policy"}
-			view.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo-service.example"}}}}
+			view.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}}
 			view.Policies = []control.NetworkPolicy{{ID: "demo-policy", Name: "Demo policy", ServiceID: "demo-service", Action: "allow", EntryScope: scope, RelayScope: scope, ExitScope: new(scope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}}
 		}
 		for _, update := range change {
 			update(sequence, &view)
 		}
 		projection := control.Projection{Config: config, NetworkID: config.NetworkID, NetworkIntent: control.EmptyNetworkIntent(), EndpointGenerations: view.Endpoints}
-		projection.NetworkIntent.Services, projection.NetworkIntent.Policies, projection.NetworkIntent.Resources, projection.NetworkIntent.Links, projection.NetworkIntent.DNSRecords = view.Services, view.Policies, view.Resources, view.Links, view.DNSRecords
+		projection.NetworkIntent.Services, projection.NetworkIntent.Policies, projection.NetworkIntent.Resources, projection.NetworkIntent.DNSRecords = view.Services, view.Policies, view.Resources, view.DNSRecords
 		projection.NetworkIntent.PublicTrust = view.PublicTrust
 		projection.EndpointGenerations = append(projection.EndpointGenerations, view.WebEndpoints...)
-		for _, group := range view.BusinessProbeTargets {
-			for _, target := range group.Targets {
-				projection.NetworkIntent.BusinessProbeTargets = append(projection.NetworkIntent.BusinessProbeTargets, control.BusinessProbeTarget{URL: target})
-			}
-		}
-		sort.Slice(projection.NetworkIntent.BusinessProbeTargets, func(i, j int) bool {
-			return projection.NetworkIntent.BusinessProbeTargets[i].URL < projection.NetworkIntent.BusinessProbeTargets[j].URL
-		})
 		projection.DeviceAuthorizations = []control.DeviceAuthorization{{ID: view.DeviceID, Name: view.Name, Platform: view.Platform, DevicePublicKey: view.DevicePublicKey, Responsibilities: view.Responsibilities, PolicyIDs: view.PolicyIDs, DNSServers: append([]string(nil), view.DNSServers...), RuntimeKey: publicValue, DistributionURLs: []string{}, TransactionID: inviteValue.ID, InviteMaterialID: genesisID, BindingMaterialID: genesisID}}
+		if project != nil {
+			project(&projection)
+		}
 		view, err = control.ProjectDeviceView(projection, view.DeviceID)
 		if err != nil {
 			t.Fatal(err)

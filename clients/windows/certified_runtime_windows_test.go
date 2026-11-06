@@ -27,7 +27,7 @@ func windowsCertifiedTestView(t *testing.T, store *deviceclient.ProtectedStore, 
 			view.PolicyIDs = []string{}
 			view.Policies = []control.NetworkPolicy{}
 			view.Services = []control.Service{}
-			view.BusinessProbeTargets = []control.ServiceProbeTargets{}
+
 		}
 	})
 }
@@ -47,7 +47,7 @@ func TestWindowsRuntimeReadyRequiresSelectorStatusWithoutBusinessSuccess(t *test
 	}
 	lkg := &control.DeviceViewEnvelope{View: control.DeviceView{DeviceID: "demo-windows"}, ViewDigest: "sha256:" + strings.Repeat("1", 64)}
 	activation := clientadapter.Activation{
-		State:      clientadapter.State{Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}, NetworkGeneration: "demo-network"},
+		State:      clientadapter.State{Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}, NetworkGeneration: "demo-network"},
 		Selections: []clientadapter.SelectionStatus{{Scope: "service:demo-service", CandidateID: "demo-route", State: "unknown"}},
 	}
 	readAt := time.Date(2030, 1, 1, 0, 0, 20, 0, time.UTC)
@@ -65,49 +65,15 @@ func TestWindowsRuntimeReadyRequiresSelectorStatusWithoutBusinessSuccess(t *test
 	}
 }
 
-func TestWindowsProbeDoesNotInventTargetScopeOrReduction(t *testing.T) {
-	view := control.DeviceView{Routes: []control.RouteCandidate{{ID: "demo-route", FinalExit: "direct", Scope: "service:demo-service", ServiceID: "demo-service", PolicyID: "demo-policy"}},
-		DNSServers: []string{"192.0.2.53"}, BusinessProbeTargets: []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo.example/demo-probe"}}}}
-	if probe := windowsBusinessProbe(view, "service:demo-service"); probe == nil {
-		t.Fatal("single authorized target unavailable")
+func TestWindowsSelectedPolicyUsesOnlyItsServicesOptionalMeasurementURLs(t *testing.T) {
+	view := control.DeviceView{PolicyIDs: []string{"demo-policy", "demo-policy-other"}, Services: []control.Service{{ID: "demo-service", ProbeURLs: []string{"https://demo.example/"}}, {ID: "demo-other", ProbeURLs: []string{"https://demo-other.example/"}}}, Policies: []control.NetworkPolicy{{ID: "demo-policy", ServiceID: "demo-service", Action: "allow"}, {ID: "demo-policy-other", ServiceID: "demo-other", Action: "allow"}}}
+	service, targets := windowsProbeTargets(view, "demo-policy")
+	if service != "demo-service" || !reflect.DeepEqual(targets, []string{"https://demo.example/"}) {
+		t.Fatal("unselected Service supplied targets")
 	}
-	withoutDNS := view
-	withoutDNS.DNSServers = nil
-	if windowsBusinessProbe(withoutDNS, "service:demo-service") == nil {
-		t.Fatal("remote name resolution requires no client DNS target")
-	}
-	for _, missing := range []string{"target"} {
-		t.Run(missing, func(t *testing.T) {
-			input := view
-			switch missing {
-			case "target":
-				input.BusinessProbeTargets = nil
-
-			}
-			if probe := windowsBusinessProbe(input, "service:demo-service"); probe != nil {
-				t.Fatal("business scope without an unambiguous authorized target did not stay unknown")
-			}
-		})
-	}
-	view.BusinessProbeTargets[0].Targets = append(view.BusinessProbeTargets[0].Targets, "https://demo.example/other")
-	if len(windowsBusinessProbe(view, "service:demo-service")) != 2 {
-		t.Fatal("multiple authenticated targets were lost")
-	}
-
-}
-
-func TestWindowsIndependentServiceTargets(t *testing.T) {
-	view := control.DeviceView{DNSServers: []string{"192.0.2.53"}, BusinessProbeTargets: []control.ServiceProbeTargets{
-		{ServiceID: "demo-a", Targets: []string{"https://demo-a.example/"}},
-		{ServiceID: "demo-b", Targets: []string{"https://demo-b.example/"}},
-	}}
-	for _, scope := range []string{"service:demo-a", "service:demo-b"} {
-		if windowsBusinessProbe(view, scope) == nil {
-			t.Fatal("another Service prevented this probe", scope)
-		}
-	}
-	if windowsBusinessProbe(view, "service:demo-missing") != nil {
-		t.Fatal("probe escaped its Service")
+	view.Services[0].ProbeURLs = nil
+	if _, targets := windowsProbeTargets(view, "demo-policy"); len(targets) != 0 {
+		t.Fatal("missing optional URLs invented defaults")
 	}
 }
 
@@ -142,7 +108,18 @@ func testWindowsRevocationRecovery(t *testing.T, protector clientsecret.Protecto
 	fetch := func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error) {
 		return next, nil
 	}
-	err = runWindowsGeneration(context.Background(), root, store, profile, fetch)
+	if changed, err := refreshWindowsCertifiedView(context.Background(), store, fetch); err != nil || !changed {
+		t.Fatalf("certified revocation was not accepted before application: %v", err)
+	}
+	fetchCalled := false
+	startupFetch := func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error) {
+		fetchCalled = true
+		return control.DeviceViewEnvelope{}, errors.New("demo slow private control must not gate local component application")
+	}
+	err = runWindowsGeneration(context.Background(), root, store, profile, startupFetch)
+	if fetchCalled {
+		t.Fatal("runtime startup waited for private configuration before using its authenticated LKG")
+	}
 	if err == nil || !strings.Contains(err.Error(), "load signed Windows runtime components") {
 		t.Fatalf("expected component application failure, got %v", err)
 	}
@@ -197,13 +174,16 @@ func testWindowsResponsibilityRemoval(t *testing.T, protector clientsecret.Prote
 		view.PolicyIDs = []string{}
 		view.Policies = []control.NetworkPolicy{}
 		view.Services = []control.Service{}
-		view.BusinessProbeTargets = []control.ServiceProbeTargets{}
+
 	})
-	if removed.View.RuntimeProfile != nil {
+	if testDeviceExecution(removed.View).RuntimeProfile != nil {
 		t.Fatal("fixture retained execution authorization")
 	}
 	fetch := func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error) {
 		return removed, nil
+	}
+	if changed, err := refreshWindowsCertifiedView(context.Background(), store, fetch); err != nil || !changed {
+		t.Fatalf("responsibility revocation was not accepted: %v", err)
 	}
 	if err = runWindowsGeneration(context.Background(), root, store, profile, fetch); err == nil {
 		t.Fatal("revoked access unexpectedly started")
@@ -286,5 +266,85 @@ func TestWindowsUnrelatedCertifiedProgressDoesNotRestartRuntime(t *testing.T) {
 	if changed, err = refreshWindowsCertifiedView(context.Background(), store, fetch); err != nil || changed || !reflect.DeepEqual(store.LKG(), &racing) {
 		t.Fatal("older in-flight response disturbed newer durable progress", err)
 	}
+}
 
+func TestWindowsConcurrentAcceptedProgressKeepsNewerResponseAndReportSequence(t *testing.T) {
+	root := t.TempDir()
+	protector := clientsecret.MachineProtector{}
+	invite, envelope := windowsFixture(t)
+	path := windowsProfileStatePath(root)
+	store, err := deviceclient.OpenProtected(path, invite, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := envelope(store.PublicKey(), 7)
+	if err = store.SaveLKG(before); err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := deviceclient.LoadProtected(path, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intermediate := envelope(store.PublicKey(), 8)
+	next := envelope(store.PublicKey(), 9)
+	var reserved control.U64
+	fetch := func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error) {
+		if err := concurrent.SaveLKG(intermediate); err != nil {
+			t.Fatal(err)
+		}
+		reserved, err = concurrent.ReserveReportSequence()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return next, nil
+	}
+	if changed, err := refreshWindowsCertifiedView(context.Background(), store, fetch); err != nil || changed {
+		t.Fatalf("same execution inputs changed or failed: %v", err)
+	}
+	if !reflect.DeepEqual(store.LKG(), &next) {
+		t.Fatal("concurrent accepted progress discarded the newer authenticated response")
+	}
+	if nextSequence, err := store.ReserveReportSequence(); err != nil || nextSequence <= reserved {
+		t.Fatal("configuration acceptance rolled back a report reservation", err)
+	}
+}
+
+func TestWindowsFailedFetchStillReportsConcurrentlyAcceptedRevocation(t *testing.T) {
+	root := t.TempDir()
+	protector := clientsecret.MachineProtector{}
+	invite, envelope := windowsFixture(t)
+	path := windowsProfileStatePath(root)
+	store, err := deviceclient.OpenProtected(path, invite, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := envelope(store.PublicKey(), 7)
+	if err := store.SaveLKG(before); err != nil {
+		t.Fatal(err)
+	}
+	concurrent, err := deviceclient.LoadProtected(path, protector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := envelope(store.PublicKey(), 8, func(view *control.DeviceView) {
+		view.PolicyIDs = []string{}
+		view.Policies = []control.NetworkPolicy{}
+		view.Services = []control.Service{}
+	})
+	fetch := func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error) {
+		if err := concurrent.SaveLKG(revoked); err != nil {
+			t.Fatal(err)
+		}
+		return control.DeviceViewEnvelope{}, errors.New("demo private request failed after concurrent revocation")
+	}
+	changed, err := refreshWindowsCertifiedView(context.Background(), store, fetch)
+	if err != nil || !changed {
+		t.Fatalf("network failure hid accepted revocation from runtime cancellation: %v", err)
+	}
+	if !reflect.DeepEqual(store.LKG(), &revoked) {
+		t.Fatal("failed request replaced the concurrently accepted revocation")
+	}
+	if err := store.SaveLKG(before); err == nil {
+		t.Fatal("failed request allowed the pre-revocation floor")
+	}
 }

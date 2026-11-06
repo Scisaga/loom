@@ -85,7 +85,7 @@ func reportCountersReady(index *bolt.Bucket) error {
 
 // Every original is checked before its derived row is trusted or replaced.
 // No cached proof or current permission substitutes for the historical binding.
-func verifyReportCounterOriginal(raw, location []byte, keys map[reportOwner]string, codec *contractCodec) (DeviceReport, string, error) {
+func verifyStoredReportOriginal(raw, location []byte, keys map[reportOwner]string, codec *contractCodec) (DeviceReport, string, error) {
 	var report DeviceReport
 	if err := decodeStoredReportWithCodec(raw, &report, codec); err != nil {
 		return report, "", err
@@ -118,7 +118,7 @@ func rebuildReportCounters(ctx context.Context, tx *bolt.Tx, keys map[reportOwne
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		report, key, err := verifyReportCounterOriginal(raw, location, keys, codec)
+		report, key, err := verifyStoredReportOriginal(raw, location, keys, codec)
 		if err != nil {
 			return err
 		}
@@ -141,7 +141,7 @@ func verifyReportCounters(ctx context.Context, tx *bolt.Tx, keys map[reportOwner
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		report, key, err := verifyReportCounterOriginal(raw, location, keys, codec)
+		report, key, err := verifyStoredReportOriginal(raw, location, keys, codec)
 		if err != nil {
 			return err
 		}

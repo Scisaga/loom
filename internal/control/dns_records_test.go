@@ -94,13 +94,13 @@ func TestOverlayDNSFormalWriteRestartViewAndDeletion(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(view.View.DNSRecords, []DNSRecord{record}) {
 		t.Fatal("DNS did not reach signed device projection after restart", err)
 	}
-	if !reflect.DeepEqual(view.View.Routes, original.View.Routes) {
+	if !reflect.DeepEqual(testDeviceExecution(view.View).Routes, testDeviceExecution(original.View).Routes) {
 		t.Fatal("unrelated record changed Service candidate")
 	}
 	if got, _ := server.Runtime.Authority.Material(result.MaterialID); !bytes.Equal(got, raw) {
 		t.Fatal("restart changed signed record")
 	}
-	if got := buildWebSnapshot(server.Runtime.Authority.Snapshot(), true, false, true).DNSRecords; !reflect.DeepEqual(got, []DNSRecord{record}) {
+	if got := testWebSnapshotWithIntent(server.Runtime.Authority.Snapshot(), true, false, true).DNSRecords; !reflect.DeepEqual(got, []DNSRecord{record}) {
 		t.Fatal("management readback lost DNS")
 	}
 	op.RequestID = "demo-stale-dns"
@@ -130,9 +130,9 @@ func TestOverlayDNSFormalWriteRestartViewAndDeletion(t *testing.T) {
 	}
 }
 
-func TestOverlayDNSOnlyInvalidatesRelevantBusiness(t *testing.T) {
+func TestOverlayDNSDoesNotBecomeAnInternetPermissionOrChangeInternetRoutes(t *testing.T) {
 	p := hy2ProjectionFixture(t)
-	p.NetworkIntent.Services[0].Matchers = []ServiceMatcher{{Kind: "dns_exact", Value: "demo-business.loom"}}
+
 	before, err := ProjectDeviceView(p, "demo-access")
 	if err != nil {
 		t.Fatal(err)
@@ -142,8 +142,8 @@ func TestOverlayDNSOnlyInvalidatesRelevantBusiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Routes[0].ID != after.Routes[0].ID || before.Routes[0].SpecDigest == after.Routes[0].SpecDigest {
-		t.Fatal("record did not invalidate exactly the candidate specification")
+	if testDeviceExecution(before).Routes[0].ID != testDeviceExecution(after).Routes[0].ID || testDeviceExecution(before).Routes[0].SpecDigest != testDeviceExecution(after).Routes[0].SpecDigest {
+		t.Fatal("overlay DNS changed unrelated Internet execution")
 	}
 	receiver, err := ProjectDeviceView(p, "demo-exit")
 	if err != nil || !reflect.DeepEqual(receiver.DNSRecords, after.DNSRecords) {
@@ -151,7 +151,7 @@ func TestOverlayDNSOnlyInvalidatesRelevantBusiness(t *testing.T) {
 	}
 	p.NetworkIntent.DNSRecords = append(p.NetworkIntent.DNSRecords, DNSRecord{ID: "demo-other", Name: "demo-unrelated.loom", Addresses: []string{"192.0.2.30"}})
 	unrelated, err := ProjectDeviceView(p, "demo-access")
-	if err != nil || !reflect.DeepEqual(after.Routes, unrelated.Routes) {
+	if err != nil || !reflect.DeepEqual(testDeviceExecution(after).Routes, testDeviceExecution(unrelated).Routes) {
 		t.Fatal("unrelated DNS invalidated routes", err)
 	}
 }

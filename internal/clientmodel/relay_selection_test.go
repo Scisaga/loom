@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-func TestRemoteRelayFailureOnlyExcludesExactPathAndCompleteNewBusinessRecovers(t *testing.T) {
+func TestRemoteRelayFailureLowersPreferenceAndBusinessCannotProveItsSuffix(t *testing.T) {
 	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	ref := LinkSampleRef{LinkID: "demo-link", DeviceID: "demo-entry", ResourceID: "demo-exit-wg", SpecDigest: "sha256:" + strings.Repeat("a", 64), Target: "[fdab::1]:53", Action: "wireguard_dns"}
+	ref := LinkSampleRef{LinkID: "demo-link", DeviceID: "demo-entry", ResourceID: "demo-exit-wg", SpecDigest: "sha256:" + strings.Repeat("a", 64), Target: "[fdab::1]:53", Action: "wireguard_echo"}
 	routes := []RouteCandidate{{ID: "demo-relay", Scope: "service:demo-service", FinalExit: "demo-exit", Chain: []string{"demo-entry", "demo-exit"}, RelayLinks: []LinkSampleRef{ref}, PolicyID: "demo-policy"}, {ID: "demo-direct", Scope: "service:demo-service", FinalExit: "demo-exit", Chain: []string{"demo-exit"}, PolicyID: "demo-policy"}}
 	sample := control.DeviceLinkObservation{DeviceID: ref.DeviceID, ReportSequence: 1, ReportDigest: "sha256:" + strings.Repeat("b", 64), CurrentUntil: at.Add(30 * time.Second).UnixMilli(), Observation: control.Observation{Level: "link", ResourceID: ref.ResourceID, LinkID: ref.LinkID, SpecDigest: ref.SpecDigest, Target: ref.Target, Action: ref.Action, NetworkGeneration: "demo-remote-generation", Result: "unavailable", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli()}}
-	pref := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
+	pref := Preference{Schema: 3, PolicyID: "demo-policy"}
 	targets := []string{"https://demo.example/a", "https://demo.example/b"}
 	selectRoute := func(samples []Observation, remote control.DeviceLinkObservation, now time.Time) string {
 		t.Helper()
@@ -37,13 +37,13 @@ func TestRemoteRelayFailureOnlyExcludesExactPathAndCompleteNewBusinessRecovers(t
 	}
 	good := []Observation{}
 	for _, target := range targets {
-		good = append(good, Observation{CandidateID: routes[0].ID, Scope: routes[0].Scope, Target: target, NetworkGeneration: "demo-local-generation", Result: "available", Action: "https_request", ObservedAt: at.Add(time.Second).Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339)})
+		good = append(good, Observation{CandidateID: routes[0].ID, Scope: control.AccessSelectorScope, Target: target, NetworkGeneration: "demo-local-generation", Result: "available", Action: "https_request", ObservedAt: at.Add(time.Second).Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339)})
 	}
 	if got := selectRoute(good[:1], sample, at.Add(2*time.Second)); got != "demo-direct" {
-		t.Fatal("partial business erased relay failure", got)
+		t.Fatal("business success erased a remote link it need not have traversed", got)
 	}
-	if got := selectRoute(good, sample, at.Add(2*time.Second)); got != "demo-relay" {
-		t.Fatal("complete new business did not recover", got)
+	if got := selectRoute(good, sample, at.Add(2*time.Second)); got != "demo-direct" {
+		t.Fatal("additional URLs invented proof of an independently chosen suffix", got)
 	}
 	sample.Observation.Result = "available"
 	if got := selectRoute(nil, sample, at); got != "demo-relay" {

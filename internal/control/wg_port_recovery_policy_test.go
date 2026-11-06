@@ -40,6 +40,7 @@ func newWGRecoveryFixture(t *testing.T) *wgRecoveryFixture {
 		device.DevicePublicKey = base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
 		f.keys[device.ID] = key
 	}
+	registerTestWireGuardIdentities(t, &f.p)
 	f.link = testDerivedLink(t, f.p, "demo-entry", "demo-exit")
 	head := ReleaseDigest([]byte("demo-current-resource"))
 	f.p.Targets = append(f.p.Targets, TargetState{TargetKind: "resource", TargetID: f.link.ResourceID, MaterialIDs: []string{head}})
@@ -74,7 +75,7 @@ func (f *wgRecoveryFixture) sample(t *testing.T, link NetworkLink, at time.Time,
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Observation{Level: "link", ResourceID: link.ResourceID, LinkID: link.ID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-underlay", Result: result, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli()}
+	return Observation{Level: "link", ResourceID: link.ResourceID, LinkID: link.ID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_echo", NetworkGeneration: "demo-underlay", Result: result, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(30 * time.Second).UnixMilli()}
 }
 
 func (f *wgRecoveryFixture) report(t *testing.T, id string, sequence U64, at time.Time, samples []Observation) DeviceReport {
@@ -219,11 +220,11 @@ func TestWGPortRecoveryRejectsInsufficientOrUnqualifiedFailure(t *testing.T) {
 		{"receiver stale", func(t *testing.T, f *wgRecoveryFixture) {
 			f.change(t, 1, 0, func(r *DeviceReport) { r.ReportedAt = f.now.Add(-3 * time.Minute).UnixMilli() })
 		}},
-		{"receiver old listener port", func(t *testing.T, f *wgRecoveryFixture) {
+		{"receiver wrong listener identity", func(t *testing.T, f *wgRecoveryFixture) {
 			f.change(t, 1, 0, func(r *DeviceReport) {
 				for i := range *r.Runtime.Resources {
 					if (*r.Runtime.Resources)[i].ResourceID == f.input.ResourceID {
-						(*r.Runtime.Resources)[i].Listen = "0.0.0.0:51819"
+						(*r.Runtime.Resources)[i].ListenerID = "demo-wrong-listener"
 					}
 				}
 			})

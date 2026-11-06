@@ -27,7 +27,7 @@ func TestWebsiteConcurrentPortsHaveNoDNSWinner(t *testing.T) {
 	if endpoints, err := WebsiteEndpoints(projection); err == nil || endpoints != nil {
 		t.Fatal("concurrent client ports chose an arbitrary DNS winner")
 	}
-	web := buildWebSnapshot(projection, true, true, true)
+	web := testWebSnapshotWithIntent(projection, true, true, true)
 	if len(web.WebEndpoints) != 0 || len(web.UIState.Warnings) == 0 {
 		t.Fatal("website conflict was hidden from management")
 	}

@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -30,20 +29,7 @@ func TestOfficialLinuxMixedSlowPrivateRequests(t *testing.T) {
 	if executable == "" {
 		t.Skip("set LOOM_LINUX_MIXED_EXECUTABLE in a dedicated user/network namespace")
 	}
-	for _, kind := range []string{"user", "net"} {
-		current, err := os.Stat("/proc/self/ns/" + kind)
-		initial, initialErr := os.Stat("/proc/1/ns/" + kind)
-		if err != nil || initialErr != nil || os.SameFile(current, initial) {
-			t.Fatal("real Mixed test requires separate user and network namespaces")
-		}
-	}
-	interfaces, err := net.Interfaces()
-	if err != nil || len(interfaces) != 1 || interfaces[0].Name != "lo" {
-		t.Fatal("real Mixed test requires only isolated loopback")
-	}
-	if err := exec.Command("ip", "link", "set", "lo", "up").Run(); err != nil {
-		t.Fatal(err)
-	}
+	business := isolatedPublicFixtureAddress(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -76,16 +62,19 @@ func TestOfficialLinuxMixedSlowPrivateRequests(t *testing.T) {
 		<-acceptDone
 		connections.Wait()
 	}()
-	target := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	target := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(writer, "demo-authorized-business")
 	}))
+	target.Listener.Close()
+	target.Listener, err = net.Listen("tcp", net.JoinHostPort(business.String(), "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.StartTLS()
 	defer target.Close()
 	store, path, makeView := linuxAcceptanceFixture(t, func(_ uint64, view *control.DeviceView) {
 		view.Endpoints[0].Host = "127.0.0.1"
 		view.Endpoints[0].Port = listener.Addr().(*net.TCPAddr).Port
-		if len(view.Services) != 0 {
-			view.Services[0].Matchers = []control.ServiceMatcher{{Kind: "ip_prefix", Value: "127.0.0.1/32"}}
-		}
 	})
 	first, revoked := makeView(7, true), makeView(8, false)
 	if err := store.SaveLKG(first); err != nil {
@@ -133,6 +122,12 @@ func TestOfficialLinuxMixedSlowPrivateRequests(t *testing.T) {
 	proxy, _ := url.Parse("http://127.0.0.1:1080")
 	client := target.Client()
 	client.Timeout = time.Second
+	// Keep certificate verification while binding the synthetic public IP;
+	// the built-in HTTPS fixture certifies its DNS name rather than this IP.
+	if len(target.Certificate().DNSNames) == 0 {
+		t.Fatal("HTTPS fixture has no certified server name")
+	}
+	client.Transport.(*http.Transport).TLSClientConfig.ServerName = target.Certificate().DNSNames[0]
 	client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxy)
 	client.Transport.(*http.Transport).DisableKeepAlives = true
 	defer client.CloseIdleConnections()
@@ -150,12 +145,12 @@ func TestOfficialLinuxMixedSlowPrivateRequests(t *testing.T) {
 		t.Fatal("authorized HTTPS failed while management requests were waiting")
 	}
 	generation.Store("demo-after")
-	if err := SetPreference(options.LocalState, "demo-after", clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}); err != nil {
+	if err := store.SetPreference(clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	reload <- syscall.SIGHUP
 	status := wait(func(status Status) bool {
-		return status.Runtime == "running" && status.NetworkGeneration == "demo-after" && status.Preference.Policy("demo-service") == "demo-policy"
+		return status.Runtime == "running" && status.NetworkGeneration == "demo-after" && status.Preference.PolicyID == "demo-policy"
 	})
 	businessOK := request()
 	if status.Reported || accepted.Load() != 3 || !businessOK {

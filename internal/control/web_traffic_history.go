@@ -59,23 +59,33 @@ func addTrafficDelta(target **WebTrafficDelta, rx, tx U64, from, until int64) er
 }
 func counterDifference(older, newer reportCounterProjection, scope *trafficLinkScope) (U64, U64, bool) {
 	a, b := older.WireGuardCounters, newer.WireGuardCounters
-	if a == nil || b == nil || uint64(older.ReportSequence) == math.MaxUint64 || older.ReportSequence+1 != newer.ReportSequence || older.NetworkGeneration != newer.NetworkGeneration || a.Interface != b.Interface || a.Epoch != b.Epoch || a.ObservedAt >= b.ObservedAt || b.ObservedAt-a.ObservedAt > 3*time.Minute.Milliseconds() || len(a.Peers) != len(b.Peers) {
+	if a == nil || b == nil || uint64(older.ReportSequence) == math.MaxUint64 || older.ReportSequence+1 != newer.ReportSequence || older.NetworkGeneration != newer.NetworkGeneration || a.Interface != b.Interface || a.Epoch != b.Epoch || a.ObservedAt >= b.ObservedAt || b.ObservedAt-a.ObservedAt > 3*time.Minute.Milliseconds() {
 		return 0, 0, false
 	}
 	var rx, tx U64
-	found := scope == nil
-	for i, first := range a.Peers {
-		last := b.Peers[i]
-		if first.PublicKey != last.PublicKey || first.RXBytes > last.RXBytes || first.TXBytes > last.TXBytes {
-			return 0, 0, false
+	found := false
+	for i, j := 0, 0; i < len(a.Peers) && j < len(b.Peers); {
+		first, last := a.Peers[i], b.Peers[j]
+		if first.PublicKey < last.PublicKey {
+			i++
+			continue
+		}
+		if first.PublicKey > last.PublicKey {
+			j++
+			continue
+		}
+		i++
+		j++
+		if first.RXBytes > last.RXBytes || first.TXBytes > last.TXBytes {
+			continue
 		}
 		if scope != nil {
 			binding := WireGuardCounterLink{LinkID: scope.id, SpecDigest: scope.spec}
 			if a.Interface != scope.endpoint || first.PublicKey != scope.peer || !slices.Contains(first.Links, binding) || !slices.Contains(last.Links, binding) {
 				continue
 			}
-			found = true
 		}
+		found = true
 		dx, dt := last.RXBytes-first.RXBytes, last.TXBytes-first.TXBytes
 		if math.MaxUint64-uint64(rx) < uint64(dx) || math.MaxUint64-uint64(tx) < uint64(dt) {
 			return 0, 0, false
@@ -108,7 +118,7 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 			return nil
 		}
 		at := report.WireGuardCounters.ObservedAt
-		if report.ReportSequence == highest && report.ReportedAt <= until && report.ReportedAt >= until-3*time.Minute.Milliseconds() && at >= until-3*time.Minute.Milliseconds() && at <= report.ReportedAt+5*time.Second.Milliseconds() {
+		if report.ReportSequence == highest && report.ReportedAt <= until && report.ReportedAt >= until-3*time.Minute.Milliseconds() && at >= until-3*time.Minute.Milliseconds() && at <= report.ReportedAt+5*time.Second.Milliseconds() && (scope == nil || counterHasLinkScope(report.WireGuardCounters, scope)) {
 			current = &report
 		}
 		if at > ceiling {
@@ -151,6 +161,19 @@ func (store *ObservationStore) deviceTrafficHistory(ctx context.Context, network
 	}
 	return result, err
 }
+
+func counterHasLinkScope(value *WireGuardCounters, scope *trafficLinkScope) bool {
+	if value.Interface != scope.endpoint {
+		return false
+	}
+	for _, peer := range value.Peers {
+		if peer.PublicKey == scope.peer && slices.Contains(peer.Links, WireGuardCounterLink{LinkID: scope.id, SpecDigest: scope.spec}) {
+			return true
+		}
+	}
+	return false
+}
+
 func (server *Server) trafficHistory(w http.ResponseWriter, r *http.Request) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || len(q) != 1 {
@@ -188,10 +211,6 @@ func (server *Server) trafficHistory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "link":
-		resources := map[string]TransportResource{}
-		for _, v := range p.NetworkIntent.Resources {
-			resources[v.ID] = v
-		}
 		for _, link := range projectWebLinks(p) {
 			if link.ID != value || !link.Authorized {
 				continue
@@ -210,15 +229,34 @@ func (server *Server) trafficHistory(w http.ResponseWriter, r *http.Request) {
 					if !found {
 						continue
 					}
-					local, remote := resources[native.FromResourceID], resources[native.ResourceID]
-					if node == native.ToNodeID {
-						local, remote = remote, local
+					view, err := ProjectDeviceView(p, node)
+					if err != nil {
+						http.Error(w, "current counter scope unavailable", http.StatusServiceUnavailable)
+						return
 					}
-					if remote.Authentication.PublicKey == nil {
+					endpoint, peers, err := WireGuardCounterBindings(view)
+					if err != nil {
+						http.Error(w, "current counter scope unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					if endpoint == "" {
+						continue
+					}
+					var scope *trafficLinkScope
+					for _, peer := range peers {
+						if slices.Contains(peer.Links, WireGuardCounterLink{LinkID: native.ID, SpecDigest: link.SpecDigest}) {
+							if scope != nil {
+								http.Error(w, "current counter scope is ambiguous", http.StatusServiceUnavailable)
+								return
+							}
+							scope = &trafficLinkScope{id: native.ID, spec: link.SpecDigest, endpoint: endpoint, peer: peer.PublicKey}
+						}
+					}
+					if scope == nil {
 						continue
 					}
 					identities = append(identities, id)
-					scopes[node] = &trafficLinkScope{id: native.ID, spec: link.SpecDigest, endpoint: ResourceInboundTag(local.ID), peer: *remote.Authentication.PublicKey}
+					scopes[node] = scope
 				}
 			}
 		}

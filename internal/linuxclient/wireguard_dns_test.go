@@ -5,14 +5,85 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"loom/internal/clientmodel"
+	"loom/internal/clientadapter"
 	"loom/internal/control"
 )
+
+func TestWireGuardPeerCoordinatesDoNotReplaceHostOwnership(t *testing.T) {
+	before := wireGuardExecution{WireGuard: []wireGuardExecutionLink{{LinkID: "demo-resource", Interface: "demo-wg", LocalAddress: "192.0.2.1/32", PeerID: "demo-peer", PeerPublicKey: "demo-key", AllowedIP: "192.0.2.2/32", Endpoint: "192.0.2.10:51820", ListenPort: 51820, PersistentKeepalive: 25}}}
+	after := wireGuardExecution{WireGuard: slices.Clone(before.WireGuard)}
+	after.WireGuard[0].Endpoint, after.WireGuard[0].PersistentKeepalive = "192.0.2.11:51821", 0
+	if !sameWireGuardHostInputs(before, after) || before.WireGuard[0].Endpoint != "192.0.2.10:51820" {
+		t.Fatal("peer coordinate replaced or mutated host ownership")
+	}
+	rebound := wireGuardExecution{WireGuard: slices.Clone(after.WireGuard)}
+	rebound.WireGuard[0].ListenPort++
+	if !sameWireGuardHostInputs(after, rebound) {
+		t.Fatal("UDP port rebind replaced host interface ownership")
+	}
+	for _, change := range []func(*wireGuardExecutionLink){
+		func(link *wireGuardExecutionLink) { link.Interface = "demo-other" },
+		func(link *wireGuardExecutionLink) { link.LocalAddress = "192.0.2.3/32" },
+		func(link *wireGuardExecutionLink) { link.AllowedIP = "192.0.2.4/32" },
+		func(link *wireGuardExecutionLink) { link.PeerPublicKey = "demo-other-key" },
+	} {
+		next := wireGuardExecution{WireGuard: slices.Clone(after.WireGuard)}
+		change(&next.WireGuard[0])
+		if sameWireGuardHostInputs(before, next) {
+			t.Fatal("peer update accepted changed host ownership")
+		}
+	}
+}
+
+func TestLinuxWireGuardCoordinateChangeRebuildsOnlyNativePeers(t *testing.T) {
+	p, keys, input, at := nativeProjectionFixture(t)
+	before, err := control.ProjectDeviceView(p, "demo-exit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executions, err := prepareResourceExecutions(before, input, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := projectWireGuard(before, executions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := Options{Capture: "mixed", DeviceState: filepath.Join(t.TempDir(), "demo-state.json"), WireGuardPrivateKey: keys["demo-exit"]}
+	connected := []string{}
+	config, server, err := rebuildReceivingConfigs(before, options, "demo-secret", nil, executions, clientadapter.WebsiteAccess{}, &connected, nil, first, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range p.NetworkIntent.Resources {
+		if p.NetworkIntent.Resources[i].ID == "demo-entry-wg" {
+			p.NetworkIntent.Resources[i].DialHost = "192.0.2.99"
+		}
+	}
+	after, err := control.ProjectDeviceView(p, "demo-exit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := projectWireGuard(after, executions)
+	if err != nil || !sameWireGuardHostInputs(first, next) {
+		t.Fatal("coordinate changed the host ownership projection", err)
+	}
+	updated, updatedServer, err := rebuildReceivingConfigs(after, options, "demo-secret", nil, executions, clientadapter.WebsiteAccess{}, &connected, nil, next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, hot, err := clientadapter.ReceiverChanges(config, updated)
+	if err != nil || !hot || len(changes) != 1 || server != updatedServer {
+		t.Fatal("Linux rendered coordinate change required instance replacement", hot, err)
+	}
+}
 
 func TestWireGuardCertifiedDNSAndAddressChanges(t *testing.T) {
 	answers := []byte{20, 10}
@@ -63,14 +134,7 @@ func TestWireGuardCertifiedDNSAndAddressChanges(t *testing.T) {
 	if err != nil || changed.WireGuard[0].Endpoint != "192.0.2.30:51820" {
 		t.Fatalf("new DNS address not projected: %+v, %v", changed, err)
 	}
-	view := control.DeviceView{Links: []control.NetworkLink{{ID: "demo-link", FromResourceID: "demo-resource-a"}}, Routes: []control.RouteCandidate{
-		{ID: "demo-candidate-relay", LinkIDs: []string{"demo-link"}, PolicyID: "demo-policy"}, {ID: "demo-candidate-direct", LinkIDs: []string{}, PolicyID: "demo-policy"},
-	}}
-	state := LocalState{Observations: []clientmodel.Observation{{CandidateID: "demo-candidate-direct"}, {CandidateID: "demo-candidate-relay"}}}
-	invalidated := invalidateWireGuardObservations(state, view, initial, changed)
-	if len(invalidated.Observations) != 1 || invalidated.Observations[0].CandidateID != "demo-candidate-direct" || len(state.Observations) != 2 {
-		t.Fatal("DNS change failed to invalidate only the affected path")
-	}
+
 }
 
 func TestWireGuardDNSRefusesHostFallbackAndKernelResolution(t *testing.T) {

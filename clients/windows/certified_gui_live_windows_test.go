@@ -175,7 +175,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 		state, health := "available", "可用"
 		if fixture.FirstHop {
 			state, health = "unknown", "未知"
-			for _, group := range load().LKG().View.BusinessProbeTargets {
+			for _, group := range testDeviceExecution(load().LKG().View).BusinessProbeTargets {
 				if len(group.Targets) != 0 {
 					t.Fatal("first-hop fixture must not include Service probe targets")
 				}
@@ -190,7 +190,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 			}
 			if fixture.FirstHop {
 				resource := ""
-				for _, route := range load().LKG().View.Routes {
+				for _, route := range testDeviceExecution(load().LKG().View).Routes {
 					if route.ID == selection.CandidateID {
 						resource = route.FirstResourceID
 					}
@@ -214,7 +214,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 			if row == nil || row.Health != health {
 				return false
 			}
-			for _, group := range load().LKG().View.BusinessProbeTargets {
+			for _, group := range testDeviceExecution(load().LKG().View).BusinessProbeTargets {
 				if "service:"+group.ServiceID != selection.Scope {
 					continue
 				}
@@ -376,10 +376,8 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 			if err != nil || len(s.LKG().View.PolicyIDs) == 0 || current.ViewDigest != s.LKG().ViewDigest || len(current.Selections) != 0 || len(current.BlockedScopes) == 0 {
 				return false
 			}
-			for _, choice := range s.Preference().Services {
-				if choice.PolicyID != "" {
-					t.Fatal("reauthorization restored an old choice")
-				}
+			if s.Preference().PolicyID != "" {
+				t.Fatal("reauthorization restored an old choice")
 			}
 			return true
 		})
@@ -410,7 +408,7 @@ func TestWindowsCertifiedGUIRuntimeLive(t *testing.T) {
 				return false
 			})
 			wait("explicit service policy persisted", func() bool {
-				return load().Preference().Policy(service.ID) == policyID && app.skin.route.pending == nil
+				return load().Preference().PolicyID == policyID && app.skin.route.pending == nil
 			})
 		}
 		status = readback(true)

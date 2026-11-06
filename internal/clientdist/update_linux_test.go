@@ -59,7 +59,7 @@ func TestDeliveryOriginalSignaturesAndCatalogBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := control.DeviceView{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", Name: "Demo device", DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), Platform: "linux", Responsibilities: []string{"control"}, PolicyIDs: []string{}, Services: []control.Service{}, Policies: []control.NetworkPolicy{}, Resources: []control.TransportResource{}, Links: []control.NetworkLink{}, Endpoints: []control.EndpointGeneration{}, DNSServers: []string{}, BusinessProbeTargets: []control.ServiceProbeTargets{}, Routes: []control.RouteCandidate{}, InboundCredentials: []control.InboundCredential{}, ExpectedComponents: manifestComponents(manifest)}
+	view := control.DeviceView{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", Name: "Demo device", DevicePublicKey: base64.RawURLEncoding.EncodeToString(public), Platform: "linux", Responsibilities: []string{"control"}, PolicyIDs: []string{}, Services: []control.Service{}, Policies: []control.NetworkPolicy{}, Resources: []control.TransportResource{}, Endpoints: []control.EndpointGeneration{}, DNSServers: []string{}, Nodes: []control.ViewNode{}, TransportCredentials: []control.TransportCredential{}, ExpectedComponents: manifestComponents(manifest)}
 	digest, err := control.DeviceViewDigest(view)
 	if err != nil {
 		t.Fatal(err)

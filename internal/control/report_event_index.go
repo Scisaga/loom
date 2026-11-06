@@ -113,7 +113,7 @@ func reportEventRuntime(tx *bolt.Tx, key []byte, codec *contractCodec) (RuntimeR
 	if !bytes.Equal(referenceOf(report).key(ReleaseDigest(raw)), key) {
 		return RuntimeReadback{}, errors.New("event candidate original differs from its storage key")
 	}
-	return RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, ErrorCode: report.Runtime.ErrorCode}, nil
+	return RuntimeReadback{State: report.Runtime.State, AppliedViewDigest: report.Runtime.AppliedViewDigest, PermissionViewDigest: report.Runtime.PermissionViewDigest, ErrorCode: report.Runtime.ErrorCode}, nil
 }
 
 func reportEventCandidate(tx *bolt.Tx, current, prior reportEventPosition, earliest U64, codec *contractCodec) ([]byte, error) {

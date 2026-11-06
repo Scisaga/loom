@@ -57,7 +57,7 @@ func TestObservationTransactionsExceedFormerAggregateCapacity(t *testing.T) {
 	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
 	digest := "sha256:" + strings.Repeat("0", 64)
 	report := DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-device", ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: 1,
-		Selections: []ReportSelection{{ServiceID: "demo-a", CandidateID: digest}, {ServiceID: "demo-b", CandidateID: digest}, {ServiceID: "demo-c", CandidateID: digest}, {ServiceID: "demo-d", CandidateID: digest}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
+		PolicyID: "demo-policy", Selections: []ReportSelection{{ServiceID: "demo-service", PolicyID: "demo-policy", CandidateID: digest}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
 	sign := func(sequence U64) DeviceReport {
 		t.Helper()
 		report.ReportSequence = sequence

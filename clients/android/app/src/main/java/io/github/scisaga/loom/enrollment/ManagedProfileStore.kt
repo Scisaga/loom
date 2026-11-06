@@ -9,6 +9,7 @@ import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 
 internal fun libboxWorkingDirectory(filesDir: File): File = filesDir.resolve("libbox")
 
@@ -25,6 +26,7 @@ data class ManagedProfile(
     internal val hasWebsite: Boolean = false,
     val possiblePermissionRestoration: Boolean = false,
     val resourceCacheIdentity: String = "",
+    val executionDigest: String = "",
     val serviceCatalog: String = "[]",
     val policyCatalog: String = "[]",
     val serviceScopes: String = "[]",
@@ -51,7 +53,6 @@ internal class ManagedProfileStore internal constructor(
         Loomcore.replaceAndroidTransport(original, replacement)
     },
     private val replacePolicy: (ByteArray, ByteArray, ByteArray) -> ByteArray = Loomcore::replaceAndroidPolicySelection,
-    private val migratePreference: (ByteArray, ByteArray, ByteArray) -> ByteArray = Loomcore::migrateAndroidPolicyPreference,
     private val acceptImportedView: (ByteArray, ByteArray) -> ByteArray = Loomcore::acceptAndroidCertifiedView,
 ) {
     constructor(context: Context, profileId: String) : this(
@@ -112,6 +113,11 @@ internal class ManagedProfileStore internal constructor(
             return@synchronized replacePolicySelection(replacement)
         }
         val next = acceptImportedView(original, replacement)
+        if (protected.get(preferenceKey) != null) {
+            preserveEvidence(preferenceKey, policyPreferenceEvidenceKey)
+            protected.remove(preferenceKey)
+            check(protected.get(preferenceKey) == null) { "旧偏好记录尚未删除" }
+        }
         acceptCertified(next)
     }
 
@@ -120,31 +126,27 @@ internal class ManagedProfileStore internal constructor(
     fun replacePolicySelection(replacement: ByteArray): ManagedProfile = synchronized(stateLock) {
         check(protected.get(candidateKey) == null) { "存在待核对的旧材料，不能替换认证配置" }
         val current = checkNotNull(protected.get(stateKey)) { "设备身份不存在" }
-        val original = protected.get(policyIdentityEvidenceKey) ?: current
-        val previousPreference = protected.get(policyPreferenceEvidenceKey)
-            ?: (protected.get(preferenceKey) ?: ByteArray(0)).also {
-                check(protected.get(policyIdentityEvidenceKey) == null) { "迁移的原偏好证据缺失" }
-            }
-        val next = replacePolicy(original, replacement, previousPreference)
-        val preference = migratePreference(original, replacement, previousPreference)
+        val previousPreference = protected.get(preferenceKey) ?: ByteArray(0)
+        val next = replacePolicy(current, replacement, previousPreference)
         validate(next)
-        if (!current.contentEquals(original)) {
-            validate(current)
-            check(authenticatedView(current) == authenticatedView(next)) { "不能覆盖另一次配置更新" }
-            checkAdvance(current, next)
-            return@synchronized checkNotNull(project(current)) { "认证配置已保存；没有可执行的 access 配置" }
-        }
-        if (protected.get(policyPreferenceEvidenceKey) == null) {
-            protected.put(policyPreferenceEvidenceKey, previousPreference)
-        }
-        check(protected.get(policyPreferenceEvidenceKey)?.contentEquals(previousPreference) == true) { "原偏好保全回读不一致" }
-        protected.preserve(stateKey, policyIdentityEvidenceKey)
-        check(protected.get(policyIdentityEvidenceKey)?.contentEquals(original) == true) { "原认证材料保全回读不一致" }
-        protected.put(preferenceKey, preference)
-        check(protected.get(preferenceKey)?.contentEquals(preference) == true) { "服务选择持久化回读不一致" }
+        preserveEvidence(stateKey, policyIdentityEvidenceKey)
+        if (protected.get(preferenceKey) != null) preserveEvidence(preferenceKey, policyPreferenceEvidenceKey)
         protected.put(stateKey, next)
         check(protected.get(stateKey)?.contentEquals(next) == true) { "认证配置持久化回读不一致" }
+        protected.remove(preferenceKey)
+        check(protected.get(preferenceKey) == null) { "旧偏好记录尚未删除" }
+        forgetRead()
         checkNotNull(project(next)) { "认证配置已保存；没有可执行的 access 配置" }
+    }
+
+    private fun preserveEvidence(source: String, prefix: String) {
+        val original = checkNotNull(protected.get(source))
+        val hash = MessageDigest.getInstance("SHA-256")
+        hash.update(prefix.encodeToByteArray())
+        hash.update(0.toByte())
+        val target = hash.digest(original).joinToString("") { "%02x".format(it) }
+        protected.preserve(source, target)
+        check(protected.get(target)?.contentEquals(original) == true) { "原始材料保全回读不一致" }
     }
 
     // Only explicit certified-file import reaches this path. Ordinary state(),
@@ -166,6 +168,7 @@ internal class ManagedProfileStore internal constructor(
         // second LKG or be discarded when they may contain a later revocation floor.
         try {
             check(protected.get(candidateKey) == null) { "存在旧待激活材料；须先验证前向迁移，原始资料已保留" }
+            check(protected.get(preferenceKey) == null) { "存在旧服务偏好，须经显式认证配置前向替换" }
             val body = protected.get(stateKey)
             if (body == null || cachedBytes?.contentEquals(body) != true) {
                 forgetRead()
@@ -295,6 +298,7 @@ private fun decodeAndroidProfile(body: ByteArray): ManagedProfile {
         policyCatalog = root.getJSONArray("policies").toString(),
         serviceScopes = root.getJSONArray("scopes").toString(),
         resourceCacheIdentity = root.getString("resource_cache_identity"),
+        executionDigest = root.getString("execution_digest"),
         recordID = root.getString("record_id"),
         dns = root.optJSONArray("dns")?.let { values -> (0 until values.length()).map(values::getString) }.orEmpty(),
         businessProbeTargets = root.optJSONArray("business_probe_targets")

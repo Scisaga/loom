@@ -23,6 +23,14 @@ func resourceExecutionFixture(t *testing.T, at ...time.Time) (control.DeviceView
 	if len(at) != 0 {
 		now = at[0]
 	}
+	return resourceExecutionFixtureWithLifetime(t, now, time.Minute)
+}
+
+func resourceExecutionFixtureWithLifetime(t *testing.T, now time.Time, lifetime time.Duration) (control.DeviceView, string, time.Time) {
+	t.Helper()
+	if lifetime <= 0 || lifetime >= time.Hour {
+		t.Fatal("invalid fixture certificate lifetime")
+	}
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +46,7 @@ func resourceExecutionFixture(t *testing.T, at ...time.Time) (control.DeviceView
 		t.Fatal(err)
 	}
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), DNSNames: []string{"demo.example"}, KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Minute)}
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(lifetime)}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, public, key)
 	if err != nil {
 		t.Fatal(err)
@@ -59,33 +67,33 @@ func resourceExecutionFixture(t *testing.T, at ...time.Time) (control.DeviceView
 		t.Fatal(err)
 	}
 	name, roots := "demo.example", []string{base64.RawURLEncoding.EncodeToString(caDER)}
-	view := control.DeviceView{DeviceID: "demo-exit", Resources: []control.TransportResource{{ID: input.ResourceID, Kind: "hysteria2", OwnerNodeID: "demo-exit", ListenerID: "demo-listener", DialHost: "192.0.2.10", DialPort: 443,
-		Authentication: control.ResourceAuthentication{ServerName: &name, CACertificates: &roots}}}, InboundCredentials: []control.InboundCredential{}}
+	view := control.DeviceView{DeviceID: "demo-exit", Responsibilities: []string{"forward"}, PolicyIDs: []string{}, Services: []control.Service{}, Policies: []control.NetworkPolicy{}, Resources: []control.TransportResource{{ID: input.ResourceID, Kind: "hysteria2", OwnerNodeID: "demo-exit", ListenerID: "demo-listener", DialHost: "192.0.2.10", DialPort: 443,
+		Authentication: control.ResourceAuthentication{ServerName: &name, CACertificates: &roots}}}, Nodes: []control.ViewNode{}, TransportCredentials: []control.TransportCredential{}}
 	return view, path, now
 }
 
 func TestResourceExecutionRequiresProtectedInputsAndCertifiedTLS(t *testing.T) {
 	view, path, now := resourceExecutionFixture(t)
-	executions, err := prepareHY2Executions(view, path, now)
+	executions, err := prepareResourceExecutions(view, path, now)
 	if err != nil || len(executions) != 1 {
 		t.Fatal("valid execution material rejected", err)
 	}
 	if _, err := nodeRuntimeConfig(view, "demo-secret", nil, "tun", executions); err == nil {
 		t.Fatal("server listener was coupled to access TUN")
 	}
-	if _, err := prepareHY2Executions(view, path, now.Add(2*time.Minute)); err == nil {
+	if _, err := prepareResourceExecutions(view, path, now.Add(2*time.Minute)); err == nil {
 		t.Fatal("expired leaf could start a listener")
 	}
 	wrongName := "other.example"
 	view.Resources[0].Authentication.ServerName = &wrongName
-	if _, err := prepareHY2Executions(view, path, now); err == nil {
+	if _, err := prepareResourceExecutions(view, path, now); err == nil {
 		t.Fatal("local certificate bypassed the signed verification name")
 	}
 	view, path, now = resourceExecutionFixture(t)
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepareHY2Executions(view, path, now); err == nil {
+	if _, err := prepareResourceExecutions(view, path, now); err == nil {
 		t.Fatal("unprotected execution inputs were accepted")
 	}
 }
@@ -93,7 +101,7 @@ func TestResourceExecutionRequiresProtectedInputsAndCertifiedTLS(t *testing.T) {
 func TestUnusedResourceInputsCannotCreateServerAuthority(t *testing.T) {
 	view, path, now := resourceExecutionFixture(t)
 	view.Resources = []control.TransportResource{}
-	executions, err := prepareHY2Executions(view, path, now)
+	executions, err := prepareResourceExecutions(view, path, now)
 	if err != nil || len(executions) != 0 {
 		t.Fatal("local inputs manufactured an owned resource", err)
 	}

@@ -395,6 +395,7 @@ private fun LoomHomeRoute(
                 onRefreshEnrollment = enrollment::refreshConfiguration,
                 onAbandonEnrollment = enrollment::abandonPending,
                 onSelectRoute = { profileID, serviceID, policyID -> routeManager.select(profileID, serviceID, policyID) },
+                onRebuildService = routeManager::rebuildServiceConnections,
                 onOpenNotificationSettings = onOpenNotificationSettings,
             ),
         )
@@ -770,7 +771,12 @@ private fun suggestedProfileName(profiles: List<ConnectionProfile>): String {
 }
 
 @Composable
-internal fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStatus, onRefresh: () -> Unit) {
+internal fun JoinedDeviceCard(
+    profile: ConnectionProfile,
+    status: EnrollmentStatus,
+    onRefresh: () -> Unit,
+    onImportFile: () -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -803,6 +809,12 @@ internal fun JoinedDeviceCard(profile: ConnectionProfile, status: EnrollmentStat
                 TextButton(onClick = onRefresh, modifier = Modifier.testTag("refresh-config")) {
                     Text("检查更新")
                 }
+            }
+            OutlinedButton(
+                onClick = onImportFile,
+                modifier = Modifier.fillMaxWidth().testTag("import-certified-config"),
+            ) {
+                Text("导入签名配置")
             }
         }
     }
@@ -976,11 +988,14 @@ internal fun NetworkEvidenceCard(
             if (deviceName.isNotBlank()) Text("设备：$deviceName", color = Muted, fontSize = 13.sp)
             Text("可信上报：${status.trustedReport}", color = Ink, fontSize = 13.sp)
             BusinessEvidenceRows(route.businessEvidence, route.running && status.phase == ConnectionPhase.CONNECTED, evidenceTime)
+            if (route.running && status.phase == ConnectionPhase.CONNECTED) {
+                Text(route.observationDetail, color = Ink, fontSize = 13.sp, modifier = Modifier.testTag("native-tcp-observation"))
+            }
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE3E8E5)))
             Text("信任边界", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text(diagnostics, color = Ink, fontSize = 13.sp, modifier = Modifier.testTag("device-info-card"))
             Text(
-                "业务结果按服务、目标和当前网络分别记录；\n未配置获授权探测目标时保持未知。",
+                "HTTPS 结果按配置网址记录；本机 TCP 建连观测只证明建连，不代表 HTTPS 请求或整个网站可用。",
                 color = Muted,
                 fontSize = 12.sp,
             )
@@ -1134,7 +1149,7 @@ private fun enrollmentTitle(phase: EnrollmentPhase): String = when (phase) {
 }
 
 @Composable
-internal fun ServicePolicyCard(status: RouteStatus, onSelect: (String, String) -> Unit) {
+internal fun ServicePolicyCard(status: RouteStatus, onRebuild: (String) -> Unit, onSelect: (String, String) -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().testTag("service-policy-card")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("服务策略", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -1144,8 +1159,15 @@ internal fun ServicePolicyCard(status: RouteStatus, onSelect: (String, String) -
                 if (service.policyID.isEmpty()) Text("请选择策略后使用此服务", color = Muted, fontSize = 12.sp)
                 service.options.forEach { policy ->
                     ServicePolicyButton(label = policy.name, selected = service.policyID == policy.id,
-                        onClick = { onSelect(service.serviceID, policy.id) }, enabled = status.available && !status.busy,
+                        onClick = { onSelect(service.serviceID, policy.id) }, enabled = status.available,
                         modifier = Modifier.fillMaxWidth().testTag("service-policy-${service.serviceID}-${policy.id}"))
+                }
+                if (status.running && service.policyID.isNotEmpty()) {
+                    TextButton(onClick = { onRebuild(service.serviceID) }, enabled = status.available && !status.busy,
+                        modifier = Modifier.testTag("service-rebuild-${service.serviceID}")) {
+                        Text("重建该服务连接")
+                    }
+                    Text("新连接使用当前优选路径；已有连接保持原路径。此操作会关闭该服务的现有连接。", color = Muted, fontSize = 11.sp)
                 }
             }
             Text(status.detail, color = if (status.blocked) Color(0xFFB33A3A) else Muted, fontSize = 12.sp)

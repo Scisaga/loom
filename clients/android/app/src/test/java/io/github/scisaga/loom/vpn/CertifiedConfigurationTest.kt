@@ -38,4 +38,30 @@ class CertifiedConfigurationTest {
         assertTrue(accepted.isFailure)
         assertTrue(cleanup.isSuccess)
     }
+    @Test
+    fun acceptedMeasurementChangeCanRetainExactlyMatchingExecution() = runBlocking {
+        var stopped = false
+        val (accepted, cleanup) = acceptAuthorityAndStopRuntime(
+            accept = { "demo-same-execution" },
+            canRetainExecution = { it == "demo-same-execution" },
+            stop = { stopped = true },
+        )
+        assertTrue(accepted.isSuccess)
+        assertTrue(cleanup.isSuccess)
+        assertTrue(!stopped)
+    }
+
+    @Test
+    fun failedExecutionComparisonStillStopsOldRuntime() = runBlocking {
+        var stopped = false
+        val (accepted, cleanup) = acceptAuthorityAndStopRuntime(
+            accept = { "demo-new-permission" },
+            canRetainExecution = { error("execution comparison unavailable") },
+            stop = { stopped = true },
+        )
+        assertTrue(accepted.isSuccess)
+        assertTrue(cleanup.isSuccess)
+        assertTrue(stopped)
+    }
+
 }

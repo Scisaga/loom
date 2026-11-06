@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"reflect"
 	"strconv"
 	"testing"
@@ -21,7 +22,7 @@ func TestEmptyLinkScopeDoesNotReadUnrelatedReportOriginals(t *testing.T) {
 		t.Fatal("join failed", response.Code)
 	}
 	envelope, err := server.deviceEnvelope(invite.DeviceID)
-	if err != nil || len(envelope.View.Links) != 0 {
+	if err != nil || len(testDeviceExecution(envelope.View).Links) != 0 {
 		t.Fatal("fixture must have an empty relay source scope", err)
 	}
 	root := server.Runtime.Authority.root
@@ -68,6 +69,25 @@ func TestEmptyLinkScopeDoesNotReadUnrelatedReportOriginals(t *testing.T) {
 	}
 }
 
+func testProjectReportMeasurements(t *testing.T, projection Projection, recipient, digest string, reports []DeviceReport, now time.Time, viewFor func(string) (DeviceView, string, error)) (DeviceLinkObservations, error) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := testOpenObservationStore(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, report := range reports {
+		identity, _ := identityFor(projection, report.DeviceID)
+		if err := store.Put(report, identity.DevicePublicKey); err != nil {
+			return DeviceLinkObservations{}, err
+		}
+	}
+	return projectDeviceLinkObservations(context.Background(), store, projection, recipient, digest, now, viewFor)
+}
+
 func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.T) {
 	p := relayProjectionFixture(t)
 	key := testKey(t)
@@ -92,7 +112,7 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 	link := testDerivedLink(t, p, "demo-entry", "demo-exit")
 	spec, _ := LinkSpecDigest(source, link.ID)
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	sample := Observation{Level: "link", ResourceID: link.ResourceID, LinkID: link.ID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-source-underlay", Result: "unavailable", ObservedAt: now.Add(-time.Second).UnixMilli(), ValidUntil: now.Add(29 * time.Second).UnixMilli()}
+	sample := Observation{Level: "link", ResourceID: link.ResourceID, LinkID: link.ID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: link.ProbeTarget.Action, NetworkGeneration: "demo-source-underlay", Result: "unavailable", ObservedAt: now.Add(-time.Second).UnixMilli(), ValidUntil: now.Add(29 * time.Second).UnixMilli()}
 	resources := []ResourceReadback{}
 	for _, resource := range source.Resources {
 		if resource.OwnerNodeID != source.DeviceID {
@@ -111,12 +131,53 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := projectDeviceLinkObservations(p, recipient.DeviceID, recipientDigest, []DeviceReport{signed}, now, viewFor)
+	result, err := testProjectReportMeasurements(t, p, recipient.DeviceID, recipientDigest, []DeviceReport{signed}, now, viewFor)
 	if err != nil || len(result.Observations) != 1 || !reflect.DeepEqual(result.Observations[0].Observation, sample) {
 		t.Fatal("current signed original was not delivered", err, result)
 	}
 	if calls[source.DeviceID] != 1 || calls[recipient.DeviceID] != 1 {
 		t.Fatal("recipient and report checks rebuilt a View in the same request", calls)
+	}
+	changed := cloneAuthorityProjection(p)
+	for index := range changed.DeviceAuthorizations {
+		if changed.DeviceAuthorizations[index].ID == source.DeviceID {
+			changed.DeviceAuthorizations[index].Name = "Demo renamed forward"
+		}
+	}
+	changedViews := deviceLinkViewFor(func(id string) (DeviceView, error) { return ProjectDeviceView(changed, id) })
+	_, changedSourceDigest, err := changedViews(source.DeviceID)
+	if err != nil || changedSourceDigest == digest {
+		t.Fatal("fixture did not change an unrelated source View field", err)
+	}
+	_, changedRecipientDigest, err := changedViews(recipient.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := base
+	head.ReportSequence++
+	head.ViewDigest, head.Runtime.AppliedViewDigest = changedSourceDigest, changedSourceDigest
+	head.Observations = []Observation{}
+	head, err = SignDeviceReport(head, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := testProjectReportMeasurements(t, changed, recipient.DeviceID, changedRecipientDigest, []DeviceReport{signed, head}, now, changedViews)
+	if err != nil || len(retained.Observations) != 1 || retained.Observations[0].ReportDigest != result.Observations[0].ReportDigest || retained.Observations[0].ReportSequence != signed.ReportSequence {
+		t.Fatal("an unrelated View change erased or rebound a valid original measurement", err)
+	}
+	for index := range changed.NetworkIntent.Resources {
+		if changed.NetworkIntent.Resources[index].ID == link.ResourceID {
+			changed.NetworkIntent.Resources[index].DialPort++
+		}
+	}
+	changedViews = deviceLinkViewFor(func(id string) (DeviceView, error) { return ProjectDeviceView(changed, id) })
+	_, changedRecipientDigest, err = changedViews(recipient.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidated, err := testProjectReportMeasurements(t, changed, recipient.DeviceID, changedRecipientDigest, []DeviceReport{signed, head}, now, changedViews)
+	if err != nil || len(invalidated.Observations) != 0 {
+		t.Fatal("changed transport parameters reused an incompatible original measurement", err)
 	}
 	body, err := CanonicalEncode(result)
 	if err != nil {
@@ -140,7 +201,6 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 		}, now},
 		{"source generation", func(r *DeviceReport) { r.NetworkGeneration = "demo-other-underlay" }, now},
 		{"spec", func(r *DeviceReport) { r.Observations[0].SpecDigest = ReleaseDigest([]byte("demo-other")) }, now},
-		{"stale view", func(r *DeviceReport) { r.ViewDigest = ReleaseDigest([]byte("demo-old-view")) }, now},
 		{"other network", func(r *DeviceReport) { r.NetworkID = "demo-other-network" }, now},
 		{"expired", func(*DeviceReport) {}, now.Add(30 * time.Second)},
 	} {
@@ -154,14 +214,18 @@ func TestScopedLinkDeliveryVerifiesOriginalReportAndCurrentExecution(t *testing.
 					t.Fatal(err)
 				}
 			}
-			got, err := projectDeviceLinkObservations(p, recipient.DeviceID, recipientDigest, []DeviceReport{r}, tc.at, viewFor)
-			if err != nil || len(got.Observations) != 0 {
+			got, err := testProjectReportMeasurements(t, p, recipient.DeviceID, recipientDigest, []DeviceReport{r}, tc.at, viewFor)
+			if tc.name == "signature" || tc.name == "source generation" {
+				if err == nil {
+					t.Fatal("invalid signed report entered the shared store")
+				}
+			} else if err != nil || len(got.Observations) != 0 {
 				t.Fatal("invalid execution sample delivered", err, got)
 			}
 		})
 	}
 	copy := recipient
-	copy.Links = []NetworkLink{}
+	copy.Resources = []TransportResource{}
 	if result.ValidateForView(copy) == nil {
 		t.Fatal("recipient scope withdrawal was ignored")
 	}
@@ -196,7 +260,7 @@ func TestDeviceLinkViewReuseIsRequestLocalAndRejectsFailedProjections(t *testing
 		if recipient != view.DeviceID {
 			wrong = digest
 		}
-		if _, err := projectDeviceLinkObservations(p, recipient, wrong, nil, now, viewFor); err == nil {
+		if _, err := testProjectReportMeasurements(t, p, recipient, wrong, nil, now, viewFor); err == nil {
 			t.Fatal("private projection accepted a digest paired with another recipient View")
 		}
 	}
@@ -211,7 +275,7 @@ func TestDeviceLinkViewReuseIsRequestLocalAndRejectsFailedProjections(t *testing
 	if err != nil || nextDigest == digest {
 		t.Fatal("a later request reused an earlier authorization projection", err)
 	}
-	if _, err := projectDeviceLinkObservations(changed, view.DeviceID, digest, nil, now, next); err == nil {
+	if _, err := testProjectReportMeasurements(t, changed, view.DeviceID, digest, nil, now, next); err == nil {
 		t.Fatal("private projection paired an earlier digest with a changed authorization View")
 	}
 	for _, mode := range []string{"projection error", "invalid View", "another device"} {

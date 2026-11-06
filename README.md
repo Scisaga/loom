@@ -13,7 +13,8 @@ Loom 的控制、Enrollment、客户端运行和界面以[同一套设计](docs/
 
 Loom 管理可组合承担 `access`、`forward`、`internet_egress`、`control` 职责的节点，以及不受管的目标地址。
 最终出口是路径上的位置，不是节点类型。
-客户端在认证的候选集合中选择 Direct、Auto 或指定最终出口；一跳直达与经中继到同一出口可以同时存在。
+客户端当前选择一条获授权的互联网 Policy，由它唯一确定 Service；Service 保存探测网址及可选的目标限制。
+access 自动选入口，forward 在相同 Policy 与最终出口约束内继续选路；一跳直达与同出口中继可以同时存在。
 授权配置与当前可用性分开：实际 transport 或业务结果才产生 `available / unavailable / unknown`。
 认证的 `.loom` 精确记录提供私有名称；有 `forward` 职责的节点可在 control 授权后共享等长虚拟前缀映射的局域网。
 
@@ -25,13 +26,13 @@ Loom 管理可组合承担 `access`、`forward`、`internet_egress`、`control` 
 
 控制面 Web 包含 Overview、Nodes、Topology、Live paths、Services、Policies、Releases、Events 与 Administration。
 Android 和 Windows 提供原生页面、配置选择与实际路径显示。界面从认证状态和真实运行结果单向投影；
-业务验收状态见[实施状态](docs/progress.md)。下列 Web 图片是按现行模型绘制的目标原型，
+业务验收状态见[实施状态](docs/progress.md)。下列 Web 图片是现有设计资产，部分旧字段和流程须按当前模型修订；
 与当前浏览器页面的差距见[原型对照](docs/clients/prototype-review.md)。
 [服务管理](assets/control-center/05-services.svg)统一包含互联网与[局域网服务](assets/control-center/05-services-lan.svg)，
 [策略管理](assets/control-center/06-policies.svg)为一个固定服务定义可复用的访问规则；
 [添加设备](assets/control-center/02-nodes-add-ssh.svg)先多选角色：纯 access 使用[二维码](assets/control-center/02-nodes-add-qr.svg)，
 含其他角色使用 SSH 或 [sh 脚本](assets/control-center/02-nodes-add-script.svg)；包含 access 时只选择策略，
-服务及规则由策略派生。每台设备同一服务最多选择一条策略；后续可在设备详情替换，不修改共享规则。
+服务及规则由策略派生。设备可获授多条 Policy；客户端当前互联网只选择一条。设备详情修改可选集合，不替客户端选当前策略，也不修改共享规则。
 完整规则在策略页[创建](assets/control-center/06-policies-new.svg)、复制或编辑。
 [统一设备详情](assets/control-center/02-nodes-detail.svg)按组合角色展示服务权限、当前路径、转发资源、
 共享 LAN 和重新添加入口，并保留独立的 RX／TX 历史；缺失观测以空档或 `unknown` 表示。
@@ -49,9 +50,10 @@ Android 和 Windows 提供原生页面、配置选择与实际路径显示。界
 
 | 动态拓扑 | Service 管理 |
 |---|---|
-| ![Loom 目标拓扑原型](assets/control-center/03-topology.svg) | ![Loom 目标 Service 原型](assets/control-center/05-services.svg) |
+| ![Loom 目标拓扑原型](assets/control-center/03-topology.svg) | ![Loom Service 设计资产，字段待按当前模型修订](assets/control-center/05-services.svg) |
 
-Windows 原生界面提供多配置侧栏、Direct/Auto/固定出口、当前路径和详细信息。三种交付形态是
+Windows 原生界面保留多配置侧栏、路径和详细信息；策略控件须按当前一条 Policy 的目标修订，
+不能因旧 Direct/Auto/固定出口截图而保留旧偏好模型。三种交付形态是
 Portable Mixed、Portable TUN 和 Installed；当前发行签名与实体机验收状态见[状态文档](docs/progress.md)。
 
 <p align="center">

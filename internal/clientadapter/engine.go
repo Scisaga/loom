@@ -3,32 +3,42 @@ package clientadapter
 import (
 	"context"
 	"errors"
+	"maps"
 	"sort"
 	"time"
 
 	"loom/internal/clientmodel"
 	"loom/internal/control"
+	"loom/protocol"
 )
 
 type State struct {
-	Preference            clientmodel.Preference
-	NetworkGeneration     string
-	Observations          []clientmodel.Observation
-	ResourceObservations  []control.Observation
-	LinkObservations      []control.DeviceLinkObservation
-	LocalLinkObservations []control.Observation
+	Graphs            []clientmodel.PolicyGraph
+	Preference        clientmodel.Preference
+	NetworkGeneration string
+	Observations      []clientmodel.Observation
+	// Ordinary TCP outcomes and their execution binding are RAM-only. They
+	// never enter the probe cache or the signed measurement report.
+	NativeObservations   []clientmodel.Observation
+	NativeExecutionSpec  string
+	ResourceObservations []control.Observation
+	LinkObservations     []control.DeviceLinkObservation
+	LocalMeasurements    []control.Observation
+	SelectionMemory      map[string]clientmodel.SelectionMemory
 }
 
 type SelectionStatus struct {
-	Scope       string   `json:"scope"`
-	CandidateID string   `json:"candidate_id"`
-	PolicyID    string   `json:"policy_id"`
-	FinalExit   string   `json:"final_exit"`
-	Chain       []string `json:"chain,omitempty"`
-	State       string   `json:"state"`
+	Scope       string            `json:"scope"`
+	CandidateID string            `json:"candidate_id"`
+	PolicyID    string            `json:"policy_id"`
+	FinalExit   string            `json:"final_exit"`
+	Chain       []string          `json:"chain,omitempty"`
+	State       string            `json:"state"`
+	Targets     map[string]string `json:"targets"`
 }
 
 type ProbeResult struct {
+	Deferred    bool
 	Available   bool
 	Metric      time.Duration
 	Description string
@@ -38,14 +48,28 @@ type ProbeResult struct {
 
 type Probe func(context.Context) ProbeResult
 
-// Probes contains only targets projected from this Service in the accepted View.
-// A nil function keeps the target scope while deferring its network operation.
-type Probes map[string]Probe
-
 type Activation struct {
 	State         State
 	Selections    []SelectionStatus
 	BlockedScopes []string
+}
+
+// MeasurementCandidates is a one-way projection of confirmed use and pending
+// improvements. The node scheduler validates these hints against its View.
+func MeasurementCandidates(selections []SelectionStatus, memory map[string]clientmodel.SelectionMemory, generation string) []string {
+	values := map[string]bool{}
+	for _, value := range selections {
+		current := clientmodel.Selection{Scope: value.Scope, PolicyID: value.PolicyID, CandidateID: value.CandidateID, Targets: value.Targets}
+		for _, id := range clientmodel.MeasurementCandidates(current, memory[value.Scope], generation) {
+			values[id] = true
+		}
+	}
+	result := make([]string, 0, len(values))
+	for id := range values {
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result
 }
 
 const BlockedSelection = "reject"
@@ -53,13 +77,17 @@ const BlockedSelection = "reject"
 func Scopes(routes []clientmodel.RouteCandidate, scopeIDs ...string) ([]string, map[string][]clientmodel.RouteCandidate, error) {
 	byScope := map[string][]clientmodel.RouteCandidate{}
 	for _, scope := range scopeIDs {
+		if !clientmodel.ValidSelectorScope(scope) {
+			return nil, nil, errors.New("unexpected access selector scope")
+		}
 		byScope[scope] = []clientmodel.RouteCandidate{}
 	}
 	for _, route := range routes {
 		if err := route.Validate(); err != nil {
 			return nil, nil, err
 		}
-		byScope[route.Scope] = append(byScope[route.Scope], route)
+		scope := clientmodel.CandidateSelectorScope(route)
+		byScope[scope] = append(byScope[scope], route)
 	}
 	scopes := make([]string, 0, len(byScope))
 	for scope := range byScope {
@@ -68,77 +96,6 @@ func Scopes(routes []clientmodel.RouteCandidate, scopeIDs ...string) ([]string, 
 	sort.Strings(scopes)
 
 	return scopes, byScope, nil
-}
-
-func selectAll(routes []clientmodel.RouteCandidate, observations []clientmodel.Observation, resources []control.Observation, links []control.DeviceLinkObservation,
-	preference clientmodel.Preference, current map[string]string, generation string, now time.Time, targets []string, scopeIDs ...string) (map[string]string, error) {
-	scopes, byScope, err := Scopes(routes, scopeIDs...)
-	if err != nil {
-		return nil, err
-	}
-	desired := make(map[string]string, len(scopes))
-	for _, scope := range scopes {
-		selection, err := clientmodel.SelectWithLinks(byScope[scope], observations, resources, links, preference, current[scope], generation, now, targets...)
-		if errors.Is(err, clientmodel.ErrNoUsableCandidate) {
-			desired[scope] = BlockedSelection
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		desired[scope] = selection.CandidateID
-	}
-	return desired, nil
-}
-
-func currentReadback(ctx context.Context, selector Selector, scopes []string) (map[string]string, error) {
-	current := make(map[string]string, len(scopes))
-	for _, scope := range scopes {
-		value, err := selector.Read(ctx, scope)
-		if err != nil {
-			return nil, err
-		}
-		current[scope] = value
-	}
-	return current, nil
-}
-
-func recordOutcome(state State, selections map[string]string, result ProbeResult, now time.Time) State {
-	action := result.Action
-	if action == "" {
-		action = "tcp_udp_dns"
-	}
-	byID := map[string]clientmodel.Observation{}
-	for _, observation := range state.Observations {
-		byID[observation.Key()] = observation
-	}
-	for scope, candidate := range selections {
-		if candidate == BlockedSelection {
-			continue
-		}
-		outcome := "unavailable"
-		lifetime := 30 * time.Second
-		if result.Available {
-			outcome = "available"
-			lifetime = 10 * time.Minute
-		}
-		metric := result.Metric.Milliseconds()
-		if metric < 0 {
-			metric = 0
-		}
-		observation := clientmodel.Observation{CandidateID: candidate, Target: result.Target, NetworkGeneration: state.NetworkGeneration,
-			Scope: scope, Result: outcome, Action: action, ObservedAt: now.UTC().Format(time.RFC3339),
-			ValidUntil: now.Add(lifetime).UTC().Format(time.RFC3339), MetricMillis: metric}
-		byID[observation.Key()] = observation
-	}
-	state.Observations = make([]clientmodel.Observation, 0, len(byID))
-	for _, observation := range byID {
-		state.Observations = append(state.Observations, observation)
-	}
-	sort.Slice(state.Observations, func(i, j int) bool {
-		return state.Observations[i].Key() < state.Observations[j].Key()
-	})
-	return state
 }
 
 func selectionStatuses(routes []clientmodel.RouteCandidate, observations []clientmodel.Observation,
@@ -165,194 +122,108 @@ func selectionStatuses(routes []clientmodel.RouteCandidate, observations []clien
 	return statuses
 }
 
-// activate samples only the current path, and at most one necessary fallback.
-func activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
-	probes Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
+// Activate applies one Policy's shared-evidence recommendation. It performs
+// no URL probes, full-path scans or per-Service request loops.
+func Activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
+	targets []string, now func() time.Time, scopeIDs ...string) (Activation, error) {
+	result := Activation{State: state, Selections: []SelectionStatus{}, BlockedScopes: []string{}}
 	scopes, _, err := Scopes(routes, scopeIDs...)
 	if err != nil {
-		return Activation{}, err
-	}
-	if len(probes) > 0 && len(scopes) != 1 {
-		return Activation{}, errors.New("business probes require exactly one Service scope")
-	}
-	targets := make([]string, 0, len(probes))
-	for target := range probes {
-		if target != "" && control.ValidateHTTPSURL(target) != nil {
-			return Activation{}, errors.New("invalid business probe target")
-		}
-		targets = append(targets, target)
-	}
-	sort.Strings(targets)
-	current, err := currentReadback(ctx, selector, scopes)
-	if err != nil {
-		return Activation{}, err
-	}
-	at := now().UTC()
-	transportSamples := append(append([]control.Observation{}, state.ResourceObservations...), state.LocalLinkObservations...)
-	desired, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, current, state.NetworkGeneration, at, targets, scopeIDs...)
-	if err != nil {
-		return Activation{}, err
-	}
-	readback, err := ApplySelections(ctx, selector, desired)
-	if err != nil {
-		return Activation{State: state}, err
-	}
-	result := func() Activation {
-		return Activation{State: state, Selections: selectionStatuses(routes, state.Observations, readback, state.NetworkGeneration, now().UTC(), targets...)}
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		if len(result().Selections) == 0 && len(scopes) > 0 {
-			return result(), clientmodel.ErrNoUsableCandidate
-		}
-		if len(probes) == 0 {
-			return result(), nil
-		}
-		scope := scopes[0]
-		candidate := readback[scope]
-		for _, target := range targets {
-			if probes[target] == nil {
-				continue
-			}
-			sample, found, err := clientmodel.LatestObservation(state.Observations, candidate, scope, state.NetworkGeneration, target)
-			if err != nil {
-				return result(), err
-			}
-			if found && sample.CurrentAt(now()) {
-				continue
-			}
-			outcome := probes[target](ctx)
-			if err := ctx.Err(); err != nil {
-				return result(), err
-			}
-			// User preference changes while the request is in flight invalidate
-			// this attribution; never report the new path as the sampled path.
-			actual, err := selector.Read(ctx, scope)
-			if err != nil {
-				return result(), err
-			}
-			if actual != candidate {
-				return result(), errors.New("Service selection changed during its probe")
-			}
-			outcome.Target = target
-			state = recordOutcome(state, readback, outcome, now().UTC().Truncate(time.Second))
-		}
-		at = now().UTC()
-		status, err := clientmodel.ObservationState(state.Observations, candidate, scope, state.NetworkGeneration, targets, at)
-		if err != nil {
-			return result(), err
-		}
-		if status != "unavailable" {
-			activeProbe := false
-			for _, probe := range probes {
-				activeProbe = activeProbe || probe != nil
-			}
-			if activeProbe {
-				state, err = SampleAlternateBusiness(ctx, routes, state, candidate, targets, now)
-				if err != nil {
-					return result(), err
-				}
-				improved, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, now().UTC(), targets, scopeIDs...)
-				if err != nil {
-					return result(), err
-				}
-				readback, err = ApplySelections(ctx, selector, improved)
-				if err != nil {
-					return Activation{State: state}, err
-				}
-			}
-			return result(), nil
-		}
-		fallback, err := selectAll(routes, state.Observations, transportSamples, state.LinkObservations, state.Preference, readback, state.NetworkGeneration, at, targets, scopeIDs...)
-		if err != nil {
-			return result(), err
-		}
-		readback, err = ApplySelections(ctx, selector, fallback)
-		if err != nil {
-			return Activation{State: state}, err
-		}
-	}
-	// Exhausting this pass's probe budget does not disqualify an untried path.
-	// Keep its actual selection unknown until a later business sample establishes
-	// availability; reject only when the model has no remaining eligible path.
-	if len(result().Selections) == 0 && len(scopes) > 0 {
-		return result(), clientmodel.ErrNoUsableCandidate
-	}
-	return result(), nil
-}
-
-// Activate returns rejected scopes separately from genuine candidate selections.
-// They are a disposable readback of the local selector, never report authority.
-func Activate(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
-	probe Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
-	result, err := activate(ctx, selector, routes, state, probe, now, scopeIDs...)
-	if ctx.Err() != nil {
 		return result, err
 	}
-	scopes, _, scopeErr := Scopes(routes, scopeIDs...)
-	if scopeErr != nil {
-		return Activation{}, scopeErr
+	transport := append(append([]control.Observation{}, state.ResourceObservations...), state.LocalMeasurements...)
+	routes, err = clientmodel.EstimateRoutePaths(routes, state.Graphs, transport, state.LinkObservations, state.NetworkGeneration, now())
+	if err != nil {
+		return result, err
 	}
-	if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
-		blocked, rejectErr := RejectSelections(ctx, selector, scopes)
-		if result.State.NetworkGeneration == "" {
-			result.State = state
-		}
-		result.Selections, result.BlockedScopes = nil, nil
-		for _, scope := range scopes {
-			if blocked[scope] == BlockedSelection {
-				result.BlockedScopes = append(result.BlockedScopes, scope)
-			}
-		}
-		return result, errors.Join(err, rejectErr)
+	_, byScope, err := Scopes(routes, scopeIDs...)
+	if err != nil {
+		return result, err
 	}
+	memories := maps.Clone(state.SelectionMemory)
+	if memories == nil {
+		memories = map[string]clientmodel.SelectionMemory{}
+	}
+	unavailableAny := false
 	for _, scope := range scopes {
-		actual, readErr := selector.Read(ctx, scope)
-		if readErr != nil {
-			return Activation{}, readErr
+		current, err := selector.ReadSelection(ctx, scope)
+		if err != nil {
+			return result, err
 		}
-		if actual == BlockedSelection {
+		if scope == control.AccessSelectorScope && state.NativeExecutionSpec != "" {
+			body := []byte(`{"observations":[]}`)
+			if reader, ok := selector.(interface {
+				ReadNativeObservations(context.Context) ([]byte, error)
+			}); ok && NativeBindingMatches(memories[scope], current, state.NetworkGeneration, state.NativeExecutionSpec) {
+				if completed, readErr := reader.ReadNativeObservations(ctx); readErr == nil {
+					body = completed
+				} else if ctx.Err() != nil {
+					return result, ctx.Err()
+				}
+			}
+			state.NativeObservations, err = ConsumeNativeObservations(body, state, routes, now())
+			if err != nil {
+				return result, err
+			}
+			result.State.NativeObservations = state.NativeObservations
+		}
+		probeTargets := targets
+		if scope != control.AccessSelectorScope {
+			probeTargets = nil
+		}
+		preference := clientmodel.PolicyForSelector(state.Preference, scope)
+		desired, memory, err := clientmodel.ChooseWithNativeStability(byScope[scope], state.Observations, state.NativeObservations, transport, state.LinkObservations, preference, current, memories[scope], state.NetworkGeneration, now(), selector.ElapsedMillis(), clientmodel.DefaultPerformanceRule, probeTargets...)
+		unavailable := errors.Is(err, clientmodel.ErrNoUsableCandidate)
+		if unavailable {
+			desired = clientmodel.Selection{Scope: scope, CandidateID: BlockedSelection, Targets: map[string]string{}, Choices: map[string]protocol.RouteChoice{}}
+		} else if err != nil {
+			return result, err
+		}
+		expectedRevision := current.Revision
+		refreshBinding := scope == control.AccessSelectorScope && desired.CandidateID != BlockedSelection && state.NativeExecutionSpec != "" && !NativeBindingMatches(memories[scope], current, state.NetworkGeneration, state.NativeExecutionSpec)
+		if !SameSelection(current, desired) || refreshBinding {
+			applied, err := selector.ApplySelection(ctx, current, desired)
+			if err != nil {
+				return result, err
+			}
+			if !SameSelection(applied, desired) || applied.Revision == current.Revision {
+				return result, ErrSelectionSuperseded
+			}
+			expectedRevision = applied.Revision
+		}
+		actual, err := selector.ReadSelection(ctx, scope)
+		if err != nil {
+			return result, err
+		}
+		if !SameSelection(actual, desired) || actual.Revision != expectedRevision {
+			return result, ErrSelectionSuperseded
+		}
+		if !unavailable {
+			memory, err = clientmodel.ConfirmSelection(memory, actual, selector.ElapsedMillis())
+			if err != nil {
+				return result, err
+			}
+			memory = BindNativeSelection(memory, actual, state.NetworkGeneration, state.NativeExecutionSpec)
+			if scope == control.AccessSelectorScope {
+				memory, _ = RefreshNativeHealth(memory, state.NativeObservations, now())
+			}
+			memories[scope] = memory
+		}
+		if actual.CandidateID == BlockedSelection {
 			result.BlockedScopes = append(result.BlockedScopes, scope)
+			unavailableAny = true
 			continue
 		}
-		found := false
-		for _, selection := range result.Selections {
-			found = found || selection.Scope == scope && selection.CandidateID == actual
+		statuses := selectionStatuses(routes, state.Observations, map[string]string{scope: actual.CandidateID}, state.NetworkGeneration, now(), probeTargets...)
+		if len(statuses) != 1 || statuses[0].CandidateID == "" {
+			return result, errors.New("actual selector candidate is outside the accepted scope")
 		}
-		if !found {
-			return Activation{}, errors.New("Service selector changed after application")
-		}
+		statuses[0].Targets = actual.Targets
+		result.Selections = append(result.Selections, statuses[0])
 	}
-	return result, err
-}
-
-// ActivateServices keeps each Service's outcome and failure recovery separate.
-// Probe factories return nil where no authenticated target exists.
-func ActivateServices(ctx context.Context, selector Selector, routes []clientmodel.RouteCandidate, state State,
-	probeForScope func(string) Probes, now func() time.Time, scopeIDs ...string) (Activation, error) {
-	scopes, byScope, err := Scopes(routes, scopeIDs...)
-	if err != nil {
-		return Activation{}, err
+	result.State.SelectionMemory = memories
+	if unavailableAny {
+		return result, clientmodel.ErrNoUsableCandidate
 	}
-	result := Activation{State: state, Selections: []SelectionStatus{}, BlockedScopes: []string{}}
-	var outcomes []error
-	for _, scope := range scopes {
-		var probe Probes
-		if probeForScope != nil {
-			probe = probeForScope(scope)
-		}
-		next, err := Activate(ctx, selector, byScope[scope], result.State, probe, now, scope)
-		if next.State.NetworkGeneration == "" {
-			return Activation{}, err
-		}
-		result.State = next.State
-		result.Selections = append(result.Selections, next.Selections...)
-		result.BlockedScopes = append(result.BlockedScopes, next.BlockedScopes...)
-		if err != nil {
-			outcomes = append(outcomes, err)
-		}
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	return result, errors.Join(outcomes...)
+	return result, nil
 }

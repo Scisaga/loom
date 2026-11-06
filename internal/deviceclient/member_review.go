@@ -104,22 +104,17 @@ func visiblePermissions(view control.DeviceView) map[string][]byte {
 	for _, value := range view.Policies {
 		add("policy", value.ID, value)
 	}
-	for _, value := range view.Routes {
-		add("route", value.ID, value)
-	}
 	for _, value := range view.Resources {
 		add("resource", value.ID, value)
-	}
-	for _, value := range view.Links {
-		add("link", value.ID, value)
 	}
 	for _, value := range view.DNSRecords {
 		add("dns_record", value.ID, value)
 	}
-	for _, value := range view.InboundCredentials {
-		// Credential bytes are not a visible permission and never enter a diff.
-		value.Credential = ""
-		add("inbound", value.DeviceID+"/"+value.ServiceID+"/"+value.PolicyID+"/"+value.ResourceID+"/"+value.ReceiverNodeID, value)
+	for _, value := range view.Nodes {
+		add("node_authorization", value.ID, value)
+	}
+	for _, id := range view.PolicyIDs {
+		add("assigned_policy", id, id)
 	}
 	return values
 }

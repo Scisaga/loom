@@ -87,6 +87,59 @@ func threeSchedulingMembers(t *testing.T) materialFixture {
 	return f
 }
 
+func TestEnrollmentFactsWakeRemotePullWithoutPeriodicTicks(t *testing.T) {
+	f := newMaterialFixture(t)
+	var frontiers atomic.Int32
+	peers, _ := membershipTLSPeersWithHandler(t, f, -1, func(_ int, next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/internal/frontier" {
+				frontiers.Add(1)
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	joining, invite, _, claim, _, _ := enrollmentFixtureWithRuntime(t, peers[0].server.Runtime)
+	for _, peer := range peers {
+		runtime := peer.server.Runtime
+		runtime.done = make(chan struct{})
+		// A nil tick cannot cause progress. Both directions use real peer TLS.
+		go runtime.reconcilePeers(nil)
+		t.Cleanup(func() { runtime.Close() })
+	}
+	wait := func(ready func() bool) {
+		t.Helper()
+		deadline := time.NewTimer(3 * time.Second)
+		defer deadline.Stop()
+		for !ready() {
+			select {
+			case <-deadline.C:
+				t.Fatal("enrollment facts needed a periodic tick to reach the other control")
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+	}
+	remote := peers[1].server.Runtime.Authority
+	wait(func() bool { _, err := remote.Invite(invite.ID); return err == nil })
+	started := time.Now()
+	// CompleteEnrollment writes directly to Authority. It does not go through
+	// Runtime.Submit's ordinary wake channel.
+	if response := enrollmentHTTP(t, joining, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
+		t.Fatal("claim failed", response.Code)
+	}
+	wait(func() bool { _, ok := authorizationFor(remote.Snapshot(), invite.DeviceID); return ok })
+	view, err := peers[1].server.deviceEnvelope(invite.DeviceID)
+	if err != nil || view.View.DevicePublicKey != claim.DevicePublicKey {
+		t.Fatal("remote configuration did not consume the original joined identity", err)
+	}
+	t.Log("local claim through remote signed configuration", time.Since(started))
+	// Idle or rejected synchronization must not create a completion busy loop.
+	before := frontiers.Load()
+	time.Sleep(200 * time.Millisecond)
+	if frontiers.Load()-before > 8 {
+		t.Fatal("unchanged members continued waking each other", frontiers.Load()-before)
+	}
+}
+
 func TestMemberSchedulingKeepsReceivingWhileAnotherMemberWaits(t *testing.T) {
 	f := threeSchedulingMembers(t)
 	entered, cancelled := make(chan struct{}, 4), make(chan struct{}, 4)

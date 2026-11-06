@@ -279,7 +279,7 @@ func TestWebChromeDevicePolicyRevocationPreservesIdentity(t *testing.T) {
 		t.Fatal("browser public operation did not revoke policy while preserving identity")
 	}
 	view, err := server.deviceEnvelope(invite.DeviceID)
-	if err != nil || len(view.View.Routes) != 0 || view.View.RuntimeProfile == nil {
+	if err != nil || len(testDeviceExecution(view.View).Routes) != 0 || testDeviceExecution(view.View).RuntimeProfile == nil {
 		t.Fatal("browser revoke did not produce deny-only runtime", err)
 	}
 	if len(view.View.DNSServers) != 1 || view.View.DNSServers[0] != "192.0.2.53" {
@@ -315,7 +315,7 @@ func TestWebChromeLocalEgressAuthorizationAndRevocation(t *testing.T) {
 	chromeDo(t, debug, `(()=>{history.pushState({},'',`+string(policyPath)+`);dispatchEvent(new PopStateEvent('popstate'));window.demoLocalForm=document.querySelector('#policy-form');demoLocalForm.elements.allow_direct.checked=false;demoLocalForm.elements.entry_scope_mode.value='none';demoLocalForm.elements.exit_scope_mode.value='only';demoLocalForm.elements.exit_scope_ids.value=`+string(deviceID)+`;demoLocalForm.elements.local_egress_devices.value=`+string(deviceID)+`;demoLocalForm.requestSubmit();return true})()`)
 	waitChromeEvaluation(t, debug, `document.querySelector('#policy-form')!==demoLocalForm&&!document.querySelector('#policy-form').elements.allow_direct.checked`)
 	view, err := server.deviceEnvelope(invite.DeviceID)
-	if err != nil || len(view.View.Routes) != 1 || view.View.Routes[0].FinalExit != invite.DeviceID || len(view.View.Routes[0].NodeChain) != 0 {
+	if err != nil || len(testDeviceExecution(view.View).Routes) != 1 || testDeviceExecution(view.View).Routes[0].FinalExit != invite.DeviceID || testDeviceExecution(view.View).Routes[0].EntryNodeID != invite.DeviceID {
 		t.Fatal("formal local-only policy did not produce the local exit", err)
 	}
 	devicePath, _ := json.Marshal("/devices/" + invite.DeviceID)
@@ -331,7 +331,7 @@ func TestWebChromeLocalEgressAuthorizationAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	denied, err := ProjectDeviceView(reopened.Snapshot(), invite.DeviceID)
-	if err != nil || len(denied.Routes) != 0 || len(denied.PolicyIDs) != 1 || denied.DevicePublicKey != original.DevicePublicKey {
+	if err != nil || len(testDeviceExecution(denied).Routes) != 0 || len(denied.PolicyIDs) != 1 || denied.DevicePublicKey != original.DevicePublicKey {
 		t.Fatal("removing the exit role failed to persist revocation or damaged identity/assignment", err)
 	}
 }
@@ -357,9 +357,7 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	service := submitAuthority(t, server.Runtime, authorityService("demo-service", "demo-browser-service"))
 	anyScope := PolicyScope{Mode: "any", NodeIDs: []string{}}
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-browser-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-policy", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-policy", Name: "Demo browser policy", ServiceID: "demo-service", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: new(anyScope), AllowDirect: new(true), LocalEgressDevices: new([]string{})}})
-	for _, target := range []BusinessProbeTarget{{ID: "demo-no-duration", URL: "https://demo-service.example/no-duration"}, {ID: "demo-zero-duration", URL: "https://demo-service.example/zero-duration"}} {
-		submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-create-" + target.ID, Operation: "probe_target.put", TargetKind: "probe_target", TargetID: target.ID, Dependencies: []string{}, Payload: target})
-	}
+	setServiceProbeURLs(t, server.Runtime, "demo-service", "demo-browser-probes", "https://demo-service.example/no-duration", "https://demo-service.example/zero-duration")
 	// Let authenticated enrollment options arrive first. The normal form must
 	// wait for its snapshot rather than preserve a draft missing those Policies.
 	allowSnapshot := make(chan struct{})
@@ -538,12 +536,12 @@ func TestWebChromeInvitationDeviceDetailAndSignedReports(t *testing.T) {
 	}
 	chromeDo(t, debug, `(()=>{document.querySelector('a[data-nav][href="/devices/demo-browser-device"]').click();return true})()`)
 	view, err := server.deviceEnvelope("demo-browser-device")
-	if err != nil || len(view.View.Routes) != 1 {
+	if err != nil || len(testDeviceExecution(view.View).Routes) != 1 {
 		t.Fatal("joined device has no expected service route", err)
 	}
-	route := view.View.Routes[0]
+	route := testDeviceExecution(view.View).Routes[0]
 	zero := int64(0)
-	report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: "demo-browser-device", ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-network-generation", ReportedAt: server.now().UnixMilli(), PolicyChoices: new([]PolicyChoice{{ServiceID: route.ServiceID, PolicyID: route.PolicyID}}), Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}
+	report := DeviceReport{Schema: 3, NetworkID: server.Config.NetworkID, DeviceID: "demo-browser-device", ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-network-generation", ReportedAt: server.now().UnixMilli(), PolicyID: route.PolicyID, Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}
 	report.Components = []ComponentReadback{{ComponentID: "agent", Platform: "linux-amd64", Version: "demo-agent", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}, {ComponentID: "sing-box", Platform: "linux-amd64", Version: "demo-dataplane", ArtifactDigest: "sha256:" + strings.Repeat("b", 64)}}
 	// These signed samples test the UI mapping, not a live request to the example targets.
 	for index, target := range []string{"https://demo-service.example/no-duration", "https://demo-service.example/zero-duration"} {

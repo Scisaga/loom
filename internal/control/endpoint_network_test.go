@@ -213,12 +213,12 @@ func TestEndpointTLSClaimConfigurationReportAndRevocation(t *testing.T) {
 	if err := DecodeCanonical(body, &view, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
 		t.Fatal(err)
 	}
-	if len(view.View.Routes) != 1 {
+	if len(testDeviceExecution(view.View).Routes) != 1 {
 		t.Fatal("authorized Direct candidate is unavailable")
 	}
 
 	store := server.Runtime.Reports
-	report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: config.NetworkID, DeviceID: invite.DeviceID, ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-loopback", ReportedAt: time.Now().UnixMilli(), Selections: []ReportSelection{{ServiceID: "demo-service", CandidateID: view.View.Routes[0].ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, key)
+	report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: config.NetworkID, DeviceID: invite.DeviceID, ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-loopback", ReportedAt: time.Now().UnixMilli(), PolicyID: "demo-policy", Selections: []ReportSelection{{ServiceID: "demo-service", PolicyID: "demo-policy", CandidateID: testDeviceExecution(view.View).Routes[0].ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestEndpointTLSClaimConfigurationReportAndRevocation(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatal("empty-policy configuration unavailable")
 	}
-	if err := DecodeCanonical(body, &view, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil || len(view.View.Routes) != 0 {
+	if err := DecodeCanonical(body, &view, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil || len(testDeviceExecution(view.View).Routes) != 0 {
 		t.Fatal("removed policy survived in authenticated runtime view")
 	}
 	if len(store.Verified(runtime.Authority.Snapshot())) != 0 {

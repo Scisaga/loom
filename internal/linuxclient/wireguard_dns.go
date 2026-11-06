@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"reflect"
 	"slices"
 
 	"loom/internal/clientmodel"
@@ -12,10 +13,25 @@ import (
 	"loom/internal/netx"
 )
 
+// Peer coordinates and keepalive belong to the native transport, not ownership
+// of a host interface, exact address or management return route.
+func sameWireGuardHostInputs(before, after wireGuardExecution) bool {
+	project := func(value wireGuardExecution) []wireGuardExecutionLink {
+		links := append([]wireGuardExecutionLink{}, value.WireGuard...)
+		for index := range links {
+			links[index].Endpoint = ""
+			links[index].PersistentKeepalive = 0
+			links[index].ListenPort = 0
+		}
+		return links
+	}
+	return reflect.DeepEqual(project(before), project(after))
+}
+
 // DNS answers are temporary execution addresses. The signed resource and peer
 // key remain unchanged; the kernel must never perform implicit host resolution.
 func resolveWireGuardEndpoints(ctx context.Context, desired, current wireGuardExecution, servers []string, dial func(context.Context, string, string) (net.Conn, error)) (wireGuardExecution, error) {
-	result := wireGuardExecution{WireGuard: append([]wireGuardExecutionLink{}, desired.WireGuard...)}
+	result := wireGuardExecution{WireGuard: append([]wireGuardExecutionLink{}, desired.WireGuard...), ListenPort: desired.ListenPort}
 	resolved := map[string][]netip.Addr{}
 	for index, link := range result.WireGuard {
 		if link.Mode != "initiator" {
@@ -50,6 +66,11 @@ func resolveWireGuardEndpoints(ctx context.Context, desired, current wireGuardEx
 }
 
 func invalidateWireGuardObservations(state LocalState, view control.DeviceView, previous, next wireGuardExecution) LocalState {
+	execution, err := control.ProjectDeviceCandidates(view, clientmodel.MeasurementPolicies(state.Preference))
+	if err != nil {
+		state.Observations = nil
+		return state
+	}
 	changed := map[string]bool{}
 	for _, link := range next.WireGuard {
 		for _, prior := range previous.WireGuard {
@@ -59,14 +80,21 @@ func invalidateWireGuardObservations(state LocalState, view control.DeviceView, 
 		}
 	}
 	affectedLinks := map[string]bool{}
-	for _, link := range view.Links {
+	for _, link := range execution.Links {
 		if changed[link.ResourceID] || changed[link.FromResourceID] {
 			affectedLinks[link.ID] = true
 		}
 	}
 	affectedCandidates := map[string]bool{}
-	for _, candidate := range view.Routes {
-		for _, link := range candidate.LinkIDs {
+	for _, candidate := range execution.Routes {
+		if changed[candidate.FirstResourceID] {
+			affectedCandidates[candidate.ID] = true
+		}
+		_, linkIDs, err := control.CandidateTopologyEstimate(execution, candidate)
+		if err != nil {
+			continue
+		}
+		for _, link := range linkIDs {
 			if affectedLinks[link] {
 				affectedCandidates[candidate.ID] = true
 			}

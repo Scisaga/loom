@@ -30,7 +30,7 @@ func TestWebRoundTripsUseDistinctCurrentScopeSamplesAndPreserveOriginals(t *test
 	spec, _ := LinkSpecDigest(view, link.ID)
 	digest, _ := DeviceViewDigest(view)
 	now := time.Date(2026, 1, 2, 12, 30, 0, 0, time.UTC)
-	base := Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-generation", Result: "available", DurationMS: new(int64(100))}
+	base := Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_echo", NetworkGeneration: "demo-generation", Result: "available", DurationMS: new(int64(100))}
 	reports := []DeviceReport{}
 	add := func(age time.Duration, value int64, mutate func(*DeviceReport)) {
 		t.Helper()

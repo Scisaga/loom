@@ -3,9 +3,10 @@
 package main
 
 import (
-	"golang.org/x/sys/windows"
 	"testing"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestGUIMisakaContextMenuMouseTargetsAndEmptySpace(t *testing.T) {

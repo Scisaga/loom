@@ -11,12 +11,119 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
+
+func TestTrafficHistoryPartialPeersPreserveComparableIntervals(t *testing.T) {
+	key := testKey(t)
+	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	identity := projectedDeviceIdentity{ID: "demo-device", DevicePublicKey: public}
+	digest := "sha256:" + strings.Repeat("0", 64)
+	now := time.Date(2030, 1, 2, 12, 30, 0, 0, time.UTC)
+	peer := func(name byte, rx, tx U64) WireGuardPeerCounter {
+		return WireGuardPeerCounter{PublicKey: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{name}, 32)), RXBytes: rx, TXBytes: tx, Links: []WireGuardCounterLink{{LinkID: "demo-link-" + string(name), SpecDigest: digest}}}
+	}
+	sets := [][]WireGuardPeerCounter{
+		{peer('a', 100, 200), peer('b', 1000, 2000)},
+		{peer('a', 200, 400), peer('b', 1200, 2400)},
+		{peer('a', 300, 600), peer('c', 50, 100)},
+	}
+	reports := make([]DeviceReport, len(sets))
+	for i, peers := range sets {
+		sort.Slice(peers, func(i, j int) bool { return peers[i].PublicKey < peers[j].PublicKey })
+		at := now.Add(time.Duration(i-2) * time.Minute).UnixMilli()
+		var err error
+		reports[i], err = SignDeviceReport(DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: identity.ID, ReportSequence: U64(i + 1), ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: at, Selections: []ReportSelection{}, Observations: []Observation{}, Components: []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, WireGuardCounters: &WireGuardCounters{Interface: "wg-shared", Epoch: strings.Repeat("a", 32), ObservedAt: at, Peers: peers}}, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	testSetObservationReports(t, root, reports, public)
+	store, err := testOpenObservationStore(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	original := testObservationBytes(t, store)
+	device, err := store.deviceTrafficHistory(context.Background(), "demo-network", identity, nil, now)
+	if err != nil || device.Recent == nil || device.Recent.RXBytes != 400 || device.Recent.TXBytes != 800 || device.Recent.CoveredMS != 120000 {
+		t.Fatal("peer membership change erased the remaining adjacent peer deltas", device.Recent, err)
+	}
+	for _, name := range []byte{'a', 'b', 'c'} {
+		value := peer(name, 0, 0)
+		scope := &trafficLinkScope{id: value.Links[0].LinkID, spec: digest, endpoint: "wg-shared", peer: value.PublicKey}
+		got, err := store.deviceTrafficHistory(context.Background(), "demo-network", identity, scope, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name == 'a' {
+			if got.Recent == nil || got.Recent.RXBytes != 200 || got.Recent.TXBytes != 400 || got.Recent.CoveredMS != 120000 {
+				t.Fatal("the continuously observed Link lost its current rate", got.Recent)
+			}
+			continue
+		}
+		if got.Recent != nil {
+			t.Fatal("missing or newly observed peer invented a current Link rate", string(name))
+		}
+		var historic *WebTrafficDelta
+		for _, bucket := range got.Buckets {
+			if bucket.Delta != nil {
+				historic = bucket.Delta
+			}
+		}
+		if name == 'b' && (historic == nil || historic.RXBytes != 200 || historic.TXBytes != 400 || historic.CoveredMS != 60000) {
+			t.Fatal("a peer missing now erased its original valid history", historic)
+		}
+		if name == 'c' && historic != nil {
+			t.Fatal("a new peer with no adjacent sample became measured zero")
+		}
+	}
+	if !bytes.Equal(original, testObservationBytes(t, store)) {
+		t.Fatal("partial queries changed the original signed reports")
+	}
+}
+
+func TestTrafficCounterDifferenceIsPerAdjacentObservedPeer(t *testing.T) {
+	peer := func(name byte, count U64) WireGuardPeerCounter {
+		return WireGuardPeerCounter{PublicKey: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{name}, 32)), RXBytes: count, TXBytes: 2 * count, Links: []WireGuardCounterLink{}}
+	}
+	projection := func(seq U64, peers ...WireGuardPeerCounter) reportCounterProjection {
+		if peers == nil {
+			peers = []WireGuardPeerCounter{}
+		}
+		sort.Slice(peers, func(i, j int) bool { return peers[i].PublicKey < peers[j].PublicKey })
+		return reportCounterProjection{ReportSequence: seq, NetworkGeneration: "demo-underlay", WireGuardCounters: &WireGuardCounters{Interface: "wg-shared", Epoch: strings.Repeat("a", 32), ObservedAt: int64(seq) * 60000, Peers: peers}}
+	}
+	for _, tc := range []struct {
+		name      string
+		old, next reportCounterProjection
+		rx, tx    U64
+		valid     bool
+	}{
+		{"membership change", projection(1, peer('a', 10), peer('b', 100)), projection(2, peer('a', 20), peer('c', 1000)), 10, 20, true},
+		{"one peer reset", projection(1, peer('a', 10), peer('b', 100)), projection(2, peer('a', 20), peer('b', 0)), 10, 20, true},
+		{"disjoint", projection(1, peer('a', 10)), projection(2, peer('b', 100)), 0, 0, false},
+		{"none observed", projection(1), projection(2), 0, 0, false},
+		{"observed zero", projection(1, peer('a', 10)), projection(2, peer('a', 10)), 0, 0, true},
+		{"absence interrupts peer", projection(2, peer('c', 10)), projection(3, peer('a', 30)), 0, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rx, tx, valid := counterDifference(tc.old, tc.next, nil)
+			if rx != tc.rx || tx != tc.tx || valid != tc.valid {
+				t.Fatal("adjacent peer intersection was miscounted", rx, tx, valid)
+			}
+		})
+	}
+}
 
 func TestTrafficHistoryCounterProjectionPreservesOriginalResultsAndProofScope(t *testing.T) {
 	key := testKey(t)
@@ -30,10 +137,10 @@ func TestTrafficHistoryCounterProjectionPreservesOriginalResultsAndProofScope(t 
 	for i := range reports {
 		at := now.Add(time.Duration(i-2) * time.Minute).UnixMilli()
 		report := DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: identity.ID, ReportSequence: U64(i + 1), ViewDigest: digest,
-			NetworkGeneration: "demo-underlay", ReportedAt: at, Selections: []ReportSelection{{ServiceID: "demo-service", CandidateID: digest}},
-			Preference: &ReportPreference{Mode: "auto"}, LocalNetworks: &networks,
-			Observations: []Observation{},
-			Components:   []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest},
+			NetworkGeneration: "demo-underlay", ReportedAt: at, PolicyID: "demo-policy", Selections: []ReportSelection{{ServiceID: "demo-service", PolicyID: "demo-policy", CandidateID: digest}},
+			LocalNetworks: &networks,
+			Observations:  []Observation{},
+			Components:    []ComponentReadback{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest},
 			WireGuardCounters: &WireGuardCounters{Interface: "resource:demo-wg", Epoch: strings.Repeat("a", 32), ObservedAt: at,
 				Peers: []WireGuardPeerCounter{{PublicKey: peer, RXBytes: U64(math.MaxUint64 - 900 + uint64(i)*100), TXBytes: U64(math.MaxUint64 - 1500 + uint64(i)*500), Links: []WireGuardCounterLink{}}}}}
 		for j := 0; j < 128; j++ {

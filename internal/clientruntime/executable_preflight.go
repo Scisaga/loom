@@ -136,23 +136,13 @@ func RequireTUNDNSExecutor(ctx context.Context, executable string, config []byte
 	return nil
 }
 
-// PreflightWindowsCandidate applies Loom's stricter managed shape checks before
-// invoking the pinned upstream executable.
-func PreflightWindowsCandidate(ctx context.Context, executable string, config []byte, runtimeDir string) error {
-	if err := ValidateWindowsSingBox(config); err != nil {
-		return fmt.Errorf("Windows sing-box structural preflight: %w", err)
+// PreflightWindowsRuntime checks the one current native projection. Business
+// permissions were rendered from View; Windows does not decode them again.
+func PreflightWindowsRuntime(ctx context.Context, executable string, config WindowsRuntimeConfig, runtimeDir string) error {
+	if err := config.validate(); err != nil {
+		return err
 	}
-	return RunSingBoxCheck(ctx, executable, config, runtimeDir)
-}
-
-// PreflightWindowsRuntime validates the exact derived profile before invoking
-// the pinned upstream syntax and feature checker.
-func PreflightWindowsRuntime(ctx context.Context, executable string, config []byte, runtimeDir string,
-	profile WindowsRuntimeProfile) error {
-	if err := ValidateWindowsRuntimeConfig(config, profile); err != nil {
-		return fmt.Errorf("Windows sing-box structural preflight: %w", err)
-	}
-	return RunSingBoxCheck(ctx, executable, config, runtimeDir)
+	return RunSingBoxCheck(ctx, executable, config.body, runtimeDir)
 }
 
 func validateExecutable(name string) error {

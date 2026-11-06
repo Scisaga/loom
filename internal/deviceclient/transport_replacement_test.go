@@ -59,22 +59,22 @@ func historicalTransportState(t *testing.T, state State, independentWG ...bool) 
 	var identity, envelope, view map[string]json.RawMessage
 	json.Unmarshal(current, &identity)
 	json.Unmarshal(identity["certified_lkg"], &envelope)
-	json.Unmarshal(envelope["view"], &view)
+	view = testHistoricalView(t, state.LKG.View)
 	if len(independentWG) == 0 {
 		delete(view, "network_id")
 	} else {
 		view["runtime_profile"], _ = json.Marshal(map[string]any{"config": `{"endpoints":[{"type":"wireguard","tag":"wg-send.demo-receiver"}]}`})
 	}
-	envelope["view"], _ = json.Marshal(view)
+	envelope["view"] = testCanonicalHistoricalJSON(t, view)
 	sum := sha256.Sum256(append([]byte("loom-device-view-digest-v3\x00"), envelope["view"]...))
 	envelope["view_digest"], _ = json.Marshal("sha256:" + hex.EncodeToString(sum[:]))
 	delete(envelope, "signature")
-	unsigned, _ := json.Marshal(envelope)
+	unsigned := testCanonicalHistoricalJSON(t, envelope)
 	seed := sha256.Sum256([]byte("demo-device-control-b"))
 	signature := ed25519.Sign(ed25519.NewKeyFromSeed(seed[:]), append([]byte("loom-device-view-v3\x00"), unsigned...))
 	envelope["signature"], _ = json.Marshal(base64.RawURLEncoding.EncodeToString(signature))
-	identity["certified_lkg"], _ = json.Marshal(envelope)
-	original, _ := json.Marshal(identity)
+	identity["certified_lkg"] = testCanonicalHistoricalJSON(t, envelope)
+	original := testCanonicalHistoricalJSON(t, identity)
 	return original
 }
 
@@ -100,7 +100,7 @@ func TestTransportReplacementPreservesIdentityAndOnlyAdvancesAuthenticatedProgre
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !fixedIdentityEqual(next, store.state) || next.ReportSequence != 1 || next.HighWater[0].Sequence != 8 || len(next.LKG.View.Routes) != 0 {
+	if !fixedIdentityEqual(next, store.state) || next.ReportSequence != 1 || next.HighWater[0].Sequence != 8 || len(testDeviceExecution(next.LKG.View).Routes) != 0 {
 		t.Fatal("identity, floor, report sequence or revocation lost")
 	}
 	for name, input := range map[string][]byte{"tampered": bytes.Replace(original, []byte("Demo access"), []byte("Fake access"), 1), "space": append([]byte(" "), original...), "current": mustStateBytes(t, store.state)} {
@@ -185,7 +185,7 @@ func TestSharedWGReplacementPreservesCurrentProductionIdentity(t *testing.T) {
 	}
 	saved, _ := os.ReadFile(evidence)
 	loaded, err := Load(path)
-	if err != nil || !bytes.Equal(saved, original) || !fixedIdentityEqual(loaded.state, store.state) || loaded.state.ReportSequence != 1 || loaded.state.HighWater[0].Sequence != 8 || len(loaded.LKG().View.Routes) != 0 {
+	if err != nil || !bytes.Equal(saved, original) || !fixedIdentityEqual(loaded.state, store.state) || loaded.state.ReportSequence != 1 || loaded.state.HighWater[0].Sequence != 8 || len(testDeviceExecution(loaded.LKG().View).Routes) != 0 {
 		t.Fatal("shared WG migration lost original evidence, identity, progress or revocation", err)
 	}
 	if _, err := ReplaceTransportLKG(bytes.Replace(original, []byte("wg-send.demo-receiver"), []byte("wg-send.demo-tampered"), 1), next); err == nil {

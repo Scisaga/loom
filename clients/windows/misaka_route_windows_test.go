@@ -29,7 +29,7 @@ func newMisakaRouteGUITestWindow(t *testing.T) (*portableGUI, *windowsProfileMan
 	child.joined, child.state, child.routeSelected = true, guiStopped, 0
 	child.routeOptions = []portableRouteOption{}
 	for _, id := range []string{"demo-policy-a", "demo-policy-b", "demo-policy-c"} {
-		preference := clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-a", PolicyID: id}, {ServiceID: "demo-b", PolicyID: "demo-unchanged-policy"}}}
+		preference := clientmodel.Preference{Schema: 3, PolicyID: id}
 		child.routeOptions = append(child.routeOptions, portableRouteOption{Label: "Demo service / " + id, ServiceID: "demo-a", PolicyID: id, Preference: preference})
 	}
 
@@ -73,7 +73,7 @@ func TestGUIMisakaServicePolicyNavigationRequiresConfirmation(t *testing.T) {
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRoute|portableCBNSelEndOK<<16, app.controls.routeCombo)
 	finishMisakaRouteTestRequest(t, app, m)
 	snapshot := child.snapshot()
-	if snapshot.routeSelected != 1 || snapshot.routeOptions[1].Preference.Policy("demo-b") != "demo-unchanged-policy" {
+	if snapshot.routeSelected != 1 || snapshot.routeOptions[1].Preference.PolicyID != "demo-unchanged-policy" {
 		t.Fatal("Service choice changed another Service")
 	}
 }

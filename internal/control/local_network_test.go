@@ -15,13 +15,13 @@ func localNetworkTestService(t *testing.T, network, id, gateway string) Service 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Service{ID: id, Name: "Demo LAN", Kind: "local_network", LocalNetwork: &LocalNetwork{GatewayNodeID: gateway, LocalPrefix: "192.0.2.0/24", VirtualPrefix: prefix.String(), Enabled: true}}
+	return Service{ID: id, Name: "Demo LAN", Kind: "local_network", LocalNetwork: &LocalNetwork{GatewayNodeID: gateway, LocalPrefix: "192.0.2.0/24", VirtualPrefix: prefix.String(), Enabled: true}, RestrictToProbeTargets: new(false)}
 }
 
-func TestLocalNetworkContractPreservesInternetBytes(t *testing.T) {
-	internet := Service{ID: "demo-service", Name: "Demo", Kind: "internet", Matchers: []ServiceMatcher{{Kind: "ip_prefix", Value: "192.0.2.0/24"}}}
+func TestLocalNetworkAndInternetShareCurrentCanonicalServiceShape(t *testing.T) {
+	internet := Service{ID: "demo-service", Name: "Demo", Kind: "internet", RestrictToProbeTargets: new(false)}
 	body, err := CanonicalEncode(internet)
-	if err != nil || string(body) != `{"id":"demo-service","kind":"internet","matchers":[{"kind":"ip_prefix","value":"192.0.2.0/24"}],"name":"Demo"}` {
+	if err != nil || string(body) != `{"id":"demo-service","kind":"internet","name":"Demo","restrict_to_probe_targets":false}` {
 		t.Fatal("internet Service bytes changed", err)
 	}
 	policy := materialTestPolicy("demo-policy", internet.ID)
@@ -191,10 +191,10 @@ func TestLocalNetworkFixedGatewayTranslationAndWithdrawal(t *testing.T) {
 			t.Fatal("LAN View failed original byte recovery", err)
 		}
 		if id == "demo-access" {
-			if len(view.Routes) != 2 || len(view.BusinessProbeTargets) != 1 || len(view.BusinessProbeTargets[0].Targets) != 0 {
+			if len(testDeviceExecution(view).Routes) != 2 || len(testDeviceExecution(view).BusinessProbeTargets) != 1 || len(testDeviceExecution(view).BusinessProbeTargets[0].Targets) != 0 {
 				t.Fatal("LAN lost one-hop/relay alternatives or invented business evidence")
 			}
-			for _, route := range view.Routes {
+			for _, route := range testDeviceExecution(view).Routes {
 				if route.FinalExit != "demo-exit" || route.Scope != "local_network:"+route.ServiceID {
 					t.Fatal("LAN acquired an arbitrary internet exit or shared internet scope")
 				}
@@ -203,7 +203,7 @@ func TestLocalNetworkFixedGatewayTranslationAndWithdrawal(t *testing.T) {
 		var config struct {
 			Outbounds []map[string]any `json:"outbounds"`
 		}
-		if err := json.Unmarshal([]byte(view.RuntimeProfile.Config), &config); err != nil {
+		if err := json.Unmarshal([]byte(testDeviceExecution(view).RuntimeProfile.Config), &config); err != nil {
 			t.Fatal(err)
 		}
 		mappings := 0
@@ -233,9 +233,21 @@ func TestLocalNetworkFixedGatewayTranslationAndWithdrawal(t *testing.T) {
 	} {
 		copy := localNetworkProjectionFixture(t)
 		change(&copy)
+		noConsumers := len(copy.DeviceAuthorizations[0].PolicyIDs) == 0
 		for _, id := range []string{"demo-access", "demo-entry", "demo-exit"} {
 			view, err := ProjectDeviceView(copy, id)
-			if err != nil || len(view.Routes) != 0 || len(view.InboundCredentials) != 0 || view.RuntimeProfile != nil && strings.Contains(view.RuntimeProfile.Config, `"prefix_mapping"`) {
+			if noConsumers {
+				if err != nil || len(testDeviceExecution(view).Routes) != 0 || len(testDeviceExecution(view).AccessGrants) != 0 {
+					t.Fatal("withdrawn origin retained an access grant", id, err)
+				}
+				for _, permission := range view.TransportCredentials {
+					if permission.SenderID == "demo-access" {
+						t.Fatal("withdrawn origin retained access credentials")
+					}
+				}
+				continue
+			}
+			if err != nil || len(testDeviceExecution(view).Routes) != 0 || testDeviceExecution(view).RuntimeProfile != nil && strings.Contains(testDeviceExecution(view).RuntimeProfile.Config, `"prefix_mapping"`) {
 				t.Fatal("withdrawn LAN left a candidate, credential or translation", id, err)
 			}
 		}

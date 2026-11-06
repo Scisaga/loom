@@ -26,6 +26,23 @@ type deviceConfigInputs struct {
 	revision   uint64
 	projection Projection
 	proof      ControlProof
+	changed    <-chan struct{}
+}
+
+// This notification has no authority or durable progress of its own. Writers
+// publish it under the same lock as the existing immutable input replacement.
+func (a *Authority) changedDeviceConfigLocked() {
+	a.deviceConfigRevision++
+	if a.deviceConfigChanged != nil {
+		close(a.deviceConfigChanged)
+	}
+	a.deviceConfigChanged = make(chan struct{})
+}
+
+func (a *Authority) deviceConfigurationChanges() (uint64, <-chan struct{}) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.deviceConfigRevision, a.deviceConfigChanged
 }
 
 func (a *Authority) deviceConfigInputs() (deviceConfigInputs, error) {
@@ -34,7 +51,7 @@ func (a *Authority) deviceConfigInputs() (deviceConfigInputs, error) {
 	if a.blocked != nil {
 		return deviceConfigInputs{}, a.blocked
 	}
-	return deviceConfigInputs{a.deviceConfigRevision, a.projection, ControlProof{Genesis: a.genesis, Successors: a.certificates}}, nil
+	return deviceConfigInputs{a.deviceConfigRevision, a.projection, ControlProof{Genesis: a.genesis, Successors: a.certificates}, a.deviceConfigChanged}, nil
 }
 
 func (a *Authority) deviceConfigInputsCurrent(input deviceConfigInputs) bool {

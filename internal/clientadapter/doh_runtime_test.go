@@ -22,6 +22,16 @@ import (
 
 // Only loopback listeners and one disposable Mixed process; no host network changes.
 func TestManagedDoHRuntimePreservesBusinessDomainAndDoesNotGrantResolverAccess(t *testing.T) {
+	for _, ordinary := range []bool{false, true} {
+		name := "specified destinations"
+		if ordinary {
+			name = "ordinary internet rejects a private DNS answer"
+		}
+		t.Run(name, func(t *testing.T) { testManagedDoHRuntime(t, ordinary) })
+	}
+}
+
+func testManagedDoHRuntime(t *testing.T, ordinary bool) {
 	executable := os.Getenv("LOOM_TUN_ROUTING_EXECUTABLE")
 	if executable == "" {
 		t.Skip("requires the reviewed data-plane executable")
@@ -74,7 +84,11 @@ func TestManagedDoHRuntimePreservesBusinessDomainAndDoesNotGrantResolverAccess(t
 	}
 	address, port := listener.Addr().String(), listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
-	source, _ := json.Marshal(map[string]any{"inbounds": []any{map[string]any{"type": "mixed", "tag": "demo-mixed", "listen": "127.0.0.1", "listen_port": port}}, "outbounds": []any{map[string]any{"type": "direct", "tag": "demo-direct"}, map[string]any{"type": "block", "tag": "reject"}}, "route": map[string]any{"final": "reject", "rules": []any{map[string]any{"domain": []string{"example.com"}, "outbound": "demo-direct"}}}})
+	rule := map[string]any{"domain": []string{"example.com"}, "outbound": "demo-direct"}
+	if ordinary {
+		rule = map[string]any{"public_internet": true, "outbound": "demo-direct"}
+	}
+	source, _ := json.Marshal(map[string]any{"inbounds": []any{map[string]any{"type": "mixed", "tag": "demo-mixed", "listen": "127.0.0.1", "listen_port": port}}, "outbounds": []any{map[string]any{"type": "direct", "tag": "demo-direct", "public_internet": ordinary}, map[string]any{"type": "block", "tag": "reject"}}, "route": map[string]any{"final": "reject", "rules": []any{rule}}})
 	badTLS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
 	defer badTLS.Close()
 	config, err := WithManagedDNS(string(source), []string{strings.Replace(badTLS.URL, "http://", "https://", 1) + "/dns-query", dns.URL + "/dns-query"}, false)
@@ -123,7 +137,7 @@ func TestManagedDoHRuntimePreservesBusinessDomainAndDoesNotGrantResolverAccess(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := probe(ctx); !result.Available || queries.Load() == 0 {
+	if result := probe(ctx); result.Available == ordinary || queries.Load() == 0 {
 		t.Fatal("runtime DoH business failed", result)
 	}
 	for _, url := range []string{dns.URL + "/dns-query", target.URL + "/demo-probe"} {

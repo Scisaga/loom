@@ -23,6 +23,9 @@ func ObserveWireGuardCounters(ctx context.Context, view control.DeviceView, now 
 	if tag == "" {
 		return nil, nil
 	}
+	return observeWireGuardCounters(ctx, tag, expected, now)
+}
+func observeWireGuardCounters(ctx context.Context, tag string, expected []control.WireGuardPeerCounter, now func() time.Time) (*control.WireGuardCounters, error) {
 	source, ok := ctx.Value(nativeDiagnosticKey{}).(nativeDiagnostic)
 	if !ok {
 		return nil, errors.New("WG counter owner is unavailable")
@@ -68,18 +71,31 @@ func ObserveWireGuardCounters(ctx context.Context, view control.DeviceView, now 
 		return nil, errors.New("WG counter response is invalid")
 	}
 	endpoint := value.Endpoints[0]
-	if endpoint.Interface != tag || endpoint.Peers == nil || len(endpoint.Peers) != len(expected) {
+	if endpoint.Interface != tag || endpoint.Peers == nil {
 		return nil, errors.New("WG counters are not from the applied shared endpoint")
 	}
-	result := &control.WireGuardCounters{Interface: tag, Epoch: endpoint.Epoch, ObservedAt: now().UnixMilli(), Peers: expected}
-	for i, peer := range endpoint.Peers {
-		if peer.RXBytes == nil || peer.TXBytes == nil || peer.PublicKey != expected[i].PublicKey {
-			return nil, errors.New("WG counter peer differs from applied configuration")
+	observed := &control.WireGuardCounters{Interface: tag, Epoch: endpoint.Epoch, ObservedAt: now().UnixMilli(), Peers: []control.WireGuardPeerCounter{}}
+	for _, peer := range endpoint.Peers {
+		if peer.RXBytes == nil || peer.TXBytes == nil {
+			return nil, errors.New("WG counter peer has incomplete counts")
 		}
-		result.Peers[i].RXBytes, result.Peers[i].TXBytes = *peer.RXBytes, *peer.TXBytes
+		observed.Peers = append(observed.Peers, control.WireGuardPeerCounter{PublicKey: peer.PublicKey, RXBytes: *peer.RXBytes, TXBytes: *peer.TXBytes, Links: []control.WireGuardCounterLink{}})
 	}
-	if err := result.Validate(); err != nil {
+	// Validate every native slot, including retired or no longer authorized keys,
+	// before projecting the real observations onto the current View.
+	if err := observed.Validate(); err != nil {
 		return nil, err
+	}
+	allowed := make(map[string]control.WireGuardPeerCounter, len(expected))
+	for _, peer := range expected {
+		allowed[peer.PublicKey] = peer
+	}
+	result := &control.WireGuardCounters{Interface: tag, Epoch: observed.Epoch, ObservedAt: observed.ObservedAt, Peers: []control.WireGuardPeerCounter{}}
+	for _, peer := range observed.Peers {
+		if binding, ok := allowed[peer.PublicKey]; ok {
+			peer.Links = append([]control.WireGuardCounterLink{}, binding.Links...)
+			result.Peers = append(result.Peers, peer)
+		}
 	}
 	return result, nil
 }

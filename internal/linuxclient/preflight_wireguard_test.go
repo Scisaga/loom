@@ -1,17 +1,15 @@
 package linuxclient
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"loom/internal/clientadapter"
 	"loom/internal/control"
 )
 
-func TestPreflightUsesCertifiedWGExecutionAddressWithoutChangingAuthority(t *testing.T) {
+func TestPreflightKeepsCertifiedWGNamesWithoutCreatingHostGeometry(t *testing.T) {
 	p, keys, input, at := nativeProjectionFixture(t)
 	for i := range p.DeviceAuthorizations {
 		p.DeviceAuthorizations[i].DNSServers = []string{"192.0.2.53"}
@@ -29,13 +27,11 @@ func TestPreflightUsesCertifiedWGExecutionAddressWithoutChangingAuthority(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	executions, err := prepareHY2Executions(view, input, at)
+	executions, err := prepareResourceExecutions(view, input, at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	config, server, err := preflightProjectedConfigs(ctx, view, "demo-local", "mixed", executions, clientadapter.WebsiteAccess{}, keys[view.DeviceID], nativePeerTestDNS(t))
+	config, server, err := preflightProjectedConfigs(view, "demo-local", "mixed", executions, clientadapter.WebsiteAccess{}, keys[view.DeviceID])
 	if err != nil || server != "" {
 		t.Fatal("Named WG preflight did not render the shared endpoint", err)
 	}
@@ -48,31 +44,23 @@ func TestPreflightUsesCertifiedWGExecutionAddressWithoutChangingAuthority(t *tes
 		t.Fatal("preflight duplicated the shared WG endpoint")
 	}
 	endpoint := endpoints[0].(map[string]any)
-	name, _ := endpoint["name"].(string)
-	if !strings.HasPrefix(name, "loom-wg") || len(name) != 15 {
-		t.Fatal("preflight still uses the stable listener identity as a Linux interface name")
+	if endpoint["system"] == true || endpoint["name"] != nil || endpoint["host_sources"] != nil || endpoint["stack_address"] != nil {
+		t.Fatal("preflight created host management geometry from a relay resource")
 	}
-	profile, _, err := projectWireGuard(view)
-	if err != nil || len(profile.WireGuard) == 0 || name != profile.WireGuard[0].Interface {
-		t.Fatal("preflight and runtime disagree on the projected interface name", err)
+	profile, _, err := projectWireGuard(view, executions)
+	if err != nil || len(profile.WireGuard) != 0 || profile.ListenPort == 0 {
+		t.Fatal("preflight lost its local receiver port or generated host peers", err)
 	}
-	peers := endpoints[0].(map[string]any)["peers"].([]any)
-	resolved := false
-	for _, raw := range peers {
-		peer := raw.(map[string]any)
-		if peer["address"] == "192.0.2.12" && peer["port"] == float64(51822) {
-			resolved = true
-		}
-	}
-	if !resolved || strings.Contains(config, `"address":"demo-peer.example"`) {
-		t.Fatal("Native preflight left a hostname for implicit resolution")
+	if !strings.Contains(config, "demo-peer.example") {
+		t.Fatal("pure preflight rewrote the certified sender DNS name")
 	}
 	after, _ := control.CanonicalEncode(view)
 	if string(after) != string(original) {
 		t.Fatal("DNS result changed the authoritative View")
 	}
 	view.DNSServers = []string{}
-	if _, _, err := preflightProjectedConfigs(ctx, view, "demo-local", "mixed", executions, clientadapter.WebsiteAccess{}, keys[view.DeviceID], nil); err == nil {
-		t.Fatal("Preflight fell back to host DNS")
+	denied, _, err := preflightProjectedConfigs(view, "demo-local", "mixed", executions, clientadapter.WebsiteAccess{}, keys[view.DeviceID])
+	if err != nil || !strings.Contains(denied, "loom-runtime-deny-dns") {
+		t.Fatal("preflight without certified DNS installed an implicit resolver", err)
 	}
 }

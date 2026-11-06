@@ -56,7 +56,18 @@ func (value WireGuardCounters) Validate() error {
 // renderer's existing projection. It neither exports nor derives private keys.
 // Empty means the View has no WG endpoint. Counts are deliberately absent.
 func WireGuardCounterBindings(view DeviceView) (string, []WireGuardPeerCounter, error) {
-	if view.RuntimeProfile == nil {
+	hasWG := false
+	for _, resource := range view.Resources {
+		hasWG = hasWG || resource.Kind == "wireguard"
+	}
+	if !hasWG {
+		return "", nil, nil
+	}
+	execution, err := ProjectDeviceExecution(view, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	if execution.RuntimeProfile == nil {
 		return "", nil, nil
 	}
 	var config struct {
@@ -68,7 +79,7 @@ func WireGuardCounterBindings(view DeviceView) (string, []WireGuardPeerCounter, 
 			} `json:"peers"`
 		} `json:"endpoints"`
 	}
-	if json.Unmarshal([]byte(view.RuntimeProfile.Config), &config) != nil {
+	if json.Unmarshal([]byte(execution.RuntimeProfile.Config), &config) != nil {
 		return "", nil, errors.New("WG runtime projection is invalid")
 	}
 	tag := ""
@@ -93,24 +104,26 @@ func WireGuardCounterBindings(view DeviceView) (string, []WireGuardPeerCounter, 
 	for _, resource := range view.Resources {
 		resources[resource.ID] = resource
 	}
-	for _, link := range view.Links {
+	for _, link := range execution.Links {
 		if link.FromNodeID != view.DeviceID && link.ToNodeID != view.DeviceID {
 			continue
 		}
-		local, remote := resources[link.FromResourceID], resources[link.ResourceID]
+		if resources[link.ResourceID].Kind != "wireguard" {
+			continue
+		}
+		remoteID := link.ToNodeID
 		if link.ToNodeID == view.DeviceID {
-			local, remote = remote, local
+			remoteID = link.FromNodeID
 		}
-		if local.Authentication.PublicKey == nil || remote.Authentication.PublicKey == nil || tag != ResourceInboundTag(local.ID) {
-			return "", nil, errors.New("WG Link counter scope has no local resource")
-		}
+		remote := viewNodes(view)[remoteID]
+
 		spec, err := LinkSpecDigest(view, link.ID)
 		if err != nil {
 			return "", nil, err
 		}
 		found := false
 		for i := range peers {
-			if peers[i].PublicKey == *remote.Authentication.PublicKey {
+			if peers[i].PublicKey == remote.WireGuardPublicKey {
 				peers[i].Links = append(peers[i].Links, WireGuardCounterLink{LinkID: link.ID, SpecDigest: spec})
 				found = true
 				break
@@ -130,12 +143,16 @@ func verifyWireGuardCounters(value *WireGuardCounters, view DeviceView) error {
 	if value == nil {
 		return nil
 	}
+	if err := value.Validate(); err != nil {
+		return err
+	}
 	tag, expected, err := WireGuardCounterBindings(view)
-	if err != nil || tag == "" || value.Interface != tag || len(value.Peers) != len(expected) {
+	if err != nil || tag == "" || value.Interface != tag {
 		return errors.New("WG counters are outside the applied View")
 	}
-	for i, peer := range value.Peers {
-		if peer.PublicKey != expected[i].PublicKey || !reflect.DeepEqual(peer.Links, expected[i].Links) {
+	for _, peer := range value.Peers {
+		i := sort.Search(len(expected), func(i int) bool { return expected[i].PublicKey >= peer.PublicKey })
+		if i == len(expected) || peer.PublicKey != expected[i].PublicKey || !reflect.DeepEqual(peer.Links, expected[i].Links) {
 			return errors.New("WG counter peer scope does not match the View")
 		}
 	}

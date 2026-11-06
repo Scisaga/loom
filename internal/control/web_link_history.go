@@ -142,7 +142,7 @@ func (store *ObservationStore) linkHistory(ctx context.Context, network string, 
 			}
 			if scope := result.RoundTrips; scope != nil && sample.NetworkGeneration == scope.NetworkGeneration && recentPossible(sample.LinkID, sample.SpecDigest, sample.ObservedAt) &&
 				report.ReportedAt <= result.Until+webClockTolerance.Milliseconds() && report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == report.ViewDigest &&
-				sample.ObservedAt <= report.ReportedAt+webClockTolerance.Milliseconds() && sample.ValidUntil-sample.ObservedAt <= (30*time.Second).Milliseconds() {
+				sample.ObservedAt <= report.ReportedAt+webClockTolerance.Milliseconds() && sample.ValidUntil-sample.ObservedAt <= (10*time.Minute).Milliseconds() {
 				// Keep failed and missing-RTT contents in conflict detection, too.
 				// No equal-time contradictory sample can win by report order.
 				if old, found := recentBodies[sample.ObservedAt]; !found {

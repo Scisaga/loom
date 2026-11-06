@@ -157,6 +157,7 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 			return
 		default:
 		}
+		_, configurationChanged := runtime.Authority.deviceConfigurationChanges()
 		members := map[string]Member{}
 		config := runtime.Authority.Snapshot().Config
 		for _, member := range config.Members {
@@ -215,11 +216,24 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 			scope := active.attemptScope()
 			peerCtx, peerCancel := context.WithCancel(active.ctx)
 			active.done = make(chan struct{})
+			finished := active.done
+			inputRevision, _ := runtime.Authority.deviceConfigurationChanges()
+			scope.factsChanged = active.notifiedRevision != inputRevision
+			active.notifiedRevision = inputRevision
 			peerCtx = context.WithValue(peerCtx, memberHTTPAttemptKey{}, scope)
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				defer close(active.done)
+				defer func() {
+					close(finished)
+					current, _ := runtime.Authority.deviceConfigurationChanges()
+					if current != inputRevision {
+						select {
+						case runtime.wake <- struct{}{}:
+						default:
+						}
+					}
+				}()
 				defer peerCancel()
 				active.result = runtime.reconcilePeerAttempt(peerCtx, member)
 				if active.result != nil && peerCtx.Err() == nil {
@@ -231,6 +245,7 @@ func (runtime *Runtime) reconcilePeers(ticks <-chan time.Time) {
 		case <-runtime.stop:
 			return
 		case <-runtime.wake:
+		case <-configurationChanged:
 		case <-ticks:
 		}
 	}
@@ -255,9 +270,10 @@ func (runtime *Runtime) reconcilePeerAttempt(ctx context.Context, member Member)
 // Current-member transport resources, never a sync cursor or authorization cache.
 type memberHTTPAttemptKey struct{}
 type memberHTTPAttempt struct {
-	member Member
-	client *http.Client
-	proof  *http.Client
+	member       Member
+	client       *http.Client
+	proof        *http.Client
+	factsChanged bool
 }
 
 func (clients memberHTTPAttempt) close() {

@@ -25,7 +25,7 @@ type WGPortRecoveryExecutor interface {
 	WGPortMappings() ([]localconfig.NodeNetwork, string, error)
 	WGPortOccupied(context.Context, string, TransportResource) ([]int, error)
 	WGPortCheck(context.Context, string, DeviceView) error
-	WGPortDeliver(context.Context, string, DeviceViewEnvelope) error
+	WGPortDeliver(context.Context, string, DeviceViewEnvelope, string) error
 }
 
 func (server *Server) startWGPortRecovery(parent context.Context) func() {
@@ -120,23 +120,33 @@ func (server *Server) reconcileWGPorts(ctx context.Context) error {
 	// within this attempt remain bounded and parallel.
 	suggestion := suggestions[0]
 	resource := wgPortRecoveryResource(p, suggestion.ResourceID)
+	currentSocket, err := localconfig.IngressAddress(nodes, resource.OwnerNodeID, "udp", resource.DialHost, resource.DialPort)
+	if err != nil {
+		return err
+	}
 	occupied, err := executor.WGPortOccupied(ctx, resource.OwnerNodeID, resource)
 	if err != nil {
 		return err
 	}
+	selected := false
 	for _, input := range inputs {
 		if input.ResourceID != resource.ID {
 			continue
 		}
 		for _, candidate := range input.Ports {
-			if !slices.Contains(occupied, candidate) {
+			mapped, err := localconfig.IngressAddress(nodes, resource.OwnerNodeID, "udp", resource.DialHost, candidate)
+			if err != nil {
+				continue
+			}
+			if mapped.Port() == currentSocket.Port() || !slices.Contains(occupied, int(mapped.Port())) {
 				suggestion.ToPort = candidate
+				selected = true
 				break
 			}
 		}
 	}
-	if slices.Contains(occupied, suggestion.ToPort) {
-		return errors.New("no free mapped WG port")
+	if !selected {
+		return errors.New("no unoccupied mapped local WG port is available for the same receiving address")
 	}
 	views, err := server.wgPortRecoveryViews(p, resource.ID)
 	if err != nil {
@@ -200,7 +210,7 @@ func wgPortRecoveryPorts(nodes []localconfig.NodeNetwork, p Projection, resource
 			continue
 		}
 		for _, mapping := range node.Ingress {
-			if mapping.Protocol != "udp" || mapping.PublicHost != resource.DialHost || mapping.PublicPorts != mapping.HostPorts {
+			if mapping.Protocol != "udp" || mapping.PublicHost != resource.DialHost {
 				continue
 			}
 			for port := mapping.PublicPorts.First; port <= mapping.PublicPorts.Last; port++ {
@@ -210,7 +220,7 @@ func wgPortRecoveryPorts(nodes []localconfig.NodeNetwork, p Projection, resource
 				occupied := false
 				for _, other := range p.NetworkIntent.Resources {
 					if other.ID != resource.ID && (other.Kind == "wireguard" || other.Kind == "hysteria2") && other.DialPort == port &&
-						(other.OwnerNodeID == resource.OwnerNodeID || other.DialHost == resource.DialHost) {
+						other.DialHost == resource.DialHost {
 						occupied = true
 					}
 				}

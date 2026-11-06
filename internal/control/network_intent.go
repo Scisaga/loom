@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -14,11 +15,16 @@ import (
 )
 
 type Service struct {
-	ID           string           `json:"id"`
-	Name         string           `json:"name"`
-	Kind         string           `json:"kind"`
-	Matchers     []ServiceMatcher `json:"matchers,omitempty"`
-	LocalNetwork *LocalNetwork    `json:"local_network,omitempty"`
+	ID                     string        `json:"id"`
+	Name                   string        `json:"name"`
+	Kind                   string        `json:"kind"`
+	RestrictToProbeTargets *bool         `json:"restrict_to_probe_targets,omitempty"`
+	ProbeURLs              []string      `json:"probe_urls,omitempty"`
+	LocalNetwork           *LocalNetwork `json:"local_network,omitempty"`
+	// These two fields preserve exact schema-3 signed originals for historical
+	// signature and causal validation. Writers and runtime reject their shape.
+	AccessScope string           `json:"access_scope,omitempty"`
+	Matchers    []ServiceMatcher `json:"matchers,omitempty"`
 }
 
 // NetworkIntent is reconstructed from signed facts. Empty unsupported
@@ -63,7 +69,7 @@ type NetworkLink struct {
 	FromNodeID      string          `json:"from_node_id"`
 	ToNodeID        string          `json:"to_node_id"`
 	ResourceID      string          `json:"resource_id"`
-	FromResourceID  string          `json:"from_resource_id"`
+	FromResourceID  string          `json:"from_resource_id,omitempty"`
 	InitiatorNodeID string          `json:"initiator_node_id"`
 	Purpose         string          `json:"purpose"`
 	ProbeTarget     LinkProbeTarget `json:"probe_target"`
@@ -138,27 +144,37 @@ func (resource TransportResource) Validate() error {
 }
 
 func (link NetworkLink) Validate() error {
-	for _, id := range []string{link.ID, link.FromNodeID, link.ToNodeID, link.ResourceID, link.FromResourceID, link.InitiatorNodeID} {
+	for _, id := range []string{link.ID, link.FromNodeID, link.ToNodeID, link.ResourceID, link.InitiatorNodeID} {
 		if ValidateID(id) != nil || id == "direct" {
 			return errors.New("Link identity is invalid")
 		}
+	}
+	if link.FromResourceID != "" && ValidateID(link.FromResourceID) != nil {
+		return errors.New("invalid source resource")
 	}
 	if link.FromNodeID == link.ToNodeID || link.ResourceID == link.FromResourceID ||
 		link.InitiatorNodeID != link.FromNodeID && link.InitiatorNodeID != link.ToNodeID || link.Purpose != "relay" {
 		return errors.New("Link endpoints, initiator or purpose are invalid")
 	}
 	address, err := netip.ParseAddr(link.ProbeTarget.Host)
-	if err != nil || address.Zone() != "" || address.String() != link.ProbeTarget.Host || ValidateID(link.ProbeTarget.ResourceID) != nil || link.ProbeTarget.Port < 1 || link.ProbeTarget.Port > 65535 {
+	if !contractHost(link.ProbeTarget.Host) || ValidateID(link.ProbeTarget.ResourceID) != nil || link.ProbeTarget.Port < 1 || link.ProbeTarget.Port > 65535 {
 		return errors.New("Link probe target is invalid")
 	}
 	switch link.ProbeTarget.Action {
-	case "wireguard_dns":
-		if link.ProbeTarget.ResourceID != link.ResourceID || link.ProbeTarget.Port != 53 || !address.Is6() || address.Is4In6() || !address.IsPrivate() {
+	case "wireguard_echo", "wireguard_dns":
+		if err != nil || link.ProbeTarget.ResourceID != link.ResourceID || link.ProbeTarget.Port != 53 || !address.Is6() || address.Is4In6() || !address.IsPrivate() {
 			return errors.New("native Link probe must use its receiver's exact execution DNS")
+		}
+	case "hysteria2_echo":
+		if link.ProbeTarget.ResourceID != link.ResourceID {
+			return errors.New("Hy2 link probe has another receiver")
 		}
 	case "hysteria2_tls": // Original signed facts remain verifiable; new writes reject this action.
 	default:
 		return errors.New("Link probe action is unsupported")
+	}
+	if (link.ProbeTarget.Action == "wireguard_dns" || link.ProbeTarget.Action == "hysteria2_tls") && link.FromResourceID == "" {
+		return errors.New("historical link lacks its original source resource")
 	}
 	return nil
 }
@@ -208,28 +224,86 @@ type BusinessProbeTarget struct {
 }
 
 func (service Service) Validate() error {
+	if service.RestrictToProbeTargets == nil {
+		return validateHistoricalService(service)
+	}
+	return service.ValidateCurrent()
+}
+
+func (service Service) ValidateCurrent() error {
 	if ValidateID(service.ID) != nil || ValidateText(service.Name) != nil {
 		return errors.New("Service identity is invalid")
 	}
+	if service.RestrictToProbeTargets == nil || service.AccessScope != "" || service.Matchers != nil {
+		return errors.New("current Service requires probe URLs and an explicit restriction flag; legacy destinations are not executable")
+	}
 	if service.Kind == "local_network" {
-		if service.LocalNetwork == nil || service.Matchers != nil {
+		if service.LocalNetwork == nil {
 			return errors.New("local network Service requires only its complete mapping")
 		}
-		return service.LocalNetwork.Validate()
+		if err := service.LocalNetwork.Validate(); err != nil {
+			return err
+		}
+	} else {
+		if service.Kind != "internet" || service.LocalNetwork != nil {
+			return errors.New("internet Service cannot contain a LAN mapping")
+		}
 	}
-	if service.Kind != "internet" || service.LocalNetwork != nil || len(service.Matchers) == 0 {
-		return errors.New("internet Service requires only nonempty matchers")
+	if service.ProbeURLs != nil && len(service.ProbeURLs) == 0 || *service.RestrictToProbeTargets && len(service.ProbeURLs) == 0 {
+		return errors.New("unconfigured Service probe URLs must be omitted")
 	}
-	for index, matcher := range service.Matchers {
-		if matcher.Validate() != nil || index > 0 && !serviceMatcherLess(service.Matchers[index-1], matcher) {
-			return errors.New("Service matchers are invalid or not uniquely sorted")
+	for index, target := range service.ProbeURLs {
+		if ValidateHTTPSURL(target) != nil || index > 0 && service.ProbeURLs[index-1] >= target {
+			return errors.New("Service probe URLs must be permitted, canonical and uniquely sorted")
+		}
+		parsed, _ := url.Parse(target)
+		host := parsed.Hostname()
+		if service.Kind == "internet" && !(ServiceMatcher{Kind: "public_internet"}).Matches(host) {
+			return errors.New("internet probe URL cannot grant LAN, overlay or local access")
+		}
+		if service.LocalNetwork != nil {
+			if address, err := netip.ParseAddr(host); err == nil {
+				prefix, _ := netip.ParsePrefix(service.LocalNetwork.VirtualPrefix)
+				if !prefix.Contains(address) {
+					return errors.New("LAN probe URL is outside the authorized virtual prefix")
+				}
+			} else if !strings.HasSuffix(host, ".loom") || host == "control.loom" {
+				return errors.New("named LAN probe URL requires an authorized overlay record")
+			}
 		}
 	}
 	return nil
 }
 
+func (service Service) IsPublicInternet() bool {
+	return service.Kind == "internet" && service.RestrictToProbeTargets != nil
+}
+
+// executionService excludes measurement configuration. Changing a URL cannot
+// rotate path specifications, receiver ACLs or credentials.
+func executionService(service Service) Service {
+	service.Name = service.ID
+	if service.RestrictToProbeTargets == nil || !*service.RestrictToProbeTargets {
+		service.ProbeURLs = nil
+	} else {
+		origins := map[string]bool{}
+		for _, target := range service.ProbeURLs {
+			parsed, _ := url.Parse(target)
+			origins["https://"+parsed.Host+"/"] = true
+		}
+		service.ProbeURLs = make([]string, 0, len(origins))
+		for origin := range origins {
+			service.ProbeURLs = append(service.ProbeURLs, origin)
+		}
+		sort.Strings(service.ProbeURLs)
+	}
+	return service
+}
+
+func (service Service) ProbeURLsOrEmpty() []string { return append([]string{}, service.ProbeURLs...) }
+
 func serviceMatcherLess(left, right ServiceMatcher) bool {
-	return left.Kind < right.Kind || left.Kind == right.Kind && left.Value < right.Value
+	return left.Kind < right.Kind || left.Kind == right.Kind && (left.Value < right.Value || left.Value == right.Value && left.Port < right.Port)
 }
 
 func (policy NetworkPolicy) Validate() error {
@@ -287,6 +361,28 @@ func (target BusinessProbeTarget) Validate() error {
 		return errors.New("business probe target ID is invalid")
 	}
 	return ValidateHTTPSURL(target.URL)
+}
+
+// A connection is identified before encrypted HTTP paths are available.
+func ValidateConnectionTarget(value string) error {
+	host, port, err := net.SplitHostPort(value)
+	number, numberErr := strconv.Atoi(port)
+	if err != nil || numberErr != nil || !contractHost(host) || number < 1 || number > 65535 || net.JoinHostPort(host, strconv.Itoa(number)) != value {
+		return errors.New("connection target must be canonical host/IP and port")
+	}
+	return nil
+}
+
+func ProbeConnectionTarget(target string) (string, error) {
+	if err := ValidateHTTPSURL(target); err != nil {
+		return "", err
+	}
+	parsed, _ := url.Parse(target)
+	port := parsed.Port()
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(parsed.Hostname(), port), nil
 }
 
 // ValidateHTTPSURL verifies original authority bytes, without normalization.

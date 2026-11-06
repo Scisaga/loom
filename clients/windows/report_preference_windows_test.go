@@ -33,7 +33,7 @@ func TestWindowsPolicyApplyFailureStopsRuntimeWhenRejectionCannotBeVerified(t *t
 	if err := store.SaveLKG(view); err != nil {
 		t.Fatal(err)
 	}
-	preference, err := clientmodel.ChoosePolicy(store.Preference(), view.View, "demo-service", "demo-policy")
+	preference, err := clientmodel.ChoosePolicy(store.Preference(), view.View, "demo-policy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 				t.Fatal(err)
 			}
 			var actual control.RouteCandidate
-			for _, route := range view.View.Routes {
+			for _, route := range testDeviceExecution(view.View).Routes {
 				if route.FinalExit == "direct" {
 					actual = route
 				}
@@ -81,7 +81,7 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 				t.Fatal("demo Direct readback missing")
 			}
 			for _, policy := range view.View.Policies {
-				preference, err := clientmodel.ChoosePolicy(clientmodel.EmptyPreference(), view.View, policy.ServiceID, policy.ID)
+				preference, err := clientmodel.ChoosePolicy(clientmodel.EmptyPreference(), view.View, policy.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -94,9 +94,14 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 				if err != nil || reopened.PublicKey() != store.PublicKey() || !reopened.Preference().Equal(preference) {
 					t.Fatal("native preference write lost its original DPAPI identity", err)
 				}
-				activation := clientadapter.Activation{State: clientadapter.State{Preference: reopened.Preference(), NetworkGeneration: "demo-underlay"}, Selections: []clientadapter.SelectionStatus{{Scope: actual.Scope, CandidateID: actual.ID}}}
+				for _, route := range testDeviceExecution(view.View).Routes {
+					if route.PolicyID == policy.ID && route.FinalExit == "direct" {
+						actual = route
+					}
+				}
+				activation := clientadapter.Activation{State: clientadapter.State{Preference: reopened.Preference(), NetworkGeneration: "demo-underlay"}, Selections: []clientadapter.SelectionStatus{{Scope: control.AccessSelectorScope, CandidateID: actual.ID}}}
 				report, err := windowsDeviceReport(reopened.LKG(), activation, nil, time.Now())
-				if err != nil || report.PolicyChoices == nil || report.Preference != nil || (*report.PolicyChoices)[0].PolicyID != policy.ID || report.Selections[0].CandidateID != actual.ID {
+				if err != nil || report.PolicyID != policy.ID || report.PolicyChoices != nil || report.Preference != nil || report.Selections[0].CandidateID != actual.ID {
 					t.Fatal("native report replaced the setting with the actual selector", err)
 				}
 				sequence, err := reopened.ReserveReportSequence()

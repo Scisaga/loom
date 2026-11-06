@@ -3,7 +3,6 @@ package clientadapter
 import (
 	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
 
 	"loom/internal/control"
@@ -29,55 +28,6 @@ func ValidateNativeSenders(raw json.RawMessage) error {
 		}
 	}
 	return nil
-}
-
-const NativeProbeAddress = "127.0.0.1:61801"
-
-// WithNativeProbe adds one authenticated process-local DNS diagnostic entry.
-// Certified rules already restrict every user to its receiver's DNS address.
-func WithNativeProbe(config, secret string) (string, error) {
-	var document map[string]any
-	if err := json.Unmarshal([]byte(config), &document); err != nil {
-		return "", err
-	}
-	outbounds, _ := document["outbounds"].([]any)
-	ids := []string{}
-	for _, raw := range outbounds {
-		outbound, ok := raw.(map[string]any)
-		if !ok {
-			return "", errors.New("invalid native outbound")
-		}
-		tag, _ := outbound["tag"].(string)
-		if strings.HasPrefix(tag, "wg-base.") && outbound["type"] == "direct" {
-			ids = append(ids, strings.TrimPrefix(tag, "wg-base."))
-		}
-		if control.ValidateDigest(tag) == nil && outbound["type"] != "selector" {
-			ids = append(ids, tag)
-		}
-	}
-	sort.Strings(ids)
-	users := []any{}
-	for i, id := range ids {
-		if control.ValidateID(id) != nil && control.ValidateDigest(id) != nil || i > 0 && id == ids[i-1] {
-			return "", errors.New("invalid native diagnostic resource")
-		}
-		users = append(users, map[string]any{"username": id, "password": secret})
-	}
-	if len(users) == 0 {
-		return config, nil
-	}
-	if secret == "" {
-		return "", errors.New("native diagnostic requires local authentication")
-	}
-	inbounds, _ := document["inbounds"].([]any)
-	for _, raw := range inbounds {
-		if raw.(map[string]any)["tag"] == control.LinkProbeInbound {
-			return "", errors.New("native diagnostic inbound duplicated")
-		}
-	}
-	document["inbounds"] = append(inbounds, map[string]any{"type": "socks", "tag": control.LinkProbeInbound, "listen": "127.0.0.1", "listen_port": 61801, "users": users})
-	body, err := json.Marshal(document)
-	return string(body), err
 }
 
 // WithRuntimeDNSCache binds disposable synthetic-name state to the existing

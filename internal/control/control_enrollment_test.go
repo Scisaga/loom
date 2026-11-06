@@ -60,7 +60,7 @@ func TestControlEnrollmentWaitsForCertificateAndRestoresIdentity(t *testing.T) {
 			if combined != containsString(enrollment.DeviceView.View.Responsibilities, "access") {
 				t.Fatal("member certificate changed invited responsibilities")
 			}
-			if !combined && (len(enrollment.DeviceView.View.Services) != 0 || enrollment.DeviceView.View.RuntimeProfile != nil || len(server.Runtime.Authority.Snapshot().DeviceAuthorizations) != 0) {
+			if !combined && (len(enrollment.DeviceView.View.Services) != 0 || testDeviceExecution(enrollment.DeviceView.View).RuntimeProfile != nil || len(server.Runtime.Authority.Snapshot().DeviceAuthorizations) != 0) {
 				t.Fatal("pure control manufactured an ordinary authorization")
 			}
 			for _, device := range projectWebDevices(server.Runtime.Authority.Snapshot()) {
@@ -112,7 +112,7 @@ func TestControlEnrollmentWaitsForCertificateAndRestoresIdentity(t *testing.T) {
 					t.Fatal(err)
 				}
 				view, err := server.deviceEnvelope(invite.DeviceID)
-				if err != nil || len(view.View.Responsibilities) != 1 || view.View.Responsibilities[0] != "control" || view.View.RuntimeProfile != nil {
+				if err != nil || len(view.View.Responsibilities) != 1 || view.View.Responsibilities[0] != "control" || testDeviceExecution(view.View).RuntimeProfile != nil {
 					t.Fatal("ordinary revocation removed control identity or retained access", err)
 				}
 				for _, device := range projectWebDevices(revoked.Projection) {

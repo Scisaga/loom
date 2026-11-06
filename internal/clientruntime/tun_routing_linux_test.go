@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"loom/internal/clientadapter"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,10 +23,10 @@ import (
 	"time"
 )
 
-// §7.2.1：真实 TUN 验证使用隔离网络命名空间；测试只替换操作系统接管范围，
-// Service、默认策略和本机派生 action 仍由正式配置校验与派生函数生成。
-// 运行：LOOM_TUN_ROUTING_EXECUTABLE=/abs/sing-box unshare -Urn <test-binary> -test.run TestOfficialTUNServiceRouting
-func TestOfficialTUNServiceRouting(t *testing.T) {
+// The isolated fixture verifies DNS/capture mechanics, not Loom's current
+// Service authorization or the Windows application's View constructor.
+// Run only with LOOM_TUN_ROUTING_EXECUTABLE inside a dedicated network namespace.
+func TestIsolatedTUNCaptureDomainRouting(t *testing.T) {
 	executable := os.Getenv("LOOM_TUN_ROUTING_EXECUTABLE")
 	if executable == "" {
 		t.Skip("[§7.2.1] 设置 LOOM_TUN_ROUTING_EXECUTABLE 并在独立网络命名空间运行真实 TUN 测试")
@@ -111,21 +112,17 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 
 func routingTUNConfig(t *testing.T, dnsAddress string) []byte {
 	t.Helper()
-	source := []byte(validWindowsConfig(""))
-	body, err := DeriveWindowsRuntimeConfig(source, WindowsPortableTUNProfile, []string{"192.0.2.53"}, nil)
+	// This is an isolated capture mechanism fixture, not application authority.
+	body, err := deriveWindowsCapture(captureFixtureConfig(), WindowsPortableTUNProfile, []string{"192.0.2.53"}, nil, clientadapter.WebsiteAccess{}, new([]string{}), "demo-api")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config singBoxConfig
-	if err := json.Unmarshal(body, &config); err != nil {
-		t.Fatal(err)
-	}
-	// Isolated harness substitutes loopback servers after the formal adapter;
-	// the production config never receives destination override facilities.
-	config.DNS.Servers[0].Address = "udp://" + dnsAddress
-	for i := range config.Outbounds {
-		if config.Outbounds[i].Tag == "demo-candidate" {
-			config.Outbounds[i].OverrideAddress = "127.0.0.2"
+	config := runtimeDocument(t, body)
+	config["dns"].(map[string]any)["servers"].([]any)[0].(map[string]any)["address"] = "udp://" + dnsAddress
+	for _, raw := range config["outbounds"].([]any) {
+		outbound := raw.(map[string]any)
+		if outbound["tag"] == "demo-candidate" {
+			outbound["override_address"] = "127.0.0.2"
 		}
 	}
 	body, err = json.Marshal(config)

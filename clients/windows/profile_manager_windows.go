@@ -140,11 +140,15 @@ func (app *portableGUI) loadOfflineProfileRoutes() {
 	if err != nil || store.LKG() == nil {
 		return
 	}
-	options, err := windowsRouteOptions(store.LKG().View, store.Preference())
+	options, err := windowsRouteOptions(store.LKG().View, store.Preference(), nil, time.Now())
 	if err != nil {
 		return
 	}
 	app.mu.Lock()
+	if app.runCancel != nil {
+		app.mu.Unlock()
+		return
+	}
 	app.possiblePermissionRestoration = store.PossiblePermissionRestoration()
 	app.routeOptions, app.routeSelected = options, routeOptionIndex(options, store.Preference())
 	app.mu.Unlock()

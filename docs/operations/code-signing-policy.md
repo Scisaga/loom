@@ -12,8 +12,8 @@ Loom 自有代码使用 [Apache License 2.0](../../LICENSE)。Windows 发行计�
 开发环境。外部签名流程尚未启用，启用前必须证明签名请求与这份已验证制品的摘要绑定，并在
 签名后重新验证文件，再生成下载校验清单。不能用另一次 runner 构建的文件替换已验收制品。
 
-上游 sing-box、Wintun 随包保留原文件、许可证及已有签名，不以 Loom 的签名资格
-重新签名上游代码。sing-box 使用 GPL-3.0-or-later；官方 Wintun DLL 使用其单独的
+sing-box 和 Wintun 随包保留各自许可及来源记录。Loom 修订的 sing-box 必须绑定原上游版本、
+实际补丁和构建字节，不能称为未修改上游原件；Wintun 保持其发布者原签名，不以 Loom 签名替代。sing-box 使用 GPL-3.0-or-later；官方 Wintun DLL 使用其单独的
 预编译许可。Loom 的 Apache-2.0 许可不改变这些条件；Wintun 在 SignPath 申请中的
 可接受性须另经审核。
 

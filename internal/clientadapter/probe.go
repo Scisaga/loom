@@ -36,7 +36,10 @@ func httpsBusinessProbe(proxyAddress, target string, tlsConfig *tls.Config) (Pro
 		transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSClientConfig: tlsConfig,
 			DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
 				connection, _, err := socksRequest(ctx, proxyAddress, 1, address)
-				return connection, err
+				if err != nil {
+					return nil, err
+				}
+				return measurementConnection(ctx, connection), nil
 			}}
 		defer transport.CloseIdleConnections()
 		client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

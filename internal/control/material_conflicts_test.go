@@ -256,7 +256,7 @@ func TestMaterialConflictPaginationAndStrictCursor(t *testing.T) {
 	expected := []string{}
 	for i := 0; i <= materialConflictPageSize; i++ {
 		id := fmt.Sprintf("demo-service-%d", i)
-		material := f.sign(t, 0, 1, nil, id, "service.put", "service", id, Service{ID: id, Name: "Demo", Kind: "internet", Matchers: []ServiceMatcher{{Kind: "dns_exact", Value: "demo.example"}}})
+		material := f.sign(t, 0, 1, nil, id, "service.put", "service", id, Service{ID: id, Name: "Demo", Kind: "internet", RestrictToProbeTargets: new(false)})
 		a.materials = append(a.materials, material)
 		expected = append(expected, materialTestID(t, material))
 	}

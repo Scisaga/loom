@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
+	"loom/internal/netx"
+	"loom/protocol"
 )
 
 // U64 retains the entire unsigned range while using a JSON decimal string.
@@ -82,57 +83,23 @@ func ValidatePublicKey(value string) error {
 // PolicyScope is a value inside a Policy, without independent authority or
 // lifecycle. Allows checks this range only; node eligibility is checked by the
 // authorization projection against its authenticated dependencies.
-type PolicyScope struct {
-	Mode    string   `json:"mode"`
-	NodeIDs []string `json:"node_ids"`
-}
-
-func (scope PolicyScope) Validate() error {
-	if scope.NodeIDs == nil {
-		return errors.New("policy scope node IDs must be an explicit collection")
-	}
-	switch scope.Mode {
-	case "any", "none":
-		if len(scope.NodeIDs) != 0 {
-			return errors.New("policy scope mode cannot carry node IDs")
-		}
-	case "only":
-		if len(scope.NodeIDs) == 0 {
-			return errors.New("policy only scope requires node IDs")
-		}
-	default:
-		return errors.New("policy scope mode is invalid")
-	}
-	for index, nodeID := range scope.NodeIDs {
-		if ValidateID(nodeID) != nil || nodeID == "direct" || index > 0 && scope.NodeIDs[index-1] >= nodeID {
-			return errors.New("policy scope node IDs are invalid or not uniquely sorted")
-		}
-	}
-	return nil
-}
-
-func (scope PolicyScope) Allows(nodeID string) bool {
-	if scope.Validate() != nil || ValidateID(nodeID) != nil || nodeID == "direct" {
-		return false
-	}
-	switch scope.Mode {
-	case "any":
-		return true
-	case "only":
-		index := sort.SearchStrings(scope.NodeIDs, nodeID)
-		return index < len(scope.NodeIDs) && scope.NodeIDs[index] == nodeID
-	default:
-		return false
-	}
-}
+type PolicyScope = protocol.PolicyScope
 
 type ServiceMatcher struct {
 	Kind  string `json:"kind"`
 	Value string `json:"value"`
+	Port  int    `json:"port,omitempty"`
 }
 
 func (matcher ServiceMatcher) Validate() error {
+	if matcher.Port < 0 || matcher.Port > 65535 {
+		return errors.New("target port is invalid")
+	}
 	switch matcher.Kind {
+	case "public_internet":
+		if matcher.Value != "" || matcher.Port != 0 {
+			return errors.New("ordinary internet matcher has no destination value")
+		}
 	case "dns_exact", "dns_suffix":
 		if !contractDNSName(matcher.Value) {
 			return errors.New("service matcher DNS name is not canonical")
@@ -148,6 +115,10 @@ func (matcher ServiceMatcher) Validate() error {
 	return nil
 }
 
+func (matcher ServiceMatcher) MatchesEndpoint(host string, port int) bool {
+	return port > 0 && port <= 65535 && (matcher.Port == 0 || matcher.Port == port) && matcher.Matches(host)
+}
+
 // Matches consumes an already canonical DNS name or IP, never a URL, address
 // with a port, or a DNS answer inferred by this function. It does not resolve
 // names or normalize authority values.
@@ -156,6 +127,11 @@ func (matcher ServiceMatcher) Matches(target string) bool {
 		return false
 	}
 	switch matcher.Kind {
+	case "public_internet":
+		if address, err := netip.ParseAddr(target); err == nil {
+			return netx.IsPublicInternetAddress(address)
+		}
+		return contractDNSName(target) && netx.IsPublicInternetName(target)
 	case "dns_exact":
 		return contractDNSName(target) && target == matcher.Value
 	case "dns_suffix":

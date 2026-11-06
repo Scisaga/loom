@@ -121,6 +121,22 @@ func TestMixedCaptureRejectsAdditionalFacilitiesAndImplicitRouting(t *testing.T)
 	}
 }
 
+func TestMixedCaptureFollowsCertifiedSelectorMembers(t *testing.T) {
+	source := mixedSourceDocument()
+	outbounds := source["outbounds"].([]any)
+	outbounds[1].(map[string]any)["outbounds"] = []string{"demo-forward"}
+	source["outbounds"] = append(outbounds, map[string]any{"type": "selector", "tag": "demo-forward", "outbounds": []string{"demo-path"}})
+	body, _ := json.Marshal(source)
+	if _, err := deriveLinuxMixedRuntime(string(body)); err != nil {
+		t.Fatal("composed access/forward selector rejected", err)
+	}
+	source["outbounds"] = append(source["outbounds"].([]any), map[string]any{"type": "selector", "tag": "demo-unused", "outbounds": []string{"demo-unused"}})
+	body, _ = json.Marshal(source)
+	if _, err := deriveLinuxMixedRuntime(string(body)); err == nil {
+		t.Fatal("an unreachable selector cycle manufactured a traffic source")
+	}
+}
+
 func TestNativeWGCaptureKeepsBusinessBindingAndUnderlaySeparate(t *testing.T) {
 	source := mixedSourceDocument()
 	wg := map[string]any{"type": "wireguard", "tag": "wg-shared", "system": false, "address": []string{"fdab::2/128"}, "private_key": "demo-private-input", "source_routes": []any{map[string]any{"source": "fdab::2", "destination": "fdab:1::/64"}}, "peers": []any{map[string]any{"address": "192.0.2.10", "port": 51820, "public_key": "demo-public-input", "allowed_ips": []string{"fdab:1::/64", "fdab:2::1/128"}}}}
@@ -314,7 +330,7 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	if len(status.Selections) != 1 || status.Selections[0].Scope != "service:demo-service" || status.Selections[0].CandidateID != store.LKG().View.Routes[0].ID ||
+	if len(status.Selections) != 1 || status.Selections[0].Scope != "service:demo-service" || status.Selections[0].CandidateID != testDeviceExecution(store.LKG().View).Routes[0].ID ||
 		status.Selections[0].State != "unknown" || len(status.Observations) != 0 || status.Reported {
 		t.Fatalf("selector readback invented business or report success: %+v", status)
 	}
@@ -355,8 +371,18 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	readSelector := func() {
-		request, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:61800/proxies/service:demo-service", nil)
-		request.Header.Set("Authorization", "Bearer "+actualSelector.secret)
+		request, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:61800/proxies/access", nil)
+		var api struct {
+			Experimental struct {
+				ClashAPI struct {
+					Secret string `json:"secret"`
+				} `json:"clash_api"`
+			} `json:"experimental"`
+		}
+		if err := json.Unmarshal(actualConfig, &api); err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+api.Experimental.ClashAPI.Secret)
 		response, err := selectorClient.Do(request)
 		if err != nil {
 			t.Fatal(err)
@@ -366,7 +392,7 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 		var selection struct {
 			Now string `json:"now"`
 		}
-		if err != nil || response.StatusCode != http.StatusOK || json.Unmarshal(body, &selection) != nil || selection.Now != store.LKG().View.Routes[0].ID {
+		if err != nil || response.StatusCode != http.StatusOK || json.Unmarshal(body, &selection) != nil || selection.Now != testDeviceExecution(store.LKG().View).Routes[0].ID {
 			t.Fatal("actual selector readback changed or failed during preference reload")
 		}
 	}
@@ -394,14 +420,14 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 		}
 	}
 	previousSequence := sequence()
-	if err := SetPreference(options.LocalState, "demo-network", clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}); err != nil {
+	if err := store.SetPreference(clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	reload <- syscall.SIGHUP
 	for {
 		readback, err := ReadStatus(options.Status)
-		if err == nil && sequence() > previousSequence && readback.Preference.Policy("demo-service") == "demo-policy" {
-			if readback.ViewDigest != status.ViewDigest || len(readback.Selections) != 1 || readback.Selections[0].CandidateID != store.LKG().View.Routes[0].ID {
+		if err == nil && sequence() > previousSequence && readback.Preference.PolicyID == "demo-policy" {
+			if readback.ViewDigest != status.ViewDigest || len(readback.Selections) != 1 || readback.Selections[0].CandidateID != testDeviceExecution(store.LKG().View).Routes[0].ID {
 				t.Fatal("preference reload changed the certified authority or actual selector")
 			}
 			break
@@ -423,7 +449,7 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 	// its process/API. This fixture has no authenticated probe targets, so a
 	// later runtime refresh cannot promote its generic diagnostic into Service
 	// health; after expiry its actual selection must remain unknown.
-	routes, _, err := clientadapter.AccessProjection(store.LKG().View)
+	routes, _, err := clientadapter.AccessProjection(store.LKG().View, testPolicyIDs(store.LKG().View))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +457,7 @@ func TestOfficialLinuxMixedRuntimeSelectorAndBusiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := Activate(ctx, actualSelector, routes, local, Probes{"": func(context.Context) ProbeResult { return ProbeResult{Action: "https_request"} }}, options.Now)
+	failed, err := Activate(ctx, actualSelector, routes, local, nil, options.Now)
 	if !errors.Is(err, clientmodel.ErrNoUsableCandidate) || len(failed.Selections) != 0 {
 		t.Fatal("failed Service remained selected", err)
 	}

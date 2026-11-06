@@ -1,65 +1,42 @@
 package linuxclient
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
-	"net"
-	"net/netip"
-	"strconv"
 
 	"loom/internal/control"
 )
 
-// Host interface names are execution projections, never resource or peer IDs.
-func wireGuardInterface(networkID, resourceID string) string {
-	digest := sha256.Sum256([]byte("loom-linux-wg-interface\x00" + networkID + "\x00" + resourceID))
-	return "loom-wg" + hex.EncodeToString(digest[:4])
+// Business relay edges are userspace transport resources. They do not create
+// host interfaces, host addresses, routes or host access between Loom nodes.
+func projectWireGuard(view control.DeviceView, executions []resourceExecution) (wireGuardExecution, *wireGuardIdentity, error) {
+	result := wireGuardExecution{WireGuard: []wireGuardExecutionLink{}}
+	listen, err := wireGuardListenerPort(view, executions)
+	if err != nil {
+		return result, nil, err
+	}
+	result.ListenPort = listen
+	return result, nil, nil
 }
 
-func projectWireGuard(view control.DeviceView) (wireGuardExecution, *wireGuardIdentity, error) {
-	result := wireGuardExecution{WireGuard: []wireGuardExecutionLink{}}
-	resources := map[string]control.TransportResource{}
+// The receiver's local port is an execution input. Peer dial coordinates do
+// not choose it, and a receiving resource never narrows sending address families.
+func wireGuardListenerPort(view control.DeviceView, executions []resourceExecution) (int, error) {
+	port := 0
 	for _, resource := range view.Resources {
-		resources[resource.ID] = resource
-	}
-	identity := &wireGuardIdentity{}
-	for _, link := range view.Links {
-		if link.FromNodeID != view.DeviceID && link.ToNodeID != view.DeviceID {
+		if resource.Kind != "wireguard" || resource.OwnerNodeID != view.DeviceID {
 			continue
 		}
-		local, peer := resources[link.FromResourceID], resources[link.ResourceID]
-		if link.ToNodeID == view.DeviceID {
-			local, peer = peer, local
+		if port != 0 {
+			return 0, errors.New("multiple WG receiving resources require an explicit contract")
 		}
-		localAddress, e1 := control.WGResourceAddress(local)
-		peerAddress, e2 := control.WGResourceAddress(peer)
-		if e1 != nil || e2 != nil || local.OwnerNodeID != view.DeviceID {
-			return result, nil, errors.New("WireGuard Link execution identities are invalid")
+		for _, execution := range executions {
+			if execution.resource.ID == resource.ID && execution.resource.OwnerNodeID == view.DeviceID && execution.resource.Kind == "wireguard" {
+				port = execution.input.ListenPort
+			}
 		}
-		localKey, _ := base64.RawURLEncoding.DecodeString(*local.Authentication.PublicKey)
-		peerKey, _ := base64.RawURLEncoding.DecodeString(*peer.Authentication.PublicKey)
-		publicKey := base64.StdEncoding.EncodeToString(localKey)
-		if identity.WGPublicKey != "" && identity.WGPublicKey != publicKey {
-			return result, nil, errors.New("WireGuard resources do not share this node's fixed key reference")
+		if port < 1 || port > 65535 {
+			return 0, errors.New("WG receiving resource requires its local listen_port")
 		}
-		identity.WGPublicKey = publicKey
-		value := wireGuardExecutionLink{LinkID: local.ID, Interface: wireGuardInterface(view.NetworkID, local.ID), LocalAddress: netip.PrefixFrom(localAddress, localAddress.BitLen()).String(), PeerID: peer.OwnerNodeID,
-			PeerPublicKey: base64.StdEncoding.EncodeToString(peerKey), AllowedIP: netip.PrefixFrom(peerAddress, peerAddress.BitLen()).String(), Mode: "initiator", ListenPort: local.DialPort,
-			PersistentKeepalive: 25, Endpoint: net.JoinHostPort(peer.DialHost, strconv.Itoa(peer.DialPort))}
-		result.WireGuard = append(result.WireGuard, value)
 	}
-	groups, err := groupWireGuardLinks(result.WireGuard)
-	if err != nil {
-		return wireGuardExecution{}, nil, err
-	}
-	result.WireGuard = []wireGuardExecutionLink{}
-	for _, group := range groups {
-		result.WireGuard = append(result.WireGuard, group.peerLinks()...)
-	}
-	if len(result.WireGuard) == 0 {
-		return result, nil, nil
-	}
-	return result, identity, nil
+	return port, nil
 }

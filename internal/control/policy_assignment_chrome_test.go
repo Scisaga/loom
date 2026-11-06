@@ -123,11 +123,11 @@ func TestWebChromePolicyCopyPreservesAssignmentDraftAndSharedSource(t *testing.T
 		t.Fatal("single device assignment changed another device or identity")
 	}
 	permitted, err := ProjectDeviceView(projection, original.ID)
-	if err != nil || len(permitted.Routes) != 2 || !reflect.DeepEqual(permitted.PolicyIDs, []string{"demo-copied-policy", "demo-policy"}) {
+	if err != nil || len(testDeviceExecution(permitted).Routes) != 2 || !reflect.DeepEqual(permitted.PolicyIDs, []string{"demo-copied-policy", "demo-policy"}) {
 		t.Fatal("saved same-Service policy collection did not reach the device view", err)
 	}
 	allowed, err := ProjectDeviceView(projection, other.ID)
-	if err != nil || len(allowed.Routes) == 0 {
+	if err != nil || len(testDeviceExecution(allowed).Routes) == 0 {
 		t.Fatal("other device lost its existing allowed route", err)
 	}
 	chromeDo(t, debug, `(()=>{history.pushState({},'','/policies?policy=demo-missing');dispatchEvent(new PopStateEvent('popstate'));return true})()`)

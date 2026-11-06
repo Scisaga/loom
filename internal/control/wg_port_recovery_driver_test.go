@@ -26,7 +26,7 @@ func TestWGPortRecoveryMappingsAreCyclicSuppliedAndUnoccupied(t *testing.T) {
 	}{
 		{"cyclic", node, nil, nil, []int{51823, 51824, 51820, 51821}},
 		{"previously failed and authenticated resources", node, []TransportResource{
-			{ID: "demo-other-wg", Kind: "wireguard", OwnerNodeID: resource.OwnerNodeID, DialPort: 51823},
+			{ID: "demo-other-wg", Kind: "wireguard", OwnerNodeID: resource.OwnerNodeID, DialHost: resource.DialHost, DialPort: 51823},
 			{ID: "demo-other-hy2", Kind: "hysteria2", OwnerNodeID: "demo-other", DialHost: resource.DialHost, DialPort: 51824},
 		}, []int{51820}, []int{51821}},
 		{"unrelated resource does not occupy this host", node, []TransportResource{{ID: "demo-other", Kind: "wireguard", OwnerNodeID: "demo-other", DialHost: "192.0.2.11", DialPort: 51823}}, nil, []int{51823, 51824, 51820, 51821}},
@@ -36,7 +36,7 @@ func TestWGPortRecoveryMappingsAreCyclicSuppliedAndUnoccupied(t *testing.T) {
 			other.HostPorts = localconfig.PortRange{First: 60000, Last: 60004}
 			value.Ingress = []localconfig.IngressMapping{other}
 			return value
-		}(), nil, nil, []int{}},
+		}(), nil, nil, []int{51823, 51824, 51820, 51821}},
 		{"other host and protocol", func() localconfig.NodeNetwork {
 			value := node
 			tcp, other := mapping, mapping
@@ -72,6 +72,12 @@ func wgRecoveryAuthorityFixture(t *testing.T) (*Server, TransportResource, Devic
 	resource.ID, resource.ListenerID, resource.OwnerNodeID = "demo-gateway-wg", "demo-gateway-wg", "demo-gateway"
 	if resource.Kind != "wireguard" {
 		t.Fatal("fixture requires a native WG resource")
+	}
+	for _, device := range p.DeviceAuthorizations {
+		if device.ID == resource.OwnerNodeID {
+			public := device.WireGuardPublicKey
+			resource.Authentication.PublicKey = &public
+		}
 	}
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-create-wg", Operation: "resource.put", TargetKind: "resource", TargetID: resource.ID, Dependencies: owner.MaterialIDs, Payload: resource})
 	view, err := ProjectDeviceView(server.Runtime.Authority.Snapshot(), resource.OwnerNodeID)
@@ -208,6 +214,8 @@ func TestWGPortRecoveryCurrentProtectsHealthyDirectionsAndEveryConsumer(t *testi
 			}
 			t.Cleanup(func() { store.Close() })
 			server := &Server{Runtime: &Runtime{Reports: store}, Now: func() time.Time { return f.now }}
+			mappedResource := wgPortRecoveryResource(f.p, f.link.ResourceID)
+			server.SSH = recoveryManagementFixture{nodes: []localconfig.NodeNetwork{{ID: mappedResource.OwnerNodeID, Ingress: []localconfig.IngressMapping{{Protocol: "udp", PublicHost: mappedResource.DialHost, PublicPorts: localconfig.PortRange{First: mappedResource.DialPort, Last: mappedResource.DialPort}, HostAddress: mappedResource.DialHost, HostPorts: localconfig.PortRange{First: mappedResource.DialPort, Last: mappedResource.DialPort}}}}}}
 			healthy := testDerivedLink(t, f.p, "demo-other", "demo-exit")
 			for _, device := range f.p.DeviceAuthorizations {
 				samples := []Observation{}

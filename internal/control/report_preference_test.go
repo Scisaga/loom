@@ -41,21 +41,27 @@ func TestReportedPreferenceKeepsOriginalBytesAndBindsNewSamples(t *testing.T) {
 	if !bytes.Equal(before, after) || decoded.Preference != nil {
 		t.Fatal("missing report became an inferred setting")
 	}
-	for _, preference := range []ReportPreference{{Mode: "auto"}, {Mode: "direct"}, {Mode: "fixed_exit", Exit: "demo-unavailable-exit"}} {
-		report.Preference = &preference
+	for _, policy := range []string{"demo-auto-policy", "demo-direct-policy", "demo-fixed-policy"} {
+		report.PolicyID = policy
 		report, err = SignDeviceReport(report, key)
 		if err != nil {
 			t.Fatal(err)
 		}
 		body, err := CanonicalEncode(report)
 		if err != nil || decodeStoredReport(body, &decoded) != nil || !reflect.DeepEqual(decoded, report) || decoded.Verify(public) != nil {
-			t.Fatal("new report did not round trip", err)
+			t.Fatal("current selected Policy did not round trip", err)
 		}
 		tampered := report
-		tampered.Preference = nil
+		tampered.PolicyID = ""
 		if tampered.Verify(public) == nil {
-			t.Fatal("preference was outside the signature")
+			t.Fatal("selected Policy was outside signature")
 		}
+	}
+	legacy := report
+	legacy.PolicyID = ""
+	legacy.Preference = &ReportPreference{Mode: "auto"}
+	if _, err := SignDeviceReport(legacy, key); err == nil {
+		t.Fatal("current writer issued a historical routing mode")
 	}
 	for _, invalid := range []string{`null`, `{}`, `{"mode":"unknown"}`, `{"mode":"auto","exit":"demo-exit"}`, `{"mode":"direct","exit":""}`, `{"mode":"fixed_exit"}`, `{"exit":"direct","mode":"fixed_exit"}`, `{"exit":"auto","mode":"fixed_exit"}`, `{"mode":"auto","unknown":true}`} {
 		body := bytes.Replace(before, []byte(`"report_sequence"`), []byte(`"preference":`+invalid+`,"report_sequence"`), 1)
@@ -74,9 +80,9 @@ func TestReportedPolicyChoiceRemainsSeparateFromSelectionAndSurvivesRestart(t *t
 	digest, _ := DeviceViewDigest(view)
 	report := DeviceReport{Schema: 3, NetworkID: projection.NetworkID, DeviceID: view.DeviceID, ReportSequence: 1,
 		ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: 1,
-		PolicyChoices: new([]PolicyChoice{{ServiceID: "demo-service"}}),
-		Selections:    []ReportSelection{{ServiceID: view.Routes[0].ServiceID, PolicyID: view.Routes[0].PolicyID, CandidateID: view.Routes[0].ID}},
-		Observations:  []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
+		PolicyID:     "demo-policy",
+		Selections:   []ReportSelection{{ServiceID: testDeviceExecution(view).Routes[0].ServiceID, PolicyID: testDeviceExecution(view).Routes[0].PolicyID, CandidateID: testDeviceExecution(view).Routes[0].ID}},
+		Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
 	report, err = SignDeviceReport(report, fixture.keys[0])
 	if err != nil || verifyCurrentReport(report, projection) != nil {
 		t.Fatal("intent was confused with actual selection or authorization", err)
@@ -92,9 +98,9 @@ func TestReportedPolicyChoiceRemainsSeparateFromSelectionAndSurvivesRestart(t *t
 		if err != nil {
 			t.Fatal(err)
 		}
-		snapshot := WebSnapshot{Devices: []Device{{ID: view.DeviceID}}, Paths: projectWebPaths(projection)}
-		projectWebObservations(&snapshot, store.Verified(projection), time.UnixMilli(report.ReportedAt))
-		if snapshot.Devices[0].Evidence == nil || !reflect.DeepEqual(snapshot.Devices[0].Evidence.PolicyChoices, report.PolicyChoices) || !snapshot.Paths[0].Selected || snapshot.Paths[0].FinalExit != "direct" {
+		snapshot := WebSnapshot{Devices: []Device{{ID: view.DeviceID}}, Paths: projectWebPathsUsing(projection, func(id string) (DeviceView, error) { return ProjectDeviceView(projection, id) }, report)}
+		testProjectWebObservations(&snapshot, store.Verified(projection), time.UnixMilli(report.ReportedAt))
+		if snapshot.Devices[0].Evidence == nil || snapshot.Devices[0].Evidence.PolicyID != report.PolicyID || !snapshot.Paths[0].Selected || snapshot.Paths[0].FinalExit != "direct" {
 			t.Fatal("readback replaced actual Direct or lost pending policy intent")
 		}
 		if !bytes.Equal(original, testObservationBytes(t, store)) {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"slices"
 	"strings"
 
@@ -16,26 +15,108 @@ import (
 
 // AccessProjection is a one-way execution input. It never decodes authority,
 // signs facts, persists a second view, or supplies fields missing from a view.
-func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, clientmodel.RuntimeProfile, error) {
-	if view.RuntimeProfile == nil || !slices.Contains(view.Responsibilities, "access") {
+func AccessProjection(view control.DeviceView, selected []string) ([]clientmodel.RouteCandidate, clientmodel.RuntimeProfile, error) {
+	if !slices.Contains(view.Responsibilities, "access") {
 		return nil, clientmodel.RuntimeProfile{}, errors.New("view has no access runtime")
 	}
-	probes, err := control.CandidateFirstHopProbes(view)
+	execution, err := control.ProjectDeviceExecution(view, selected)
 	if err != nil {
 		return nil, clientmodel.RuntimeProfile{}, err
 	}
-	linkRefs := map[string]clientmodel.LinkSampleRef{}
-	for _, link := range view.Links {
-		spec, err := control.LinkSpecDigest(view, link.ID)
-		if err != nil {
-			return nil, clientmodel.RuntimeProfile{}, err
-		}
-		linkRefs[link.ID] = clientmodel.LinkSampleRef{LinkID: link.ID, DeviceID: link.FromNodeID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, fmt.Sprint(link.ProbeTarget.Port)), Action: link.ProbeTarget.Action}
+	routes, err := accessCandidates(execution)
+	profile := clientmodel.RuntimeProfile{Kind: execution.RuntimeProfile.Kind, Config: execution.RuntimeProfile.Config}
+	if err == nil {
+		err = profile.Validate(routes)
 	}
-	routes := make([]clientmodel.RouteCandidate, 0, len(view.Routes))
-	for _, route := range view.Routes {
-		candidate := clientmodel.RouteCandidate{ID: route.ID, PolicyID: route.PolicyID, FinalExit: route.FinalExit, Chain: append([]string{}, route.NodeChain...), Scope: route.Scope}
-		for _, id := range route.LinkIDs {
+	return routes, profile, err
+}
+
+// AccessCandidates avoids serializing native configuration on each measurement
+// or recommendation tick. It derives only the currently selected Policies.
+func AccessCandidates(view control.DeviceView, selected []string) ([]clientmodel.RouteCandidate, error) {
+	execution, err := control.ProjectDeviceCandidates(view, selected)
+	if err != nil {
+		return nil, err
+	}
+	return accessCandidates(execution)
+}
+
+// AccessRoutingInputs shares one current candidate projection and one set of
+// link references between access selection and graph estimation.
+func AccessRoutingInputs(view control.DeviceView, selected []string) ([]clientmodel.RouteCandidate, []clientmodel.PolicyGraph, error) {
+	execution, err := control.ProjectDeviceCandidates(view, selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	return AccessRoutingInputsFromExecution(execution, selected)
+}
+
+// AccessRoutingInputsFromExecution reuses the current round's authenticated
+// candidate projection instead of projecting the same View a second time.
+func AccessRoutingInputsFromExecution(execution control.DeviceExecution, selected []string) ([]clientmodel.RouteCandidate, []clientmodel.PolicyGraph, error) {
+	view := execution.DeviceView
+	graphs, err := selectedPolicyGraphs(view, selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(graphs) == 0 {
+		return []clientmodel.RouteCandidate{}, graphs, nil
+	}
+	refs, err := graphLinkReferences(view, execution.Links)
+	if err != nil {
+		return nil, nil, err
+	}
+	routes, err := accessCandidatesWithLinks(execution, refs)
+	for i := range graphs {
+		graphs[i].Links = refs
+	}
+	return routes, graphs, err
+}
+
+func accessCandidates(execution control.DeviceExecution) ([]clientmodel.RouteCandidate, error) {
+	if len(execution.Routes) == 0 {
+		return []clientmodel.RouteCandidate{}, nil
+	}
+	refs, err := graphLinkReferences(execution.DeviceView, execution.Links)
+	if err != nil {
+		return nil, err
+	}
+	return accessCandidatesWithLinks(execution, refs)
+}
+
+func accessCandidatesWithLinks(execution control.DeviceExecution, refs []clientmodel.GraphLink) ([]clientmodel.RouteCandidate, error) {
+	view := execution.DeviceView
+	probes, err := control.CandidateFirstHopProbes(execution)
+	if err != nil {
+		return nil, err
+	}
+	linkRefs := make(map[string]clientmodel.LinkSampleRef, len(refs))
+	for _, link := range refs {
+		linkRefs[link.Ref.LinkID] = link.Ref
+	}
+	routes := make([]clientmodel.RouteCandidate, 0, len(execution.Routes))
+	fixed := map[string]bool{}
+	for _, policy := range view.Policies {
+		fixed[policy.ID] = policy.ExitScope == nil || policy.AllowDirect != nil && !*policy.AllowDirect && policy.ExitScope.Mode == "only" && len(policy.ExitScope.NodeIDs) == 1
+	}
+	resources := map[string]control.TransportResource{}
+	for _, value := range view.Resources {
+		resources[value.ID] = value
+	}
+	for _, route := range execution.Routes {
+		chain, linkIDs, estimateErr := control.CandidateTopologyEstimate(execution, route)
+		if estimateErr != nil {
+			return nil, estimateErr
+		}
+		candidate := clientmodel.RouteCandidate{ID: route.ID, PolicyID: route.PolicyID, FixedExit: fixed[route.PolicyID], SourceNode: view.DeviceID, EntryNodeID: route.EntryNodeID, FirstResourceID: route.FirstResourceID, FinalExit: route.FinalExit, Chain: chain, Scope: route.Scope}
+		candidate.Transport = resources[route.FirstResourceID].Kind
+		if route.FirstResourceID == "" {
+			candidate.Transport = "direct"
+			if route.FinalExit != "direct" && route.FinalExit != view.DeviceID {
+				candidate.Transport = "forward"
+			}
+		}
+		for _, id := range linkIDs {
 			candidate.RelayLinks = append(candidate.RelayLinks, linkRefs[id])
 		}
 		if probe, found := probes[route.ID]; found {
@@ -43,22 +124,21 @@ func AccessProjection(view control.DeviceView) ([]clientmodel.RouteCandidate, cl
 		}
 		routes = append(routes, candidate)
 	}
-	profile := clientmodel.RuntimeProfile{Kind: view.RuntimeProfile.Kind, Config: view.RuntimeProfile.Config}
-	return routes, profile, profile.Validate(routes)
+	return routes, nil
 }
 
 // ManagedRuntimeConfig adds only local execution inputs. Platform capture
 // adapters must complete this value before passing it to a process. It remains
 // disposable and must never replace the signed RuntimeProfile.
 func ManagedRuntimeConfig(view control.DeviceView, secret string, websites ...WebsiteAccess) (string, error) {
-	_, config, err := AccessRuntimeProjection(view, secret, websites...)
+	_, config, err := AccessRuntimeProjection(view, nil, secret, websites...)
 	return config, err
 }
 
 // AccessRuntimeProjection validates the certified View once for both selection
 // and host execution. Its private helpers never accept unvalidated inputs.
-func AccessRuntimeProjection(view control.DeviceView, secret string, websites ...WebsiteAccess) ([]clientmodel.RouteCandidate, string, error) {
-	routes, _, err := AccessProjection(view)
+func AccessRuntimeProjection(view control.DeviceView, selected []string, secret string, websites ...WebsiteAccess) ([]clientmodel.RouteCandidate, string, error) {
+	routes, _, err := AccessProjection(view, selected)
 	if err != nil {
 		return nil, "", err
 	}
@@ -95,7 +175,7 @@ func managedRuntimeConfig(view control.DeviceView, secret string, websites ...We
 // AccessRuntimeSource retains the complete certified authorization and adds
 // only the local API. Capture adapters add DNS once for their own inbounds.
 func AccessRuntimeSource(view control.DeviceView, secret string) (string, error) {
-	if _, _, err := AccessProjection(view); err != nil {
+	if _, _, err := AccessProjection(view, nil); err != nil {
 		return "", err
 	}
 	return runtimeSource(view, secret, true)
@@ -111,7 +191,11 @@ func RuntimeSource(view control.DeviceView, secret string, access bool) (string,
 }
 
 func runtimeSource(view control.DeviceView, secret string, access bool) (string, error) {
-	if view.RuntimeProfile == nil || secret == "" || access && !slices.Contains(view.Responsibilities, "access") {
+	execution, err := control.ProjectDeviceExecution(view, nil)
+	if err != nil {
+		return "", err
+	}
+	if execution.RuntimeProfile == nil || secret == "" || access && !slices.Contains(view.Responsibilities, "access") {
 		return "", errors.New("runtime profile, role or local API secret is missing")
 	}
 	if err := ValidateOverlayUnderlay(view); err != nil {
@@ -122,12 +206,10 @@ func runtimeSource(view control.DeviceView, secret string, access bool) (string,
 			if view.Platform != "linux" {
 				return "", errors.New("this platform has no server resource executor")
 			}
-		} else if _, err := netip.ParseAddr(resource.DialHost); err != nil && len(view.DNSServers) == 0 {
-			return "", errors.New("resource hostname execution requires an authenticated resolver configuration")
 		}
 	}
 	var document map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(view.RuntimeProfile.Config), &document); err != nil {
+	if err := json.Unmarshal([]byte(execution.RuntimeProfile.Config), &document); err != nil {
 		return "", err
 	}
 	if document["outbounds"] == nil || document["route"] == nil {
@@ -137,6 +219,9 @@ func runtimeSource(view control.DeviceView, secret string, access bool) (string,
 		if field != "outbounds" && field != "route" && field != "endpoints" && field != "dns" {
 			return "", errors.New("unsupported authorization runtime facilities")
 		}
+	}
+	if document["dns"] == nil {
+		document["dns"] = json.RawMessage(`{"servers":[{"tag":"loom-runtime-deny-dns","address":"rcode://refused"}],"rules":[],"final":"loom-runtime-deny-dns"}`)
 	}
 	document["inbounds"] = json.RawMessage(`[]`)
 	if access {
@@ -165,7 +250,35 @@ func WithManagedDNS(config string, addresses []string, access bool) (string, err
 		return "", err
 	}
 	if len(addresses) == 0 {
-		return config, nil
+		var document map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(config), &document); err != nil {
+			return "", err
+		}
+		if document["dns"] == nil {
+			document["dns"] = json.RawMessage(`{"servers":[{"tag":"loom-runtime-deny-dns","address":"rcode://refused"}],"rules":[],"final":"loom-runtime-deny-dns"}`)
+		}
+		if access {
+			var route map[string]json.RawMessage
+			if err := json.Unmarshal(document["route"], &route); err != nil {
+				return "", err
+			}
+			var rules []json.RawMessage
+			if err := json.Unmarshal(route["rules"], &rules); err != nil {
+				return "", err
+			}
+			hijack := json.RawMessage(`{"inbound":["tun-in"],"port":[53],"action":"hijack-dns"}`)
+			found := false
+			for _, rule := range rules {
+				found = found || string(rule) == string(hijack)
+			}
+			if !found {
+				rules = append([]json.RawMessage{hijack}, rules...)
+			}
+			route["rules"], _ = json.Marshal(rules)
+			document["route"], _ = json.Marshal(route)
+		}
+		body, err := json.Marshal(document)
+		return string(body), err
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(config), &document); err != nil {
@@ -259,4 +372,61 @@ func WithManagedDNS(config string, addresses []string, access bool) (string, err
 	}
 	body, err := json.Marshal(document)
 	return string(body), err
+}
+
+// PolicyGraphs derives only the caller's current calculation scopes. Policies
+// share the same link reference slice; none is an authorization wire value.
+func PolicyGraphs(view control.DeviceView, selected []string) ([]clientmodel.PolicyGraph, error) {
+	graphs, err := selectedPolicyGraphs(view, selected)
+	if err != nil || len(graphs) == 0 {
+		return graphs, err
+	}
+	links, err := control.DerivedViewLinks(view)
+	if err != nil {
+		return nil, err
+	}
+	refs, err := graphLinkReferences(view, links)
+	if err != nil {
+		return nil, err
+	}
+	for index := range graphs {
+		graphs[index].Links = refs
+	}
+	return graphs, nil
+}
+
+func selectedPolicyGraphs(view control.DeviceView, selected []string) ([]clientmodel.PolicyGraph, error) {
+	graphs := []clientmodel.PolicyGraph{}
+	if len(selected) == 0 {
+		return graphs, nil
+	}
+	wanted := make(map[string]bool, len(selected))
+	for _, id := range selected {
+		if control.ValidateID(id) != nil || wanted[id] {
+			return nil, errors.New("invalid or duplicated graph Policy selection")
+		}
+		wanted[id] = true
+	}
+	for _, policy := range view.Policies {
+		if wanted[policy.ID] && policy.Action == "allow" {
+			graphs = append(graphs, clientmodel.PolicyGraph{PolicyID: policy.ID, SourceNode: view.DeviceID, RelayScope: policy.RelayScope, MaxHops: policy.MaxHops})
+		}
+	}
+	if len(graphs) != len(wanted) {
+		return nil, errors.New("graph Policy selection is absent or denied")
+	}
+	return graphs, nil
+}
+
+func graphLinkReferences(view control.DeviceView, links []control.NetworkLink) ([]clientmodel.GraphLink, error) {
+	specs, err := control.LinkSpecifications(view)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]clientmodel.GraphLink, 0, len(links))
+	for _, link := range links {
+		spec := specs[link.ID]
+		refs = append(refs, clientmodel.GraphLink{From: link.FromNodeID, To: link.ToNodeID, Ref: clientmodel.LinkSampleRef{LinkID: link.ID, DeviceID: link.FromNodeID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, fmt.Sprint(link.ProbeTarget.Port)), Action: link.ProbeTarget.Action}})
+	}
+	return refs, nil
 }

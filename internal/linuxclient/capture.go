@@ -1,9 +1,14 @@
 package linuxclient
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
+
 	"loom/internal/clientadapter"
+	"loom/internal/control"
+	"loom/protocol"
 )
 
 func validateCapture(capture string) error {
@@ -46,10 +51,16 @@ func deriveLinuxMixedRuntime(config string) (string, error) {
 		return "", errors.New("explicit Mixed requires exactly one managed access inbound")
 	}
 	var outbounds []struct {
-		Type            string `json:"type"`
-		Tag             string `json:"tag"`
-		SystemInterface *bool  `json:"system_interface"`
-		InterfaceName   string `json:"interface_name"`
+		Type            string   `json:"type"`
+		Tag             string   `json:"tag"`
+		SystemInterface *bool    `json:"system_interface"`
+		InterfaceName   string   `json:"interface_name"`
+		Members         []string `json:"outbounds"`
+		Access          *struct {
+			NodeID  string `json:"node_id"`
+			Forward bool   `json:"forward"`
+		} `json:"access"`
+		Hop json.RawMessage `json:"hop"`
 	}
 	if err := json.Unmarshal(document["outbounds"], &outbounds); err != nil || len(outbounds) == 0 {
 		return "", errors.New("explicit Mixed outbounds are invalid")
@@ -87,6 +98,45 @@ func deriveLinuxMixedRuntime(config string) (string, error) {
 	if rules, found := route["rules"]; found {
 		if err := validateMixedRules(rules, types, used); err != nil {
 			return "", err
+		}
+	}
+	owner, forward := "", false
+	for _, outbound := range outbounds {
+		if outbound.Tag == control.AccessSelectorScope && outbound.Access != nil {
+			owner, forward = outbound.Access.NodeID, outbound.Access.Forward
+		}
+	}
+	var rawOutbounds []json.RawMessage
+	if err := json.Unmarshal(document["outbounds"], &rawOutbounds); err != nil {
+		return "", err
+	}
+	for index, outbound := range outbounds {
+		if len(outbound.Hop) == 0 {
+			continue
+		}
+		if err := validateMixedForwardEntry(rawOutbounds[index], owner, forward, types); err != nil {
+			return "", err
+		}
+		// The native receiver dispatches admitted business to this existing
+		// forward entry independently of this node's access Policy grants.
+		used[outbound.Tag] = true
+	}
+	// Follow the existing component references from both local access and
+	// native forward entries without creating an additional traffic rule.
+	for changed := true; changed; {
+		changed = false
+		for _, outbound := range outbounds {
+			if outbound.Type != "selector" || !used[outbound.Tag] {
+				continue
+			}
+			for _, tag := range outbound.Members {
+				if types[tag] == "" {
+					return "", errors.New("explicit Mixed selector references an unknown outbound")
+				}
+				if !used[tag] {
+					used[tag], changed = true, true
+				}
+			}
 		}
 	}
 	for tag, kind := range types {
@@ -138,6 +188,48 @@ func deriveLinuxMixedRuntime(config string) (string, error) {
 	return string(body), err
 }
 
+func validateMixedForwardEntry(body json.RawMessage, owner string, forward bool, types map[string]string) error {
+	var entry struct {
+		Type              string            `json:"type"`
+		Tag               string            `json:"tag"`
+		Members           []string          `json:"outbounds"`
+		Default           string            `json:"default"`
+		CandidatePolicies map[string]string `json:"candidate_policies"`
+		Hop               struct {
+			Policy      protocol.HopPolicy  `json:"policy"`
+			NodeID      string              `json:"node_id"`
+			Nodes       map[string]string   `json:"nodes"`
+			ExitChoices map[string][]string `json:"exit_choices"`
+		} `json:"hop"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&entry); err != nil {
+		return errors.New("explicit Mixed forward entry has an unsupported native structure")
+	}
+	hop := entry.Hop
+	if !forward || control.ValidateID(owner) != nil || hop.NodeID != owner || hop.Policy.Validate() != nil || len(hop.Policy.Origins) != 0 || !slices.Contains(hop.Policy.Nodes, owner) || entry.Type != "selector" || entry.Tag != control.ForwardSelectorTag(hop.Policy.PolicyID) || entry.Default != "reject" || len(entry.Members) == 0 || entry.Members[0] != "reject" || entry.CandidatePolicies == nil || hop.Nodes == nil || hop.ExitChoices == nil || len(entry.CandidatePolicies) != len(entry.Members)-1 || len(hop.Nodes) != len(entry.Members)-1 || len(hop.ExitChoices) != len(hop.Policy.Exits) {
+		return errors.New("explicit Mixed forward entry is not owned by this authorized node")
+	}
+	for index, tag := range entry.Members[1:] {
+		if types[tag] == "" || tag == "reject" || index > 0 && entry.Members[index] >= tag || entry.CandidatePolicies[tag] != hop.Policy.PolicyID || !slices.Contains(hop.Policy.Nodes, hop.Nodes[tag]) || !slices.Contains(hop.Policy.Edges, protocol.DirectedHop{From: owner, To: hop.Nodes[tag]}) {
+			return errors.New("explicit Mixed forward entry references an uncertified next hop")
+		}
+	}
+	for _, exit := range hop.Policy.Exits {
+		choices, found := hop.ExitChoices[exit]
+		if !found || choices == nil {
+			return errors.New("explicit Mixed forward entry has no exit choices")
+		}
+		for _, tag := range choices {
+			if _, found := hop.Nodes[tag]; !found {
+				return errors.New("explicit Mixed forward entry has an unknown exit choice")
+			}
+		}
+	}
+	return nil
+}
+
 func validateMixedRules(body json.RawMessage, outbounds map[string]string, used map[string]bool) error {
 	var rules []map[string]json.RawMessage
 	if json.Unmarshal(body, &rules) != nil {
@@ -147,6 +239,7 @@ func validateMixedRules(body json.RawMessage, outbounds map[string]string, used 
 		for field := range rule {
 			switch field {
 			case "type", "mode", "rules", "domain", "domain_suffix", "domain_keyword", "domain_regex",
+				"public_internet",
 				"ip_cidr", "source_ip_cidr", "ip_is_private", "source_ip_is_private", "port", "port_range",
 				"source_port", "source_port_range", "network", "protocol", "inbound", "auth_user", "invert", "outbound", "action":
 			default:

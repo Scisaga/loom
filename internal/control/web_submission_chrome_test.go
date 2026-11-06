@@ -147,7 +147,7 @@ func TestWebChromePolicyIdentitySuggestionsPreserveEdits(t *testing.T) {
 	anyScope := PolicyScope{Mode: "any", NodeIDs: []string{}}
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-prefill-occupied", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-prefill-lan-default", Dependencies: []string{service.MaterialID}, Payload: NetworkPolicy{ID: "demo-prefill-lan-default", Name: "Demo existing policy", ServiceID: "demo-prefill-lan", Action: "allow", EntryScope: anyScope, RelayScope: anyScope}})
 	longID, longName := "demo-"+strings.Repeat("界", 40), "Demo "+strings.Repeat("名", 83)
-	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-prefill-long", Operation: "service.put", TargetKind: "service", TargetID: longID, Dependencies: []string{}, Payload: Service{ID: longID, Name: longName, Kind: "internet", Matchers: []ServiceMatcher{{Kind: "dns_suffix", Value: "demo-defaults.example"}}}})
+	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-prefill-long", Operation: "service.put", TargetKind: "service", TargetID: longID, Dependencies: []string{}, Payload: Service{ID: longID, Name: longName, Kind: "internet", RestrictToProbeTargets: new(false)}})
 	host := httptest.NewServer(server.AdminHandler())
 	defer host.Close()
 	debug := openCommandChrome(t, host.URL+"/policies?new=1&service=demo-prefill-lan")

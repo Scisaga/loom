@@ -3,6 +3,7 @@
 package control
 
 type Device struct {
+	WireGuardPublicKey string              `json:"wireguard_public_key,omitempty"`
 	ExpectedComponents []ComponentReadback `json:"expected_components"`
 	ExpectedReferences []ExpectedComponent `json:"expected_component_references"`
 	ComponentError     string              `json:"component_error,omitempty"`
@@ -40,8 +41,8 @@ type DeviceEvidence struct {
 	Freshness         string                `json:"freshness"`
 	CurrentUntil      int64                 `json:"current_until,omitempty"`
 	LocalNetworks     *[]LocalNetworkPrefix `json:"local_networks,omitempty"`
-	Preference        *ReportPreference     `json:"preference,omitempty"`
-	PolicyChoices     *[]PolicyChoice       `json:"policy_choices,omitempty"`
+	PolicyID          string                `json:"policy_id,omitempty"`
+	LANPolicyIDs      map[string]string     `json:"lan_policy_ids,omitempty"`
 	ReportedAt        string                `json:"reported_at"`
 	ReportSequence    U64                   `json:"report_sequence"`
 	ViewDigest        string                `json:"view_digest"`
@@ -75,6 +76,7 @@ type Link struct {
 }
 
 type Path struct {
+	PathBasis       string   `json:"path_basis,omitempty"`
 	PolicyID        string   `json:"policy_id"`
 	CandidateID     string   `json:"candidate_id,omitempty"`
 	ServiceID       string   `json:"service_id"`

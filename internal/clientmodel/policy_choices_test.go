@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"testing"
-	"time"
 
 	"loom/internal/control"
 )
 
 func TestPolicyChoiceCanonicalRepresentationAndGrantBoundary(t *testing.T) {
-	canonical := []byte(`{"schema":3,"services":[{"service_id":"demo-a"},{"policy_id":"demo-policy","service_id":"demo-b"}]}`)
+	canonical := []byte(`{"policy_id":"demo-policy","schema":3}`)
 	var preference Preference
 	if err := control.DecodeCanonical(canonical, &preference, control.ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 8, MaxItems: 64}); err != nil {
 		t.Fatal(err)
@@ -35,18 +34,19 @@ func TestPolicyChoiceCanonicalRepresentationAndGrantBoundary(t *testing.T) {
 	view := control.DeviceView{PolicyIDs: []string{"demo-policy"}, Policies: []control.NetworkPolicy{{ID: "demo-policy", ServiceID: "demo-b", Action: "allow"}}}
 	next, err := ReconcilePreference(preference, view)
 	services, options := PolicyOptions(view)
-	if err != nil || next.Policy("demo-b") != "" || len(next.Services) != 2 || len(services) != 0 || len(options) != 0 {
+	if err != nil || next.PolicyID != "" || len(services) != 0 || len(options) != 0 {
 		t.Fatal("deleted Service or receiver permissions became client authorization", err)
 	}
-	if _, err := ChoosePolicy(next, view, "demo-b", "demo-policy"); err == nil {
+	if _, err := ChoosePolicy(next, view, "demo-policy"); err == nil {
 		t.Fatal("deleted Service remained selectable")
 	}
 }
 
 func TestPolicyChoiceInitializationRevocationAndRestart(t *testing.T) {
-	view := control.DeviceView{Services: []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo.example"}}}}, PolicyIDs: []string{"demo-a"}, Policies: []control.NetworkPolicy{{ID: "demo-a", ServiceID: "demo-service", Action: "allow"}}}
-	preference, err := ReconcilePreference(Preference{Schema: 3, Services: []ServicePreference{}}, view)
-	if err != nil || preference.Policy("demo-service") != "demo-a" {
+	view := control.DeviceView{Services: []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}}, PolicyIDs: []string{"demo-a"}, Policies: []control.NetworkPolicy{{ID: "demo-a", ServiceID: "demo-service", Action: "allow"}}}
+	preference := InitialPreference(view)
+	var err error
+	if err != nil || preference.PolicyID != "demo-a" {
 		t.Fatal("single policy initialization", err)
 	}
 	view.PolicyIDs = append(view.PolicyIDs, "demo-b")
@@ -55,13 +55,13 @@ func TestPolicyChoiceInitializationRevocationAndRestart(t *testing.T) {
 	if err != nil || !kept.Equal(preference) {
 		t.Fatal("adding authorization changed saved choice", err)
 	}
-	fresh, err := ReconcilePreference(Preference{Schema: 3, Services: []ServicePreference{}}, view)
-	if err != nil || fresh.Policy("demo-service") != "" || len(fresh.Services) != 1 {
+	fresh, err := ReconcilePreference(Preference{Schema: 3}, view)
+	if err != nil || fresh.PolicyID != "" {
 		t.Fatal("multiple policies did not remain pending", err)
 	}
 	view.PolicyIDs = []string{"demo-b"}
 	revoked, err := ReconcilePreference(kept, view)
-	if err != nil || revoked.Policy("demo-service") != "" || len(revoked.Services) != 1 {
+	if err != nil || revoked.PolicyID != "" {
 		t.Fatal("revocation silently selected remaining policy", err)
 	}
 	body, err := control.CanonicalEncode(revoked)
@@ -70,24 +70,61 @@ func TestPolicyChoiceInitializationRevocationAndRestart(t *testing.T) {
 		t.Fatal("preference round trip", err)
 	}
 	restarted, err = ReconcilePreference(restarted, view)
-	if err != nil || restarted.Policy("demo-service") != "" {
+	if err != nil || restarted.PolicyID != "" {
 		t.Fatal("restart restored revoked choice", err)
 	}
-	if _, err := ChoosePolicy(restarted, view, "demo-service", "demo-a"); err == nil {
+	if _, err := ChoosePolicy(restarted, view, "demo-a"); err == nil {
 		t.Fatal("ungranted policy selected")
 	}
 }
 
 func TestChoiceFiltersBeforeAvailabilityWithoutCrossPolicyFallback(t *testing.T) {
-	now := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
-	routes := []RouteCandidate{{ID: "demo-fixed", PolicyID: "demo-fixed-policy", Scope: "service:demo-service", FinalExit: "demo-exit"}, {ID: "demo-auto", PolicyID: "demo-auto-policy", Scope: "service:demo-service", FinalExit: "direct"}}
-	preference := Preference{Schema: 3, Services: []ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-fixed-policy"}}}
-	failed := Observation{CandidateID: "demo-fixed", Scope: routes[0].Scope, NetworkGeneration: "demo-generation", Action: "https_request", Result: "unavailable", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}
-	if _, err := Select(routes, []Observation{failed}, nil, preference, "", "demo-generation", now, ""); !errors.Is(err, ErrNoUsableCandidate) {
-		t.Fatal("failure escaped selected policy", err)
+	routes, samples, now := firstHopSelectionFixture()
+	routes = routes[:2]
+	routes[1].PolicyID = "demo-other-policy"
+	samples[0].Result = "unavailable"
+	preference := Preference{Schema: 3, PolicyID: "demo-policy"}
+	if got, err := Select(routes, nil, samples, preference, "", "demo-network", now); err != nil || got.CandidateID != routes[0].ID {
+		t.Fatal("diagnostic fallback escaped the current Policy or blocked its only attempt", got, err)
 	}
-	preference.Services[0].PolicyID = ""
-	if _, err := Select(routes, nil, nil, preference, "", "demo-generation", now, ""); !errors.Is(err, ErrNoUsableCandidate) {
+	preference.PolicyID = ""
+	if _, err := Select(routes, nil, nil, preference, "", "demo-network", now); !errors.Is(err, ErrNoUsableCandidate) {
 		t.Fatal("pending choice leaked traffic", err)
+	}
+}
+
+func TestInternetChoicePreservesIndependentLANIntent(t *testing.T) {
+	view := control.DeviceView{Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-lan-a", "demo-lan-b", "demo-web-a", "demo-web-b"}, Services: []control.Service{{ID: "demo-web", Kind: "internet", RestrictToProbeTargets: new(false)}, {ID: "demo-lan", Kind: "local_network", RestrictToProbeTargets: new(false), LocalNetwork: &control.LocalNetwork{Enabled: true, GatewayNodeID: "demo-gateway", VirtualPrefix: "10.64.1.0/24", LocalPrefix: "192.0.2.0/24"}}}, Policies: []control.NetworkPolicy{{ID: "demo-lan-a", ServiceID: "demo-lan", Action: "allow"}, {ID: "demo-lan-b", ServiceID: "demo-lan", Action: "allow"}, {ID: "demo-web-a", ServiceID: "demo-web", Action: "allow"}, {ID: "demo-web-b", ServiceID: "demo-web", Action: "allow"}}}
+	pref := InitialPreference(view)
+	if pref.PolicyID != "" || len(pref.LANPolicyIDs) != 0 {
+		t.Fatal("multiple choices silently selected")
+	}
+	lan, err := ChoosePolicy(pref, view, "demo-lan-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, err := ChoosePolicy(lan, view, "demo-web-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := ChoosePolicy(web, view, "demo-web-b")
+	if err != nil || next.LANPolicyIDs["demo-lan"] != "demo-lan-a" {
+		t.Fatal("Internet choice erased the independent LAN choice", err)
+	}
+	if scopes := ChangedSelectorScopes(web, next); len(scopes) != 1 || scopes[0] != "access" {
+		t.Fatal("Internet choice would close LAN connections", scopes)
+	}
+	body, err := control.CanonicalEncode(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Preference
+	if control.DecodeCanonical(body, &restored, control.ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 8, MaxItems: 64}) != nil || !restored.Equal(next) {
+		t.Fatal("LAN intent did not survive the one identity preference round trip")
+	}
+	view.PolicyIDs = []string{"demo-lan-a", "demo-lan-b"}
+	revoked, err := ReconcilePreference(restored, view)
+	if err != nil || revoked.PolicyID != "" || revoked.LANPolicyIDs["demo-lan"] != "demo-lan-a" {
+		t.Fatal("Internet revocation changed LAN intent", err)
 	}
 }

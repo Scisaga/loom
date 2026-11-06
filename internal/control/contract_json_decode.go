@@ -203,6 +203,36 @@ func (parser *contractJSONParser) typed(destination reflect.Value, codec *contra
 		return nil
 	}
 	switch destination.Kind() {
+	case reflect.Map:
+		if !parser.take('{') {
+			return errors.New("contract map must be an object")
+		}
+		result := reflect.MakeMap(destination.Type())
+		previous := ""
+		if !parser.take('}') {
+			for {
+				name, err := parser.objectKey(previous)
+				if err != nil {
+					return err
+				}
+				previous = name
+				value := reflect.New(destination.Type().Elem()).Elem()
+				if err := parser.typed(value, codec, depth+1); err != nil {
+					return err
+				}
+				key := reflect.New(destination.Type().Key()).Elem()
+				key.SetString(name)
+				result.SetMapIndex(key, value)
+				if parser.take('}') {
+					break
+				}
+				if !parser.take(',') {
+					return errors.New("contract map is incomplete")
+				}
+			}
+		}
+		destination.Set(result)
+		return nil
 	case reflect.Struct:
 		if !parser.take('{') {
 			return errors.New("contract value must be an object")

@@ -32,7 +32,6 @@ type WebSnapshot struct {
 	Policies              []NetworkPolicy               `json:"policies"`
 	PolicyInvites         []WebPolicyInvite             `json:"policy_invites"`
 	Services              []Service                     `json:"services"`
-	BusinessProbeTargets  []WebBusinessProbeTarget      `json:"business_probe_targets"`
 	LocalNetworkConflicts []string                      `json:"local_network_conflicts"`
 	Releases              []Release                     `json:"releases"`
 	Publisher             *PublisherStatus              `json:"publisher,omitempty"`
@@ -127,7 +126,7 @@ func buildWebSnapshotUsing(projection Projection, admin, local, writable bool, v
 		capabilities.Credential = "local_admin"
 	}
 	if admin && writable {
-		capabilities.Operations = []string{"admin_certificate.delete", "admin_certificate.put", "conflict.resolve", "device.delete", "device.put", "device.revoke", "dns_record.delete", "dns_record.put", "endpoint.put", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "probe_target.delete", "probe_target.put", "public_trust.delete", "public_trust.put", "service.delete", "service.put"}
+		capabilities.Operations = []string{"admin_certificate.delete", "admin_certificate.put", "conflict.resolve", "device.delete", "device.put", "device.revoke", "dns_record.delete", "dns_record.put", "endpoint.put", "expected_component.delete", "expected_component.put", "invite.cancel", "invite.issue", "policy.delete", "policy.put", "public_trust.delete", "public_trust.put", "service.delete", "service.put"}
 	}
 	devices := projectWebDevices(projection, releases...)
 	warnings := []WebWarning{}
@@ -161,11 +160,10 @@ func buildWebSnapshotUsing(projection Projection, admin, local, writable bool, v
 		FactFrontier:         append([]FactFrontier{}, projection.Frontier...), Targets: append([]TargetState{}, projection.Targets...),
 		Capabilities: capabilities, UIState: WebUIState{LocalWritable: writable, Warnings: warnings},
 		Devices: devices, Links: projectWebLinks(projection), Paths: projectWebPathsUsing(projection, viewFor), Policies: append([]NetworkPolicy{}, projection.NetworkIntent.Policies...),
-		PolicyInvites:        []WebPolicyInvite{},
-		BusinessProbeTargets: projectWebBusinessProbeTargets(projection),
-		DNSRecords:           append([]DNSRecord{}, projection.NetworkIntent.DNSRecords...),
-		PublicTrust:          append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),
-		WebEndpoints:         append([]EndpointGeneration{}, webEndpoints...),
-		Services:             append([]Service{}, projection.NetworkIntent.Services...), LocalNetworkConflicts: lanConflicts, Releases: []Release{}, Deployments: []Deployment{},
+		PolicyInvites: []WebPolicyInvite{},
+		DNSRecords:    append([]DNSRecord{}, projection.NetworkIntent.DNSRecords...),
+		PublicTrust:   append([]PublicTrust{}, projection.NetworkIntent.PublicTrust...),
+		WebEndpoints:  append([]EndpointGeneration{}, webEndpoints...),
+		Services:      append([]Service{}, projection.NetworkIntent.Services...), LocalNetworkConflicts: lanConflicts, Releases: []Release{}, Deployments: []Deployment{},
 		Administrators: projectWebAdministrators(projection)}
 }

@@ -85,6 +85,15 @@ func AcceptLKG(state State, envelope control.DeviceViewEnvelope) (State, error) 
 	}
 	next := state
 	next.LKG = &envelope
+	preference := clientmodel.InitialPreference(envelope.View)
+	if state.Preference != nil {
+		reconciled, err := clientmodel.ReconcilePreference(*state.Preference, envelope.View)
+		if err != nil {
+			return State{}, err
+		}
+		preference = reconciled
+	}
+	next.Preference = &preference
 	highWater := map[string]control.FactFrontier{}
 	inviteID, err := control.MaterialID(state.Invite.Material)
 	if err != nil {
@@ -180,6 +189,9 @@ func (state State) Validate() error {
 		}
 		return nil
 	}
+	if state.Preference == nil {
+		return errors.New("accepted identity must contain its single current Policy preference")
+	}
 	if err := control.VerifyDeviceViewEnvelope(*state.LKG, *state.Invite); err != nil {
 		return err
 	}
@@ -239,10 +251,6 @@ func openStore(path string, invite control.BootstrapInvite, platform string, pro
 	if err != nil {
 		return nil, err
 	}
-	if protector != nil {
-		preference := clientmodel.EmptyPreference()
-		next.Preference = &preference
-	}
 	if err := store.save(next, nil, false); err != nil {
 		return nil, err
 	}
@@ -266,11 +274,8 @@ func (store *Store) validateState(state State) error {
 	return store.validateProtection(state)
 }
 func (store *Store) validateProtection(state State) error {
-	if store.protector != nil && (state.Platform != "windows" || state.Preference == nil) {
+	if store.protector != nil && state.Platform != "windows" {
 		return errors.New("protected device state is not a Windows profile")
-	}
-	if store.protector == nil && state.Preference != nil {
-		return errors.New("plain device identity cannot contain a protected profile preference")
 	}
 	return nil
 }
@@ -411,23 +416,11 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 				if current.Preference == nil || current.LKG == nil {
 					return errors.New("policy choice requires a current protected profile")
 				}
-				expected := *current.Preference
-				changed := 0
-				for _, choice := range preference.Services {
-					if expected.Policy(choice.ServiceID) == choice.PolicyID {
-						continue
-					}
-					changed++
-					var err error
-					expected, err = clientmodel.ChoosePolicy(expected, current.LKG.View, choice.ServiceID, choice.PolicyID)
-					if err != nil {
-						return err
-					}
+				err := clientmodel.ValidatePreferenceChange(*current.Preference, *preference, current.LKG.View)
+				if err != nil {
+					return errors.New("choose one granted Policy against the current protected profile")
 				}
-				if changed > 1 || !expected.Equal(*preference) {
-					return errors.New("choose one Service policy against the current protected profile")
-				}
-				copy := *preference
+				copy := preference.Clone()
 				next.Preference = &copy
 			}
 			if reserveReport {
@@ -439,7 +432,9 @@ func (store *Store) save(next State, preference *clientmodel.Preference, reserve
 				next.ReportSequence++
 			}
 		} else {
-			next.Preference = current.Preference
+			if current.Preference != nil {
+				next.Preference = current.Preference
+			}
 			next.ReportSequence = current.ReportSequence
 			if next.Preference != nil && next.LKG != nil {
 				reconciled, err := clientmodel.ReconcilePreference(*next.Preference, next.LKG.View)

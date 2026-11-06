@@ -46,7 +46,7 @@ func TestWebChromeRevokedDeviceReviewAndExplicitRegrant(t *testing.T) {
 	if chromeDo(t, debug, `(()=>{const f=document.querySelector('#device-policy-form');return f.elements.name.value==='Demo revised device'&&f.elements.dns_servers.value==='192.0.2.54'&&f.elements.distribution_urls.value==='https://downloads.example/'&&!f.querySelector('[data-revoke-device]')&&document.body.innerText.includes('Not authorized')})()`) != true {
 		t.Fatal("review form used the Invite's obsolete fields or concealed revocation")
 	}
-	web := buildWebSnapshot(projection, true, true, true)
+	web := testWebSnapshotWithIntent(projection, true, true, true)
 	body, err := json.Marshal(web)
 	if err != nil || strings.Contains(string(body), "runtime_key") || strings.Contains(string(body), original.RuntimeKey) || strings.Contains(string(body), "device_public_key") {
 		t.Fatal("public review leaked identity or runtime credentials")

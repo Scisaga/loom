@@ -33,7 +33,10 @@ type wireGuardExecutionLink struct {
 	AccessAddress       string `json:"access_address,omitempty"`
 	AccessPort          int    `json:"access_port,omitempty"`
 }
-type wireGuardExecution struct{ WireGuard []wireGuardExecutionLink }
+type wireGuardExecution struct {
+	WireGuard  []wireGuardExecutionLink
+	ListenPort int // validated local receiver port; never a peer dial coordinate
+}
 type wireGuardIdentity struct{ WGPublicKey string }
 
 // An authenticated profile authorizes a desired configuration, but cannot prove

@@ -26,7 +26,7 @@ func (cache resourceObservationCache) Validate() error {
 	for i, observation := range cache.Observations {
 		if observation.Validate() != nil || observation.Level != "resource" ||
 			observation.Result != "available" && observation.Result != "unavailable" ||
-			i > 0 && (cache.Observations[i-1].ResourceID >= observation.ResourceID || cache.Observations[i-1].NetworkGeneration != observation.NetworkGeneration) {
+			i > 0 && (measurementSampleKey(cache.Observations[i-1]) >= measurementSampleKey(observation) || cache.Observations[i-1].NetworkGeneration != observation.NetworkGeneration) {
 			return errors.New("resource observation cache samples are invalid")
 		}
 	}
@@ -52,7 +52,7 @@ func ResourceCacheIdentity(lkg control.DeviceViewEnvelope) (string, error) {
 
 // EncodeResourceObservations only saves samples authorized by the current View.
 // It retains their original times; serialization is not another observation.
-func EncodeResourceObservations(lkg control.DeviceViewEnvelope, observations []control.Observation) ([]byte, error) {
+func EncodeResourceObservations(lkg control.DeviceViewEnvelope, observations []control.Observation, policies []string) ([]byte, error) {
 	identity, err := ResourceCacheIdentity(lkg)
 	if err != nil {
 		return nil, err
@@ -61,12 +61,26 @@ func EncodeResourceObservations(lkg control.DeviceViewEnvelope, observations []c
 	if err := cache.Validate(); err != nil {
 		return nil, err
 	}
-	probes, err := control.FirstHopProbes(lkg.View)
+	execution, err := control.ProjectDeviceCandidates(lkg.View, policies)
+	if err != nil {
+		return nil, err
+	}
+	probes, err := control.FirstHopProbes(execution)
 	if err != nil {
 		return nil, err
 	}
 	if len(observations) > 0 && len(RetainResourceObservations(probes, observations, observations[0].NetworkGeneration)) != len(observations) {
 		return nil, errors.New("resource cache sample is outside the current authorization")
+	}
+	return EncodeResourceObservationCache(identity, observations)
+}
+
+// EncodeResourceObservationCache serializes already checked, disposable samples
+// without projecting a private View again. It does not authorize any sample.
+func EncodeResourceObservationCache(identity string, observations []control.Observation) ([]byte, error) {
+	cache := resourceObservationCache{Schema: 3, IdentityDigest: identity, Observations: append([]control.Observation{}, observations...)}
+	if err := cache.Validate(); err != nil {
+		return nil, err
 	}
 	body, err := control.CanonicalEncode(cache)
 	if err == nil && len(body) > ResourceObservationCacheLimit {
@@ -77,7 +91,7 @@ func EncodeResourceObservations(lkg control.DeviceViewEnvelope, observations []c
 
 // DecodeResourceObservations restores only exact current execution inputs.
 // It does not accept a View, select a route, or extend any validity window.
-func DecodeResourceObservations(body []byte, lkg control.DeviceViewEnvelope, generation string) ([]control.Observation, error) {
+func DecodeResourceObservations(body []byte, lkg control.DeviceViewEnvelope, generation string, policies []string) ([]control.Observation, error) {
 	identity, err := ResourceCacheIdentity(lkg)
 	if err != nil {
 		return nil, err
@@ -86,7 +100,11 @@ func DecodeResourceObservations(body []byte, lkg control.DeviceViewEnvelope, gen
 	if err != nil {
 		return nil, err
 	}
-	probes, err := control.FirstHopProbes(lkg.View)
+	execution, err := control.ProjectDeviceCandidates(lkg.View, policies)
+	if err != nil {
+		return nil, err
+	}
+	probes, err := control.FirstHopProbes(execution)
 	if err != nil {
 		return nil, err
 	}

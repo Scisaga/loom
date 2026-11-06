@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -299,6 +300,18 @@ func EndpointRouteExclusions(ctx context.Context, endpoints []control.EndpointGe
 // Fetch verifies authentication without applying a runtime. SaveLKG is the
 // durable acceptance boundary; execution and probes happen only afterward.
 func Fetch(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope, error) {
+	return fetchConfiguration(ctx, store, false, 0)
+}
+
+// AwaitConfiguration uses the same authenticated operation and signed output.
+// The round is a disposable fairness offset, never a cursor or trusted progress.
+func AwaitConfiguration(ctx context.Context, store IdentityStore, round uint64) (control.DeviceViewEnvelope, error) {
+	return fetchConfiguration(ctx, store, true, round)
+}
+
+var errConfigurationUnchanged = errors.New("authenticated configuration is unchanged")
+
+func fetchConfiguration(ctx context.Context, store IdentityStore, wait bool, round uint64) (control.DeviceViewEnvelope, error) {
 	previous := store.LKG()
 	if previous == nil {
 		return control.DeviceViewEnvelope{}, errors.New("device has no accepted View")
@@ -307,7 +320,22 @@ func Fetch(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope
 	if err != nil {
 		return control.DeviceViewEnvelope{}, err
 	}
-	return requestDevice(ctx, store, previous, 2, deviceRequestTimeout, func(attempt context.Context, connection net.Conn) (control.DeviceViewEnvelope, error) {
+	endpoints := servingDeviceEndpoints(previous)
+	if len(endpoints) == 0 {
+		return control.DeviceViewEnvelope{}, errors.New("device LKG has no serving endpoint")
+	}
+	offset := int(round % uint64(len(endpoints)))
+	endpoints = append(append([]control.EndpointGeneration{}, endpoints[offset:]...), endpoints[:offset]...)
+	timeout := deviceRequestTimeout
+	requestContext := ctx
+	if wait {
+		timeout += control.DeviceConfigWaitSeconds * time.Second
+		var cancel context.CancelFunc
+		requestContext, cancel = context.WithTimeout(ctx, timeout+deviceRequestTimeout)
+		defer cancel()
+	}
+	var unchanged atomic.Bool
+	value, err := requestDeviceEndpoints(withCertifiedDNS(requestContext, previous.View.DNSServers), endpoints, previous.View.DeviceID, store.PrivateKey(), 2, timeout, control.DialEndpoint, func(attempt context.Context, connection net.Conn) (control.DeviceViewEnvelope, error) {
 		var envelope control.DeviceViewEnvelope
 		request, err := http.NewRequestWithContext(attempt, http.MethodPost, "http://loom.private/device/config", strings.NewReader("{}"))
 		if err != nil {
@@ -315,6 +343,17 @@ func Fetch(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope
 		}
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set(control.DeviceConfigDigestHeader, digest)
+		waiting := ""
+		if wait {
+			seconds := control.DeviceConfigWaitSeconds
+			if deadline, ok := attempt.Deadline(); ok {
+				seconds = min(seconds, int((time.Until(deadline)-deviceRequestTimeout)/time.Second))
+			}
+			if seconds > 0 {
+				waiting = strconv.Itoa(seconds)
+				request.Header.Set(control.DeviceConfigWaitHeader, waiting)
+			}
+		}
 		response, err := tunnelHTTPClient(connection).Do(request)
 		if err != nil {
 			return envelope, err
@@ -322,15 +361,37 @@ func Fetch(ctx context.Context, store IdentityStore) (control.DeviceViewEnvelope
 		defer response.Body.Close()
 		if response.StatusCode == http.StatusNoContent {
 			body, err := io.ReadAll(io.LimitReader(response.Body, 1))
-			if err != nil || len(body) != 0 || response.Header.Get(control.DeviceConfigDigestHeader) != digest {
+			if err != nil || len(body) != 0 || response.Header.Get(control.DeviceConfigDigestHeader) != digest || waiting != "" && response.Header.Get(control.DeviceConfigWaitHeader) != waiting {
 				return envelope, errors.New("unchanged device configuration was not confirmed")
 			}
 			envelope = *previous
 		} else if _, err := readCanonicalResponse(response, &envelope); err != nil {
 			return control.DeviceViewEnvelope{}, err
 		}
-		return envelope, validateFetchedView(store, envelope)
+		if err := validateFetchedView(store, envelope); err != nil {
+			return control.DeviceViewEnvelope{}, err
+		}
+		if wait {
+			current, err := control.DeviceConfigurationDigest(envelope)
+			if err != nil {
+				return control.DeviceViewEnvelope{}, err
+			}
+			if current == digest {
+				if response.StatusCode != http.StatusNoContent {
+					return control.DeviceViewEnvelope{}, errors.New("configuration wait was not acknowledged")
+				}
+				unchanged.Store(true)
+				// Another authenticated member may already have a new envelope.
+				// A timeout confirmation cannot win that race and cancel it.
+				return control.DeviceViewEnvelope{}, errConfigurationUnchanged
+			}
+		}
+		return envelope, nil
 	})
+	if wait && err != nil && unchanged.Load() && ctx.Err() == nil {
+		return *previous, nil
+	}
+	return value, err
 }
 
 func validateFetchedView(store IdentityStore, envelope control.DeviceViewEnvelope) error {
@@ -388,6 +449,10 @@ func Report(ctx context.Context, store IdentityStore, report control.DeviceRepor
 	report.DeviceID = lkg.View.DeviceID
 	report.ViewDigest = lkg.ViewDigest
 	report.ReportSequence = sequence
+	report.Observations, err = UnreportedObservations(report, store.PublicKey())
+	if err != nil {
+		return err
+	}
 	report, err = control.SignDeviceReport(report, store.PrivateKey())
 	if err != nil {
 		return err
@@ -432,5 +497,8 @@ func PostSignedReport(ctx context.Context, store IdentityStore, report control.D
 		}
 		return struct{}{}, nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return confirmedMeasurements.remember(report, store.PublicKey())
 }

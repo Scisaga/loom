@@ -28,6 +28,8 @@ func reportIndexFixture(t *testing.T) (string, string, []DeviceReport, string) {
 		if i == 1 {
 			report.Runtime = RuntimeReadback{State: "running", AppliedViewDigest: report.ViewDigest}
 			report.WireGuardCounters = &WireGuardCounters{Interface: "wg-shared", Epoch: strings.Repeat("a", 32), ObservedAt: 2, Peers: []WireGuardPeerCounter{}}
+			report.Observations = []Observation{{Level: "egress", Target: "https://demo-service.example/health", Action: "https_request", SpecDigest: ReleaseDigest([]byte("demo-egress-spec")),
+				NetworkGeneration: report.NetworkGeneration, ObservedAt: 2, ValidUntil: 1000, Result: "available", DurationMS: new(int64(1))}}
 		}
 		var err error
 		reports[i], err = SignDeviceReport(report, key)
@@ -56,7 +58,7 @@ func reportBucketSnapshot(t *testing.T, root string, child []byte) map[string][]
 	result := map[string][]byte{}
 	err := withReportDatabase(context.Background(), filepath.Join(root, "observations.db"), false, func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(child)
-		if bytes.Equal(child, reportCountersBucket) {
+		if bytes.Equal(child, reportCountersBucket) || bytes.Equal(child, reportMeasurementBucket) {
 			bucket = tx.Bucket(reportIndexBucket).Bucket(child)
 		}
 		return bucket.ForEach(func(key, raw []byte) error {
@@ -68,6 +70,44 @@ func reportBucketSnapshot(t *testing.T, root string, child []byte) map[string][]
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestPrepareReportIndexVerifiesAndRebuildsMeasurementLocations(t *testing.T) {
+	root, socket, _, _ := reportIndexFixture(t)
+	path := filepath.Join(root, "observations.db")
+	originals := reportBucketSnapshot(t, root, observationBucket)
+	locations := reportBucketSnapshot(t, root, reportMeasurementBucket)
+	if len(locations) != 1 {
+		t.Fatal("fixture has no original measurement location")
+	}
+	if err := withReportDatabase(context.Background(), path, true, func(tx *bolt.Tx) error {
+		return tx.Bucket(reportIndexBucket).DeleteBucket(reportMeasurementBucket)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareReportIndex(context.Background(), root, socket, ReportIndexOptions{Verify: true}); err == nil {
+		t.Fatal("verify accepted missing measurement locations")
+	}
+	if err := PrepareReportIndex(context.Background(), root, socket, ReportIndexOptions{Rebuild: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareReportIndex(context.Background(), root, socket, ReportIndexOptions{Verify: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(locations, reportBucketSnapshot(t, root, reportMeasurementBucket)) || !reflect.DeepEqual(originals, reportBucketSnapshot(t, root, observationBucket)) {
+		t.Fatal("rebuilding locations lost samples or changed signed originals")
+	}
+	if err := withReportDatabase(context.Background(), path, true, func(tx *bolt.Tx) error {
+		for location := range locations {
+			return tx.Bucket(reportIndexBucket).Bucket(reportMeasurementBucket).Put([]byte(location), []byte("demo-damaged-location"))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareReportIndex(context.Background(), root, socket, ReportIndexOptions{Verify: true}); err == nil {
+		t.Fatal("verify accepted an altered measurement original location")
+	}
 }
 
 func TestPrepareReportIndexVerifiesReadOnlyAndRebuildsAtomically(t *testing.T) {

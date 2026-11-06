@@ -62,7 +62,7 @@ func materialTestID(t testing.TB, value Material) string {
 	return id
 }
 func materialTestService(id string) Service {
-	return Service{ID: id, Name: "Demo service", Kind: "internet", Matchers: []ServiceMatcher{{Kind: "dns_exact", Value: id + ".example"}}}
+	return Service{ID: id, Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}
 }
 func materialTestPolicy(id, service string) NetworkPolicy {
 	scope := PolicyScope{Mode: "any", NodeIDs: []string{}}

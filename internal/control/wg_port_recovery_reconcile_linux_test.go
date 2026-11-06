@@ -16,8 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"loom/internal/localconfig"
+
+	"golang.org/x/sys/unix"
 )
 
 type recoveryManagementFixture struct {
@@ -43,7 +44,7 @@ func (f recoveryManagementFixture) WGPortOccupied(context.Context, string, Trans
 func (f recoveryManagementFixture) WGPortCheck(_ context.Context, _ string, view DeviceView) error {
 	return f.check(view)
 }
-func (f recoveryManagementFixture) WGPortDeliver(_ context.Context, _ string, envelope DeviceViewEnvelope) error {
+func (f recoveryManagementFixture) WGPortDeliver(_ context.Context, _ string, envelope DeviceViewEnvelope, _ string) error {
 	return f.deliver(envelope)
 }
 
@@ -176,6 +177,11 @@ func remoteWGRecoveryFixture(t *testing.T) (*Server, *wgRecoveryFixture) {
 		binding := EnrollmentBind{TransactionID: invite.ID, InviteMaterialID: issued, ClaimRequestID: id + "-claim", DevicePublicKey: public, Platform: "linux"}
 		bound := appendFact("invite.bind", "invite", invite.ID, binding, issued)
 		device := DeviceAuthorization{ID: id, Name: id, Platform: "linux", DevicePublicKey: public, Responsibilities: []string{"forward"}, PolicyIDs: []string{}, DistributionURLs: []string{}, RuntimeKey: base64.RawURLEncoding.EncodeToString(seed[:]), TransactionID: invite.ID, InviteMaterialID: issued, BindingMaterialID: bound}
+		for _, resource := range resources {
+			if resource.Kind == "wireguard" && resource.OwnerNodeID == id {
+				device.WireGuardPublicKey = *resource.Authentication.PublicKey
+			}
+		}
 		joined := appendFact("device.join", "device", id, device, bound)
 		for _, resource := range resources {
 			if resource.Kind == "wireguard" && resource.OwnerNodeID == id {

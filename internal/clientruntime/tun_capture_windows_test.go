@@ -4,9 +4,9 @@ package clientruntime
 
 import (
 	"context"
+	"loom/internal/clientadapter"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -17,17 +17,15 @@ func TestOfficialWindowsTUNCaptureCheck(t *testing.T) {
 		t.Skip("set LOOM_SING_BOX_EXECUTABLE for Windows syntax check")
 	}
 	root := t.TempDir()
-	source := strings.NewReplacer("${secret:vault:cred/win01}", "fixture-password",
-		"${secret:api/win01}", "fixture-api").Replace(validWindowsConfig("warn"))
 	for _, profile := range []WindowsRuntimeProfile{WindowsPortableTUNProfile, WindowsPortableMixedProfile} {
 		t.Run(string(profile), func(t *testing.T) {
-			config, err := DeriveWindowsRuntimeConfig([]byte(source), profile, []string{"192.0.2.53"}, nil)
+			config, err := DeriveWindowsRuntimeConfig(windowsViewFixture(t), profile, "demo-api", clientadapter.WebsiteAccess{}, new([]string{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer clear(config)
+			defer config.Clear()
 			if err := PreflightWindowsRuntime(context.Background(), executable, config,
-				filepath.Join(root, "runtime"), profile); err != nil {
+				filepath.Join(root, "runtime")); err != nil {
 				t.Fatal(err)
 			}
 		})

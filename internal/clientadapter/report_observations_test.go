@@ -15,8 +15,8 @@ func reportObservationFixture() []control.Observation {
 		return control.Observation{Level: "service", ServiceID: id, CandidateID: digest, Target: "https://demo.example/probe", Action: "https_request", SpecDigest: digest, NetworkGeneration: "demo-underlay", Result: result, ObservedAt: observed, ValidUntil: until}
 	}
 	return []control.Observation{
-		{Level: "link", LinkID: "demo-link", ResourceID: "demo-wg", Target: "[fdff::2]:53", Action: "wireguard_dns", SpecDigest: digest, NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: 999, ValidUntil: 1001},
-		{Level: "resource", ResourceID: "demo-hy2", Target: "demo.example:443", Action: "hysteria2_tls", SpecDigest: digest, NetworkGeneration: "demo-underlay", Result: "unavailable", ObservedAt: 900, ValidUntil: 1000},
+		{Level: "link", LinkID: "demo-link", ResourceID: "demo-wg", Target: "[fdff::2]:53", Action: "wireguard_echo", SpecDigest: digest, NetworkGeneration: "demo-underlay", Result: "available", ObservedAt: 999, ValidUntil: 1001},
+		{Level: "resource", ResourceID: "demo-hy2", Target: "demo.example:443", Action: "hysteria2_echo", SpecDigest: digest, NetworkGeneration: "demo-underlay", Result: "unavailable", ObservedAt: 900, ValidUntil: 1000},
 		service("demo-a", "available", 1000, 1001),
 		service("demo-b", "unavailable", 990, 1010),
 		service("demo-c", "unknown", 990, 1010),

@@ -23,18 +23,21 @@ class LoomVpnServicePolicyTest {
     }
 
     @Test
-    fun addressFamilyWithoutExplicitRoutesGetsDefaultRoute() {
-        assertEquals(true, requiresDefaultRoute(hasAddress = true, hasExplicitRoute = false))
-        assertEquals(false, requiresDefaultRoute(hasAddress = true, hasExplicitRoute = true))
-        assertEquals(false, requiresDefaultRoute(hasAddress = false, hasExplicitRoute = false))
-    }
-
-    @Test
     fun bootAndUpgradeRestoreOnlyAnAuthorizedRequestedConnection() {
         assertEquals(true, shouldRestoreVpn(Intent.ACTION_BOOT_COMPLETED, true, true))
         assertEquals(true, shouldRestoreVpn(Intent.ACTION_MY_PACKAGE_REPLACED, true, true))
         assertEquals(false, shouldRestoreVpn(Intent.ACTION_BOOT_COMPLETED, false, true))
         assertEquals(false, shouldRestoreVpn(Intent.ACTION_BOOT_COMPLETED, true, false))
         assertEquals(false, shouldRestoreVpn("unexpected", true, true))
+    }
+
+    @Test
+    fun reconnectAfterCommittedFailureCannotReuseTheFailedBoxWhenUiProjectsStarting() {
+        assertEquals(true, canReuseVpnRuntime(true, true, true, ConnectionPhase.STARTING))
+        assertEquals(true, canReuseVpnRuntime(true, true, true, ConnectionPhase.CONNECTED))
+        // Fail-closed commit invalidates the managed runtime before releasing
+        // the locks. A new CONNECT projecting STARTING must create a new Box.
+        assertEquals(false, canReuseVpnRuntime(true, true, false, ConnectionPhase.STARTING))
+        assertEquals(false, canReuseVpnRuntime(true, true, true, ConnectionPhase.ERROR))
     }
 }

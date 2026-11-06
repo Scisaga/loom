@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"loom/internal/clientadapter"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -74,14 +75,15 @@ func TestTUNDNSHy2TargetIdentity(t *testing.T) {
 	body, _ := json.Marshal(receiver)
 	stopReceiver := runRoutingSingBoxAt(t, executable, body, "127.0.0.1:61801")
 	defer stopReceiver()
-	source, _ := decodeWindowsConfig([]byte(validWindowsConfig("")))
-	// The same name is queried by both the TUN application and the underlay.
-	// A leaked synthetic answer here would make the Hy2 connection recurse.
-	source.Outbounds[1] = singBoxOutbound{Type: "hysteria2", Tag: "demo-candidate", Server: "demo-service.example", ServerPort: port, Password: password,
-		TLS: &singBoxTLS{Enabled: true, ServerName: "example.com", Certificate: []string{string(certPEM)}}}
-	source.Route.Rules[0].Rules = append(source.Route.Rules[0].Rules, singBoxRule{IPCIDR: []string{"192.0.2.77/32"}})
+	source := runtimeDocument(t, []byte(captureFixtureConfig()))
+	// This fixture tests only transport DNS/capture mechanics. The application
+	// constructor is separately tested with the current certified View.
+	source["outbounds"].([]any)[1] = map[string]any{"type": "hysteria2", "tag": "demo-candidate", "server": "demo-service.example", "server_port": port, "password": password,
+		"tls": map[string]any{"enabled": true, "server_name": "example.com", "certificate": []string{string(certPEM)}}}
+	rules := source["route"].(map[string]any)["rules"].([]any)[0].(map[string]any)
+	rules["rules"] = append(rules["rules"].([]any), map[string]any{"ip_cidr": []string{"192.0.2.77/32"}})
 	body, _ = json.Marshal(source)
-	body, err = DeriveWindowsRuntimeConfig(body, WindowsPortableTUNProfile, []string{"192.0.2.53"}, nil)
+	body, err = deriveWindowsCapture(string(body), WindowsPortableTUNProfile, []string{"192.0.2.53"}, nil, clientadapter.WebsiteAccess{}, new([]string{}), "demo-api")
 	if err != nil {
 		t.Fatal(err)
 	}

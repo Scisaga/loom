@@ -12,9 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sagernet/quic-go"
 	"loom/internal/clientmodel"
 	"loom/internal/control"
+
+	"github.com/sagernet/quic-go"
 )
 
 func TestResourceTimeoutClassificationRejectsCryptoCancellationAndUnclassifiedErrors(t *testing.T) {
@@ -50,7 +51,9 @@ func TestProcessFailureReportsOnlyExitAndSignal(t *testing.T) {
 
 func TestUnknownRuntimeKeepsComponentsAndOriginalObservationTimes(t *testing.T) {
 	store, _, makeView := linuxAcceptanceFixture(t, func(_ uint64, view *control.DeviceView) {
-		view.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo-service.example/"}}}
+		view.Responsibilities = []string{"access", "internet_egress"}
+		view.Policies[0].LocalEgressDevices = new([]string{view.DeviceID})
+		view.Services[0].ProbeURLs = []string{"https://demo-service.example/"}
 	})
 	lkg := makeView(7, true)
 	if err := store.SaveLKG(lkg); err != nil {
@@ -58,18 +61,31 @@ func TestUnknownRuntimeKeepsComponentsAndOriginalObservationTimes(t *testing.T) 
 	}
 	at := time.Now().UTC().Truncate(time.Second)
 	state := defaultState("demo-network")
+	state.Preference = store.Preference()
 	state.ObservationViewDigest = lkg.ViewDigest
-	state.Observations = []clientmodel.Observation{{CandidateID: lkg.View.Routes[0].ID, Scope: lkg.View.Routes[0].Scope, NetworkGeneration: state.NetworkGeneration,
+	state.Observations = []clientmodel.Observation{{CandidateID: testDeviceExecution(lkg.View).Routes[0].ID, Scope: control.AccessSelectorScope, NetworkGeneration: state.NetworkGeneration,
 		Result: "available", Target: "https://demo-service.example/", Action: "https_request", ObservedAt: at.Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339)}}
-	activation := Activation{State: state, Selections: []SelectionStatus{{CandidateID: lkg.View.Routes[0].ID, Scope: lkg.View.Routes[0].Scope}}}
+	probes, err := control.EgressProbes(lkg.View)
+	if err != nil || len(probes) == 0 {
+		t.Fatal("fixture requires an exit measurement", err)
+	}
+	probe := probes[0]
+	measurements := []control.Observation{{Level: "egress", Target: probe.Target, Action: "https_request", SpecDigest: probe.SpecDigest,
+		NetworkGeneration: state.NetworkGeneration, Result: "available", ObservedAt: at.UnixMilli(), ValidUntil: at.Add(time.Minute).UnixMilli()}}
+	activation := Activation{State: state, Selections: []SelectionStatus{{CandidateID: testDeviceExecution(lkg.View).Routes[0].ID, Scope: control.AccessSelectorScope}}}
 	components, err := linuxComponentReadbacks(context.Background(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	readback := control.RuntimeReadback{State: "unknown", ErrorCode: "resource_readback_timeout"}
-	report, err := selectionReport(context.Background(), lkg, activation, at, components, readback, nil, nil)
-	if err != nil || len(report.Selections) != 0 || report.Runtime.AppliedViewDigest != "" || report.Runtime.Resources != nil || report.WireGuardCounters != nil || !reflect.DeepEqual(report.Components, components) {
+	report, err := selectionReport(context.Background(), lkg, activation, at, components, readback, measurements, nil)
+	if err != nil || len(report.Selections) != 0 || len(report.Observations) != 0 || report.Runtime.AppliedViewDigest != "" || report.Runtime.Resources != nil || report.WireGuardCounters != nil || !reflect.DeepEqual(report.Components, components) {
 		t.Fatal("unknown acquired current application evidence or erased actual component coordinates", err)
+	}
+	readback.PermissionViewDigest = lkg.ViewDigest
+	report, err = selectionReport(context.Background(), lkg, activation, at, components, readback, measurements, nil)
+	if err != nil || len(report.Selections) != 0 || len(report.Observations) != 1 || report.Observations[0].Level != "egress" || report.Runtime.AppliedViewDigest != "" || report.Runtime.Resources != nil {
+		t.Fatal("current permissions lost raw resource measurements or manufactured full-path application", err)
 	}
 	report.Schema, report.NetworkID, report.DeviceID, report.ReportSequence = 3, lkg.NetworkID, lkg.View.DeviceID, 1
 	signed, err := control.SignDeviceReport(report, store.PrivateKey())

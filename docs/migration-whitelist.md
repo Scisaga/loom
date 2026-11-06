@@ -21,8 +21,8 @@ Web、Android 和 Windows 已有的页面、样式、图标、品牌资源及有
 | 规范编码、typed hash、签名与 Merkle | 必需的纯函数 | 仅服务当前 `Material`、`ControlConfig`、`DeviceView` 等规范字节与证明；不连带旧格式 decoder 或 proof 分支。 |
 | 私有 TLS 与设备认证 | TLS/SPKI、设备挑战及 listener adapter | 受限引导和私有设备入口来自认证 `EndpointGeneration`；不自行维护 endpoint 生命周期或从公网提供设备配置。 |
 | HY2/Trojan 数据面 listener 与 relay | 已能真实 bind/accept/dial 的传输代码 | `forward`/`internet_egress` 业务入口、users/ACL 与下一跳由当前认证 `DeviceView`/运行时投影；transport 不决定授权。 |
-| 节点间加密承载 | WG、hy2 或私有 TLS tunnel 的实际连接 adapter | 共享资源来自认证 `NetworkIntent.transport_resources` 中的 `TransportResource`；普通 access 首跳按授权投影，显式 `NetworkLink` 只定义中继邻接；新增节点不自动创建 WG。不得为差量同步、报告和业务各建一份链路权威。 |
-| sealed artifact 与 capability 限额 | 不可重算秘密的原子保存、持久消费计数 | 只执行当前 Artifact 或 BootstrapCapability 的既定语义，不形成第二套授权或状态机。 |
+| 节点间加密承载 | WG、hy2 或私有 TLS tunnel 的实际连接 adapter | 共享资源来自认证 NetworkIntent.resources；首跳与中继按职责、资源及 Policy 派生，不维护人工 Link 权威；新增 access 不创建专属 WG。不得为差量同步、报告和业务各建一份链路权威。 |
+| 制品验签与受限邀请交付 | 摘要、签名、受众校验及同事务身份/请求的原子保存 | 制品由签名发布记录限定，短邀请凭据由原 Invite 签名派生；不建立额外 capability 权威、消费 store 或完成状态。 |
 | 公网静态站点与制品发布 | fake website、不可变 Nginx renderer、按精确对象写入及回读 | 公开范围只由认证投影决定；不公开设备 view、配置或 secret，也不由 publisher 自选 latest。 |
 | 纯渲染与运行安装 | 确定性配置、preflight、apply/readback、精确回滚 | 输入来自当前认证 `Projection`/`DeviceView`；删除旧配置兼容分支和重复 runtime store。 |
 | 客户端安全存储 | 平台密钥、证书、floor、latch 与完整 LKG 的原子保存 | 只保存当前认证对象；不恢复旧网络 fallback、旧 scheduler 或重复 LKG。 |
@@ -36,7 +36,8 @@ Web、Android 和 Windows 已有的页面、样式、图标、品牌资源及有
 现网身份、密钥与证书、业务数据、已认证原始字节、不可回退 floor、v2 latch、设备完整 LKG 及实际部署坐标
 必须保全。源码和文档的整理不授权清空、降低、改写或静默重解释这些值。
 
-保护原始状态不等于允许当前 daemon 解码或接受旧格式 Material、旧设备协议或旧投影分支。
+保护原始状态不等于保留旧业务模型、旧偏好结构或允许旧执行 fallback。
+历史 schema 3 原件仅按现行契约已明确限定的历史验签与因果依赖例外处理；不能由此恢复旧协议。
 若现网状态不能按[唯一现行契约](core/current-contract.md)验证，当前加载与新写入失败关闭；
 生产切换保持受阻，所需的身份、信任与 floor 处理以及验证和回读方案另由用户明确决定。
 本白名单不定义 importer、历史重放或自动生成替代 genesis。

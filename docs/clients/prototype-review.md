@@ -4,7 +4,10 @@
 
 Web、Android、Windows 的目标原型均依据用户明确要求与现行模型制定。已有实现和原生截图用于核对
 有效交互、视觉延续和实现差距，不限定目标流程、业务状态、文案或场景数量。原型与模型不一致时，
-应在设计审查中明确修订；实现完成由正式业务入口和运行回读验证，原生截图负责视觉验证。
+应按当前需求修订原型与说明，不能据旧字段或截图要求保留旧模型。互联网 Service 只保存
+网址与限制开关，客户端当前选一条 Policy 并唯一确定 Service；现有包含 Destinations、独立
+Probe 页面或按服务策略选择的 SVG 是待修订设计资产，不是现行契约。此轮文档审计未重绘 SVG。
+实现完成由正式业务入口和运行回读验证，原生截图负责视觉验证。
 SVG 是可编辑的界面沟通稿，不读取 wire 或持久状态，也不参与客户端或 control 的运行判断：
 
 ```text
@@ -72,11 +75,11 @@ manifest 与签名下载均已核对，见[交付对账](../delivery-audit.md)�
 | 滚动条 | 轨道与滑块右缘贴住窗体内缘 `x=875.5`，不留额外右边距；正文留白独立保留 |
 | 滚动底界 | 内容裁切和轨道延伸到窗体内底缘 `y=613.5`；24 DIP 末尾留白属于可滚动内容，不得形成固定底部空带 |
 | 操作控件 | 正文按钮、输入框、出口选择统一高 32 DIP、圆角 8 DIP；系统标题栏和图标按钮单独布局 |
-| 服务策略 | 沿用同一区域的原生选择器；选项注明服务、策略与该服务当前选择，授权集合和实际路径分开 |
+| 服务策略 | 沿用同一区域的原生选择器；选择当前一条互联网 Policy，并显示其所属 Service；授权集合、保存意图与实际路径分开 |
 | 描边 | 需要描边的控件及分隔线 0.75 DIP；路径和普通图标 1 DIP；状态图标 1.25 DIP |
 | 文字层级 | 页面标题 20 DIP、分组标题 14 DIP、正文与控件 12 DIP、说明 11 DIP |
 
-按服务的策略选择和辅助说明在同一区域对齐；路径行的名称、观测摘要及状态垂直居中对齐，
+当前 Policy 及其所属 Service 的说明在同一区域对齐；路径行的名称、观测摘要及状态垂直居中对齐，
 节点与标签的距离一致。加入表单沿用同一控件和间距尺度，空状态、错误状态使用相同操作位置。
 减少重复边框和无意义留白，不能通过删掉证据、状态、入口或缩小视口来获得整齐效果。
 
@@ -187,7 +190,7 @@ Topology 的全网方向统计置于页头，桌面图与详情接近等宽、�
 
 文件沿用两位资源组号 `01` 至 `09`：主页面用 `<组号>-<导航名>.svg`，
 子页面和状态稿用 `<组号>-<导航名>-<场景>.svg`。本轮访问配置相关原型的顶栏将 Services、Policies 合并为
-Access configuration，内部固定为 Services、Policies、Private DNS、Probe targets 四个同级视图；
+Access configuration，内部保留 Services、Policies、Private DNS 三个视图；旧 Probe 页面退出目标，网址归 Service；
 保留 `05`、`06` 文件名以维持已有原型链接。无管理导航的私有入口仍为 `10-entry-guest.svg`。
 正式界面沿同一访问配置分组实现，保留 `/services`、`/policies` URL 和既有权威对象；
 部署及实际入口回读仍以实施状态为准。
@@ -420,18 +423,18 @@ Access configuration 的四个视图及 `07` 至 `09` 的管理稿沿用这种�
 共享保存影响引用，复制另存不改原对象。LAN 状态选中既有 office-lan，终点仍是 relay-west。
 新建状态以 private-app 的 demo-private-access 为未保存草稿：allow、普通 Direct 和路径不限作为
 新建默认。草稿不增加目录已保存的三条策略，也不自动分配给任何设备。
-Services 右侧按配置、共享影响与保存、关联策略、只读授权匹配探测目标排列；关联回读基于已保存配置，
+Services 右侧编辑预期服务的网址及限制开关，保留共享影响、保存与关联策略；回读基于已保存配置，
 不因编辑草稿而被当作新规则已生效。DNS 将保留名的两个入口答案归入一行，来源和只读性跟随记录，
 名称总数与自定义记录数分开；普通记录在原位编辑，保留多 A/AAAA 地址，解析观测仍为 unknown。
-Probe targets 使用独立共享池列表与新增、编辑、删除确认状态，使用情况只是只读投影；不从设备路径
-反推目标池完整性，也不以池内存在或匹配关系生成可用观测。
+旧 Probe targets 独立列表及 CRUD 原型退出目标范围；Service 内直接编辑网址，不再维护
+稳定目标 ID、匹配表或独立页面。保留该 SVG 只能作为历史设计对照，不能据其恢复旧入口。
 
-本轮访问配置目标稿共七张，使用 `role="document"` 保留浏览器中的链接导航；其他原型和正式页面不在
+该次历史访问配置稿共七张，其中独立 Probe 稿已退出当前目标；使用 `role="document"` 保留浏览器中的链接导航；其他原型和正式页面不在
 本次布局修订范围。DNS 合成场景改为 3 个名称、1 个系统名、2 条自定义记录、5 个答案：`control.loom`
 含两个 IPv4 入口，`demo-printer.loom` 仍关联 office-network 且只有 IPv4，独立的 `demo-app.loom`
 同时有 IPv4/IPv6 并默认展开编辑。新增双栈场景只检验多答案表达，不改写原生产记录或历史验收。
 策略使用 Paths through Loom 标题组织入口、中间转发与最终出口，Direct 仍是独立许可。
-本轮审阅覆盖四视图往返、完整目录与分组、共享影响、DNS 多答案、未使用/未匹配探测目标及其操作场景；
+该次历史审阅覆盖原四视图往返、完整目录与分组、共享影响、DNS 多答案、Service 内网址与限制开关的操作场景（旧独立探测稿须修订）；
 生成文件和固定场景演示不表示正式写入、运行消费或部署已经完成。
 
 发布目录固定为 generation 42，共九个已验签精确文件，每平台三个；三张图的选中文件均未声明最低
@@ -472,10 +475,10 @@ Configuration state；普通同对象显式解决已完成正常浏览器、签�
 | Device detail | [统一设备详情](../../assets/control-center/02-nodes-detail.svg) | 同一页组合服务权限、当前路径、转发资源、LinkID、RX／TX 与局域网服务；身份和设备操作共用 |
 | Topology | [topology](../../assets/control-center/03-topology.svg) | 双圈拓扑、独立 WG/hy2 观测；选中连线及逐链路的延迟、实测速率、RTT 波动和历史流量 |
 | Live paths | [服务与设备](../../assets/control-center/04-live-paths.svg) · [路径详情](../../assets/control-center/04-live-paths-detail.svg) | 两层；左侧服务导航、右侧设备表；详情含候选/历史页签及 LAN 范围 |
-| Services | [互联网服务](../../assets/control-center/05-services.svg) · [局域网服务](../../assets/control-center/05-services-lan.svg) | 统一目录；互联网目标或 LAN 网关及地址映射；从设备授权回读使用者，无全局 Policy 选择器 |
-| Policies | [互联网策略](../../assets/control-center/06-policies.svg) · [新建](../../assets/control-center/06-policies-new.svg) · [LAN 策略](../../assets/control-center/06-policies-lan.svg) | 策略固定所属服务；允许/拒绝、范围模式及引用节点明确；完整编辑与复制在此完成 |
+| Services | [互联网服务](../../assets/control-center/05-services.svg) · [局域网服务](../../assets/control-center/05-services-lan.svg) | 统一目录；互联网网址及限制开关，或 LAN 网关及地址映射；从设备授权回读使用者，无全局 Policy 选择器 |
+| Policies | [互联网策略](../../assets/control-center/06-policies.svg) · [新建](../../assets/control-center/06-policies-new.svg) · [LAN 策略](../../assets/control-center/06-policies-lan.svg) | 策略固定所属服务；新写入仅 allow，路径范围及引用节点明确；历史 deny 只读；完整编辑与复制在此完成 |
 | Private DNS | [私有名称与编辑](../../assets/control-center/05-services-dns.svg) | 系统与自定义来源、名称与自定义计数、多 A/AAAA 答案；保留名只读 |
-| Probe targets | [共享 HTTPS 目标池](../../assets/control-center/05-services-probes.svg) | 独立查看、新增、编辑与删除；未使用或未匹配目标保留，授权匹配与真实观测分别回读 |
+| 已退役的独立 Probe 页面 | [旧设计对照](../../assets/control-center/05-services-probes.svg) | 不再是目标页面；网址与限制开关归 Service，旧 SVG 不构成实现依据 |
 | Device versions | [device versions](../../assets/control-center/07-releases-deployments.svg) | 按设备对照期望与实报摘要；不一致行原位展开，未知逐行说明原因 |
 | Events | [events](../../assets/control-center/08-events.svg) | 单行筛选、72h / 10min 类型堆叠柱状图、三列历史；展开事件说明当时影响，再链接当前对象状态 |
 | Administration | [控制节点](../../assets/control-center/09-administration.svg) · [管理员](../../assets/control-center/09-administration-administrators.svg) · [网站证书](../../assets/control-center/09-administration-certificates.svg) · [配置状态](../../assets/control-center/09-administration-configuration.svg) | 四项左侧导航；成员与同步分离，管理员公开叶授权，网站证书手工续签，原位解决配置冲突 |
@@ -558,9 +561,9 @@ Add Device 的三种媒介共用 880 px 宽的居中纵向表单，标题与字�
 这种页面选择只是 UI 展示，不新增领域、wire、持久或运行时状态。
 
 其余流程沿用相同方式：权限编辑、重新添加、添加交付、SSH 执行结果、操作反馈、LAN
-服务创建和无 admin 私有入口使用纵向内容；Services、Policies、Private DNS、Probe targets 的目录/记录查询部分保留，
+服务创建和无 admin 私有入口使用纵向内容；Services、Policies、Private DNS 的目录/记录查询部分保留，
 Services 与 Policies 的整个编辑区置于一个主要内容面板，内部字段与章节保持平铺；Private DNS 与
-Probe targets 的原位编辑留在同一个记录面板内，以浅底区分草稿，不再另加编辑卡片。只读身份不伪装成可编辑输入，删除操作与主保存按钮分开，当前事实、
+Service 内的网址及限制开关在原编辑面板表达，以浅底区分草稿，不增加独立目标编辑卡片。只读身份不伪装成可编辑输入，删除操作与主保存按钮分开，当前事实、
 未提交草稿及待回读结果保留各自语义。流程页不强制等高，不以另一张说明卡填补留白。
 列表和监测页面保留面板式布局。Nodes 在每行并列状态采样条与 RX／TX 小柱图；Topology 增加选中链路
 的三项测量，连线数字使用无背景、无边框的纯文字。链路表按链路、当前度量、状态历史、传输历史四列
@@ -574,7 +577,7 @@ Services 与 Policies 使用约 300 px 的浅底目录，每项名称与摘要�
 右侧使用单一白底编辑面板。目录内边距约 20 px，主内容内边距约 24 px，相邻区域留 24 px；
 细边框与 10 px 圆角区分区域，不加阴影。Service 按“配置 → 共享影响与保存 → 关联策略 → 探测回读”归组；Policy 把访问决定、
 独立 Direct、入口 → 中继 → 最终出口和高级限制分开，LAN 终点只读固定网关。删除与主保存分开。
-Private DNS、Probe targets、Device versions、Events 和 Administration 使用对象列表与原位展开内容；
+Private DNS、Device versions、Events 和 Administration 使用对象列表与原位展开内容；
 筛选只出现一次，状态、依据和关联入口跟随对应对象，不再旁置通用规则卡。
 Administration 的四个视图共用浅底导航面板及单一白底主内容面板，原有表格、续签、授权和冲突审阅
 在其内部以章节分隔；容器不代表新的领域对象或操作状态。以上调整只影响视觉分组，不改变 Policy
@@ -603,7 +606,7 @@ Overview 为 `1586×1140`，Nodes 为 `1586×1120`，Topology 为 `1586×1840`�
 一次粘贴脚本交付稿高 1112，为完整命令、历史风险提示与后续入口分别保留空间。
 Live paths 的服务与设备合并页高 864、路径详情高 1224，宽均为 1586；同页服务切换、筛选和详情页签共用对应文件。
 Services 高 1208、LAN Service 高 1184；Policies 高 1504、新建高 1344、LAN Policy 高 1576；
-Private DNS 高 1400，Probe targets 高 1160；Linux / Android Releases
+Private DNS 高 1400；旧 Probe 稿的尺寸仅作历史资产信息；Linux / Android Releases
 高 1150，Windows 无目标场景高 1060，Device versions 高 1240；Events 高 1552；Administration 的
 控制节点高 984、管理员高 1160、网站证书高 1192、配置状态高 1224。同页结果共用对应视图高度。
 页面宽度均为 1586，不为凑齐统一高度添加无关面板。

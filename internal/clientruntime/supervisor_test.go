@@ -4,6 +4,7 @@ package clientruntime
 
 import (
 	"context"
+	"loom/internal/clientadapter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,16 +22,12 @@ func TestRunWindowsDataPlanePreflightsAndStopsChild(t *testing.T) {
 	runtimeDir := filepath.Join(root, "runtime")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	source := strings.NewReplacer(
-		"${secret:vault:cred/win01}", "fixture-password",
-		"${secret:api/win01}", "fixture-api",
-	).Replace(validWindowsConfig("warn"))
-	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, nil, nil)
+	config, err := DeriveWindowsRuntimeConfig(windowsViewFixture(t), WindowsPortableMixedProfile, "demo-api", clientadapter.WebsiteAccess{}, new([]string{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() {
-		done <- RunWindowsDataPlane(ctx, executable, []byte(config), runtimeDir)
+		done <- RunWindowsDataPlane(ctx, executable, config, runtimeDir, runtimeDir, nil)
 	}()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -81,17 +78,13 @@ func TestRunWindowsDataPlaneRemovesStalePlaintextConfigBeforeStart(t *testing.T)
 	if err := os.WriteFile(stale, []byte("old secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	source := strings.NewReplacer(
-		"${secret:vault:cred/win01}", "fixture-password",
-		"${secret:api/win01}", "fixture-api",
-	).Replace(validWindowsConfig("warn"))
-	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, nil, nil)
+	config, err := DeriveWindowsRuntimeConfig(windowsViewFixture(t), WindowsPortableMixedProfile, "demo-api", clientadapter.WebsiteAccess{}, new([]string{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- RunWindowsDataPlane(ctx, executable, []byte(config), runtimeDir) }()
+	go func() { done <- RunWindowsDataPlane(ctx, executable, config, runtimeDir, runtimeDir, nil) }()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		entries, _ := os.ReadDir(runtimeDir)
@@ -129,20 +122,16 @@ while :; do sleep 1; done
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	source := strings.NewReplacer(
-		"${secret:vault:cred/win01}", "fixture-password",
-		"${secret:api/win01}", "fixture-api",
-	).Replace(validWindowsConfig("warn"))
-	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsPortableMixedProfile, nil, nil)
+	config, err := DeriveWindowsRuntimeConfig(windowsViewFixture(t), WindowsPortableMixedProfile, "demo-api", clientadapter.WebsiteAccess{}, new([]string{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clear(config)
+	defer config.Clear()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	runtimeDir := filepath.Join(root, "runtime-mixed")
 	go func() {
-		done <- RunWindowsDataPlaneProfile(ctx, executable, config, runtimeDir, WindowsPortableMixedProfile)
+		done <- RunWindowsDataPlane(ctx, executable, config, runtimeDir, runtimeDir, nil)
 	}()
 	deadline := time.Now().Add(3 * time.Second)
 	for {

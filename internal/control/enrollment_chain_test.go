@@ -82,7 +82,7 @@ func TestEnrollmentClaimResumeAndPublicPolicyChange(t *testing.T) {
 	if err := DecodeCanonical(response.Body.Bytes(), &enrollment, ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}); err != nil {
 		t.Fatal(err)
 	}
-	if enrollment.State != "completed" || enrollment.DeviceView == nil || len(enrollment.DeviceView.View.Routes) != 1 {
+	if enrollment.State != "completed" || enrollment.DeviceView == nil || len(testDeviceExecution(enrollment.DeviceView.View).Routes) != 1 {
 		t.Fatal("claim did not produce the actual authorized Direct view")
 	}
 	authorization := server.Runtime.Authority.Snapshot().DeviceAuthorizations[0]
@@ -129,7 +129,7 @@ func TestEnrollmentClaimResumeAndPublicPolicyChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.View.Routes) != 0 || view.View.RuntimeProfile == nil {
+	if len(testDeviceExecution(view.View).Routes) != 0 || testDeviceExecution(view.View).RuntimeProfile == nil {
 		t.Fatal("removal did not produce a valid deny-only runtime")
 	}
 	put.RequestID = "demo-regrant-policy"
@@ -264,7 +264,7 @@ func TestObservationMonotonicPersistenceAndForkEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := DeviceReport{Schema: 3, NetworkID: server.Runtime.Config.NetworkID, DeviceID: invite.DeviceID, ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: server.now().UnixMilli(), Selections: []ReportSelection{{ServiceID: "demo-service", CandidateID: view.View.Routes[0].ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest, ErrorCode: ""}, Components: []ComponentReadback{}}
+	report := DeviceReport{Schema: 3, NetworkID: server.Runtime.Config.NetworkID, DeviceID: invite.DeviceID, ReportSequence: 1, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: server.now().UnixMilli(), PolicyID: "demo-policy", Selections: []ReportSelection{{ServiceID: "demo-service", PolicyID: "demo-policy", CandidateID: testDeviceExecution(view.View).Routes[0].ID}}, Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest, ErrorCode: ""}, Components: []ComponentReadback{}}
 	report, err = SignDeviceReport(report, key)
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +411,7 @@ func TestInitialControlBindsItsOwnDeviceIdentityWithoutChangingMembership(t *tes
 	target, _ := result.Projection.CurrentTarget("device", invite.DeviceID)
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-initial-ordinary-revoke", Operation: "device.revoke", TargetKind: "device", TargetID: invite.DeviceID, Dependencies: target.MaterialIDs, Payload: DeleteTarget{ID: invite.DeviceID}})
 	view, err = server.deviceEnvelope(invite.DeviceID)
-	if err != nil || len(view.View.Responsibilities) != 1 || view.View.Responsibilities[0] != "control" || view.View.DevicePublicKey != signed.DevicePublicKey || view.View.RuntimeProfile != nil {
+	if err != nil || len(view.View.Responsibilities) != 1 || view.View.Responsibilities[0] != "control" || view.View.DevicePublicKey != signed.DevicePublicKey || testDeviceExecution(view.View).RuntimeProfile != nil {
 		t.Fatal("ordinary revocation changed the genesis member's separate device identity", err)
 	}
 }

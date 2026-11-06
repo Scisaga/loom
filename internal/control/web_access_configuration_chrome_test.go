@@ -63,11 +63,11 @@ func TestWebChromeAccessConfigurationNavigationFiltersAndResponsiveEditors(t *te
 	anyScope := PolicyScope{Mode: "any", NodeIDs: []string{}}
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-access-ui-lan-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-office-policy", Dependencies: []string{lan.MaterialID}, Payload: NetworkPolicy{ID: "demo-office-policy", Name: "Demo office access", ServiceID: "demo-office", Action: "allow", EntryScope: anyScope, RelayScope: anyScope}})
 	second := authorityService("demo-api", "demo-access-ui-api")
-	second.Payload = Service{ID: "demo-api", Name: "Demo API", Kind: "internet", Matchers: []ServiceMatcher{{Kind: "dns_exact", Value: "demo-api.example"}, {Kind: "ip_prefix", Value: "198.51.100.0/24"}}}
+	second.Payload = Service{ID: "demo-api", Name: "Demo API", Kind: "internet", RestrictToProbeTargets: new(false)}
 	api := submitAuthority(t, server.Runtime, second)
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-access-ui-api-policy", Operation: "policy.put", TargetKind: "policy", TargetID: "demo-api-policy", Dependencies: []string{api.MaterialID}, Payload: NetworkPolicy{ID: "demo-api-policy", Name: "Demo API access", ServiceID: "demo-api", Action: "allow", EntryScope: anyScope, RelayScope: anyScope, ExitScope: &anyScope, AllowDirect: new(true), LocalEgressDevices: new([]string{})}})
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-access-ui-dns", Operation: "dns_record.put", TargetKind: "dns_record", TargetID: "demo-console-record", Dependencies: []string{}, Payload: DNSRecord{ID: "demo-console-record", Name: "demo-console.loom", Addresses: []string{"192.0.2.42", "2001:db8::42"}}})
-	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-access-ui-probe", Operation: "probe_target.put", TargetKind: "probe_target", TargetID: "demo-service-health", Dependencies: []string{}, Payload: BusinessProbeTarget{ID: "demo-service-health", URL: "https://demo-service.example/health/" + strings.Repeat("demo", 32)}})
+	setServiceProbeURLs(t, server.Runtime, "demo-service", "demo-access-ui-probe", "https://demo-service.example/health/"+strings.Repeat("demo", 32))
 	host := httptest.NewServer(server.AdminHandler())
 	defer host.Close()
 	debug := openCommandChrome(t, host.URL+"/services?service=demo-service")
@@ -76,7 +76,7 @@ func TestWebChromeAccessConfigurationNavigationFiltersAndResponsiveEditors(t *te
 
 	assertNavigation := func(href string) {
 		t.Helper()
-		waitChromeEvaluation(t, debug, fmt.Sprintf(`(()=>{const tabs=[...document.querySelectorAll('.intent-tabs a')],active=tabs.filter(a=>a.getAttribute('aria-current')==='page'),main=[...document.querySelectorAll('header nav a[aria-current="page"]')];return tabs.length===4&&active.length===1&&active[0].getAttribute('href')===%q&&main.length===1&&main[0].getAttribute('href')==='/services'&&!document.querySelector('header nav a[href="/policies"]')})()`, href))
+		waitChromeEvaluation(t, debug, fmt.Sprintf(`(()=>{const tabs=[...document.querySelectorAll('.intent-tabs a')],active=tabs.filter(a=>a.getAttribute('aria-current')==='page'),main=[...document.querySelectorAll('header nav a[aria-current="page"]')];return tabs.length===3&&active.length===1&&active[0].getAttribute('href')===%q&&main.length===1&&main[0].getAttribute('href')==='/services'&&!document.querySelector('header nav a[href="/policies"]')})()`, href))
 	}
 	clickTab := func(href string) {
 		t.Helper()
@@ -84,10 +84,10 @@ func TestWebChromeAccessConfigurationNavigationFiltersAndResponsiveEditors(t *te
 		assertNavigation(href)
 	}
 	assertNavigation("/services")
-	for _, href := range []string{"/policies", "/services?tab=dns", "/services?tab=probes"} {
+	for _, href := range []string{"/policies", "/services?tab=dns"} {
 		clickTab(href)
 	}
-	for _, href := range []string{"/services?tab=dns", "/policies", "/services"} {
+	for _, href := range []string{"/policies", "/services"} {
 		chromeDo(t, debug, `history.back();true`)
 		assertNavigation(href)
 	}
@@ -128,7 +128,6 @@ func TestWebChromeAccessConfigurationNavigationFiltersAndResponsiveEditors(t *te
 		{"services", "/services?service=demo-api", "#service-form"},
 		{"policies", "/policies?policy=demo-policy", "#policy-form"},
 		{"dns", "/services?tab=dns&record=demo-console-record", "#dns-record-form"},
-		{"probes", "/services?tab=probes&target=demo-service-health", "#probe-target-form"},
 		{"live-paths", "/routing?service=demo-service", ".paths-devices"},
 		{"administration-controls", "/ssot?section=controls", ".administration-content"},
 		{"administration-administrators", "/ssot?section=administrators&add=1", ".administration-content"},

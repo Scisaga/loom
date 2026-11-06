@@ -10,9 +10,9 @@
 |---|---|---|
 | 控制事实 `Material` | 一份规范签名的不可变事实；绑定网络、签发 control 及验证键、引用的成员表、该键连续序列与前哈希、因果依赖、稳定目标和操作。操作限于设备（含组合申请 control 时的条件授权事实）、网络意图、管理员证书、私有入口、Invite 生命周期与冲突解决。接收只判定事实自身及其声明依赖；设备授权携带的 `RuntimeKey` 使 Material 含秘密，只在 control 间加密同步。 | 当前 `Projection` 从有效事实与成员表确定性重建，不另存可写副本；依赖之外的并发事实只影响是否生效，不影响接收。 |
 | control 成员 `ControlConfig` | 首个受保护信任锚及引用前驱摘要的成员表链；后继表按全序轮次由旧成员在同一轮次多数签名，只封存失去资格的验证键；逐轮计算可能选定项后，仅在最高轮提案唯一时继承，同轮多个不同提案仍可能已选定则补取证据，封存点及 tip 摘要由首次合法提案所引多数签名前缀报告和完整原始事实链证明，后轮安全继承时不重算。增员证书绑定 Invite/事务 ID、目标设备 ID、首次 claim 的公钥，以及非 control 职责所需的条件授权事实 ID，并直接完成该事务；成员不变的作废证书绑定事务 ID 与取消/到期原因，阻止迟到增员。整体删除 control 节点时同一多数载荷带不可复活墓碑。只有成员表赋予 `control` 职责。 | 多数派从成员集合计算，不保存冗余阈值、连接或健康状态；整体删除原子收口其他职责和依赖。诚实成员遵守持久投票规则时防止分叉，不防御单个被攻破的 control。 |
-| 网络意图 `NetworkIntent` | 节点、稳定且不随每台设备参与而改写的 `TransportResource`、Service、Policy、共享 HTTPS 探测目标、精确 `.loom` DNS、局域网映射、公开信任材料和期望组件均随各自稳定 ID 的规范事实更新；不以全量 `network.update` 或全局 `base_head` 覆盖并发变化。 | 普通 access 首跳由授权及共享资源投影；中继候选引用 LinkID；观测按 Service、底层网络代与实际依赖摘要记录，不因无关事实变化全网失效。 |
+| 网络意图 `NetworkIntent` | 节点、稳定且不随每台设备参与而改写的 `TransportResource`、Service（含网址与限制开关）、Policy、精确 `.loom` DNS、局域网映射、公开信任材料和期望组件均随各自稳定 ID 的规范事实更新；不以全量 `network.update` 或全局 `base_head` 覆盖并发变化。 | 普通 access 首跳由授权及共享资源投影；中继候选引用 LinkID；观测按 Service、底层网络代与实际依赖摘要记录，不因无关事实变化全网失效。 |
 | 私有入口与 Invite | `EndpointGeneration` 定义入口身份和生命周期，只由承载它的 control 签发，承载者失去 control 资格时一并退出；Invite 是 control 签名的一次性受限能力，固定发行者、首次信任锚、目标设备、职责与授权。首次 claim 只由发行者处理；纯 `access` 使用二维码，含其他职责使用 SSH/sh 脚本，三处入口均校验职责与媒介匹配。 | 已加入设备以设备身份使用认证管理通道；入口可达不授予成员或业务权限；`control.loom` 解析为 web 模式入口。 |
-| 设备授权与视图 | `DeviceAuthorization` 是签名事实的有效结果，`PolicyIDs` 保存设备获准选择的策略集合，每条 Policy 固定属于一个 Service，同服务可授权多条；客户端 Preference 按服务当前最多选择一条；Service 不绑定全局 Policy，业务授权来自所分配的 allow Policy；普通职责由有效 control 单签，`control` 只由成员表投影。`DeviceView` 由有效 control 对设备相关配置、成员证明和事实前沿签名；设备原子保存信任绑定、完整 LKG、不可回退 latch 与单调的已见高水位。连续多数证书仅可对明确封存的键把新 View 验收前沿降至封存序列，原高水位与 latch 保留，旧 LKG 只在验收失败时保留，成功时原子替换唯一 LKG；留任 control 在证书验收前已持久接受且可验证的超限撤权自动重签，原始证据全失时可能复权，必须标记可见差异和剩余未知风险。其他键、成员链和既有全局认证 floor 不回退。 | 运行时、报告和 UI 仅从获授权的视图与真实观测生成；不能由视图、报告或颜色倒写权威。 |
+| 设备授权与视图 | `DeviceAuthorization` 是签名事实的有效结果，`PolicyIDs` 保存设备获准选择的策略集合，每条 Policy 固定属于一个 Service，同服务可授权多条；客户端当前选择一条互联网 Policy，并由其唯一确定 Service；Service 不绑定全局 Policy，业务授权来自所分配的 allow Policy；普通职责由有效 control 单签，`control` 只由成员表投影。`DeviceView` 由有效 control 对设备相关配置、成员证明和事实前沿签名；设备原子保存信任绑定、完整 LKG、不可回退 latch 与单调的已见高水位。连续多数证书仅可对明确封存的键把新 View 验收前沿降至封存序列，原高水位与 latch 保留，旧 LKG 只在验收失败时保留，成功时原子替换唯一 LKG；留任 control 在证书验收前已持久接受且可验证的超限撤权自动重签，原始证据全失时可能复权，必须标记可见差异和剩余未知风险。其他键、成员链和既有全局认证 floor 不回退。 | 运行时、报告和 UI 仅从获授权的视图与真实观测生成；不能由视图、报告或颜色倒写权威。 |
 | 发布记录 | 发布签名密钥签署的不可变 release catalog 与制品 manifest；规范签名负载包含 schema 3、单调发布 generation，以及每项的组件 ID、目标平台、制品摘要、长度、媒体类型、受众、版本和可选最低兼容版本，签名覆盖所有这些字段及规范排序。发布私钥引用来自 `LocalDeploymentConfig.signing_key`（部署 YAML 的 `signing_key`）；验签公钥由验证方受保护的安装信任输入固定，发布前须与签发密钥的公钥核对，不从待验 catalog 或 Web 响应取得。签名 release store 独立于控制事实；可变 `current` 指针只定位待验 catalog。 | `Projection` 只按摘要引用期望组件；Web 仅展示验签且逐文件核验通过的 catalog。公网 Nginx 只分发受众为通用公开的制品；设备与节点报告实际运行坐标，只有报告与期望摘要相符才能显示已应用。 |
 | 客户端本机值 | `DeviceIdentity` 私钥与信任绑定、已见 floor、完整 LKG、唯一 `Preference`，以及 Android/Windows 保存用户命名、稳定本机 ID 与恢复意图的 profile catalog；各自严格 schema、原子持久往返。 | 候选、Selection 与 UI 每次从这些值和宿主回读重建；这些值不作为网络权威上传。 |
 | 本机部署输入 | [配置模型](../operations/configuration-model.md)规定的 `.env` 文件引用与唯一部署 YAML；可选键缺席时不写该行，密钥和证书正文留在受保护本机输入。 | 只生成本次部署计划与脱敏结果，不保存 control 或 DNS overlay 的第二份事实。 |
@@ -80,7 +80,7 @@ envelope、Invite 与 claim/resume、设备 report——统一使用 schema **3*
 | `Material` | 网络、签发 control 与验证键、所引成员表、该键序列和前事实 ID、因果依赖、稳定目标、操作及对应内容、签名；genesis 固定初始成员、网络意图和管理员信任。 | 下方固定普通授权链的操作、ID、签名及规范字节，以及 genesis、初始成员表和 NetworkIntent 外层；DNS/LAN 分配、发布期望与其他普通对象采用本文对应章节的唯一规范值，不用全量 network.update 代替。 | 管理 operation、事实同步、持久重建与运行消费的已验范围见实施状态；字段表不抵扣正式验收。 |
 | 成员承诺、投票、证书 | 基础表、轮次、发起者、成员、完整投票史、按键已验证前缀、后继提案、封存点和同轮多数签名。 | 初始表、内容 ID、完整后继载荷及历史／前缀／签名集合的字段与排序见下文；非空后继与初始表共用连续证明验证，持久原件和正式入口见控制模型。 | control 加入、移除、换键及离线设备验证连续成员证明需要相同的签名字节；不能用初始表代替后继证明。 |
 | `NetworkIntent` 内的 `TransportResource` | 稳定资源 ID、种类、承载节点、interface/listener 身份、拨号坐标和公开认证参数；共享首跳与中继复用同一资源，私钥留在本机。 | 下方固定资源公共字段及 Hy2 的 CA/校验名、凭据和接收端 ACL 投影；WG 的普通设备参与身份和地址投影、各 Link 真实探测动作仍须与 adapter 入口核对。真实执行以实施状态为准。 | WG、Hy2、私有 TLS 的真实身份校验、资源复用和参数变化后的观测失效；无公网域名不能成为关闭 Hy2 验签的理由。 |
-| 设备授权内的 `RuntimeKey` 与凭据派生 | 只在 control 间保管根密钥；派生绑定设备、Service、Policy、用途、资源和接收节点，不向设备交付根密钥。 | 下方固定 32 字节根密钥、HKDF-SHA256、最小 info、输出及执行失败收口，不用整份授权/Policy 摘要引入无关换钥。资源认证值及实际凭据/ACL 替换仍须完成；现网旧凭据不能直接解释为新凭据。 | 同一授权在客户端与服务节点产生匹配且用途隔离的凭据；撤权、策略替换或换钥后旧凭据的拒绝不能依赖旧派生规则。 |
+| 设备授权内的 `RuntimeKey` 与凭据派生 | 只在 control 间保管根密钥；派生绑定实际发送节点、网络、传输用途、资源认证材料及接收节点，不向设备交付根密钥。 | 下方固定 32 字节根密钥、HKDF-SHA256、最小 info、输出及执行失败收口，不用整份授权/Policy 摘要引入无关换钥。资源认证值及实际凭据/ACL 替换仍须完成；现网旧凭据不能直接解释为新凭据。 | 同一授权在客户端与服务节点产生匹配且用途隔离的凭据；撤权、策略替换或换钥后旧凭据的拒绝不能依赖旧派生规则。 |
 | `DeviceView` 与 envelope | 单设备配置、签发者资格、连续成员证明、签发者事实前沿、View 摘要、设备绑定与签名。 | 下方固定普通互联网授权的外层字段、摘要和设备绑定；连续成员证明及服务节点执行回读仍是完整 writer 的前置。 | 配置领取、认证 LKG 原子保存、离线恢复与运行消费须验证同一完整 View，不能拼接或补造缺项。 |
 | Invite、claim、resume | Invite 的签发者/锚/设备/职责/PolicyIDs/入口/一次性约束；首次 claim 的设备公钥、目标端识别的平台与 request ID；Invite 不预锁平台，平台随绑定事实及设备授权签名；resume 同事务同密钥同平台。 | 下方固定普通加入的交付、请求、绑定与响应；申请 control 的条件授权及多数后继使用本文固定的成员消息与原绑定引用。 | SSH、脚本与二维码共用加入协议；目标平台绑定、同事务恢复和重复提交拒绝需要统一字节。 |
 | 设备 report 与逐条 Observation | 当前 View 摘要、按设备递增序列、真实观测与运行回读；观测绑定设备、网络代、层级、Service/候选或 LinkID、实际目标及规范摘要，缺失或失效为 unknown。 | 下方固定普通 access 报告字段、签名、时间编码、重放拒绝及接收端时效投影；服务节点 listener/ACL/返回路径的逐项回读仍须分别验证。 | 当前路径、业务状态、链路测量和部署回读的新鲜性及重放拒绝；不能由签名有效或单项成功推定其他范围仍可用。 |
@@ -137,6 +137,9 @@ generation 与规范排序的 manifest 摘要集合；每份 manifest 固定组�
 小写十六进制 `\u00xx`，其他字符直接输出 UTF-8，不转义 `/`、`<`、`>`、`&` 或非 ASCII 字符。
 decoder 必须在丢失重复键信息前拒绝重复键，再按精确类型和字段集验证，最后验证 `C(decode(B))=B`；
 不能通过 Go struct 顺序、普通 map 序列化或浏览器的 `JSON.stringify` 猜测规范字节。
+运行回读中明确规定的目标映射使用精确 string 键和值类型；空映射为 `{}`，键仍按 ASCII 排序，
+逐项验证规范域名/IP＋端口和当前 Policy。严格解码不接受 interface 值、任意字段对象、null、重复键
+或自定义 codec；映射按同一输入大小、项数和深度限制处理，失败不改变调用者。
 
 | 记号 | 唯一 wire 值与限制 |
 |---|---|
@@ -168,9 +171,9 @@ decoder 需要输入大小、集合和嵌套的资源保护，但不能未经完
 | 成员表内容 ID | `loom-control-config-id-v3\0`；完整成员表业务载荷，不含外部证书的轮次、凑票签名集合或自身 ID；初始载荷的精确形状见下节 |
 | Service/Policy/资源当前值摘要 | `loom-network-value-v3\0`；`{"kind":"service"或"policy"或"resource","value":完整值}` |
 | 资源认证摘要 | `loom-resource-auth-v3\0`；资源的完整 authentication 值 |
-| 接收端传输用户名 | `loom-inbound-user-v3\0`；`{"device_id":ID,"service_id":ID,"policy_id":ID,"resource_id":ID,"receiver_node_id":ID,"candidate_id":Digest,"sender_id":ID}`；只作当前进程的 auth_user 投影，不新增身份 |
-| 接收端 ACL 摘要 | `loom-inbound-acl-v3\0`；当前资源的完整 InboundCredential 有序数组，包括允许和排除范围；空授权为 `[]` |
-| Link 规范摘要 | `loom-link-spec-v3\0`；`{"link":完整Link,"resource":完整TransportResource}` |
+| 接收端传输用户名 | `loom-inbound-user-v3\0`；`{"network_id":ID,"resource_id":ID,"sender_id":ID}`；只作当前进程的 auth_user 投影，不新增身份 |
+| 接收端 ACL 摘要 | `loom-inbound-acl-v3\0`；当前资源、相关节点授权、Service 访问边界、Policy 与本资源传输凭据的单向投影；不包含测量和候选展开 |
+| Link 规范摘要 | `loom-directed-link-spec-v3\0`；网络、派生有向 Link、接收资源、实际来源节点的公开 WG 身份及来源解析参数 |
 | 候选身份 | `loom-candidate-id-v3\0`；下述候选身份字段，不含其 ID 和规范摘要 |
 | 候选规范摘要 | `loom-candidate-spec-v3\0`；`{"identity":候选身份,"service":完整Service,"policy":完整Policy,"resources":按首跳及链路顺序列出的完整资源,"links":按路径顺序列出的完整Link}`；资源按路径保留重复引用 |
 | View 摘要 | `loom-device-view-digest-v3\0`；完整 DeviceView，不含 envelope |
@@ -200,6 +203,10 @@ operation: 下表中的精确操作名
 payload: 对应的唯一类型
 signature: Signature
 ```
+
+`probe_target` 仅保留旧签名事实的验签、因果依赖及一次性删除所需标识；当前写入不允许
+`probe_target.put`，不产生独立探测对象、引用或管理页。新探测网址只写在 Service 中；删除旧
+对象不删除其原始签名事实，也不将历史可解码形状恢复为当前运行模型。
 
 空链值固定为 `SHA256("loom-empty-material-chain-v3\0")` 的 Digest 表达。
 sequence 按签发验证键连续递增，前项 ID 必须属于同网络、同签发键的紧前序列，不能按成员表换代归零。
@@ -235,7 +242,7 @@ daemon 校验依赖后生成签名事实并持久化，
 | `resource.put` / resource | 下述完整资源值；任一有效 control 可签发，依赖已审阅的资源前值与承载节点授权；本机私钥路径不进入 payload |
 | `endpoint.put` / endpoint | 下述完整入口值；只由承载 control 签发；本机私钥路径不进入 payload |
 | `resource.delete`、历史 `link.delete` / 对应种类 | `{"id":ID}`；共享资源删除收口全部引用，link.delete 只前向撤销历史人工配置，不删除当前派生边 |
-| `probe_target.put` / probe_target | `id:ID,url:HTTPS_URL`；仍是已有共享目标池的元素，不拥有独立探测组生命周期 |
+| 历史 `probe_target.put` / probe_target | 已签原件只用于历史验签与因果引用；当前不新增或修改，探测网址直接属于 Service |
 | `probe_target.delete` / probe_target | `{"id":ID}`；不改变设备权限 |
 | `expected_component.put` / expected_component | 下述 ExpectedComponent；依赖有效设备授权及已审阅的同目标前值，签发前独立验证精确发布引用 |
 | `expected_component.delete` / expected_component | `{"id":ID}`；只撤销该期望，不删除程序、不降低安装 floor 或改变设备权限 |
@@ -484,7 +491,7 @@ genesis.network_intent 的字段集固定为下表；schema 为整数 `3`，其�
 | policies | 本节 Policy；按 id 排序；service_id 须引用同一初值中有效 Service；节点范围不得引用不存在或不具对应职责的节点 |
 | resources | 本节 TransportResource；按 id 排序；owner_node_id 须具有该资源所需资格；公开认证值按资源种类严格校验 |
 | links | 历史 NetworkLink 原件的规范值；仅历史验证，当前执行图由有效节点和资源派生；新 genesis 保持显式空集合 |
-| business_probe_targets | `id:ID,url:HTTPS_URL`；按 id 排序；这是共享目标池，不自动分配 Service 权限 |
+| 历史 business_probe_targets | 已签 Genesis 中的原值保全；新 Genesis 只能为空，不新增独立目标权威 |
 | dns_records | `DNSRecord` 集合，按稳定 id 排序；每项为 `id,name,addresses`，LAN 记录另含 `service_id`，规范及并发同名拒绝见下文 |
 | public_trust | `PublicTrust{id,purpose,certificate_der}`，按 id 排序；当前 purpose 恰为 website，证书为受约束网站根 DER 的无填充 base64url，id 为 website- 加 DER 的 SHA-256 小写十六进制；规范与撤销规则见[公开网站信任根](control-model.md#公开网站信任根)。数据面认证仍由 TransportResource 的原公开值确定，不继承网站根 |
 | expected_components | 下述 ExpectedComponent；按 node_id、component_id、platform 排序；初始值没有普通设备授权，非空初始期望拒绝，后续通过普通事实逐项修改 |
@@ -509,7 +516,7 @@ DNS resolver 运行地址与 overlay DNS 记录不同，
 字段完整性到此分为两层：本节规定已列出的 genesis、初始成员表及 NetworkIntent 初始字段的编码规则，
 初始节点的首次设备绑定与认证分发地址也使用上文的同一事实链。互联网 Service/Policy 和共享 HTTPS 目标已有完整
 非空值规范；Hy2 authentication 的字段固定于下文，公开网站根使用上述完整 PublicTrust。
-Link 探测动作使用下述原生 WG DNS 契约，LAN 使用 Service 的局域网映射契约。
+Link 探测动作使用下述原生 WG 回显契约，LAN 使用 Service 的局域网映射契约。
 任何未定义的非空值仍须指明缺项并拒绝，不能先落盘后补规范。
 空集合是合法新网络的无配置初态，不是允许忽略其非空内容的测试协议；正式入口与测试使用同一个 decoder，
 对已规定元素执行同一检查，对未规定元素同样拒绝。补齐元素时修订同一 schema 3；既有 genesis 原始
@@ -561,12 +568,87 @@ wire = C(genesis)
 
 ### Service、Policy 与设备授权
 
-普通互联网 Service 字段为 `id:ID,name:Text,kind="internet",matchers:[]Matcher`，集合非空。
-Matcher 是 `kind,value` 两字段：`dns_exact` 精确主机、`dns_suffix` 域及其逐标签子域、
-`ip_prefix` 为 IPv4/IPv6 Prefix。DNS 使用小写 ASCII A-label，无末尾点、通配星号或空标签；
-后缀不匹配相似字符串，例如 `demo.example` 不匹配 `notdemo.example`。按 `(kind,value)` 字节排序。
-精确 IP 以 /32 或 /128 表达，不另设歧义 matcher。Service 删除或目标修改后，同设备目标归属不唯一的
-请求拒绝，不按 Service 列表位置择宽规则。LAN Service 的网关/映射沿控制模型处理，不能编码成互联网 matcher 冒充。
+互联网 Service 的当前目标是保存预期访问服务的探测网址及“是否只能访问这些目标”开关，
+不再分别编辑访问范围、Destinations 和探测对象。客户端当前选择一条互联网 Policy，所属
+Service 从 Policy.ServiceID 唯一确定；多个已授权 Policy 是可选集合，不同时成为互联网当前策略。
+完整业务语义见[当前业务基线](control-model.md#服务与策略的当前业务基线)。
+
+限制关闭时允许普通互联网，不以探测网址构成白名单；限制开启时从这些目标派生访问边界。
+普通互联网不授予 LAN、overlay、本机或管理 underlay 访问，最终解析与实际拨号须检查边界。
+没有探测网址且未开启限制时，仍可依靠传输及真实业务观测联网；空目标不能产生受限访问许可。
+网址仍使用规范 HTTPS URL，排序、去重及未知/非规范输入拒绝规则保持。
+
+当前 Service 字段为 `id,name,kind,restrict_to_probe_targets,probe_urls?,local_network?`。
+限制开关必须显式出现；未配置网址时省略 probe_urls，不能用 null 或空数组替代省略。
+限制开启时网址必须非空；权限按每个 URL 的规范 host 与有效端口生成并去重，默认 HTTPS 端口为
+443。路径、query 和探测响应不改变权限。互联网仍逐次拒绝非公网解析及拨号；LAN 仍与其完整
+LocalNetwork 映射取交集，不能借一个网址扩大范围。kind 与 local_network 的对应保持。
+
+派生接收端 Matcher 可带 `port`（1～65535）；省略表示该原有范围内不限端口，仅用于普通互联网
+及完整 LAN 映射。限制网址生成的 Matcher 必须带精确端口，域名只生成 dns_exact，字面 IP 只生成
+精确 /32 或 /128。它们不是新的可编辑目标列表。只改 URL 的路径或 query 不改变执行凭据及 ACL；
+限制关闭时任何纯探测网址编辑都不改变授权。限制开启时改变 host/端口须重新应用相应授权。
+
+固定出口时不按探测网址分别优选入口或中继，所有目标共用到该出口的传输路径选择；网址结果
+只作相应业务诊断。非固定出口时，多网址分别参与所选 Policy 内的目标相关优选，未测目标使用
+该 Policy 的默认优选；没有 Service 平均分或跨 Policy 回落。实际目标按原始域名/IP＋端口匹配，
+不以 HTTPS 路径区分连接。一个连接或 UDP 会话的最终出口保持，复用该连接的请求不另选出口。
+
+用户已确认非固定出口的默认规则：未测目标先比较当前 Service 探测目标的已测可达覆盖，同等
+覆盖再比分段代价。按规范域名/IP＋有效端口去重；同一连接目标的多个 URL 分别保留测量，任一
+新鲜成功可证明该目标有成功证据，全部 URL 均有新鲜失败才记目标失败，其余为 unknown。
+成功目标数是已证明的覆盖，不把 unknown 记失败，不取 HTTPS 耗时平均分。覆盖较少或无样本
+不删除候选；未知入口及出口继续得到探索机会。该规则不改变固定出口的传输排序。
+
+每个 internet_egress 自行持续检测其适用 Service 的探测项；同出口、URL 与实际测量规格去重，
+结果进入既有签名报告、成员差量同步及相关观测批量交付。节点预算约束覆盖频率，不能因暂无
+消费者取消检测。access 消费共享出口原样本，保留本机到入口的测量及真实业务观测，不重复执行
+整套出口网址扫描。Policy 可见性随运行观测更新，是 UI 投影。
+
+原 matchers、access_scope、按服务 services Preference 是待迁移的已存在字节形状；保全原件
+不等于继续把它们作为目标写入口。新字段修订及前向迁移验证完成前，停止相关配置写入；不在
+同一认证前沿重解释旧 View，不增加协议版本、双读、双写或旧执行 fallback。
+
+当前 Preference 是同一个身份内的规范值：`schema:3,policy_id?:ID,lan_policy_ids?:{ServiceID:PolicyID}`。
+省略 policy_id 表示互联网策略待选；LAN 按 Service 独立保存当前选择，不能向该 map 写入互联网
+Service 或不属于该 Service 的 Policy。空 LAN map 必须省略，未知字段、非法 ID 和非规范编码拒绝。
+它保存在唯一 DeviceIdentity 记录中；不再单独保存 Android 的第二份路由偏好，也不在 runtime
+缓存中寻找偏好 fallback。PolicyID 唯一确定 Service；若选择 LAN Policy，其映射仍单独授权，
+不会合并其他 Service 的权限。首次接受 LKG 时，互联网可选 Policy 恰好一条才初始化该选择，
+LAN 分别在该 Service 恰好一条可选 Policy 时初始化；其他情况保存待选。此后撤权或引用失效
+只清空受影响的选择，新增／恢复授权不自动挑选另一 Policy，也不重新初始化已有身份。
+
+运行投影只有一个本机互联网 access selector，默认拒绝，共享传输由稳定授权和资源派生。
+选择快照只引用当前 Policy 的本机候选；非固定出口时可附带按网络类型、host/IP＋端口的目标优选，
+固定出口不生成该目标覆盖表。接收端仍独立校验同一权限。
+目标覆盖使用相同 Policy，未测目标使用该默认，不查询另一个 Service。普通性能优化保留已有
+合法连接；主动“重建该服务连接”只作用于本机该服务业务，无需重启 VPN 或共享传输。
+用户已明确：手动更换 Policy 后，新连接立即采用新选择；仍获当前授权的旧连接保留原 Policy
+和路径，至自然结束或用户明确重建该服务连接。切换不受性能冷却限制，也不自动关闭该服务旧流。
+应用未完成时新连接可暂时拒绝，不能继续使用旧选择并声称新选择已应用；这种运行拒绝不撤销
+旧连接的授权。真正撤权仍由完整当前权限逐条关闭失权连接。此前“必关旧连接”的实现是迁移
+差距，不能再由偏好变化推出授权撤回；显式服务重建继续是独立的用户操作。
+
+连接建立时从已验证 Policy 固定派生所属 ServiceID，作为本机实际连接元数据保存；后续选择
+不能改写它。原生 transport 仍只携带和校验原 Policy 上下文，不再传第二份 Service 权威。
+私有连接回读的 `metadata.serviceID` 投影这一既有 ID。显式重建按实际 source scope 及该 ID
+筛选连接，再沿原逐 UUID 关闭入口执行；不能只按共享 `access` 链标签关闭其他 Service 的
+合法旧流，也不能从目标网站或当前选择猜测旧连接归属。此项随按需回收的原生修订接线，
+较早仅按 scope 关闭的制品不算已满足该边界。
+
+当前签名报告使用可选 `policy_id:ID` 采样唯一选择，省略时不宣称已选择；该值不授予权限。
+历史 policy_choices/preference 仅按原字节验证，新报告不能同时携带它们。Selection 可带可选
+target（规范 `tcp://host:port` 或 `udp://host:port`）；省略表示默认优选，存在时表示该网络及连接目标
+的优选，按 ServiceID、
+target 排序且唯一。它们描述新连接选择，存量连接的实际路径须从数据面连接回读，不从偏好推断。
+
+国内/国外样本不产生 traffic_class、地域域名/IP 库或实际请求的地域 Service 归属。Policy 的
+固定出口限制只约束最终出口，不能因样本较快改选别的 Policy 或 Direct。探测没有独立 ID、
+事实目标、全局池或管理页；已签 probe_target 原件仅保全历史验签及因果关系，删除只用于显式退休。
+
+运行投影中的 Matcher 继续用于接收端目标校验，不构成另一份可编辑 Destinations。精确域名
+按原 FQDN 比较，后缀不得匹配相似字符串，IP 按规范前缀比较；TLS SNI 不能替代实际目标扩权。
+每段都必须从同一 Service/Policy 派生权限，不以传输嵌套复用另一协议的授权。
 
 局域网 Service 恰为 `id,name,kind="local_network",local_network`；不能带 `matchers`。
 `local_network` 是同一 Service 的值，恰含 `gateway_node_id,local_prefix,virtual_prefix,allocation_attempt,enabled`。
@@ -601,6 +683,17 @@ DeviceAuthorization 字段为 `id,name,platform,device_public_key,responsibiliti
 PolicyIDs 可为空，没有 access 则必须为空。同 Service 可有多条可选 Policy；新分配时
 未知/冲突/悬空引用和歧义目标组合均拒绝。已分配引用后来失效，原分配仍可回读但不再产生相应权限。
 RuntimeKey 是 control 生成的 Secret32，不是设备身份私钥。
+
+DeviceAuthorization 还可保存 `wireguard_public_key:PublicKey`，为本节点现用 WG 身份的规范
+无填充 base64url。省略表示未登记 WG 身份，不从资源是否存在、报告或缓存补造；显式空值和
+null 拒绝。它与设备签名公钥不同，知道公钥不授予 access、forward 或出口职责。
+现有 `device.put` 可显式登记；省略该字段保留当前已认证登记值，普通改名、改权或探测编辑
+不能抹掉或替换它。显式登记必须与仍存在的本节点 WG 资源公钥一致，实际执行还须验证本机
+私钥。当前新加入沿原 RuntimeKey 派生原有发送键并登记其公钥；使用既有固定键的节点在建立
+WG 接收资源前显式登记实际公钥，不写入或移动私钥。该操作不新增管理对象或密钥 store。
+历史缺席字段的原件仍按原义验签和往返；现存固定键从已核实的原资源及本机私钥引用取得公钥，
+现存派生键按原算法取得公钥，均经新的普通事实前向登记，不能在同一认证前沿补写 View。
+读取者先升级；生产登记与部署仍须获得该任务授权。
 
 设备还可带 `dns_servers:[]Resolver`，由同一 `device.put` 公开命令管理，表示该设备已认证的
 underlay 与本机最终出网解析器集合。Resolver 是现有字段中的规范字符串值，不是新权威实体：
@@ -646,7 +739,7 @@ PublisherInput、部署计划与 UI 是单向投影，不新增节点属性 stor
 前向替换见下文，实际部署结果见[传输实现纠偏](../progress.md#传输实现纠偏)。
 
 TransportResource 字段为 `id,kind,owner_node_id,listener_id,dial_host,dial_port,authentication`，
-Hy2 可另外保存 `link_only:true`，表示不开放普通公开首跳；此历史用途不生成当前 Hy2 中继；false 的唯一编码是省略该字段。
+Hy2 可另外保存 `link_only:true`，表示不开放普通公开首跳；forward 仍可用其建立后续 Hy2 段；false 的唯一编码是省略该字段。
 WG 以可选 `access_enabled:true` 明确开放普通首跳；省略表示不开放，规范输入拒绝显式 false。
 承载者可为 forward 或 internet_egress，后者可直接作为最终出口。已签历史字段
 `access_hy2_resource_id` 仅在历史验签中识别，现行写入和运行 View 一律拒绝。
@@ -667,6 +760,11 @@ dial_port 是 Port。kind 仅 `wireguard/hysteria2/tls_tunnel`，authentication 
 
 ##### 分段传输的替代执行模型
 
+当前目标由用户确定：access 选入口，forward 在相同 Policy/最终出口约束内继续选路。
+下文现存完整 Candidate 绑定、逐路径地址和凭据计算是需要前向替换的具体执行形状；其原始
+字节必须保全，但不能因已部署就要求保留源端指定完整路径。新接收端一致校验与规范 wire
+尚须完成，不能继续按旧形状签发新执行配置，也不通过嵌套传输或新增协议版本绕过。
+
 WG 公钥的规范检查与授权检查分开：相同规范公钥是否能执行 X25519 是不随设备、策略、
 时间或网络变化的数学属性。重复渲染、身份回读和报告序列预留会反复验证同一公钥，
 不能让这些重复运算耗尽私有报告的请求时限。执行器可在内存中复用至多 256 个精确规范
@@ -676,11 +774,11 @@ domain、wire、persistent、runtime 配置与 UI 表达均不变；缓存只属
 反例是同一合法公钥被放入未授权资源或非规范编码：前者仍须按当前授权拒绝，后者不得
 借用缓存命中。最小验证覆盖这些拒绝、并发读取、淘汰后的等价重算，以及运行配置字节不变。
 
-Linux 同时承担 access 与服务端职责并使用隔离 TUN 时，已有两个进程不能分别持有同一发送端 WG 会话，否则会发生 peer endpoint 漫游竞争。最小变化是只让服务端进程持有实际传输；隔离 capture 通过固定回环、临时密码保护的 SOCKS 入口提交原始目标和已签名 Candidate。服务端按原 Service 边界与 Candidate 校验后发送下一段，拒绝其他用户、目标与入口流量。此本机连接不进入 WG，也不新增远端代理层、持久身份或第二份授权；增加的运行成本仅为本机一次转发及两个可删除 DNS 缓存。Mixed 与纯 access 仍只需一个进程。
+Linux 同时承担 access 与服务端职责并使用隔离 TUN 时，已有两个进程不能分别持有同一发送端 WG 会话，否则会发生 peer endpoint 漫游竞争。最小变化是只让服务端进程持有实际传输；隔离 capture 通过固定回环、临时密码保护的 SOCKS 入口提交原始目标和独立的互联网／LAN selector 范围。实际传输所在进程从当前选择绑定 Policy、入口及出口，并按 Service 边界校验后发送下一段，拒绝其他用户、目标与入口流量。此本机连接不进入 WG，也不新增远端代理层、持久身份或第二份授权；增加的运行成本仅为本机一次转发及两个可删除 DNS 缓存。Mixed 与纯 access 仍只需一个进程。
 
 本段定义唯一现行执行；旧耦合字段仅在下文的历史字节识别边界内验证，不能生成新的接入。
 正常业务是 access 选择同一 Service 的 RouteCandidate，经首跳到入口，再逐段经 Link 到最终
-出口。每段只传业务 IP；Hy2 首跳在入口终止，不建立下一段 Hy2 会话。WG 接收器将解密后的
+出口。每段独立终止 WG 或 Hy2，forward 可选择后续独立 WG 或 Hy2 段。原始域名／IP 与端口随执行请求传递，最终出口解析公网域名；WG 接收器将解密后的
 TCP/UDP 交给公共路由器，权限来自同一 Service/Policy，不从传输类型推测。
 
 共享 WG 接收器的不同 peer 可以并发交付报文。每次调用交给宿主 TUN 的筛选批次必须独立拥有
@@ -688,136 +786,84 @@ TCP/UDP 交给公共路由器，权限来自同一 Service/Policy，不从传输
 共用的临时数组承载各 peer 的批次，否则另一调用可能在合并中覆盖长度并造成崩溃或串包。
 最小修正为调用内的临时宿主批次，仅有宿主报文时分配，不新增锁、持久值或配置；额外成本是
 该次报文数对应的切片描述符。domain、签名 wire、身份、固定键、管理路由和 UI 均不变。
-验证须让两个 peer 的不同长度批次同时处于交付中，确认互不覆盖，再验证真实共享 WG 的业务与管理连接。
+验证须让两个 peer 的不同长度批次同时处于交付中，确认互不覆盖，再验证显式隔离的共享 WG 收包能力与业务连接；这项底层能力不触发普通业务资源的宿主管理投影。
 
 本次修订的规范值明确如下，仍使用 schema 3：WG 资源以 `access_enabled:true` 显式开放
 普通接入，false 只编码为省略。没有该字段的旧资源仍不自动开放普通接入；
 `access_hy2_resource_id` 只在已签历史材料中识别，当前写入及 DeviceView 拒绝。
-新 Link 的 `probe_target` 引用自己的接收 WG 资源，action 为 `wireguard_dns`，host 为该
-资源的执行 DNS 地址，port 为 53。它验证该段 WG 内的 DNS 往返，不建立 Hy2 会话，也不
-替代业务测试。已签 `hysteria2_tls` Link 只验证原历史关系，不进入当前候选或执行投影。
+新派生 Link 的 `probe_target` 引用接收资源。WG action 为 `wireguard_echo`，host 为该资源
+确定性执行地址、port 为 53；Hy2 action 为 `hysteria2_echo`，host/port 为该资源认证的拨号坐标。该地址与端口承载 WG 内部的原生执行帧，不提供普通 DNS fallback。
+回显只证明该段传输；access 准入回显另检查本段实际认证来源的当前 Policy 入口资格。
+旧 `wireguard_dns`、`hysteria2_tls` 原件仅按历史原义验签，不进入当前测量身份。
 
-DeviceView 显式绑定 `network_id`，须与 envelope 相同。`inbound_credentials` 每项保存
-`device_id,service_id,policy_id,candidate,sender_id,resource_id,receiver_node_id,allowed_targets,
-excluded_targets`；`candidate` 为完整原 RouteCandidate。Hy2 项另有非空 `credential`，WG
-项省略该字段；旧 `relay_target` 删除。Hy2 凭据的 HKDF 绑定额外包含候选 ID 和发送者 ID，
-不把业务权限收缩成下一层代理的端口权限。`wireguard_peers` 仍按资源与实际发送设备保存
-公钥，既覆盖普通设备，也覆盖转发节点；不传出其他设备的 RuntimeKey。
+DeviceView 显式绑定 network_id。传输凭据的唯一交付行是
+`{resource_id,sender_id,credential}`；只交付本机发送或本机接收所需的 Hy2 行。
+WG 从同一节点公开身份和资源派生 peer 与精确来源地址，不签发逐 Policy 或逐出口的 peer 表。
+相关节点的职责、PolicyIDs 和公开身份只投影原授权；来源解析参数仅用于当前测量规格匹配。
+`access_grants`、`policy_exits`、`wireguard_peers` 都是可删除的本机计算结果，不能进入签名 View。
 
-RuntimeProfile 表达本节点全部业务执行投影，服务节点也可持有它；是否启动 access capture
-只由 `responsibilities` 中的 access 决定。profile 的 `endpoints` 至多保存一个本节点共享 WG 实例：拥有 WG 资源的节点使用资源固定公钥，
-私钥只由本机引用补齐；无自有资源的普通设备使用本设备唯一派生私钥。`outbounds/route/dns` 同时表达本机接入、接收授权和下一段业务转发。
-固定接收私钥与 listener 仍由 HostAdapter 的本机输入补齐。control 使用完整节点职责过滤
-最终出口，View 的 Routes 是签名确定的候选集合；消费端核对其中每项与 Service/Policy、
-资源及 Link 一致，但不得从部分资源集合重新补出未经签发的候选。
+Hy2 用原 32 字节 RuntimeKey 和 HKDF-SHA256，salt 为 `loom-runtime-key-v3\0`；规范 info 为
+`{network_id,sender_id,resource_id,resource_auth_digest,receiver_node_id,purpose:"transport-auth"}`，
+输出 32 字节、无填充 base64url。不得把 Policy、Service、入口／中继用途、网址或完整路径放回凭据。
+普通业务和准入回显在原生请求中显式传 PolicyID；仅传输回显不携带 Policy。
 
-仍只有设备、Service、Policy、TransportResource、Link 和 RouteCandidate。一次接收权限是
-这些值到某个接收节点的私有执行投影，不可独立写入或持久成第二授权表。它必须绑定来源设备、
-PolicyID、完整候选、接收资源和实际发送节点；下一 Link 或最终出网由候选中本节点的位置推导。
-首跳发送者是来源设备，中继发送者是前一节点。接收节点验证自己的位置、精确前驱及资源，
-拒绝跳过节点、改出口、跨服务使用、重复节点、缺失或多义的绑定。
+一个节点使用一个共享 WG 实例。精确 /128 来源复用原基础地址算法：
+`SHA256("loom-wg-access-address-v3\0" || C({resource_id,receiver_node_id,receiver_public_key,peer_public_key}))`
+取前 16 字节并将首字节置 fd。它标识实际发送节点，不授予 Policy 或业务目标权限；每条连接
+仍须校验显式上下文。peer 公钥与 AllowedIPs 共同认证来源，跨 peer 地址冲突必须拒绝。
+原设备身份、RuntimeKey、固定密钥和认证进度必须保留。WG 公钥由上述节点授权登记，资源公钥
+必须与 owner 的登记值相等；删除接收资源不删除发送身份。DeviceView 自身的可选
+`wireguard_public_key` 与相关 ViewNode 的同名字段都只复制该登记值。自身派生私钥仅在其公钥
+确实等于登记值且执行需要时交付；否则由 Linux 消费原受保护私钥文件，不能改用另一把派生键。
+一个进程内的共享 WG endpoint 固定为 `wg-shared`，不随接收资源增删改名。固定私钥的加载
+与接收 listener 分开；缺失、错误私钥或资源／owner 公钥不一致均拒绝。没有登记值的节点
+不具备 WG 发送资格，但不因此撤销独立 Hy2 或 Direct 权限。
 
-| 层 | 唯一对应 |
-|---|---|
-| domain / signed persistent | 原设备授权、Service/Policy 和资源；中继段与候选由这些事实确定 |
-| private wire / LKG | 接收权限、WG peer 公钥及普通设备自己的唯一派生传输私钥；不交付他人的 RuntimeKey |
-| runtime | 首跳 Hy2 用户或 WG 精确来源地址 → 接收权限 → 目标检查 → 下一段或最终出网 |
-| UI / report | 原 Service、候选 ID、受管节点链、最终出口与真实业务结果；不展示运行地址作为新业务实体 |
+接收端 /64 合成池仍绑定 `{network_id,resource_id,receiver_public_key}`，采用
+`loom-wg-target-prefix-v3\0`；池用于 UDP 目标注册。TCP 在 WG 自身可靠流的执行前缀后直接
+传递上下文及原目标，接收后转发该流，不先做一次 DNS 注册往返。UDP 通过同一 WG 会话的可靠
+执行流注册原目标和上下文，再发送到返回的池地址；缓存使用时重新校验当前来源与权限。
+名称不从 SNI 或共享 IP 的历史答案猜测，中间节点不解析业务公网名称，最终出口才解析并检查
+实际公网地址。WG 没有 Hy2 依赖，Hy2 使用自身请求与可靠会话注册，不套入 WG。
 
-一个节点只有一个当前 WG 资源、固定密钥和 UDP listener；该实例同时发送、接收，所有邻居是
-同一 peer 集合。普通接入设备也只持有一个用户态实例和一个派生密钥。Service、候选和收发方向
-不产生新 WG 实例。节点使用原固定密钥，不向客户端交付它；普通设备的 RuntimeKey 根保持不变。
-不能给不同 peer 重复配置 `::/0`：标准 WG 按目的地址选 peer，重复默认网段不能表达同一目标的
-多个出口。旧多资源布局必须显式整合资源后才能生成当前 View，不能任意保留第一个。
+新增设备及撤权更新原生接收投影、WG 准入 peers 或 Hy2 用户，保持监听器、固定密钥和未变化
+会话。授权替换与新连接登记共用短时 fence；发布新权限后只关闭最新权限已拒绝的存量连接。
+传输更新失败不得重新装回旧权限。性能推荐只改变新连接选择，既有连接保持固定路径。
+本机 API 的不可预测 CAS revision 与投影摘要仅属于可删除运行实例，不形成认证进度或持久权威。
 
-仅凭发送者和目标 IP 不能表达同一服务的不同出口。因此每个接收权限派生一个精确 IPv6 来源
-地址，绑定 `network_id,device_id,policy_id,candidate_id,resource_id,sender_public_key`。
-取 `SHA256("loom-wg-packet-source-v3\0" || C(binding))` 的前 16 字节并将首字节置为 `fd`。
-客户端不能分配地址；接收端同时以公钥 peer、AllowedIPs 和来源地址匹配当前权限。不同权限、
-资源本机地址与基础 DNS 来源地址发生碰撞时拒绝，不能合并权限或依加入顺序改号。
-该地址是可重建的执行投影，无独立分配库；增加其他设备、修改显示名称不改变已有绑定。
-发送者的共享会话还保留一个只可访问接收端执行 DNS 的基础地址，不能以它访问业务目标。
-
-节点中继的 WG 身份认证实际发送节点；该节点只能代表本次投影列出的来源设备和路径转发。
-接收节点仍检查每项来源设备当前的服务权限。此处明确依赖受管转发节点执行其获准的转发职责，
-不声称 WG 逐段终止后仍有来源客户端到最终出口的独立传输认证。应用自己的 TLS 不被终止。
-
-域名不从 TLS SNI 或共享 IP 的历史 DNS 答案猜测。发送端经该接收资源的 WG 会话查询接收端
-执行 DNS，取得接收端自己维护的合成 IPv6 地址；接收端在业务路由前还原原名称，再检查
-Service/Policy。查询或知道合成地址本身不授予访问权限。不同接收资源的 DNS 缓存必须隔离；
-原名称在最终出口才用认证解析器解析为真实目标。中间节点向下一段再次投影该名称，不以入口
-解析出的公网地址替代出口解析。此处复用现有持久 fake-IP 缓存及其崩溃恢复规则，不新增权威。
-
-WG 业务包使用 IPv6。每个接收资源有独立的合成目标 /64，绑定
-`{network_id,resource_id,receiver_public_key}`，取
-`SHA256("loom-wg-target-prefix-v3\0" || C(binding))` 的前八字节、首字节置 `fd`、后八字节清零。
-域名及字面 IPv4/IPv6 都经接收方执行 DNS 映射到此池；发送端以当前业务来源选择唯一接收池，
-查询结果必须全部属于该池。每个 peer 的 AllowedIPs 只含它的目标池、DNS /128、已授权来源
-/128 和既有精确管理地址；跨 peer 重叠、重复公钥、来源多义或本地/远端地址碰撞均拒绝。
-因此同一原始目标经不同出口时在 WG 内具有不同目的地址，返回包也由同一 peer 的目标池验证。
-WG 协议与 cryptokey routing 不变，不增加远端代理、加密套娃或新的权威实体。
-
-字面地址使用执行 DNS 内部保留名称：规范四字节或十六字节地址的小写十六进制，分别加
-`.v4.loom-ip.invalid` 或 `.v6.loom-ip.invalid`。禁止 mapped IPv6、zone、大小写变体、非精确
-长度或畸形保留名称；普通域名请求不得使用该保留后缀。接收器从既有持久 fake-IP 缓存恢复
-原名；内部保留名称先还原为字面 IP，再执行 IP 权限，不能变成域名权限。域名保持原名称到
-最终出口。新目标每段增加一次内部 DNS 查询，缓存命中可复用；缓存缺失或恢复失败拒绝业务，
-不能猜测目标。接收池地址本身不能作为原始业务目标，缓存必须保留地址与目标的一一对应。
-
-runtime 的 `source_routes` 是来源地址到目标 /64 或 DNS /128 的唯一映射，只由认证权限投影；
-DNS 来源只能访问对应 /128 的 53 端口。`address` 是用户态精确来源；Linux 系统实例将它们
-移入 `stack_address`，`address` 仅保留原宿主管理地址。两者共用同一个 WG 实例与用户态栈。
-这些字段没有独立持久身份，UI 仍显示原服务、候选和实际节点，不显示合成地址为业务对象。
-
-接收器保留数据包实际目标，不把“目标等于本资源地址”隐式改写为宿主 loopback。执行 DNS
-只由本资源精确目标和端口的显式规则接收，不能使普通 WG 获得宿主管理端口访问。
-
-已有 WG 同时承载私有管理时，接收器可使用上游系统 endpoint 保留原精确接口地址与路由。
-目标是保留现有管理连接；原内核 WG 只把包送给主机，缺少业务路由器接收。最小变化是同一
-资源改由原生接收器执行，公开端点、资源身份、固定私钥、管理地址与精确 peer 不变；不另开
-公网端口。运行时 `host_sources` 只列已认证管理节点 peer 的精确来源，且必须等于对应
-AllowedIPs；该来源发往本资源精确地址才交给主机，其余获认证的业务来源进入公共路由器。
-不能把本机地址的补集当成宿主流量 capture，不能增加默认路由或策略 rule。
-发送业务使用同一实例的用户态栈及固定节点键；业务源地址与宿主管理来源严格分开。
+Policy 的可选正整数 `max_hops` 限制受管节点数量；省略无额外限制，始终拒绝重复节点。
+公开首跳和本机 hybrid Link 起点使用同一候选模型。每一跳检查当前 Service 目标边界，
+forward 在同一 Policy 和最终出口约束内选择下一跳；只有获准 internet_egress 才执行最终互联网出站。
+原完整 Candidate 指定下一跳的形状退出目标，相关历史字段按下文说明保全。
 
 ###### Linux WG 的宿主接口名
 
-`listener_id` 继续是原签名资源的稳定本机身份，不是 Linux 接口名或某个 peer 的身份。
-原执行器直接把它用作接口名，令共享资源继续显示早期节点对名称；这会误导操作者判断网络的
-中心和依赖。最小修正只改变 Linux HostAdapter 的单向执行投影，不改资源、签名、LKG、
-schema 3、固定密钥、地址、端口、候选或授权，也不新增名称配置、分配表或身份。
+现行普通 WG 接入与中继只在共享用户态 endpoint 内执行。`TransportResource`、自动派生的
+relay Link、节点职责和本机监听输入均不隐式创建宿主 WG 接口、地址、返回路由或任意宿主
+管理权限。新增远端资源只改变完整权限、发送资源描述及 forward 遍历图，由本机资源池消费；
+不输出 `system/name/host_sources/stack_address`，也不由业务边生成宿主接口名。
 
-宿主接口名固定为 `loom-wg` 加以下摘要前四字节的小写十六进制，共 15 个 ASCII 字符：
+正式 bootstrap、配置、报告与 `control.loom` 使用认证 Endpoint、认证 DNS 和精确的
+website underlay；既有 underlay SSH、WG、LAN、DNS 与代理不因业务资源增减被改写。
+某个 Endpoint 的显式地址恰与资源地址相同，也不能推导出额外宿主权限或自动创建一条路径。
+这保留其真实可达性要求，不能用 Direct、系统 DNS 或扩大 Policy 掩盖缺失路径。
 
-```text
-SHA256("loom-linux-wg-interface\0" || network_id || "\0" || resource_id)
-```
-
-两个输入都是已验证的规范 ID，不含 NUL。后缀区分同机的独立资源，不表达对端、服务器或
-业务方向；peer 增删、排序及停止重启不改名。它不是认证身份，不要求反解；摘要碰撞或已有
-同名接口均按现有所有权门禁拒绝，不试探其他名称，不接管或删除未知对象。
+先前执行器曾从网络与资源 ID 派生宿主接口名，创建临时 TUN、改名并添加精确返回路由。
+这属于历史执行；相关事故与已记录的原件保留原义，不是现行业务资源的运行前提。
+旧 generation 的精确所有权记录只供原对象的 compare-and-delete 清理，不能从原资源或公钥
+重新猜测所有权、恢复旧执行或接管未知对象。清理失败保持 failed/inactive，不清空身份、
+认证进度或发布 floor，也不修改既有 underlay 管理配置。
 
 | 层 | 对应关系 |
 |---|---|
-| domain / wire / persistent | 原 `TransportResource.id/listener_id` 与签名原件保持；唯一 LKG 仍规范往返 |
-| runtime | Linux 从网络与资源 ID 派生接口名；预检、启动、精确管理返回路由及清理消费同一投影 |
-| 可删除所有权记录 | 记录本 generation 实际接口名、随机所有权 token 与 ifindex，不能反向写入资源 |
-| UI / report | 继续按资源及所属节点显示网络、按原 `listener_id` 认证资源回读；不从接口后缀推断 peer 或可用性 |
+| domain / wire / persistent | 原 `TransportResource.id/listener_id`、身份、密钥、原签名与唯一 LKG 保持；不新增管理邻接对象 |
+| runtime | 接收 listener 使用显式本机端口；发送 principal 与 pool 保持原算法；业务资源不生成宿主接口与路由 |
+| 历史所有权记录 | 只定位原 generation 明确拥有且仍可严格核对的旧对象，用于精确清理；不授予新执行权限 |
+| UI / report | 按原资源、节点及 `listener_id` 显示和回读真实 listener，不从历史接口名推断 peer、授权或健康 |
 
-正常切换沿正式签名安装与 service 入口停止旧 owner，按旧 generation 的实际名称完成精确清理，
-再从原身份和 LKG 创建新临时接口，确认进程所有权后改为上述派生名并添加原精确返回路由。
-原名称只可在已记录的停止清理中消费，不能作为新运行 fallback。失败保留已接受的身份、
-认证进度和包接受前沿，精确清理后保持 failed/inactive，不回退旧执行。
-
-反例是本机已有不属于本 generation 的同名接口：即使资源或公钥相同也不能接管。
-最小验证覆盖名称与 peer 无关且输入原字节不变、正式预检和启动使用同一名称、同名冲突拒绝、
-旧 generation 精确清理及新实例的真实 WG 业务、管理返回、正常/异常停止和同身份重启。
-新增操作成本仅为一次受控客户端升级；不要求操作者修改资源、密钥、NAT 或网络参数。
-
-新增操作成本是有独立管理通道时完成一次受保护的接口执行器替换，必须提前记录精确接口、
-地址、peer、路由与旧所有权，停止旧 owner 并精确清理后才可创建替代接口；失败保持服务停止，并按
-本 generation 的清单清理和回读，不能 flush 共享对象或降低身份/floor。此处没有新增
-DeviceView 之外的授权库。隔离测试证明底层接收和清理能力，不能代替生产接口迁移验收。
+最小验证覆盖本机端口与公网拨号端口独立、两族对端地址、原密钥引用不变、新增资源不产生
+宿主接口或路由，以及正常配置更新后同实例与合法旧业务连接保持。显式隔离的底层接口能力
+与严格所有权测试继续成立，但不能据此要求普通业务图触发宿主管理接口。
 
 撤权先接受并持久化新授权，再移除相应来源地址、用户及目标规则，并关闭旧业务连接；其他
 服务的共享 WG 身份不因此换钥。最后一项发送权限消失时移除 peer。应用失败保持新授权并
@@ -848,7 +894,7 @@ DeviceView 之外的授权库。隔离测试证明底层接收和清理能力，
    它们不能生成新业务配置。现行写入与运行只有分段传输这一种语义，不保留旧 transport fallback。
    这是对“旧格式材料不进入解码、重放或迁移运行路径”的限定澄清，不能由实现自行扩大。
 2. 通过现有 `resource.put` 和历史人工 Link 的 `link.delete` 等正式写入产生新事实前沿，保留设备、资源的
-   稳定身份及密钥；当前中继 LinkID 从有效资源自动派生。接收权限绑定完整候选，新的 `DeviceView` 由同一有效 control 签发；
+   稳定身份及密钥；当前中继 LinkID 从有效资源自动派生。新 View 交付稳定节点授权与传输身份，候选及 ACL 仅在本机派生；新的 `DeviceView` 由同一有效 control 签发；
    不改 genesis、不另建网络、不增加全局 checkpoint、协议号或第二份事实权威。
 3. 设备进行显式、一次性的 LKG 前向替换：先校验原认证进度及新 envelope 的身份绑定、成员
    证明与前沿，再原子保存新状态。私钥、公钥、Invite、latch、报告序列和 high_water 均保留
@@ -856,8 +902,7 @@ DeviceView 之外的授权库。隔离测试证明底层接收和清理能力，
    本次自动邻接纠正还包含已经运行的共享原生 WG 配置：历史识别必须正向同时核对规范的单个
    `resource:<ResourceID>`（普通 access 为 `wg-shared`）共享 endpoint、受保护资源对应、公钥、
    精确私有地址与资源绑定的 fd DNS /64，以及原人工非摘要 LinkID 的两端资源与 DNS 探测形状。
-   原配置和原签名仍为 opaque 证据，不以新渲染器重新生成或执行它；新目标必须通过当前派生
-   Link/完整候选与渲染校验。已经自动派生的当前 LKG 不属于历史识别范围，不能重复调用迁移
+   原配置和原签名仍为 opaque 证据，不以新渲染器重新生成或执行它；新目标必须通过当前稳定授权、独立传输与本机运行投影校验。已经自动派生的当前 LKG 不属于历史识别范围，不能重复调用迁移
    形成第二普通 writer。同前沿、降低已见任一键的进度、变更固定身份或原件篡改继续拒绝。
 4. 切换验证须覆盖 control / device 重启、旧消息重放拒绝、撤权不复活、管理通道与实际业务。
    成功后删除旧生成器、RelayTarget 的 Hy2 端口授权、AccessHY2ResourceID 耦合、探测执行器
@@ -889,35 +934,8 @@ Android 从既有配置页文件导入入口选择同一签名文件，在运行
 旧 View 中的 `link_probe_credentials` 和嵌套运行配置只作为原签名字节验证，不解码成可执行配置。
 当前生成器、接收权限和探测执行器没有这些入口；不得恢复 Hy2 detour 或旧凭据作为 fallback。
 
-#### 自动中继与服务凭据
 
-中继不再是用户配置的签名邻接对象。唯一权威仍为设备职责、TransportResource、Service 和 Policy。
-`DerivedNetworkLinks(Projection)` 不读取历史 NetworkIntent.links 或运行观测；当前手工 link.put 和
-以 Link 为值的 conflict.resolve 均拒绝，已有 link.delete 仅作为历史人工配置的前向撤销。
-已签原件仍按其原语义进行历史验签和因果验证，正文、摘要、序列和认证 floor 不改变。
-
-DeviceView.links 保留 NetworkLink 的 schema 3 规范形状：
-`id,from_node_id,to_node_id,from_resource_id,resource_id,initiator_node_id,purpose,probe_target`。
-当前 View 的普通解码、验证和签发均逐段重算并核对完整派生值；人工 ID、另选 initiator、
-非派生的探测参数或其他字段差异拒绝，不能由签名重新授权静态中继执行。历史 View 原字节只由
-显式一次性迁移的受限历史验证入口读取，不能进入当前 decoder、签发或启动路径。
-From 具有 forward，To 可以 forward 或 internet_egress，两端各有唯一当前独立 WG 资源；
-公钥必须有效且不同，精确接口地址有效、不同且同族。重复 owner/key/address 或未知当前认证形状拒绝。
-AccessEnabled 仅限制普通首跳；control 资格既不增加业务许可，也不排除合格节点之间的中继。
-
-LinkID 为 SHA-256(`loom-relay-link-id-v3\0` || C({network_id,from_resource_id,resource_id,purpose}))，
-purpose 固定 relay，文本为 sha256: 加小写十六进制。业务 From/To 和有向资源 pair 决定身份；
-资源的参数改变不改 ID，但使旧规格摘要和观测失效。正反 Link 的 initiator_node_id 均取两端 NodeID
-按规范字节排序的较小者，作为稳定默认坐标；运行时两端均配置对端已认证拨号坐标与 keepalive，
-不以此字段禁止任一端建立同一 WG 会话。probe_target 引用 To 的同一 WG 资源，host 为确定性执行
-DNS 地址，port 为 53，action 为 wireguard_dns；无 Hy2 引用。真实 DNS 交换仅证明本段 WG 传输，
-不能制造 Service 成功。派生段可删除重建，不是第二 store、协议、权威或可编辑配置。
-
-Policy 的可选正整数 `max_hops` 限制受管节点数量；省略无额外限制，始终拒绝重复节点。
-公开首跳和本机 hybrid Link 起点使用同一候选模型。每一跳检查原 Service 目标及排除范围，
-当前节点按完整 Candidate 选择下一 WG 接收资源；终点仅在 internet_egress 时访问外部目标。
-
-Hy2 只在独立首跳派生 `service-auth` 凭据。RFC 5869 HKDF-SHA256 的 IKM 为原始 32 字节 RuntimeKey，
+现存 Hy2 首跳 `service-auth` 的完整路径绑定如下，仅用于界定旧字节及前向替换：RFC 5869 HKDF-SHA256 的 IKM 为原始 32 字节 RuntimeKey，
 salt 为 `loom-runtime-key-v3\0`，info 恰为 C 编码的
 `{network_id,device_id,service_id,policy_id,resource_id,resource_auth_digest,receiver_node_id,purpose,candidate_id,sender_id}`，
 其中 sender_id 等于来源 device_id，输出 32 字节后无填充 base64url。candidate_id 固定完整授权路径；
@@ -930,13 +948,355 @@ resource_auth_digest 仅绑定资源 authentication，显示名称及无关 Serv
 私钥只交付本设备，全部接收资源使用同一公钥。拥有 WG 资源的节点直接使用该资源固定密钥，
 不得再派生逐接收端密钥。RuntimeKey、设备身份键及固定节点键不变；旧派生传输凭据的替换属于
 明确的 LKG 前向迁移，不是原签名字节的静默重解释。Service/Candidate 只投影精确源地址与权限。
-`wireguard_peers` 按 resource_id、device_id 排序；来源设备、转发节点和 DNS-only Link 探测使用同一模型。
-基础源地址只允许执行 DNS；每项业务源地址由本节已定义的绑定导出，每跳都按原始目标执行权限。
+`wireguard_peers` 按 resource_id、device_id 排序；来源设备、转发节点和原生回显使用同一共享传输。
+基础源地址只允许原生传输回显；每项业务源地址由本节已定义的绑定导出，每跳都按原始目标执行权限。
 
-ACL 摘要使用 `loom-inbound-acl-v3\0` 和 C 编码数组；先按规范顺序收集本资源 InboundCredential，
-再追加该资源 WireGuardPeer。无需独立 Link 探测口令或另一个授权 store。
+ACL 摘要使用 `loom-inbound-acl-v3\0`，绑定本资源的规范接收权限、WG peers、相关 Policy、
+Service 目标边界、来源授权与最终出口资格；探测网址在未限制访问时不参与摘要。无需独立
+探测口令或另一个授权 store。
 新 View 必须保持身份、成员证明、latch 和 floor，且认证事实前沿实际前移；同一前沿不同 View 仍拒绝。
 未知现存宿主对象不因它曾出现在 View 中而取得所有权，清理失败保持 failed/inactive。
+
+#### 稳定 View 与本机运行派生
+
+用户已确认本轮采用以下唯一 schema 3 契约。删除旧执行字段不改变已签原件；历史仅由显式前向
+替换验证器读取，普通解码、加入、同步及重启均只接受本节形状。没有第二份 View、授权 store 或版本。
+
+| 层 | 唯一值与转换 |
+|---|---|
+| domain | 现有设备及四种职责、设备的 PolicyIDs、Service、Policy、资源和入口；其他节点的职责及授权只作这些事实的最小投影，不新增节点种类、管理实体或登记流程 |
+| signed wire / persistent | DeviceView 保存自身身份、职责、可选 Policy、相关节点的职责／PolicyIDs／公开 WG 身份、Service、Policy、资源、必要 Hy2 凭据及自身派生 WG 私钥、DNS／入口／发布引用。删除 routes、runtime_profile、inbound_credentials、wireguard_peers、access_grants、policy_exits、links、business_probe_targets 的预展开交付 |
+| runtime | 从同一 LKG 和身份内 Preference，派生当前互联网 Policy 与独立 LAN 选择的候选、图和 selector；转发／出口按自身职责派生相关权限。资源 transport 按资源复用，不能再创建 Policy×入口×出口的 outbound 或凭据。候选、运行 JSON、测量与推荐均可删除重建 |
+| UI / report | 保留策略选择和现有交互；授权来自 LKG，当前偏好来自身份，实际选择来自原生回读，路径链区分估计与实际观测。报告只采样，不设置或重签 Policy |
+
+相关节点投影是 DeviceAuthorization／成员事实的只读子集，无独立 ID、写入、生命周期或持久库。
+删除它会使消费端无法校验其他位置的职责、来源授权和最终出口资格，因此不能只按资源名称猜资格。
+接收与发送凭据只认证实际发送节点和资源：WG 使用原固定／原设备派生身份及资源内精确来源；
+Hy2 使用同一 RuntimeKey 派生的节点／资源凭据，不绑定 Service、Policy、原始来源或完整路径。
+有凭据不等于有业务权限。Policy／来源撤权更新授权投影并关闭相关连接，不靠轮换全网传输身份。
+
+每条原生请求显式携带 PolicyID、原始来源、最终出口和已走节点。Service 由 Policy 唯一推导。
+接收端先认证实际发送者，再查当前 Policy 与原始来源授权，核对本资源接入开关、实际前驱、入口／
+中继范围、最终职责、受管跳数、无重复节点和目标边界；只有全部满足才转发。传入的上下文不能
+自带权限。起点访问要求原始来源等于认证发送者；中继要求已走链尾等于发送者且该段具有合格
+转发关系。受管 forward 负责保全原始上下文，不声称逐段终止后仍有端到端的来源传输认证。
+WG 与 Hy2 各自承载同一语义，无嵌套及旧请求 fallback。
+
+运行选择包含当前 Policy、默认入口／出口及按目标的覆盖；固定出口不建立目标专属入口优选。
+资源 transport 独立于选择复用；每连接建立时固定上下文和 transport。原生 CAS 更新推荐仅影响
+新连接，旧连接保留；撤权及用户操作按受影响的 Policy／Service 处理，不能断开整个 VPN 替代。
+
+常驻数据面的更新边界见[常驻数据面与增量应用](../clients/client-runtime-model.md#常驻数据面与增量应用)。
+本地认证运行 API 可增量更新 WG peer 坐标、keepalive、AllowedIPs 与接收准入，不替换 WG 设备，
+不重写未变化的 endpoint，不更改既有 underlay 管理所有权。纯发送 WG endpoint 同样消费 peer 差量，
+不要求伪造接收权限或增加监听资源。此 API 是已接受配置的单向运行投影，没有新的签名对象、
+持久状态或协议版本；CAS 与完整应用回读仍为必要条件，失败不恢复旧授权。
+
+本机 `PolicyIDs` 只授予本机 access 消费，不是节点 forward 职责的前提。撤掉本机未选中的
+Policy，不删除仍为其他来源执行的共享 Policy、转发或出口设施。access selector 的成员引用表
+由同一 access 投影中的 entries、egress_outbounds、forward_outbounds 和 reject 确定性派生，
+引用表本身不授予权限；增减引用而实际组件未变时沿现有权限 CAS 更新。每次使用仍检查当前
+Policy、目标、入口和最终出口，再取既有组件；撤权只关闭受影响连接。Mixed 的 capture 校验
+与原生 forward 入口分别核对，不能要求所有 forward Policy 同时授予本机 access。
+
+### 发送资源的按需增量应用
+
+节点已认证的当前 View、传输资格、凭据交付集合及认证前沿保持原义；本节只修订它们的本机运行消费。
+不得为预备未来入口扩大签名材料池，也不在同一认证前沿重签不同 View。按需资源池是同一数据面实例
+内已创建对象及当前请求工作集的可删除投影，不是新管理对象、权限 store、注册表或发布权威。
+
+先耐久接受完整新权限，再沿既有 source／receiver API 提交并回读；当前合法资源尚未物化不能阻止
+撤销旧权限。完整权限无法确认时仍须执行安全收口，不能当作普通资源未齐继续旧权限。已确认新权限
+而本机资源准备失败时保留合法旧连接，返回既有 `unknown`，清除完整应用／资源证明，并沿原配置跟随
+及检查重试；不得因此关闭整个 VPN、恢复旧权限或用空字符串／布尔值混淆这两类失败。
+
+接收端在登记连接所用的同一短 fence 内接受权限并立即清理失权连接，随后才在锁外进行物理
+配置。接收回读的 `config_hash` 证明本次操作所包含的投影：WG 仅提交 `execution` 时可立即
+确认纯权限摘要，不能因较早的物理操作未完成而把已确认权限改成未知；它也不证明 peer、
+监听或发送工作集已就绪。包含物理更新的操作忙时返回现有本机未完成结果，不排队积累任务，
+沿原入口重试。旧物理回调无论成功或失败均不得覆盖较新的权限、修订或确认摘要；完整资源
+与实际选择继续分别回读，不从纯权限摘要推导业务成功。
+
+| 层 | 对应值与边界 |
+|---|---|
+| domain／signed wire | 原职责、资源、Service、Policy、身份与凭据行不变；每条连接仍由 source 和各 receiver 校验当前完整路径及目标 |
+| persistent | 原唯一身份／LKG、密钥、原始签名、high_water／floor、latch、报告序列不改；不保存另一份池期望或权限 |
+| runtime | 既有 manager 管理实际 sender 对象；新增、精确撤下及合法旧流租用由本实例处理；资源未申请不是配置失败，已申请组件未创建／未确认才是本次请求未完成 |
+| UI／report | 分别消费权限已确认与资源工作集已确认；部分应用用既有 unknown，不从 active profile 的新 ViewDigest 自动制造 applied_view_digest 或 running 资源证明；页面与选择交互不增加对象 |
+
+本机资源操作只走既有 Bearer 认证的回环 HTTP 服务。`GET /loom/resources` 回读本实例的执行修订、
+当前请求摘要及已完成摘要；`PUT /loom/resources` 使用下列唯一字段，不交付或接受签名权限：
+
+| 请求字段 | 含义 |
+|---|---|
+| `expected_revision` | GET 得到的本实例池执行 CAS 修订；不等于 View、认证 high_water 或网络代 |
+| `authorization_revisions` | 此请求依赖的现 source／receiver scope 到已回读权限 revision 的映射；发布前逐项重核，权限提交本身即使旧准备失效 |
+| `outbounds` | 当前合法运行投影中可构造 sender 的完整 typed 描述，复用原生 outbound 值；出现只安装说明，不触发构建，不扩大 View 材料范围，也不是候选扫描命令 |
+| `forwarding` | 必填的当前 selector tag 到既有 `ExecutionHopOptions` 的完整派生遍历描述；无 forward 时显式空表。由现 manager 创建、更新或退休容器，不是另一份权限；图中引用资源不要求提前全部物化 |
+| `wireguard`（可选） | `tag`、`source_routes`、`peers` 的当前可构造发送说明；来源仍为原 `{source,destination,execution}`。`initializer` 只提供首次需要共享 WG 时的构造定义，重复相同定义不重初始化；身份差异仍拒绝，已有接收监听及宿主管理几何不能由此改写 |
+
+回读至少含 `revision,authorization_revisions,desired_config_hash,config_hash`；摘要按本次规范请求
+（排除 CAS 前置）计算。`config_hash` 只证明本次构造说明、遍历图及权限前置已完整应用，其他
+情况为空；不以尚未创建的备选制造 pending，也不据描述应用宣称实际 sender 或业务已可用。
+实际选择仍须完成 selector 的原子引用交接和完整回读，报告的完整运行证明同时需要它们。
+GET 必须足以识别 PUT 回应丢失和同 View 重试；同一请求重试不重复换权限 revision。
+池执行 CAS 及当前期望摘要只属于实例内执行，不能持久化或倒写认证前沿。
+
+GET 另回读 `described_outbounds` 的构造摘要、实际 `outbounds`／`forwarding` 摘要和共享 WG
+设施是否存在，不再保留累计历史需求的 `requested_outbounds`。forwarding 摘要
+只绑定遍历描述，不含持续变化的性能排序；响应总摘要不能抵扣逐项实际摘要。遍历图与排序在
+一个不可变快照中发布，图改变产生新 selector revision，使旧优化 CAS 失效；发布保留最新仍合法
+的性能顺序，再追加新候选，不从构造时的初值覆盖刚完成的优化。已建立连接继续使用固定后继和
+实际身份，由完整当前接收权限重核，不能借新图或新优选重标记既有连接。
+
+没有新需求的同 View 重试只修复当前仍需要的有限工作集；显式探索 C 不把尚未创建成功的 B
+变成其他入口的前置条件，也不因 A 曾经物化就永久保留 A。B 的授权、原样本截止和公平复测保留；
+本机构造失败不冒充实测全网失败。forward 容器的纯退休同样不关闭合法 leaf 连接，真正撤销 Policy
+或后继资格仍由当前 source／receiver 精确收口，不增加容器管理对象。
+
+用户已确定闲置发送传输按需回收。实际保留依据仅为当前 source 选择所需的默认／目标路径、
+合法旧连接和正在执行的拨号、测量或转发任务；同一对象的需求合并，最后一个需求退出后精确
+释放。候选、观测缓存、已认证资源材料及 forward 的完整遍历图均不构成保温需求。闲置备选
+再次使用时重新建连，接受由此产生的首次建连成本；不增加闲置等待时钟、保温模式或管理页。
+WG 接收身份、ACL 及接收所需 peer 与发送需求分开：保留接收资格不要求持续发送保活；不能
+仅因节点合格或图中存在边就保活所有 peer。Hy2 闲置发送会话同样随实际需求释放；回收不得
+关闭仍被合法业务或在途任务持有的共享会话。已确认选择仍须有实际可用对象，释放与并发申请
+沿原实例／对象身份校验，迟到释放不能删除新对象。此处是当前目标，旧工作集累积及静态保活
+仍须修改和实测，不能把已有增量创建验收扩大为闲置回收已经完成。
+
+用户已选定完全回收闲置纯发送 WG peer：当前选择、合法旧流及在途任务的最后引用退出后，
+若该 peer 也不属于当前接收准入或宿主管理所需集合，删除其实际协议对象，停止并等待自有
+协程退出，释放队列与会话状态；不能只把保活设为零后保留闲置执行对象。仍保留当前合法
+构造说明、原身份及密钥，下一次需要时按当前授权重新构造和握手。接收准入所需 peer 继续
+存在，独立于发送闲置决定；不增加按需接收机制、闲置时钟或保温模式。
+
+逻辑撤下与并发申请必须按具体对象及当前引用判定；物理停止在资源发布锁和权限 fence 外
+完成。同公钥的新对象不能被旧清理删除，新引用也不能被旧保活更新覆盖。失败只清理本次
+未发布对象，并按最新合法说明与仍有效引用收敛；不能恢复旧授权或用旧快照覆盖较新的坐标。
+这些均为现实例内的运行派生，不新增签名字段、持久状态、管理对象或用户操作。
+
+资源准备在权限 fence 和 manager 全局锁外进行；请求可取消并在返回前 join 所有自有 I/O。
+发布只在短临界区再次核对当前期望、实例及权限 revision，迟到对象不得复活已撤资源。失败只能
+关闭本次未发布对象，不能关闭原同 tag 对象或覆盖后来的对象；同 tag 规格改变须按实际引用与
+撤权处理，不能直接调用关闭旧对象的通用 Create 代替增量。
+
+工作集缺项与撤权分开：仅不再请求某资源时，仍被当前选择或合法旧连接租用的对象、WG peer 和
+来源绑定保留到不再使用；真正撤权先收紧权限并关闭精确受影响连接，再回收。租用包含待拨号阶段、
+TCP 及 UDP，旧对象迟到释放不能删除后来的同 tag 对象。新选择只引用已物化资源，缺项拒绝或未知，
+不回退 Direct、系统 DNS 或更宽 Policy。
+
+source 完整选择 CAS 仅从默认路径及 Targets 实际引用取得需要的现有 Lease，不因完整 Choices
+保温资源。在锁外按当前说明冷准备并持有新引用，再于短临界区重核原选择、权限、描述修订和
+实际身份，一次发布选择并接管引用；发布后释放旧选择引用，失败只释放本次准备。旧业务继续
+自己的 Lease，同值 CAS 仍推进 revision。构造说明只保存在既有池内，可由当前运行投影重建。
+
+测量及后台 TCP 校准在原生正式入口同次冷准备和借用，引用贯穿准备、拨号及任务结束；取消
+并 join 后才释放，不经一次独立准备请求永久增加工作集。共享测量由真正执行的 flight 持有
+引用，单个等待者取消不影响其他等待者。forward 图及完整 exit_choices 不预建发送对象；新流
+按原 Policy、出口及 visited 约束排序，冷准备后固定下一跳。构造失败可试下一合格项，不为
+回收增加已固定连接或已交付数据后的透明重拨。实际连接继续持有它已取得的 Lease。
+
+WG 实际发送绑定与所需保活从所有有效引用合并，接收 base 继续保留公钥、PSK、接收 ACL
+及协议已学坐标，单凭静态资格生成的 persistent keepalive 为零；新增与释放沿原同快照 CAS
+增量执行，不重建共享设备。Hy2 最后一个实际引用释放时关闭闲置发送 QUIC，会话再用时从
+当前说明重建。上述本机执行字段只维护这一份当前语义，原实现及旧制品仅作证据保全，不能
+增加旧运行 fallback，也不能以描述摘要代替实际选择、监听或业务回读。
+
+WG 旧流租用保留精确来源／AllowedIPs 绑定，不保留一份能覆盖当前值的历史拨号坐标。同一公钥
+仅改公开地址或端口时，当前请求规格优先；该资源随后退出工作集但旧流仍在时，取原生实际快照
+中的当前 peer 规格补足绑定，不从 entry 首次创建值恢复旧地址。读取、合并及发布依赖同一原生
+快照并沿原 CAS 拒绝迟到操作；身份差异、已撤绑定、重叠及歧义仍拒绝，不借旧流增加权限。
+域名坐标的主机或端口已改变时，也不继承旧目的地的已解析 endpoint 来掩盖新解析失败；
+同一目的地的解析刷新失败与协议已学习地址保持原义，不能据此关闭仍合法的旧连接。
+
+WG 的内部用户态栈使用稳定双族初始化地址，与候选和资源集合无关；它们不标识或授权远端来源。
+真正发送仍使用原 resource／receiver 公钥／sender 公钥算法的精确 IPv6 principal。source routes
+与 peers 验证来源唯一、同 peer 的 pool／execution 归属及不重叠，以一致快照供一次拨号／UDP 注册
+读取。资源增减不增删栈地址、不重建 Device／Bind；普通业务图不生成 Linux 宿主 Address／HostSources、接口或返回路由。
+本机诊断使用一个固定身份及一条动态分派，只允许当前请求资源的精确执行 DNS 目标；不增加逐资源
+SOCKS 用户／静态路由，也不改变远端回显请求、测量规格或授予业务权限。
+
+最小验证须覆盖：撤 A 同时新增 B 而 B 准备失败，A 的撤权仍生效且合法旧流保留；新增 B、退役 B
+及空池重入均不重建共享实例；取消／旧 CAS／旧实例迟到不发布；TCP／UDP 的旧绑定保持；首业务无需
+等待所有候选；部分完成不报告全应用；同 View 重试修复缺项；Android、Linux、Windows 沿正式入口
+消费同一结果；WG 同公钥改址、改址后重试及退出工作集仍有旧流时不得冲突或恢复旧坐标。
+另须覆盖闲置备选释放且再用可恢复、测量结束不遗留保活、当前路径与 TCP／UDP 旧流继续租用、
+并发重用与迟到释放、接收准入不因发送回收丢失，以及资源数量不随已探测历史单调累积。
+域名改址解析失败与同目的地刷新失败分别覆盖。真正监听／宿主管理、后续图／出口及其他设施变化的边界须分别验证，不能借本节假称
+所有资源生命周期都已完成。
+
+WG 的公开 `dial_host/dial_port` 与本机监听端口分开。接收节点从受保护的现有
+`ResourceInputs.listeners` 读取 WG 项 `{resource_id,listen_port}`，按资源及 owner 资格投影
+原生 `listen_port`。端口须为显式非零值，不从公开拨号端口补默认值；NAT 可以将公网端口 P
+映射到本机端口 Q。既有映射的 `host_address` 定位落点，不成为 WG 绑定 IP 或地址族的限制。
+WG 项省略 `listen` 和 TLS 引用；Hy2 项仍使用原 `listen` 与成对的证书、私钥文件引用，原字节
+不改写。未引用输入不启动接收资源，也不授予权限。
+
+同一 WG Device 使用原生 Std 双栈共享 UDP 端口，每个支持的地址族共用一个 socket 收发，
+不按 peer 增加 socket。没有接收资源的发送端由同一 Bind 分配临时共享端口；端口存在不表示
+该节点取得接收资源或接入授权。每条业务连接仍须核对 peer 公钥、AllowedIPs 与原连接上下文。
+cookie 回复沿原共享 socket 返回。同一 peer 改址或无关 peer 加入不重建 WG Device、密钥或
+既有业务连接；停止、切网与撤权仍按真实传输及授权边界执行。
+
+预检须核对本机共享端口 Q 与所有支持地址族的实际占用。同机其他 IP 上的 Hy2 或其他 UDP
+服务使用相同端口也会与 WG 通配 socket 冲突，不能只比较地址是否相同。端口冲突必须明确失败，
+不能自动改用公网 P、随机端口或退成单栈；原生对真实不支持地址族的处理保持原义。
+
+本机换端口沿原认证运行 API 的 `wireguard_listener:{port}`、`wireguard_peers` 和接收
+`execution` 执行两次 CAS：先提交新权限与当前已确认端口，再提交相同权限与新端口。两次
+均使用各自提交前实际读回的 `expected_revision`，并在成功后核对新 revision 及完整
+`config_hash`；第一次成功不能代替第二次的执行确认。换端口只重绑 WG UDP，保留 Device、
+业务栈与独立 Hy2。来源 selector 的完整选择 CAS 继续独立成立，不把接收更新当成新选择。
+权限先发布、传输尚未完成或失败时，接收状态的 `config_hash` 为空，执行保持 unknown；成功
+并完整回读后才确认摘要。已经确认新权限后，仅 WG 换端口失败不得恢复旧权限、宣称旧端口
+仍在运行或停止无关 Hy2。权限本身无法确认时仍须按授权安全边界失败关闭，不能吞错。
+重试核对实际绑定端口，不能凭上次请求值跳过执行；底层网络刷新和唤醒仍使用明确请求的
+接收端口，绑定失败不改用随机端口。完整摘要与实际 socket 所有权都成立才确认接收执行；
+只有摘要吻合而 socket 缺失时，按相同当前权限重新应用期望端口，再核对两项回读。
+执行 TCP 包装显式透传半关闭，保留另一方向；复制优化不得绕过原生响应确认。
+
+本机输入变化由现有运行检查及明确重载入口消费，不增加 watcher、持久回执或第二份权威。
+实际迁移只前向登记已核实的本机端口，不修改 NAT、原资源身份、固定密钥、签名原件及认证进度。
+共享 socket 仅消除按 peer 建 socket 的成本；现有 peers、keepalive 与探测在节点增长时的
+内存、流量、计算及耗电成本仍须收敛并实测，不能据此宣称全邻接或规模问题已经解决。
+
+首次加入链为认证绑定、唯一身份／LKG 原子保存、接收准入生效、本机派生、原生应用回读、首个
+真实业务、持续优化与独立报告。删除缓存和离线重启可由相同 LKG＋Preference 重建；新选择不改
+签名 View。同一认证前沿的 View 内容仍不得改写。显式迁移保全原身份、固定及派生密钥、原签名、
+high_water/floor、latch 和报告序列，只接受前沿真正前进的替换，不双读或双写运行配置。
+
+最小反例测试：大 Policy 集合不生成签名候选／运行 JSON；加策略、网址或设备不轮换其他节点
+传输身份；单凭据不能使用未授 Policy、伪造来源／出口／已走链或绕过目标限制；WG-only、Hy2-only
+及混合逐段传输；切换互联网不改变 LAN；性能更新保留旧流；撤权与登记竞态不漏关；迁移字节
+保全与删除缓存后的恢复。通过单元检查不抵扣真实代理业务、真机、长连接和加入干扰验收。
+
+#### 逐跳 TCP 建连确认
+
+原生 WG／Hy2 的业务 `Dial` 只有在下游确认目标建连后才成功返回。forward 因而先等待下一段
+的确认，再向上一段确认；最终出口先完成实际目标 TCP 建连。确认不等待 TLS、HTTP 或其他应用
+首包，也不代表应用请求成功。业务域名仍由最终出口解析，入口不为获得确认而抢先解析。
+
+捕获入口的 HTTP CONNECT 响应、SOCKS 预读确认及 TUN 内部 TCP 状态不能代替这一结果。
+HTTP 入口可能先确认隧道接管，裸 IP 的名称嗅探也可能先读取并确认 SOCKS；真实业务反馈必须
+从固定到该连接的原生拨号结果取得，再分别保留应用响应及其成功范围。
+
+WG 沿既有响应帧校验 nonce、操作及 Accepted／Denied／Unavailable；Hy2 沿既有 TCPResponse
+编码读取状态和消息，不增加帧、字段或版本。原生 Hy2 的明确拒绝／不可用消息仅为精确的
+`loom:execution:denied`／`loom:execution:unavailable`；普通 Hy2 和任意其他错误消息不据此推导
+明确的原生结果。Denied 表示本次执行被拒绝，Unavailable 仅说明本次获准路径不能完成建连，
+不能仅凭它断言最终网站或某一段故障。后续业务观测必须保留该范围，不能据此隐藏全部 Policy。
+
+当前 Loom 单拨号端口的原生入口中，建流／认证、发送请求和读取确认共用八秒上限，并取调用方
+更短期限；取消只终止本次连接或 QUIC stream，
+不关闭共享 WG／QUIC 传输。取消回调与成功返回须同步结束，不能迟到关闭已返回的连接。收到
+下游 Denied 不得改报 Accepted；取消、普通 EOF 或关闭不能伪造成功，也不生成目标故障事实。
+确认头后的首个业务字节及 TCP 半关闭语义保持，通用非原生 Hy2 的懒读行为不因此改变。
+失败的 `Dial` 返回错误及真正的空连接；具体指针转为 `net.Conn` 接口前须先处理错误，
+不能让含空指针的非空接口进入上层清理，也不能靠空 `Close` 或吞错掩盖这项返回契约。
+发送端停止等待不等于远端 forward 的在途 Dial 立即取消；远端仍受自身有界期限约束。
+不能把 TCP 读 EOF 或 QUIC 发送半关闭当成整个双向连接取消。
+
+这只是既有运行与传输入口的确认修正，不改变领域授权、签名对象、持久身份或 UI 完成判定。
+最小验证覆盖：下游延迟确认时 Dial 不提前成功；明确拒绝与不可用逐跳保留；取消后共享传输仍可
+建立另一连接；确认与首字节同包不丢字节；半关闭保留返回方向；无探测网址的普通业务仍可执行。
+正式 WG／Hy2 Endpoint 的拒绝和失败同时检查错误语义与空连接，不只在具体指针 helper 上验收。
+
+#### 普通 TCP 结果的本机消费
+
+access 的普通本机 TCP 连接在实际下游 Dial 完成处采集一次结果，不从代理握手、字节计数或关闭
+事件推断。记录保留连接固定的 Policy、候选、原始 host/IP＋端口、已有选择 revision、尝试开始与
+完成时间。成功只证明 TCP 建连，明确不可用只证明该候选无法完成这一目标；拒绝、取消、未知
+确认及正常 EOF 不产生失败。诊断探测、forward 入站、LAN 和管理流量不混入普通互联网结果。
+本机等待确认的期限到达仍为 unknown；不能只因裸 deadline 或通用 timeout 就声称下游明确失败。
+未取消的真实尝试即使结果未知，也可按原开始时间保留 `unknown`，仅证明近期确有使用；按最新
+尝试规则消费，不制造不可用或性能确认，不借新未知结果延长旧成功／失败的截止。拒绝、取消和
+正常关闭不提供这种活动证据，后台校准也不能更新普通活动缓存。
+
+原生实例通过既有带认证的本机 API 提供有界快照，不新增公网入口。缓存最多 128 条、64 KiB，
+按真实尝试开始时间保留最新结果；同刻冲突为 unknown，迟到旧尝试不能覆盖更新尝试。保留上限
+为既有成功样本寿命，读取不续期；实际成功／失败寿命仍沿用节点采样参数。它不执行额外探测，
+限额不是 Service 网址数量或探索并发限制。
+
+复用已有不可预测 revision，不增加观测上下文字段。客户端在完整选择回读后，仅在 RAM 绑定
+revision、本机网络代及当前 Policy 的实际执行规格。切网、重启或执行条件变化时，同路径也通过
+原完整 CAS 重新确认；授权差量改变 revision 后也重新绑定。迟到且不匹配的事件丢弃，不套用当前
+路径或规格。性能更新保持已消费、同网络同规格的原样本至原截止；新事件只按其原归属消费。
+绑定和普通 TCP 样本不进入身份、Preference、Probe 持久缓存或共享 Observation 原件。
+本机循环只领取现存结果，与远端报告和测量请求独立；没有新事实且无待确认改善时不重算路径图。
+其读取周期不等于主动测量周期、样本有效期或性能最小换路间隔，也不产生额外网络探测。
+
+本机 `tcp_connect` 样本复用 Observation 值，Target 是规范 host/IP＋端口，MetricMillis 是完整
+建连耗时而非 RTT；HTTPS 仍保留完整 URL。两类证据分开，TCP 成功不能清除 HTTPS 失败或增加
+Service 网址覆盖，也不能抹去分段故障。固定出口仍只按分段观测选入口和中继。非固定出口中，
+某 TCP 目标的当前候选明确失败可立即尝试同 Policy 的未证实失败候选；全部失败时不反复切换。
+恢复优化仍遵守改善确认和最小间隔，已有连接保持。
+
+运行目标 key 统一为 `tcp://host:port` 或 `udp://host:port`，仅前缀区分传输，host/IP 与十进制
+端口仍严格规范，不含路径、query 或用户信息。原生选择按实际网络取 key，未知目标用默认；TCP
+或 HTTPS 证据只产生 TCP 覆盖，不连带更换 UDP。Service 访问边界仍为 host/IP＋端口，不因此新增
+访问分类。选择报告沿现有 Target 字段发送同一 key，不增加字段或报告对象；只上送实际覆盖，
+不把每次普通连接变成全网共享测量项。已签 schema 3 中的裸 host:port 保留原泛协议语义和原始
+字节，可历史验签；新的运行覆盖与报告 writer 不生成裸 key，不增加运行 fallback。
+
+domain 没有新权威概念；签名 wire 只细化选择 Target 的网络范围，旧原件不改写；persistent 的
+身份、进度、原签名不变；runtime 的绑定、结果与覆盖均可删除重建；UI 分别说明 TCP 建连、HTTPS
+请求及实际选择，不能将 TCP 成功显示成网站或整网成功。
+
+最小验证覆盖：真实拨号点采集及取消／拒绝排除；旧慢结果、同刻冲突和缓存限额；同路径切网
+CAS、执行条件变更与旧实例迟到；无网址的 TCP 故障选合法备选、恢复稳定及固定出口不按目标分路；
+TCP 覆盖不影响 UDP；报告 key 严格拒绝与历史签名字节不变；普通业务与长连接经正式入口回读。
+
+#### 后台 TCP 恢复校准
+
+用户已确认：先在后台试连，再让新连接采用优选路径，已有连接保持。本节只处理非固定出口
+Policy 内近期实际目标缺少恢复证据的情形；固定出口继续按分段规则选入口与中继，不产生目标
+校准任务。它不是 Service 网址扫描、权限扩张或新的 Probe 对象。
+
+运行端先从可比的当前分段样本形成显著且持续的改善推荐，再检查目标证据。不能因当前候选
+持续产生 TCP 成功，就永远不提出更好的备选；旧目标证据到期也不能清空仍成立的分段推荐。
+只有近期真实 `tcp_connect` 证明该目标仍值得校准。原健康截止与近期使用保留界限分开：过期
+结果不再证明可用，仍可在原保留窗口内证明曾实际使用；读取和校准都不延长这个窗口。
+
+每个活跃目标只保留必要备选，任务由既有待确认改善和节点调度单向派生，不建立完整路径与
+网址乘积。已有当前相关出口 HTTPS 成功时优先复用原共享与分段证据；不伪造本机端到端 TCP
+样本，不清除尚有效的本机失败。相关 HTTPS 明确失败时，不以一次 TCP 成功洗白，也不重复做
+这种不能解决问题的校准。缺少足够相关共享结果时，才为持续改善的合法备选做少量 TCP 试连。
+
+校准复用现有节点请求率、并发、预留字节及截止预算，与其他测量公平轮转。重测周期、原样本
+寿命与性能最小间隔仍分别处理；性能冷却期间可以继续测量，不能用冷却代替采样周期。预算
+不足只延后，不续期旧证据。实际计数须注明范围，本机 API 的字节不能冒充共享 WG／QUIC 的
+全部线上开销。校准不发送 HTTP、TLS 或应用内容，只等待原生逐跳 TCP 建连结果。
+
+本机认证 API 为 `POST /loom/access/{name}/tcp-connect`，只在带非空认证的字面 loopback
+listener 可用，请求正文最多四 KiB，恰含 `expected_revision,policy_id,choice,target`；choice
+使用已有 `entry_node_id,first_resource_id,final_exit`，target 为规范 `tcp://host:port`。拒绝
+未知字段、尾随正文、query 与非规范目标。当前 selector 必须为互联网 access，Policy 及
+revision 必须与实际选择一致；候选 ID 由当前 Service、Policy 与 choice 重新计算，摘要不是
+权限。复用当前源权限、目标边界、资源职责、运行组件和完整路径约束校验，不能给未选 Policy
+执行，不能靠临时切换生产 selector 探路。近期目标还须存在于原生普通 TCP 缓存，校准不写该缓存。
+
+短授权 fence 内完成校验及现有连接 tracker 登记，释放后才能 DNS／Dial；撤权和停止只取消
+这次试连，迟到连接立即关闭，不关闭共享 WG／QUIC 或其他流。结束前再次核对当前选择及授权，
+过时结果丢弃。响应复用本机 TCP 结果的 revision、Policy、候选、原目标、开始／完成时间和
+结果；调用方只在原网络代、执行规格与运行所有者仍有效时接受。明确不可用只描述该候选与
+该目标；普通确认超时、未知、取消与拒绝不制造故障，不能据此隐藏整个 Policy。
+
+校准结果仅在同一 RAM 工作集使用既有 Observation 的本机动作 `tcp_calibration`。它与真实
+`tcp_connect` 按原尝试时间比较 TCP 证据，但不能续真实活动、不进入签名 Observation、身份、
+Preference 或 Probe 持久缓存，也不增加 Service 网址覆盖。TCP 可用性是恢复准入条件；持续
+改善仍由新分段样本确认，不能把 TCP 更新时间当 RTT 或要求旧连接反复重建来增加确认。
+取得所需证据、改善仍成立且最小间隔满足后，只改变新连接。真实故障、撤权与用户操作继续
+沿其原规则及时处理，不等待性能校准。
+
+domain 与持久身份无新权威实体；签名 wire 与传输上下文保持 schema 3 原义；新增请求只是
+既有本机执行 API 的派生操作；运行记录可删除重建。UI 区分真实业务建连与后台校准来源，不
+把试连成功说成网站成功，不新增管理对象或页面。
+
+最小验证包括：无网址的真实目标故障绕行后，由实际校准生产恢复结果而非注入成功；当前
+持续成功与旧证据到期均不锁住备选；共享结果复用与 HTTPS 失败保留；固定出口、UDP、LAN 不
+参与；预算、公平、取消、撤权和旧结果归属；校准不切 selector、不发应用内容，性能更新后旧
+TCP 仍收发，新连接才采用新路径。
+
 
 ### Invite、claim、resume 与配置交付
 
@@ -1033,43 +1393,49 @@ Invite Material 的 control_config_id 必须等于其证明终表内容 ID。隔
 control_proof、Invite 和 View 均不得因此泄漏设备授权的 RuntimeKey 或其他设备的派生凭据。
 后继验证实现后沿同一 envelope 交付，不加 runtime_contract 或第二份 View。
 
-本链 DeviceView 的字段为 `schema=3,network_id,device_id,name,platform,device_public_key,responsibilities,policy_ids,`
-`services,policies,resources,links,endpoints,dns_servers,business_probe_targets,routes,`
-`inbound_credentials,expected_components`。所有集合显式出现；没有相应授权时为空集合。
-另有可选 `runtime_profile`，以及可选非空 `wireguard_peers`、`dns_records`、`public_trust` 和 `web_endpoints`，分别按上文的 peer、DNSRecord、PublicTrust
-和 EndpointGeneration 规范投影；web_endpoints 仅含当前成员、有效根授权下相同客户端端口的
-serving `control.loom` web 代，按 ID/generation 排序，原设备认证 endpoints 不因此加入 web-only 值。
-无配置时字段缺席，显式空数组、null、未知用途或不规范证书均拒绝；已有缺席字段的签名字节保持。
-View 职责包含普通设备授权与成员表的有效投影；其中 control 只能来自已经验证的成员表。
-runtime_profile 在 access 或持有传输资源的服务节点出现，无 access 且无资源时省略。
-它包含 `kind="sing_box",config`，config 是 C 编码的 JSON 字符串，包含候选 outbound、
-原生 WG endpoint、Service selector 与接收权限规则；平台本机 capture/listener 和本机 API secret 由
-HostAdapter 投影，不可扩大签名 selector 的成员。无业务权限的 access 仍须能表示拒绝业务的合法运行配置，
-不能因 routes 为空而拒绝认证配置。forward/出网的入站值由当前权限单向投影，不接受本机自填 ACL。
-每个受管 Service 的签名 selector 都包含既有 `reject` block，并以它为默认值；无候选也保留 reject-only selector。
-平台只在所选 Policy 内应用候选；待选、无路或应用失败保持拒绝，拒绝值不进入 Selection 或候选报告。
-业务观测过期后按同一授权重新选择，其他 Service 与服务节点 listener 不因单项业务失败停止，详见
-[Preference 与 Selection](../clients/client-runtime-model.md#preference-与-selection)。
+本链 DeviceView 的必需字段为 `schema=3,network_id,device_id,name,platform,device_public_key,`
+`responsibilities,policy_ids,nodes,services,policies,resources,transport_credentials,endpoints,dns_servers,expected_components`。
+集合必须显式出现。`nodes` 不重复自身；每项为 `id,responsibilities,policy_ids`，可带公开 WG
+身份及非空来源解析参数。Hy2 传输凭据按资源／实际发送节点排序；不得出现重复或越过本机
+发送／接收边界的秘密。可选自身派生 WG 私钥只为自身执行；固定私钥仍用原本机文件。
+可选非空 `dns_records`、`public_trust`、`web_endpoints` 保留各自规范字段和当前有效引用；
+显式空可选集合、null、未知或非规范输入拒绝。
 
-services/policies/resources/links/endpoints 均使用上述完整值，引用仅限该设备可消费范围；
-policy_ids 保留设备原分配；policies 只包含当前有效值，缺失的所选策略或缺失所属 Service 表示该权限已收口，
-不能使完整认证 View 因没有业务权限而被拒绝。运行候选、凭据或 allow 规则引用缺失值则必须拒绝；
-策略按 PolicyID 唯一，不同服务之间检查目标歧义，同服务多条策略合法。dns_servers 是上述规范排序 Resolver 集合；business_probe_targets 的项为
-`service_id,targets:[]HTTPS_URL`，按 Service ID、URL 排序，目标须匹配该 Service 且设备所选策略 allow。
-无适用目标保留空集合，不能填入硬编码公网目标。expected_components 的项为
+签名 wire／持久 LKG 不含候选、运行 JSON、逐路径或逐 Policy 的凭据／peer 展开；具体删去的
+旧字段和一次性替换见[稳定 View 与本机运行派生](#稳定-view-与本机运行派生)。旧原件保全并按
+原义验签，不得在同一认证前沿改写成薄 View。职责包含普通设备授权与成员表的有效投影；
+control 只能来自已验证成员表。
+
+access 依据唯一当前互联网 Policy 与独立 LAN 选择派生候选。共享 transport 和稳定授权谓词
+在本机编译，实际选择由完整 CAS 快照提交：`policy_id,now,targets,choices,revision`；
+`choices` 的键为候选摘要，值为 `entry_node_id,first_resource_id,final_exit`。原生 selector 重新
+计算候选身份、校验当前 Policy、入口资源、出口资格及目标边界；性能更新只影响新连接。
+无业务权限或待选是可接受的认证状态，运行 selector 保持 reject。运行 JSON、测量、推荐及
+本机 API revision 只能单向派生，不能签发、倒写或形成第二份持久权限。
+
+policy_ids 保留设备原分配，policies 只包含相关当前有效值；缺失的 Policy 或所属 Service 收口
+相应权限，不得因此拒绝整个认证 View。源解析参数改变使对应测量规格失效，不改变其他节点
+的执行或 ACL。探测网址仅从 Service 投影，未配置也能依据传输和真实业务观测正常联网。
+expected_components 的项为
 `component_id,platform,version,artifact_digest`，按组件和平台排序；发布记录的验签仍需其独立契约。
-HTTPS 目标池在现行模型中没有限于 443 的业务约束；非默认端口仍须精确授权和按原 URL 校验证书。
+Service 的 HTTPS 网址不隐含仅 443 的业务约束；非默认端口仍须精确授权和按原 URL 校验证书。
 TLS 校验名始终是原 URL 的主机名，HTTP authority 保留非默认端口；地址尝试或代理不能将二者换成
 拨号 IP，也不能跟随重定向后把另一目标的结果记给原 URL。各端实际端口消费的证据见[实施状态](../progress.md)。
 
-候选身份字段为 `service_id,policy_id,first_resource_id,node_chain,link_ids,final_exit`；Direct 与本机出口的
+#### 待替换的完整路径执行字节
+
+以下描述现存完整候选、入站凭据及排除目标的旧字段，用于界定原件保全和前向替换范围；
+它们不能约束 access 选入口、forward 在同一 Policy/最终出口内继续选路的目标。新规范字段和
+接收端一致校验尚须完成，不继续签发该旧执行形状，也不将其保留为运行 fallback。
+
+历史候选身份字段为 `service_id,policy_id,first_resource_id,node_chain,link_ids,final_exit`；Direct 与本机出口的
 first_resource_id 为空且两条链为空，final_exit 分别为 `direct` 和设备 NodeID。一跳有首跳资源而无 LinkID。
 RouteCandidate 在这些字段外还有 `id,spec_digest,scope`；id 和 spec_digest 按本节摘要规则计算，
 scope 固定为 `service:` 加 Service ID。入站权限项为
 `device_id,service_id,policy_id,candidate,resource_id,receiver_node_id,sender_id,allowed_targets,excluded_targets`；
 Hy2 另含前述 KDF 输出 `credential`，WG 省略该字段。互联网 allowed_targets 是规范排序 Matcher 集合，只能来自该 Service 及当前策略的
-获授权投影，不能由 credential 持有者扩张。excluded_targets 为该来源设备其他当前所选 Service 的
-matcher 去重并集（包括 deny），同样显式、规范排序。先拒绝 excluded，再允许 allowed，默认拒绝；
+获授权投影，不能由 credential 持有者扩张。历史 excluded_targets 为旧多服务选择模型派生的 matcher 并集（包括 deny）。该规则只描述旧
+原件，不再生成“其他当前所选互联网 Service”的排除权限。先拒绝 excluded，再允许 allowed，默认拒绝；
 这保持 Service 后继修改造成交集时的拒绝语义，不把凭据本身当成目标授权。每项按
 `device_id,service_id,policy_id,candidate.id,resource_id,receiver_node_id,sender_id` 排序且唯一；Hy2
 凭据用户名由这些绑定字段的规范摘要派生，不通过有歧义的字符串拼接。权限绑定完整候选、
@@ -1084,11 +1450,13 @@ matcher 去重并集（包括 deny），同样显式、规范排序。先拒绝 
 
 接收端按 Hy2 请求实际携带的 FQDN/IP 或 WG 执行 DNS 恢复的原名称/字面 IP 执行目标规则；
 不得用 sniff SNI 为任意 IP 请求扩大权限。
-本机 TLS 引用及监听坐标仅定位执行输入。撤权先耐久接受新 View，再关闭旧进程和存量 QUIC 会话，
-然后建立新 generation；仅热换 user 表不能撤销已认证会话。失败保持新 LKG 并报告 error，重启不复权。
-共享 listener 的合法会话因此可能短暂中断；不为避免中断保留旧 ACL、凭据或第二状态源。
+本机 TLS 引用及监听坐标仅定位执行输入。撤权先耐久接受新 View，再终止受影响的旧会话，
+不能只改 user 表却让越权已认证会话继续。失败保持新 LKG，重启不复权；无法精确更新是实现
+缺口，不应规定增员或性能优化必须重启共享 listener。不得为连续性保留旧 ACL 或第二状态源。
 完整中继与 WG 参与地址使用上文的逐段权限、peer 和来源投影；实际业务结果仍须分别验收，
 不能从一跳成功推定其他路径可用。
+
+#### 认证接受与执行分离
 
 验收顺序固定为：严格规范解码 → 固定网络锚 → 连续成员证明与签发资格 → 完整 envelope 签名 →
 View 摘要 → 设备 ID/公钥/平台 → 内部引用及授权/运行映射 → 已见前沿。任何一步失败都不覆盖原 LKG。
@@ -1110,23 +1478,22 @@ domain、wire 与 persistent 均保持原值和原字节，runtime 只有本调�
 
 ### 私有设备的中继观测交付
 
-`POST /device/link-observations` 复用加入后的设备认证通道，请求规范值恰为
-`{schema:3,view_digest}`，摘要必须等于该设备当前可签发 View；未知、非规范、错设备、bootstrap
-或陈旧配置请求拒绝。返回规范值恰为 `schema=3,network_id,device_id,view_digest,observations`。
-observations 显式出现，缺少有效样本时为空集合；按原 observation.link_id 排序且唯一。
-每项恰为 `device_id,report_sequence,report_digest,current_until,observation`：device_id 是真实
-报告来源，sequence 保持原 U64，digest 是完整规范原报告字节的 SHA-256 内容摘要，observation
-是本节既有 Observation 原值。current_until 单独给出有效展示/选择截止，不能改写原 valid_until。
+`POST /device/link-observations` 复用加入后的设备认证通道，唯一当前请求、响应、cursor 与
+工作集语义见[设备相关测量的批量差量交付](#设备相关测量的批量差量交付)，不另维护无 cursor
+的响应格式。摘要必须等于该设备当前可签发 View；未知、非规范、错设备、bootstrap 或陈旧
+配置请求拒绝。每条引用保留真实来源、原 U64 序列、完整规范报告的内容摘要与原 Observation。
 
-交付从原报告库最高且无同序列分叉的位置读取，核对当前设备身份、公钥与签名、来源当前 View
-及实际应用 runtime、来源网络代、该方向的 Link/资源/探测规格和报告与样本有效期，使用同一
-三分钟报告、三十秒 Link 和时钟边界；不延长过期样本，不由端口、握手或计数生成健康。
-只交付接收设备当前 View 中依赖的 Link，且来源必须等于 Link 的 From；调用端重算 Link/spec
-及目标/动作对应，复核自己的 View 摘要仍相同。来源网络代不得改成接收设备的网络代。
-设备仅缓存当前运行中这些投影。取件失败不产生新样本、不改变已有结果或延长截止；只有仍匹配
-当前已接受并运行的 View、接收设备、Link/spec、来源及目标/动作，且未过期的已有 RAM 样本
-可以继续使用，缓存也可随时丢弃。成功取得的新投影整体替换原范围，空集合也一样，不能用旧
-样本补回新投影缺失项。丢弃只使缺少其他有效证据的段成为 unknown，不能生成失败或成功。
+交付核对当前身份、公钥与原件签名、来源当前职责与规格、最新已知的唯一 head 所声明的运行
+应用状态和来源网络代。最高位置分叉、明确停止、应用失败、换代、撤权或规格变化清除对应
+证据；没有新报告不等于停止、数据面故障或新网络代。选路按原样本 valid_until、合法原寿命与
+时钟边界使用，current_until 保留该原截止；不因领取、重复报告或分页续期。Web 报告的三分钟
+陈旧标记仅属于展示，不裁剪选路样本，不成为第四个测量时钟。
+
+只交付接收设备当前 View 中允许的 Link 与出口目标，Link 来源必须等于 From；调用端重算
+Link/spec 和目标/动作对应，复核自己的 View 摘要仍相同。来源网络代不得改成接收设备的网络代。
+设备只使用仍匹配当前已接受 View、来源、目标、规格且未到原截止的样本。取件失败保留精确
+base/cursor，不产生新样本；跨页有效事实由同一有界工作集合并。客户端原子替换通过验证的
+完整工作集，不在该工作集之外自行补回旧行。缺项只令无其他证据的段为 unknown，不制造故障。
 接受撤权或资源/spec 变化、View 改变或样本到期后，旧样本立即不再使用；
 不持久化第二报告/健康 store，不把远端样本签成自己的报告，不把观测放进授权 DeviceView。
 TLS 认证控制交付，来源签名由 control 核验；它不提升来源或接收者的 Service 权限。
@@ -1157,6 +1524,13 @@ domain/wire/persistent 均不新增值；runtime 仅持有这些输入的单向�
 UI 与 Link 范围检查只消费内部的 View 和摘要，不为只读投影签发配置。
 正常链为已认证输入变化、配置重建、设备验证并持久保存唯一 LKG/floor、运行应用与报告回读。
 最小检查包括并发单次构建、同 View 的证明推进、撤权/阻断/发布材料损坏、取消及冷热规范字节等价。
+
+配置跟随使用同一 `/device/config`、原认证摘要及可选的规范 `Loom-Config-Wait` 传输头，
+详细边界见[私有配置交付](enrollment-endpoint-model.md#配置领取与认证持久化)。本机认证输入变化通知及
+成员前沿请求中的 `Loom-Facts-Changed: 1` 只调度原领取/取缺，不构成授权、同步前沿或执行回执；
+该提示按[普通事实同步](control-model.md#4-普通写入与大规模增量同步)丢弃重建。签名对象与持久
+schema 3 字节均不变，已认证原件不重签或重解释。配置变化后先持久保存认证进度，再局部应用；
+同 View 的前沿前进也须保留，不能因未重建数据面而丢弃。
 
 合法的服务节点配置可包含数百条分段权限与完整运行配置；例如 4 MiB 的规范输出及其 typed View
 无法进入原 2 MiB 预算，连续配置读取与管理快照即使输入未变也持续重算。预算提高到上述固定上限，
@@ -1198,6 +1572,33 @@ Service 的允许/排除目标执行每轮至多一个未选 candidate/目标的
 不关闭生产业务连接，以及正常入口取件和重启原件保全。禁止恢复 Link 只供 Web 而不参与选择、
 以当前路径成功阻止其余路径恢复观测，或通过切换生产 selector 进行全量探测。
 
+### 本机出口测量的物理 I/O
+
+出口测量由既有节点 worker 从当前已认证 View 派生 `EgressProbes`，按原规格去重、预算调度并
+在原 owner fence 内提交。它不使用来源路径校准的 candidate 诊断权限，也不建立逐 Service 的
+原生探测用户、路由 ACL 或另一份可更新授权。互联网业务共用一个固定的公网物理出站；
+Service／Policy 的原始目标、来源、最终出口和路径约束仍由 access／receiver 当前权限快照校验。
+LAN 保留独立映射及权限；捕获匹配完整获授权映射，实际访问再与当前限制目标取交集，拒绝后
+不能落入其他 Scope。存在物理出站不等于节点取得互联网出口职责或业务许可。
+
+可信本机消费者沿既有回环认证 HTTP 服务使用 `CONNECT /loom/egress`，以 `X-Loom-Target`
+携带规范 `tcp://host:port`。只接受 HTTP/1、强认证、回环监听和无 query 的请求；固定出站必须
+保持认证 DNS、原生平台 underlay 绑定及每次实际拨号的公网地址守卫，不使用系统 DNS fallback。
+持有同一临时本机口令的消费者本来已可应用整个运行权限投影；此入口是其物理 socket 能力，
+不是远端 Service 授权。普通 Mixed／TUN、`source:access`、WG／Hy2 用户及设备资源凭据不能
+借它绕过 Policy，也不能取得该本机口令。
+
+建连继承本次 HTTP 请求的取消与原八秒总期限，成功后才交接数据通道；交接后的通道保持原
+绝对截止及运行实例所有权，不能因 HTTP handler 返回误关闭，也不能在停止后遗留。停止、取消、
+失败仅关闭本次持有的 socket 并等待本次 I/O 退出，不将普通 TCP 半关闭解释为取消。
+Go 继续执行原 GET、TLS／主机校验、不跟随重定向、状态判断和前 4 KiB 读取；实际网络位置及
+请求／解析规格不变，不改 `egressProbeSpec` 或重解释历史签名报告。
+
+domain、签名 wire、persistent 与 UI 均无新对象或字段：Service／Policy、身份、原签名、认证
+进度和报告序列保持；本机 CONNECT 与共享出站只是单向运行投影，不写回 View 或偏好。
+最小验证覆盖未授权／错入口／非公网拒绝、建连前后取消与通道退出、普通半关闭、受限目标撤回
+后仅关闭失权连接、仍允许连接保持、共享请求与原规格保持，以及 Hy2-only 出口的认证业务 DNS。
+
 ### Report 与逐条观测
 
 DeviceReport 字段为 `schema=3,network_id,device_id,report_sequence:U64,view_digest,network_generation,reported_at,`
@@ -1211,21 +1612,35 @@ DeviceReport 字段为 `schema=3,network_id,device_id,report_sequence:U64,view_d
 创建 LAN Service，且只能选择其中 lan=true 的项；access 的集合仅用于地址冲突检测。
 读回失败不能用空集合冒充成功，不能由接口名称或设备职责推断 lan=true。
 同一原件、序列和数据库持久化/同步规则适用，不新增 LAN 报告文件或冲突 store。
-当前 selections 每项为 `service_id,policy_id,candidate_id`，按 ServiceID 排序，表示实际 selector 回读；
-无实际选择则为空。当前 access 报告携带 `policy_choices:[{service_id,policy_id?}]`，按 ServiceID
-唯一排序；省略 policy_id 明确表示待选。它采样本机 Preference，不授予任何权限；实际 Selection
-与保存的选择在异步应用或失败时可以不同。当前 View 校验实际候选与对应 Policy，不能跨策略拼接。
-历史报告的 preference 与不含 PolicyID 的 selections 只按原义验签及保全原始字节，不补造当前选择；
-缺少 policy_choices 显示未报告。新报告不再写全局 preference，不增加报告 store 或配置写入入口。
+实际选择与保存意图必须分别报告，不能从其中一个制造另一个。互联网当前意图只包含一条
+Policy，由其确定 Service，实际新连接仍须保持该 Policy 和最终出口约束。现存报告的
+`selections:[{service_id,policy_id,candidate_id}]` 及 `policy_choices:[{service_id,policy_id?}]`
+按原义验签和保全，不能用它们要求新的客户端按服务分别选择。新当前意图的字段级修订与
+前向替换尚未完成，不能复用旧字段静默改变语义。报告不授予权限，不增加报告 store。
 
-runtime 为 `state,applied_view_digest,error_code`；state 仅 `running/error/stopped/unknown`，
+runtime 为 `state,applied_view_digest,error_code`，另可有 `permission_view_digest`；state 仅 `running/error/stopped/unknown`，
 无故障时 error_code 为空字符串，不能承载含秘密的错误正文。运行摘要必须来自实际加载结果，失败时不能将
 当前获认证 View 摘要冒充已应用摘要；尚未加载任何 View 时 applied_view_digest 为空字符串。
+`permission_view_digest` 只在本实例完整 source／receiver 权限已提交并回读成功时填写，必须等于
+本报告 View；不从 LKG 已保存推断，不证明组件、路径或业务已就绪。完整 running 与 applied
+一致；资源未齐时仍为 unknown，applied 留空，只有权限确认可继续报告。停止、权限未确认或
+失败时不填。缺席字段保持历史 schema 3 原字节与原义，不新增持久权限或重签旧报告。
+
+可选字段保留历史缺席字节，不表示旧严格消费者能够解析新字段。未来经授权发布时，须先更新
+承接报告及报告同步／读取的 control 消费者，再激活发送该字段的新 producer；不能反向发布后
+自动删掉权限证明绕过拒绝，也不增加兼容解码路径、协议版本或第二份报告。本轮源码和独立验收
+不构成生产发布。
+
+独立链路／出口观测可由上述当前权限证明交付，仍逐样本核对职责、资源／请求规格、网络代、
+原时间及截止；业务路径、选择、监听／ACL 和整实例应用证明继续要求完整 running 回读。
+资源未齐不能令无关有效样本全失效，重复报告也不能为样本续期；原报告的其他 View 字段不进入
+测量身份。control 的验签缓存及批量读取必须保留该标量，不能以 UI 状态代替这项确认。
 承载 Hy2/WG 的运行报告另有非空可选 `resources`，按 resource_id 排序；纯 access 不写空的替代集合。
 每项为 `resource_id,listener_id,listen,certificate_digest,acl_digest`，WG 另含 `public_key`，其中 Hy2 certificate_digest 为证书摘要，WG 固定为空且 public_key 必须匹配资源认证公钥。
 旧 Hy2 回读缺席 public_key，保持原签名字节；两种身份不可同时提供。
-WG 回读核对已启动精确进程及其 UDP socket，只证明执行，不能代替 WG DNS 或业务探测。listen 为本机实际监听的
-规范 IP:Port，certificate_digest 是对该 listener 完成真实 QUIC/TLS 验证所见叶证书 DER 的摘要；
+WG 回读核对已启动精确进程及所有支持地址族的共享端口 socket，只证明执行，不能代替 WG DNS 或业务探测。
+listen 仍为实际 socket 的规范 IP:Port；WG 的通配地址是运行回读，不成为精确绑定 IP 的输入。
+certificate_digest 是对 Hy2 listener 完成真实 QUIC/TLS 验证所见叶证书 DER 的摘要；
 有获授权用户时还须用实际派生凭据完成 Hy2 认证。acl_digest 覆盖本 generation 已交给精确执行制品的
 该资源完整规范入站凭据集合，接收 control 重算比较；不把它当单个业务请求成功或全网撤权证据。
 只有完整执行已就绪且 applied_view_digest 等于该 View 才可携带这些回读；一般启动失败不填期望值。
@@ -1274,8 +1689,11 @@ libbox 与共享 Go 核心同处一个已加载模块，其坐标不表示 VPN �
 
 Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest,`
 `network_generation,result,observed_at,valid_until`，可选 `duration_ms` 为非负整数。
-可选 `round_trip_ms` 也是非负整数，仅允许出现在成功的 Link `wireguard_dns` 观测中，并须有
-`duration_ms >= round_trip_ms`。它测量已建立执行 DNS 连接后的请求/响应往返，定义见下文。
+可选 `round_trip_ms` 也是非负整数，允许出现在成功的 resource/link `wireguard_dns` 或 resource
+`hysteria2_tls` 观测中，并须有 `duration_ms >= round_trip_ms`。前者测量已建立执行 DNS 连接后的
+请求/响应往返；后者只读取同次已认证 QUIC 连接实际 ACK 更新的平滑 RTT，不使用 QUIC 初值、
+DNS、TLS/HTTP 总耗时或传输字节速率代替。两者是相应传输段的估计输入，包含的处理开销不同，
+不是完整路径的 HTTPS 实测；业务结果仍独立校正估计。具体 WG 定义见下文。
 字段缺席表示未测量，显式零表示毫秒精度下的实测零；缺席不补值，原有已签字节不变，schema 仍为 3。
 可选 `hy2_transfer` 恰含 `duration_ns,rx_bytes,tx_bytes`；duration_ns 是正整数，两个字节数为规范 U64
 十进制字符串且均大于零。它只允许成功的 resource `hysteria2_tls` 观测携带，并要求
@@ -1285,59 +1703,68 @@ Observation 字段为 `level,service_id,candidate_id,resource_id,link_id,target,
 两个方向均相对报告设备：TX 发往该资源承载节点，RX 由其返回。时长不含名称解析和先前失败地址的尝试，
 外层 duration_ms 仍是原完整认证耗时。取消、认证失败及未完成测量不能生成吞吐值。
 这只是小量认证探测的实际传输速率，不表示饱和容量、业务用量、Service 成功或新的选路排序输入。
-level 仅 `resource/link/service`；不适用的四个 ID 字段固定为空字符串，不能缺席。
+level 为 `resource/link/egress/service`；不适用的四个 ID 字段固定为空字符串，不能缺席。
 resource 层仅 resource_id 非空，link 层仅 link_id/resource_id 非空，service 层仅 service_id/candidate_id 非空；
+egress 层四个 ID 字段均为空，来源由签名报告的设备身份确定，target 为完整探测 URL，action 固定
+`https_request`。它由具备 internet_egress 职责且当前获准执行该请求的来源测量；同出口及相同实际
+请求、TLS、解析和出站条件的消费者复用该项，不合并 Service 或 Policy 权限。
 每条保留实际 target 和 action。spec_digest 分别绑定资源、Link+资源或候选规范内容。
 按 `(network_generation,level,service_id,candidate_id,resource_id,link_id,target,action,spec_digest)` 排序且无重复。
 目标为确切 HTTPS URL 或相应传输动作的确切坐标，不能用一个聚合颜色替代。
 
-Resource 层 action 为 `hysteria2_tls` 或 `wireguard_dns`，只报告本设备获授权的相应公开首跳；
-target 为该资源的规范 dial_host:port，名称不替换成某次 DNS 答案。每个资源取当前获授权候选中
-ID 最小者的首跳凭据（中继候选取首个 hop，不取最终出口的凭据），因此多个 Service 或路径共用
-资源时只需一次认证。该成功仅证明这个凭据完成了资源认证，不证明其他 Service 的凭据或目标可用。
-私有凭据仍只取已认证 RuntimeProfile，不新增 View 字段、探测用户或接收端权限。
+Resource 层的新样本 action 为 `hysteria2_echo` 或 `wireguard_echo`，只报告当前所选 Policy
+允许的公开首跳。target 为资源的规范 dial_host:port，域名不替换成某次 DNS 答案。传输认证按
+实际发送节点／资源复用；每次 admission_echo 还显式携带 PolicyID，接收端校验当前来源的首跳
+资格。多个入口／出口候选共用同一资源及 Policy 的准入样本，不借另一 Policy 的回显证明准入。
+实际在途请求的复用键也必须包含规范测量规格、动作及 Policy；不能只对观测分组区分 Policy，
+却让底层共享请求忽略它。规格变化即使仍指向同一资源，也不能取得旧规格在途请求的结果。
+WG 准入从本机认证诊断入口经同一 WG 来源访问该资源精确执行地址的固定端口，再发送原生
+AdmissionEcho；不先经过要求业务连接上下文的包装。此诊断规则不能匹配普通目标，业务连接
+仍须携带并通过当前逐连接上下文校验，不新增凭据、协议或访问许可。
+
 spec_digest 为 `loom-resource-probe-spec-v3\0` 加
-`C({device_id,resource:完整TransportResource,dns_servers:规范数组,credential_digest})` 的 SHA-256；
-未配置 DNS 时数组为空。credential_digest 为 `loom-resource-probe-credential-v3\0` 加
-`C(所选规范凭据字符串)` 的 SHA-256。它绑定用途凭据变化，不公开秘密正文，也不是独立身份。
-接收方从当前 View 重算唯一投影并核对资源、动作、目标和摘要；没有普通公开首跳授权的 Link
-或服务节点不能借此上报资源成功。原 Link/Service 报告及 DeviceView 字节保持。
+`C({policy_id,device_id,resource,dns_servers,credential_digest,request:{operation:"admission_echo",policy_id}})`
+的 SHA-256；dns_servers 始终为数组。WG 还绑定 network_id 和该资源内实际 source_address。
+credential_digest 为 `loom-resource-probe-credential-v3\0` 加 `C(规范传输凭据字符串)` 的 SHA-256；
+WG 此处为实际发送公钥，Hy2 为稳定节点／资源凭据。派生自稳定 View，不从已删除的签名 RuntimeProfile 取件。
 
-Resource 执行只在本轮实际应用并回读的选择需要该资源时触发，包含必要 fallback 前的真实选择，
-按资源去重并行；Direct、本机出网及以 WG Link
-起步的 hybrid 没有此项公开首跳采样。Hy2 沿平台 underlay socket 和认证 DNS 完成真实 QUIC/TLS
-认证，只有校验成功并收到 233 才为 available；WG 复用实际运行的原生会话，完成接收端执行 DNS
-请求与响应的核对才为 available。超时、拒绝和认证失败为该资源样本的 unavailable，
-取消不产生样本。完整耗时含本次必要解析及认证，不是 RTT 或完整 Service 请求耗时。
-Hy2 的可选传输测量复用这一认证动作及平台保护的同一 UDP socket；不新增测速服务器、探测凭据、
-授权、连接、配置键或持久对象。control 从当前 View 验证同一资源/凭据/动作/摘要范围；运行及 UI
-仅从原签名 Observation 单向投影 `8 × bytes / seconds`，缓存重用保留原字节、时间和截止。
-新样本成功保存十分钟、失败三十秒，复用时原时间不变；这是客户端必要重测窗口，报告及页面
-还须通过下述接收端时效投影。缓存只保留同网络代、同规范执行摘要且仍授权的原样本，可删除重建；撤权、
-凭据/资源/DNS 变化、到期或换网后不能复用。资源结果不能变成 Service 的整体健康；客户端按
-[首跳样本参与必要尝试](../clients/client-runtime-model.md#首跳样本参与必要尝试)核对候选实际凭据的
-精确对应，只将匹配的原样本用于必要尝试顺序和失败排除，签名格式及已有样本原文不变。
+Hy2 先完成真实 QUIC/TLS 及登录，再在同一连接执行原生回显；WG 复用实际原生会话，通过自身
+执行帧交换回显。响应必须对应操作、Policy 和本次 nonce。登录成功、握手或端口返回均不能
+替代准入回显。取消不产生失败；超时和拒绝仅影响这一准入样本，不推断普通互联网整体失败。
+duration_ms 为包含必要解析、建连及认证的完整耗时；round_trip_ms 仅为已建连后的回显往返，
+不是握手耗时或线路纯 RTT。Hy2 可选 UDP 字节计数与纳秒时长来自同次实际 socket，不代表带宽容量。
 
-Link 层当前 action 仅 `wireguard_dns`，resource_id 为 Link 的接收端 WG resource_id，target 为
-probe_target 的规范 IP:Port（IPv6 使用方括号）。spec_digest 为 `loom-link-spec-v3\0` 加
-`C({link:NetworkLink,resources:[TransportResource]})` 的 SHA-256 摘要；resources 恰含两端 WG
-两项，按 ID 排序。仅 From 节点可报告；报告接收方重算所有引用、目标与摘要。实际执行复用
-本 generation 的原生发送会话及其只允许执行 DNS 的来源地址，经受限本机入口发起 DNS 请求；
-响应须匹配问题、事务号、成功码及执行地址池。没有运行会话、返回不匹配或超时均不能记 available。
-没有独立 Hy2 探测凭据或远端代理会话。duration_ms 是本次 DNS 完整往返的单调时钟耗时，
-不是 WG 握手 RTT 或 Service HTTPS 延迟。
-`round_trip_ms` 使用同一次请求的单调时钟：SOCKS 认证、WG 与 DNS TCP 连接建立完成且问题编码
-完成后，在写入 DNS 长度帧前开始计时，完整响应帧读完即结束；只有上述响应验证全部通过才报告。
-这是该方向 WG 内的 DNS 探测往返，包含两端处理和本机代理转交，不声称是纯线路时延或 WG 握手
-耗时。连接建立、名称解析和问题编码不计入这个值，完整 `duration_ms` 保持原义；例如连接建立慢
-而请求往返快时，两者必须分别显示。失败、取消和无实际响应不能产生 RTT，不能从旧 duration 推算。
-复用既有探测和授权，不新增探测入口、参数或持久实体。运行时计时值进入同一 Observation，
-沿原 schema 3 签名报告持久化与同步；Web 只投影原值及同范围历史，不倒写客户端选择。
-每轮按运行刷新周期重新采样；新样本的 valid_until 为该次 observed_at 加两倍调用方刷新周期，
-最长三十秒。Linux 默认十五秒刷新，为下一轮样本上传与复制留出正常交付余量；延迟超过余量时
-仍按原截止显示 unknown，不承诺所有超时路径内都有当前结果。既有签名样本的原截止不变。
-这是设备声明的该轮样本边界，接收端另核对下面的最大窗口。取消或未执行不生成成功样本，
-失败只影响该次 Link 观测，不停止其他 Service；UI 保留原时间和样本结果，仅有效结果参与当前拓扑投影。
+消费端不得把该失败当作授权或拓扑失格。先比较当前 Policy 内仍合法的候选及各自诊断证据；
+有合格备选时可避开失败诊断所依赖的路径，没有备选时仍可保留合法当前路径，冷启动也可
+从合法集合稳定选择实际尝试项。不得仅因全部诊断失败就把普通互联网 selector 写成 reject，
+或在图中删除所有失败测量边后声称无合法路径。撤权、资源失格或确实无合法拓扑仍须拒绝；
+实际拨号及接收端逐连接检查不放宽，观测和 TTL 不改写，选择不构成 available 证明。
+较新的真实 TCP 成功仅能反证同 Policy、候选、执行规格和来源网络代下明确经历的本机首跳
+传输负面，且原生事件的实际开始毫秒须严格晚于失败；较早请求的迟到完成不构成恢复。
+NativeTCP 的 MetricMillis 是同一原事件结束与开始毫秒之差，反算只还原该原值，不增加时间
+字段；未绑定同次起止的 HTTPS 完成与耗时不作传输反证。TCP 成功不能替代 AdmissionEcho、
+伪造 HTTPS 结果，或反证逐跳自由选路中未记录实际经过
+的远端 Link。目标失败与后台恢复的既有约束继续成立，详见[客户端运行模型](../clients/client-runtime-model.md)。
+
+Link 层的新样本同样使用 wireguard_echo／hysteria2_echo，只有 From 节点可报告。
+resource_id 为接收资源；WG target 为其确定性原生执行地址与端口，Hy2 为该资源的规范拨号
+域名/IP＋端口。后续 transport_echo 不声明某个 access 的首跳准入，不能与 admission_echo 混用。
+当前有向规格为 `loom-directed-link-spec-v3\0` 加
+`C({network_id,link,receiver_resource,source_node_id,source_wireguard_public_key,dns_servers})` 的 SHA-256。
+原始来源网络代在样本中另行保留，接收与消费方核对相同规格，不把端到端 HTTPS 耗时补成段 RTT。
+旧 wireguard_dns／hysteria2_tls 和旧资源对规格仅按原义验证历史原件，不生成新测量或当前运行 fallback。
+
+来源使用固定 WG 公钥而 Hy2 RuntimeKey 单独变化时，当前有向规格还缺少独立的来源传输认证
+变更绑定；须与稳定身份字段一起收敛后验证失效，不能把固定 WG 公钥当 Hy2 认证根的替代。
+
+所有测量按节点共享请求率、并发、字节和超时预算。活跃项优先并给最久未测项公平机会；
+预算不足延后执行，不能给旧样本续期。当前执行默认活跃周期三十秒、其余两分钟，成功有效期
+十分钟、失败三十秒；这是供本地与真机验证的默认值，不是业务授权或固定探测条数。
+测量周期、样本有效期和性能最小换路间隔各自独立，冷却期间继续测量。当前 WG 预算仍使用
+预留估算，尚未完成 underlay 全字节及实际耗电验收，不据此宣称严格流量上限已经成立。
+性能比较复用原样本有效期和来源规格，不另设成对时间差或第二有效期。现有运行内存中已经
+达到改善门槛的待确认备选，可与当前路径一起提示本机测量优先级；异步完成、节点总预算、
+公平轮转及原采样截止保持。该提示不是 wire 权威值、报告字段或持久用户选择。
 
 本链 HTTPS action 固定 `https_request`；result 仅 `available/unavailable/unknown`。
 时间均为 Time，必须 `observed_at < valid_until`；到 valid_until 即失效，接收方不能按接收时间延长寿命。
@@ -1353,8 +1780,8 @@ Android 内部桥接报告时间固定 UTC 三位毫秒，签名 wire 仍为原 
 
 #### 接收端的限时观测投影
 
-目标是让管理员区分当前范围内尚有效的运行回读与原始历史。Linux 默认每十五秒报告和更新 Link，
-其他客户端按其既有周期报告；业务与资源成功保留十分钟、失败三十秒，Link 最大三十秒。
+目标是让管理员区分当前范围内尚有效的运行回读与原始历史。报告调度与测量调度分开；
+resource、link、egress 和 service 的成功样本最长十分钟、其他结果最长三十秒，始终以原截止为限。
 原页面因缺少统一上限而全部保持未知。接收端对原报告作限时投影，不增加操作者配置或持久实体；
 Linux 刷新频率的交付成本与有限余量见[客户端运行模型](../clients/client-runtime-model.md)。
 运行、selector 和组件回读的窗口固定为三分钟，允许常规报告暂时迟到或丢失；超时只降低监控
@@ -1372,14 +1799,15 @@ Linux 刷新频率的交付成本与有限余量见[客户端运行模型](../cl
 2. 逐条样本还须来自报告为 running、已应用同一 View 的执行，匹配该报告的网络代和当前资源、
    Link 或 Service/候选、实际目标、动作及规范摘要。停止或应用失败报告携带的旧样本只作历史。
    `observed_at <= now + 5s`、`observed_at <= reported_at + 5s`、`now < valid_until` 同时成立，
-   才继续核对原窗口长度。resource/service 成功最大十分钟，失败或 unknown 最大三十秒；Link
-   的所有结果最大三十秒。超过上限时该样本不作为当前证据，不能裁剪原文后把它当合格样本。
+   才继续核对原窗口长度。当前工作区展示校验对 resource/service/link/egress 的成功窗口使用十分钟上限，失败或 unknown
+   使用三十秒上限；它们是读回校验范围，不是测量周期、换路冷却或当前部署已支持全部层级的证明。超过上限时该样本不作为当前证据，不能裁剪原文后把它当合格样本。
 3. 合格样本的展示截止为 `min(valid_until, reported_at + 3min)`；原 valid_until 到期即失效，
    五秒容忍不加在截止时间上。当前已失效的样本不得因另一个报告的接收时间续期。新报告携带同一
    尚有效的原样本时，只能恢复报告范围，不能越过样本原截止。
 4. 各层分别归约：Link 只使用其 From 设备对该 Link 的样本，resource 只说明相应凭据的入口结果。
-   Service 的授权测试集合按同一候选、全部目标成功／全部失败／混合或缺项分别投影
-   available／unavailable／unknown；空集合为 unknown。资源或链路成功不能补足 Service 样本，
+   Service 的测试集合仍须保留逐目标结果；若汇总全部成功、全部失败或混合/缺项，必须标明
+   “所测网址”范围，不能将该汇总显示为整个普通互联网的可用性。空集合为 unknown。
+   选路按客户端模型的默认覆盖优先、目标各自优选及固定出口只比传输执行，不能从页面汇总反推算法。资源或链路成功不能补足业务样本，
    一个 Service 的结果也不能变成整机健康。当前选择只由有效的 running、已应用同一 View 的
    selector 回读形成；历史 reported selection 继续保留，两者不互换。
 
@@ -1560,7 +1988,7 @@ writer、批次中途失败的原子性、非法键值与签名拒绝、迁移�
 不能省去这些结果后宣称 schema 3 服务节点运行状态已可验证。
 
 本链可用单目标、单候选验证真实运行、改权和撤权；这不规定多目标结果归约。
-同 Service 多目标混合结果按客户端模型保留为 unknown；多个可比指标的优先级仍按其待决点另行明确，
+同 Service 多目标混合的页面摘要保留为 unknown；选路使用逐目标结果、默认覆盖与分段代价，
 不得把首个目标、最新样本或传输成功当作整个 Service 的业务状态。
 
 报告库的本地接收时间只服务于 [Events 的原件查询](../clients/web-ui-projection.md#events-的查询与原件接收时间)。
@@ -1570,6 +1998,95 @@ writer、批次中途失败的原子性、非法键值与签名拒绝、迁移�
 原件及附注重建；接收时间本身不能从设备采样时间重建，既存无附注原件保持未覆盖而不补造。
 Material/成员证书使用同一受保护原文件 inode 的首次接收时间附注；签名原字节、规范 schema、
 身份及既有认证进度均不变。此本地存储前向修订不恢复旧容器、双读或另设事件权威。
+
+#### 设备相关测量的批量差量交付
+
+设备沿现有私有认证入口 `/device/link-observations` 一次领取相关有向链路及出口测量，
+不按 Service 分别请求。请求为 `schema:3,view_digest:Digest,cursor?:Text`；cursor 是
+1～128 个 ASCII 字母、数字、`-` 或 `_` 组成的不透明引用，首次请求省略。
+响应保存 `schema,network_id,device_id,view_digest,cursor,reset,removed,observations`。
+reset 为 true 时 observations 是当前有界工作集的完整批次，removed 必须为 `[]`；否则两者
+分别表示该工作集的更新与删除。工作集不声称包含全部获授权测量；未交付或过期项保持 unknown，
+不改变权限、原件或原截止。调用方以本次请求所用的完整缓存合并差量，不使用另一设备、View
+或并发请求的缓存替代。
+
+测量项身份绑定原来源、level、来源网络代、resource、link、target、action 和规格摘要；
+报告序列及报告摘要仅引用原件，不参与测量项身份。同项不能在一份差量中既删除又更新；
+重复、未排序、删除未知项、无完整缓存时应用差量及错误接收范围均拒绝。删除和缓存丢失只丢弃
+观测，不改变授权。已过期项不参加选择；收到重复报告或领取响应均不能重置原采样时间或截止。
+
+control 在读取报告前，按当前授权范围与稳定查询坐标限制本次扫描、查询量、来源与字节；不先展开
+全部来源、资源与网址的乘积后再截取。有限预算下公平轮转，暂无样本的项也推进位置。近期签名
+报告可提供有限的软优先，不能被当作实时当前 Policy，也不能排除或饿死其他合法项。Service 与
+网址的授权数量不由内部交付预算限制；规模增大可以降低更新频率，不能给旧样本续期。
+
+现有不透明 cursor 由精确工作集的随机引用和固定长度的非授权轮转提示组成，不增加请求字段。
+引用仍绑定设备及 View；提示只决定重新验证范围内的检查顺序。失效、切换 control 或重启后
+返回 bounded reset，仍可依据提示继续轮转，不能永久回到首页。空页与未知页也进位；不依赖
+时钟取模，否则领取周期可能使部分项永久饥饿。提示不是权限、样本、旧快照或第二份权威。
+
+W 可保留先前已经验证、仍在原有效期且属于当前 scope 的行，与本页结果组合；否则链路页与出口页
+可能始终无法同时参与路径计算。本页明确查到消失、规格或来源网络代变化时，删除相应旧行；
+已知新来源代不与其旧代混用。没有检查的行只保留原期限，不声称重新验证；报告沉默不剪短
+原样本寿命，Web 的报告年龄不参与选路。优先接纳本页有效
+结果，容量不足时再从未被本页查询的旧行中淘汰；不能让较旧但仍有效的本页结果每次自淘汰而
+永不交付。cache miss 从当前页重建，不借失去的引用恢复旧 base。
+
+报告原件的读取与复制另有本次字节预算，同一原件在本轮复用，来源 head 的成本范围须单独
+说明。不能把响应字节上限声称为总堆内存上限。达到预算时保留下一未处理查询的位置；能够
+独占一页的有效行仅因页尾空间不足时必须在下一页重试，不能每轮跳过。没有样本才按已检查
+进位。查询边界、原件和位置都是本次临时值，不新增报告权威、持久对象或管理流程。
+
+先选定完整工作集 W，再由精确旧 W 计算差量。换出使用原 Removed；更新加 Removed 超出响应
+预算时，发送新 W 的完整有界 reset，不截断差量。单份 W、最终规范响应与客户端累计快照分别
+检查字节预算；新返回的 cursor 必须能保留对应精确 W，不能因该 W 本身超限立即自淘汰。缓存
+总容量仍可淘汰旧引用，所有条目均可删除重建，不新增持久缓存。
+
+客户端只在临时结果的 scope、排序、删除关系及完整规范字节均验证后，一次提交 snapshot 与
+cursor。取消、换 View、超限或非法差量均保留原 base 与 cursor。不能自行裁剪 base 或删除到期
+行后继续使用原 cursor；仅在运行投影时忽略到期项。服务器构造和编码在共享短锁外进行，锁内
+只读不可变快照及插入、淘汰。原签名报告、既有报告数据库和配置 View 仍各自保持原职责。
+
+domain 与签名 wire 不增加权威实体；persistent 原件不变；runtime 是可删除的查询位置提示、
+工作集与缓存；UI 仍按收到的原时间显示，缺项为 unknown，不增加页面或操作。
+
+最小验证覆盖：小响应累计超限的原反例；W 均合法但差量加 Removed 超限时 reset；客户端拒绝
+超限且原 base 不变；每次 cache miss、空页和未知页仍遍历全部稳定查询；软优先不饿死轮转；
+跨页链路与出口能够共同参与组合、页尾有效行不被永久跳过、原件读取达到预算后从未处理项续行；
+重复报告与领取不续期；撤权、换 View、规格变化与精确删除；正式认证 HTTP、原签名报告、共享
+领取及运行消费的一条正向链。
+本节规定当前改造的交付语义，不表示分段选路及真实业务验收已经完成。
+
+#### 共享测量的原件定位与跨报告保留
+
+测量结果按测量项保留最近观测，不以“最高序列报告中出现了哪些项”判断整个测量集合。
+报告 observations 可以只携带本轮完成的新样本；空集合不删除以前仍有效的样本。运行、组件和
+当前选择继续由最高无分叉报告读取，不能从低序列恢复已停止或已失败的运行状态。
+
+发送端只用有界、可删除的内存摘要集合去除已经获现有报告 ACK 确认的相同样本；摘要绑定网络、
+设备公钥与完整原 Observation。先过滤、后签名，同一次报告重试始终复用同一原文。失败、取消或
+错序 ACK 不记为已发送；并发请求可以重复携带尚未确认的样本。缓存淘汰和重启最多增加重复交付，
+不能删除唯一原件、改变采样时间、降低报告序列或成为完成依据。此缓存不增加持久字段或交付回执。
+Web 的测量集合也从同一原件定位读取，不能用最高报告的省略项覆盖它。
+
+既有 observations.db 的 report-index 增加可删除重建的 measurement-items 子 bucket，只保存
+原件位置。定位键由报告所有者、来源网络代、测量规格元组摘要、倒序采样时间及完整 Observation
+摘要组成；值是已有报告原件键和其中的样本序号。规格元组包括 level、Service/candidate、resource/link、target、
+action 和 spec_digest。相同样本在多个报告中出现只保留一份定位，选择最小原件键，不形成新测量。
+同规格、同时间出现不同样本时不能按报告序列择一，当前结果为 unknown。
+
+原件与定位同事务写入。子 bucket 缺失时在启动或正式离线索引入口的单事务内重建，不增加索引
+版本、独立序列、权威值或运行扫描 fallback。消费时回读实际原件，核验规范值、签名、原件键及
+样本定位；索引不能制造结果。没有匹配项时返回未知，不根据 URL 数量填充成功或失败。
+
+领取相关样本时按当前测量规格定位，而不扫描所有报告或只取最后一份报告。来源最高报告须无
+分叉、仍属当前身份且完整权限应用确认有效；确认来自原 running／applied 回读或上述部分应用的
+permission_view_digest，不能接受未确认权限的 unknown。样本须匹配该来源当前网络代，原产生
+报告也须具备相同资格。当前角色、资源、Service/Policy 和实际测量依赖分别再校验。无关 View 改变不废弃
+依赖未变的原样本；保留原报告摘要和 View 绑定，不修改其字节。样本自身的原有效期始终不续期。
+
+最小验证包含新报告省略仍有效项、重复旧样本、晚到报告和同时间冲突、来源切网/停止/分叉、
+原件损坏、无关原件不被查询读取，以及删除定位后重建与原件逐字保全。
 
 #### Events 运行变化的候选位置
 
@@ -1722,15 +2239,23 @@ domain、wire、persistent 与 UI 不变；只有 runtime 的可删除在途通�
 
 #### 共享 WG 的原始计数与流量派生
 
-目标是使已有 Overview、设备、Link 流量图和 WG 实测速率有真实输入；明确排除以流量判断健康、线路容量、应用有效载荷计费、额外 WG 会话和 Hy2 套 WG。现有单共享用户态 WG 已保有每 peer 计数，宿主 TUN 只承接一部分管理流量，不能替代它。最小变化是读取这些现有计数，随同原设备报告签名、持久化和同步；无需操作者新增配置。
+目标是使已有 Overview、设备、Link 流量图和 WG 实测速率有真实输入；明确排除以流量判断健康、线路容量、应用有效载荷计费、额外 WG 会话和 Hy2 套 WG。现有单共享用户态 WG 已保有每 peer 计数；宿主接口计数不能替代它，普通业务资源也不因此创建宿主接口。最小变化是读取这些现有计数，随同原设备报告签名、持久化和同步；无需操作者新增配置。
 
-唯一新增的值是可选 DeviceReport.wireguard_counters：{interface,epoch,observed_at,peers}；它没有独立身份权威、store 或生命周期。interface 是实际 endpoint tag（resource:<ID> 或 wg-shared），epoch 为该 endpoint 实例建立时生成的 16 字节小写十六进制随机串；重建必换、重复读取不换。observed_at 是读取完成的 UTC 毫秒。peers 是完整、按规范 WG 公钥排序的集合，每项 {public_key,rx_bytes:U64,tx_bytes:U64,links:[{link_id,spec_digest}]}。links 按 ID 排序，绑定该实际 peer 对应的现行相邻 Link；无 Link 的接入 peer 仍保留，空集为 []。同一 Link 不能出现在两个 peer。绑定从认证 View 的两端资源和现行 Link 摘要推导；不能把一个接口总量写到每个 peer。
+唯一新增的值是可选 DeviceReport.wireguard_counters：{interface,epoch,observed_at,peers}；它没有独立身份权威、store 或生命周期。interface 是实际 endpoint tag（resource:<ID> 或 wg-shared），epoch 为该 endpoint 实例建立时生成的 16 字节小写十六进制随机串；重建必换、重复读取不换。observed_at 是读取完成的 UTC 毫秒。peers 是本次真实已有统计与当前授权范围的交集，按规范 WG 公钥排序，每项 {public_key,rx_bytes:U64,tx_bytes:U64,links:[{link_id,spec_digest}]}。它不要求全部候选已经物化，未观测项不补零；旧全量报告仍是合法特例，原字段和签名字节不改。links 按 ID 排序，绑定该统计身份对应的现行相邻 Link；无 Link 的接入 peer 仍保留，空集为 []。同一 Link 不能出现在两个 peer。接收端逐项验证公钥属于当前允许范围且 Links 精确一致，不能因允许子集而放宽任何一项的授权。绑定从认证 View 的两端资源和现行 Link 摘要推导；不能把一个接口总量写到每个 peer。
+
+累计统计归本 WG Device 实例内的远端公钥，不归可回收的协议 peer。现有接收／发送计数直接
+写同一份小原子数；同公钥的新旧 peer 引用它，删除时不抄数、不结算 offset，因而旧握手
+任务的迟到写入也不会丢失或重复累计。统计不持有 Peer、私钥、PSK、队列或协程；协议对象
+仍按最后实际引用完全回收，不能用统计条目数证明实际 peer 数。统计随整个 Device 销毁，
+不持久化、不由 control 生成，不新增报告字段、统计代或管理对象。空间随本实例实际见过的
+不同公钥增长，不随连接重建、Service、Policy 或网址数相乘；此处不承诺恒定内存。仅因权限
+暂时撤回不能清零这份统计，同身份重新授予与采样间隙可能使清零无法由旧报文字段识别。
 
 读取入口复用本 generation 的带秘密认证回环 API 和既有 namespace dialer。计数只从已启动的用户态 WG 对象读取，API 不导出 UAPI 配置或私钥。RX 是原生实现接受的 WG 报文计数，TX 是原生发送成功的 WG 报文计数；包含实现计入的握手、保活、加密封装，不包含外层 IP/UDP 头，不是应用独占字节。每端独立测量，TX 不等于对端已收到。读取失败、没有 WG、实例关闭或执行未应用时省略整个可选值；不伪造零。实际已读回的零保持零。两项原子计数是短时间顺序读取，不宣称全网同时快照。
 
-领域值、规范 wire 与持久原件均为原 DeviceReport 的同一个可选字段；unsigned 签名负载包含它，缺席仍保持既有 schema 3 原字节和签名。新消费者先完成部署，再启动产生新字段的执行器；不改号、不改旧报告、不做双写。运行时只从本 generation 已应用的配置映射公开 peer 与 Link，接收端验证现行报告的绑定；历史只用原件签名与当前查询授权，不调用不相关的组件发布解析。UI 与聚合是单向派生，删除缓存后可重建。
+领域值、规范 wire 与持久原件均为原 DeviceReport 的同一个可选字段；unsigned 签名负载包含它，缺席仍保持既有 schema 3 原字节和签名。字段形式不变，允许已观测子集的消费者须先于该生产者激活；不改号、不改旧报告、不做双写。运行时从本 generation 当前已确认的权限映射真实统计公钥与 Link，计数不代替完整资源应用或路径可达证明；接收端逐项验证现行报告的绑定。历史只用原件签名与当前查询授权，不调用不相关的组件发布解析。UI 与聚合是单向派生，删除缓存后可重建。
 
-聚合输入是同一持久设备当前公钥下、无同序列分叉的有效原报告，按报告序列回读相邻样本，序列缺口切断区间。相同 interface、epoch、network_generation、peer 公钥且 Link 查询的 spec_digest 匹配，时间严格增加、不超过三分钟、计数不下降才产生增量；同一采样重投去重，矛盾同时间样本和时钟倒退切断区间。缺失/失败、重建、撤权、未知范围不补零也不续期。完整落入查询窗口/UTC 小时的区间才能计入，不假设跨界区间内均匀流量；因此显示已观测部分及实际覆盖毫秒。最近五分钟用 8×有效 TX 增量/有效秒数得到实测速率，当前速率只使用本库最高唯一序列所报告的同实例与网络代；该最新报告缺样、分叉、已停止或最后样本超过三分钟时当前速率未知，历史仍保留。未来报告不入历史；当前计数还须满足原报告时间五秒的采样容差，时钟矛盾不制造当前速率。
+聚合输入是同一持久设备当前公钥下、无同序列分叉的有效原报告，按报告序列回读相邻样本，序列缺口切断区间。相同 interface、epoch、network_generation，时间严格增加且不超过三分钟时，只对两份报告共同出现的 peer 逐项计算非下降增量；Link 查询另要求其公钥和两端 spec_digest 绑定均匹配。新增、缺失或计数回退的 peer 不补零，也不抹掉其他可比项；无可比项保持未知，不能跨中间缺席强接旧样本。同一采样重投去重，矛盾同时间样本和时钟倒退切断区间。失败、重建、撤权、未知范围不续期。完整落入查询窗口/UTC 小时的区间才能计入，不假设跨界区间内均匀流量；页面明确显示已观测 WG 部分及可比时间覆盖，该时间不代表全部 peer 覆盖。最近五分钟用 8×有效 TX 增量/有效秒数得到已观测传输速率，当前速率只使用本库最高唯一序列所报告的同实例与网络代；该最新报告缺样、分叉、已停止或最后样本超过三分钟时当前速率未知，Link 当前速率还要求该最新报告仍含对应 peer 和现行 Link 绑定，历史仍保留。未来报告不入历史；当前计数还须满足原报告时间五秒的采样容差，时钟矛盾不制造当前速率。
 
 设备图按实际 peer 各计一次 RX/TX；网络只加每设备每 peer 的 TX，不再加接收端 RX，也不按有向 Link 重加。同一个 peer 被正反两条 Link 引用时，两条页面都明确是该物理 peer 的共享测量，不能声称按 Service 或有向策略拆分。链路详情两端分别统计 TX；网络多跳传输在各发送端确有开销，不等于唯一应用用量。无计数的 Hy2/Direct 不假装包含，UI 明确 WG 范围。
 
@@ -2143,19 +2668,19 @@ DeviceView、客户端运行时和 Web 都是从已验证事实的单向投影�
 
 ### 设备服务授权修订的切换边界
 
-Service 定义目标，Policy 固定所属服务，DeviceAuthorization/Invite 的 PolicyIDs 是客户端可选集合。
-同服务可授权多条允许策略，客户端以现有 Preference 按服务选择一条；未授权与待选都不通业务。
-Policy 的 action 签名字段保留，新写入只能为 allow；历史 deny 原件不重解释为允许，不进入可选运行集合。
-历史事实回放仍按原义校验 deny 及其引用；当前签发入口拒绝新增、保留 deny 引用或将 deny 改为 allow，
-先由正式授权入口撤回引用，再删除策略。不能通过丢弃历史授权事实绕过这条链。
-当前 RouteCandidate 必含 policy_id，身份摘要也绑定 PolicyID；当前 Preference 恰为
-`schema,services:[{service_id,policy_id?}]`。这些现行值均沿本节往返与拒绝规则，不升级 schema。
+Service、当前 Policy 及网址限制遵循[当前业务基线](control-model.md#服务与策略的当前业务基线)。
+DeviceAuthorization/Invite 的 PolicyIDs 是可选集合，当前互联网只选择一条 Policy；Service 由它
+唯一确定。旧 `schema,services:[{service_id,policy_id?}]` 偏好不能再作为必须保留的目标结构。
 
-本次显式一次性前向迁移验证并保全既存 schema 3 原始签名配置、本机偏好、身份密钥、high_water、
-报告序列及 latch。旧 Auto 在原单策略服务上保存该策略；旧 Direct/固定出口只有完整允许规则能证明
-等价时转换，否则该服务待选，不自动新建策略或放宽规则。旧执行段只作为不透明验签证据，不交给
-现行运行解码器。通过正式 device.put 确认授权并推进事实前沿，再签发当前 View；同前沿不同摘要仍拒绝。
-一次性迁移失败保留原件、可以重试；完成后只使用当前值，不保留双读、双写、全局模式运行分支或 fallback。
+仍在同一 schema 3 内修订规范字段；原签名策略、Service、View 和本机偏好按原义保全。
+显式一次性前向替换须保留身份密钥、high_water/floor、报告序列及 latch。不能按旧列表顺序
+擅自挑选新当前 Policy，也不能合并多条规则或扩大权限；无法证明等价时须让用户明确选择。
+原始执行段只作为受保护历史验签证据，不进入当前运行解码；新事实必须推进真实认证前沿，
+同前沿不同 View 摘要仍拒绝。字段和迁移路径未完成前停止相关写入，不以旧 decoder fallback 绕过。
+
+Policy 的 action 签名字段保持历史原义，新写入只能为 allow；历史 deny 不重解释为允许，
+不进入可选运行集合。历史事实的验签和因果引用不能因业务设计更新而丢弃。
+一次性迁移失败保留原件及原认证进度；成功后仅有一份当前偏好及 LKG，不长期双写、双读。
 
 ## 遇错时只修订这一份契约
 
@@ -2165,13 +2690,15 @@ Policy 的 action 签名字段保留，新写入只能为 allow；历史 deny �
 
 ## 现网字节与生产切换
 
-用户已在当前部署任务明确授权删除旧版、正式切换和真实业务验证，不再以寻找历史 signed-current
-原件作为本次替换的前置。该授权优先于本文此前列出的发布机制迁移证明流程：本次按精确制品直接
+本节记录既往一次已授权生产切换的范围，不能作为当前或以后任务的写入、部署或删除授权。
+这些步骤只说明当次如何保全并切换字节，不定义当前 Service/Policy 目标或后续迁移的自动批准。
+当次用户明确授权删除旧版、正式切换和真实业务验证，不再以寻找历史 signed-current
+原件作为该次替换的前置。该次授权只覆盖当次发布：按精确制品直接
 替换正式服务，旧发布入口退出运行；已有身份、密钥、授权业务资料及原始记录受保护保留，
 不把归档恢复成运行 fallback。新服务只消费当前规范输入，替换后须完成业务、报告及重启回读。
 此授权不放宽宿主 TUN/netns、SSH 管理通道或现有 underlay 的保护边界。
 
-本次执行从核验过的旧材料显式构造 schema 3 初始签名材料，保留同一网络、成员公钥、设备签名密钥及
+该次执行从核验过的旧材料显式构造 schema 3 初始签名材料，保留同一网络、成员公钥、设备签名密钥及
 管理员证书；沿当前 Invite/claim 和普通管理入口重新建立原授权的精确对应。旧签名域的认证序列与新域的
 事实序列不是同一计数器，不能以同号或较大数字宣称连续；旧原始 floor、head 和签名字节单独封存，
 新设备仅固定这次交付的当前 genesis，拒绝旧格式输入和任意替代根。发布 floor 原文件保持，当前服务不读取

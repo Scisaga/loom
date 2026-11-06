@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,7 +52,7 @@ func androidFixture(t *testing.T, sequence uint64, deny bool, changes ...func(*c
 		t.Fatal(err)
 	}
 	scope := control.PolicyScope{Mode: "any", NodeIDs: []string{}}
-	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", Matchers: []control.ServiceMatcher{{Kind: "dns_exact", Value: "demo.example"}}}}
+	p.NetworkIntent.Services = []control.Service{{ID: "demo-service", Name: "Demo service", Kind: "internet", RestrictToProbeTargets: new(false)}}
 	action := "allow"
 	if deny {
 		action = "deny"
@@ -60,7 +61,7 @@ func androidFixture(t *testing.T, sequence uint64, deny bool, changes ...func(*c
 	inviteID, _ := control.MaterialID(material)
 	p.DeviceAuthorizations = []control.DeviceAuthorization{{ID: invitation.DeviceID, Name: invitation.Name, Platform: "android", DevicePublicKey: state.PublicKey, Responsibilities: []string{"access"}, PolicyIDs: []string{"demo-policy"}, DistributionURLs: []string{}, RuntimeKey: members[0].PublicKey, TransactionID: invitation.ID, InviteMaterialID: inviteID, BindingMaterialID: anchor}}
 	p.EndpointGenerations = []control.EndpointGeneration{endpoint}
-	p.NetworkIntent.BusinessProbeTargets = []control.BusinessProbeTarget{{ID: "demo-probe", URL: "https://demo.example:8443/health"}}
+	p.NetworkIntent.Services[0].ProbeURLs = []string{"https://demo.example:8443/health"}
 	for _, change := range changes {
 		change(&p)
 	}
@@ -154,8 +155,8 @@ func TestAndroidAcceptedConfigurationRecoversDNSWithoutReplacingIdentity(t *test
 	if err := ValidateAndroidDeviceState(accepted); err != nil {
 		t.Fatal("reopened state rejected", err)
 	}
-	for _, input := range []struct{ candidate, target string }{{"demo-unknown", "https://demo.example/"}, {state.LKG.View.Routes[0].ID, "https://other.example/"}} {
-		if request, err := NewAndroidBusinessRequest(accepted, input.candidate, input.target); err == nil {
+	for _, input := range []struct{ candidate, target string }{{"demo-unknown", "https://demo.example/"}, {testDeviceExecution(state.LKG.View).Routes[0].ID, "https://other.example/"}} {
+		if request, err := NewAndroidBusinessRequest(accepted, input.candidate, input.target, "demo-network"); err == nil {
 			request.Cancel()
 			t.Fatal("probe expanded Service authorization")
 		}
@@ -179,11 +180,25 @@ func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
 		t.Fatal("Android manufactured global head/floor")
 	}
 	var original, derived map[string]json.RawMessage
-	_ = json.Unmarshal([]byte(state.LKG.View.RuntimeProfile.Config), &original)
+	_ = json.Unmarshal([]byte(testDeviceExecution(state.LKG.View).RuntimeProfile.Config), &original)
 	_ = json.Unmarshal([]byte(profile.Config), &derived)
 	assertRuntimeSelectorRejectionOnly(t, original["outbounds"], derived["outbounds"])
-	if len(derived["inbounds"]) == 0 || len(derived["experimental"]) == 0 || derived["dns"] != nil {
-		t.Fatal("Android host adapter changed authorization or invented DNS")
+	if len(derived["inbounds"]) == 0 || len(derived["experimental"]) == 0 {
+		t.Fatal("Android host adapter lost its capture facilities")
+	}
+	var dns struct {
+		Final   string `json:"final"`
+		Servers []struct {
+			Address string `json:"address"`
+		} `json:"servers"`
+	}
+	if json.Unmarshal(derived["dns"], &dns) != nil || dns.Final != "loom-runtime-deny-dns" {
+		t.Fatal("Android invented implicit system resolution")
+	}
+	for _, server := range dns.Servers {
+		if !strings.HasPrefix(server.Address, "rcode://") && server.Address != "fakeip" {
+			t.Fatal("Android invented an unauthenticated resolver")
+		}
 	}
 	var capture struct {
 		Inbounds []struct {
@@ -197,13 +212,12 @@ func TestAndroidSharesAuthorityAndDerivesOnlyHostRuntime(t *testing.T) {
 			Protect bool `json:"auto_detect_interface"`
 		} `json:"route"`
 	}
-	if json.Unmarshal([]byte(profile.Config), &capture) != nil || !capture.Route.Protect || len(capture.Inbounds) != 2 ||
+	if json.Unmarshal([]byte(profile.Config), &capture) != nil || !capture.Route.Protect || len(capture.Inbounds) != 1 ||
 		len(capture.Inbounds[0].Exclusions) != 1 || capture.Inbounds[0].Exclusions[0] != state.LKG.View.Endpoints[0].Host+"/32" {
 		t.Fatal("Android captured its libbox or private management underlay")
 	}
-	if capture.Inbounds[0].Type != "tun" || capture.Inbounds[1].Type != "socks" || capture.Inbounds[1].Tag != control.LinkProbeInbound ||
-		capture.Inbounds[1].Listen != "127.0.0.1" || capture.Inbounds[1].Port != 61801 {
-		t.Fatal("alternate diagnostic widened capture or opened a non-local entry")
+	if capture.Inbounds[0].Type != "tun" {
+		t.Fatal("ordinary capture lost its one TUN entry")
 	}
 	after, err := deviceclient.EncodeIdentityState(state)
 	if err != nil || !bytes.Equal(body, after) {
@@ -278,9 +292,9 @@ func TestAndroidReportsActualRuntimeAndActualScopedProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, _ := decodeState(reserved)
-	route := state.LKG.View.Routes[0]
-	observations, _ := json.Marshal([]androidObservation{{CandidateID: route.ID, NetworkGeneration: "demo-network-generation", Scope: route.Scope, Result: "available", Action: "https_request", Target: "https://demo.example:8443/health", ObservedAt: "2030-01-01T00:00:00Z", ValidUntil: "2030-01-01T00:10:00Z"}})
-	selections, _ := json.Marshal([]androidSelection{{Scope: route.Scope, CandidateID: route.ID}})
+	route := testDeviceExecution(state.LKG.View).Routes[0]
+	observations, _ := json.Marshal([]androidObservation{{CandidateID: route.ID, NetworkGeneration: "demo-network-generation", Scope: control.AccessSelectorScope, Result: "available", Action: "https_request", Target: "https://demo.example:8443/health", ObservedAt: "2030-01-01T00:00:00Z", ValidUntil: "2030-01-01T00:10:00Z"}})
+	selections, _ := json.Marshal([]androidSelection{{Scope: control.AccessSelectorScope, CandidateID: route.ID}})
 	runtime, _ := json.Marshal(control.RuntimeReadback{State: "running", AppliedViewDigest: state.LKG.ViewDigest})
 	components, _ := json.Marshal([]control.ComponentReadback{{ComponentID: "agent", Platform: androidComponentPlatform(), Version: "demo-agent", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}, {ComponentID: "sing-box", Platform: androidComponentPlatform(), Version: "demo-native", ArtifactDigest: "sha256:" + strings.Repeat("b", 64)}})
 	report, err := androidReport(state, nil, nil, observations, selections, runtime, components, nil, "demo-network-generation", "2030-01-01T00:01:00.000Z")
@@ -383,7 +397,7 @@ func assertRuntimeSelectorRejectionOnly(t *testing.T, original, derived []byte) 
 	for i := range before {
 		if string(before[i]["type"]) == `"selector"` {
 			var members, actual []string
-			if json.Unmarshal(before[i]["outbounds"], &members) != nil || json.Unmarshal(after[i]["outbounds"], &actual) != nil || len(actual) != len(members) || len(actual) == 0 || actual[0] != "reject" || string(after[i]["default"]) != `"reject"` {
+			if json.Unmarshal(before[i]["outbounds"], &members) != nil || json.Unmarshal(after[i]["outbounds"], &actual) != nil || len(actual) != len(members) || len(actual) == 0 || !slices.Contains(actual, "reject") || string(after[i]["default"]) != `"reject"` {
 				t.Fatal("selector has no exact local rejection position")
 			}
 			for j := range members {

@@ -27,6 +27,7 @@ func hy2ProjectionFixture(t *testing.T) Projection {
 	policy.AllowDirect = new(false)
 	policy.EntryScope = PolicyScope{Mode: "only", NodeIDs: []string{owner.ID}}
 	policy.ExitScope = new(PolicyScope{Mode: "only", NodeIDs: []string{owner.ID}})
+	registerTestWireGuardIdentities(t, &projection)
 	return projection
 }
 
@@ -65,19 +66,19 @@ func TestHy2ResourceTrustHasOneCanonicalShape(t *testing.T) {
 func TestHy2OneHopSharesCredentialsWithoutSharingAccessAssignment(t *testing.T) {
 	projection := hy2ProjectionFixture(t)
 	access, err := ProjectDeviceView(projection, "demo-access")
-	if err != nil || len(access.Routes) != 1 || len(access.InboundCredentials) != 0 {
+	if err != nil || len(testDeviceExecution(access).Routes) != 1 || len(access.TransportCredentials) != 1 {
 		t.Fatal("one-hop access projection failed", err)
 	}
-	route := access.Routes[0]
-	if route.FinalExit != "demo-exit" || route.FirstResourceID != "demo-hy2" || !reflect.DeepEqual(route.NodeChain, []string{"demo-exit"}) || len(route.LinkIDs) != 0 {
+	route := testDeviceExecution(access).Routes[0]
+	if route.FinalExit != "demo-exit" || route.FirstResourceID != "demo-hy2" || route.EntryNodeID != "demo-exit" {
 		t.Fatal("one-hop candidate lost resource or exit identity")
 	}
 	receiver, err := ProjectDeviceView(projection, "demo-exit")
-	if err != nil || len(receiver.InboundCredentials) != 1 || len(receiver.PolicyIDs) != 0 || receiver.RuntimeProfile == nil || len(receiver.Policies) != 1 {
+	if err != nil || len(receiver.TransportCredentials) != 1 || len(receiver.PolicyIDs) != 0 || testDeviceExecution(receiver).RuntimeProfile == nil || len(receiver.Policies) != 1 {
 		t.Fatal("receiver borrowed the source access assignment", err)
 	}
-	passwords, err := profileCredentials(access)
-	if err != nil || passwords[route.ID] != receiver.InboundCredentials[0].Credential {
+	passwords, err := executionCredentials(access)
+	if err != nil || passwords[route.FirstResourceID] != receiver.TransportCredentials[0].Credential {
 		t.Fatal("access and receiver did not consume the same derived credential")
 	}
 	for _, view := range []DeviceView{access, receiver} {
@@ -100,30 +101,31 @@ func TestHy2OneHopSharesCredentialsWithoutSharingAccessAssignment(t *testing.T) 
 		change(&p)
 		for _, id := range []string{"demo-access", "demo-exit"} {
 			view, err := ProjectDeviceView(p, id)
-			if err != nil || len(view.Routes) != 0 || len(view.InboundCredentials) != 0 {
+			if err != nil || len(testDeviceExecution(view).Routes) != 0 || len(view.TransportCredentials) != 0 {
 				t.Fatal("withdrawal retained a remote route or receiver credential", err)
 			}
 		}
 	}
 }
 
-func TestHy2ReceiverExcludesLaterAmbiguousTargetsAndRejectsOldACLReport(t *testing.T) {
+func TestHy2ReceiverUsesCurrentServiceRestrictionAndRejectsOldACLReport(t *testing.T) {
 	p := hy2ProjectionFixture(t)
-	p.NetworkIntent.Services[0].Matchers = []ServiceMatcher{{Kind: "dns_suffix", Value: "example.test"}}
-	other := Service{ID: "demo-z-service", Name: "Demo denied", Kind: "internet", Matchers: []ServiceMatcher{{Kind: "dns_exact", Value: "blocked.example.test"}}}
+	p.NetworkIntent.Services[0].RestrictToProbeTargets = new(true)
+	p.NetworkIntent.Services[0].ProbeURLs = []string{"https://demo-limited.example:8443/health"}
+	other := Service{ID: "demo-z-service", Name: "Demo denied", Kind: "internet", RestrictToProbeTargets: new(false)}
 	policy := materialTestPolicy("demo-z-policy", other.ID)
 	policy.Action = "deny"
 	p.NetworkIntent.Services = append(p.NetworkIntent.Services, other)
 	p.NetworkIntent.Policies = append(p.NetworkIntent.Policies, policy)
 	p.DeviceAuthorizations[0].PolicyIDs = append(p.DeviceAuthorizations[0].PolicyIDs, policy.ID)
-	p.NetworkIntent.BusinessProbeTargets = []BusinessProbeTarget{{ID: "demo-target", URL: "https://blocked.example.test/"}}
+	// A denied alternative does not change the current Service targets.
 	access, err := ProjectDeviceView(p, "demo-access")
-	if err != nil || len(access.BusinessProbeTargets) != 1 || len(access.BusinessProbeTargets[0].Targets) != 0 {
-		t.Fatal("later overlap prevented accepting narrowed authorization or retained an ambiguous probe", err)
+	if err != nil || len(testDeviceExecution(access).BusinessProbeTargets) != 1 || len(testDeviceExecution(access).BusinessProbeTargets[0].Targets) != 1 {
+		t.Fatal("current Service restriction did not survive projection", err)
 	}
 	receiver, err := ProjectDeviceView(p, "demo-exit")
-	if err != nil || len(receiver.InboundCredentials) != 1 || !reflect.DeepEqual(receiver.InboundCredentials[0].ExcludedTargets, other.Matchers) {
-		t.Fatal("receiver did not deny the selected Service intersection", err)
+	if err != nil || len(receiver.TransportCredentials) != 1 || !reflect.DeepEqual(receiver.Services[0].TargetMatchers(receiver.DNSRecords...), []ServiceMatcher{{Kind: "dns_exact", Value: "demo-limited.example", Port: 8443}}) {
+		t.Fatal("receiver changed the current Service permission because of an alternative", err)
 	}
 	digest, _ := DeviceViewDigest(receiver)
 	acl, _ := InboundACLDigest(receiver, "demo-hy2")

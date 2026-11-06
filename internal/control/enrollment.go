@@ -173,21 +173,25 @@ func (termination EnrollmentTermination) Validate() error {
 }
 
 type DeviceAuthorization struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	Platform          string   `json:"platform"`
-	DevicePublicKey   string   `json:"device_public_key"`
-	Responsibilities  []string `json:"responsibilities"`
-	PolicyIDs         []string `json:"policy_ids"`
-	DistributionURLs  []string `json:"distribution_urls"`
-	DNSServers        []string `json:"dns_servers,omitempty"`
-	RuntimeKey        string   `json:"runtime_key"`
-	TransactionID     string   `json:"transaction_id"`
-	InviteMaterialID  string   `json:"invite_material_id"`
-	BindingMaterialID string   `json:"binding_material_id"`
+	WireGuardPublicKey string   `json:"wireguard_public_key,omitempty"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Platform           string   `json:"platform"`
+	DevicePublicKey    string   `json:"device_public_key"`
+	Responsibilities   []string `json:"responsibilities"`
+	PolicyIDs          []string `json:"policy_ids"`
+	DistributionURLs   []string `json:"distribution_urls"`
+	DNSServers         []string `json:"dns_servers,omitempty"`
+	RuntimeKey         string   `json:"runtime_key"`
+	TransactionID      string   `json:"transaction_id"`
+	InviteMaterialID   string   `json:"invite_material_id"`
+	BindingMaterialID  string   `json:"binding_material_id"`
 }
 
 func (authorization DeviceAuthorization) Validate() error {
+	if authorization.WireGuardPublicKey != "" && validateWireGuardPublicKey(authorization.WireGuardPublicKey) != nil {
+		return errors.New("registered WireGuard public key is invalid")
+	}
 	if err := validateOptionalDNS(authorization.DNSServers); err != nil {
 		return err
 	}
@@ -253,38 +257,28 @@ func (bootstrap BootstrapInvite) Validate() error {
 }
 
 type RouteCandidate struct {
-	ID              string   `json:"id"`
-	SpecDigest      string   `json:"spec_digest"`
-	Scope           string   `json:"scope"`
-	ServiceID       string   `json:"service_id"`
-	PolicyID        string   `json:"policy_id"`
-	FirstResourceID string   `json:"first_resource_id"`
-	NodeChain       []string `json:"node_chain"`
-	LinkIDs         []string `json:"link_ids"`
-	FinalExit       string   `json:"final_exit"`
+	ID              string `json:"id"`
+	SpecDigest      string `json:"spec_digest"`
+	Scope           string `json:"scope"`
+	ServiceID       string `json:"service_id"`
+	PolicyID        string `json:"policy_id"`
+	EntryNodeID     string `json:"entry_node_id"`
+	FirstResourceID string `json:"first_resource_id"`
+	FinalExit       string `json:"final_exit"`
 }
 
 func (candidate RouteCandidate) Validate() error {
-	if ValidateDigest(candidate.ID) != nil || ValidateDigest(candidate.SpecDigest) != nil || ValidateID(candidate.ServiceID) != nil || ValidateID(candidate.PolicyID) != nil || (candidate.Scope != "service:"+candidate.ServiceID && candidate.Scope != "local_network:"+candidate.ServiceID) || ValidateID(candidate.FinalExit) != nil || candidate.NodeChain == nil || candidate.LinkIDs == nil {
+	if ValidateDigest(candidate.ID) != nil || ValidateDigest(candidate.SpecDigest) != nil || ValidateID(candidate.ServiceID) != nil || ValidateID(candidate.PolicyID) != nil || (candidate.Scope != "service:"+candidate.ServiceID && candidate.Scope != "local_network:"+candidate.ServiceID) || ValidateID(candidate.FinalExit) != nil {
 		return errors.New("route candidate is invalid")
 	}
-	if len(candidate.NodeChain) == 0 {
-		if candidate.FirstResourceID != "" || len(candidate.LinkIDs) != 0 {
-			return errors.New("local candidate cannot use a remote resource or link")
+	if candidate.FinalExit == "direct" {
+		if candidate.EntryNodeID != "" || candidate.FirstResourceID != "" {
+			return errors.New("Direct cannot use a managed entry")
 		}
 		return nil
 	}
-	if ValidateID(candidate.FirstResourceID) != nil || candidate.FinalExit == "direct" || len(candidate.LinkIDs) != len(candidate.NodeChain)-1 || candidate.NodeChain[len(candidate.NodeChain)-1] != candidate.FinalExit {
-		return errors.New("remote candidate path is invalid")
-	}
-	for _, values := range [][]string{candidate.NodeChain, candidate.LinkIDs} {
-		seen := map[string]bool{}
-		for _, id := range values {
-			if ValidateID(id) != nil || id == "direct" || seen[id] {
-				return errors.New("candidate path contains an invalid or repeated identity")
-			}
-			seen[id] = true
-		}
+	if ValidateID(candidate.EntryNodeID) != nil || candidate.EntryNodeID == "direct" || candidate.FirstResourceID != "" && ValidateID(candidate.FirstResourceID) != nil {
+		return errors.New("candidate has an invalid local or remote entry")
 	}
 	return nil
 }
@@ -312,75 +306,62 @@ type ServiceProbeTargets struct {
 	ServiceID string   `json:"service_id"`
 	Targets   []string `json:"targets"`
 }
-type InboundCredential struct {
-	DeviceID        string           `json:"device_id"`
-	ServiceID       string           `json:"service_id"`
-	PolicyID        string           `json:"policy_id"`
-	ResourceID      string           `json:"resource_id"`
-	ReceiverNodeID  string           `json:"receiver_node_id"`
-	SenderID        string           `json:"sender_id"`
-	Candidate       RouteCandidate   `json:"candidate"`
-	Credential      string           `json:"credential,omitempty"`
-	AllowedTargets  []ServiceMatcher `json:"allowed_targets"`
-	ExcludedTargets []ServiceMatcher `json:"excluded_targets"`
+
+// ViewNode is only the needed public projection of an existing device. It has
+// no writer or lifecycle of its own. Self stays in DeviceView's identity fields.
+type ViewNode struct {
+	DNSServers         []string `json:"dns_servers,omitempty"`
+	ID                 string   `json:"id"`
+	Responsibilities   []string `json:"responsibilities"`
+	PolicyIDs          []string `json:"policy_ids"`
+	WireGuardPublicKey string   `json:"wireguard_public_key,omitempty"`
+}
+type TransportCredential struct {
+	ResourceID string `json:"resource_id"`
+	SenderID   string `json:"sender_id"`
+	Credential string `json:"credential"`
 }
 
-func (value InboundCredential) Validate() error {
-	for _, id := range []string{value.DeviceID, value.ServiceID, value.PolicyID, value.ResourceID, value.ReceiverNodeID, value.SenderID} {
-		if ValidateID(id) != nil || id == "direct" {
-			return errors.New("inbound credential binding is invalid")
-		}
-	}
-	if value.DeviceID == value.ReceiverNodeID || value.SenderID == value.ReceiverNodeID || value.Candidate.Validate() != nil || value.Candidate.ServiceID != value.ServiceID || value.Candidate.PolicyID != value.PolicyID || value.Candidate.FirstResourceID == "" ||
-		value.Credential != "" && ValidatePublicKey(value.Credential) != nil || len(value.AllowedTargets) == 0 || value.ExcludedTargets == nil {
-		return errors.New("inbound credential has no distinct source, secret or target boundary")
-	}
-	for _, matchers := range [][]ServiceMatcher{value.AllowedTargets, value.ExcludedTargets} {
-		for index, matcher := range matchers {
-			if matcher.Validate() != nil || index > 0 && !serviceMatcherLess(matchers[index-1], matcher) {
-				return errors.New("inbound target matchers are not valid and uniquely sorted")
-			}
-		}
+func (value TransportCredential) Validate() error {
+	if ValidateID(value.ResourceID) != nil || ValidateID(value.SenderID) != nil || value.SenderID == "direct" || ValidatePublicKey(value.Credential) != nil {
+		return errors.New("invalid transport sender credential")
 	}
 	return nil
 }
 
 type DeviceView struct {
-	NetworkID            string                `json:"network_id"`
-	WireGuardPeers       []WireGuardAccessPeer `json:"wireguard_peers,omitempty"`
-	WebEndpoints         []EndpointGeneration  `json:"web_endpoints,omitempty"`
-	PublicTrust          []PublicTrust         `json:"public_trust,omitempty"`
-	DNSRecords           []DNSRecord           `json:"dns_records,omitempty"`
 	Schema               int                   `json:"schema"`
+	NetworkID            string                `json:"network_id"`
 	DeviceID             string                `json:"device_id"`
 	Name                 string                `json:"name"`
 	Platform             string                `json:"platform"`
 	DevicePublicKey      string                `json:"device_public_key"`
 	Responsibilities     []string              `json:"responsibilities"`
 	PolicyIDs            []string              `json:"policy_ids"`
+	Nodes                []ViewNode            `json:"nodes"`
 	Services             []Service             `json:"services"`
 	Policies             []NetworkPolicy       `json:"policies"`
 	Resources            []TransportResource   `json:"resources"`
-	Links                []NetworkLink         `json:"links"`
+	TransportCredentials []TransportCredential `json:"transport_credentials"`
+	WireGuardPrivateKey  string                `json:"wireguard_private_key,omitempty"`
+	WireGuardPublicKey   string                `json:"wireguard_public_key,omitempty"`
 	Endpoints            []EndpointGeneration  `json:"endpoints"`
 	DNSServers           []string              `json:"dns_servers"`
-	BusinessProbeTargets []ServiceProbeTargets `json:"business_probe_targets"`
-	Routes               []RouteCandidate      `json:"routes"`
-	RuntimeProfile       *RuntimeProfile       `json:"runtime_profile,omitempty"`
-	InboundCredentials   []InboundCredential   `json:"inbound_credentials"`
+	DNSRecords           []DNSRecord           `json:"dns_records,omitempty"`
+	WebEndpoints         []EndpointGeneration  `json:"web_endpoints,omitempty"`
+	PublicTrust          []PublicTrust         `json:"public_trust,omitempty"`
 	ExpectedComponents   []ComponentReadback   `json:"expected_components"`
 }
 
 func (view DeviceView) Validate() error {
-	if view.Schema != 3 || ValidateID(view.NetworkID) != nil || ValidateID(view.DeviceID) != nil || view.DeviceID == "direct" || ValidateText(view.Name) != nil || !validatePlatform(view.Platform) || ValidatePublicKey(view.DevicePublicKey) != nil || validateResponsibilities(view.Responsibilities, true) != nil ||
-		validateIDSet(view.PolicyIDs) != nil || view.Services == nil || view.Policies == nil || view.Resources == nil || view.Links == nil || view.Endpoints == nil || view.DNSServers == nil || view.BusinessProbeTargets == nil || view.Routes == nil || view.InboundCredentials == nil || view.ExpectedComponents == nil {
-		return errors.New("device view fields are invalid or incomplete")
+	if view.Schema != 3 || ValidateID(view.NetworkID) != nil || ValidateID(view.DeviceID) != nil || view.DeviceID == "direct" || ValidateText(view.Name) != nil || !validatePlatform(view.Platform) || ValidatePublicKey(view.DevicePublicKey) != nil || validateResponsibilities(view.Responsibilities, true) != nil || validateIDSet(view.PolicyIDs) != nil || view.Nodes == nil || view.Services == nil || view.Policies == nil || view.Resources == nil || view.TransportCredentials == nil || view.Endpoints == nil || view.DNSServers == nil || view.ExpectedComponents == nil {
+		return errors.New("stable device View fields are invalid or incomplete")
 	}
-	if view.DNSRecords != nil && len(view.DNSRecords) == 0 {
-		return errors.New("empty overlay DNS must be omitted")
+	if !containsString(view.Responsibilities, "access") && len(view.PolicyIDs) > 0 {
+		return errors.New("non-access View cannot assign access Policies")
 	}
-	if view.PublicTrust != nil && len(view.PublicTrust) == 0 {
-		return errors.New("empty public trust must be omitted")
+	if view.DNSRecords != nil && len(view.DNSRecords) == 0 || view.PublicTrust != nil && len(view.PublicTrust) == 0 {
+		return errors.New("empty optional View collections must be omitted")
 	}
 	if err := validatePublicTrust(view.PublicTrust); err != nil {
 		return err
@@ -390,13 +371,6 @@ func (view DeviceView) Validate() error {
 	}
 	if err := validateDNSRecords(view.DNSRecords); err != nil {
 		return err
-	}
-	access := containsString(view.Responsibilities, "access")
-	if access && view.RuntimeProfile == nil || !access && (len(view.PolicyIDs) != 0 || len(view.Routes) != 0) {
-		return errors.New("device view access projection does not match its responsibilities")
-	}
-	if view.RuntimeProfile != nil && view.RuntimeProfile.Validate() != nil {
-		return errors.New("device view runtime is invalid")
 	}
 	if err := validateDeviceDNS(view.DNSServers); err != nil {
 		return err

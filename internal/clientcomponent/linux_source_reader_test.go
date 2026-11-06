@@ -63,11 +63,14 @@ func TestReviewedLinuxReadersFromEnvironment(t *testing.T) {
 			oldReaders[destination] = bytes.NewReader(body)
 		}
 		readers["source/BUILD.txt"] = bytes.NewReader(linuxSourceBuildInstructions(value.Version))
-		oldReaders["source/BUILD.txt"] = bytes.NewReader(linuxSourceBuildInstructions(DataPlaneVersion))
+		// Historical meaning does not depend on whether current platform
+		// targets happen to share one artifact coordinate.
+		historical := "1.11.4-loom.15"
+		oldReaders["source/BUILD.txt"] = bytes.NewReader(linuxSourceBuildInstructions(historical))
 		if err := VerifyLinuxSourceFilesReaders(readers, value.Version); err != nil {
 			t.Fatal(err)
 		}
-		if err := VerifyLinuxSourceFilesReaders(oldReaders, DataPlaneVersion); err == nil {
+		if err := VerifyLinuxSourceFilesReaders(oldReaders, historical); err == nil {
 			t.Fatal("new source bytes reinterpreted as previous artifact")
 		}
 	}

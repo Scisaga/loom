@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -110,33 +111,35 @@ type portableGUI struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu                  sync.RWMutex
-	state               portableGUIState
-	joined              bool
-	deviceID            string
-	detail              string
-	hostname            string
-	runCancel           context.CancelFunc
-	joinStarted         time.Time
-	runDone             chan struct{}
-	stopRequested       bool
-	runSequence         uint64
-	routeOptions        []portableRouteOption
-	routeSelected       int
-	routeBusy           bool
-	routeDetail         string
-	paths               []windowsPathDisplay
-	profiles            *windowsProfileManager
-	profileChild        bool
-	profileHost         bool
-	profileMessage      string
-	brokerProfiles      []windowsProfileDisplay
-	brokerProfilesReady bool
-	brokerProfileDraft  *windowsProfileDraftDisplay
-	selectedProfile     string
-	profileName         string
-	activeProfile       string
-	activeProfileName   string
+	mu                    sync.RWMutex
+	state                 portableGUIState
+	joined                bool
+	deviceID              string
+	detail                string
+	hostname              string
+	runCancel             context.CancelFunc
+	joinStarted           time.Time
+	runDone               chan struct{}
+	stopRequested         bool
+	runSequence           uint64
+	routeOptions          []portableRouteOption
+	routeSelected         int
+	routeBusy             bool
+	routeDetail           string
+	routeHidden           map[string]int64
+	routeHiddenViewDigest string
+	paths                 []windowsPathDisplay
+	profiles              *windowsProfileManager
+	profileChild          bool
+	profileHost           bool
+	profileMessage        string
+	brokerProfiles        []windowsProfileDisplay
+	brokerProfilesReady   bool
+	brokerProfileDraft    *windowsProfileDraftDisplay
+	selectedProfile       string
+	profileName           string
+	activeProfile         string
+	activeProfileName     string
 
 	lockMu           sync.Mutex
 	lock             *windowsNamedLock
@@ -398,6 +401,7 @@ func (app *portableGUI) startRuntime() {
 	sequence := app.runSequence
 	done := make(chan struct{})
 	app.runCancel = runCancel
+	app.routeHidden, app.routeHiddenViewDigest = nil, ""
 	app.runDone = done
 	app.stopRequested = false
 	app.state = guiStarting
@@ -430,7 +434,14 @@ func (app *portableGUI) startRuntime() {
 		}()
 		pathsDone := make(chan struct{})
 		go func() { defer close(pathsDone); app.watchCurrentPaths(runCtx, sequence) }()
-		err = workload(runCtx)
+		err = workload(withWindowsRouteVisibility(runCtx, func(viewDigest string, hidden map[string]int64) {
+			app.mu.Lock()
+			if sequence == app.runSequence && app.runCancel != nil && runCtx.Err() == nil {
+				app.routeHiddenViewDigest = viewDigest
+				app.routeHidden = maps.Clone(hidden)
+			}
+			app.mu.Unlock()
+		}))
 		runCancel()
 		<-watchDone
 		<-routeDone
@@ -471,12 +482,14 @@ func (app *portableGUI) runtimeReady(sequence uint64) {
 
 func (app *portableGUI) finishRuntime(sequence uint64, runCtx context.Context, runErr error) {
 	app.mu.Lock()
-	defer app.mu.Unlock()
 	if sequence != app.runSequence {
+		app.mu.Unlock()
 		return
 	}
+	defer func() { app.mu.Unlock(); app.loadOfflineProfileRoutes() }()
 	stopped := app.stopRequested || app.ctx.Err() != nil || errors.Is(runCtx.Err(), context.Canceled)
 	app.runCancel = nil
+	app.routeHidden, app.routeHiddenViewDigest = nil, ""
 	app.paths = nil
 	app.runDone = nil
 	app.stopRequested = false

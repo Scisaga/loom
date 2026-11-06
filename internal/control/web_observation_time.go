@@ -30,11 +30,10 @@ func webObservationUntil(report DeviceReport, sample Observation, reportUntil in
 	}
 	lifetime := 30 * time.Second
 	switch sample.Level {
-	case "resource", "service":
+	case "resource", "service", "link", "egress":
 		if sample.Result == "available" {
 			lifetime = 10 * time.Minute
 		}
-	case "link":
 	default:
 		return 0
 	}

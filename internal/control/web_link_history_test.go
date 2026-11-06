@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 	now := time.Date(2026, 1, 2, 12, 30, 0, 0, time.UTC)
 	hour := now.Truncate(time.Hour)
 	zero := int64(0)
-	base := Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_dns", NetworkGeneration: "demo-generation", Result: "available", DurationMS: &zero}
+	base := Observation{Level: "link", LinkID: link.ID, ResourceID: link.ResourceID, SpecDigest: spec, Target: net.JoinHostPort(link.ProbeTarget.Host, "53"), Action: "wireguard_echo", NetworkGeneration: "demo-generation", Result: "available", DurationMS: &zero}
 	reports := []DeviceReport{}
 	add := func(hours int, change func(*Observation)) {
 		t.Helper()
@@ -148,7 +149,7 @@ func TestWebLinkHistoryKeepsOriginalDirectionScopeAndSampleTime(t *testing.T) {
 		previous = got
 	}
 	for i := range p.NetworkIntent.Resources {
-		if p.NetworkIntent.Resources[i].ID == link.FromResourceID {
+		if p.NetworkIntent.Resources[i].ID == link.ResourceID {
 			p.NetworkIntent.Resources[i].DialPort++
 		}
 	}
@@ -212,7 +213,7 @@ func TestWebLinkHistoryQueryCannotExpandEndpointPermission(t *testing.T) {
 	// Native WG may terminate at an Internet egress without a forwarding role.
 	a.projection.DeviceAuthorizations[1].Responsibilities = []string{"internet_egress"}
 	check("link="+link.ID, http.StatusOK)
-	if links := projectWebLinks(a.Snapshot()); len(links) != 1 || links[0].ID != link.ID {
+	if links := projectWebLinks(a.Snapshot()); len(links) != 2 || !slices.ContainsFunc(links, func(value Link) bool { return value.ID == link.ID }) {
 		t.Fatal("authorized Internet-only receiver disappeared from the topology")
 	}
 	for _, change := range []func(*Projection){

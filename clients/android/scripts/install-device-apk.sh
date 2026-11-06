@@ -81,7 +81,9 @@ if "${adb[@]}" shell pm path "$package_name" | grep -q '^package:'; then
 fi
 
 install_log="$tmp_dir/adb-install.log"
-"${adb[@]}" install -r "$apk" >"$install_log" 2>&1 &
+"${adb[@]}" shell input keyevent KEYCODE_WAKEUP
+"${adb[@]}" shell wm dismiss-keyguard
+"${adb[@]}" install --no-streaming -r "$apk" >"$install_log" 2>&1 &
 install_pid=$!
 clicked=0
 deadline=$((SECONDS + 35))
@@ -118,7 +120,7 @@ while kill -0 "$install_pid" >/dev/null 2>&1 && (( SECONDS < deadline )); do
         cp -- "$ui_dump" "$INSTALL_EVIDENCE_DIR/install-confirmation.xml"
     fi
     echo "已验证 Loom 安装页；单次点击: $tap_label"
-    "${adb[@]}" shell input tap "$tap_x" "$tap_y"
+    "${adb[@]}" shell input touchscreen -d 0 tap "$tap_x" "$tap_y"
     clicked=1
     break
 done
@@ -145,6 +147,8 @@ if (( install_status != 0 )); then
 fi
 grep -Fq 'Success' <<<"$install_output" || { echo "ADB 未返回 Success" >&2; exit 1; }
 verify_installed_signer || { echo "安装后包名/签名验证失败" >&2; exit 1; }
+installed_apk_sha=$(sha256sum -- "$tmp_dir/installed-base.apk" | awk '{print $1}')
+[[ "$installed_apk_sha" == "$expected_apk_sha" ]] || { echo "安装后 APK SHA-256 不匹配" >&2; exit 1; }
 
 installed_dump=$("${adb[@]}" shell dumpsys package "$package_name" | tr -d '\r')
 installed_version=$(sed -n '/versionCode=/{p;q}' <<<"$installed_dump")

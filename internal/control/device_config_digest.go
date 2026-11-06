@@ -1,6 +1,9 @@
 package control
 
 const DeviceConfigDigestHeader = "Loom-Config-Digest"
+const DeviceConfigWaitHeader = "Loom-Config-Wait"
+
+const DeviceConfigWaitSeconds = 20
 
 // DeviceConfigurationDigest is a disposable transport comparison of an already
 // verified envelope. Member signatures can differ for the same certified state;

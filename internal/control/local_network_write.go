@@ -139,7 +139,7 @@ func localNetworkAllocation(projection Projection, reports []DeviceReport, reque
 	if err != nil {
 		return Operation{}, err
 	}
-	value := Service{ID: request.ID, Name: request.Name, Kind: "local_network", LocalNetwork: &LocalNetwork{GatewayNodeID: gateway.ID, LocalPrefix: request.LocalPrefix, VirtualPrefix: virtual.String(), AllocationAttempt: request.AllocationAttempt, Enabled: true}}
+	value := Service{ID: request.ID, Name: request.Name, Kind: "local_network", RestrictToProbeTargets: new(false), LocalNetwork: &LocalNetwork{GatewayNodeID: gateway.ID, LocalPrefix: request.LocalPrefix, VirtualPrefix: virtual.String(), AllocationAttempt: request.AllocationAttempt, Enabled: true}}
 	ids := make([]string, 0, len(dependencies))
 	for id := range dependencies {
 		ids = append(ids, id)
@@ -177,7 +177,11 @@ func checkLocalNetworkWrite(operation Operation, projection Projection, reports 
 	if err != nil {
 		return err
 	}
-	if !sameContractValue(want.Payload, value) {
+	allocation := want.Payload.(Service)
+	// Sampling and an optional narrowing restriction are submitted in this same
+	// Service fact, but do not change the reviewed address allocation.
+	allocation.ProbeURLs, allocation.RestrictToProbeTargets = value.ProbeURLs, value.RestrictToProbeTargets
+	if !sameContractValue(allocation, value) {
 		return errors.New("LAN allocation preview is stale; review a new allocation")
 	}
 	for _, id := range want.Dependencies {

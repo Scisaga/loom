@@ -120,11 +120,11 @@ func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *tes
 	public := invite.ControlProof.Genesis.Payload.(control.Genesis).ControlConfig.Members[0].PublicKey
 	lkg := envelope(public, 7)
 	lkg.View.DNSServers = []string{"192.0.2.53"}
-	lkg.View.BusinessProbeTargets = []control.ServiceProbeTargets{{ServiceID: "demo-service", Targets: []string{"https://demo.example/"}}}
-	route := lkg.View.Routes[0]
+	lkg.View.Services[0].ProbeURLs = []string{"https://demo.example/"}
+	route := testDeviceExecution(lkg.View).Routes[0]
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	activation := clientadapter.Activation{State: clientadapter.State{NetworkGeneration: "demo-network", Observations: []clientmodel.Observation{{CandidateID: route.ID, Target: "https://demo.example/", Scope: route.Scope, NetworkGeneration: "demo-network", Action: "https_request", Result: "unavailable", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}}, Selections: []clientadapter.SelectionStatus{{Scope: route.Scope, CandidateID: route.ID}}}
-	activation.State.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
+	activation := clientadapter.Activation{State: clientadapter.State{NetworkGeneration: "demo-network", Observations: []clientmodel.Observation{{CandidateID: route.ID, Target: "https://demo.example/", Scope: control.AccessSelectorScope, NetworkGeneration: "demo-network", Action: "https_request", Result: "unavailable", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}}, Selections: []clientadapter.SelectionStatus{{Scope: control.AccessSelectorScope, CandidateID: route.ID}}}
+	activation.State.Preference = clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}
 	report, err := windowsDeviceReport(&lkg, activation, nil, now)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *tes
 		t.Fatal("report lost authenticated coordinates or coupled runtime to business failure")
 	}
 	first := windowsRuntimeFactsDigest(activation, nil)
-	activation.State.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service"}}}
+	activation.State.Preference = clientmodel.Preference{Schema: 3}
 	changed, err := windowsDeviceReport(&lkg, activation, nil, now)
 	if err != nil || changed.PolicyChoices == nil || changed.Preference != nil || first == windowsRuntimeFactsDigest(activation, nil) || changed.Selections[0] != report.Selections[0] {
 		t.Fatal("setting change was not reported independently from the selector", err)
@@ -143,7 +143,7 @@ func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *tes
 	if first == windowsRuntimeFactsDigest(activation, nil) {
 		t.Fatal("actual result change lost")
 	}
-	lkg.View.BusinessProbeTargets[0].Targets = append(lkg.View.BusinessProbeTargets[0].Targets, "https://demo.example/other")
+	testDeviceExecution(lkg.View).BusinessProbeTargets[0].Targets = append(testDeviceExecution(lkg.View).BusinessProbeTargets[0].Targets, "https://demo.example/other")
 	report, err = windowsDeviceReport(&lkg, activation, nil, now)
 	if err != nil || len(report.Observations) != 1 || report.Observations[0].Target != "https://demo.example/" {
 		t.Fatal("another target erased or reinterpreted the original sample")

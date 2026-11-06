@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"loom/internal/control"
 )
@@ -41,7 +41,39 @@ func nativePeerTestDNS(t *testing.T) func(context.Context, string, string) (net.
 	}
 }
 
-func TestNativeReceiversConsumeResolvedManagementAddress(t *testing.T) {
+func serveNativePeerTestDNS(t *testing.T) {
+	t.Helper()
+	listener, err := net.ListenPacket("udp", "192.0.2.53:53")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dial := nativePeerTestDNS(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var query, response [2048]byte
+		for {
+			n, peer, err := listener.ReadFrom(query[:])
+			if err != nil {
+				return
+			}
+			conn, err := dial(context.Background(), "udp", "192.0.2.53:53")
+			if err != nil {
+				return
+			}
+			_ = conn.SetDeadline(time.Now().Add(time.Second))
+			_, writeErr := conn.Write(query[:n])
+			n, readErr := conn.Read(response[:])
+			_ = conn.Close()
+			if writeErr == nil && readErr == nil {
+				_, _ = listener.WriteTo(response[:n], peer)
+			}
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close(); <-done })
+}
+
+func TestNativeReceiverKeepsSenderDNSInResourcePreparation(t *testing.T) {
 	p, keys, input, at := nativeProjectionFixture(t)
 	for i := range p.DeviceAuthorizations {
 		p.DeviceAuthorizations[i].DNSServers = []string{"192.0.2.53"}
@@ -59,7 +91,7 @@ func TestNativeReceiversConsumeResolvedManagementAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	executions, err := prepareHY2Executions(view, input, at)
+	executions, err := prepareResourceExecutions(view, input, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,58 +99,29 @@ func TestNativeReceiversConsumeResolvedManagementAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, _, err := projectWireGuard(view)
-	if err != nil || len(profile.WireGuard) != 1 {
-		t.Fatal("missing management peer", err)
+	profile, _, err := projectWireGuard(view, executions)
+	if err != nil || len(profile.WireGuard) != 0 {
+		t.Fatal("relay generated host management peers", err)
 	}
-	for _, endpoint := range []string{"192.0.2.12:51822", "[2001:db8::12]:51822"} {
-		t.Run(endpoint, func(t *testing.T) {
-			resolved := wireGuardExecution{WireGuard: append([]wireGuardExecutionLink{}, profile.WireGuard...)}
-			resolved.WireGuard[0].Endpoint = endpoint
-			actual, err := appendNativeReceivers(config, view, resolved, nil, keys["demo-entry"])
-			if err != nil {
-				t.Fatal(err)
-			}
-			var document struct {
-				Endpoints []struct {
-					Peers []struct {
-						PublicKey string `json:"public_key"`
-						Address   string `json:"address"`
-						Port      uint16 `json:"port"`
-					} `json:"peers"`
-				} `json:"endpoints"`
-			}
-			if err := json.Unmarshal([]byte(actual), &document); err != nil {
-				t.Fatal(err)
-			}
-			address := netip.MustParseAddrPort(endpoint)
-			found := false
-			for _, resource := range document.Endpoints {
-				for _, peer := range resource.Peers {
-					if peer.PublicKey == profile.WireGuard[0].PeerPublicKey {
-						found = true
-						if peer.Address != address.Addr().String() || peer.Port != address.Port() {
-							t.Fatal("native peer discarded the resolved endpoint")
-						}
-					}
-				}
-			}
-			if !found || strings.Contains(actual, "demo-peer.example") {
-				t.Fatal("native endpoint still depends on resolving the original name")
-			}
-			after, _ := control.CanonicalEncode(view)
-			if string(after) != string(original) || profile.WireGuard[0].Endpoint != "demo-peer.example:51822" {
-				t.Fatal("runtime address overwrote the certified name")
-			}
-		})
+	actual, err := appendNativeWireGuard(config, view, profile, nil, keys["demo-entry"])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := appendNativeReceivers(config, view, profile, nil, keys["demo-entry"]); err == nil {
-		t.Fatal("unresolved management address reached the native receiver")
+	var document struct {
+		Endpoints []map[string]any `json:"endpoints"`
 	}
-	missing := wireGuardExecution{WireGuard: append([]wireGuardExecutionLink{}, profile.WireGuard...)}
-	missing.WireGuard[0].Endpoint = "192.0.2.12:51822"
-	missing.WireGuard[0].PeerPublicKey = "demo-missing-peer"
-	if _, err := appendNativeReceivers(config, view, missing, nil, keys["demo-entry"]); err == nil {
-		t.Fatal("resolved address without its authenticated peer was accepted")
+	if err := json.Unmarshal([]byte(actual), &document); err != nil || len(document.Endpoints) != 1 {
+		t.Fatal(err)
+	}
+	endpoint := document.Endpoints[0]
+	if endpoint["system"] == true || endpoint["name"] != nil || endpoint["host_sources"] != nil || endpoint["stack_address"] != nil {
+		t.Fatal("sender DNS preparation created host geometry")
+	}
+	if !strings.Contains(actual, "demo-peer.example") {
+		t.Fatal("sender description lost its certified name")
+	}
+	after, _ := control.CanonicalEncode(view)
+	if string(after) != string(original) {
+		t.Fatal("runtime preparation changed the authenticated View")
 	}
 }

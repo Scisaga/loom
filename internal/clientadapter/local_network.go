@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"loom/internal/control"
+	"loom/internal/netx"
 	"maps"
 	"net"
 	"net/netip"
@@ -15,7 +16,7 @@ import (
 // ConnectedIPv4Prefixes reads the local underlay. Including other VPNs is
 // deliberate for conflict detection: their addresses must not enter Loom.
 // The platform's own fixed capture subnet is reserved by the allocator.
-func ConnectedIPv4Prefixes(resources ...control.TransportResource) (*[]string, error) {
+func ConnectedIPv4Prefixes() (*[]string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
@@ -33,25 +34,18 @@ func ConnectedIPv4Prefixes(resources ...control.TransportResource) (*[]string, e
 			addresses = append(addresses, address.String())
 		}
 	}
-	return InterfaceIPv4Prefixes(addresses, resources...)
+	return InterfaceIPv4Prefixes(addresses)
 }
 
 // InterfaceIPv4Prefixes consumes a platform's UP, non-loopback interface
 // addresses. A nil slice means unavailable readback; an empty slice is known.
-func InterfaceIPv4Prefixes(addresses []string, resources ...control.TransportResource) (*[]string, error) {
+// Resource addresses are remote coordinates and never identify owned local
+// interfaces. Only the platform capture addresses below are omitted.
+func InterfaceIPv4Prefixes(addresses []string) (*[]string, error) {
 	if addresses == nil {
 		return nil, nil
 	}
 	ignored := map[netip.Addr]bool{netip.MustParseAddr("172.19.0.1"): true, netip.MustParseAddr("192.0.2.1"): true}
-	for _, resource := range resources {
-		if resource.Authentication.LocalAddresses != nil {
-			for _, text := range *resource.Authentication.LocalAddresses {
-				if prefix, err := netip.ParsePrefix(text); err == nil {
-					ignored[prefix.Addr()] = true
-				}
-			}
-		}
-	}
 
 	values := map[string]bool{}
 	for _, address := range addresses {
@@ -99,7 +93,11 @@ func WithLocalNetworkBoundary(config string, connected *[]string, localNetworks 
 	rules, _ := route["rules"].([]any)
 	prefixes, _ := localRuntimePrefixes(document)
 	if len(prefixes) == 0 {
-		return config, nil
+		if err := applyTUNCapture(document); err != nil {
+			return "", err
+		}
+		body, err := json.Marshal(document)
+		return string(body), err
 	}
 	underlay := []netip.Prefix{}
 	if connected != nil {
@@ -268,25 +266,8 @@ func WithLocalNetworkBoundary(config string, connected *[]string, localNetworks 
 		rules = append(rules[:index], append(guards, rules[index:]...)...)
 		route["rules"] = rules
 	}
-	guarded, err := json.Marshal(document)
-	if err != nil {
+	if err := applyTUNCapture(document); err != nil {
 		return "", err
-	}
-	for _, raw := range array(document["inbounds"]) {
-		inbound, _ := raw.(map[string]any)
-		if inbound["type"] != "tun" {
-			continue
-		}
-		capture, exclusions, err := LocalNetworkCapture(string(guarded), stringArray(inbound["address"]), stringArray(inbound["route_exclude_address"]))
-		if err != nil {
-			return "", err
-		}
-		if len(capture) > 0 {
-			inbound["route_address"] = capture
-		}
-		if len(exclusions) > 0 {
-			inbound["route_exclude_address"] = exclusions
-		}
 	}
 	body, err := json.Marshal(document)
 	return string(body), err
@@ -294,6 +275,9 @@ func WithLocalNetworkBoundary(config string, connected *[]string, localNetworks 
 
 func array(value any) []any { result, _ := value.([]any); return result }
 func stringArray(value any) []string {
+	if values, ok := value.([]string); ok {
+		return append([]string(nil), values...)
+	}
 	result := []string{}
 	for _, raw := range array(value) {
 		if text, ok := raw.(string); ok {
@@ -307,8 +291,6 @@ func localRuntimePrefixes(document map[string]any) ([]string, bool) {
 	internet := false
 	for _, raw := range array(document["outbounds"]) {
 		outbound, _ := raw.(map[string]any)
-		tag, _ := outbound["tag"].(string)
-		internet = internet || strings.HasPrefix(tag, "service:")
 		if mapping, ok := outbound["prefix_mapping"].(map[string]any); ok {
 			if prefix, ok := mapping["virtual_prefix"].(string); ok {
 				values[prefix] = true
@@ -333,6 +315,7 @@ func localRuntimePrefixes(document map[string]any) ([]string, bool) {
 	if route, ok := document["route"].(map[string]any); ok {
 		for _, raw := range array(route["rules"]) {
 			if rule, ok := raw.(map[string]any); ok {
+				internet = internet || rule["outbound"] == control.AccessSelectorScope && hasPublicInternetMatcher(rule)
 				visit(rule, false)
 			}
 		}
@@ -345,17 +328,55 @@ func localRuntimePrefixes(document map[string]any) ([]string, bool) {
 	return result, internet
 }
 
-// LocalNetworkCapture derives exact capture values from the existing scopes
-// and deny rules. The validator uses the same pure projection.
-func LocalNetworkCapture(config string, addresses, exclusions []string) ([]string, []string, error) {
+func hasPublicInternetMatcher(rule map[string]any) bool {
+	if rule["invert"] == true {
+		return false
+	}
+	if rule["public_internet"] == true {
+		return true
+	}
+	for _, raw := range array(rule["rules"]) {
+		if child, ok := raw.(map[string]any); ok && hasPublicInternetMatcher(child) {
+			return true
+		}
+	}
+	return false
+}
+
+// WithTUNCapture projects the existing access rules into positive capture
+// ranges. Local conflict guards, when present, only narrow those ranges.
+func WithTUNCapture(config string) (string, error) {
 	var document map[string]any
 	if err := json.Unmarshal([]byte(config), &document); err != nil {
-		return nil, nil, err
+		return "", err
 	}
+	if err := applyTUNCapture(document); err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(document)
+	return string(body), err
+}
+
+func applyTUNCapture(document map[string]any) error {
+	for _, raw := range array(document["inbounds"]) {
+		inbound, _ := raw.(map[string]any)
+		if inbound["type"] != "tun" {
+			continue
+		}
+		capture, exclusions, err := accessCapturePrefixes(document, stringArray(inbound["address"]), stringArray(inbound["route_exclude_address"]))
+		if err != nil {
+			return err
+		}
+		inbound["route_address"] = capture
+		if len(exclusions) > 0 {
+			inbound["route_exclude_address"] = exclusions
+		}
+	}
+	return nil
+}
+
+func accessCapturePrefixes(document map[string]any, addresses, exclusions []string) ([]string, []string, error) {
 	prefixes, internet := localRuntimePrefixes(document)
-	if len(prefixes) == 0 {
-		return nil, exclusions, nil
-	}
 	blocked := map[string]bool{}
 	route, _ := document["route"].(map[string]any)
 	for _, raw := range array(route["rules"]) {
@@ -369,28 +390,49 @@ func LocalNetworkCapture(config string, addresses, exclusions []string) ([]strin
 		}
 	}
 	var capture []string
+	if internet {
+		capture = netx.PublicInternetPrefixes()
+	}
 	exclusions = append([]string(nil), exclusions...)
 	for _, prefix := range prefixes {
 		if blocked[prefix] {
 			exclusions = append(exclusions, prefix)
-		} else if !internet {
+		} else {
 			capture = append(capture, prefix)
 		}
 	}
-	if !internet {
-		for _, text := range addresses {
-			prefix, err := netip.ParsePrefix(text)
-			if err != nil {
-				return nil, nil, err
-			}
-			capture = append(capture, prefix.Masked().String())
+	for _, text := range addresses {
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil {
+			return nil, nil, err
 		}
-		if len(capture) == 0 {
-			return nil, nil, errors.New("LAN capture has no explicit address boundary")
-		}
-		sort.Strings(capture)
-		capture = slices.Compact(capture)
+		capture = append(capture, prefix.Masked().String())
 	}
+	if dns, ok := document["dns"].(map[string]any); ok {
+		for _, raw := range array(dns["servers"]) {
+			server, _ := raw.(map[string]any)
+			if server["tag"] != "loom-tun-domain" || server["address"] != "fakeip" {
+				continue
+			}
+			pool, _ := dns["fakeip"].(map[string]any)
+			if pool["enabled"] != true {
+				return nil, nil, errors.New("TUN domain DNS capture has no enabled address pool")
+			}
+			for _, key := range []string{"inet4_range", "inet6_range"} {
+				text, _ := pool[key].(string)
+				prefix, err := netip.ParsePrefix(text)
+				if err != nil || prefix != prefix.Masked() {
+					return nil, nil, errors.New("TUN domain DNS capture has an invalid address pool")
+				}
+				capture = append(capture, text)
+			}
+		}
+	}
+	if len(capture) == 0 {
+		return nil, nil, errors.New("TUN capture has no positive address boundary")
+	}
+	sort.Strings(capture)
+	capture = slices.Compact(capture)
 	sort.Strings(exclusions)
 	return capture, slices.Compact(exclusions), nil
 }

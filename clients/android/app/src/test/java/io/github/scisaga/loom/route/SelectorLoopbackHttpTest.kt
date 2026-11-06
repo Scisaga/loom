@@ -12,8 +12,94 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class SelectorLoopbackHttpTest {
+    @Test
+    fun cancellationClosesARealBlockedSelectorSocket() = runBlocking {
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
+            val entered = CountDownLatch(1)
+            val closed = CountDownLatch(1)
+            val worker = thread(isDaemon = true) {
+                server.accept().use { socket ->
+                    socket.soTimeout = 10_000
+                    val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII))
+                    while (!reader.readLine().isNullOrEmpty()) { /* bounded test request */ }
+                    entered.countDown()
+                    if (socket.getInputStream().read() == -1) closed.countDown()
+                }
+            }
+            val request = launch {
+                cancellableLoopbackHttpRequest("127.0.0.1", server.localPort, "demo-secret", "GET", "/version", null, 1024)
+            }
+            withContext(Dispatchers.IO) { assertTrue(entered.await(5, TimeUnit.SECONDS)) }
+            withTimeout(1_000) { request.cancelAndJoin() }
+            withContext(Dispatchers.IO) { assertTrue("cancel did not close the actual socket", closed.await(1, TimeUnit.SECONDS)) }
+            worker.join(1_000)
+            assertTrue(!worker.isAlive)
+        }
+    }
+
+    @Test
+    fun totalDeadlineAlsoBoundsAContinuouslyDrippingResponse() = runBlocking {
+        ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
+            val closed = CountDownLatch(1)
+            val worker = thread(isDaemon = true) {
+                server.accept().use { socket ->
+                    try {
+                        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII))
+                        while (!reader.readLine().isNullOrEmpty()) { /* request */ }
+                        socket.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n\r\n".toByteArray())
+                        repeat(20) {
+                            socket.getOutputStream().write('x'.code)
+                            socket.getOutputStream().flush()
+                            Thread.sleep(500)
+                        }
+                    } catch (_: IOException) {
+                        closed.countDown()
+                    }
+                }
+            }
+            withTimeout(5_000) {
+                try {
+                    cancellableLoopbackHttpRequest("127.0.0.1", server.localPort, "demo-secret", "GET", "/version", null, 1024)
+                    throw AssertionError("slow response escaped the total deadline")
+                } catch (_: IOException) {
+                    // No read remains idle for the socket timeout; only the
+                    // complete request's deadline can terminate this response.
+                }
+            }
+            withContext(Dispatchers.IO) { assertTrue(closed.await(2, TimeUnit.SECONDS)) }
+            worker.join(1_000)
+        }
+    }
+
+    @Test
+    fun startupRetriesOnlyTransientIoAndNeverASelectionConflict() = runBlocking {
+        val attempts = AtomicInteger()
+        val response = selectorStartupRead {
+            if (attempts.incrementAndGet() == 1) throw IOException("demo listener starting")
+            "ready"
+        }
+        assertEquals("ready", response)
+        assertEquals(2, attempts.get())
+        attempts.set(0)
+        try {
+            selectorStartupRead<String> { attempts.incrementAndGet(); throw SelectionSuperseded() }
+            throw AssertionError("CAS conflict was retried")
+        } catch (_: SelectionSuperseded) {
+            assertEquals(1, attempts.get())
+        }
+    }
+
     @Test
     fun readsFiftySevenDerivedCandidatesBeyondFourKiB() {
         val candidates = (0 until 57).map { "sha256:" + it.toString(16).padStart(64, '0') }

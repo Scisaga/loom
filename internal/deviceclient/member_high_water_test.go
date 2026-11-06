@@ -85,13 +85,12 @@ func testMemberRetirementHighWater(t *testing.T, platform string) {
 		t.Fatal(err)
 	}
 	review := ReviewMemberTransition(prepared, store.state)
-	changedPolicy, addedRoute := false, false
+	changedPolicy := false
 	for _, change := range review.Changes {
 		changedPolicy = changedPolicy || change.Kind == "policy" && change.ID == "demo-policy" && change.Change == "changed"
-		addedRoute = addedRoute || change.Kind == "route" && change.Change == "added"
 	}
 	reviewBody, _ := json.Marshal(review)
-	if !review.PossiblePermissionRestoration || !changedPolicy || !addedRoute || strings.Contains(string(reviewBody), store.state.PrivateKey) || strings.Contains(string(reviewBody), "credential") {
+	if !review.PossiblePermissionRestoration || !changedPolicy || strings.Contains(string(reviewBody), store.state.PrivateKey) || strings.Contains(string(reviewBody), "credential") {
 		t.Fatal("member review missed visible restored permissions or exposed secret fields")
 	}
 	if err = store.SaveLKG(next); err != nil {

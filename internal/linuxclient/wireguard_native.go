@@ -89,89 +89,52 @@ func nativePrivateKey(path string) (string, string, error) {
 	return text, base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()), nil
 }
 
-// appendNativeReceivers consumes local key bytes only here. The signed profile
-// contains neither fixed receiver private keys nor host execution ownership.
-func appendNativeReceivers(config string, view control.DeviceView, profile wireGuardExecution, transaction *wireGuardTransaction, keyPath string) (string, error) {
+// appendNativeWireGuard hydrates the registered node key independently of
+// receiving resources. Host facilities still require their exact ownership.
+func appendNativeWireGuard(config string, view control.DeviceView, profile wireGuardExecution, _ *wireGuardTransaction, keyPath string) (string, error) {
+	var document map[string]any
+	if err := json.Unmarshal([]byte(config), &document); err != nil {
+		return "", err
+	}
+	endpoints, _ := document["endpoints"].([]any)
+	if len(endpoints) == 0 {
+		return config, nil
+	}
+	if len(endpoints) != 1 {
+		return "", errors.New("WG requires one shared native endpoint")
+	}
+	endpoint, ok := endpoints[0].(map[string]any)
+	if !ok || endpoint["type"] != "wireguard" || endpoint["tag"] != control.WireGuardEndpointTag || view.WireGuardPublicKey == "" {
+		return "", errors.New("WG endpoint lacks its registered node identity")
+	}
+	private, public := view.WireGuardPrivateKey, view.WireGuardPublicKey
+	if private == "" {
+		var err error
+		private, public, err = nativePrivateKey(keyPath)
+		if err != nil {
+			return "", err
+		}
+		if public != view.WireGuardPublicKey {
+			return "", errors.New("fixed WG key differs from its registered node identity")
+		}
+	} else if endpoint["private_key"] != private {
+		return "", errors.New("native WG sender differs from its certified private material")
+	}
+	endpoint["private_key"] = private
 	owned := []control.TransportResource{}
 	for _, resource := range view.Resources {
 		if resource.OwnerNodeID == view.DeviceID && resource.Kind == "wireguard" {
 			owned = append(owned, resource)
 		}
 	}
-	if len(owned) == 0 {
-		return config, nil
-	}
-	private, public, err := nativePrivateKey(keyPath)
-	if err != nil {
-		return "", err
-	}
-	var document map[string]any
-	if err := json.Unmarshal([]byte(config), &document); err != nil {
-		return "", err
-	}
-	endpoints, _ := document["endpoints"].([]any)
 	for _, resource := range owned {
+		if profile.ListenPort < 1 || profile.ListenPort > 65535 {
+			return "", errors.New("WG receiver has no validated local listener port")
+		}
+		endpoint["listen_port"] = profile.ListenPort
 		if *resource.Authentication.PublicKey != public {
 			return "", errors.New("fixed WG key differs from receiving resource")
 		}
-		var endpoint map[string]any
-		for _, raw := range endpoints {
-			value, ok := raw.(map[string]any)
-			if ok && value["tag"] == control.ResourceInboundTag(resource.ID) {
-				if endpoint != nil {
-					return "", errors.New("duplicate native WG endpoint")
-				}
-				endpoint = value
-			}
-		}
-		if endpoint == nil || len(endpoints) != 1 {
-			return "", errors.New("shared native WG endpoint is missing")
-		}
-		endpoint["private_key"] = private
-		addresses := []string{}
-		hostSources := []string{}
-		for _, peer := range profile.WireGuard {
-			if peer.LinkID != resource.ID {
-				continue
-			}
-			if peer.Mode == "initiator" {
-				address, err := netip.ParseAddrPort(peer.Endpoint)
-				if err != nil || address.Port() == 0 {
-					return "", errors.New("native WG management peer requires its resolved execution address")
-				}
-				matched := false
-				peers, _ := endpoint["peers"].([]any)
-				for _, raw := range peers {
-					value, ok := raw.(map[string]any)
-					if ok && value["public_key"] == peer.PeerPublicKey {
-						value["address"], value["port"] = address.Addr().String(), address.Port()
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					return "", errors.New("resolved WG management peer is absent from the native endpoint")
-				}
-			}
-			if len(hostSources) == 0 {
-				addresses = []string{peer.LocalAddress}
-			}
-			hostSources = append(hostSources, peer.AllowedIP)
-		}
-		if len(hostSources) > 0 {
-			name := wireGuardInterface(view.NetworkID, resource.ID)
-			if transaction != nil {
-				for _, handle := range transaction.owned {
-					if handle.link.LinkID == resource.ID {
-						name = handle.creationName
-					}
-				}
-			}
-			endpoint["stack_address"] = endpoint["address"]
-			endpoint["system"], endpoint["name"], endpoint["host_sources"] = true, name, hostSources
-			endpoint["address"] = addresses
-		}
-
 	}
 	document["endpoints"] = endpoints
 	body, err := json.Marshal(document)
@@ -229,6 +192,9 @@ func (transaction *wireGuardTransaction) activateNative(ctx context.Context, pid
 			}
 		}
 		owned.index = actual.Index
+		if err := verifyNativeHost(transaction.options, *owned); err != nil {
+			return err
+		}
 		if err := transaction.saveOwnership(); err != nil {
 			return err
 		}
@@ -247,6 +213,9 @@ func (transaction *wireGuardTransaction) activateNative(ctx context.Context, pid
 		if _, err := runHostCommand(transaction.options.IP, "link", "set", "dev", owned.link.Interface, "up"); err != nil {
 			return err
 		}
+		if err := restoreNativeHostAddresses(transaction.options, *owned, pid); err != nil {
+			return err
+		}
 		for _, peer := range owned.peerLinks() {
 			if _, err := runHostCommand(transaction.options.IP, wireGuardRouteArguments("add", peer, owned.link.Interface)...); err != nil {
 				return err
@@ -261,6 +230,42 @@ func (transaction *wireGuardTransaction) activateNative(ctx context.Context, pid
 		}
 	}
 	return nil
+}
+
+// Linux may remove IPv6 addresses when the new TUN is brought down for its
+// rename. Restore only missing authorized addresses on this exact owned link;
+// an additional address is ownership drift, not something to delete or accept.
+func restoreNativeHostAddresses(options Options, owned wireGuardOwnedLink, pid int) error {
+	actual, found, err := inspectOwnedWireGuardInterface(options, owned)
+	if err != nil {
+		return err
+	}
+	if !found || owned.index == 0 || actual.Index != owned.index || actual.Name != owned.link.Interface || actual.Info.Kind != "tun" || actual.Alias != owned.alias || !processOwnsTUN(pid, actual.Name) {
+		return ErrWireGuardOwnership
+	}
+	addresses, err := interfaceAddresses(options.IP, actual.Name)
+	if err != nil {
+		return err
+	}
+	wanted := owned.localAddresses()
+	missing := make(map[string]bool, len(wanted))
+	for _, address := range wanted {
+		missing[address] = true
+	}
+	for _, address := range addresses {
+		if !missing[address] {
+			return ErrWireGuardOwnership
+		}
+		missing[address] = false
+	}
+	for _, address := range wanted {
+		if missing[address] {
+			if _, err := runHostCommand(options.IP, "address", "add", address, "dev", actual.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return verifyNativeHost(options, owned)
 }
 
 func processOwnsTUN(pid int, name string) bool {
@@ -358,4 +363,27 @@ func (transaction *wireGuardTransaction) readbackNative() error {
 		}
 	}
 	return nil
+}
+
+// A verified native update changes socket/peer execution metadata, while the
+// token, interface, exact addresses and return routes keep their original owner.
+func (transaction *wireGuardTransaction) updateNativeExecution(profile wireGuardExecution) error {
+	if transaction == nil {
+		return nil
+	}
+	for i := range transaction.owned {
+		owned := &transaction.owned[i]
+		update := func(value *wireGuardExecutionLink) {
+			for _, next := range profile.WireGuard {
+				if next.LinkID == value.LinkID && next.PeerPublicKey == value.PeerPublicKey {
+					value.ListenPort, value.Endpoint, value.PersistentKeepalive = next.ListenPort, next.Endpoint, next.PersistentKeepalive
+				}
+			}
+		}
+		update(&owned.link)
+		for j := range owned.peers {
+			update(&owned.peers[j])
+		}
+	}
+	return transaction.saveOwnership()
 }

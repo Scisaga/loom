@@ -150,7 +150,7 @@ func (a *Authority) configurationReview(controlID string, now time.Time) (WebCon
 		}
 	}
 	for _, target := range projection.Targets {
-		row := WebConfigurationRow{Target: target, Sources: []WebConfigurationSource{}, References: []WebConfigurationReference{}, Resolvable: target.Conflicted && !target.Deleted && resolvableTarget(target.TargetKind) && len(target.MaterialIDs) >= 2}
+		row := WebConfigurationRow{Target: target, Sources: []WebConfigurationSource{}, References: []WebConfigurationReference{}, Resolvable: target.TargetKind != "probe_target" && target.Conflicted && !target.Deleted && resolvableTarget(target.TargetKind) && len(target.MaterialIDs) >= 2}
 		if target.TargetKind == "link" {
 			row.Resolvable = false
 			row.Reason = "Historical manual relay configuration. Current relay segments are derived from node responsibilities and transport resources."

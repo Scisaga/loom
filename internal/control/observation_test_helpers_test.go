@@ -116,6 +116,9 @@ func testSetObservationReports(t *testing.T, source any, reports []DeviceReport,
 		if err := ensureReportIndexes(tx); err != nil {
 			return err
 		}
+		if err := ensureReportMeasurementIndex(context.Background(), tx); err != nil {
+			return err
+		}
 		if _, err := tx.Bucket(reportIndexBucket).CreateBucket(reportCountersBucket); err != nil {
 			return err
 		}

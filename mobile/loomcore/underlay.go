@@ -12,12 +12,12 @@ import (
 	"loom/internal/control"
 )
 
-func androidConnectedIPv4Prefixes(body []byte, resources ...control.TransportResource) (*[]string, error) {
+func androidConnectedIPv4Prefixes(body []byte) (*[]string, error) {
 	var addresses []string
 	if len(body) > 1<<20 || json.Unmarshal(body, &addresses) != nil {
 		return nil, errors.New("Android interface readback is invalid")
 	}
-	return clientadapter.InterfaceIPv4Prefixes(addresses, resources...)
+	return clientadapter.InterfaceIPv4Prefixes(addresses)
 }
 
 // AndroidSocketProtector is the platform VpnService boundary, not identity or

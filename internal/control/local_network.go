@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"net/netip"
+	"net/url"
 	"sort"
+	"strconv"
 )
 
 // LocalNetworkPrefix is a signed readback value, never a sharing grant.
@@ -71,6 +73,40 @@ func (service Service) Scope() string {
 // TargetMatchers is a runtime projection. The LAN wire retains the complete
 // mapping; callers cannot encode it as an internet Service with an IP matcher.
 func (service Service) TargetMatchers(records ...DNSRecord) []ServiceMatcher {
+	if service.RestrictToProbeTargets == nil {
+		return []ServiceMatcher{} // Historical values are evidence, never runtime input.
+	}
+	if *service.RestrictToProbeTargets {
+		unique := map[ServiceMatcher]bool{}
+		for _, target := range service.ProbeURLs {
+			parsed, err := url.Parse(target)
+			if err != nil {
+				continue
+			}
+			port := 443
+			if parsed.Port() != "" {
+				port, _ = strconv.Atoi(parsed.Port())
+			}
+			matcher := ServiceMatcher{Kind: "dns_exact", Value: parsed.Hostname(), Port: port}
+			if address, err := netip.ParseAddr(parsed.Hostname()); err == nil {
+				matcher.Kind, matcher.Value = "ip_prefix", netip.PrefixFrom(address, address.BitLen()).String()
+			}
+			unique[matcher] = true
+		}
+		result := make([]ServiceMatcher, 0, len(unique))
+		for matcher := range unique {
+			result = append(result, matcher)
+		}
+		sort.Slice(result, func(i, j int) bool { return serviceMatcherLess(result[i], result[j]) })
+		return result
+	}
+	return service.baseTargetMatchers(records...)
+}
+
+func (service Service) baseTargetMatchers(records ...DNSRecord) []ServiceMatcher {
+	if service.Kind == "internet" {
+		return []ServiceMatcher{{Kind: "public_internet", Value: ""}}
+	}
 	if service.LocalNetwork != nil {
 		matchers := []ServiceMatcher{{Kind: "ip_prefix", Value: service.LocalNetwork.VirtualPrefix}}
 		for _, record := range records {
@@ -81,7 +117,7 @@ func (service Service) TargetMatchers(records ...DNSRecord) []ServiceMatcher {
 		sort.Slice(matchers, func(i, j int) bool { return serviceMatcherLess(matchers[i], matchers[j]) })
 		return matchers
 	}
-	return append([]ServiceMatcher{}, service.Matchers...)
+	return []ServiceMatcher{}
 }
 
 func ipv4Number(address netip.Addr) uint64 {
@@ -245,6 +281,23 @@ func executableServices(projection Projection) map[string]Service {
 }
 
 func validateServiceGateway(material Material, view Projection, service Service) error {
+	if service.RestrictToProbeTargets != nil {
+		for _, target := range service.ProbeURLs {
+			if !targetMatchesService(target, service, view.NetworkIntent.DNSRecords...) {
+				return errors.New("Service probe URL is outside its current authorized scope")
+			}
+			if service.LocalNetwork != nil {
+				parsed, _ := url.Parse(target)
+				for _, record := range view.NetworkIntent.DNSRecords {
+					if record.Name == parsed.Hostname() {
+						if err := requireTargetDependency(material, view, "dns_record", record.ID, true); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
 	if service.LocalNetwork == nil {
 		return nil
 	}

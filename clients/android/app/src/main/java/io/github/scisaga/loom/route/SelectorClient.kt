@@ -1,16 +1,63 @@
 package io.github.scisaga.loom.route
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import io.github.scisaga.loom.enrollment.privateCall
 import org.json.JSONObject
+import org.json.JSONArray
+import io.github.scisaga.loomcore.AndroidDeviceRequest
+import io.github.scisaga.loomcore.Loomcore
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-internal class SelectorClient(config: String) {
+/** Bounded bookkeeping owned only by one cancellable selector call. */
+internal class SelectorCallScopes {
+    private val remaining = linkedSetOf<String>()
+    private val uncertain = linkedSetOf<String>()
+    // A predecessor's unconfirmed PUT may still commit. Reads and local
+    // preparation failures cannot discharge this call's CAS requirement.
+    private val requiredCAS = linkedSetOf<String>()
+    @Synchronized fun plan(scopes: Collection<String>, requireCAS: Collection<String> = emptyList()) {
+        require(scopes.containsAll(requireCAS))
+        remaining.addAll(scopes)
+        requiredCAS.addAll(requireCAS)
+    }
+    @Synchronized fun mayWrite(scope: String): Boolean = scope in remaining
+    @Synchronized fun requiresCAS(scope: String): Boolean = scope in requiredCAS
+    @Synchronized fun wrote(scope: String) { uncertain.add(scope) }
+    @Synchronized fun uncertain(): Set<String> = uncertain + requiredCAS
+    @Synchronized fun finished(scope: String) { remaining.remove(scope) }
+    @Synchronized fun confirmed(scope: String) { remaining.remove(scope); uncertain.remove(scope); requiredCAS.remove(scope) }
+}
+
+internal class SelectorClient(private val config: String) {
+    private val socketLock = Any()
+    private var activeSocket: Socket? = null
+    private var resourceRequest: AndroidDeviceRequest? = null
+    private var cancelled = false
+    private val scopes = SelectorCallScopes()
+
+    fun planScopes(values: Collection<String>, requireCAS: Collection<String> = emptyList()) = scopes.plan(values, requireCAS)
+    fun mayWrite(scope: String): Boolean = scopes.mayWrite(scope)
+    fun requiresCAS(scope: String): Boolean = scopes.requiresCAS(scope)
+    fun uncertainScopes(): Set<String> = scopes.uncertain()
+    fun confirmed(scope: String) = scopes.confirmed(scope)
+    fun finished(scope: String) = scopes.finished(scope)
+
+    fun cancel() = synchronized(socketLock) {
+        cancelled = true
+        activeSocket?.close()
+        resourceRequest?.cancel()
+    }
     private val root = JSONObject(config).getJSONObject("experimental").getJSONObject("clash_api")
     private val controller = root.getString("external_controller").also {
         check(it == "127.0.0.1:61800") { "移动 selector 控制端点不是固定回环地址" }
@@ -21,119 +68,167 @@ internal class SelectorClient(config: String) {
         }
     }
 
+    var readbackTargets: Map<String,Map<String,String>> = emptyMap()
+        private set
+
+    var readbackRevisions: Map<String,String> = emptyMap()
+        private set
+
+    var readbackPolicies: Map<String,String> = emptyMap()
+        private set
+    var readbackChoices: Map<String,RouteChoices> = emptyMap()
+        private set
+
     suspend fun apply(targets: List<AppliedSelector>) {
-        if (targets.isEmpty()) {
-            checkHealth()
-            return
-        }
-        var failure: Throwable? = null
+        if (targets.isEmpty()) { checkHealth(); return }
+        planScopes(targets.map { it.selector })
         for (target in targets.sortedBy(AppliedSelector::selector)) {
-            try {
-                val current = readCurrentWithStartupRetry(target.selector)
-                if (current != target.candidate) {
-                    request("PUT", target.selector, target.candidate)
-                    closeServiceConnections(listOf(target.selector))
+            val current = request("GET", target.selector)
+            val currentTargets = readbackTargets[target.selector].orEmpty()
+            val currentPolicy = checkNotNull(readbackPolicies[target.selector])
+            val currentChoices = checkNotNull(readbackChoices[target.selector])
+            val explicit = target.expectedCandidate != null
+            val expected = target.expectedCandidate ?: current
+            val expectedTargets = if (explicit) target.expectedTargets else currentTargets
+            val expectedPolicy = if (explicit) checkNotNull(target.expectedPolicyID) else currentPolicy
+            val expectedChoices = if (explicit) target.expectedChoices else currentChoices
+            val revision = checkNotNull(readbackRevisions[target.selector])
+            val expectedRevision = target.expectedRevision ?: revision
+            if (current != expected || currentTargets != expectedTargets || revision != expectedRevision || currentPolicy != expectedPolicy || currentChoices != expectedChoices) throw SelectionSuperseded()
+            val changed = current != target.candidate || currentTargets != target.targets || currentPolicy != target.policyID || currentChoices != target.choices
+            var appliedRevision = revision
+            if (changed || target.forceCAS || scopes.requiresCAS(target.selector)) {
+                prepareResources(target)
+                synchronized(socketLock) {
+                    if (cancelled) throw SelectionSuperseded()
+                    // Record the possible write before its socket is opened.
+                    // cancel() holds this same lock, so a cancelled call can
+                    // neither start an unrecorded PUT nor add a later write.
+                    scopes.wrote(target.selector)
                 }
-                check(request("GET", target.selector) == target.candidate) {
-                    "selector ${target.selector} 未读回目标候选"
-                }
-            } catch (error: Throwable) {
-                // A failed switch must not revive an earlier policy. Other
-                // Services and their established connections remain untouched.
-                runCatching { request("PUT", target.selector, "reject") }.exceptionOrNull()?.let(error::addSuppressed)
-                runCatching { closeServiceConnections(listOf(target.selector)) }.exceptionOrNull()?.let(error::addSuppressed)
-                runCatching { check(request("GET", target.selector) == "reject") { "服务拒绝状态未读回" } }
-                    .exceptionOrNull()?.let(error::addSuppressed)
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                if (failure == null) failure = error else failure.addSuppressed(error)
+                check(request("PUT", target.selector, target.candidate, target.targets, expected, expectedTargets, expectedRevision,
+                    target.policyID, target.choices, expectedPolicy, expectedChoices) == target.candidate &&
+                    readbackTargets[target.selector] == target.targets && readbackPolicies[target.selector] == target.policyID && readbackChoices[target.selector] == target.choices) { "selector 未确认完整选择" }
+                appliedRevision = checkNotNull(readbackRevisions[target.selector])
+                check(appliedRevision != revision) { "selector 没有返回新的快照标识" }
+            }
+            check(request("GET",target.selector) == target.candidate && readbackTargets[target.selector] == target.targets &&
+                readbackPolicies[target.selector] == target.policyID && readbackChoices[target.selector] == target.choices && readbackRevisions[target.selector] == appliedRevision) {
+                "selector ${target.selector} 未读回完整选择"
             }
         }
-        failure?.let { throw it }
     }
+
+    private suspend fun prepareResources(target: AppliedSelector) {
+        if (target.candidate == "reject") return
+        currentCoroutineContext().ensureActive()
+        val body = JSONObject().put("scope", target.selector).put("policy_id", target.policyID)
+            .put("candidate_id", target.candidate).put("revision", "")
+            .put("targets", JSONObject(target.targets)).put("choices", JSONObject(target.choices))
+            .toString().encodeToByteArray()
+        val pending = Loomcore.newAndroidSelectionResourcesRequest(config, body)
+        synchronized(socketLock) {
+            if (cancelled) { pending.cancel(); throw SelectionSuperseded() }
+            check(activeSocket == null && resourceRequest == null) { "selector 客户端不允许并发资源准备" }
+            resourceRequest = pending
+        }
+        val result = try {
+            JSONObject(privateCall(pending::run, pending::cancel).decodeToString())
+        } finally {
+            pending.cancel()
+            synchronized(socketLock) { if (resourceRequest === pending) resourceRequest = null }
+        }
+        currentCoroutineContext().ensureActive()
+        synchronized(socketLock) { if (cancelled) throw SelectionSuperseded() }
+        check(result.getBoolean("supported") && result.getBoolean("permission_current")) { "当前原生权限未确认" }
+        if (!result.getBoolean("resources_ready")) throw RuntimeResourcesPending()
+    }
+
+    suspend fun readNativeObservations(): ByteArray = requestRaw("GET", "/loom/tcp-observations", null)
 
     /** §7.3.3：只读投影 libbox 的实际 selector 状态。 */
-    suspend fun readCurrent(targets: List<AppliedSelector>): Map<String, String> {
+    suspend fun readCurrent(targets: List<AppliedSelector>): Map<String, String> = selectorStartupRead {
         if (targets.isEmpty()) {
-            var last: Throwable? = null
-            repeat(20) {
-                try {
-                    checkHealth()
-                    return emptyMap()
-                } catch (error: Throwable) {
-                    last = error
-                    delay(100)
+            checkHealth()
+            emptyMap()
+        } else {
+            linkedMapOf<String, String>().apply {
+                targets.sortedBy(AppliedSelector::selector).forEach { target ->
+                    put(target.selector, request("GET", target.selector))
                 }
             }
-            throw IllegalStateException("本地运行时 API 启动超时", last)
-        }
-        return linkedMapOf<String, String>().apply {
-            targets.sortedBy(AppliedSelector::selector).forEach { target ->
-                put(target.selector, readCurrentWithStartupRetry(target.selector))
-            }
         }
     }
 
-    private fun closeServiceConnections(scopes: List<String>) {
-        val root = JSONObject(requestRaw("GET", "/connections/", null).decodeToString())
-        check(root.has("connections")) { "服务连接快照缺失" }
-        if (root.isNull("connections")) return
-        val connections = root.getJSONArray("connections")
-        val wanted = scopes.toSet()
-        val ids = (0 until connections.length()).mapNotNull { index ->
-            val item = connections.getJSONObject(index)
-            if (item.isNull("chains")) return@mapNotNull null
-            val chain = item.getJSONArray("chains")
-            if ((0 until chain.length()).none { chain.getString(it) in wanted }) return@mapNotNull null
-            item.getString("id").also { id ->
-                check(id == java.util.UUID.fromString(id).toString()) { "服务连接标识不规范" }
-            }
-        }.sorted()
-        check(ids.distinct().size == ids.size) { "服务连接标识重复" }
-        ids.forEach { requestRaw("DELETE", "/connections/$it", null) }
+    suspend fun closeServiceConnections(serviceID: String, scope: String) {
+        val snapshot = requestRaw("GET", "/connections/", null)
+        val ids = JSONArray(Loomcore.serviceConnectionIDs(snapshot, serviceID, scope).decodeToString())
+        repeat(ids.length()) { index ->
+            currentCoroutineContext().ensureActive()
+            requestRaw("DELETE", "/connections/${ids.getString(index)}", null)
+        }
     }
 
-    private fun checkHealth() {
+    private suspend fun checkHealth() {
         check(JSONObject(requestRaw("GET", "/version", null).decodeToString()).getString("version").isNotBlank()) {
             "本地运行时 API 未返回实际版本"
         }
     }
 
-    private suspend fun readCurrentWithStartupRetry(selector: String): String {
-        var last: Throwable? = null
-        repeat(20) {
-            try {
-                return request("GET", selector)
-            } catch (error: Throwable) {
-                last = error
-                delay(100)
-            }
-        }
-        throw IllegalStateException("本地 selector API 启动超时", last)
-    }
 
-    private fun request(method: String, selector: String, target: String? = null): String {
+    private suspend fun request(method: String, selector: String, target: String? = null,
+        targets: Map<String,String> = emptyMap(), expected: String? = null, expectedTargets: Map<String,String> = emptyMap(), expectedRevision: String? = null, policyID: String = "", choices: RouteChoices = emptyMap(),
+        expectedPolicyID: String = "", expectedChoices: RouteChoices = emptyMap()): String {
         val encoded = URLEncoder.encode(selector, StandardCharsets.UTF_8.name()).replace("+", "%20")
-        val response = requestRaw(
-            method,
-            "/proxies/$encoded",
-            target?.let { JSONObject().put("name", it).toString().encodeToByteArray() },
-        )
-        if (method != "GET") return ""
-        return JSONObject(response.decodeToString()).getString("now").also {
-            check(it.isNotBlank()) { "selector $selector 没有返回当前候选" }
+        val response = requestRaw(method,"/proxies/$encoded",target?.let {
+            JSONObject().put("name",it).put("targets",JSONObject(targets)).put("expected_name",checkNotNull(expected))
+                .put("expected_targets",JSONObject(expectedTargets)).put("expected_revision",checkNotNull(expectedRevision))
+                .put("policy_id",policyID).put("choices",JSONObject(choices)).put("expected_policy_id",expectedPolicyID)
+                .put("expected_choices",JSONObject(expectedChoices)).toString().encodeToByteArray()
+        })
+        val value = JSONObject(response.decodeToString())
+        val selected = value.getString("now").also { check(it.isNotBlank()) { "selector 没有返回当前候选" } }
+        val choices = value.getJSONObject("targets").let { map -> map.keys().asSequence().associateWith(map::getString) }
+        val revision = value.getString("revision").also {
+            check(it.isNotBlank() && it.length <= 128 && it.all { char -> char.code in 0x21..0x7e }) { "selector 快照标识无效" }
         }
+        val policy = value.getString("policy_id")
+        val routes = value.getJSONObject("choices").routeChoices()
+        check(if (selected == "reject") policy.isEmpty() && choices.isEmpty() && routes.isEmpty() else policy.isNotEmpty() && routes.keys == (choices.values + selected).toSet()) { "selector 连接上下文缺失" }
+        readbackPolicies = readbackPolicies + (selector to policy)
+        readbackChoices = readbackChoices + (selector to routes)
+        readbackTargets = readbackTargets + (selector to choices)
+        readbackRevisions = readbackRevisions + (selector to revision)
+        return selected
     }
 
-    private fun requestRaw(method: String, path: String, body: ByteArray?): ByteArray {
-        val response = loopbackHttpRequest(
-            host = LOOPBACK_HOST,
-            port = LOOPBACK_PORT,
-            secret = secret,
-            method = method,
-            path = path,
-            body = body,
-            maximum = if (path == "/connections/") 8 * 1024 * 1024 else SELECTOR_READBACK_LIMIT,
-        )
+    private suspend fun requestRaw(method: String, path: String, body: ByteArray?): ByteArray {
+        currentCoroutineContext().ensureActive()
+        val socket = Socket()
+        synchronized(socketLock) {
+            if (cancelled) {
+                socket.close()
+                throw SelectionSuperseded()
+            }
+            check(activeSocket == null) { "selector 客户端不允许并发请求" }
+            activeSocket = socket
+        }
+        val response = try {
+            cancellableLoopbackHttpRequest(
+                LOOPBACK_HOST, LOOPBACK_PORT, secret, method, path, body,
+                if (path == "/connections/") 8 * 1024 * 1024 else if (path == "/loom/tcp-observations") 64 * 1024 else SELECTOR_READBACK_LIMIT, socket,
+            )
+        } catch (error: Throwable) {
+            currentCoroutineContext().ensureActive()
+            synchronized(socketLock) { if (cancelled) throw SelectionSuperseded() }
+            throw error
+        } finally {
+            socket.close()
+            synchronized(socketLock) { if (activeSocket === socket) activeSocket = null }
+        }
+        synchronized(socketLock) { if (cancelled) throw SelectionSuperseded() }
+        if (response.status == 409) throw SelectionSuperseded()
+        if (response.status == 503) throw IOException("本地 selector API 尚未就绪")
         check(response.status in 200..299) { "本地 selector API 返回 HTTP ${response.status}" }
         return response.body
     }
@@ -145,7 +240,51 @@ internal class SelectorClient(config: String) {
     }
 }
 
+internal class RuntimeResourcesPending : IOException("当前按需传输资源尚未确认")
+
+internal class SelectionSuperseded : IllegalStateException("选择已由其他操作更新；丢弃过时推荐")
+
 internal data class LoopbackHttpResponse(val status: Int, val body: ByteArray)
+
+/** One total startup deadline; conflicts and malformed replies are not retried. */
+internal suspend fun <T> selectorStartupRead(read: suspend () -> T): T {
+    var last: IOException? = null
+    try {
+        return withTimeout(SOCKET_TIMEOUT_MS.toLong()) {
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                try {
+                    return@withTimeout read()
+                } catch (error: IOException) {
+                    last = error
+                    delay(100)
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            error("selector startup ended without a response")
+        }
+    } catch (error: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive()
+        throw IllegalStateException("本地 selector API 启动超时", last ?: error)
+    }
+}
+
+internal suspend fun cancellableLoopbackHttpRequest(
+    host: String, port: Int, secret: String, method: String, path: String,
+    body: ByteArray?, maximum: Int, socket: Socket = Socket(),
+): LoopbackHttpResponse {
+    try {
+        return withTimeout(SOCKET_TIMEOUT_MS.toLong()) {
+            privateCall(
+                run = { loopbackHttpRequest(host, port, secret, method, path, body, maximum, socket) },
+                cancel = socket::close,
+            )
+        }
+    } catch (error: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive()
+        throw IOException("本地 selector API 响应超时", error)
+    }
+}
 
 /**
  * Android's cleartext policy correctly blocks HttpURLConnection even for an
@@ -161,6 +300,7 @@ internal fun loopbackHttpRequest(
     path: String,
     body: ByteArray?,
     maximum: Int,
+    socket: Socket = Socket(),
 ): LoopbackHttpResponse {
     require(host == "127.0.0.1") { "selector API 只允许 IPv4 回环" }
     require(port in 1..65535) { "selector API 端口无效" }
@@ -172,7 +312,7 @@ internal fun loopbackHttpRequest(
     require(maximum in 1..8 * 1024 * 1024) { "selector API 响应边界无效" }
     require(body == null || body.size <= maximum) { "selector API 请求过大" }
 
-    Socket().use { socket ->
+    socket.use {
         socket.connect(InetSocketAddress(host, port), SOCKET_TIMEOUT_MS)
         socket.soTimeout = SOCKET_TIMEOUT_MS
         val header = buildString {
@@ -293,3 +433,11 @@ private const val SOCKET_TIMEOUT_MS = 3_000
 internal const val SELECTOR_READBACK_LIMIT = 1024 * 1024
 private const val MAX_HEADER_LINE = 4 * 1024
 private const val MAX_HEADERS = 16 * 1024
+
+internal typealias RouteChoices = Map<String,Map<String,String>>
+internal fun JSONObject.routeChoices(): RouteChoices = keys().asSequence().associateWith { id ->
+    val choice = getJSONObject(id)
+    val fields = setOf("entry_node_id", "first_resource_id", "final_exit")
+    check(choice.keys().asSequence().toSet() == fields) { "路径上下文字段不规范" }
+    fields.associateWith(choice::getString)
+}

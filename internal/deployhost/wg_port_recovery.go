@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"loom/internal/control"
@@ -31,21 +33,23 @@ func pythonCommand(script string) string {
 // public identity coordinates and UDP port numbers can reach the control.
 const wgRecoveryPython = `
 from pathlib import Path
-import base64,hashlib,json,os,re,stat,subprocess,sys,tempfile
+import base64,hashlib,ipaddress,json,os,re,stat,subprocess,sys,tempfile
 CLI='/usr/local/lib/loom-client/current/loom'
 STATE='/var/lib/loom-device/state.json'
 def run(args,input=None):
  p=subprocess.run(args,input=input,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
  if p.returncode or len(p.stdout)>1<<20:raise ValueError('readback rejected')
  return p.stdout
-def read_json(path,maximum=5<<20):
+def read_document(path,maximum=5<<20):
  path=Path(path);s=path.lstat()
  if not stat.S_ISREG(s.st_mode) or s.st_uid!=0 or s.st_nlink!=1 or stat.S_IMODE(s.st_mode)&0o077 or s.st_size>maximum:raise ValueError('unsafe input')
  with path.open('rb') as f:
   opened=os.fstat(f.fileno());body=f.read(maximum+1)
  after=path.lstat()
- if len(body)>maximum or (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns)!=(opened.st_dev,opened.st_ino,opened.st_size,opened.st_mtime_ns) or (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns):raise ValueError('input changed')
- return json.loads(body)
+ def identity(value):return value.st_dev,value.st_ino,value.st_mode,value.st_uid,value.st_gid,value.st_nlink,value.st_size,value.st_mtime_ns,value.st_ctime_ns
+ if len(body)>maximum or identity(s)!=identity(opened) or identity(s)!=identity(after):raise ValueError('input changed')
+ return s,body,json.loads(body)
+def read_json(path,maximum=5<<20):return read_document(path,maximum)[2]
 def identity(expected):
  value=json.loads(run([CLI,'client','inspect','-identity','-state',STATE]))
  if not value['joined'] or value['platform']!='linux':raise ValueError('not joined Linux')
@@ -105,7 +109,7 @@ func (executor *Executor) WGPortCheck(ctx context.Context, alias string, view co
 	return nil
 }
 
-func wgOccupiedScript(resource control.TransportResource) (string, error) {
+func wgOccupiedScript(resource control.TransportResource, mapped netip.AddrPort) (string, error) {
 	if resource.Validate() != nil || resource.Kind != "wireguard" {
 		return "", errors.New("WG recovery requires a current native resource")
 	}
@@ -113,7 +117,7 @@ func wgOccupiedScript(resource control.TransportResource) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return wgRecoveryPython + "\nEXPECTED=json.loads(bytes.fromhex('" + hex.EncodeToString(body) + "'))\n" + `
+	return wgRecoveryPython + "\nEXPECTED=json.loads(bytes.fromhex('" + hex.EncodeToString(body) + "'))\nMAPPED=" + fmt.Sprintf("(%q,%d)\n", mapped.Addr().String(), mapped.Port()) + `
 def main():
  state=read_json(STATE);view=state['certified_lkg']['view']
  own=[r for r in view['resources'] if r['id']==EXPECTED['id']]
@@ -139,13 +143,22 @@ def main():
   except FileNotFoundError:raise ValueError('native generation changed')
  if len(endpoints)!=1:raise ValueError('shared WG execution is not singular')
  pid,config,endpoint=endpoints[0]
- if endpoint.get('tag')!='resource:'+EXPECTED['id'] or endpoint.get('listen_port')!=EXPECTED['dial_port']:raise ValueError('native resource differs')
+ if endpoint.get('tag')!='wg-shared':raise ValueError('shared native resource differs')
+ port=endpoint.get('listen_port')
+ if port!=MAPPED[1] or endpoint.get('listen_address') is not None:raise ValueError('native local listener differs')
  public=run(['wg','pubkey'],(endpoint['private_key']+'\n').encode()).decode().strip()
  if base64.b64decode(public,validate=True)!=base64.urlsafe_b64decode(EXPECTED['authentication']['public_key']+'='):raise ValueError('native key differs')
- ownership=read_json(str(config)+'.wg-ownership')
- if len(ownership)!=1 or ownership[0].get('native') is not True:raise ValueError('native ownership missing')
- record=ownership[0];link=record['link']
- if link['link_id']!=EXPECTED['id'] or link['interface']!=EXPECTED['listener_id'] or link['listen_port']!=EXPECTED['dial_port'] or record['public_key']!=public or not record['configured']:raise ValueError('native ownership differs')
+ client_args=[os.fsdecode(v) for v in (Path('/proc')/service['MainPID']/'cmdline').read_bytes().split(b'\x00') if v]
+ if client_args.count('-runtime-config')>1:raise ValueError('ambiguous runtime input')
+ runtime_config=client_args[client_args.index('-runtime-config')+1] if '-runtime-config' in client_args else '/run/loom-client/config.json'
+ ownership_path=Path(runtime_config+'.wg-ownership')
+ if endpoint.get('system'):
+  ownership=read_json(ownership_path)
+  if len(ownership)!=1 or ownership[0].get('native') is not True:raise ValueError('native ownership missing')
+  record=ownership[0];link=record['link']
+  derived='loom-wg'+hashlib.sha256(('loom-linux-wg-interface\x00'+view['network_id']+'\x00'+EXPECTED['id']).encode()).hexdigest()[:8]
+  if link['link_id']!=EXPECTED['id'] or link['interface']!=derived or link['listen_port']!=port or record['public_key']!=public or not record['configured'] or endpoint.get('name')!=record['creation_name']:raise ValueError('native ownership differs')
+ elif ownership_path.exists() and read_json(ownership_path):raise ValueError('unexpected host ownership')
  status=json.loads(run([CLI,'client','status']))
  if status['runtime']!='running' or status['view_digest']!=state['certified_lkg']['view_digest']:raise ValueError('runtime not current')
  ports=set();listener=False
@@ -157,7 +170,11 @@ def main():
   port=int(text)
   if port<1 or port>65535:raise ValueError('UDP port invalid')
   ports.add(port)
-  if port==EXPECTED['dial_port'] and re.search(r'\bpid='+re.escape(pid)+r'\b',line):listener=True
+  host=fields[3].rsplit(':',1)[0].strip('[]')
+  wildcard=host in ('*','0.0.0.0','::')
+  peer_host,peer_port=fields[4].rsplit(':',1)
+  unconnected=fields[0]=='UNCONN' and peer_host.strip('[]') in ('*','0.0.0.0','::') and peer_port in ('*','0')
+  if unconnected and port==endpoint['listen_port'] and wildcard and re.search(r'\bpid='+re.escape(pid)+r'\b',line):listener=True
  if not listener:raise ValueError('owned UDP listener missing')
  sys.stdout.write(json.dumps(sorted(ports),separators=(',',':'))+'\n')
 try:main()
@@ -171,7 +188,15 @@ func (executor *Executor) WGPortOccupied(ctx context.Context, alias string, reso
 	if alias != resource.OwnerNodeID {
 		return nil, errors.New("WG recovery target differs from the resource owner")
 	}
-	script, err := wgOccupiedScript(resource)
+	config, err := localconfig.Load(executor.envPath)
+	if err != nil {
+		return nil, errors.New("WG recovery deployment inputs cannot be loaded")
+	}
+	mapped, err := localconfig.IngressAddress(config.Nodes, resource.OwnerNodeID, "udp", resource.DialHost, resource.DialPort)
+	if err != nil {
+		return nil, err
+	}
+	script, err := wgOccupiedScript(resource, mapped)
 	if err != nil {
 		return nil, err
 	}
@@ -191,12 +216,70 @@ func (executor *Executor) WGPortOccupied(ctx context.Context, alias string, reso
 	return ports, nil
 }
 
-func wgDeliverScript(envelope control.DeviceViewEnvelope, body []byte) string {
+func wgDeliverScript(envelope control.DeviceViewEnvelope, body []byte, local map[string]any) string {
 	sum := sha256.Sum256(body)
-	return wgRecoveryPython + fmt.Sprintf("\nLENGTH=%d\nDIGEST='%x'\nEXPECTED=json.loads(bytes.fromhex('%s'))\n", len(body), sum, hex.EncodeToString(mustRecoveryIdentity(envelope))) + `
+	localJSON, _ := json.Marshal(local)
+	return wgRecoveryPython + "\nLOCAL=json.loads(bytes.fromhex('" + hex.EncodeToString(localJSON) + "'))\n" + `
+def prepare_listener(local):
+ if local is None:return None
+ properties=run(['systemctl','show','loom-client.service','-p','ActiveState','-p','MainPID']).decode()
+ service=dict(line.split('=',1) for line in properties.splitlines() if '=' in line)
+ if service['ActiveState']!='active' or int(service['MainPID'])<=0:raise ValueError('client inactive')
+ process=Path('/proc')/service['MainPID']
+ args=[os.fsdecode(v) for v in (process/'cmdline').read_bytes().split(b'\x00') if v]
+ if args[1:3]!=['client','run']:raise ValueError('client execution differs')
+ def option(name,default=None):
+  if args.count(name)>1:raise ValueError('ambiguous client input')
+  return args[args.index(name)+1] if name in args else default
+ if option('-state',STATE)!=STATE:raise ValueError('client state differs')
+ name=option('-resource-inputs')
+ if not name:raise ValueError('local listener input is missing')
+ path=Path(name)
+ if not path.is_absolute():path=(process/'cwd').resolve()/path
+ if str(path)!=os.path.normpath(str(path)):raise ValueError('noncanonical input path')
+ info,body,inputs=read_document(path,1<<20)
+ if inputs.get('schema')!=3 or set(inputs)!={'schema','listeners'}:raise ValueError('listener schema differs')
+ rows=[row for row in inputs['listeners'] if row.get('resource_id')==local['resource_id']]
+ if len(rows)!=1 or set(rows[0])!={'resource_id','listen_port'}:raise ValueError('WG local input differs')
+ row=rows[0]
+ if not isinstance(row['listen_port'],int) or isinstance(row['listen_port'],bool) or not 1<=row['listen_port']<=65535:raise ValueError('invalid WG listener port')
+ target=local['port']
+ old=json.dumps(row,sort_keys=True,separators=(',',':')).encode()
+ updated=dict(row);updated['listen_port']=target
+ new=json.dumps(updated,sort_keys=True,separators=(',',':')).encode()
+ if body.count(old)!=1:raise ValueError('noncanonical local listener input')
+ changed=body.replace(old,new,1)
+ parent=path.parent.lstat()
+ if not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=0 or stat.S_IMODE(parent.st_mode)&0o077:raise ValueError('local input parent unsafe')
+ return path,info,body,changed,option('-sing-box','/usr/local/lib/loom-client/current/sing-box'),option('-capture','mixed'),option('-wireguard-private-key','/etc/wireguard/node.key')
+
+def apply_listener(pending):
+ if pending is None:return
+ path,info,body,changed,executable,capture,key=pending
+ fd,temporary=tempfile.mkstemp(prefix='.wg-listen-',dir=path.parent)
+ try:
+  os.fchmod(fd,stat.S_IMODE(info.st_mode));os.fchown(fd,info.st_uid,info.st_gid)
+  with os.fdopen(fd,'wb') as output:output.write(changed);output.flush();os.fsync(output.fileno())
+  run([CLI,'client','preflight','-state',STATE,'-sing-box',executable,'-capture',capture,'-resource-inputs',temporary,'-wireguard-private-key',key])
+  current,current_body,_=read_document(path,1<<20)
+  def identity(value):return value.st_dev,value.st_ino,value.st_mode,value.st_uid,value.st_gid,value.st_nlink,value.st_size,value.st_mtime_ns,value.st_ctime_ns
+  if identity(current)!=identity(info) or current_body!=body:raise ValueError('local input was replaced')
+  if changed!=body:
+   os.replace(temporary,path);temporary=None
+   directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+   try:os.fsync(directory)
+   finally:os.close(directory)
+  # Existing reload/check consumes the same local input and hot rebinds only
+  # WG UDP. It never restarts this client, its Device/TUN, Hy2 or access VPN.
+  run(['systemctl','reload','loom-client.service'])
+ finally:
+  if temporary is not None:os.unlink(temporary)
+
+` + fmt.Sprintf("\nLENGTH=%d\nDIGEST='%x'\nEXPECTED=json.loads(bytes.fromhex('%s'))\n", len(body), sum, hex.EncodeToString(mustRecoveryIdentity(envelope))) + `
 def main():
  value=identity(EXPECTED)
  if value['genesis_digest']!=EXPECTED['genesis_digest']:raise ValueError('network anchor differs')
+ pending=prepare_listener(LOCAL)
  parent=Path(STATE).parent;s=parent.lstat()
  if not stat.S_ISDIR(s.st_mode) or s.st_uid!=0 or stat.S_IMODE(s.st_mode)&0o077:raise ValueError('state parent unsafe')
  fd,name=tempfile.mkstemp(prefix='.wg-port-view-',dir=parent)
@@ -212,6 +295,7 @@ def main():
    f.flush();os.fsync(f.fileno())
   if count!=LENGTH or digest.hexdigest()!=DIGEST:raise ValueError('delivery changed')
   run([CLI,'client','sync','-state',STATE,'-view',name])
+  apply_listener(pending)
  finally:
   os.unlink(name)
  sys.stdout.write('ok\n')
@@ -226,9 +310,11 @@ func mustRecoveryIdentity(envelope control.DeviceViewEnvelope) []byte {
 }
 
 // WGPortDeliver imports the unchanged signed View through the installed client.
-// It neither edits the LKG nor restarts a client/native process. The receiver's
-// ordinary verifier preserves identity, high-water values and the latch.
-func (executor *Executor) WGPortDeliver(ctx context.Context, alias string, envelope control.DeviceViewEnvelope) error {
+// The ordinary verifier owns LKG acceptance. Only the receiver's existing local
+// listener input may then change, followed by an ordinary HUP/check; no client,
+// WG Device/TUN or Hy2 process is restarted. Identity and authentication progress
+// remain in the sole protected store.
+func (executor *Executor) WGPortDeliver(ctx context.Context, alias string, envelope control.DeviceViewEnvelope, resourceID string) error {
 	if alias != envelope.View.DeviceID || envelope.View.Platform != "linux" || envelope.Validate() != nil {
 		return errors.New("WG recovery delivery is not a valid signed Linux device view")
 	}
@@ -236,7 +322,34 @@ func (executor *Executor) WGPortDeliver(ctx context.Context, alias string, envel
 	if err != nil || len(body) == 0 || len(body) > 5<<20 {
 		return errors.New("WG recovery delivery exceeds the device view boundary")
 	}
-	result, err := executor.Stream(ctx, alias, pythonCommand(wgDeliverScript(envelope, body)), bytes.NewReader(body))
+	var local map[string]any
+	if resourceID != "" {
+		if control.ValidateID(resourceID) != nil {
+			return errors.New("invalid WG recovery resource")
+		}
+		found := false
+		for _, resource := range envelope.View.Resources {
+			if resource.ID != resourceID || resource.Kind != "wireguard" {
+				continue
+			}
+			found = true
+			if resource.OwnerNodeID == alias {
+				config, err := localconfig.Load(executor.envPath)
+				if err != nil {
+					return errors.New("WG recovery deployment inputs cannot be loaded")
+				}
+				mapped, err := localconfig.IngressAddress(config.Nodes, alias, "udp", resource.DialHost, resource.DialPort)
+				if err != nil {
+					return err
+				}
+				local = map[string]any{"resource_id": resourceID, "port": mapped.Port()}
+			}
+		}
+		if !found {
+			return errors.New("WG recovery resource is absent from the accepted view")
+		}
+	}
+	result, err := executor.Stream(ctx, alias, pythonCommand(wgDeliverScript(envelope, body, local)), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

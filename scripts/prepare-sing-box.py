@@ -92,14 +92,30 @@ def prepare(destination):
         subprocess.run(["git", "apply", "--check", str(patch)], cwd=stage, env=patch_env, check=True)
         subprocess.run(["git", "apply", str(patch)], cwd=stage, env=patch_env, check=True)
         subprocess.run(["git", "apply", "--reverse", "--check", str(patch)], cwd=stage, env=patch_env, check=True)
+        # The patch contains a read-only projection of the one hand-written
+        # execution codec. Standalone source packages reproduce from the patch;
+        # repository builds additionally reject any divergence from its source.
+        execution_files = sorted((stage / "common/loomprotocol").glob("*.go"))
+        if not execution_files:
+            raise ValueError("native execution codec is missing")
+        execution_hash = hashlib.sha256()
+        source = REPO / "protocol"
+        if source.is_dir() and {p.name for p in source.glob("*.go")} != {p.name for p in execution_files}:
+            raise ValueError("native execution projection has a different source set")
+        for target in execution_files:
+            body = target.read_bytes()
+            if source.is_dir() and (source / target.name).read_bytes() != body:
+                raise ValueError("native execution projection differs from its source")
+            execution_hash.update(target.name.encode() + b"\0" + len(body).to_bytes(8, "big") + body)
         (stage / MARKER).write_text(COMMIT)
         if destination.exists():
             shutil.rmtree(destination)
         stage.rename(destination)
     return {"upstream_version": VERSION, "upstream_commit": COMMIT, "upstream_module_sum": SUM,
             "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
+            "execution_protocol_sha256": execution_hash.hexdigest(),
             "wireguard_commit": WG_COMMIT, "wireguard_module_sum": WG_SUM,
-            "artifact_version": "1.11.4-loom.15"}
+            "artifact_version": "1.11.4-loom.26"}
 
 
 if __name__ == "__main__":

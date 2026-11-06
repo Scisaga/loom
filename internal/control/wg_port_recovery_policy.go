@@ -3,9 +3,8 @@ package control
 import (
 	"bytes"
 	"errors"
-	"net"
+	"net/netip"
 	"sort"
-	"strconv"
 	"time"
 )
 
@@ -65,6 +64,10 @@ func WGPortRecovery(projection Projection, histories []WGPortRecoveryReports, in
 		return nil, errors.New("WG port recovery requires an explicit current time")
 	}
 	links, err := DerivedNetworkLinks(projection)
+	if err != nil {
+		return nil, err
+	}
+	linkSpecs, err := projectionLinkSpecs(projection)
 	if err != nil {
 		return nil, err
 	}
@@ -137,12 +140,12 @@ func WGPortRecovery(projection Projection, histories []WGPortRecoveryReports, in
 				continue
 			}
 			source, exists := latest[link.FromNodeID]
-			if !exists || !wgPortRecoveryListener(source, resources[link.FromResourceID]) {
+			if !exists {
 				continue
 			}
-			spec, err := nativeLinkSpecDigest(link, resources[link.FromResourceID], resource)
-			if err != nil {
-				return nil, err
+			spec := linkSpecs[link.ID]
+			if spec == "" {
+				continue
 			}
 			if since := wgPortRecoveryFailure(reports[link.FromNodeID], source, link, spec, now); since != 0 {
 				result = append(result, WGPortRecoverySuggestion{ResourceID: resource.ID, FromPort: resource.DialPort, ToPort: port, LinkID: link.ID, SourceNodeID: link.FromNodeID, FailureSince: since})
@@ -222,7 +225,7 @@ func wgPortRecoveryChangeAllowed(projection Projection, input WGPortRecoveryReso
 	return true
 }
 
-func wgPortRecoveryListener(report DeviceReport, resource TransportResource) bool {
+func wgPortRecoveryListener(report DeviceReport, resource TransportResource, mapped ...netip.AddrPort) bool {
 	if report.Runtime.Resources == nil {
 		return false
 	}
@@ -230,9 +233,17 @@ func wgPortRecoveryListener(report DeviceReport, resource TransportResource) boo
 		if listener.ResourceID != resource.ID || listener.ListenerID != resource.ListenerID || listener.PublicKey != *resource.Authentication.PublicKey {
 			continue
 		}
-		_, port, err := net.SplitHostPort(listener.Listen)
-		if err == nil && port == strconv.Itoa(resource.DialPort) {
-			return true
+		// A resource authenticates the peer's public dial coordinate. The
+		// receiver reports its actual, independently configured local socket.
+		if listener.Validate() == nil {
+			if len(mapped) == 0 {
+				return true
+			}
+			if len(mapped) != 1 {
+				return false
+			}
+			actual, err := netip.ParseAddrPort(listener.Listen)
+			return err == nil && actual.Port() == mapped[0].Port() && actual.Addr().IsUnspecified()
 		}
 	}
 	return false

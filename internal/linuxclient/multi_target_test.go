@@ -1,6 +1,7 @@
 package linuxclient
 
 import (
+	"loom/internal/control"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,7 +15,7 @@ func TestTargetSamplesRoundTripWithoutReinterpretingOldCache(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	state := defaultState("demo-network")
 	state.ObservationViewDigest = "sha256:" + strings.Repeat("a", 64)
-	state.Preference = clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}
+	state.Preference = clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}
 	for i, target := range []string{"", "https://demo.example/a", "https://demo.example/b"} {
 		result := "available"
 		if i == 2 {
@@ -27,8 +28,8 @@ func TestTargetSamplesRoundTripWithoutReinterpretingOldCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := loadLocalState(path, state.NetworkGeneration, state.ObservationViewDigest)
-	if err != nil || !reflect.DeepEqual(loaded, state) {
-		t.Fatal("canonical cache restart changed samples or preference", err)
+	if err != nil || !reflect.DeepEqual(loaded.observationCache, state.observationCache) || loaded.Preference.PolicyID != "" || len(loaded.SelectionMemory[control.AccessSelectorScope].Decisions) != 0 {
+		t.Fatal("cache restart changed original samples or persisted execution inputs", err)
 	}
 	health, err := clientmodel.ObservationState(loaded.Observations, "demo-route", "service:demo-service", state.NetworkGeneration, []string{"https://demo.example/a", "https://demo.example/b"}, now)
 	if err != nil || health != "unknown" {

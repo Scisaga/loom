@@ -60,7 +60,7 @@ func TestHistoricalDenyReferenceKeepsSignedMeaningUntilExplicitWithdrawal(t *tes
 		t.Fatal("historical deny reference was reinterpreted or discarded")
 	}
 	view, err := ProjectDeviceView(projection, invite.DeviceID)
-	if err != nil || len(view.Routes) != 0 {
+	if err != nil || len(testDeviceExecution(view).Routes) != 0 {
 		t.Fatal("historical deny granted business", err)
 	}
 	dependencies = []string{}
@@ -96,49 +96,55 @@ func TestSameServicePoliciesHaveDistinctCandidatesAndDefaultReject(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Routes) != 2 || view.Routes[0].ID == view.Routes[1].ID || view.Routes[0].PolicyID == view.Routes[1].PolicyID {
-		t.Fatal("same path lost policy identity", view.Routes)
+	first, err := ProjectDeviceCandidates(view, []string{view.PolicyIDs[0]})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(view.RuntimeProfile.Config, `"default":"reject"`) {
-		t.Fatal("service starts before client chooses policy")
+	other, err := ProjectDeviceCandidates(view, []string{second.ID})
+	if err != nil || len(first.Routes) != 1 || len(other.Routes) != 1 || first.Routes[0].ID == other.Routes[0].ID {
+		t.Fatal("same path lost Policy identity", err)
 	}
-	view.Routes[0].PolicyID = "demo-unauthorized"
-	if view.Validate() == nil {
-		t.Fatal("candidate used an ungranted policy")
+	pending, err := ProjectDeviceExecution(view, nil)
+	if err != nil || len(pending.Routes) != 0 || !strings.Contains(pending.RuntimeProfile.Config, `"default":"reject"`) {
+		t.Fatal("pending selection grants execution", err)
 	}
+	if _, err := ProjectDeviceCandidates(view, []string{"demo-unauthorized"}); err == nil {
+		t.Fatal("unassigned Policy executed")
+	}
+
 }
 
-func TestSameServicePoliciesKeepIndependentTransportCredentials(t *testing.T) {
+func TestSameServicePoliciesReuseOnlySenderResourceAuthentication(t *testing.T) {
 	projection := hy2ProjectionFixture(t)
 	second := projection.NetworkIntent.Policies[0]
 	second.ID = "demo-policy-b"
 	projection.NetworkIntent.Policies = append(projection.NetworkIntent.Policies, second)
 	projection.DeviceAuthorizations[0].PolicyIDs = append(projection.DeviceAuthorizations[0].PolicyIDs, second.ID)
 	access, err := ProjectDeviceView(projection, "demo-access")
-	if err != nil || len(access.Routes) != 2 {
-		t.Fatal("same-Service policies lost a candidate", err)
-	}
-	receiver, err := ProjectDeviceView(projection, "demo-exit")
-	if err != nil || len(receiver.InboundCredentials) != 2 {
-		t.Fatal("receiver lost a policy permission", err)
-	}
-	passwords, err := profileCredentials(access)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, secondPermission := receiver.InboundCredentials[0], receiver.InboundCredentials[1]
-	if first.PolicyID == secondPermission.PolicyID || first.Credential == secondPermission.Credential || first.Candidate.ID == secondPermission.Candidate.ID || !reflect.DeepEqual(first.AllowedTargets, secondPermission.AllowedTargets) {
-		t.Fatal("identical targets conflated independent policy permissions")
+	receiver, err := ProjectDeviceView(projection, "demo-exit")
+	if err != nil || len(access.TransportCredentials) != 1 || len(receiver.TransportCredentials) != 1 {
+		t.Fatal("Policy multiplied transport authentication", err)
 	}
-	for _, permission := range receiver.InboundCredentials {
-		if permission.Credential != passwords[permission.Candidate.ID] || permission.PolicyID != permission.Candidate.PolicyID {
-			t.Fatal("client and receiver disagree on the complete policy binding")
-		}
+	if !reflect.DeepEqual(access.TransportCredentials, receiver.TransportCredentials) {
+		t.Fatal("sender and receiver authentication differ")
 	}
-	wrong := first
-	wrong.PolicyID = secondPermission.PolicyID
-	if wrong.Validate() == nil {
-		t.Fatal("request permission accepted another policy's candidate")
+	first, err := ProjectDeviceCandidates(access, []string{projection.NetworkIntent.Policies[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := ProjectDeviceCandidates(access, []string{second.ID})
+	if err != nil || len(first.Routes) != 1 || len(other.Routes) != 1 || first.Routes[0].ID == other.Routes[0].ID {
+		t.Fatal("independent Policy choices were conflated", err)
+	}
+	if _, err := ProjectDeviceCandidates(access, access.PolicyIDs); err == nil {
+		t.Fatal("two Internet Policies executed together")
+	}
+	value, err := ReceiverExecutionOptions(receiver, "demo-hy2")
+	if err != nil || len(value["policies"].([]any)) != 2 {
+		t.Fatal("transport authentication replaced Policy authorization", err)
 	}
 }
 
@@ -149,31 +155,31 @@ func TestReceiverOnlyOverlappingServiceDoesNotBecomeClientAuthorization(t *testi
 	policy := materialTestPolicy("demo-policy-own", service.ID)
 	projection.NetworkIntent.Services = append(projection.NetworkIntent.Services, service)
 	projection.NetworkIntent.Policies = append(projection.NetworkIntent.Policies, policy)
-	projection.NetworkIntent.BusinessProbeTargets = []BusinessProbeTarget{{ID: "demo-probe", URL: "https://demo-service.example/probe"}}
+	projection.NetworkIntent.Services[1].ProbeURLs = []string{"https://demo-service.example/probe"}
 	projection.DeviceAuthorizations[1].Responsibilities = []string{"access", "internet_egress"}
 	projection.DeviceAuthorizations[1].PolicyIDs = []string{policy.ID}
 	view, err := ProjectDeviceView(projection, "demo-exit")
-	if err != nil || len(view.InboundCredentials) != 1 || len(view.BusinessProbeTargets) != 1 || len(view.BusinessProbeTargets[0].Targets) != 1 || view.BusinessProbeTargets[0].ServiceID != service.ID {
+	if err != nil || len(view.TransportCredentials) != 1 || len(testDeviceExecution(view).BusinessProbeTargets) != 1 || len(testDeviceExecution(view).BusinessProbeTargets[0].Targets) != 1 || testDeviceExecution(view).BusinessProbeTargets[0].ServiceID != service.ID {
 		t.Fatal("receiver's foreign service permissions changed its own probe authorization", err)
 	}
 }
 
-func TestReportedChoicesRejectUnauthorizedPolicyWithoutInferringFromActualPath(t *testing.T) {
+func TestReportedPolicyRejectsUnauthorizedChoiceAndDifferentSelectedPath(t *testing.T) {
 	_, _, projection := deviceContractFixture(t)
 	view, err := ProjectDeviceView(projection, "demo-access")
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := view.Routes[0]
-	report := DeviceReport{PolicyChoices: new([]PolicyChoice{{ServiceID: route.ServiceID}}), Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}}}
+	route := testDeviceExecution(view).Routes[0]
+	report := DeviceReport{PolicyID: route.PolicyID, Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}}}
 	if err := verifyReportViewFields(report, view); err != nil {
 		t.Fatal("saved intent and actual readback were conflated", err)
 	}
-	report.PolicyChoices = new([]PolicyChoice{{ServiceID: route.ServiceID, PolicyID: "demo-ungranted"}})
+	report.PolicyID = "demo-ungranted"
 	if verifyReportViewFields(report, view) == nil {
 		t.Fatal("report invented policy authorization")
 	}
-	report.PolicyChoices = new([]PolicyChoice{{ServiceID: route.ServiceID, PolicyID: route.PolicyID}})
+	report.PolicyID = route.PolicyID
 	report.Selections[0].PolicyID = "demo-ungranted"
 	if verifyReportViewFields(report, view) == nil {
 		t.Fatal("actual selection reused another policy's candidate")

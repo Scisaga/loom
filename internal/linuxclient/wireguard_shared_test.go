@@ -107,6 +107,7 @@ func TestRealSharedWGProjectedConcurrentExits(t *testing.T) {
 			}
 		}()
 	}
+	addFixtureWGListeners(t, input, p.NetworkIntent.Resources)
 	root := t.TempDir()
 	logs := map[string]string{}
 	stops := map[string]func(){}
@@ -119,7 +120,7 @@ func TestRealSharedWGProjectedConcurrentExits(t *testing.T) {
 			t.Fatal(id, err)
 		}
 		views[id] = view
-		executions, err := prepareHY2Executions(view, input, at)
+		executions, err := prepareResourceExecutions(view, input, at)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +128,7 @@ func TestRealSharedWGProjectedConcurrentExits(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		config, err = appendNativeReceivers(config, view, wireGuardExecution{}, nil, keys[id])
+		config, err = appendNativeWireGuard(config, view, fixtureWGReceiver(t, view, executions), nil, keys[id])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -156,9 +157,9 @@ func TestRealSharedWGProjectedConcurrentExits(t *testing.T) {
 			}
 			if id == "demo-access-b" {
 				experimental["clash_api"].(map[string]any)["external_controller"] = "127.0.0.1:61803"
-				selector.client.Transport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				selector.SetDialer(func(ctx context.Context, _, _ string) (net.Conn, error) {
 					return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:61803")
-				}}
+				})
 			}
 			selectors[id] = selector
 		} else {
@@ -235,7 +236,7 @@ func TestRealSharedWGProjectedConcurrentExits(t *testing.T) {
 			}
 			exit := []string{"demo-exit", "demo-exit-b"}[index]
 			found := false
-			for _, candidate := range views[id].Routes {
+			for _, candidate := range testDeviceExecution(views[id]).Routes {
 				if candidate.FinalExit == exit && candidate.FirstResourceID == "demo-entry-wg" {
 					if err := selector.Set(ctx, candidate.Scope, candidate.ID); err != nil {
 						t.Fatal(err)

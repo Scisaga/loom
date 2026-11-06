@@ -1,13 +1,13 @@
 package control
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"net/netip"
 	"net/url"
 	"sort"
+	"strconv"
 )
 
 func digestContractValue(domain string, value any) (string, error) {
@@ -20,17 +20,11 @@ func digestContractValue(domain string, value any) (string, error) {
 }
 
 func localCandidate(service Service, policy NetworkPolicy, finalExit string, records ...DNSRecord) (RouteCandidate, error) {
-	identity := map[string]any{"service_id": service.ID, "policy_id": policy.ID, "first_resource_id": "", "node_chain": []string{}, "link_ids": []string{}, "final_exit": finalExit}
-	id, err := digestContractValue("loom-candidate-id-v3\x00", identity)
-	if err != nil {
-		return RouteCandidate{}, err
+	entry := finalExit
+	if finalExit == "direct" {
+		entry = ""
 	}
-	spec, err := digestContractValue("loom-candidate-spec-v3\x00", dnsCandidateSpec(map[string]any{"identity": identity, "service": service, "policy": policy, "resources": []TransportResource{}, "links": []NetworkLink{}}, service, records))
-	if err != nil {
-		return RouteCandidate{}, err
-	}
-	return RouteCandidate{ID: id, SpecDigest: spec, Scope: service.Scope(), ServiceID: service.ID, PolicyID: policy.ID,
-		FirstResourceID: "", NodeChain: []string{}, LinkIDs: []string{}, FinalExit: finalExit}, nil
+	return candidateForEntry(service, policy, entry, TransportResource{}, finalExit, records...)
 }
 
 // servicePermissionValues verifies the selected current values without requiring
@@ -41,19 +35,19 @@ func servicePermissionValues(view DeviceView) (map[string]Service, map[string]Ne
 	}
 	services := map[string]Service{}
 	for index, service := range view.Services {
-		if service.Validate() != nil || index > 0 && view.Services[index-1].ID >= service.ID {
+		if service.ValidateCurrent() != nil || index > 0 && view.Services[index-1].ID >= service.ID {
 			return nil, nil, errors.New("view Services are invalid or not uniquely sorted")
 		}
 		services[service.ID] = service
 	}
 	byPolicy := map[string]NetworkPolicy{}
-	inboundPolicies := map[string]bool{}
-	for _, credential := range view.InboundCredentials {
-		inboundPolicies[credential.PolicyID] = true
-	}
 	for index, policy := range view.Policies {
 		selected := containsString(view.PolicyIDs, policy.ID)
-		if policy.Validate() != nil || index > 0 && view.Policies[index-1].ID >= policy.ID || !selected && !inboundPolicies[policy.ID] {
+		service, present := services[policy.ServiceID]
+		measuringExit := present && policy.Action == "allow" && policy.permitsEndpoint(service, view.DeviceID) &&
+			(service.Kind == "internet" && containsString(view.Responsibilities, "internet_egress") || service.Kind == "local_network" && containsString(view.Responsibilities, "forward"))
+		servingForward := containsString(view.Responsibilities, "forward") && policy.Action == "allow" && (policy.EntryScope.Allows(view.DeviceID) || policy.RelayScope.Allows(view.DeviceID))
+		if policy.Validate() != nil || index > 0 && view.Policies[index-1].ID >= policy.ID || !selected && !measuringExit && !servingForward {
 			return nil, nil, errors.New("view Policies are invalid, unassigned or not uniquely sorted")
 		}
 		if service, found := services[policy.ServiceID]; found && policy.ValidateForService(service) != nil {
@@ -68,7 +62,16 @@ func servicePermissionValues(view DeviceView) (map[string]Service, map[string]Ne
 }
 
 func matcherRule(matcher ServiceMatcher) map[string]any {
+	if matcher.Port != 0 {
+		port := matcher.Port
+		matcher.Port = 0
+		rule := matcherRule(matcher)
+		rule["port"] = []int{port}
+		return rule
+	}
 	switch matcher.Kind {
+	case "public_internet":
+		return map[string]any{"public_internet": true}
 	case "dns_exact":
 		return map[string]any{"domain": []string{matcher.Value}}
 	case "dns_suffix":
@@ -80,124 +83,60 @@ func matcherRule(matcher ServiceMatcher) map[string]any {
 	}
 }
 
-func serviceRule(service Service, records ...DNSRecord) map[string]any {
-	rules := make([]any, 0, len(service.TargetMatchers(records...)))
-	for _, matcher := range service.TargetMatchers(records...) {
+// Capture routes the complete independently authorized scope to its selector.
+// Current target restrictions are enforced there, rather than bypassing capture.
+func captureServiceRule(service Service, records ...DNSRecord) map[string]any {
+	rules := make([]any, 0, len(service.baseTargetMatchers(records...)))
+	for _, matcher := range service.baseTargetMatchers(records...) {
 		rules = append(rules, matcherRule(matcher))
 	}
 	return map[string]any{"type": "logical", "mode": "or", "rules": rules}
 }
 
-// ProjectAccessRuntime is the sole permission-to-runtime projection. Host capture,
-// listeners and the local API secret are added later by the platform adapter.
-// Only the outbound passwords are private inputs of the certified profile;
-// identities, transport parameters and ACLs are always rebuilt from the View.
-func ProjectAccessRuntime(view DeviceView) ([]RouteCandidate, *RuntimeProfile, error) {
-	credentials, err := profileCredentials(view)
+// ProjectAccessRuntime derives from stable authorization and explicit intent.
+func ProjectAccessRuntime(view DeviceView, selected []string) ([]RouteCandidate, *RuntimeProfile, error) {
+	value, err := ProjectDeviceExecution(view, selected)
 	if err != nil {
 		return nil, nil, err
 	}
-	return projectAccessRuntime(view, credentials)
-}
-
-func projectAccessRuntime(view DeviceView, credentials map[string]string) ([]RouteCandidate, *RuntimeProfile, error) {
-	return renderSegmentedRuntime(view, credentials)
+	return value.Routes, value.RuntimeProfile, nil
 }
 
 func targetMatchesService(target string, service Service, records ...DNSRecord) bool {
-	if ValidateHTTPSURL(target) != nil {
+	if service.ValidateCurrent() != nil || ValidateHTTPSURL(target) != nil {
 		return false
 	}
 	parsed, _ := url.Parse(target)
+	port := 443
+	if parsed.Port() != "" {
+		port, _ = strconv.Atoi(parsed.Port())
+	}
+	base := false
+	for _, matcher := range service.baseTargetMatchers(records...) {
+		base = base || matcher.Matches(parsed.Hostname())
+	}
+	if !base {
+		return false
+	}
 	for _, matcher := range service.TargetMatchers(records...) {
-		if matcher.Matches(parsed.Hostname()) {
+		if matcher.MatchesEndpoint(parsed.Hostname(), port) {
 			return true
 		}
 	}
 	return false
 }
 
-func validateDeviceViewAuthorization(view DeviceView) error {
-	services, policies, err := servicePermissionValues(view)
-	if err != nil {
-		return err
-	}
-	for index, endpoint := range view.Endpoints {
-		if endpoint.Validate() != nil {
-			return errors.New("view endpoint is invalid")
-		}
-		if index > 0 {
-			previous := view.Endpoints[index-1]
-			if previous.ID > endpoint.ID || previous.ID == endpoint.ID && previous.Generation >= endpoint.Generation {
-				return errors.New("view endpoints are not uniquely sorted")
-			}
-		}
-	}
-	for index, group := range view.BusinessProbeTargets {
-		service, exists := services[group.ServiceID]
-		assigned := false
-		for _, policy := range policies {
-			assigned = assigned || policy.ServiceID == group.ServiceID && policy.Action == "allow"
-		}
-		if !exists || !assigned || group.Targets == nil || index > 0 && view.BusinessProbeTargets[index-1].ServiceID >= group.ServiceID {
-			return errors.New("business probe group is unauthorized or not uniquely sorted")
-		}
-		for targetIndex, target := range group.Targets {
-			if !targetMatchesService(target, service, view.DNSRecords...) || targetIndex > 0 && group.Targets[targetIndex-1] >= target {
-				return errors.New("business probe target is unauthorized or not uniquely sorted")
-			}
-			for otherID, other := range services {
-				if otherID != service.ID {
-					assigned := false
-					for _, policy := range policies {
-						assigned = assigned || policy.ServiceID == otherID
-					}
-					if assigned && targetMatchesService(target, other, view.DNSRecords...) {
-						return errors.New("business probe target belongs to multiple Services")
-					}
-				}
-			}
-		}
-	}
-	for index, component := range view.ExpectedComponents {
-		if component.Validate() != nil {
-			return errors.New("expected component is invalid")
-		}
-		if index > 0 {
-			previous := view.ExpectedComponents[index-1]
-			if previous.ComponentID > component.ComponentID || previous.ComponentID == component.ComponentID && previous.Platform >= component.Platform {
-				return errors.New("expected components are not uniquely sorted")
-			}
-		}
-	}
-	if err := validateViewResources(view); err != nil {
-		return err
-	}
-	routes, profile, err := ProjectAccessRuntime(view)
-	if err != nil {
-		return err
-	}
-	actualRoutes, err := CanonicalEncode(view.Routes)
-	if err != nil {
-		return err
-	}
-	wantedRoutes, err := CanonicalEncode(routes)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(actualRoutes, wantedRoutes) {
-		return errors.New("view candidates do not match its Service permissions")
-	}
-	if (profile == nil) != (view.RuntimeProfile == nil) || profile != nil && *profile != *view.RuntimeProfile {
-		return errors.New("view runtime does not match its Service permissions")
-	}
-	return nil
-}
+func validateDeviceViewAuthorization(view DeviceView) error { return validateStableView(view) }
 
 // ProjectDeviceView consumes authenticated facts and independently verified
 // immutable release sets. It performs no I/O; the envelope signer attaches the
 // actual member proof and verified fact frontier.
 func ProjectDeviceView(projection Projection, deviceID string, releases ...ReleaseSet) (DeviceView, error) {
+	for _, service := range projection.NetworkIntent.Services {
+		if err := service.ValidateCurrent(); err != nil {
+			return DeviceView{}, errors.New("historical Service requires explicit forward facts before current View projection")
+		}
+	}
 	view, err := projectDeviceView(projection, deviceID, releases...)
 	if err != nil {
 		return DeviceView{}, err
@@ -210,6 +149,9 @@ func ProjectDeviceView(projection Projection, deviceID string, releases ...Relea
 
 // Only the private configuration builder may defer validation to its strict encoder.
 func projectDeviceView(projection Projection, deviceID string, releases ...ReleaseSet) (DeviceView, error) {
+	if len(projection.NetworkIntent.BusinessProbeTargets) != 0 {
+		return DeviceView{}, errors.New("historical probe pool requires explicit Service forward replacement and retirement")
+	}
 	var authorization DeviceAuthorization
 	found := false
 	for _, value := range projection.DeviceAuthorizations {
@@ -225,9 +167,10 @@ func projectDeviceView(projection Projection, deviceID string, releases ...Relea
 		return DeviceView{}, errors.New("device identity or authorization is unavailable")
 	}
 	view := DeviceView{NetworkID: projection.NetworkID, DNSRecords: projectDNSRecords(projection.NetworkIntent.DNSRecords), Schema: 3, DeviceID: identity.ID, Name: identity.Name, Platform: identity.Platform, DevicePublicKey: identity.DevicePublicKey,
-		Responsibilities: append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
-		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Links: []NetworkLink{}, Endpoints: []EndpointGeneration{},
-		DNSServers: append([]string{}, authorization.DNSServers...), BusinessProbeTargets: []ServiceProbeTargets{}, Routes: []RouteCandidate{}, InboundCredentials: []InboundCredential{}, ExpectedComponents: []ComponentReadback{}}
+		WireGuardPublicKey: authorization.WireGuardPublicKey,
+		Responsibilities:   append([]string{}, authorization.Responsibilities...), PolicyIDs: append([]string{}, authorization.PolicyIDs...),
+		Services: []Service{}, Policies: []NetworkPolicy{}, Resources: []TransportResource{}, Nodes: []ViewNode{}, TransportCredentials: []TransportCredential{}, Endpoints: []EndpointGeneration{},
+		DNSServers: append([]string{}, authorization.DNSServers...), ExpectedComponents: []ComponentReadback{}}
 	view.PublicTrust = append([]PublicTrust(nil), projection.NetworkIntent.PublicTrust...)
 	var componentErr error
 	view.ExpectedComponents, componentErr = deviceExpectedComponents(projection, deviceID, releases)
@@ -262,7 +205,7 @@ func projectDeviceView(projection Projection, deviceID string, releases ...Relea
 	}
 	sort.Slice(view.Policies, func(i, j int) bool { return view.Policies[i].ID < view.Policies[j].ID })
 	sort.Slice(view.Services, func(i, j int) bool { return view.Services[i].ID < view.Services[j].ID })
-	credentials, err := projectViewResources(projection, &view)
+	err := projectViewResources(projection, &view)
 	if err != nil {
 		return DeviceView{}, err
 	}
@@ -281,51 +224,15 @@ func projectDeviceView(projection Projection, deviceID string, releases ...Relea
 	// An unrepresentable concurrent website port conflict removes only the
 	// reserved website projection. The management snapshot exposes the conflict.
 	view.WebEndpoints, _ = WebsiteEndpoints(projection)
-	for _, service := range view.Services {
-		allowed := false
-		for _, policy := range view.Policies {
-			allowed = allowed || policy.ServiceID == service.ID && containsString(view.PolicyIDs, policy.ID) && policy.Action == "allow"
-		}
-		if !allowed {
-			continue
-		}
-		group := ServiceProbeTargets{ServiceID: service.ID, Targets: []string{}}
-		for _, target := range projection.NetworkIntent.BusinessProbeTargets {
-			unique := true
-			for _, otherPolicy := range view.Policies {
-				if !containsString(view.PolicyIDs, otherPolicy.ID) || otherPolicy.ServiceID == service.ID {
-					continue
-				}
-				for _, otherService := range view.Services {
-					if otherService.ID == otherPolicy.ServiceID && targetMatchesService(target.URL, otherService, view.DNSRecords...) {
-						unique = false
-					}
-				}
-			}
-			if unique && targetMatchesService(target.URL, service, view.DNSRecords...) {
-				group.Targets = append(group.Targets, target.URL)
-			}
-		}
-		sort.Strings(group.Targets)
-		unique := group.Targets[:0]
-		for _, target := range group.Targets {
-			if len(unique) == 0 || unique[len(unique)-1] != target {
-				unique = append(unique, target)
-			}
-		}
-		group.Targets = unique
-		view.BusinessProbeTargets = append(view.BusinessProbeTargets, group)
-	}
-	view.Routes, view.RuntimeProfile, err = projectAccessRuntime(view, credentials)
-	if err != nil {
-		return DeviceView{}, err
-	}
 	return view, nil
 }
 
 // ServicesOverlap proves overlaps available from the certified matcher values;
 // it never resolves DNS to invent a relation between a name and an IP prefix.
 func ServicesOverlap(left, right Service) bool {
+	if left.IsPublicInternet() || right.IsPublicInternet() {
+		return left.IsPublicInternet() && right.IsPublicInternet()
+	}
 	for _, a := range left.TargetMatchers() {
 		for _, b := range right.TargetMatchers() {
 			if a.Kind == "ip_prefix" && b.Kind == "ip_prefix" {

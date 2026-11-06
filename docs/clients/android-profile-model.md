@@ -3,7 +3,9 @@
 [设计入口](../README.md) · [客户端运行与选路模型](client-runtime-model.md)
 
 本文定义 Android 如何在同一应用中保存、命名、浏览和切换多份连接配置。
-它只是现有 `DeviceIdentity` 、`CertifiedLKG` 和 `Preference` 的本机聚合边界；每份
+它只是现有 `DeviceIdentity` 、`CertifiedLKG` 和 `Preference` 的本机聚合边界；当前一条互联网
+Policy 的选择及其所属 Service 遵循[当前业务基线](../core/control-model.md#服务与策略的当前业务基线)，
+不能因旧 Preference 在每个 profile 内按服务保存，就保留旧选择模型。每份
 `CertifiedLKG` 都包含签名 `DeviceView`、连续成员表证明、签发者事实前沿及该 profile 的单调 floor，
 不是第九个网络权威概念，也不改变一台 Android 设备同时只运行一条 VPN 的约束。
 
@@ -132,6 +134,9 @@ LAN 冲突检查的本机接口地址由 Android Java `NetworkInterface` 只读�
 libbox 启动失败已经结束本次实例，平台继续释放自己的 TUN 和监视回调，不保留已结束实例阻挡下一次重试。
 停止时清理未确认保留运行错误与空 active，不将异常抛出为进程崩溃或显示成功停止。
 重试沿原身份同步；不删除身份、重扫新邀请或用内置 bootstrap 解析器补齐已接受 View。
+已加入行仍在配置卡片中保留“检查更新”和“导入签名配置”，二者消费同一身份与认证接受流程。
+私有通道失效时，显式文件交付不能因已加入而消失；文件只是原签名 View 的临时媒介，
+仍校验设备绑定、签名和认证进度，不生成另一份身份、配置 store 或恢复状态机。
 本次连接已终止时清除持久 desired，运行投影暂保留失败的 requested ID 只用于给错误归属；
 它不是 active，也不得自动恢复或切换到 viewed/另一行。重试、删除该行或发出另一连接请求后替换该错误投影。
 

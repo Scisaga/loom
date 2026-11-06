@@ -6,7 +6,7 @@ package clientmodel
 import (
 	"encoding/json"
 	"errors"
-	"slices"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -14,16 +14,23 @@ import (
 	"unicode/utf8"
 
 	"loom/internal/control"
+	"loom/protocol"
 )
 
 type RouteCandidate struct {
-	ID         string             `json:"id"`
-	PolicyID   string             `json:"policy_id"`
-	FinalExit  string             `json:"final_exit"`
-	Chain      []string           `json:"chain"`
-	Scope      string             `json:"scope"`
-	FirstHop   *ResourceSampleRef `json:"first_hop,omitempty"`
-	RelayLinks []LinkSampleRef    `json:"relay_links,omitempty"`
+	Transport        string             `json:"transport"`
+	GraphUnavailable bool               `json:"graph_unavailable,omitempty"`
+	ID               string             `json:"id"`
+	PolicyID         string             `json:"policy_id"`
+	FixedExit        bool               `json:"fixed_exit"`
+	SourceNode       string             `json:"source_node"`
+	EntryNodeID      string             `json:"entry_node_id"`
+	FirstResourceID  string             `json:"first_resource_id"`
+	FinalExit        string             `json:"final_exit"`
+	Chain            []string           `json:"chain"`
+	Scope            string             `json:"scope"`
+	FirstHop         *ResourceSampleRef `json:"first_hop,omitempty"`
+	RelayLinks       []LinkSampleRef    `json:"relay_links,omitempty"`
 }
 
 // LinkSampleRef binds a projected relay segment to the original reporter.
@@ -74,29 +81,23 @@ type Observation struct {
 	MetricMillis      int64  `json:"metric_millis,omitempty"`
 }
 
-type ServicePreference = control.PolicyChoice
-
 type Preference struct {
-	Schema   int                 `json:"schema"`
-	Services []ServicePreference `json:"services"`
+	Schema       int               `json:"schema"`
+	PolicyID     string            `json:"policy_id,omitempty"`
+	LANPolicyIDs map[string]string `json:"lan_policy_ids,omitempty"`
 }
 
 func (preference Preference) Equal(other Preference) bool {
-	return preference.Schema == other.Schema && slices.Equal(preference.Services, other.Services)
-}
-
-func (preference Preference) Policy(serviceID string) string {
-	for _, choice := range preference.Services {
-		if choice.ServiceID == serviceID {
-			return choice.PolicyID
-		}
-	}
-	return ""
+	return preference.Schema == other.Schema && preference.PolicyID == other.PolicyID && maps.Equal(preference.LANPolicyIDs, other.LANPolicyIDs)
 }
 
 type Selection struct {
-	CandidateID string `json:"candidate_id"`
-	Scope       string `json:"scope"`
+	PolicyID    string                          `json:"policy_id"`
+	Choices     map[string]protocol.RouteChoice `json:"choices"`
+	Revision    string                          `json:"revision"`
+	CandidateID string                          `json:"candidate_id"`
+	Scope       string                          `json:"scope"`
+	Targets     map[string]string               `json:"targets"`
 }
 
 func validName(value string) bool {
@@ -121,12 +122,12 @@ func (candidate RouteCandidate) Validate() error {
 		return errors.New("local network candidate requires its fixed gateway")
 	}
 	if ref := candidate.FirstHop; ref != nil && (len(candidate.Chain) == 0 || control.ValidateID(ref.ResourceID) != nil ||
-		control.ValidateDigest(ref.SpecDigest) != nil || !validName(ref.Target) || ref.Action != "hysteria2_tls" && ref.Action != "wireguard_dns") {
+		control.ValidateDigest(ref.SpecDigest) != nil || !validName(ref.Target) || ref.Action != "hysteria2_echo" && ref.Action != "wireguard_echo") {
 		return errors.New("candidate first-hop evidence reference is invalid")
 	}
 	seenLinks := map[string]bool{}
 	for _, ref := range candidate.RelayLinks {
-		if control.ValidateID(ref.LinkID) != nil || control.ValidateID(ref.DeviceID) != nil || control.ValidateID(ref.ResourceID) != nil || control.ValidateDigest(ref.SpecDigest) != nil || !validName(ref.Target) || ref.Action != "wireguard_dns" || seenLinks[ref.LinkID] {
+		if control.ValidateID(ref.LinkID) != nil || control.ValidateID(ref.DeviceID) != nil || control.ValidateID(ref.ResourceID) != nil || control.ValidateDigest(ref.SpecDigest) != nil || !validName(ref.Target) || ref.Action != "wireguard_echo" && ref.Action != "hysteria2_echo" || seenLinks[ref.LinkID] {
 			return errors.New("candidate relay evidence reference is invalid")
 		}
 		seenLinks[ref.LinkID] = true
@@ -137,9 +138,16 @@ func (candidate RouteCandidate) Validate() error {
 
 func (observation Observation) Validate() error {
 	if !validName(observation.CandidateID) || !validName(observation.NetworkGeneration) ||
-		!validName(observation.Scope) || !validName(observation.Action) || observation.MetricMillis < 0 ||
-		observation.Target != "" && control.ValidateHTTPSURL(observation.Target) != nil {
+		!validName(observation.Scope) || !validName(observation.Action) || observation.MetricMillis < 0 {
 		return errors.New("observation is incomplete")
+	}
+	native := observation.Action == "tcp_connect" || observation.Action == "tcp_calibration"
+	if native {
+		if observation.Scope != control.AccessSelectorScope || control.ValidateConnectionTarget(observation.Target) != nil {
+			return errors.New("invalid native TCP observation")
+		}
+	} else if observation.Target != "" && control.ValidateHTTPSURL(observation.Target) != nil {
+		return errors.New("invalid business observation target")
 	}
 	switch observation.Result {
 	case "available", "unavailable", "unknown":
@@ -147,11 +155,15 @@ func (observation Observation) Validate() error {
 		return errors.New("observation result is invalid")
 	}
 	observed, err := time.Parse(time.RFC3339, observation.ObservedAt)
-	if err != nil || observation.ObservedAt != observed.UTC().Format(time.RFC3339) {
+	format := time.RFC3339
+	if native {
+		format = time.RFC3339Nano
+	}
+	if err != nil || observation.ObservedAt != observed.UTC().Format(format) || native && (!observed.Equal(observed.Truncate(time.Millisecond)) || observed.UnixMilli() <= observation.MetricMillis) {
 		return errors.New("observation time is not canonical")
 	}
 	until, err := time.Parse(time.RFC3339, observation.ValidUntil)
-	if err != nil || observation.ValidUntil != until.UTC().Format(time.RFC3339) || !until.After(observed) {
+	if err != nil || observation.ValidUntil != until.UTC().Format(format) || !until.After(observed) || native && !until.Equal(until.Truncate(time.Millisecond)) {
 		return errors.New("observation validity is invalid")
 	}
 	return nil
@@ -161,7 +173,37 @@ func (preference Preference) Validate() error {
 	if preference.Schema != 3 {
 		return errors.New("preference schema is invalid")
 	}
-	return control.ValidatePolicyChoices(preference.Services)
+	if preference.PolicyID != "" && control.ValidateID(preference.PolicyID) != nil {
+		return errors.New("invalid Internet Policy choice")
+	}
+	if preference.LANPolicyIDs != nil && len(preference.LANPolicyIDs) == 0 {
+		return errors.New("empty LAN choices must be omitted")
+	}
+	for service, policy := range preference.LANPolicyIDs {
+		if control.ValidateID(service) != nil || control.ValidateID(policy) != nil {
+			return errors.New("invalid LAN Policy choice")
+		}
+	}
+	return nil
+}
+func (preference Preference) Clone() Preference {
+	preference.LANPolicyIDs = maps.Clone(preference.LANPolicyIDs)
+	return preference
+}
+func ValidSelectorScope(scope string) bool {
+	return scope == control.AccessSelectorScope || strings.HasPrefix(scope, "local_network:") && control.ValidateID(strings.TrimPrefix(scope, "local_network:")) == nil
+}
+func (preference Preference) PolicyForScope(scope string) string {
+	if scope == control.AccessSelectorScope {
+		return preference.PolicyID
+	}
+	return preference.LANPolicyIDs[strings.TrimPrefix(scope, "local_network:")]
+}
+func CandidateSelectorScope(candidate RouteCandidate) string {
+	if strings.HasPrefix(candidate.Scope, "local_network:") {
+		return candidate.Scope
+	}
+	return control.AccessSelectorScope
 }
 
 // ErrNoUsableCandidate distinguishes a current selection limit from invalid
@@ -181,156 +223,25 @@ func Select(routes []RouteCandidate, observations []Observation, resources []con
 // remote network generations belong to their source, never the local underlay.
 func SelectWithLinks(routes []RouteCandidate, observations []Observation, resources []control.Observation, links []control.DeviceLinkObservation, preference Preference, current,
 	networkGeneration string, now time.Time, targets ...string) (Selection, error) {
-	if err := preference.Validate(); err != nil || !validName(networkGeneration) {
-		return Selection{}, errors.New("selection input is invalid")
+	evaluation, err := evaluateRouting(routes, observations, resources, links, preference, current, networkGeneration, now, targets)
+	if err != nil {
+		return Selection{}, err
 	}
-	for _, observation := range observations {
-		if err := observation.Validate(); err != nil {
-			return Selection{}, err
-		}
-	}
-	resourceByID := map[string]control.Observation{}
-	localLinks := map[string]control.Observation{}
-	for _, sample := range resources {
-		if err := sample.Validate(); err != nil || sample.Level != "resource" && sample.Level != "link" {
-			return Selection{}, errors.New("first-hop sample is invalid")
-		}
-		if sample.Level == "link" {
-			if _, exists := localLinks[sample.LinkID]; exists {
-				return Selection{}, errors.New("local relay samples are duplicated")
-			}
-			localLinks[sample.LinkID] = sample
-			continue
-		}
-		if _, exists := resourceByID[sample.ResourceID]; exists {
-			return Selection{}, errors.New("first-hop samples are duplicated")
-		}
-		resourceByID[sample.ResourceID] = sample
-	}
-	linkByID := map[string]control.DeviceLinkObservation{}
-	for _, sample := range links {
-		if sample.Validate() != nil {
-			return Selection{}, errors.New("relay sample is invalid")
-		}
-		if _, found := linkByID[sample.Observation.LinkID]; found {
-			return Selection{}, errors.New("relay samples are duplicated")
-		}
-		linkByID[sample.Observation.LinkID] = sample
-	}
-	byID := map[string]string{}
-	failures := map[string]string{}
-	metrics := map[string]int64{}
-	hopAvailable := map[string]bool{}
-	hopFailed := map[string]bool{}
-	for _, candidate := range routes {
-		state, failure, metric, err := candidateEvidence(observations, candidate.ID, candidate.Scope, networkGeneration, targets, now)
-		if err != nil {
-			return Selection{}, err
-		}
-		byID[candidate.ID], failures[candidate.ID], metrics[candidate.ID] = state, failure, metric
-		consume := func(hop control.Observation, until int64, complete bool) error {
-			if hop.ObservedAt > now.UnixMilli() {
-				return nil
-			}
-			recovered, err := businessSucceededAfter(observations, candidate, networkGeneration, targets, hop.ObservedAt, now)
-			if complete {
-				recovered, err = businessCompleteSucceededAfter(observations, candidate, networkGeneration, targets, hop.ObservedAt, now)
-			}
-			if err != nil {
-				return err
-			}
-			if hop.Result == "unavailable" && !recovered {
-				hopFailed[candidate.ID] = hopFailed[candidate.ID] || now.UnixMilli() < until
-				at := time.UnixMilli(hop.ObservedAt).UTC().Truncate(time.Second).Format(time.RFC3339)
-				if at > failures[candidate.ID] {
-					failures[candidate.ID] = at
-				}
-			}
-			hopAvailable[candidate.ID] = hopAvailable[candidate.ID] || hop.Result == "available" && now.UnixMilli() < until
-			return nil
-		}
-		if candidate.FirstHop != nil {
-			hop, found := resourceByID[candidate.FirstHop.ResourceID]
-			if found && matchesFirstHop(candidate.FirstHop, hop, networkGeneration) {
-				if err := consume(hop, hop.ValidUntil, false); err != nil {
-					return Selection{}, err
-				}
-			}
-		}
-		for _, ref := range candidate.RelayLinks {
-			if hop, found := localLinks[ref.LinkID]; found && hop.NetworkGeneration == networkGeneration && hop.ResourceID == ref.ResourceID && hop.SpecDigest == ref.SpecDigest && hop.Target == ref.Target && hop.Action == ref.Action {
-				if err := consume(hop, hop.ValidUntil, true); err != nil {
-					return Selection{}, err
-				}
-				continue
-			}
-			sample, found := linkByID[ref.LinkID]
-			hop := sample.Observation
-			if !found || sample.DeviceID != ref.DeviceID || hop.ResourceID != ref.ResourceID || hop.SpecDigest != ref.SpecDigest || hop.Target != ref.Target || hop.Action != ref.Action {
-				continue
-			}
-			if err := consume(hop, sample.CurrentUntil, true); err != nil {
-				return Selection{}, err
-			}
-		}
-	}
-	eligible := make([]RouteCandidate, 0, len(routes))
-	seen := map[string]bool{}
-	for _, candidate := range routes {
-		if err := candidate.Validate(); err != nil || seen[candidate.ID] {
-			return Selection{}, errors.New("route candidates are invalid or duplicated")
-		}
-		seen[candidate.ID] = true
-		_, serviceID, found := strings.Cut(candidate.Scope, ":")
-		allowed := found && preference.Policy(serviceID) == candidate.PolicyID
-		if !allowed || byID[candidate.ID] == "unavailable" || hopFailed[candidate.ID] {
-			continue
-		}
-		eligible = append(eligible, candidate)
-	}
-	if len(eligible) == 0 {
-		return Selection{}, ErrNoUsableCandidate
-	}
-	rank := func(candidate RouteCandidate) int {
-		if byID[candidate.ID] == "available" {
-			return 0
-		}
-		return 1
-	}
-	sort.Slice(eligible, func(i, j int) bool {
-		left, right := eligible[i], eligible[j]
-		leftRank, rightRank := rank(left), rank(right)
-		if leftRank != rightRank {
-			return leftRank < rightRank
-		}
-		if leftRank == 1 && failures[left.ID] != failures[right.ID] {
-			return failures[left.ID] < failures[right.ID]
-		}
-		if (left.ID == current) != (right.ID == current) {
-			return left.ID == current
-		}
-		if leftRank == 1 && hopAvailable[left.ID] != hopAvailable[right.ID] {
-			return hopAvailable[left.ID]
-		}
-		if leftRank == 1 && len(left.Chain) != len(right.Chain) {
-			return len(left.Chain) < len(right.Chain)
-		}
-		return left.ID < right.ID
-	})
-	selected := eligible[0]
-	// Mixing pairwise metric comparisons with current/ID tie breakers creates
-	// comparison cycles when a metric is missing. Establish the stable baseline
-	// first, then replace it only with a strictly better comparable measurement.
-	if len(targets) == 1 && rank(selected) == 0 && metrics[selected.ID] > 0 {
-		for _, candidate := range eligible[1:] {
-			if rank(candidate) == 0 && metrics[candidate.ID] > 0 && metrics[candidate.ID] < metrics[selected.ID] {
-				selected = candidate
-			}
-		}
-	}
-	return Selection{CandidateID: selected.ID, Scope: selected.Scope}, nil
+	return evaluation.selection, nil
 }
 
+type runtimeExecutionSource struct {
+	PolicyID    string `json:"policy_id"`
+	OriginID    string `json:"origin_id,omitempty"`
+	FinalExitID string `json:"final_exit_id,omitempty"`
+	LocalNodeID string `json:"local_node_id,omitempty"`
+}
+type runtimeHop struct {
+	Policy      protocol.HopPolicy  `json:"policy"`
+	NodeID      string              `json:"node_id"`
+	Nodes       map[string]string   `json:"nodes"`
+	ExitChoices map[string][]string `json:"exit_choices"`
+}
 type runtimeDocument struct {
 	Inbounds []struct {
 		Type      string `json:"type"`
@@ -338,11 +249,14 @@ type runtimeDocument struct {
 		AutoRoute bool   `json:"auto_route"`
 	} `json:"inbounds"`
 	Outbounds []struct {
-		Type      string   `json:"type"`
-		Detour    string   `json:"detour"`
-		Tag       string   `json:"tag"`
-		Outbounds []string `json:"outbounds,omitempty"`
-		Default   string   `json:"default"`
+		Type              string                  `json:"type"`
+		Hop               *runtimeHop             `json:"hop,omitempty"`
+		ExecutionSource   *runtimeExecutionSource `json:"execution_source,omitempty"`
+		CandidatePolicies *map[string]string      `json:"candidate_policies,omitempty"`
+		Detour            string                  `json:"detour"`
+		Tag               string                  `json:"tag"`
+		Outbounds         []string                `json:"outbounds,omitempty"`
+		Default           string                  `json:"default"`
 	} `json:"outbounds"`
 	Endpoints []struct {
 		Type string `json:"type"`
@@ -356,10 +270,10 @@ type runtimeDocument struct {
 	} `json:"experimental"`
 }
 
+// Validate checks this disposable projection's shape. Authorization is
+// checked by DeviceView and again by the native selector/receiving transport.
+// Candidate IDs are choices over shared transports, never outbound tags.
 func (profile RuntimeProfile) Validate(routes []RouteCandidate) error {
-	if profile.Kind != "sing_box" || profile.Config == "" {
-		return errors.New("runtime profile is incomplete")
-	}
 	if err := (control.RuntimeProfile{Kind: profile.Kind, Config: profile.Config}).Validate(); err != nil {
 		return err
 	}
@@ -367,65 +281,16 @@ func (profile RuntimeProfile) Validate(routes []RouteCandidate) error {
 	if err := json.Unmarshal([]byte(profile.Config), &document); err != nil {
 		return err
 	}
-	// Host capture and local API authentication belong to the platform adapter.
-	// The authenticated profile contains no platform listeners or local secret.
 	if len(document.Inbounds) != 0 || document.Experimental.ClashAPI.ExternalController != "" || document.Experimental.ClashAPI.Secret != "" {
-		return errors.New("authorization profile contains host execution inputs")
+		return errors.New("projection contains host inputs")
 	}
-	outboundType := map[string]string{}
-	selectors := map[string][]string{}
-	for _, outbound := range document.Outbounds {
-		if !validName(outbound.Tag) || outboundType[outbound.Tag] != "" {
-			return errors.New("runtime profile outbound tags are invalid")
-		}
-		outboundType[outbound.Tag] = outbound.Type
-		if outbound.Type == "selector" {
-			if len(outbound.Outbounds) == 0 || outbound.Default != "reject" {
-				return errors.New("runtime profile selector is empty")
-			}
-			selectors[outbound.Tag] = append([]string(nil), outbound.Outbounds...)
-		}
-	}
-	wanted := map[string]map[string]bool{}
+	seen := map[string]bool{}
 	for _, route := range routes {
-		if err := route.Validate(); err != nil || outboundType[route.ID] == "" || outboundType[route.ID] == "selector" {
-			return errors.New("runtime profile does not contain an authorized candidate outbound")
+		if route.Validate() != nil || seen[route.ID] {
+			return errors.New("invalid candidate projection")
 		}
-		if len(route.Chain) == 0 && outboundType[route.ID] != "direct" {
-			return errors.New("direct route is not backed by a direct outbound")
-		}
-		if wanted[route.Scope] == nil {
-			wanted[route.Scope] = map[string]bool{}
-		}
-		if wanted[route.Scope][route.ID] {
-			return errors.New("runtime route mapping is duplicated")
-		}
-		wanted[route.Scope][route.ID] = true
+		seen[route.ID] = true
 	}
-	for scope, members := range selectors {
-		if !strings.HasPrefix(scope, "service:") && !strings.HasPrefix(scope, "local_network:") {
-			return errors.New("runtime selector has no Service scope")
-		}
-		candidates := wanted[scope]
-		if len(members) != len(candidates)+1 {
-			return errors.New("runtime selector members do not match authorized candidates")
-		}
-		seen := map[string]bool{}
-		for _, member := range members {
-			if member != "reject" && !candidates[member] || seen[member] {
-				return errors.New("runtime selector contains an unauthorized candidate")
-			}
-			seen[member] = true
-		}
-		if !seen["reject"] || outboundType["reject"] != "block" {
-			return errors.New("runtime selector has no rejecting default")
-		}
-		delete(wanted, scope)
-	}
-	if len(wanted) != 0 {
-		return errors.New("runtime selectors do not match authorized scopes")
-	}
-
 	return nil
 }
 
@@ -436,25 +301,10 @@ func ProjectRuntimeCandidates(routes []RouteCandidate, profile RuntimeProfile) (
 	if err := profile.Validate(routes); err != nil {
 		return nil, err
 	}
-	var document runtimeDocument
-	if err := json.Unmarshal([]byte(profile.Config), &document); err != nil {
-		return nil, err
-	}
-	transport := make(map[string]string, len(document.Outbounds))
-	for _, outbound := range document.Outbounds {
-		transport[outbound.Tag] = outbound.Type
-	}
-	for _, endpoint := range document.Endpoints {
-		for _, outbound := range document.Outbounds {
-			if outbound.Type == "direct" && outbound.Detour == endpoint.Tag && endpoint.Type == "wireguard" {
-				transport[outbound.Tag] = "wireguard"
-			}
-		}
-	}
 	result := make([]RuntimeCandidate, 0, len(routes))
 	for _, route := range routes {
 		result = append(result, RuntimeCandidate{ID: route.ID, PolicyID: route.PolicyID, FinalExit: route.FinalExit,
-			Chain: append([]string(nil), route.Chain...), Scope: route.Scope, Transport: transport[route.ID]})
+			Chain: append([]string(nil), route.Chain...), Scope: route.Scope, Transport: route.Transport})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Scope != result[j].Scope {

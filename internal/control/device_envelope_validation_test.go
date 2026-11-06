@@ -150,7 +150,7 @@ func TestDeviceViewEnvelopeFixedInspectionKeepsRejections(t *testing.T) {
 		{"required proof collection", func(v *DeviceViewEnvelope) { v.ControlProof.Successors = nil }},
 		{"optional DNS collection", func(v *DeviceViewEnvelope) { v.View.DNSRecords = []DNSRecord{} }},
 		{"optional public trust", func(v *DeviceViewEnvelope) { v.View.PublicTrust = []PublicTrust{} }},
-		{"nested UTF8", func(v *DeviceViewEnvelope) { v.View.RuntimeProfile.Config += string([]byte{0xff}) }},
+		{"nested UTF8", func(v *DeviceViewEnvelope) { v.View.Services[0].Name += string([]byte{0xff}) }},
 		{"signature UTF8", func(v *DeviceViewEnvelope) { v.Signature += string([]byte{0xff}) }},
 		{"signature newline", func(v *DeviceViewEnvelope) { v.Signature = "\n" + v.Signature }},
 		{"signature padding", func(v *DeviceViewEnvelope) { v.Signature += "=" }},
@@ -240,8 +240,7 @@ func TestDeviceViewEnvelopeKeepsSemanticChecksWithValidSignature(t *testing.T) {
 			}
 			change.change(&envelope)
 			var err error
-			envelope.View.Routes, envelope.View.RuntimeProfile, err = ProjectAccessRuntime(envelope.View)
-			if err != nil || envelope.View.Validate() != nil {
+			if envelope.View.Validate() != nil {
 				t.Fatal("semantic rejection fixture has an invalid inner View", err)
 			}
 			envelope.ViewDigest, err = DeviceViewDigest(envelope.View)

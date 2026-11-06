@@ -14,8 +14,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"golang.org/x/sys/windows"
 	"loom/internal/clientmodel"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -40,8 +41,8 @@ func newProfileGUITestWindow(t *testing.T) *portableGUI {
 			{ID: profileGUIFixtureB, Name: "演示网络乙", DeviceID: "demo-device-b", State: guiStopped},
 		},
 		routeSelected: 0, routeOptions: []portableRouteOption{
-			{Label: "境外 API / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}},
-			{Label: "境外 API / 固定德国出口", Preference: clientmodel.Preference{Schema: 3, Services: []clientmodel.ServicePreference{{ServiceID: "demo-service", PolicyID: "demo-policy"}}}},
+			{Label: "境外 API / 最优出口 ✓", Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}},
+			{Label: "境外 API / 固定德国出口", Preference: clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}},
 		},
 		paths: []windowsPathDisplay{
 			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", Health: "可用",

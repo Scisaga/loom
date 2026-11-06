@@ -46,6 +46,7 @@ class EnrollmentManager private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val operation = Mutex()
+    private val reporting = Mutex()
     private val statusLock = Any()
     private val jobLock = Any()
     private val mutableStatuses = mutableMapOf<String, MutableStateFlow<EnrollmentStatus>>()
@@ -63,21 +64,27 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     fun importInvite(profileId: String, raw: String) = launch(profileId, "加入失败") { store ->
-        check(store.state() == null) { "设备已有身份；不会用另一份邀请覆盖" }
-        val state = Loomcore.newAndroidDeviceState(raw)
-        currentCoroutineContext().ensureActive()
-        store.saveState(state)
+        val state = operation.withLock {
+            check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
+            check(store.state() == null) { "设备已有身份；不会用另一份邀请覆盖" }
+            Loomcore.newAndroidDeviceState(raw).also {
+                currentCoroutineContext().ensureActive()
+                store.saveState(it)
+            }
+        }
         advanceUntilReady(profileId, store, state)
     }
 
     fun importFile(profileId: String, body: ByteArray) {
         if (runCatching { JSONObject(body.decodeToString()).has("view") }.getOrDefault(false)) {
             launch(profileId, "配置替换失败") { store ->
-                val profile = LoomVpnService.acceptConfiguration(profileId) {
-                    check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
-                    store.importCertifiedView(body)
+                operation.withLock {
+                    val profile = LoomVpnService.acceptConfiguration(profileId) {
+                        check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
+                        store.importCertifiedView(body)
+                    }
+                    ready(profileId, profile, "认证配置已更新，原设备身份已保留")
                 }
-                ready(profileId, profile, "认证配置已更新，原设备身份已保留")
             }
         } else {
             require(body.size <= 16 * 1024) { "加入文件必须小于 16 KiB" }
@@ -93,55 +100,74 @@ class EnrollmentManager private constructor(context: Context) {
         launch(profileId, "重试失败") { store -> resumeUnlocked(profileId, store) }
 
     fun refreshConfiguration(profileId: String) = launch(profileId, "配置更新失败") { store ->
-        val state = checkNotNull(store.state()) { "设备尚未加入" }
-        check(store.acceptedViewDigest().isNotEmpty()) { "设备尚未获得首份认证配置" }
-        statusSink(profileId).let { status ->
-            status.value = status.value.copy(
-                phase = EnrollmentPhase.PULLING,
-                detail = "正在通过私有通道检查认证配置…",
-            )
-        }
-        val next = Loomcore.syncAndroidDevice(state)
-        currentCoroutineContext().ensureActive()
-        if (store.certifiedViewDigest(next) == store.acceptedViewDigest()) {
-            store.saveState(next)
-            ready(profileId, store.decodeProfile(next), "认证配置已是最新")
-        } else {
-            acceptCertified(profileId, store, next)
-        }
+        syncConfiguration(profileId, store, background = false)
     }
 
     /** Accept authenticated updates independently of the current VPN or business outcome. */
-    fun refreshConfigurationInBackground(profileId: String) {
+    suspend fun refreshConfigurationInBackground(profileId: String, round: Long): Boolean {
         requireProfileId(profileId)
-        scope.launch {
-            operation.withLock {
-                val store = store(profileId)
-                guarded(profileId, store, "配置更新失败") {
-                    if (store.acceptedViewDigest().isEmpty()) return@guarded
-                    val state = store.state() ?: return@guarded
-                    val next = try {
-                        Loomcore.syncAndroidDevice(state)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Throwable) {
-                        // An unavailable private channel does not revoke the accepted LKG.
-                        return@guarded
-                    }
-                    currentCoroutineContext().ensureActive()
-                    if (store.certifiedViewDigest(next) == store.acceptedViewDigest()) {
-                        store.saveState(next)
-                        return@guarded
-                    }
-                    acceptCertified(profileId, store, next)
-                }
-            }
+        val store = store(profileId)
+        return try {
+            syncConfiguration(profileId, store, background = true, round = round)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            currentCoroutineContext().ensureActive()
+            fail(profileId, store, "配置更新失败", error)
+            false
         }
     }
 
+    private suspend fun syncConfiguration(profileId: String, store: ManagedProfileStore, background: Boolean, round: Long = 0): Boolean {
+        val input = operation.withLock {
+            if (!ProfileCatalog.get(appContext).contains(profileId)) return false
+            val state = store.state()
+            val digest = store.acceptedViewDigest()
+            if (background && (state == null || digest.isEmpty())) return false
+            checkNotNull(state) { "设备尚未加入" }
+            check(digest.isNotEmpty()) { "设备尚未获得首份认证配置" }
+            if (!background) {
+                statusSink(profileId).let { status ->
+                    status.value = status.value.copy(
+                        phase = EnrollmentPhase.PULLING,
+                        detail = "正在通过私有通道检查认证配置…",
+                    )
+                }
+            }
+            state to digest
+        }
+        val envelope = try {
+            val request = Loomcore.newAndroidConfigurationRequest(input.first, background, round)
+            privateCall(request::run, request::cancel)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            currentCoroutineContext().ensureActive()
+            if (background) return false // Keep the accepted LKG when its channel is unavailable.
+            throw error
+        }
+        currentCoroutineContext().ensureActive()
+        operation.withLock {
+            if (!ProfileCatalog.get(appContext).contains(profileId) || store.acceptedViewDigest() != input.second) return true
+            // Apply only the envelope to the latest record. In particular, a
+            // report sequence reserved during the HTTP wait cannot be lost.
+            val current = checkNotNull(store.state()) { "设备身份不存在" }
+            val next = Loomcore.acceptAndroidCertifiedView(current, envelope)
+            if (store.certifiedViewDigest(next) == input.second) {
+                store.saveState(next)
+                if (!background) ready(profileId, store.decodeProfile(next), "认证配置已是最新")
+            } else {
+                acceptCertifiedUnlocked(profileId, store, next)
+            }
+        }
+        return true
+    }
+
     fun abandonPending(profileId: String) = launch(profileId, "无法放弃待加入事务") { store ->
-        store.clearUncompletedIdentity()
-        statusSink(profileId).value = EnrollmentStatus(EnrollmentPhase.NOT_JOINED, "已清除未完成的本机身份")
+        operation.withLock {
+            store.clearUncompletedIdentity()
+            statusSink(profileId).value = EnrollmentStatus(EnrollmentPhase.NOT_JOINED, "已清除未完成的本机身份")
+        }
     }
 
     fun currentProfile(profileId: String): ManagedProfile? = store(profileId).loadCurrent()
@@ -149,31 +175,38 @@ class EnrollmentManager private constructor(context: Context) {
     internal fun prepareRuntimeProfile(profileId: String): ManagedProfile =
         store(profileId).prepareRuntime(readLocalInterfaceAddresses())
 
-    internal suspend fun postReport(profileId: String) = operation.withLock {
-        check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
-        val store = store(profileId)
-        val acceptedView = store.acceptedViewDigest().also { check(it.isNotEmpty()) { "设备尚未获得认证配置" } }
-        val send = LoomVpnService.withRuntimeReport(profileId) { runtime ->
-            val routing = RouteManager.get(appContext).reportData(
-                profileId, checkNotNull(store.state()), acceptedView, runtime.optString("applied_view_digest"),
-            )
-            // The sequence and complete identity/LKG are one durable write. A
-            // network failure burns this number; no stale handle can reuse it.
-            val reserved = store.updateState(Loomcore::reserveAndroidReportSequence)
-            val runtimeBytes = runtime.toString().encodeToByteArray()
-            val components = Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version())
-            val addresses = readLocalInterfaceAddresses()
-            val observedAt = reportTimestamp(Instant.now())
-            val transmit: () -> Unit = {
-                Loomcore.postAndroidDeviceReport(
-                    reserved, routing.preference, routing.resourceObservations, routing.observations, routing.selections, runtimeBytes,
-                    components, addresses, routing.networkGeneration, observedAt,
+    internal suspend fun postReport(profileId: String) = reporting.withLock {
+        val send = operation.withLock {
+            check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
+            val store = store(profileId)
+            val acceptedView = store.acceptedViewDigest().also { check(it.isNotEmpty()) { "设备尚未获得认证配置" } }
+            LoomVpnService.withRuntimeReport(profileId) { runtime, capturedAt ->
+                val routing = RouteManager.get(appContext).reportData(
+                    profileId, checkNotNull(store.state()), acceptedView, runtime.optString("applied_view_digest"),
+                    runtime.optString("permission_view_digest"),
                 )
+                if (runtime.optString("state") == "running" && !routing.applicationComplete) {
+                    runtime.put("state", "unknown").put("applied_view_digest", "").put("error_code", "runtime_apply_pending")
+                }
+                // The sequence and complete identity/LKG are one durable write. A
+                // network failure burns this number; no stale handle can reuse it.
+                val reserved = store.updateState(Loomcore::reserveAndroidReportSequence)
+                val runtimeBytes = runtime.toString().encodeToByteArray()
+                val transmit: suspend () -> Unit = {
+                    val components = Loomcore.androidRuntimeComponents(appContext.packageCodePath, BuildConfig.LOOM_SOURCE_COMMIT, Libbox.version())
+                    val addresses = readLocalInterfaceAddresses()
+                    val observedAt = reportTimestamp(capturedAt)
+                    val request = Loomcore.newAndroidReportRequest(
+                        reserved, routing.preference, routing.resourceObservations, routing.observations, routing.selections, runtimeBytes,
+                        components, addresses, routing.networkGeneration, observedAt,
+                    )
+                    privateCall(request::run, request::cancel)
+                }
+                transmit
             }
-            transmit
         }
-        // Keep profile deletion serialized, but let VPN stop release resources
-        // while this immutable report waits for the authenticated control.
+        // Only the immutable signed report crosses the network. Enrollment,
+        // configuration, profile deletion and VPN lifecycle own no HTTP wait.
         send()
     }
 
@@ -206,22 +239,24 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun resumeUnlocked(profileId: String, store: ManagedProfileStore) {
-        if (store.acceptedViewDigest().isNotEmpty() && runCatching { store.loadCurrent() }.isFailure) {
-            val next = Loomcore.syncAndroidDevice(checkNotNull(store.state()))
-            currentCoroutineContext().ensureActive()
-            acceptCertified(profileId, store, next)
-            return
+        val input = operation.withLock {
+            check(ProfileCatalog.get(appContext).contains(profileId)) { "配置已删除" }
+            val repair = store.acceptedViewDigest().isNotEmpty() && runCatching { store.loadCurrent() }.isFailure
+            if (!repair) {
+                store.loadCurrent()?.let {
+                    ready(profileId, it, "已从受保护存储恢复完整认证 LKG")
+                    return
+                }
+            }
+            val state = store.state()
+            if (state == null) {
+                statusSink(profileId).value = EnrollmentStatus(EnrollmentPhase.NOT_JOINED, "扫描中控二维码或导入加入文件")
+                return
+            }
+            state to repair
         }
-        store.loadCurrent()?.let {
-            ready(profileId, it, "已从受保护存储恢复完整认证 LKG")
-            return
-        }
-        val state = store.state()
-        if (state == null) {
-            statusSink(profileId).value = EnrollmentStatus(EnrollmentPhase.NOT_JOINED, "扫描中控二维码或导入加入文件")
-            return
-        }
-        advanceUntilReady(profileId, store, state)
+        if (input.second) syncConfiguration(profileId, store, background = false)
+        else advanceUntilReady(profileId, store, input.first)
     }
 
     private suspend fun advanceUntilReady(profileId: String, store: ManagedProfileStore, initial: ByteArray) {
@@ -229,39 +264,50 @@ class EnrollmentManager private constructor(context: Context) {
         while (true) {
             currentCoroutineContext().ensureActive()
             val before = JSONObject(Loomcore.androidEnrollmentState(state).decodeToString())
-            statusSink(profileId).value = EnrollmentStatus(
-                phase = if (before.getBoolean("claimed")) EnrollmentPhase.WAITING else EnrollmentPhase.CLAIMING,
-                detail = if (before.getBoolean("claimed")) "正在恢复同一设备的认证配置…" else "正在通过私有通道提交设备身份…",
-                canAbandonPending = true,
-            )
-            state = try {
-                Loomcore.advanceAndroidEnrollment(state)
+            operation.withLock {
+                if (!ProfileCatalog.get(appContext).contains(profileId) || store.state()?.contentEquals(state) != true) return
+                statusSink(profileId).value = EnrollmentStatus(
+                    phase = if (before.getBoolean("claimed")) EnrollmentPhase.WAITING else EnrollmentPhase.CLAIMING,
+                    detail = if (before.getBoolean("claimed")) "正在恢复同一设备的认证配置…" else "正在通过私有通道提交设备身份…",
+                    canAbandonPending = true,
+                )
+            }
+            val next = try {
+                val request = Loomcore.newAndroidEnrollmentRequest(state)
+                privateCall(request::run, request::cancel)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
                 currentCoroutineContext().ensureActive()
-                statusSink(profileId).value = EnrollmentStatus(
-                    EnrollmentPhase.WAITING,
-                    "私有通道暂不可用；将重试同一身份",
-                    canAbandonPending = true,
-                    diagnostic = error.javaClass.simpleName,
-                )
+                operation.withLock {
+                    if (!ProfileCatalog.get(appContext).contains(profileId) || store.state()?.contentEquals(state) != true) return
+                    statusSink(profileId).value = EnrollmentStatus(
+                        EnrollmentPhase.WAITING,
+                        "私有通道暂不可用；将重试同一身份",
+                        canAbandonPending = true,
+                        diagnostic = error.javaClass.simpleName,
+                    )
+                }
                 delay(RETRY_MS)
                 continue
             }
             currentCoroutineContext().ensureActive()
-            val after = JSONObject(Loomcore.androidEnrollmentState(state).decodeToString())
-            if (!after.getBoolean("ready")) {
-                store.saveState(state)
-                delay(RETRY_MS)
-                continue
+            val after = JSONObject(Loomcore.androidEnrollmentState(next).decodeToString())
+            operation.withLock {
+                if (!ProfileCatalog.get(appContext).contains(profileId) || store.state()?.contentEquals(state) != true) return
+                if (after.getBoolean("ready")) {
+                    acceptCertifiedUnlocked(profileId, store, next)
+                    return
+                }
+                store.saveState(next)
+                state = next
             }
-            acceptCertified(profileId, store, state)
-            return
+            delay(RETRY_MS)
         }
     }
 
-    private suspend fun acceptCertified(profileId: String, store: ManagedProfileStore, body: ByteArray) {
+    // The caller owns the short commit operation, never a private network wait.
+    private suspend fun acceptCertifiedUnlocked(profileId: String, store: ManagedProfileStore, body: ByteArray) {
         // Validate the accepted authority independently of runtime projection.
         store.certifiedViewDigest(body)
         val profile = LoomVpnService.acceptConfiguration(profileId) {
@@ -291,7 +337,7 @@ class EnrollmentManager private constructor(context: Context) {
         requireProfileId(profileId)
         val store = store(profileId)
         val job = scope.launch(start = CoroutineStart.LAZY) {
-            operation.withLock { guarded(profileId, store, prefix) { block(store) } }
+            guarded(profileId, store, prefix) { block(store) }
         }
         synchronized(jobLock) {
             activeJob?.cancel()
@@ -326,6 +372,7 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun fail(profileId: String, store: ManagedProfileStore, prefix: String, error: Throwable) {
+        if (!ProfileCatalog.get(appContext).contains(profileId)) return
         val accepted = runCatching { store.acceptedViewDigest() }.getOrDefault("")
         val runtime = VpnRuntime.status.value
         val preparationFailed = accepted.isNotEmpty() && (runCatching { store.loadCurrent() }.isFailure ||

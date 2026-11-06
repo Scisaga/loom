@@ -217,7 +217,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 		return peers[to].server.Runtime.reconcilePeer(ctx, members[from])
 	}
 	joining, invite, _, claim, deviceKey, _ := enrollmentFixtureWithRuntime(t, peers[0].server.Runtime)
-	submitAuthority(t, joining.Runtime, Operation{Schema: 3, RequestID: "demo-report-target", Operation: "probe_target.put", TargetKind: "probe_target", TargetID: "demo-probe", Dependencies: []string{}, Payload: BusinessProbeTarget{ID: "demo-probe", URL: "https://demo-service.example/probe"}})
+	setServiceProbeURLs(t, joining.Runtime, "demo-service", "demo-report-target", "https://demo-service.example/probe")
 	if response := enrollmentHTTP(t, joining, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
 		t.Fatal("formal enrollment failed", response.Code)
 	}
@@ -245,15 +245,11 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := view.View.Routes[0]
+	route := testDeviceExecution(view.View).Routes[0]
 	reportFor := func(sequence U64, state string) DeviceReport {
 		t.Helper()
-		var preference *ReportPreference
-		if sequence%2 == 0 {
-			preference = &ReportPreference{Mode: "fixed_exit", Exit: "demo-unavailable-exit"}
-		}
 		at := joining.now().Add(-time.Duration(10000-int64(sequence)) * time.Second).UnixMilli()
-		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: firstConfig.NetworkID, DeviceID: invite.DeviceID, ReportSequence: sequence, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: joining.now().UnixMilli(), Preference: preference, Selections: []ReportSelection{{ServiceID: route.ServiceID, CandidateID: route.ID}}, Observations: []Observation{{NetworkGeneration: "demo-underlay", Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, SpecDigest: route.SpecDigest, Target: "https://demo-service.example/probe", Action: "https_request", Result: "available", ObservedAt: at, ValidUntil: at + 60000}}, Runtime: RuntimeReadback{State: state, AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, deviceKey)
+		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: firstConfig.NetworkID, DeviceID: invite.DeviceID, ReportSequence: sequence, ViewDigest: view.ViewDigest, NetworkGeneration: "demo-underlay", ReportedAt: joining.now().UnixMilli(), PolicyID: route.PolicyID, Selections: []ReportSelection{{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID}}, Observations: []Observation{{NetworkGeneration: "demo-underlay", Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, SpecDigest: route.SpecDigest, Target: "https://demo-service.example/probe", Action: "https_request", Result: "available", ObservedAt: at, ValidUntil: at + 60000}}, Runtime: RuntimeReadback{State: state, AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, deviceKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -645,7 +641,7 @@ func TestReportMemberBatchReturnsBoundedOriginalPrefix(t *testing.T) {
 	}
 	projection := server.Runtime.Authority.Snapshot()
 	view, _ := server.deviceEnvelope(invite.DeviceID)
-	route := view.View.Routes[0]
+	route := testDeviceExecution(view.View).Routes[0]
 	// Each original fits the device boundary, while three exceed a member
 	// response. A long canonical target exercises bytes rather than item count.
 	target := "https://demo-service.example/" + strings.Repeat("a", 6<<20)

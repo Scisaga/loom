@@ -60,7 +60,7 @@ func TestWebChromePolicyPathsFollowReportsWithoutReplacingDraft(t *testing.T) {
 	if response := enrollmentHTTP(t, server, "/enrollment/claim", claim, enrollmentTunnel(invite)); response.Code != http.StatusOK {
 		t.Fatal("normal enrollment failed", response.Body.String())
 	}
-	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-policy-runtime-probe", Operation: "probe_target.put", TargetKind: "probe_target", TargetID: "demo-policy-probe", Dependencies: []string{}, Payload: BusinessProbeTarget{ID: "demo-policy-probe", URL: "https://demo-service.example/health"}})
+	setServiceProbeURLs(t, server.Runtime, "demo-service", "demo-policy-runtime-probe", "https://demo-service.example/health")
 	p := server.Runtime.Authority.Snapshot()
 	copy := p.NetworkIntent.Policies[0]
 	copy.ID, copy.Name = "demo-draft-policy", "Demo unapplied policy"
@@ -68,7 +68,7 @@ func TestWebChromePolicyPathsFollowReportsWithoutReplacingDraft(t *testing.T) {
 	submitAuthority(t, server.Runtime, Operation{Schema: 3, RequestID: "demo-policy-runtime-copy", Operation: "policy.put", TargetKind: "policy", TargetID: copy.ID, Dependencies: service.MaterialIDs, Payload: copy})
 	before := server.Runtime.Authority.Frontier()
 	view, err := server.deviceEnvelope(invite.DeviceID)
-	if err != nil || len(view.View.Routes) != 1 || len(view.View.BusinessProbeTargets) != 1 {
+	if err != nil || len(testDeviceExecution(view.View).Routes) != 1 || len(testDeviceExecution(view.View).BusinessProbeTargets) != 1 {
 		t.Fatal("fixture needs one fully scoped business candidate", err)
 	}
 	sequence := U64(0)
@@ -77,10 +77,9 @@ func TestWebChromePolicyPathsFollowReportsWithoutReplacingDraft(t *testing.T) {
 		sequence++
 		at := time.Now().UTC().Truncate(time.Millisecond)
 		clock.Store(at.UnixMilli())
-		route := view.View.Routes[0]
+		route := testDeviceExecution(view.View).Routes[0]
 		report, err := SignDeviceReport(DeviceReport{Schema: 3, NetworkID: view.View.NetworkID, DeviceID: invite.DeviceID,
-			ReportSequence: sequence, ViewDigest: view.ViewDigest, ReportedAt: at.UnixMilli(), NetworkGeneration: "demo-network",
-			PolicyChoices: new([]PolicyChoice{{ServiceID: "demo-service", PolicyID: "demo-policy"}}), Selections: []ReportSelection{},
+			ReportSequence: sequence, ViewDigest: view.ViewDigest, ReportedAt: at.UnixMilli(), NetworkGeneration: "demo-network", PolicyID: "demo-policy", Selections: []ReportSelection{},
 			Observations: []Observation{{Level: "service", ServiceID: route.ServiceID, CandidateID: route.ID, SpecDigest: route.SpecDigest, NetworkGeneration: "demo-network", Target: "https://demo-service.example/health", Action: "https_request", Result: result, ObservedAt: at.UnixMilli(), ValidUntil: at.Add(lifetime).UnixMilli()}},
 			Runtime:      RuntimeReadback{State: "running", AppliedViewDigest: view.ViewDigest}, Components: []ComponentReadback{}}, key)
 		if err != nil {

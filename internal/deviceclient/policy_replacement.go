@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"reflect"
 	"sort"
 
 	"loom/internal/clientmodel"
@@ -21,47 +20,40 @@ func ReplacePolicySelectionLKG(original []byte, replacement control.DeviceViewEn
 	if len(original) > maxStateBytes || replacement.Validate() != nil {
 		return State{}, clientmodel.Preference{}, errors.New("policy replacement input is invalid")
 	}
-	type span struct {
-		name       string
-		start, end int
-		raw        []byte
-	}
-	fields := []span{}
 	decoder := json.NewDecoder(bytes.NewReader(original))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return State{}, clientmodel.Preference{}, errors.New("historical identity is not an object")
 	}
-	seen := map[string]bool{}
-	var historicalView, historicalPreference []byte
+	fields := map[string]json.RawMessage{}
 	for decoder.More() {
 		token, err := decoder.Token()
 		name, ok := token.(string)
-		if err != nil || !ok || seen[name] {
+		if err != nil || !ok || fields[name] != nil {
 			return State{}, clientmodel.Preference{}, errors.New("historical identity has duplicated fields")
 		}
-		seen[name] = true
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil {
 			return State{}, clientmodel.Preference{}, err
 		}
-		if name == "certified_lkg" || name == "preference" {
-			end := int(decoder.InputOffset())
-			fields = append(fields, span{name, end - len(raw), end, raw})
-		}
-		if name == "certified_lkg" {
-			historicalView = raw
-		}
-		if name == "preference" {
-			historicalPreference = raw
-		}
+		fields[name] = raw
 	}
-	if token, err := decoder.Token(); err != nil || token != json.Delim('}') || len(historicalView) == 0 {
-		return State{}, clientmodel.Preference{}, errors.New("historical identity has no complete LKG")
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return State{}, clientmodel.Preference{}, errors.New("historical identity is incomplete")
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return State{}, clientmodel.Preference{}, errors.New("trailing historical identity input")
 	}
+	if !bytes.Equal(original, joinHistoricalIdentityFields(fields)) {
+		return State{}, clientmodel.Preference{}, errors.New("historical identity is not canonical")
+	}
+	historicalView, historicalPreference := fields["certified_lkg"], fields["preference"]
+	if len(historicalView) == 0 {
+		return State{}, clientmodel.Preference{}, errors.New("historical identity has no LKG")
+	}
 	if len(externalPreference) > 0 {
+		if len(historicalPreference) > 0 && !bytes.Equal(externalPreference, historicalPreference) {
+			return State{}, clientmodel.Preference{}, errors.New("conflicting historical preference originals require explicit review")
+		}
 		historicalPreference = externalPreference
 	}
 	preference, err := migratePolicyPreference(historicalView, historicalPreference, replacement.View)
@@ -77,21 +69,9 @@ func ReplacePolicySelectionLKG(original []byte, replacement control.DeviceViewEn
 	if err != nil {
 		return State{}, clientmodel.Preference{}, err
 	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].start > fields[j].start })
-	nextBytes := append([]byte{}, original...)
-	defer func() { clear(nextBytes) }()
-	for _, field := range fields {
-		body := viewBody
-		if field.name == "preference" {
-			body = preferenceBody
-		}
-		value := make([]byte, 0, len(nextBytes)+len(body))
-		value = append(value, nextBytes[:field.start]...)
-		value = append(value, body...)
-		value = append(value, nextBytes[field.end:]...)
-		clear(nextBytes)
-		nextBytes = value
-	}
+	fields["certified_lkg"], fields["preference"] = viewBody, preferenceBody
+	nextBytes := joinHistoricalIdentityFields(fields)
+	defer clear(nextBytes)
 	next, err := DecodeIdentityState(nextBytes)
 	if err != nil {
 		return State{}, clientmodel.Preference{}, err
@@ -103,16 +83,44 @@ func ReplacePolicySelectionLKG(original []byte, replacement control.DeviceViewEn
 	return next, preference, err
 }
 
-// This finite local value is read only by explicit migration, never startup.
+// This only reconstructs the canonical outer container during explicit import;
+// signed subobjects keep their original bytes and are verified independently.
+func joinHistoricalIdentityFields(fields map[string]json.RawMessage) []byte {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	body := []byte{'{'}
+	for index, key := range keys {
+		if index > 0 {
+			body = append(body, ',')
+		}
+		name, _ := json.Marshal(key)
+		body = append(body, name...)
+		body = append(body, ':')
+		body = append(body, fields[key]...)
+	}
+	return append(body, '}')
+}
+
+// Finite original values for explicit import, never a current preference DTO.
 type historicalRoutingPreference struct {
-	Schema int    `json:"schema"`
-	Mode   string `json:"mode"`
-	Exit   string `json:"exit,omitempty"`
+	Schema   int                     `json:"schema"`
+	Services *[]control.PolicyChoice `json:"services,omitempty"`
+	Mode     string                  `json:"mode,omitempty"`
+	Exit     string                  `json:"exit,omitempty"`
 }
 
 func (value historicalRoutingPreference) Validate() error {
 	if value.Schema != 3 {
 		return errors.New("historical preference schema is invalid")
+	}
+	if value.Services != nil {
+		if value.Mode != "" || value.Exit != "" {
+			return errors.New("ambiguous historical preference")
+		}
+		return control.ValidatePolicyChoices(*value.Services)
 	}
 	if (value.Mode == "auto" || value.Mode == "direct") && value.Exit == "" {
 		return nil
@@ -162,53 +170,84 @@ func migratePolicyPreference(historicalView, previous []byte, next control.Devic
 	}
 	var legacy historicalRoutingPreference
 	if len(previous) > 0 {
-		if err := control.DecodeCanonical(previous, &legacy, control.ContractDecodeLimits{MaxBytes: 4096, MaxDepth: 4, MaxItems: 16}); err != nil {
+		if err := control.DecodeCanonical(previous, &legacy, control.ContractDecodeLimits{MaxBytes: 1 << 20, MaxDepth: 8, MaxItems: 1 << 16}); err != nil {
 			return clientmodel.Preference{}, err
 		}
 	}
-	preference := clientmodel.EmptyPreference()
-	for _, service := range view.Services {
-		var assigned []control.NetworkPolicy
-		for _, policy := range view.Policies {
-			for _, id := range view.PolicyIDs {
-				if id == policy.ID && policy.ServiceID == service.ID {
-					assigned = append(assigned, policy)
+	oldPolicies := map[string]control.NetworkPolicy{}
+	for _, policy := range view.Policies {
+		for _, id := range view.PolicyIDs {
+			if id == policy.ID {
+				oldPolicies[id] = policy
+			}
+		}
+	}
+	intent := map[string]bool{}
+	if legacy.Services != nil {
+		for _, choice := range *legacy.Services {
+			if choice.PolicyID == "" {
+				continue
+			}
+			policy, found := oldPolicies[choice.PolicyID]
+			if !found || policy.ServiceID != choice.ServiceID || policy.Action != "allow" {
+				return clientmodel.Preference{}, errors.New("historical choice is not an original granted Policy")
+			}
+			intent[policy.ID] = true
+		}
+	} else if len(previous) > 0 {
+		for _, service := range view.Services {
+			for _, policy := range oldPolicies {
+				if policy.ServiceID == service.ID && policyMatchesHistoricalPreference(view.DeviceID, service.Kind, policy, legacy) {
+					intent[policy.ID] = true
 				}
 			}
 		}
-		if len(assigned) == 0 {
+	} else if len(oldPolicies) == 1 {
+		for id, policy := range oldPolicies {
+			if policy.Action == "allow" {
+				intent[id] = true
+			}
+		}
+	}
+	_, options := clientmodel.PolicyOptions(next)
+	nextKinds := map[string]string{}
+	for _, service := range next.Services {
+		nextKinds[service.ID] = service.Kind
+	}
+	choices := []string{}
+	lanChoices := map[string]string{}
+	for _, policy := range options {
+		original, found := oldPolicies[policy.ID]
+		if legacy.Services == nil && len(previous) > 0 && !policyMatchesHistoricalPreference(next.DeviceID, nextKinds[policy.ServiceID], policy, legacy) {
 			continue
 		}
-		choice := clientmodel.ServicePreference{ServiceID: service.ID}
-		if len(assigned) == 1 && assigned[0].Action == "allow" {
-			policy := assigned[0]
-			equivalent := policyMatchesHistoricalPreference(view.DeviceID, service.Kind, policy, legacy)
-			currentKind := ""
-			sameServiceRules := false
-			for _, current := range next.Services {
-				if current.ID == service.ID {
-					currentKind = current.Kind
-					current.Name = service.Name
-					sameServiceRules = reflect.DeepEqual(current, service)
+		if found && intent[policy.ID] && original.ServiceID == policy.ServiceID {
+			if nextKinds[policy.ServiceID] == "local_network" {
+				if previous, exists := lanChoices[policy.ServiceID]; exists && previous != policy.ID {
+					lanChoices[policy.ServiceID] = ""
+				} else if !exists {
+					lanChoices[policy.ServiceID] = policy.ID
 				}
-			}
-			for _, current := range next.Policies {
-				if current.ID == policy.ID && current.ServiceID == service.ID {
-					equivalent = equivalent && currentKind == service.Kind && policyMatchesHistoricalPreference(next.DeviceID, currentKind, current, legacy)
-					current.Name = policy.Name
-					if legacy.Mode != "auto" {
-						equivalent = equivalent && sameServiceRules && reflect.DeepEqual(current, policy)
-					}
-				}
-			}
-			if equivalent {
-				choice.PolicyID = policy.ID
+			} else {
+				choices = append(choices, policy.ID)
 			}
 		}
-		preference.Services = append(preference.Services, choice)
 	}
-	sort.Slice(preference.Services, func(i, j int) bool { return preference.Services[i].ServiceID < preference.Services[j].ServiceID })
-	return clientmodel.ReconcilePreference(preference, next)
+	preference := clientmodel.EmptyPreference()
+	for service, policy := range lanChoices {
+		if policy != "" {
+			if preference.LANPolicyIDs == nil {
+				preference.LANPolicyIDs = map[string]string{}
+			}
+			preference.LANPolicyIDs[service] = policy
+		}
+	}
+	if len(choices) == 1 {
+		preference.PolicyID = choices[0]
+	}
+	// Several formerly simultaneous choices cannot identify one user choice.
+	// Preserve pending intent and let the normal current Policy UI select it.
+	return preference, nil
 }
 
 func policyMatchesHistoricalPreference(deviceID, kind string, policy control.NetworkPolicy, legacy historicalRoutingPreference) bool {
@@ -246,8 +285,8 @@ func MigratePolicySelectionFile(path, evidence string, replacement control.Devic
 	return preference, err
 }
 
-// PreviewPolicySelectionFile authenticates the finite original before a host
-// adapter prepares its separate protected preference value. No files change.
+// PreviewPolicySelectionFile authenticates the finite original before the host
+// prepares a disposable runtime cache. The choice stays in identity. No files change.
 func PreviewPolicySelectionFile(path, evidence string, replacement control.DeviceViewEnvelope, legacyPreference []byte, protector clientsecret.Protector) (clientmodel.Preference, error) {
 	if !validStatePath(path) || !validStatePath(evidence) || path == evidence {
 		return clientmodel.Preference{}, errors.New("migration requires distinct canonical paths")

@@ -15,9 +15,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -268,11 +270,18 @@ func windowsRuntimeStatusPath(root string) string {
 	return filepath.Join(root, "runtime", "status.json")
 }
 
-func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, activation clientadapter.Activation, reported bool, selectorReadAt time.Time) error {
+func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, activation clientadapter.Activation, reported bool, selectorReadAt time.Time, runtime ...control.RuntimeReadback) error {
 	status := windowsRuntimeStatus{Schema: 3, NetworkGeneration: activation.State.NetworkGeneration, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest, RuntimeState: "running",
 		Preference: activation.State.Preference, Selections: activation.Selections, BlockedScopes: activation.BlockedScopes,
 		Observations: activation.State.Observations, ResourceObservations: activation.State.ResourceObservations, Reported: reported,
 		SelectorReadAt: selectorReadAt.UTC().Format(time.RFC3339Nano)}
+	if len(runtime) != 0 {
+		status.RuntimeState = runtime[0].State
+	}
+	if status.RuntimeState != "running" {
+		status.Selections, status.BlockedScopes = []clientadapter.SelectionStatus{}, nil
+		status.Observations, status.ResourceObservations = []clientmodel.Observation{}, nil
+	}
 	body, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
 		return err
@@ -280,46 +289,27 @@ func writeWindowsRuntimeStatus(root string, lkg *control.DeviceViewEnvelope, act
 	return writeWindowsRuntimeStatusFile(windowsRuntimeStatusPath(root), append(body, '\n'))
 }
 
-func windowsProbeTargets(view control.DeviceView, scope string) (string, []string) {
-	for _, group := range view.BusinessProbeTargets {
-		if scope == "service:"+group.ServiceID || scope == "local_network:"+group.ServiceID {
-			return group.ServiceID, group.Targets
+func windowsProbeTargets(view control.DeviceView, policyID string) (string, []string) {
+	for _, service := range view.Services {
+		if service.ID == clientmodel.SelectedServiceID(view, clientmodel.Preference{Schema: 3, PolicyID: policyID}) {
+			return service.ID, service.ProbeURLs
 		}
 	}
 	return "", nil
 }
-func windowsBusinessProbe(view control.DeviceView, scope string) clientadapter.Probes {
-	_, targets := windowsProbeTargets(view, scope)
-	if len(targets) == 0 {
-		return nil
-	}
-	probes := clientadapter.Probes{}
-	for _, target := range targets {
-		probe, err := clientadapter.HTTPSBusinessProbe("127.0.0.1:1080", target)
-		if err != nil {
-			return nil
-		}
-		probes[target] = func(ctx context.Context) clientadapter.ProbeResult {
-			value := probe(ctx)
-			value.Action = "https_request"
-			return value
-		}
-	}
-	return probes
-}
-
 func activateWindowsServices(ctx context.Context, selector clientadapter.Selector, view control.DeviceView,
-	routes []clientmodel.RouteCandidate, state clientadapter.State, probe bool) (clientadapter.Activation, error) {
-	factory := func(scope string) clientadapter.Probes {
-		probes := windowsBusinessProbe(view, scope)
-		if !probe {
-			for target := range probes {
-				probes[target] = nil
-			}
-		}
-		return probes
+	routes []clientmodel.RouteCandidate, state clientadapter.State, _ bool) (clientadapter.Activation, error) {
+	graphs, err := clientadapter.PolicyGraphs(view, clientmodel.MeasurementPolicies(state.Preference))
+	if err != nil {
+		return clientadapter.Activation{}, err
 	}
-	return clientadapter.ActivateServices(ctx, selector, routes, state, factory, time.Now, clientmodel.ServiceScopes(view)...)
+	state.Graphs = graphs
+	state.NativeExecutionSpec, err = clientadapter.NativeExecutionSpec(view, routes, graphs, state.Preference.PolicyID)
+	if err != nil {
+		return clientadapter.Activation{}, err
+	}
+	_, targets := windowsProbeTargets(view, state.Preference.PolicyID)
+	return clientadapter.Activate(ctx, selector, routes, state, targets, time.Now, clientmodel.SelectorScopes(view)...)
 }
 
 func windowsNetworkGeneration() (string, error) {
@@ -346,38 +336,55 @@ func windowsNetworkGeneration() (string, error) {
 }
 
 func windowsDeviceReport(lkg *control.DeviceViewEnvelope, activation clientadapter.Activation,
-	components []control.ComponentReadback, reportedAt time.Time) (control.DeviceReport, error) {
-	preference, err := clientadapter.ReportedPolicyChoices(lkg.View, activation.State.Preference)
+	components []control.ComponentReadback, reportedAt time.Time, runtime ...control.RuntimeReadback) (control.DeviceReport, error) {
+	preference, err := clientadapter.ReportedPolicyID(lkg.View, activation.State.Preference)
 	if err != nil {
 		return control.DeviceReport{}, err
 	}
-	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
-	report := control.DeviceReport{LocalNetworks: clientadapter.UnderlayNetworkReport(connected), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, ReportedAt: reportedAt.UnixMilli(),
-		PolicyChoices: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: append([]control.ComponentReadback{}, components...),
+	connected, _ := clientadapter.ConnectedIPv4Prefixes()
+	lanChoices, err := clientadapter.ReportedLANPolicyIDs(lkg.View, activation.State.Preference)
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
+	report := control.DeviceReport{LANPolicyIDs: lanChoices, LocalNetworks: clientadapter.UnderlayNetworkReport(connected), ViewDigest: lkg.ViewDigest, NetworkGeneration: activation.State.NetworkGeneration, ReportedAt: reportedAt.UnixMilli(),
+		PolicyID: preference, Selections: []control.ReportSelection{}, Observations: []control.Observation{}, Components: append([]control.ComponentReadback{}, components...),
 		Runtime: control.RuntimeReadback{State: "running", AppliedViewDigest: lkg.ViewDigest}}
+	if len(runtime) != 0 {
+		report.Runtime = runtime[0]
+	}
+	execution, err := control.ProjectDeviceCandidates(lkg.View, clientmodel.MeasurementPolicies(activation.State.Preference))
+	if err != nil {
+		return control.DeviceReport{}, err
+	}
 	routes := map[string]control.RouteCandidate{}
-	for _, route := range lkg.View.Routes {
+	for _, route := range execution.Routes {
 		routes[route.ID] = route
 	}
-	for _, selection := range activation.Selections {
-		route, ok := routes[selection.CandidateID]
-		if !ok || route.Scope != selection.Scope {
-			return control.DeviceReport{}, errors.New("selection is not in the accepted View")
+	complete := report.Runtime.State == "running" && report.Runtime.AppliedViewDigest == lkg.ViewDigest
+	if complete {
+		report.Selections, err = clientadapter.ReportSelections(lkg.View, activation.State.Preference, activation.Selections)
+		if err != nil {
+			return control.DeviceReport{}, err
 		}
-		report.Selections = append(report.Selections, control.ReportSelection{ServiceID: route.ServiceID, PolicyID: route.PolicyID, CandidateID: route.ID})
 	}
-	sort.Slice(report.Selections, func(i, j int) bool { return report.Selections[i].ServiceID < report.Selections[j].ServiceID })
+
 	for _, observation := range activation.State.ResourceObservations {
+		if !report.Runtime.HasCurrentPermissions(lkg.ViewDigest) {
+			break
+		}
 		if observation.Validate() != nil || observation.Level != "resource" || observation.NetworkGeneration != report.NetworkGeneration {
 			return control.DeviceReport{}, errors.New("resource sample does not belong to this Windows runtime")
 		}
 		report.Observations = append(report.Observations, observation)
 	}
 	for _, observation := range activation.State.Observations {
-		service, targets := windowsProbeTargets(lkg.View, observation.Scope)
-		target := observation.Target
+		if !complete {
+			break
+		}
 		route, ok := routes[observation.CandidateID]
-		if target == "" || !slices.Contains(targets, target) || observation.Action != "https_request" || !ok || route.ServiceID != service || route.Scope != observation.Scope || observation.NetworkGeneration != report.NetworkGeneration {
+		service, targets := windowsProbeTargets(lkg.View, route.PolicyID)
+		target := observation.Target
+		if target == "" || !slices.Contains(targets, target) || observation.Action != "https_request" || !ok || route.ServiceID != service || observation.Scope != control.AccessSelectorScope || observation.NetworkGeneration != report.NetworkGeneration {
 			continue
 		}
 		observed, err := time.Parse(time.RFC3339, observation.ObservedAt)
@@ -430,21 +437,8 @@ func windowsActivationApplied(activation clientadapter.Activation, routes []clie
 	return true
 }
 
-func windowsRuntimeFactsDigest(activation clientadapter.Activation, components []control.ComponentReadback) string {
-	body, _ := json.Marshal(struct {
-		Preference           clientmodel.Preference          `json:"preference"`
-		Selections           []clientadapter.SelectionStatus `json:"selections"`
-		BlockedScopes        []string                        `json:"blocked_scopes,omitempty"`
-		Observations         []clientmodel.Observation       `json:"observations"`
-		ResourceObservations []control.Observation           `json:"resource_observations,omitempty"`
-		Components           []control.ComponentReadback     `json:"components"`
-	}{Preference: activation.State.Preference, Selections: activation.Selections, BlockedScopes: activation.BlockedScopes, Observations: activation.State.Observations,
-		ResourceObservations: activation.State.ResourceObservations, Components: components})
-	digest := sha256.Sum256(body)
-	return hex.EncodeToString(digest[:])
-}
-
 var errWindowsRuntimeInputsChanged = errors.New("Windows runtime inputs have changed")
+var errWindowsConfigurationPending = errors.New("accepted Windows configuration is awaiting runtime application")
 
 func refreshWindowsCertifiedView(ctx context.Context, store *deviceclient.ProtectedStore,
 	fetch func(context.Context, deviceclient.IdentityStore) (control.DeviceViewEnvelope, error)) (bool, error) {
@@ -460,24 +454,44 @@ func refreshWindowsCertifiedView(ctx context.Context, store *deviceclient.Protec
 	if changed() {
 		return true, nil
 	}
-	refreshContext, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	envelope, err := fetch(refreshContext, store)
-	if reloaded, readErr := store.Reload(); readErr != nil {
+	previous := store.LKG()
+	// AwaitConfiguration already bounds the private request and closes its
+	// sockets on cancellation. Do not truncate its healthy long-poll wait.
+	envelope, err := fetch(ctx, store)
+	if _, readErr := store.Reload(); readErr != nil {
 		return false, readErr
-	} else if reloaded {
-		return changed(), nil
+	}
+	current = store.LKG()
+	if previous != nil && current != nil && current.Signature != previous.Signature && err == nil {
+		// Only a newer accepted envelope can supersede this response. A report
+		// reservation or a UI Preference write must not discard fresh authority.
+		if control.CheckDeviceViewAdvance(envelope, *current, current.FactFrontier) != nil {
+			return changed(), nil
+		}
 	}
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
 	if err != nil {
 		log.Printf("private Windows view refresh unavailable; keeping certified LKG: %v", err)
-		return false, nil
+		// Reload may have accepted another handle's revocation while this
+		// request failed. Its runtime cancellation cannot depend on network success.
+		return changed(), nil
 	}
 	// Every authenticated envelope advances the durable proof/frontier. Only
 	// changed execution inputs stop the current data-plane generation.
 	if err = store.SaveLKG(envelope); err != nil {
+		// Another protected handle may advance authority after the read above.
+		// Its accepted progress wins over this stale response, without turning
+		// ordinary GUI/report concurrency into a data-plane restart.
+		if _, reloadErr := store.Reload(); reloadErr != nil {
+			return false, fmt.Errorf("accept certified Windows configuration: %w", errors.Join(err, reloadErr))
+		}
+		accepted := store.LKG()
+		if current != nil && accepted != nil && accepted.Signature != current.Signature &&
+			control.CheckDeviceViewAdvance(envelope, *accepted, accepted.FactFrontier) != nil {
+			return changed(), nil
+		}
 		return false, fmt.Errorf("accept certified Windows configuration: %w", err)
 	}
 	return changed(), nil
@@ -491,14 +505,16 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		return fmt.Errorf("remove stale Windows runtime status: %w", err)
 	}
 	defer os.Remove(statusPath) //nolint:errcheck
-	if _, err := refreshWindowsCertifiedView(ctx, store, fetch); err != nil {
+	// The authenticated LKG is sufficient for local startup. A slow/offline
+	// control must not precede runtime application with a blocking fetch.
+	if _, err := store.Reload(); err != nil {
 		return err
 	}
 	lkg := store.LKG()
-	if lkg == nil || lkg.View.RuntimeProfile == nil {
+	if lkg == nil || !control.HasRuntime(lkg.View) {
 		return errors.New("Windows profile lost its certified LKG")
 	}
-	if _, _, err := clientadapter.AccessProjection(lkg.View); err != nil {
+	if _, _, err := clientadapter.AccessProjection(lkg.View, clientmodel.MeasurementPolicies(store.Preference())); err != nil {
 		return err
 	}
 	// Authentication is already durable. Component verification and runtime
@@ -520,15 +536,8 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if _, err := rand.Read(localSecret); err != nil {
 		return err
 	}
-	source, err := clientadapter.AccessRuntimeSource(lkg.View, hex.EncodeToString(localSecret))
+	selectorSecret := hex.EncodeToString(localSecret)
 	clear(localSecret)
-	if err != nil {
-		return err
-	}
-	source, err = clientadapter.WithBlockedSelectors(source)
-	if err != nil {
-		return err
-	}
 	websiteGeneration := ""
 	if len(lkg.View.WebEndpoints) > 0 {
 		websiteGeneration, err = windowsNetworkGeneration()
@@ -544,10 +553,21 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if err != nil {
 		return err
 	}
-	config, err := clientruntime.DeriveWindowsRuntimeConfig([]byte(source), profile, lkg.View.DNSServers, lkg.View.DNSRecords, website)
+	connected, err := clientadapter.ConnectedIPv4Prefixes()
 	if err != nil {
 		return err
 	}
+	projection, err := clientruntime.DeriveWindowsRuntimeConfig(lkg.View, profile, selectorSecret, website, connected)
+	if err != nil {
+		return err
+	}
+	defer projection.Clear()
+	config := projection.Bytes()
+	nativeProjection, err := projection.NativeResourceBase()
+	if err != nil {
+		return err
+	}
+	defer nativeProjection.Clear()
 	if website.Port != 0 {
 		current, err := windowsNetworkGeneration()
 		if err != nil {
@@ -557,13 +577,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 			return errWindowsRuntimeInputsChanged
 		}
 	}
-	connected, _ := clientadapter.ConnectedIPv4Prefixes(lkg.View.Resources...)
-	bounded, err := clientadapter.WithLocalNetworkBoundary(string(config), connected)
-	if err != nil {
-		return err
-	}
-	config = []byte(bounded)
-	defer clear(config)
+	defer func() { clear(config) }()
 	generationContext, stopGeneration := context.WithCancel(ctx)
 	defer stopGeneration()
 	ctx = generationContext
@@ -574,8 +588,8 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		if filepath.Base(filepath.Dir(root)) == "profiles" && validConnectionProfileID(filepath.Base(root)) {
 			base = filepath.Dir(filepath.Dir(root))
 		}
-		planeDone <- clientruntime.RunWindowsDataPlaneProfileStarted(ctx, components.SingBox, config,
-			filepath.Join(root, "runtime"), filepath.Join(base, "dataplane-cache"), profile, func(pid int) { started <- pid })
+		planeDone <- clientruntime.RunWindowsDataPlane(ctx, components.SingBox, nativeProjection,
+			filepath.Join(root, "runtime"), filepath.Join(base, "dataplane-cache"), func(pid int) { started <- pid })
 	}()
 	var dataPlanePID int
 	select {
@@ -600,16 +614,29 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if err != nil {
 		return err
 	}
-	routes, _, err := clientadapter.AccessProjection(lkg.View)
+	routes, _, err := clientadapter.AccessProjection(lkg.View, clientmodel.MeasurementPolicies(store.Preference()))
 	if err != nil {
 		return err
 	}
-	scopes, _, err := clientadapter.Scopes(routes)
+	scopes, _, err := clientadapter.Scopes(routes, clientmodel.SelectorScopes(lkg.View)...)
 	if err != nil {
 		return err
 	}
 	if err := clientadapter.WaitSelector(ctx, selector, scopes); err != nil {
 		return err
+	}
+	authorization, err := selector.ApplyRuntimeAuthorization(ctx, string(config), string(config), string(config))
+	if err != nil || !authorization.Supported || !authorization.PermissionCurrent {
+		return errors.Join(err, errors.New("Windows runtime authorization was not confirmed"))
+	}
+	resourcesReady, resourceErr := selector.ReconcileRuntimeResources(ctx, string(config))
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	resourcesReady = resourcesReady && resourceErr == nil
+	permissionCurrent := authorization.PermissionCurrent
+	readback := func() control.RuntimeReadback {
+		return windowsResourceReadback(lkg.ViewDigest, permissionCurrent, resourcesReady)
 	}
 	generation, err := windowsNetworkGeneration()
 	if err != nil {
@@ -619,7 +646,7 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	// observation baseline here; comparing it to pre-capture interfaces would
 	// mistake our own successful startup for an underlay change forever.
 	// The resolved website input was checked immediately before capture.
-	resourceSamples, cacheErr := readWindowsResourceCache(root, *lkg, generation)
+	resourceSamples, cacheErr := readWindowsResourceCache(root, *lkg, generation, clientmodel.MeasurementPolicies(store.Preference()))
 	if cacheErr != nil {
 		log.Printf("first-hop observation cache unavailable; resource samples remain unknown: %v", cacheErr)
 	}
@@ -629,59 +656,237 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if !windowsActivationApplied(activation, routes, clientmodel.ServiceScopes(lkg.View)...) {
+	if errors.Is(activationErr, clientadapter.ErrResourcesNotReady) {
+		resourcesReady = false
+	} else if !windowsActivationApplied(activation, routes, clientmodel.SelectorScopes(lkg.View)...) {
 		return activationErr
 	}
-	if err := writeWindowsRuntimeStatus(root, lkg, activation, false, selectorReadAt); err != nil {
+	if err := writeWindowsRuntimeStatus(root, lkg, activation, false, selectorReadAt, readback()); err != nil {
 		return err
 	}
-	initiallySelected := windowsSelectedCandidates(activation)
 	diagnosticContext, err := clientadapter.WithNativeDiagnostic(ctx, string(config), nil)
 	if err != nil {
 		return err
 	}
-	refreshWindowsLinkObservations(ctx, store, lkg, &activation.State)
-	activation, activationErr = activateWindowsServices(diagnosticContext, selector, lkg.View, routes, activation.State, true)
-	selectorReadAt = time.Now()
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if !windowsActivationApplied(activation, routes, clientmodel.ServiceScopes(lkg.View)...) {
-		return activationErr
-	}
+	var measurements *control.DeviceLinkObservations
 
-	observeWindowsFirstHops(diagnosticContext, root, *lkg, &activation, initiallySelected)
-	if ctx.Err() != nil {
-		return ctx.Err()
+	measureFirstHops := func(workContext context.Context, active *clientadapter.Activation, initial []string) error {
+		ctx, diagnosticContext := workContext, workContext
+		preference, network := active.State.Preference, active.State.NetworkGeneration
+		_, targets := windowsProbeTargets(lkg.View, preference.PolicyID)
+		progress := func() error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if _, err := store.Reload(); err != nil {
+				return err
+			}
+			generation, err := windowsNetworkGeneration()
+			if err != nil {
+				return err
+			}
+			current := store.LKG()
+			if current == nil || current.ViewDigest != lkg.ViewDigest || !store.Preference().Equal(preference) || generation != network {
+				return clientadapter.ErrSelectionSuperseded
+			}
+			// Reuse the graph already built by activation for this View.
+			next, err := clientadapter.Activate(diagnosticContext, selector, routes, active.State, targets, time.Now, clientmodel.SelectorScopes(lkg.View)...)
+			if errors.Is(err, clientadapter.ErrResourcesNotReady) {
+				resourcesReady = false
+				return writeWindowsRuntimeStatus(root, lkg, *active, false, selectorReadAt, readback())
+			}
+			if !windowsActivationApplied(next, routes, clientmodel.SelectorScopes(lkg.View)...) {
+				return errors.Join(err, errors.New("Windows progressive selector application was not confirmed"))
+			}
+			if err != nil && !errors.Is(err, clientmodel.ErrNoUsableCandidate) {
+				return err
+			}
+			*active = next
+			selectorReadAt = time.Now()
+			if !resourcesReady {
+				ready, resourceErr := selector.ReconcileRuntimeResources(ctx, string(config))
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				resourcesReady = ready && resourceErr == nil
+			}
+			return writeWindowsRuntimeStatus(root, lkg, *active, false, selectorReadAt, readback())
+		}
+		recovery := &clientadapter.TCPRecoveryInput{Selector: selector, Routes: routes, State: active.State}
+		recovery.Progress = func(batch []clientmodel.Observation) error {
+			if _, err := store.Reload(); err != nil {
+				return err
+			}
+			currentGeneration, err := windowsNetworkGeneration()
+			if err != nil {
+				return err
+			}
+			current := store.LKG()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if current == nil || current.ViewDigest != lkg.ViewDigest || currentGeneration != network || !store.Preference().Equal(preference) {
+				return clientadapter.ErrSelectionSuperseded
+			}
+			active.State.NativeObservations, err = clientadapter.AcceptTCPRecovery(ctx, selector, recovery.State, active.State, routes, batch, time.Now)
+			if err != nil {
+				return err
+			}
+			return progress()
+		}
+		err := observeWindowsFirstHops(diagnosticContext, root, *lkg, active, initial, progress, recovery)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !errors.Is(err, clientadapter.ErrSelectionSuperseded) {
+			return err
+		}
+		// A UI choice can replace the preference during sampling. Discard the
+		// old work and reconcile immediately without restarting the data plane.
+		current := store.LKG()
+		if current == nil || current.ViewDigest != lkg.ViewDigest {
+			return errWindowsConfigurationPending
+		}
+		generation, err := windowsNetworkGeneration()
+		if err != nil {
+			return err
+		}
+		if generation != network {
+			if website.Port != 0 || windowsHasLocalNetwork(lkg.View) {
+				return errWindowsRuntimeInputsChanged
+			}
+			active.State.NetworkGeneration = generation
+			active.State.Observations, active.State.ResourceObservations = nil, nil
+			active.State.SelectionMemory = nil
+		}
+		active.State.Preference = store.Preference()
+		routes, err = clientadapter.AccessCandidates(lkg.View, clientmodel.MeasurementPolicies(active.State.Preference))
+		if err != nil {
+			return err
+		}
+		next, err := activateWindowsServices(diagnosticContext, selector, lkg.View, routes, active.State, false)
+		if errors.Is(err, clientadapter.ErrResourcesNotReady) {
+			resourcesReady = false
+			return writeWindowsRuntimeStatus(root, lkg, *active, false, selectorReadAt, readback())
+		}
+		if !windowsActivationApplied(next, routes, clientmodel.SelectorScopes(lkg.View)...) {
+			return errors.Join(err, errors.New("Windows replacement selection was not confirmed"))
+		}
+		*active = next
+		selectorReadAt = time.Now()
+		return writeWindowsRuntimeStatus(root, lkg, *active, false, selectorReadAt, readback())
 	}
+	// Only this goroutine applies runtime changes. Private workers accept
+	// authentication and send temporary notifications/snapshots, never selectors.
+	var workMu sync.Mutex
+	var cancelWork, cancelReport context.CancelFunc
+	interruptWork := func() {
+		workMu.Lock()
+		defer workMu.Unlock()
+		if cancelWork != nil {
+			cancelWork()
+		}
+		if cancelReport != nil {
+			cancelReport()
+		}
+	}
+	wake := make(chan struct{}, 1)
+	requestWork := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	privateContext, stopPrivate := context.WithCancel(diagnosticContext)
+	configurationDone := make(chan error, 1)
+	reportDone := make(chan struct{})
+	reportRequests := make(chan *windowsReportAttempt, 1)
+	reportResults := make(chan windowsReportResult, 1)
+	go func() {
+		configurationDone <- followWindowsConfiguration(privateContext, 5*time.Second, func(request context.Context) (bool, error) {
+			before := store.LKG()
+			reachable := true
+			changed, err := refreshWindowsCertifiedView(request, store, func(attempt context.Context, identity deviceclient.IdentityStore) (control.DeviceViewEnvelope, error) {
+				value, err := fetch(attempt, identity)
+				reachable = err == nil
+				return value, err
+			})
+			after := store.LKG()
+			if changed || err != nil {
+				interruptWork()
+			}
+			if changed || before != nil && after != nil && before.Signature != after.Signature {
+				requestWork()
+			}
+			return reachable, err
+		})
+	}()
+	go func() {
+		defer close(reportDone)
+		uploadWindowsReports(privateContext, reportRequests, reportResults, func(reportContext context.Context, report control.DeviceReport) error {
+			attempt, cancel := context.WithTimeout(reportContext, 20*time.Second)
+			workMu.Lock()
+			cancelReport = cancel
+			workMu.Unlock()
+			defer func() {
+				cancel()
+				workMu.Lock()
+				cancelReport = nil
+				workMu.Unlock()
+			}()
+			current := store.LKG()
+			if current == nil || current.ViewDigest != report.ViewDigest {
+				return errWindowsConfigurationPending
+			}
+			report.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(attempt, current.View, time.Now)
+			return deviceclient.Report(attempt, store, report)
+		})
+	}()
+	configurationStopped := false
+	defer func() {
+		stopPrivate()
+		interruptWork()
+		if !configurationStopped {
+			<-configurationDone
+		}
+		<-reportDone
+	}()
+
 	componentReadbacks, componentErr := windowsComponentReadbacks(dataPlanePID, components, heldComponents)
 	if componentErr != nil {
 		log.Printf("actual Windows component readback incomplete: %v", componentErr)
 	}
-	report, err := windowsDeviceReport(lkg, activation, componentReadbacks, time.Now())
-	if err != nil {
-		return err
-	}
-	reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
-	report.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(diagnosticContext, lkg.View, time.Now)
-	reportErr := deviceclient.Report(reportContext, store, report)
-	reportCancel()
+	var pendingReport *windowsReportAttempt
 	lastReportAt := time.Time{}
-	if reportErr == nil {
-		lastReportAt = time.Now()
+	lastFacts, lastReportedView := "", ""
+	queueReport := func() error {
+		now := time.Now()
+		facts := windowsRuntimeFactsDigest(activation, componentReadbacks, readback())
+		if facts == lastFacts && lastReportedView == lkg.ViewDigest && now.Sub(lastReportAt) < 60*time.Second ||
+			windowsReportMatches(pendingReport, lkg.ViewDigest, facts) {
+			return nil
+		}
+		report, err := windowsDeviceReport(lkg, activation, componentReadbacks, now, readback())
+		if err != nil {
+			return err
+		}
+		pendingReport = &windowsReportAttempt{report: report, facts: facts}
+		offerLatestWindows(reportRequests, pendingReport)
+		return nil
 	}
-	lastFacts := windowsRuntimeFactsDigest(activation, componentReadbacks)
-	if err := writeWindowsRuntimeStatus(root, lkg, activation, reportErr == nil, selectorReadAt); err != nil {
+	// Publish the locally applied selector before any full sampling round or
+	// report acknowledgement. Business success remains a separate observation.
+	if err := queueReport(); err != nil {
 		return err
-	}
-	if reportErr != nil {
-		log.Printf("private signed report unavailable: %v", reportErr)
 	}
 	if activationErr != nil {
 		log.Printf("Windows candidate activation completed with unavailable outcome: %v", activationErr)
 	}
 	refresh := time.NewTicker(30 * time.Second)
 	defer refresh.Stop()
+	nativeRefresh := time.NewTicker(5 * time.Second)
+	defer nativeRefresh.Stop()
+	requestWork()
 	for {
 		select {
 		case <-ctx.Done():
@@ -690,76 +895,265 @@ func runWindowsGeneration(ctx context.Context, root string, store *deviceclient.
 		case err := <-planeDone:
 			planeStopped = true
 			return err
+		case err := <-configurationDone:
+			configurationStopped = true
+			return err
+		case result := <-reportResults:
+			if result.attempt != pendingReport {
+				continue
+			}
+			pendingReport = nil
+			if result.err != nil {
+				if !errors.Is(result.err, context.Canceled) && !errors.Is(result.err, errWindowsConfigurationPending) {
+					log.Printf("private signed Windows report unavailable: %v", result.err)
+				}
+				continue
+			}
+			if windowsReportMatches(result.attempt, lkg.ViewDigest, windowsRuntimeFactsDigest(activation, componentReadbacks, readback())) {
+				lastReportAt, lastFacts, lastReportedView = time.Now(), result.attempt.facts, result.attempt.report.ViewDigest
+				if err := writeWindowsRuntimeStatus(root, lkg, activation, true, selectorReadAt, readback()); err != nil {
+					return err
+				}
+			}
+			continue
 		case <-refresh.C:
-			changed, err := refreshWindowsCertifiedView(ctx, store, fetch)
+		case <-nativeRefresh.C:
+			if !resourcesReady {
+				requestWork()
+				continue
+			}
+			current := store.LKG()
+			generation, genErr := windowsNetworkGeneration()
+			if genErr != nil {
+				return genErr
+			}
+			if current == nil || current.ViewDigest != lkg.ViewDigest || generation != activation.State.NetworkGeneration || !store.Preference().Equal(activation.State.Preference) {
+				requestWork()
+				continue
+			}
+			workContext, cancel := context.WithCancel(diagnosticContext)
+			workMu.Lock()
+			cancelWork = cancel
+			workMu.Unlock()
+			if current := store.LKG(); current == nil || current.ViewDigest != lkg.ViewDigest {
+				cancel()
+			}
+			refreshed, needsRouting, refreshErr := clientadapter.RefreshNativeObservations(workContext, selector, routes, activation.State, time.Now)
+			next, nextErr := activation, refreshErr
+			if refreshErr == nil && needsRouting {
+				_, targets := windowsProbeTargets(lkg.View, activation.State.Preference.PolicyID)
+				next, nextErr = clientadapter.Activate(workContext, selector, routes, refreshed, targets, time.Now, clientmodel.SelectorScopes(lkg.View)...)
+			} else {
+				next.State = refreshed
+			}
+			cancel()
+			workMu.Lock()
+			cancelWork = nil
+			workMu.Unlock()
+			if errors.Is(nextErr, clientadapter.ErrResourcesNotReady) {
+				resourcesReady = false
+				requestWork()
+				continue
+			}
+			if nextErr != nil && !errors.Is(nextErr, clientmodel.ErrNoUsableCandidate) {
+				if ctx.Err() != nil {
+					continue
+				}
+				continue
+			}
+			if current := store.LKG(); current == nil || current.ViewDigest != lkg.ViewDigest {
+				continue
+			}
+			currentGeneration, generationErr := windowsNetworkGeneration()
+			if generationErr != nil {
+				return generationErr
+			}
+			if currentGeneration != generation || !store.Preference().Equal(next.State.Preference) {
+				continue
+			}
+			activation = next
+			if !needsRouting {
+				continue
+			}
+			selectorReadAt = time.Now()
+			if err := writeWindowsRuntimeStatus(root, lkg, activation, false, selectorReadAt, readback()); err != nil {
+				return err
+			}
+			continue
+		case <-wake:
+		}
+		if _, err := store.Reload(); err != nil {
+			return err
+		}
+		nextLKG := store.LKG()
+		if nextLKG == nil || !control.HasRuntime(nextLKG.View) {
+			return errWindowsRuntimeInputsChanged
+		}
+		changed := nextLKG.ViewDigest != lkg.ViewDigest
+		if changed {
+			permissionCurrent, resourcesReady = false, false
+			if !reflect.DeepEqual(lkg.View.WebEndpoints, nextLKG.View.WebEndpoints) {
+				return errWindowsRuntimeInputsChanged
+			}
+			source, err := clientadapter.AccessRuntimeSource(lkg.View, selectorSecret)
 			if err != nil {
 				return err
 			}
-			if changed {
+			source, err = clientadapter.WithBlockedSelectors(source)
+			if err != nil {
+				return err
+			}
+			nextSource, err := clientadapter.AccessRuntimeSource(nextLKG.View, selectorSecret)
+			if err != nil {
+				return err
+			}
+			nextSource, err = clientadapter.WithBlockedSelectors(nextSource)
+			if err != nil {
+				return err
+			}
+			application, err := selector.ApplyRuntimeAuthorization(ctx, source, nextSource, string(config))
+			if err != nil {
+				return err
+			}
+			if !application.Supported {
 				return errWindowsRuntimeInputsChanged
 			}
-			lkg = store.LKG()
-			now := time.Now()
-			nextGeneration, generationErr := windowsNetworkGeneration()
-			if generationErr != nil {
-				log.Printf("Windows network generation refresh unavailable: %v", generationErr)
-				continue
+			if !application.PermissionCurrent {
+				return errors.New("Windows accepted authorization was not confirmed")
+			}
+			permissionCurrent = true
+			// Keep the complete current source template in RAM. Only the
+			// constructor input given to the supervised child is stripped.
+			clear(config)
+			config = []byte(application.Config)
+			resourcesReady = false
+		}
+		lkg = nextLKG
+		workContext, workCancel := context.WithCancel(diagnosticContext)
+		workMu.Lock()
+		cancelWork = workCancel
+		workMu.Unlock()
+		// Close the accept-before-registration race as well as the normal
+		// registration-before-accept cancellation path.
+		if current := store.LKG(); current == nil || current.ViewDigest != lkg.ViewDigest {
+			workCancel()
+		}
+		workErr := func() error {
+			ready, resourceErr := selector.ReconcileRuntimeResources(workContext, string(config))
+			if workContext.Err() != nil {
+				return workContext.Err()
+			}
+			resourcesReady = ready && resourceErr == nil && windowsActivationApplied(activation, routes, clientmodel.SelectorScopes(lkg.View)...)
+			nextGeneration, err := windowsNetworkGeneration()
+			if err != nil {
+				log.Printf("Windows network generation refresh unavailable: %v", err)
+				return nil
 			}
 			nextState := activation.State
 			nextState.Preference = store.Preference()
+			selectionChanged := changed || !nextState.Preference.Equal(activation.State.Preference) || nextGeneration != nextState.NetworkGeneration
+			routes, err = clientadapter.AccessCandidates(lkg.View, clientmodel.MeasurementPolicies(nextState.Preference))
+			if err != nil {
+				return err
+			}
 			if nextGeneration != nextState.NetworkGeneration {
 				if website.Port != 0 || windowsHasLocalNetwork(lkg.View) {
 					return errWindowsRuntimeInputsChanged
 				}
 				nextState.NetworkGeneration = nextGeneration
-				nextState.Observations = nil
-				nextState.ResourceObservations = nil
-			}
-			refreshWindowsLinkObservations(ctx, store, lkg, &nextState)
-			next, nextErr := activateWindowsServices(diagnosticContext, selector, lkg.View, routes, nextState, true)
-			selectorReadAt = time.Now()
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if !windowsActivationApplied(next, routes, clientmodel.ServiceScopes(lkg.View)...) {
-				return fmt.Errorf("Windows selector application failed: %w", nextErr)
-			}
-			observeWindowsFirstHops(diagnosticContext, root, *lkg, &next, nil)
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			now = time.Now()
-			facts := windowsRuntimeFactsDigest(next, componentReadbacks)
-			if facts != lastFacts || now.Sub(lastReportAt) >= 60*time.Second {
-				nextReport, buildErr := windowsDeviceReport(lkg, next, componentReadbacks, now)
-				if buildErr != nil {
-					return buildErr
+				nextState.Observations, nextState.ResourceObservations = nil, nil
+				nextState.SelectionMemory = nil
+			} else if changed {
+				execution, err := control.ProjectDeviceCandidates(lkg.View, clientmodel.MeasurementPolicies(nextState.Preference))
+				if err != nil {
+					return err
 				}
-				reportContext, reportCancel := context.WithTimeout(ctx, 20*time.Second)
-				nextReport.WireGuardCounters, _ = clientadapter.ObserveWireGuardCounters(diagnosticContext, lkg.View, time.Now)
-				reportErr := deviceclient.Report(reportContext, store, nextReport)
-				reportCancel()
-				if reportErr != nil {
-					log.Printf("private signed report refresh unavailable: %v", reportErr)
+				probes, err := control.FirstHopProbes(execution)
+				if err != nil {
+					return err
+				}
+				nextState.ResourceObservations = clientadapter.RetainResourceObservations(probes, nextState.ResourceObservations, nextGeneration)
+			}
+			// Apply accepted authorization and UI choices before private sample
+			// retrieval. Neither retrieval nor a full probe round is an apply gate.
+			if selectionChanged || !resourcesReady {
+				next, nextErr := activateWindowsServices(workContext, selector, lkg.View, routes, nextState, false)
+				if workContext.Err() != nil {
+					return workContext.Err()
+				}
+				if errors.Is(nextErr, clientadapter.ErrResourcesNotReady) {
+					resourcesReady = false
+					activation = next
+				} else if !windowsActivationApplied(next, routes, clientmodel.SelectorScopes(lkg.View)...) {
+					return fmt.Errorf("Windows selector application failed: %w", nextErr)
 				} else {
-					lastReportAt, lastFacts = now, facts
+					activation = next
 				}
+				selectorReadAt = time.Now()
+				if err := writeWindowsRuntimeStatus(root, lkg, activation, false, selectorReadAt, readback()); err != nil {
+					return err
+				}
+			}
+			measurements = refreshWindowsLinkObservations(workContext, store, lkg, &activation.State, measurements)
+			if workContext.Err() != nil {
+				return workContext.Err()
+			}
+			next, nextErr := activateWindowsServices(workContext, selector, lkg.View, routes, activation.State, true)
+			if workContext.Err() != nil {
+				return workContext.Err()
+			}
+			if errors.Is(nextErr, clientadapter.ErrSelectionSuperseded) {
+				return nil
+			}
+			if errors.Is(nextErr, clientadapter.ErrResourcesNotReady) {
+				resourcesReady = false
+			} else if !windowsActivationApplied(next, routes, clientmodel.SelectorScopes(lkg.View)...) {
+				return fmt.Errorf("Windows sampled selector application failed: %w", nextErr)
 			}
 			activation = next
-			if writeErr := writeWindowsRuntimeStatus(root, lkg, activation, now.Sub(lastReportAt) < 60*time.Second, selectorReadAt); writeErr != nil {
-				return writeErr
+			selectorReadAt = time.Now()
+			if err := measureFirstHops(workContext, &activation, nil); err != nil {
+				return err
+			}
+			ready, resourceErr = selector.ReconcileRuntimeResources(workContext, string(config))
+			if workContext.Err() != nil {
+				return workContext.Err()
+			}
+			resourcesReady = ready && resourceErr == nil && windowsActivationApplied(activation, routes, clientmodel.SelectorScopes(lkg.View)...)
+			if err := queueReport(); err != nil {
+				return err
 			}
 			if nextErr != nil {
 				log.Printf("Windows candidate refresh completed with unavailable outcome: %v", nextErr)
 			}
+			return writeWindowsRuntimeStatus(root, lkg, activation, time.Since(lastReportAt) < 60*time.Second && lastReportedView == lkg.ViewDigest && lastFacts == windowsRuntimeFactsDigest(activation, componentReadbacks, readback()), selectorReadAt, readback())
+		}()
+		workCancel()
+		workMu.Lock()
+		cancelWork = nil
+		workMu.Unlock()
+		if errors.Is(workErr, errWindowsConfigurationPending) {
+			requestWork()
+			continue
+		}
+		if errors.Is(workErr, context.Canceled) && ctx.Err() == nil {
+			continue
+		}
+		if workErr != nil {
+			return workErr
 		}
 	}
 }
 
 func runWindowsCertifiedProfile(ctx context.Context, root string, store *deviceclient.ProtectedStore,
 	profile clientruntime.WindowsRuntimeProfile) error {
+	var round uint64
 	for {
-		err := runWindowsGeneration(ctx, root, store, profile, deviceclient.Fetch)
+		err := runWindowsGeneration(ctx, root, store, profile, func(ctx context.Context, identity deviceclient.IdentityStore) (control.DeviceViewEnvelope, error) {
+			value, err := deviceclient.AwaitConfiguration(ctx, identity, round)
+			round++
+			return value, err
+		})
 		if ctx.Err() != nil {
 			return err
 		}
