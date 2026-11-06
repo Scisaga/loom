@@ -3,6 +3,7 @@
 package main
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 
@@ -63,6 +64,7 @@ func TestGUIMisakaServicePolicyNavigationRequiresConfirmation(t *testing.T) {
 	if len(app.routeVisible) != 3 {
 		t.Fatal("service policies missing from native picker")
 	}
+	before := child.snapshot().routeOptions
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetCurSel, 1, 0)
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRoute|portableCBNSelChange<<16, app.controls.routeCombo)
 	app.cancelMisakaRoutePicker()
@@ -73,7 +75,7 @@ func TestGUIMisakaServicePolicyNavigationRequiresConfirmation(t *testing.T) {
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRoute|portableCBNSelEndOK<<16, app.controls.routeCombo)
 	finishMisakaRouteTestRequest(t, app, m)
 	snapshot := child.snapshot()
-	if snapshot.routeSelected != 1 || snapshot.routeOptions[1].Preference.PolicyID != "demo-unchanged-policy" {
-		t.Fatal("Service choice changed another Service")
+	if snapshot.routeSelected != 1 || snapshot.routeOptions[1].Preference.PolicyID != "demo-policy-b" || !reflect.DeepEqual(snapshot.routeOptions, before) {
+		t.Fatal("confirmed Internet Policy was not selected or changed the available choices")
 	}
 }

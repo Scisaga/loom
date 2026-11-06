@@ -97,7 +97,9 @@ root=os.environ['DEMO_RECOVERY_ROOT'];command=sys.argv[-1]
 open(root+'/ssh-args.json','w').write(json.dumps(sys.argv))
 def substitute(text):
  for a,b in [('/usr/local/lib/loom-client/current/loom',root+'/bin/loom'),('/var/lib/loom-device/state.json',root+'/state/state.json'),('/run/loom-client/config.json',root+'/run/config.json'),('/sys/fs/cgroup',root+'/cgroup'),('/proc',root+'/proc')]:text=text.replace(a,b)
- return text.replace('s.st_uid!=0','s.st_uid!=os.geteuid()')
+ # The synthetic target's protected files and parent directories belong to
+ # the invoking test user, which represents root on the target.
+ return text.replace('.st_uid!=0','.st_uid!=os.geteuid()')
 os.environ['SSH_CONNECTION']='192.0.2.50 50000 192.0.2.1 2222'
 if 'sh -s' in command:
  r=subprocess.run(['sh','-c',command],input=substitute(sys.stdin.read()).encode());sys.exit(r.returncode)

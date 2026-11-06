@@ -36,7 +36,7 @@ func TestTransportReplacementWithNativeDPAPI(t *testing.T) {
 				t.Fatal(err)
 			}
 			loaded, err := LoadProtected(path, protector)
-			if err != nil || !fixedIdentityEqual(loaded.state, store.state) || loaded.state.HighWater[0].Sequence != 8 || len(loaded.LKG().View.Routes) != 0 {
+			if err != nil || !fixedIdentityEqual(loaded.state, store.state) || loaded.state.HighWater[0].Sequence != 8 || len(testDeviceExecution(loaded.LKG().View).Routes) != 0 {
 				t.Fatal("native DPAPI migration lost identity, floor or revocation", err)
 			}
 			before, err := clientsecret.ReadProtected(evidence, protectedStatePurpose, protector)

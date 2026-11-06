@@ -148,6 +148,14 @@ func testNativeMixedTwoHopConnectWaitsForTarget(t *testing.T, finalTransport str
 	if err := waitSelector(ctx, selector, []string{"access"}); err != nil {
 		t.Fatal(err)
 	}
+	// Match the normal supervisor's permission/description preparation before
+	// selecting a path. A successful CAS does not install missing descriptors.
+	if err := selector.ApplyRuntimePermissions(ctx, sourceConfig); err != nil {
+		t.Fatal("current native permissions were not confirmed", err)
+	}
+	if ready, err := selector.ReconcileRuntimeResources(ctx, sourceConfig); err != nil || !ready {
+		t.Fatal("current native resource descriptions were not confirmed", err)
+	}
 	execution, err := control.ProjectDeviceCandidates(source, []string{"demo-policy"})
 	if err != nil || len(execution.Routes) != 2 {
 		t.Fatal("expected exactly two authorized first-hop transports", err)
@@ -358,8 +366,14 @@ func startNativeTCPFixtureNode(t *testing.T, ctx context.Context, p control.Proj
 	}
 	root := t.TempDir()
 	path := filepath.Join(root, "config.json")
-	if err := writeConfig(path, config); err != nil {
-		t.Fatal(err)
+	if exposeAPI {
+		if err := writeNativeResourceConfig(path, config); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := writeConfig(path, config); err != nil {
+			t.Fatal(err)
+		}
 	}
 	log, err := os.OpenFile(filepath.Join(root, "runtime.log"), os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {

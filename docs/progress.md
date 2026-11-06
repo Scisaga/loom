@@ -143,6 +143,53 @@ Android 当前源 `.27` 双 ABI AAR 重建、强制重跑的 88 项 JVM 测试�
 宿主 TUN、实体机与生产多中继验收仍不由本地检查抵扣。本节验证阶段尚未提交；后续提交推送
 按操作者新指令处理，未执行 release 签名、发布、部署、生产迁移或宿主网络配置变更。
 
+### 提交后的平台与隔离业务续验
+
+操作者要求提交推送全部代码后继续推进。提交 `c52fe299e30b5cb8da30c19663d9b1f990c13363`
+已推送至 `origin/main`，远端 ref 与本地提交逐字回读一致。该提交的
+[首次托管 CI](https://github.com/Scisaga/loom/actions/runs/42197289815) 中，新增原生 Job 实际通过；
+根普通／race 与 Windows Job 失败，不能把此前 Linux 本地检查称为已覆盖全部平台。Android
+独立工作流也在 SDK 初始化失败。原日志保留在 `out/current-review-postpush/`。
+
+Android 初始化显式仅请求仍受支持的 platform-tools，API／build-tools／NDK 固定输入保持；
+许可证继续由原 setup action 处理，去掉重复的手工管道。相同 SDK 包集合本地实测通过。
+Linux 临时托管 runner 的根普通／race 改以 root 身份和受保护磁盘 TMPDIR 执行原完整套件，
+保持生产密钥的 root-owned 保护；非托管 runner 或显式原生业务 opt-in 输入提前拒绝，默认
+TUN 测试仍自行隔离。vet／build 使用同一缓存身份，不全盘改缓存 owner。deployhost 模拟目标
+补齐父目录 owner 的映射，仅测试夹具变化。
+
+传输目录测试在不受保护的祖先下，实际在创建 capture 前被拒绝，替换回调未执行；这不是删除
+替换目录的生产缺陷。受保护磁盘下原清理逻辑正确保留 canary。测试现明确断言已到达替换点，
+并覆盖不受保护祖先在读取输入前拒绝；生产清理未改，两种前提的原复现日志均保留。
+
+Windows 测试从当前 View／Preference 派生候选，不恢复 View.Routes 或按 Service 同时选择。
+当前平台的加入 fixture 与正式入口一致；Linux 下载用例按其唯一正式入口和
+[私有签名包交付契约](core/current-contract.md#私有设备的精确签名包交付)完整移到 Linux 测试文件，
+通用 I/O 期限用例仍跨平台，原样本／断言未减少。Linux 明文证据的 POSIX 权限断言不冒充
+Windows ACL／DPAPI；Windows 真实保护由原生 DPAPI 用例验证。
+
+同机 Windows VM 的七个 CI 包均原生退出 0，共 577 个 PASS 事件，无失败；12 个既有显式
+opt-in 用例未执行，不能抵扣真实加入、数据面／TUN、跨账号或视觉终验。七包 ARM64 编译及
+Windows cross-vet 通过，不冒称 ARM64 原生执行。完整结果和 skip 名称在
+`out/current-review-postpush/windows/native-summary.json`；原件在
+`deploy/evidence/windows-vm/demo-postpush-policy-final-20261106/`。VM 正常关闭至 inactive，
+原 SID 保持、测试进程及本轮 RDP／Xvfb 清理完成，未放宽认证或改密码／网络。
+
+显式两跳原生用例最初在 CAS 成功后仍报 sender preparation pending；实际资源池为空。
+该旧夹具绕过了当前正式准备链，现仅将其 API owner 接入
+`writeNativeResourceConfig → ApplyRuntimePermissions → ReconcileRuntimeResources → 原完整 CAS`。
+无 overlay 的当前源码已通过首跳 WG／Hy2 与后段 WG／Hy2 四组合，以及三个正式 Run 的
+故障切换、WG／Hy2 后台恢复与旧 TCP 保持。每个顶层用例使用独立 user／net／mount namespace，
+只有 loopback 且无外部路由；实际对象与说明摘要匹配，进程正常退出无残留，宿主对象排除自然
+expires 倒计时后保持。全部失败、诊断与最终证据保存在
+`deploy/evidence/2026-11-06-native-business-c52fe299/run-w6nkgz3x/`。
+
+本批修正的根 build／test／race／vet、18 项脚本测试及仓库安全检查已通过，日志及命令在
+`out/current-review-postpush/root-check-summary.json`。托管工作流结论须按修正提交的实际
+run 回读，不由这些本地结果推定。四种两跳组合不等于真实 RTT 驱动的同下一跳 Forward
+资源优选，也不覆盖多 forward 节点链、物理 Android／ARM64 或生产迁移。未做生产签名、
+发布、部署、路由器或宿主网络配置变更。
+
 ## 操作者指定的端口占用与可用范围修正
 
 2026-11-04，操作者确认一台节点的指定端口已由其他程序使用，并重申原先提供的完整可用范围。

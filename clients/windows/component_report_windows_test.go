@@ -118,9 +118,9 @@ func TestWindowsComponentReadbacksMeasureRunningFilesWithoutExpectations(t *test
 func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *testing.T) {
 	invite, envelope := windowsFixture(t)
 	public := invite.ControlProof.Genesis.Payload.(control.Genesis).ControlConfig.Members[0].PublicKey
-	lkg := envelope(public, 7)
-	lkg.View.DNSServers = []string{"192.0.2.53"}
-	lkg.View.Services[0].ProbeURLs = []string{"https://demo.example/"}
+	lkg := envelope(public, 7, func(view *control.DeviceView) {
+		view.Services[0].ProbeURLs = []string{"https://demo.example/"}
+	})
 	route := testDeviceExecution(lkg.View).Routes[0]
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	activation := clientadapter.Activation{State: clientadapter.State{NetworkGeneration: "demo-network", Observations: []clientmodel.Observation{{CandidateID: route.ID, Target: "https://demo.example/", Scope: control.AccessSelectorScope, NetworkGeneration: "demo-network", Action: "https_request", Result: "unavailable", ObservedAt: now.Format(time.RFC3339), ValidUntil: now.Add(time.Minute).Format(time.RFC3339)}}}, Selections: []clientadapter.SelectionStatus{{Scope: control.AccessSelectorScope, CandidateID: route.ID}}}
@@ -134,16 +134,22 @@ func TestWindowsReportBindsActualServiceTargetAndLeavesOtherScopesUnknown(t *tes
 	}
 	first := windowsRuntimeFactsDigest(activation, nil)
 	activation.State.Preference = clientmodel.Preference{Schema: 3}
-	changed, err := windowsDeviceReport(&lkg, activation, nil, now)
-	if err != nil || changed.PolicyChoices == nil || changed.Preference != nil || first == windowsRuntimeFactsDigest(activation, nil) || changed.Selections[0] != report.Selections[0] {
-		t.Fatal("setting change was not reported independently from the selector", err)
+	if _, err := windowsDeviceReport(&lkg, activation, nil, now); err == nil {
+		t.Fatal("old selector was reported as running after the current Policy was cleared")
 	}
+	changed, err := windowsDeviceReport(&lkg, activation, nil, now, control.RuntimeReadback{State: "unknown"})
+	if err != nil || changed.PolicyID != "" || changed.PolicyChoices != nil || changed.Preference != nil || changed.Runtime.State != "unknown" || len(changed.Selections) != 0 || len(changed.Observations) != 0 || first == windowsRuntimeFactsDigest(activation, nil) {
+		t.Fatal("unconfirmed application replaced the saved empty choice or fabricated a current selection", err)
+	}
+	activation.State.Preference = clientmodel.Preference{Schema: 3, PolicyID: route.PolicyID}
 	first = windowsRuntimeFactsDigest(activation, nil)
 	activation.State.Observations[0].Result = "available"
 	if first == windowsRuntimeFactsDigest(activation, nil) {
 		t.Fatal("actual result change lost")
 	}
-	testDeviceExecution(lkg.View).BusinessProbeTargets[0].Targets = append(testDeviceExecution(lkg.View).BusinessProbeTargets[0].Targets, "https://demo.example/other")
+	lkg = envelope(public, 8, func(view *control.DeviceView) {
+		view.Services[0].ProbeURLs = []string{"https://demo.example/", "https://demo.example/other"}
+	})
 	report, err = windowsDeviceReport(&lkg, activation, nil, now)
 	if err != nil || len(report.Observations) != 1 || report.Observations[0].Target != "https://demo.example/" {
 		t.Fatal("another target erased or reinterpreted the original sample")

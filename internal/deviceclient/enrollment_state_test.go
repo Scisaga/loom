@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"loom/internal/control"
 )
 
 func TestPendingIdentityAcceptsOnlyMatchingProofAndPreservesExistingBytes(t *testing.T) {
-	invite, view := schema3Fixture(t, "linux")
+	invite, view := schema3Fixture(t, runtime.GOOS)
 	reference, err := control.ReferenceForInvite(invite)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +33,7 @@ func TestPendingIdentityAcceptsOnlyMatchingProofAndPreservesExistingBytes(t *tes
 	if err != nil || identity.Joined || identity.DeviceID != "" || identity.TransactionID != reference.TransactionID {
 		t.Fatal("pending identity inspection fabricated target data", err)
 	}
-	other, _ := schema3Fixture(t, "linux", func(value *control.Invite) { value.ID = "demo-other" })
+	other, _ := schema3Fixture(t, runtime.GOOS, func(value *control.Invite) { value.ID = "demo-other" })
 	if err := store.SaveEnrollmentProof(other); err == nil {
 		t.Fatal("different proof accepted")
 	}
@@ -77,7 +78,7 @@ func TestPendingIdentityAcceptsOnlyMatchingProofAndPreservesExistingBytes(t *tes
 	if bytes.Contains(joined, []byte("invitation_reference")) {
 		t.Fatal("reference retained as parallel authority")
 	}
-	original, err := OpenForPlatform(filepath.Join(t.TempDir(), "identity"), invite, "linux")
+	original, err := OpenForPlatform(filepath.Join(t.TempDir(), "identity"), invite, runtime.GOOS)
 	if err != nil {
 		t.Fatal(err)
 	}

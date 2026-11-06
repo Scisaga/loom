@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -266,7 +267,9 @@ func TestCurrentSharedNativeManualGraphMigrationPreservesProtectedIdentityAndRej
 		t.Fatal("completed migration became a second ordinary writer")
 	}
 	info, err := os.Stat(evidence)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+	// This Linux identity fixture uses plaintext storage. POSIX permission bits
+	// apply on Unix; Windows protection is exercised by the native DPAPI test.
+	if err != nil || !info.Mode().IsRegular() || runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatal("protected evidence did not survive", err)
 	}
 }

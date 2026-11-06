@@ -33,13 +33,22 @@ jobs:
           python3 scripts/check_repository_safety.py
 
       - name: Test
-        run: go test ./...
+        # Linux execution inputs require root ownership. Real data-plane
+        # acceptance remains opt-in; native TUN activation isolates itself.
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -z "${LOOM_LINUX_MIXED_EXECUTABLE:-}${LOOM_TUN_ROUTING_EXECUTABLE:-}"
+          sudo install -d -o root -g root -m 0700 "$PWD/out/ci-test-tmp"
+          sudo env "PATH=$PATH" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" \
+            "TMPDIR=$PWD/out/ci-test-tmp" go test ./...
 
       - name: Vet
-        run: go vet ./...
+        run: |
+          sudo env "PATH=$PATH" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" go vet ./...
 
       - name: Build loom
-        run: go build ./cmd/loom
+        run: |
+          sudo env "PATH=$PATH" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" go build ./cmd/loom
 
   race:
     name: Race detector (CGO and GCC)
@@ -64,7 +73,12 @@ jobs:
           gcc --version
 
       - name: Test with race detector
-        run: go test -race ./...
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -z "${LOOM_LINUX_MIXED_EXECUTABLE:-}${LOOM_TUN_ROUTING_EXECUTABLE:-}"
+          sudo install -d -o root -g root -m 0700 "$PWD/out/ci-test-tmp"
+          sudo env "PATH=$PATH" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" \
+            "TMPDIR=$PWD/out/ci-test-tmp" CGO_ENABLED=1 CC=gcc go test -race ./...
 
   native-dataplane:
     name: Native data plane (pinned sources, race, Linux amd64)

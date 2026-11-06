@@ -66,6 +66,26 @@ func TestTransferCaptureRequiresExplicitProtectedDiskRoot(t *testing.T) {
 		os.RemoveAll(directory)
 		t.Fatal("symlink transfer work root accepted")
 	}
+	unsafe := filepath.Join(root, "demo-unprotected")
+	if err := os.Mkdir(unsafe, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unsafe, 0777); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(unsafe, "demo-work")
+	if err := os.Mkdir(work, 0700); err != nil {
+		t.Fatal(err)
+	}
+	read := false
+	input := &transferMutatingReader{reader: bytes.NewReader(nil), mutate: func() error { read = true; return nil }}
+	if directory, err := ReceiveArchiveAt(input, control.ReleaseDigest([]byte("demo")), key, work); err == nil || read {
+		os.RemoveAll(directory)
+		t.Fatal("unprotected ancestor reached transfer capture", err)
+	}
+	if entries, err := os.ReadDir(work); err != nil || len(entries) != 0 {
+		t.Fatal("rejected work root retained a transfer capture", err)
+	}
 }
 
 type transferMutatingReader struct {
@@ -115,9 +135,13 @@ func TestTransferCaptureDoesNotDeleteReplacement(t *testing.T) {
 		}
 		return os.ErrNotExist
 	}}
-	if directory, err := ReceiveArchiveAt(input, control.ReleaseDigest([]byte("demo")), key, workRoot); err == nil {
+	directory, err := ReceiveArchiveAt(input, control.ReleaseDigest([]byte("demo")), key, workRoot)
+	if err == nil {
 		os.RemoveAll(directory)
 		t.Fatal("replaced capture accepted")
+	}
+	if replaced == "" {
+		t.Fatal("replacement fixture did not reach the transfer capture", err)
 	}
 	if body, err := os.ReadFile(filepath.Join(replaced, "demo-canary")); err != nil || string(body) != "preserve" {
 		t.Fatal("rejected transfer deleted the replacement directory", err)

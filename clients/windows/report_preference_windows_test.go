@@ -71,15 +71,6 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 			if err := store.SaveLKG(view); err != nil {
 				t.Fatal(err)
 			}
-			var actual control.RouteCandidate
-			for _, route := range testDeviceExecution(view.View).Routes {
-				if route.FinalExit == "direct" {
-					actual = route
-				}
-			}
-			if actual.ID == "" {
-				t.Fatal("demo Direct readback missing")
-			}
 			for _, policy := range view.View.Policies {
 				preference, err := clientmodel.ChoosePolicy(clientmodel.EmptyPreference(), view.View, policy.ID)
 				if err != nil {
@@ -94,10 +85,18 @@ func TestWindowsReportedPreferenceComesFromReopenedDPAPISettings(t *testing.T) {
 				if err != nil || reopened.PublicKey() != store.PublicKey() || !reopened.Preference().Equal(preference) {
 					t.Fatal("native preference write lost its original DPAPI identity", err)
 				}
-				for _, route := range testDeviceExecution(view.View).Routes {
+				execution, err := control.ProjectDeviceCandidates(reopened.LKG().View, clientmodel.MeasurementPolicies(reopened.Preference()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var actual control.RouteCandidate
+				for _, route := range execution.Routes {
 					if route.PolicyID == policy.ID && route.FinalExit == "direct" {
 						actual = route
 					}
+				}
+				if actual.ID == "" {
+					t.Fatal("current saved Policy has no demo Direct readback", policy.ID)
 				}
 				activation := clientadapter.Activation{State: clientadapter.State{Preference: reopened.Preference(), NetworkGeneration: "demo-underlay"}, Selections: []clientadapter.SelectionStatus{{Scope: control.AccessSelectorScope, CandidateID: actual.ID}}}
 				report, err := windowsDeviceReport(reopened.LKG(), activation, nil, time.Now())
