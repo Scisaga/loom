@@ -190,6 +190,16 @@ run 回读，不由这些本地结果推定。四种两跳组合不等于真实 
 资源优选，也不覆盖多 forward 节点链、物理 Android／ARM64 或生产迁移。未做生产签名、
 发布、部署、路由器或宿主网络配置变更。
 
+修正提交 `859dc0b0cafb3b9eb5bdeb0d94375c44f23e525f` 已推送。该提交的
+[Android 工作流](https://github.com/Scisaga/loom/actions/runs/42202133120)全部成功，
+[主 CI](https://github.com/Scisaga/loom/actions/runs/42202133959)的 Windows 与原生 Job 成功。
+Linux 托管续验又发现 checkout 下的 scratch 前缀过长使 Unix socket 入口超限，且新 user
+namespace 的 root 无法穿过 runner 私有 home 祖先执行测试程序。现在改用临时托管 VM 上的
+短路径 `/ci`：原子创建，已存在即拒绝，并核对 root:root 0700。没有截短业务 socket、放宽
+目录权限或跳过隔离测试。私有 mount namespace 的失败等价类普通／race 均通过，宿主 mount
+与 namespace 保持，证据为 `out/current-review-postpush/short-scratch/summary.json`。
+该执行器修正的托管结论继续以实际提交对应工作流为准。
+
 ## 操作者指定的端口占用与可用范围修正
 
 2026-11-04，操作者确认一台节点的指定端口已由其他程序使用，并重申原先提供的完整可用范围。

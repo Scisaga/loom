@@ -35,12 +35,15 @@ jobs:
       - name: Test
         # Linux execution inputs require root ownership. Real data-plane
         # acceptance remains opt-in; native TUN activation isolates itself.
+        # A short root-owned path keeps Unix sockets and child user
+        # namespaces independent of the runner's private home directory.
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
           test -z "${LOOM_LINUX_MIXED_EXECUTABLE:-}${LOOM_TUN_ROUTING_EXECUTABLE:-}"
-          sudo install -d -o root -g root -m 0700 "$PWD/out/ci-test-tmp"
+          sudo mkdir -m 0700 /ci
+          test "$(sudo stat -c '%u:%g:%a' /ci)" = 0:0:700
           sudo env "PATH=$PATH" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" \
-            "TMPDIR=$PWD/out/ci-test-tmp" go test ./...
+            TMPDIR=/ci go test ./...
 
       - name: Vet
         run: |
@@ -76,9 +79,10 @@ jobs:
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
           test -z "${LOOM_LINUX_MIXED_EXECUTABLE:-}${LOOM_TUN_ROUTING_EXECUTABLE:-}"
-          sudo install -d -o root -g root -m 0700 "$PWD/out/ci-test-tmp"
+          sudo mkdir -m 0700 /ci
+          test "$(sudo stat -c '%u:%g:%a' /ci)" = 0:0:700
           sudo env "PATH=$PATH" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" \
-            "TMPDIR=$PWD/out/ci-test-tmp" CGO_ENABLED=1 CC=gcc go test -race ./...
+            TMPDIR=/ci CGO_ENABLED=1 CC=gcc go test -race ./...
 
   native-dataplane:
     name: Native data plane (pinned sources, race, Linux amd64)
