@@ -97,7 +97,17 @@ func TestForwardProjectionMatchesNativeFacilities(t *testing.T) {
 			var expected []forwardProjection
 			for _, outbound := range native.Outbounds {
 				if outbound.Hop != nil {
-					expected = append(expected, forwardProjection{outbound.Tag, outbound.Hop.Policy, outbound.Hop.Node, outbound.Hop.Nodes})
+					nodes := map[string]forwardNextHop{}
+					for _, resource := range view.Resources {
+						tag, err := control.ForwardSegmentTag(resource.ID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if node, ok := outbound.Hop.Nodes[tag]; ok {
+							nodes[tag] = forwardNextHop{NodeID: node, ResourceID: resource.ID}
+						}
+					}
+					expected = append(expected, forwardProjection{outbound.Tag, outbound.Hop.Policy, outbound.Hop.Node, nodes})
 				}
 			}
 			if len(actual) != len(expected) || len(actual) > 0 && !reflect.DeepEqual(actual, expected) {

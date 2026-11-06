@@ -6070,10 +6070,11 @@
 +}
 --- /dev/null
 +++ b/common/loomprotocol/hop_test.go
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,179 @@
 +package protocol
 +
 +import (
++	"context"
 +	"reflect"
 +	"testing"
 +)
@@ -6172,6 +6173,81 @@
 +	value.Visited = []string{"demo-b"}
 +	if err := compiled.VerifyCurrent(value, permission); err == nil {
 +		t.Fatal("restoration accepted another receiver")
++	}
++}
++
++func TestHopRejectsForgedIdentityAndInvalidHistory(t *testing.T) {
++	for _, test := range []struct {
++		name   string
++		change func(*HopPolicy, *PathContext, *HopPermission)
++	}{
++		{"access-impersonates-another-granted-origin", func(p *HopPolicy, c *PathContext, a *HopPermission) {
++			p.Origins = []string{"demo-access", "demo-other-access"}
++			c.OriginID, c.Visited = "demo-other-access", []string{}
++			a.SenderID, a.Purpose = "demo-access", "access"
++		}},
++		{"withdrawn-origin", func(p *HopPolicy, _ *PathContext, _ *HopPermission) { p.Origins = []string{} }},
++		{"ungranted-final-exit", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.FinalExitID = "demo-other-exit" }},
++		{"deleted-history", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{} }},
++		{"transport-predecessor-mismatch", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{"demo-b"} }},
++		{"unknown-history", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{"demo-unknown", "demo-a"} }},
++		{"repeated-history", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{"demo-a", "demo-a"} }},
++		{"missing-current-directed-link", func(p *HopPolicy, _ *PathContext, _ *HopPermission) { p.Edges = []DirectedHop{} }},
++		{"entry-outside-current-scope", func(p *HopPolicy, _ *PathContext, _ *HopPermission) {
++			p.EntryScope = PolicyScope{"only", []string{"demo-b"}}
++		}},
++		{"explicit-hop-limit", func(p *HopPolicy, _ *PathContext, _ *HopPermission) { p.MaxHops = 1 }},
++		{"missing-final-responsibility", func(_ *HopPolicy, _ *PathContext, a *HopPermission) { a.InternetEgress = false }},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			policy := hopFixture()
++			path := PathContext{"demo-access", "demo-exit", []string{"demo-a"}}
++			permission := HopPermission{SenderID: "demo-a", ReceiverID: "demo-exit", Purpose: "forward", InternetEgress: true}
++			test.change(&policy, &path, &permission)
++			if _, err := policy.Admit(path, permission); err == nil {
++				t.Fatal("forged identity or invalid current path was accepted")
++			}
++		})
++	}
++}
++
++func TestTrustedForwardHistoryIsCheckedForPermissionNotCryptographicProvenance(t *testing.T) {
++	policy := hopFixture()
++	policy.Origins = []string{"demo-access", "demo-other-access"}
++	policy.Exits = []string{"demo-b", "demo-exit"}
++	permission := HopPermission{SenderID: "demo-a", ReceiverID: "demo-exit", Purpose: "forward", InternetEgress: true}
++	// These histories are all authorized by the current graph. The receiver has
++	// no end-to-end proof that a trusted forwarder preserved the actual history.
++	// Reusing a permitted context also does not confer a one-shot capability.
++	for _, path := range []PathContext{
++		{"demo-access", "demo-exit", []string{"demo-b", "demo-a"}},
++		{"demo-access", "demo-exit", []string{"demo-a"}},
++		{"demo-other-access", "demo-exit", []string{"demo-a"}},
++		{"demo-access", "demo-b", []string{"demo-a"}},
++	} {
++		permission.ReceiverID = path.FinalExitID
++		for attempt := 0; attempt < 2; attempt++ {
++			if _, err := policy.Admit(path, permission); err != nil {
++				t.Fatal("trusted-forward permission checking changed into a history-proof requirement", err)
++			}
++		}
++	}
++}
++
++func TestConnectionContextOwnsVisitedHistory(t *testing.T) {
++	want := Connection{PolicyID: "demo-policy", Path: PathContext{"demo-access", "demo-exit", []string{"demo-a"}}}
++	input := want
++	input.Path.Visited = append([]string{}, want.Path.Visited...)
++	ctx := WithConnection(context.Background(), input)
++	input.PolicyID, input.Path.OriginID, input.Path.FinalExitID, input.Path.Visited[0] = "demo-other-policy", "demo-other-origin", "demo-other-exit", "demo-b"
++	got, ok := ConnectionFrom(ctx)
++	if !ok || !reflect.DeepEqual(got, want) {
++		t.Fatal("caller changed the stored connection", got)
++	}
++	got.Path.Visited[0] = "demo-b"
++	again, ok := ConnectionFrom(ctx)
++	if !ok || !reflect.DeepEqual(again, want) {
++		t.Fatal("reader changed the stored connection", again)
 +	}
 +}
 --- /dev/null
@@ -25915,5 +25991,158 @@
 +		if err := <-done; err != nil {
 +			t.Error(err)
 +		}
++	}
++}
+--- /dev/null
++++ b/common/execution/context_security_test.go
+@@ -0,0 +1,150 @@
++package execution
++
++import (
++	"context"
++	"reflect"
++	"testing"
++
++	P "github.com/sagernet/sing-box/common/loomprotocol"
++	"github.com/sagernet/sing-box/option"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++func TestPrepareContextPreservesTrustedForwardBindingAndRejectsReplacement(t *testing.T) {
++	want := P.Connection{PolicyID: "demo-policy", Path: P.PathContext{OriginID: "demo-access", FinalExitID: "demo-exit", Visited: []string{"demo-entry"}}}
++	ctx := P.WithConnection(context.Background(), want)
++	for _, route := range []*option.ExecutionRoute{{}, {PolicyID: "demo-policy"}} {
++		prepared, got, err := PrepareContext(ctx, route)
++		if err != nil {
++			t.Fatal(err)
++		}
++		stored, ok := P.ConnectionFrom(prepared)
++		if err != nil || !ok || !reflect.DeepEqual(got, want) || !reflect.DeepEqual(stored, want) {
++			t.Fatal("forward changed the original Policy, origin, exit or history", got, err)
++		}
++	}
++	for _, test := range []struct {
++		name  string
++		route *option.ExecutionRoute
++	}{
++		{"missing-binding", nil},
++		{"different-policy", &option.ExecutionRoute{PolicyID: "demo-other-policy"}},
++		{"replace-final-exit", &option.ExecutionRoute{FinalExitID: "demo-other-exit"}},
++		{"replace-local-node", &option.ExecutionRoute{LocalNodeID: "demo-entry"}},
++		{"replace-origin", &option.ExecutionRoute{PolicyID: want.PolicyID, OriginID: "demo-other-access", FinalExitID: want.Path.FinalExitID}},
++		{"drop-visited-history", &option.ExecutionRoute{PolicyID: want.PolicyID, OriginID: want.Path.OriginID, FinalExitID: want.Path.FinalExitID}},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			if _, _, err := PrepareContext(ctx, test.route); err == nil {
++				t.Fatal("sending binding replaced an existing connection")
++			}
++		})
++	}
++	if _, _, err := PrepareContext(context.Background(), &option.ExecutionRoute{}); err == nil {
++		t.Fatal("forward invented a connection without an admitted origin")
++	}
++	initial := &option.ExecutionRoute{PolicyID: want.PolicyID, OriginID: want.Path.OriginID, FinalExitID: want.Path.FinalExitID}
++	initialContext, original, err := PrepareContext(context.Background(), initial)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, change := range []func(*option.ExecutionRoute){
++		func(route *option.ExecutionRoute) { route.PolicyID = "demo-other-policy" },
++		func(route *option.ExecutionRoute) { route.OriginID = "demo-other-access" },
++		func(route *option.ExecutionRoute) { route.FinalExitID = "demo-other-exit" },
++	} {
++		route := *initial
++		change(&route)
++		if _, _, err := PrepareContext(initialContext, &route); err == nil {
++			t.Fatal("initial binding silently replaced the pinned identity")
++		}
++	}
++	_, repeated, err := PrepareContext(initialContext, initial)
++	if err != nil || !reflect.DeepEqual(repeated, original) {
++		t.Fatal("unchanged initial binding was not repeatable", err)
++	}
++}
++
++func TestReceiverAuthenticatesSenderAndChecksRequestPolicyIndependently(t *testing.T) {
++	options := receivingFixture()
++	options.Policies[0].Policy.Origins = []string{"demo-access", "demo-other-access"}
++	other := options.Policies[0]
++	other.Policy.PolicyID, other.Policy.Origins = "demo-other-policy", []string{}
++	options.Policies = append(options.Policies, other)
++	r, err := New(options)
++	if err != nil {
++		t.Fatal(err)
++	}
++	connection := P.Connection{PolicyID: "demo-policy", Path: P.PathContext{OriginID: "demo-access", FinalExitID: "demo-exit", Visited: []string{}}}
++	target := M.ParseSocksaddr("demo.example:443")
++	if _, _, err := r.Admit(context.Background(), "demo-principal", connection, target); err != nil {
++		t.Fatal("baseline admission failed", err)
++	}
++	for _, test := range []struct {
++		name   string
++		key    string
++		change func(*P.Connection)
++	}{
++		{"unknown-transport-principal", "demo-unknown", func(*P.Connection) {}},
++		{"another-granted-origin", "demo-principal", func(c *P.Connection) { c.Path.OriginID = "demo-other-access" }},
++		{"unknown-policy", "demo-principal", func(c *P.Connection) { c.PolicyID = "demo-unknown-policy" }},
++		{"current-policy-without-origin-grant", "demo-principal", func(c *P.Connection) { c.PolicyID = "demo-other-policy" }},
++		{"invented-forward-history", "demo-principal", func(c *P.Connection) { c.Path.Visited = []string{"demo-other-access"} }},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			value := connection
++			test.change(&value)
++			if _, _, err := r.Admit(context.Background(), test.key, value, target); err == nil {
++				t.Fatal("request declaration became transport authentication or a grant")
++			}
++		})
++	}
++}
++
++func TestReceiverRestoreRechecksCurrentForwardAuthorization(t *testing.T) {
++	for _, test := range []struct {
++		name   string
++		change func(*option.ExecutionOptions)
++	}{
++		{"origin-withdrawn", func(o *option.ExecutionOptions) { o.Policies[0].Policy.Origins = []string{} }},
++		{"policy-withdrawn", func(o *option.ExecutionOptions) { o.Policies = []option.ExecutionPolicy{} }},
++		{"transport-principal-withdrawn", func(o *option.ExecutionOptions) { o.Bindings = []option.ExecutionBinding{} }},
++		{"exit-withdrawn", func(o *option.ExecutionOptions) { o.Policies[0].Policy.Exits = []string{} }},
++		{"final-role-withdrawn", func(o *option.ExecutionOptions) { o.Responsibilities = []string{"forward"} }},
++		{"link-withdrawn", func(o *option.ExecutionOptions) { o.Policies[0].Policy.Edges = []P.DirectedHop{} }},
++		{"entry-scope-narrowed", func(o *option.ExecutionOptions) {
++			o.Policies[0].Policy.EntryScope = P.PolicyScope{Mode: "none", NodeIDs: []string{}}
++		}},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			options := receivingFixture()
++			options.Bindings[0].SenderID = "demo-entry"
++			options.Policies[0].Policy.Nodes = []string{"demo-entry", "demo-exit"}
++			options.Policies[0].Policy.Edges = []P.DirectedHop{{From: "demo-entry", To: "demo-exit"}}
++			r, err := New(options)
++			if err != nil {
++				t.Fatal(err)
++			}
++			target := M.ParseSocksaddr("demo.example:443")
++			incoming := P.Connection{PolicyID: "demo-policy", Path: P.PathContext{OriginID: "demo-access", FinalExitID: "demo-exit", Visited: []string{"demo-entry"}}}
++			admitted, _, err := r.Admit(context.Background(), "demo-principal", incoming, target)
++			if err != nil {
++				t.Fatal(err)
++			}
++			stored, _ := P.ConnectionFrom(admitted)
++			if _, _, err := r.Restore(context.Background(), "demo-principal", stored, target); err != nil {
++				t.Fatal("unchanged current authorization failed restoration", err)
++			}
++			test.change(&options)
++			if err := r.Update(options); err != nil {
++				t.Fatal(err)
++			}
++			if _, _, err := r.Restore(context.Background(), "demo-principal", stored, target); err == nil {
++				t.Fatal("old admitted context bypassed current revocation")
++			}
++			if _, _, err := r.Admit(context.Background(), "demo-principal", incoming, target); err == nil {
++				t.Fatal("replayed incoming context bypassed current revocation")
++			}
++		})
 +	}
 +}

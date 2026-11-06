@@ -48,17 +48,20 @@ func ChooseForwardWithStability(routes []RouteCandidate, local []control.Observa
 // shared reverse graph search. It does not expand possible complete paths.
 func ForwardRoutePaths(routes []RouteCandidate, graphs []PolicyGraph, local []control.Observation, shared []control.DeviceLinkObservation, generation string, now time.Time) ([]RouteCandidate, error) {
 	filtered := make([]PolicyGraph, len(graphs))
-	first := map[string]map[string]LinkSampleRef{}
+	first := map[string]map[string]GraphLink{}
 	for i, graph := range graphs {
 		filtered[i] = graph
 		filtered[i].Links = []GraphLink{}
-		first[graph.PolicyID] = map[string]LinkSampleRef{}
+		first[graph.PolicyID] = map[string]GraphLink{}
 		if graph.MaxHops > 0 {
 			filtered[i].MaxHops = max(1, graph.MaxHops-1)
 		}
 		for _, link := range graph.Links {
 			if link.From == graph.SourceNode {
-				first[graph.PolicyID][link.To] = link.Ref
+				if _, exists := first[graph.PolicyID][link.Ref.ResourceID]; exists {
+					return nil, errors.New("forwarding graph has an ambiguous local resource")
+				}
+				first[graph.PolicyID][link.Ref.ResourceID] = link
 			}
 			if link.From != graph.SourceNode && link.To != graph.SourceNode {
 				filtered[i].Links = append(filtered[i].Links, link)
@@ -73,12 +76,12 @@ func ForwardRoutePaths(routes []RouteCandidate, graphs []PolicyGraph, local []co
 		if len(route.Chain) == 0 {
 			return nil, errors.New("forwarding estimate lacks its next hop")
 		}
-		firstLink, ok := first[route.PolicyID][route.Chain[0]]
-		if !ok {
+		firstLink, ok := first[route.PolicyID][route.FirstResourceID]
+		if !ok || firstLink.From != route.SourceNode || firstLink.To != route.Chain[0] || firstLink.Ref.DeviceID != route.SourceNode {
 			return nil, errors.New("forwarding estimate lacks its authorized local link")
 		}
 		result[i].Chain = append([]string{route.SourceNode}, route.Chain...)
-		result[i].RelayLinks = append([]LinkSampleRef{firstLink}, slices.Clone(route.RelayLinks)...)
+		result[i].RelayLinks = append([]LinkSampleRef{firstLink.Ref}, slices.Clone(route.RelayLinks)...)
 		for _, graph := range graphs {
 			if graph.PolicyID == route.PolicyID && graph.MaxHops > 0 && len(result[i].Chain) > graph.MaxHops {
 				result[i].GraphUnavailable = true

@@ -5,8 +5,32 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
+
+func TestHistoricalReviewedArtifactRetainsOriginalCoordinates(t *testing.T) {
+	want := reviewedArtifact{
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "31fb2fc1ca3e89222273f820ff69e74775e4aa9b9edad4a1f4fdbed368c81872",
+			"domain-cache.patch":     "c877a591af3ab5a10c68921bc4edccb181efff213c22b29cec2f9a0f53e9f736",
+			"prepare-sing-box.py":    "55f1b60df1f5748c6962c50846e7a74b9896a53f95fc45761fb32431e533c96c",
+			"source-provenance.json": "ca71fa9136f5189de74d13151aa4d5a787a37c46b38f1561479c4c573f969301",
+		},
+		linux: map[string]string{
+			"amd64": "7ce314f2e61e6d2ac7d65143c069730010dbdf18d64e92cf64c40b15270a0606",
+			"arm64": "d95a635b8ff1bb4e0391306bebf4b9c80d1f85f4af55ae4b962c4a49fe7d46f4",
+		},
+		windows: map[string]string{
+			"amd64": "d5c9846cadda28aea902a53d4dc3634ed92d9d8ab978d1af6d9bcefc6f7df562",
+			"arm64": "e7a4c592db91fff114151b2d17908fd7206238d8a697e1820cafca114311b905",
+		},
+	}
+	if !reflect.DeepEqual(reviewedArtifacts["1.11.4-loom.26"], want) {
+		t.Fatal("historical source or executable coordinates changed")
+	}
+}
 
 func sourceBuildFiles(t *testing.T, arch string) map[string][]byte {
 	t.Helper()
@@ -87,6 +111,15 @@ func TestReviewedArtifactRevisionBindingFromEnvironment(t *testing.T) {
 		inputs := map[string][]byte{}
 		for name := range reviewedArtifacts[item.version].sources {
 			inputs[name] = read(item.root, name)
+		}
+		for name, original := range inputs {
+			t.Run(item.version+"/changed-"+name, func(t *testing.T) {
+				inputs[name] = append(bytes.Clone(original), '\n')
+				if _, err := LinuxSourceFiles(inputs, item.version); err == nil {
+					t.Fatal("accepted changed source bytes for reviewed artifact")
+				}
+				inputs[name] = original
+			})
 		}
 		for _, arch := range []string{"amd64", "arm64"} {
 			linux, err := InspectLinuxSourceBuild(read(item.root, "sing-box-linux-"+arch), arch)

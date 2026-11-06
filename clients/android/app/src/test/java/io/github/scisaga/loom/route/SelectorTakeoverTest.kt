@@ -21,6 +21,19 @@ import org.junit.Test
 
 class SelectorTakeoverTest {
     @Test
+    fun injectedTransportDoesNotRelaxConfiguredControllerBoundary() {
+        for (controller in listOf("127.0.0.1:1", "192.0.2.1:61800")) {
+            var rejected = false
+            try {
+                SelectorClient("""{"experimental":{"clash_api":{"external_controller":"$controller","secret":"demo-secret"}}}""") {
+                    _, _, _, _, _, _ -> throw AssertionError("invalid controller reached HTTP transport")
+                }
+            } catch (_: IllegalStateException) { rejected = true }
+            assertTrue("non-production controller was accepted: $controller", rejected)
+        }
+    }
+
+    @Test
     fun unconfirmedAccessAndLanAdvanceSameValueSnapshotBeforeConfirmation(): Unit = runBlocking {
         for (scope in listOf("access", "local_network:demo-lan")) {
             val methods = mutableListOf<String>()
@@ -34,7 +47,7 @@ class SelectorTakeoverTest {
                 }
                 200 to rejected(revision)
             }.use { server ->
-                val client = client()
+                val client = client(server.port)
                 client.planScopes(listOf(scope), requireCAS = listOf(scope))
                 client.apply(listOf(reject(scope)))
                 server.await()
@@ -56,7 +69,7 @@ class SelectorTakeoverTest {
             methods += request.method
             200 to rejected("demo-r0")
         }.use { server ->
-            val client = client()
+            val client = client(server.port)
             client.planScopes(listOf("access"))
             client.apply(listOf(reject("access")))
             server.await()
@@ -79,7 +92,7 @@ class SelectorTakeoverTest {
             }
             200 to rejected(revision)
         }.use { server ->
-            val client = client()
+            val client = client(server.port)
             client.planScopes(listOf("access"), requireCAS = listOf("access"))
             try {
                 client.apply(listOf(reject("access")))
@@ -130,7 +143,7 @@ class SelectorTakeoverTest {
                 200 to rejected("demo-r0")
             }
         }.use { server ->
-            val client = client()
+            val client = client(server.port)
             client.planScopes(listOf("access"), requireCAS = listOf("access"))
             val call = async { runCatching { client.apply(listOf(reject("access"))) } }
             withContext(Dispatchers.IO) { assertTrue(entered.await(2, TimeUnit.SECONDS)) }
@@ -149,22 +162,27 @@ class SelectorTakeoverTest {
         assertTrue(cancelled.uncertainScopes().isEmpty())
     }
 
-    private fun client() = SelectorClient("""{"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}""")
+    private fun client(port: Int = 61800) = SelectorClient(
+        """{"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}""",
+    ) { secret, method, path, body, maximum, socket ->
+        cancellableLoopbackHttpRequest("127.0.0.1", port, secret, method, path, body, maximum, socket)
+    }
     private fun reject(scope: String) = AppliedSelector(scope, "reject", emptyList(), "")
     private fun rejected(revision: String) = JSONObject().put("now", "reject").put("revision", revision)
         .put("policy_id", "").put("targets", JSONObject()).put("choices", JSONObject())
 
     private data class Request(val method: String, val body: JSONObject)
 
-    /** Uses the real client's fixed loopback endpoint; never replaces a listener. */
+    /** Uses the real loopback HTTP transport on a test-owned ephemeral port. */
     private fun selectorServer(count: Int, reply: (Request) -> Pair<Int, JSONObject>) = TestServer(count, reply)
 
     private class TestServer(count: Int, reply: (Request) -> Pair<Int, JSONObject>) : AutoCloseable {
         private val server = ServerSocket().apply {
             reuseAddress = true
-            bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 61800))
+            bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
             soTimeout = 5_000
         }
+        val port: Int get() = server.localPort
         private val failure = AtomicReference<Throwable?>()
         private val worker = thread(isDaemon = true) {
             try {

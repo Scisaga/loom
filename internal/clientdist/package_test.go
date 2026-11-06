@@ -134,13 +134,16 @@ func TestInstallerAndServiceUseOnlyUnifiedRuntime(t *testing.T) {
 func buildClientFixtures(t *testing.T) ([]byte, []byte) {
 	t.Helper()
 	dir := t.TempDir()
-	repo, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	// These fixtures exercise ELF/buildinfo and signed package metadata, never
+	// CLI execution. Keep the original entry identities without pulling the
+	// whole runtime into every archive mutation; TestReviewedLinuxPackages
+	// builds the real CLI for the separate two-architecture package proof.
+	loomModule := filepath.Join(dir, "loom-fixture")
+	writeTestFile(t, filepath.Join(loomModule, "go.mod"), "module loom\n\ngo 1.27.0\n")
+	writeTestFile(t, filepath.Join(loomModule, "cmd", "loom", "main.go"), "package main\nfunc main() {}\n")
 	loomPath := filepath.Join(dir, "loom")
 	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", loomPath, "./cmd/loom")
-	cmd.Dir = repo
+	cmd.Dir = loomModule
 	cmd.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build Loom fixture: %v\n%s", err, output)

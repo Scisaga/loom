@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -99,5 +100,80 @@ func TestCompiledProjectionDoesNotChangeWithCallerAndRestoresAgainstCurrentGrant
 	value.Visited = []string{"demo-b"}
 	if err := compiled.VerifyCurrent(value, permission); err == nil {
 		t.Fatal("restoration accepted another receiver")
+	}
+}
+
+func TestHopRejectsForgedIdentityAndInvalidHistory(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*HopPolicy, *PathContext, *HopPermission)
+	}{
+		{"access-impersonates-another-granted-origin", func(p *HopPolicy, c *PathContext, a *HopPermission) {
+			p.Origins = []string{"demo-access", "demo-other-access"}
+			c.OriginID, c.Visited = "demo-other-access", []string{}
+			a.SenderID, a.Purpose = "demo-access", "access"
+		}},
+		{"withdrawn-origin", func(p *HopPolicy, _ *PathContext, _ *HopPermission) { p.Origins = []string{} }},
+		{"ungranted-final-exit", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.FinalExitID = "demo-other-exit" }},
+		{"deleted-history", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{} }},
+		{"transport-predecessor-mismatch", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{"demo-b"} }},
+		{"unknown-history", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{"demo-unknown", "demo-a"} }},
+		{"repeated-history", func(_ *HopPolicy, c *PathContext, _ *HopPermission) { c.Visited = []string{"demo-a", "demo-a"} }},
+		{"missing-current-directed-link", func(p *HopPolicy, _ *PathContext, _ *HopPermission) { p.Edges = []DirectedHop{} }},
+		{"entry-outside-current-scope", func(p *HopPolicy, _ *PathContext, _ *HopPermission) {
+			p.EntryScope = PolicyScope{"only", []string{"demo-b"}}
+		}},
+		{"explicit-hop-limit", func(p *HopPolicy, _ *PathContext, _ *HopPermission) { p.MaxHops = 1 }},
+		{"missing-final-responsibility", func(_ *HopPolicy, _ *PathContext, a *HopPermission) { a.InternetEgress = false }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := hopFixture()
+			path := PathContext{"demo-access", "demo-exit", []string{"demo-a"}}
+			permission := HopPermission{SenderID: "demo-a", ReceiverID: "demo-exit", Purpose: "forward", InternetEgress: true}
+			test.change(&policy, &path, &permission)
+			if _, err := policy.Admit(path, permission); err == nil {
+				t.Fatal("forged identity or invalid current path was accepted")
+			}
+		})
+	}
+}
+
+func TestTrustedForwardHistoryIsCheckedForPermissionNotCryptographicProvenance(t *testing.T) {
+	policy := hopFixture()
+	policy.Origins = []string{"demo-access", "demo-other-access"}
+	policy.Exits = []string{"demo-b", "demo-exit"}
+	permission := HopPermission{SenderID: "demo-a", ReceiverID: "demo-exit", Purpose: "forward", InternetEgress: true}
+	// These histories are all authorized by the current graph. The receiver has
+	// no end-to-end proof that a trusted forwarder preserved the actual history.
+	// Reusing a permitted context also does not confer a one-shot capability.
+	for _, path := range []PathContext{
+		{"demo-access", "demo-exit", []string{"demo-b", "demo-a"}},
+		{"demo-access", "demo-exit", []string{"demo-a"}},
+		{"demo-other-access", "demo-exit", []string{"demo-a"}},
+		{"demo-access", "demo-b", []string{"demo-a"}},
+	} {
+		permission.ReceiverID = path.FinalExitID
+		for attempt := 0; attempt < 2; attempt++ {
+			if _, err := policy.Admit(path, permission); err != nil {
+				t.Fatal("trusted-forward permission checking changed into a history-proof requirement", err)
+			}
+		}
+	}
+}
+
+func TestConnectionContextOwnsVisitedHistory(t *testing.T) {
+	want := Connection{PolicyID: "demo-policy", Path: PathContext{"demo-access", "demo-exit", []string{"demo-a"}}}
+	input := want
+	input.Path.Visited = append([]string{}, want.Path.Visited...)
+	ctx := WithConnection(context.Background(), input)
+	input.PolicyID, input.Path.OriginID, input.Path.FinalExitID, input.Path.Visited[0] = "demo-other-policy", "demo-other-origin", "demo-other-exit", "demo-b"
+	got, ok := ConnectionFrom(ctx)
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatal("caller changed the stored connection", got)
+	}
+	got.Path.Visited[0] = "demo-b"
+	again, ok := ConnectionFrom(ctx)
+	if !ok || !reflect.DeepEqual(again, want) {
+		t.Fatal("reader changed the stored connection", again)
 	}
 }

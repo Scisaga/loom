@@ -1,7 +1,9 @@
 package control
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,26 +20,55 @@ func (store *ObservationStore) All() []DeviceReport {
 	return result
 }
 func (store *ObservationStore) History() []DeviceReport {
-	result := []DeviceReport{}
+	type original struct {
+		report DeviceReport
+		body   []byte
+	}
+	originals := []original{}
+	codec := newContractCodec()
 	err := store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
 		return tx.Bucket(observationBucket).ForEach(func(_, raw []byte) error {
 			var report DeviceReport
-			if err := decodeStoredReport(raw, &report); err != nil {
+			if err := decodeStoredReportWithCodec(raw, &report, codec); err != nil {
 				return err
 			}
-			result = append(result, report)
+			// Decode still validates every original. Its exact canonical bytes
+			// determine fork order without re-encoding on every comparison.
+			originals = append(originals, original{report, bytes.Clone(raw)})
 			return nil
 		})
 	})
 	if err != nil {
 		return nil
 	}
-	sort.Slice(result, func(i, j int) bool {
-		a, _ := CanonicalEncode(result[i])
-		b, _ := CanonicalEncode(result[j])
-		return reportBefore(result[i], a, result[j], b)
+	sort.Slice(originals, func(i, j int) bool {
+		return reportBefore(originals[i].report, originals[i].body, originals[j].report, originals[j].body)
 	})
+	result := make([]DeviceReport, len(originals))
+	for i, original := range originals {
+		result[i] = original.report
+	}
 	return result
+}
+
+// Progress assertions need the number actually committed, independently of a
+// derived index. Final history assertions still decode and compare all originals.
+func testReportCount(t *testing.T, store *ObservationStore) int {
+	t.Helper()
+	count := 0
+	err := store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
+		return tx.Bucket(observationBucket).ForEach(func(_, raw []byte) error {
+			if raw == nil {
+				return errors.New("original report bucket contains a child bucket")
+			}
+			count++
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 func (store *ObservationStore) Verified(projection Projection, releases ...ReleaseSet) []DeviceReport {
 	result := []DeviceReport{}
@@ -187,11 +218,16 @@ type testReportCollection struct {
 func testCollectReports(t *testing.T, store *ObservationStore) *testReportCollection {
 	t.Helper()
 	result := &testReportCollection{reports: map[string]reportReference{}, groups: map[storedReportRange][]string{}, digests: map[storedReportRange]string{}}
+	codec := newContractCodec()
 	err := store.withDatabase(context.Background(), false, func(tx *bolt.Tx) error {
 		return tx.Bucket(observationBucket).ForEach(func(key, raw []byte) error {
-			id, ref, err := reportRecord(key, raw)
-			if err != nil {
+			var report DeviceReport
+			if err := decodeStoredReportWithCodec(raw, &report, codec); err != nil {
 				return err
+			}
+			id, ref := ReleaseDigest(raw), referenceOf(report)
+			if !bytes.Equal(ref.key(id), key) {
+				return errors.New("report storage key does not match its canonical signed value")
 			}
 			result.reports[id] = ref
 			group := storedReportRange{ref.NetworkID, reportScope{ref.DeviceID, reportRangeStart(ref.ReportSequence), reportLeafHeight}}

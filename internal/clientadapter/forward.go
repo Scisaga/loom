@@ -21,7 +21,11 @@ type forwardProjection struct {
 	Tag    string
 	Policy P.HopPolicy
 	Node   string
-	Nodes  map[string]string
+	Nodes  map[string]forwardNextHop
+}
+
+type forwardNextHop struct {
+	NodeID, ResourceID string
 }
 
 // Performance work only applies where this node can continue a Policy path.
@@ -104,13 +108,13 @@ func forwardProjections(view control.DeviceView) ([]forwardProjection, error) {
 		}
 		hop.Origins = []string{}
 		hop.EntryScope = P.PolicyScope{Mode: "any", NodeIDs: []string{}}
-		nodes := map[string]string{}
+		nodes := map[string]forwardNextHop{}
 		for _, link := range control.ForwardingLinks(execution, policy) {
 			tag, err := control.ForwardSegmentTag(link.ResourceID)
 			if err != nil {
 				return nil, err
 			}
-			nodes[tag] = link.ToNodeID
+			nodes[tag] = forwardNextHop{NodeID: link.ToNodeID, ResourceID: link.ResourceID}
 		}
 		values = append(values, forwardProjection{control.ForwardSelectorTag(policy.ID), hop, view.DeviceID, nodes})
 	}
@@ -205,7 +209,8 @@ func (selector *HTTPSelector) OptimizeForwarding(ctx context.Context, view contr
 	routes := []clientmodel.RouteCandidate{}
 	for _, p := range projections {
 		for _, exit := range p.Policy.Exits {
-			for tag, node := range p.Nodes {
+			for tag, hop := range p.Nodes {
+				node := hop.NodeID
 				if exit == p.Node || node != exit && !p.Policy.RelayScope.Allows(node) {
 					continue
 				}
@@ -213,7 +218,7 @@ func (selector *HTTPSelector) OptimizeForwarding(ctx context.Context, view contr
 				if node != exit {
 					chain = append(chain, exit)
 				}
-				routes = append(routes, clientmodel.RouteCandidate{ID: tag, PolicyID: p.Policy.PolicyID, FixedExit: true, SourceNode: p.Node, FinalExit: exit, Chain: chain, Scope: p.Tag})
+				routes = append(routes, clientmodel.RouteCandidate{ID: tag, PolicyID: p.Policy.PolicyID, FixedExit: true, SourceNode: p.Node, FirstResourceID: hop.ResourceID, FinalExit: exit, Chain: chain, Scope: p.Tag})
 			}
 		}
 	}

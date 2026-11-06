@@ -114,8 +114,11 @@ def prepare(destination):
     return {"upstream_version": VERSION, "upstream_commit": COMMIT, "upstream_module_sum": SUM,
             "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
             "execution_protocol_sha256": execution_hash.hexdigest(),
-            "wireguard_commit": WG_COMMIT, "wireguard_module_sum": WG_SUM,
-            "artifact_version": "1.11.4-loom.26"}
+            "sing_tun_version": TUN_VERSION, "sing_tun_commit": TUN_COMMIT, "sing_tun_module_sum": TUN_SUM,
+            "sing_quic_version": QUIC_VERSION, "sing_quic_commit": QUIC_COMMIT, "sing_quic_module_sum": QUIC_SUM,
+            "sing_version": SING_VERSION, "sing_commit": SING_COMMIT, "sing_module_sum": SING_SUM,
+            "wireguard_version": WG_VERSION, "wireguard_commit": WG_COMMIT, "wireguard_module_sum": WG_SUM,
+            "artifact_version": "1.11.4-loom.27"}
 
 
 if __name__ == "__main__":

@@ -32,6 +32,23 @@ var reviewedArtifacts = map[string]reviewedArtifact{
 	DataPlaneVersion: {
 		sources: map[string]string{
 			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "f5997022827512f2038959cfed55a840379f9239e4ac791d48fe8ae529b99c94",
+			"domain-cache.patch":     "c34c799bee295f8089844a93f12169488de578bc21dc3bb62bb2700419b5d5ab",
+			"prepare-sing-box.py":    "d080220b397186c8c725ab50d2b11a9be0cacfc5a5cc431a3ef0dfb1c9c5905f",
+			"source-provenance.json": "e79394c57a7fd5651577a3e3939d6e72c989ce1218cddffe5517b70b630a4bbd",
+		},
+		linux: map[string]string{
+			"amd64": "51d4396dadb91d10dcaabc3db93b3343c1fdb5a415bab4364cf7e35692c902bf",
+			"arm64": "587ded948d5efe2f5caddec3ad1cf87c4a6939b5cf147482c67ee48fe5accb92",
+		},
+		windows: map[string]string{
+			"amd64": "b18327abf967525913ca95faad5c229eff2c653e30ed8d1c7ce4c786e3d86df2",
+			"arm64": "a821faf70949e1c83c627d32ddbe629908341416947c9c1adf72cc720b992744",
+		},
+	},
+	"1.11.4-loom.26": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
 			"build-dataplane.sh":     "31fb2fc1ca3e89222273f820ff69e74775e4aa9b9edad4a1f4fdbed368c81872",
 			"domain-cache.patch":     "c877a591af3ab5a10c68921bc4edccb181efff213c22b29cec2f9a0f53e9f736",
 			"prepare-sing-box.py":    "55f1b60df1f5748c6962c50846e7a74b9896a53f95fc45761fb32431e533c96c",

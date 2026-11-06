@@ -66,6 +66,48 @@ jobs:
       - name: Test with race detector
         run: go test -race ./...
 
+  native-dataplane:
+    name: Native data plane (pinned sources, race, Linux amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CC: gcc
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test and build pinned native data plane
+        run: python3 scripts/test-native-dataplane.py
+
+      - name: Add native test summary
+        if: always()
+        shell: bash
+        run: |
+          for summary in out/native-dataplane-tests/run-*/summary.md; do
+            if [[ -f "$summary" ]]; then
+              cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Retain native test logs and source provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-dataplane-test-logs
+          path: |
+            out/native-dataplane-tests/run-*/logs/
+            out/native-dataplane-tests/run-*/summary.json
+            out/native-dataplane-tests/run-*/summary.md
+            out/native-dataplane-tests/run-*/source-provenance.json
+          if-no-files-found: warn
+          retention-days: 14
+
   windows:
     name: Windows client native checks
     runs-on: windows-latest

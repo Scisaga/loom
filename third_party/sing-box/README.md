@@ -12,7 +12,7 @@
 缓存文件仅拥有者可读写。没有新增 Service、授权、选路或签名状态。
 同时禁止该 DNS 缓存恢复或保存 selector 与 Clash mode；两者只能消费本次认证运行配置及 Loom 的实际选择。
 
-当前源码构建制品坐标为 `1.11.4-loom.26`，Linux、Windows 与 Android 的新构建使用该坐标。
+当前源码构建制品坐标为 `1.11.4-loom.27`，Linux、Windows 与 Android 的新构建使用该坐标。
 `.17`、`.18`、`.19`、`.20`、`.21`、`.22`、`.23`、`.24` 原制品及来源保持原义；当前构建坐标不代表生产或手机已经激活。必须记录源码、
 补丁与制品摘要，不能冒充未修改的上游二进制。
 该坐标是数据面制品修订，控制协议与权威 schema 仍为 3。上游源码和二进制继续遵守其随附许可证；
@@ -20,6 +20,42 @@
 当前脚本默认构建 Linux 的 amd64 与 arm64，也可显式指定 Windows 目标；Android 沿独立 AAR
 构建入口使用同一来源坐标。来源登记按正式参数
 及复现字节核对，不登记不同参数的临时开发二进制。源码构建目标不等于生产发布或安装状态。
+
+## 原生数据面自动验证
+
+根仓库的 `go test ./...` 不进入此补丁生成的源码和嵌套 Go module。CI 的独立
+`native-dataplane` Job（45 分钟上限）及本机 Linux 使用同一入口：
+
+```bash
+python3 scripts/test-native-dataplane.py
+```
+
+每次在 `out/native-dataplane-tests/run-*` 新建独立结果目录，保留已有失败日志。
+入口按根 `go.mod` 使用 Go 工具链，再调用 `prepare-sing-box.py` 核验五份上游的 commit
+与 module sum、补丁正向检查／应用／反向检查，以及 `common/loomprotocol` 与仓库 `protocol/`
+全部 Go 文件的精确字节一致性。来源 JSON 记录全部固定依赖、补丁和执行协议摘要。
+
+测试分别在 sing-box 主模块、`.loom-sing-quic`、`.loom-wireguard` 和 `.loom-sing-tun`
+工作目录执行；临时 `go.work` 将五个固定模块放在同一依赖图中，不改上游 `go.mod`。
+每次 PR 均执行下列关键集及其 race 检查，不依赖平台签名私钥：
+
+- 主模块 `common/loomprotocol`、`common/execution`、`common/sourcepool`、
+  `protocol/wireguard`、`protocol/hysteria2`、`protocol/group`、`transport/wireguard`；
+- sing-quic 的 `hysteria2`；wireguard-go 的 `conn`、`device`；
+- sing-tun 的纯内存 `TestGVisorUDPForwarderPreservesFragmentedPayload`。
+
+随后按正式构建 tags 构建 Linux amd64，记录来源、二进制摘要及 `go version -m`。
+下载、来源核验、补丁、测试和构建任一步失败都会使 Job 失败；空测试不算成功。CI 总是保存
+逐步日志、来源与测试摘要，仅上传这些诊断文件，不签名、不发布数据面制品、不修改生产配置。
+这不是上游所有 package、宿主 TUN／路由、Android／Windows 真机或生产多中继业务验收。
+宿主网络验证仍须遵守[隔离边界](../../docs/incidents/2026-09-21-host-network-takeover.md)。
+
+## 既有修订与验收边界
+
+`.27` 独立登记本轮安全回归测试、完整来源元数据与准备／构建脚本的实际字节；`.26` 及更早
+来源和二进制审核摘要保持原值。新来源不能套用 `.26` 的登记，即使测试改动未改变业务执行代码。
+这是未发布制品的构建坐标，不是协议版本；schema 3、签名原件、发布 generation 与已安装指针不变。
+本地来源／历史隔离和构建验证不表示 Windows 原生、Android 真机或生产激活已验收。
 
 `.25` 仅增加 access 业务拒绝分支诊断。连接保留第一次拒绝的固定原因与当时选择 revision
 的哈希，后续已 pin 请求缺少上下文或新选择不能覆盖首因。两个元数据字段不进入 JSON、

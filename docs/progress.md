@@ -9,6 +9,140 @@
 用户随后已要求继续当前计划，恢复范围及实际结果见下一节。历史原始证据保持原义；实体终验和
 正式入口回读仍按各任务实际范围判定。
 
+## 当前版本定向审查与修复
+
+2026-11-06，起始工作区干净，分支 `main`、本地 `origin/main` 与 HEAD 均为
+`1c387417fd916530395d532a77accc7bc28bb096`。本轮只做用户指定的定向审查、局部修复和本地验证；
+未远端重新核验部署状态，历史操作与验收仍按原记录保留。本节记录提交前的本地验证；操作者
+随后明确要求提交推送，修复坐标以 Git 历史及远端回读为准。未使用发布私钥，未执行发布、
+部署、生产迁移或宿主网络配置变更。
+
+Forward 的基线缺陷已经代码读回确认：候选标签本来绑定实际 TransportResource，派生 LinkID
+也按网络／来源／接收资源／用途唯一，但 ForwardRoutePaths 仅按下一跳节点索引首段引用，
+同节点 WG／Hy2 因而覆盖彼此。当前只保留现有 FirstResourceID 到 LinkSampleRef 的对应，
+并核对来源、接收者及样本来源；suffix 继续按实际 LinkID 和完整规格定位。无签名字节、schema、
+Policy／Service 关系或新权威状态变化，最终出口和稳定选择／CAS／确认流程保持。
+
+原实现通过 Go overlay 运行新增回归时，直达／中继及 RTT 两种方向四组均按预期失败，日志在
+`out/current-review-baseline/regression-before-fix.log`；修复后 clientmodel／clientadapter 普通
+及 race 检查通过。覆盖同下一跳的 WG／Hy2、100/25 与 20/120 毫秒反转、图遍历顺序、不同
+SpecDigest／资源／Link、unavailable 与过期隔离、并行 suffix、当前拓扑／跳数收缩和资源撤销。
+适配器测试经过完整 GET／CAS／回读／确认；重复旧样本不增加性能确认，旧记忆不能复活撤下资源。
+
+逐跳审查覆盖用户指定的十类攻击场景。未发现正常 PrepareContext、WG／Hy2 接收与恢复流程
+需要修改的生产逻辑缺陷；补充协议负面测试、连接历史副本隔离和原生上下文／当前撤权恢复测试。
+可信 forward 必须保全原连接绑定，接收端独立复验当前授权；这不是 Byzantine 防御，合法形状的
+伪历史与仍获授权的旧上下文复用不具备端到端真实性／一次性保证。完整边界已写入
+[安全契约](core/current-contract.md#逐跳上下文的信任边界)。protocol 普通／race、原生 WG／Hy2
+真实回环加密 TCP／UDP、四类 dialer 上下文及撤权定向 race 通过，日志保留在
+`out/hop-security-native/security-tests.log`。
+
+原生自动化新增独立 CI Job；本地实际执行 `python3 scripts/test-native-dataplane.py` 通过。
+五份上游 commit／module sum、补丁正向应用／反向检查及全部 protocol 文件逐字节一致均通过；
+各嵌套模块使用明确工作目录及同一固定依赖图。关键集普通与 race 每轮各 229 个测试／子测试
+事件，无失败或跳过，Linux amd64 正式 tags 构建及来源读回通过。逐项日志、摘要和来源位于
+`out/native-dataplane-tests/run-z1ylmcng/`。它不覆盖所有上游包、宿主 TUN／路由或生产业务；
+本地通过不表示 GitHub 托管 Job 已执行。
+
+Android 的七项 Scope 要求已有实现，不重复改写 RouteManager。当前源双 ABI AAR 重建通过；
+首次 JVM 回归暴露四项 SelectorTakeover 测试固定回环端口与宿主既有监听冲突，原日志／XML
+保存在 `out/android-review-initial-failure/`。局部注入同一真实 HTTP transport，仅让测试服务
+使用自有动态回环端口；正式固定端点校验保持，并新增拒绝其他端点的回归。重跑 21 组共 88 项
+JVM 测试全部通过，无跳过，指定 Scope 回归及接管测试全部通过；Debug APK 构建成功。AAR／APK
+两种 ABI 原生库逐字一致，来源记录匹配当前补丁和源码。执行命令（工作目录 `clients/android`）：
+
+```bash
+ANDROID_HOME=/opt/android-sdk JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 bash scripts/build-mobile-aar.sh
+ANDROID_HOME=/opt/android-sdk JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 bash gradlew --no-daemon --max-workers=4 :app:testDebugUnitTest :app:assembleDebug
+```
+
+日志在 `out/android-review-aar.log`、`out/android-review-gradle.log` 及
+`out/android-review-final/`。本轮未安装、运行真机或做 release 签名，构建与 JVM 回归不抵扣
+互联网／LAN 组合真机、真实多中继稳定优选、闲置冷建及生产前向迁移验收。
+
+交付对账已纠正 Scope 独立应用与纯发送资源回收的过时缺项，保留原失败版本及实际验收边界。
+首次全库验证的命令、退出码和分步日志位于 `out/current-review-validation/`；后续修复结果见
+[全量验证续作](#全量验证续作测试成本与来源坐标)：
+
+| 命令 | 实际结果 |
+|---|---|
+| `go build ./...`、`go test ./...`、`go vet ./...` | 均退出 0 |
+| `go test -race ./...` | 退出 1；clientdist 与 control 均触发默认整包 10 分钟超时，不能称全量通过 |
+| `go -C mobile/loomcore test ./...`、`go -C mobile/loomcore test -race ./...`、`go -C mobile/loomcore vet ./...` | 均退出 0 |
+| `python3 -m unittest discover -s scripts -p 'test_*.py'` | 18 项通过 |
+| `python3 scripts/check_repository_safety.py` | 通过 |
+| 仓库 Go 文件 `gofmt -l`、`git diff --check` | 无输出 |
+
+全量 race 原失败保存在 `out/current-review-validation/03.log`，没有 race 报告，但这不等于未完成
+的包已通过。clientdist 当时运行 `TestLinuxManifestRejectsAmbiguousAndLegacyBytes`，其某个清单
+负例在既有 BestCompression 打包路径压缩完整临时 CLI；测试没有读取本轮原生制品，相关实现
+和测试未改。control 当时运行 `TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS`，
+该项已运行 2 分 32 秒，堆栈在 Snapshot 的 JSON 深拷贝；它耗尽的是整包累计预算，不能据此认定
+该测试自身超时或死锁。control 的测试生产依赖不包含本次修改的 clientmodel／clientadapter，
+protocol 仅测试文件变化。上述事实尚不构成同环境基线全量 race 已复现的证明。首次审查阶段
+将这两项全量验证失败保持为未解决，没有提高超时、跳过失败或扩展到打包／报告同步重构；
+后续修复与验证见下节，原失败结果不改写。
+
+补充诊断曾执行以下单项 race；按停止追加诊断的指令在 86.078 秒主动终止测试子进程，
+退出 1、日志为 `signal: terminated`，不计为通过或单项超时证据，原日志／profile 保留在 `out/`：
+
+```bash
+GOTOOLCHAIN=go1.27.0 go test -race ./internal/control -run '^TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS$' -count=1 -timeout=90s -cpuprofile out/control-race-diagnosis.cpu > out/control-race-diagnosis.log 2>&1
+```
+
+### 全量验证续作：测试成本与来源坐标
+
+操作者随后要求继续推进，范围仍为本地审查、修复和验证，不含生产签名、发布、部署或迁移。
+保留首次全量 race、被终止诊断及以下所有失败原日志，不以调整限额或跳过用例消除失败。
+
+clientdist 的四项元数据测试不执行包内 CLI；此前却反复构建完整 CLI 并对每个清单负例重新
+压缩。现在只将这些夹具改为具有相同入口和 ELF/buildinfo 身份的小型临时程序，保留完整
+签名、摘要、规范编码、篡改断言和正式压缩逻辑。真实 CLI 与双架构数据面的正式包测试保持。
+
+control 的单项 race 在下调为 3 分钟的诊断限额内超时，完整日志及 CPU profile 保留为
+`out/current-review-followup/control-before.*`。采样中 Snapshot／深拷贝约占 5.7%，没有足够
+收益依据去修改生产权限查询或拷贝边界；更明显的成本在测试辅助的重复编码、解码和构树。
+修复仅位于两个测试文件：一次查询复用 codec，仍逐件严格解码；排序复用已验证且复制拥有的
+规范原字节；进度循环只读取真实原件条目数。最终两端仍完整校验原件 key／内容 ID／引用集合、
+数量和规范字节。1200 份报告、61 个稀疏点、故障、重试及限额均保留，生产 Snapshot、权限与
+协议代码未改。相关四用例普通及 race 通过，之后以默认限额验证整包。
+
+真实包测试还正确拒绝本轮新来源沿用 `.26` 登记：安全测试补丁及准备脚本已改变，即使当时
+数据面二进制仍相同，也不能静默改写已登记的来源。现按实际四架构构建字节新增 `.27` 独立
+制品坐标和来源摘要；`.26` 及更早登记完整保留，并增加历史冻结及逐文件篡改拒绝回归。
+这是本地构建坐标，不是协议版本，schema 3、签名原件、发布 generation／catalog 与已安装
+指针不变。来源／历史隔离、四架构构建及真实 Linux 双架构包链已经实际通过，未做 Windows
+原生执行。默认 `/tmp` 祖先不符合包捕获安全边界的拒绝也保留；正式包复验使用受保护磁盘
+TMPDIR，未放宽门禁或改用 fallback。
+
+准确命令 `go test -race ./internal/clientcomponent ./internal/clientdist` 已在默认限额内通过；
+显式 `TestReviewedLinuxPackages` 对当前 CLI 和 `.27` 数据面逐架构完成 Build、Verify、
+VerifyPackage、VerifyFiles、VerifyDirectory 与篡改拒绝，未跳过。来源登记与原件保全证据、
+真实包命令及逐步结果均位于 `out/current-review-followup/`。
+
+Android 当前源 `.27` 双 ABI AAR 重建、强制重跑的 88 项 JVM 测试及 Debug APK 构建通过；
+两种 ABI 原生库与来源逐字一致，补丁及协议副本匹配当前源码。日志和完整命令见同目录的
+`android-summary.json`。这不抵扣真机或生产验收。
+
+最终 control 整包使用 `GOTOOLCHAIN=go1.27.0 go test -race ./internal/control`，默认限额内
+退出 0，耗时 567.862 秒。源码保持后，根 `go test -race ./...` 也退出 0，75.042 秒；Go 复用
+了同源同参数的整包通过结果，日志明确显示 control 为 cached，没有跳过或替换测试入口。
+因此首次两项整包超时已通过局部测试成本修复闭合，不能把旧超时改写成当时已经通过。
+
+| 最终命令 | 实际结果与证据 |
+|---|---|
+| `go build ./...`、`go test ./...`、`go test -race ./...`、`go vet ./...` | 全部退出 0；`root-summary.json` 与对应日志 |
+| `go -C mobile/loomcore test ./...`、`go -C mobile/loomcore test -race ./...`、`go -C mobile/loomcore vet ./...` | 全部退出 0；同一 root 摘要 |
+| `python3 scripts/test-native-dataplane.py` | 当前 `.27` 来源、补丁正反与协议副本检查、逐模块关键集／race 每轮各 229 个通过事件、Linux amd64 构建通过；无失败或跳过 |
+| `python3 -m unittest discover -s scripts -p 'test_*.py'` | 18 项通过 |
+| `python3 scripts/check_repository_safety.py` | 通过 |
+| 全部 Git 可见 Go 文件 `gofmt -l`、`git diff --check` | 无输出 |
+
+当前原生验证摘要位于 `out/native-dataplane-tests/run-ynra3h0h/`，入口退出码及日志在
+`out/current-review-followup/native-final.*`；首次原生结果保持原坐标。托管 CI、所有上游包、
+宿主 TUN、实体机与生产多中继验收仍不由本地检查抵扣。本节验证阶段尚未提交；后续提交推送
+按操作者新指令处理，未执行 release 签名、发布、部署、生产迁移或宿主网络配置变更。
+
 ## 操作者指定的端口占用与可用范围修正
 
 2026-11-04，操作者确认一台节点的指定端口已由其他程序使用，并重申原先提供的完整可用范围。

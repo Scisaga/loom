@@ -345,7 +345,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if got := peers[1].server.Runtime.Reports.All(); len(got) != 2 || got[0].ReportSequence != latest.ReportSequence {
 		t.Fatal("new highest range waited behind an older historical backlog")
 	}
-	for attempt := 0; attempt < 32 && len(peers[1].server.Runtime.Reports.History()) < len(history)+3; attempt++ {
+	for attempt := 0; attempt < 32 && testReportCount(t, peers[1].server.Runtime.Reports) < len(history)+3; attempt++ {
 		if err := syncPeer(1, 0); err != nil {
 			t.Fatal("bounded retries could not fill historical gaps", err)
 		}
@@ -508,7 +508,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if err := peers[0].server.Runtime.Reports.mergeReportHistory(context.Background(), sparse, peers[0].server.Runtime.Authority.Snapshot()); err != nil {
 		t.Fatal(err)
 	}
-	beforeSparse := len(testCollectReports(t, peers[1].server.Runtime.Reports).reports)
+	beforeSparse := testReportCount(t, peers[1].server.Runtime.Reports)
 	if err := syncPeer(1, 0); err != nil {
 		t.Fatal("sparse history prevented a bounded commit", err)
 	}
@@ -516,7 +516,7 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	sparseCalls := capture.indexCalls - indexBefore
 	capture.delay = 0
 	capture.mu.Unlock()
-	afterSparse := len(testCollectReports(t, peers[1].server.Runtime.Reports).reports)
+	afterSparse := testReportCount(t, peers[1].server.Runtime.Reports)
 	if sparseCalls > reportIndexRounds+1 || afterSparse <= beforeSparse || afterSparse-beforeSparse >= len(sparse) {
 		t.Fatal("sparse history did not yield a smaller durable batch", sparseCalls, afterSparse-beforeSparse)
 	}
@@ -524,17 +524,25 @@ func TestReportMemberDeltaFillsOldHolesAndForksThroughPrivateTLS(t *testing.T) {
 	if len(got) != 2 || got[0].ReportSequence != ^U64(0) {
 		t.Fatal("historical index work hid the latest report")
 	}
-	sourceCount := len(testCollectReports(t, peers[0].server.Runtime.Reports).reports)
+	sourceCount := testReportCount(t, peers[0].server.Runtime.Reports)
 	received := afterSparse
 	for attempt := 0; attempt < len(sparse)+2 && received < sourceCount; attempt++ {
 		if err := syncPeer(1, 0); err != nil {
 			t.Fatal(err)
 		}
-		next := len(testCollectReports(t, peers[1].server.Runtime.Reports).reports)
+		next := testReportCount(t, peers[1].server.Runtime.Reports)
 		if next <= received {
 			t.Fatal("sparse retry made no durable progress", attempt, received, next)
 		}
 		received = next
+	}
+	// Progress counts above avoid repeatedly decoding the unchanged backlog.
+	// At convergence, still verify every original's key/content binding on both
+	// members and compare the complete content-ID locations before the bytes.
+	sourceOriginals := testCollectReports(t, peers[0].server.Runtime.Reports).reports
+	receivedOriginals := testCollectReports(t, peers[1].server.Runtime.Reports).reports
+	if len(sourceOriginals) != sourceCount || len(receivedOriginals) != received || !reflect.DeepEqual(sourceOriginals, receivedOriginals) {
+		t.Fatal("bounded sparse retries changed the original content-ID locations")
 	}
 	if !bytes.Equal(readHistory(0), readHistory(1)) {
 		t.Fatal("bounded sparse retries did not converge to the exact originals")

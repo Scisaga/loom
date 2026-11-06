@@ -39,7 +39,13 @@ internal class SelectorCallScopes {
     @Synchronized fun confirmed(scope: String) { remaining.remove(scope); uncertain.remove(scope); requiredCAS.remove(scope) }
 }
 
-internal class SelectorClient(private val config: String) {
+internal class SelectorClient(
+    private val config: String,
+    private val exchange: suspend (String, String, String, ByteArray?, Int, Socket) -> LoopbackHttpResponse =
+        { secret, method, path, body, maximum, socket ->
+            cancellableLoopbackHttpRequest(LOOPBACK_HOST, LOOPBACK_PORT, secret, method, path, body, maximum, socket)
+        },
+) {
     private val socketLock = Any()
     private var activeSocket: Socket? = null
     private var resourceRequest: AndroidDeviceRequest? = null
@@ -214,8 +220,8 @@ internal class SelectorClient(private val config: String) {
             activeSocket = socket
         }
         val response = try {
-            cancellableLoopbackHttpRequest(
-                LOOPBACK_HOST, LOOPBACK_PORT, secret, method, path, body,
+            exchange(
+                secret, method, path, body,
                 if (path == "/connections/") 8 * 1024 * 1024 else if (path == "/loom/tcp-observations") 64 * 1024 else SELECTOR_READBACK_LIMIT, socket,
             )
         } catch (error: Throwable) {
