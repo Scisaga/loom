@@ -29,7 +29,15 @@ func TestNativeActivationPreservesExactOwnedAddresses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Pin the actual initial namespace before the child enters a user
+		// namespace that may not inspect PID 1 through procfs.
+		initial, err := os.Open("/proc/1/ns/net")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer initial.Close()
 		child := exec.Command(binary, "-test.run=^TestNativeActivationPreservesExactOwnedAddresses$", "-test.v", "--", marker)
+		child.ExtraFiles = []*os.File{initial}
 		child.SysProcAttr = &syscall.SysProcAttr{
 			Cloneflags:                 syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWNS,
 			UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
@@ -46,7 +54,7 @@ func TestNativeActivationPreservesExactOwnedAddresses(t *testing.T) {
 		t.Log(strings.TrimSpace(string(body)))
 		return
 	}
-	if err := requireDifferentNetworkNamespace("/proc/self/ns/net", "/proc/1/ns/net"); err != nil {
+	if err := requireDifferentNetworkNamespace("/proc/self/ns/net", "/proc/self/fd/3"); err != nil {
 		t.Fatal(err)
 	}
 	interfaces, err := net.Interfaces()

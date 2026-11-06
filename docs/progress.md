@@ -198,7 +198,20 @@ namespace 的 root 无法穿过 runner 私有 home 祖先执行测试程序。�
 短路径 `/ci`：原子创建，已存在即拒绝，并核对 root:root 0700。没有截短业务 socket、放宽
 目录权限或跳过隔离测试。私有 mount namespace 的失败等价类普通／race 均通过，宿主 mount
 与 namespace 保持，证据为 `out/current-review-postpush/short-scratch/summary.json`。
-该执行器修正的托管结论继续以实际提交对应工作流为准。
+执行器修正提交 `5083595f916f133eba951e47840dbae9c4c0803c` 已推送；其
+[托管 CI](https://github.com/Scisaga/loom/actions/runs/42204054178)的 Windows 与原生 Job 成功，
+Linux 普通／race 的 socket 长度和程序执行问题消失，均只剩原生激活夹具读取 PID 1 namespace
+的权限失败。新 user namespace 不能重开 `/proc/1/ns/net`；测试现由父进程预先打开该精确
+初始 namespace，以唯一继承句柄 FD3 交给子进程。原隔离比较与 fresh loopback 检查保持，
+未增加权限、修改内核设置或放宽 skip。原四个真实激活子例和三个 namespace 边界测试普通／race
+均通过，无跳过，证据为 `out/current-review-postpush/final-ci-namespace-fd-summary.json`。
+托管失败原日志继续保留；该夹具修正的托管结论以实际提交对应工作流为准。
+
+本地提交前复核也曾误用过长 TMPDIR，再现相同两项 socket 失败；原日志保存在
+`out/current-review-postpush/namespace-fd-root-checks/`。随后在独立 mount namespace 中使用
+短的受保护目录，根 `go test ./...` 与 `go vet ./...` 均退出 0，宿主挂载及 namespace 不变；
+根 build 已通过。新修改的定向 race 已通过，本次不重复本地全库 race，继续由新提交的托管
+完整 race 验证，详见该目录 `short/summary.json`。
 
 ## 操作者指定的端口占用与可用范围修正
 
