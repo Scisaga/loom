@@ -318,6 +318,65 @@ UI 投影误用权威 canonical writer，以及把可选 RoundTrips 统计当原
 本次补齐本机真实 control 报告持久化、当前回读及重启恢复；仍不抵扣独立 access 经多个
 forward 的实网链、波动统计、Android／ARM64 实体机和生产迁移验收。
 
+该轮提交 `b92406cfd13268082d1d4ad383e6e839d1226107` 已推送；精确 head 的
+[主 CI](https://github.com/Scisaga/loom/actions/runs/42217933025) 四个 Job 全部成功，包括
+全库普通／race、Windows 原生及固定来源数据面检查。
+[Android CI](https://github.com/Scisaga/loom/actions/runs/42217933044) 同一 head 也成功，覆盖
+共享核心、AAR、lint、JVM 与 APK 构建；没有执行设备 instrumentation。上述托管结论已再次
+读取 run、jobs 和日志中的 checkout SHA，不从按包汇总输出推定 opt-in 业务用例已执行。
+
+### 独立 Access 与两个 Forward 的共享测量续验
+
+操作者继续推进后，以 `b92406cf` 开始本机隔离四节点验收；本轮修改仅为测试辅助、原生用例
+和脱敏记录。新增 `TestOfficialLinuxNativeMultiForwardSharedSuffixKeepsExistingTCP`：四台独立
+正式 CLI runtime 分别承担 access、forward、forward、internet_egress，实际执行
+`A → F1 → F2 → E` 的 WG／Hy2／WG 独立传输段。唯一互联网 Policy、最终出口和 access 的唯一
+候选固定；两个纯 forward 的 access PolicyIDs 为空。自动派生的四条有向边全部保留，包括
+F1 直达 E 和 F2 返回 F1；跳数上限与范围没有被用来强制经过 F2。
+
+实验只降低 F2→E 桥接中的真实 UDP 报文延迟，F1 两条本地边与反向边的实验输入不变。
+F2 的真实已签高／低延迟 Link 样本经过正式报告入口持久化，并由 F1 的正常
+`/device/link-observations` 接口取得。F1 实际 Run 的 forward revision／首选从 E 改为 F2，
+F2 首选仍为 E；新连接在两个 forward 的实际 tracker 分别使用 F2、E 资源并返回应用字节，
+原直达连接的 UUID、资源链和应用收发保持。辅助 Fetch 本身不被当作 Run 消费的证明，结论
+同时依赖上述远端唯一实验变量、实际 CAS、连接链和回包。
+
+四个真实 runtime 均有 current 报告。停服后只读逐件核验数据库的规范原字节、签名和键，
+两个交付引用的 DeviceID、sequence、digest 与完整 Observation 均匹配原件；F1 没有把远端
+样本重新报告为自己采集。完整签名 LKG、偏好、网络代和 access 候选保持。新四节点用例没有
+重复 control 重启场景；本轮同时用同一冻结普通测试二进制完整复验原两节点入口，0 skip。
+旧用例的两个资源各有至少两次反转后样本，CAS、新旧连接、真实报告持久化、同目录重启恢复、
+后续序列前进及旧签名字节保全均通过，验证参数化控制面辅助没有改变原行为；本项未重复 race。
+
+每台 runtime 使用独立 network namespace，固定 namespace FD 启动整个正式 CLI；有限的
+socket worker 在所属 namespace 创建 socket，经 SCM_RIGHTS 交付并逐件核对 SO_NETNS_COOKIE。
+桥接只转发原始 TCP／UDP 字节，保留 TCP 半关闭及 UDP 来源映射，不解析权限或选择路径。
+任何网络命令前先排除初始 user／net／mount namespace，并核对只有 loopback、无外部路由；
+合成公网业务地址仅绑定出口 namespace 的 loopback。未使用 veth、宿主 TUN 或宿主路由变更。
+独立 socket proof 普通／race 与初始 namespace 拒绝检查均通过；失败路径的 runtime 停止顺序
+和出口 accepted socket 的 FD 所有权也已审查修正。
+
+最终冻结源码的普通／race 两版分别在 fresh user／net／mount namespace 完整通过，均为
+0 skip、无 race 诊断；不是默认 opt-in 跳过结果。两版精确测试源一致，使用普通／race 正式
+CLI 和原 `.27` 数据面，全部 runtime／worker 正常退出，socket／namespace FD 已关闭，
+无所属进程残留。规则与宿主结构排除 IPv6 expires 自然倒计时后相同。首轮误把 access Policy
+选择传给纯 forward 的夹具失败原件保留；隔离检查前移与清理顺序的审查修正也有记录，没有
+更改生产授权、测量节奏、稳定门槛、关闭上限或 schema 3。
+
+完整命令、固定二进制与源码摘要、边界快照、已签原件和逐轮结果只存于被忽略的
+`deploy/evidence/2026-11-06-multiforward-b92406cf-final/`；最终两轮为 `run-lsye5n4r`／
+`run-xeo95gor`，汇总为 `review-summary.json`。首轮失败和中间成功轮保留在同级不带 `-final`
+的目录。旧两节点回归位于 `deploy/evidence/2026-11-06-multiforward-old-two-node-regression/`，
+汇总为 `review-summary.json`。main 测试源摘要为
+`758f532725fc87afed2cf03cce4523cdabff1f112c905609e7ad588aa6a48d98`。
+根 build／全库 test／vet、格式、仓库安全及 diff 检查通过，短受保护 TMPDIR 仅在私有 mount
+namespace 使用，证据在 `out/continuation-multiforward/root-checks/`。本轮完整 race 的托管结论
+仍按新提交的实际工作流读回，不用本地定向结果抵扣。
+
+本次补齐的是独立 access 经两个 forward、固定出口的本机隔离共享测量与新旧业务流。
+反向边可达性、所有拓扑／出口组合、真实异网质量、实体机、波动统计和生产迁移仍未验收；
+本轮没有签名发布或部署，也没有把该场景记作完整多中继自动选路交付完成。
+
 ## 操作者指定的端口占用与可用范围修正
 
 2026-11-04，操作者确认一台节点的指定端口已由其他程序使用，并重申原先提供的完整可用范围。

@@ -50,6 +50,31 @@ func startNativeForwardControl(t *testing.T, ctx context.Context, binary, eviden
 	if len(intent.Services) != 1 || len(intent.Policies) != 1 || len(intent.Resources) != 2 || len(intent.Links) != 0 || len(intent.BusinessProbeTargets) != 0 || len(intent.PublicTrust) != 0 || len(intent.ExpectedComponents) != 0 {
 		t.Fatal("forward acceptance requires its one Service/Policy and two native resources")
 	}
+	for _, resource := range intent.Resources {
+		if resource.OwnerNodeID != "demo-exit" {
+			t.Fatal("forward acceptance resource belongs to another receiver")
+		}
+	}
+	devices := []control.DevicePut{
+		{ID: "demo-device", Name: "Demo forward source", Responsibilities: []string{"access", "forward"}, PolicyIDs: []string{intent.Policies[0].ID}, DistributionURLs: []string{}, DNSServers: []string{"127.0.0.1"}, WireGuardPublicKey: sourceWGPublic},
+		{ID: "demo-exit", Name: "Demo internet exit", Responsibilities: []string{"internet_egress"}, PolicyIDs: []string{}, DistributionURLs: []string{}, DNSServers: []string{"127.0.0.1"}, WireGuardPublicKey: exitWGPublic},
+	}
+	f, stores, states := startNativeForwardControlDevices(t, ctx, binary, evidence, intent, devices)
+	return f, stores["demo-device"], states["demo-device"]
+}
+
+func startNativeForwardControlDevices(t *testing.T, ctx context.Context, binary, evidence string, intent control.NetworkIntent, devices []control.DevicePut) (*nativeForwardControl, map[string]*deviceclient.Store, map[string]string) {
+	t.Helper()
+	if len(intent.Services) != 1 || len(intent.Policies) != 1 || len(intent.Resources) == 0 || len(intent.Links) != 0 || len(intent.BusinessProbeTargets) != 0 || len(intent.PublicTrust) != 0 || len(intent.ExpectedComponents) != 0 || len(devices) == 0 {
+		t.Fatal("forward acceptance requires its one Service/Policy, native resources and devices")
+	}
+	deviceIDs := map[string]bool{}
+	for _, device := range devices {
+		if device.Validate() != nil || deviceIDs[device.ID] {
+			t.Fatal("forward acceptance device inputs are invalid or duplicated")
+		}
+		deviceIDs[device.ID] = true
+	}
 	parent := filepath.Join(evidence, "control")
 	if err := os.Mkdir(parent, 0700); err != nil {
 		t.Fatal(err)
@@ -158,44 +183,45 @@ func startNativeForwardControl(t *testing.T, ctx context.Context, binary, eviden
 	policy.EntryScope, policy.RelayScope, policy.ExitScope = anyScope, anyScope, new(anyScope)
 	f.operation(t, "policy.put", "policy", policy.ID, policy, service.MaterialID)
 	states := map[string]string{}
-	for _, device := range []struct {
-		id, name string
-		roles    []string
-		policies []string
-		wg       string
-	}{
-		{"demo-device", "Demo forward source", []string{"access", "forward"}, []string{policy.ID}, sourceWGPublic},
-		{"demo-exit", "Demo internet exit", []string{"internet_egress"}, []string{}, exitWGPublic},
-	} {
-		invite := control.Invite{ID: device.id + "-enrollment", GenesisDigest: genesisID, IssuerControlID: member.ControlID, DeviceID: device.id, Name: device.name, Responsibilities: device.roles, PolicyIDs: device.policies, DNSServers: []string{"127.0.0.1"}, Medium: "sh", Endpoint: endpoint, ExpiresAt: time.Now().Add(30 * time.Minute).UnixMilli()}
+	for _, device := range devices {
+		medium := "sh"
+		if len(device.Responsibilities) == 1 && device.Responsibilities[0] == "access" {
+			medium = "qr"
+		}
+		invite := control.Invite{ID: device.ID + "-enrollment", GenesisDigest: genesisID, IssuerControlID: member.ControlID, DeviceID: device.ID, Name: device.Name, Responsibilities: device.Responsibilities, PolicyIDs: device.PolicyIDs, DNSServers: device.DNSServers, Medium: medium, Endpoint: endpoint, ExpiresAt: time.Now().Add(30 * time.Minute).UnixMilli()}
 		issued := f.operation(t, "invite.issue", "invite", invite.ID, invite, f.dependencies(t, "endpoint", endpoint.ID, "service", intent.Services[0].ID, "policy", policy.ID)...)
 		if issued.Invite == "" {
 			t.Fatal("formal control did not return its invitation")
 		}
-		invitePath := f.file(t, device.id+"-invite.txt", []byte(issued.Invite))
-		states[device.id] = filepath.Join(parent, device.id+"-identity.json")
-		f.cli(t, "client", "enroll", "-invite-file", invitePath, "-state", states[device.id])
-		put := control.DevicePut{ID: device.id, Name: device.name, Responsibilities: device.roles, PolicyIDs: device.policies, DistributionURLs: []string{}, DNSServers: invite.DNSServers, WireGuardPublicKey: device.wg}
-		f.operation(t, "device.put", "device", device.id, put, f.dependencies(t, "device", device.id, "policy", policy.ID, "service", intent.Services[0].ID)...)
+		invitePath := f.file(t, device.ID+"-invite.txt", []byte(issued.Invite))
+		states[device.ID] = filepath.Join(parent, device.ID+"-identity.json")
+		f.cli(t, "client", "enroll", "-invite-file", invitePath, "-state", states[device.ID])
+		f.operation(t, "device.put", "device", device.ID, device, f.dependencies(t, "device", device.ID, "policy", policy.ID, "service", intent.Services[0].ID)...)
 	}
 	for _, resource := range intent.Resources {
-		if resource.OwnerNodeID != "demo-exit" {
-			t.Fatal("forward acceptance resource belongs to another receiver")
+		if !deviceIDs[resource.OwnerNodeID] {
+			t.Fatal("forward acceptance resource belongs to an unknown receiver")
 		}
 		f.operation(t, "resource.put", "resource", resource.ID, resource, f.dependencies(t, "device", resource.OwnerNodeID)...)
 	}
-	f.operation(t, "policy.put", "policy", policy.ID, intent.Policies[0], f.dependencies(t, "policy", policy.ID, "service", intent.Services[0].ID, "device", "demo-device", "device", "demo-exit")...)
+	policyTargets := []string{"policy", policy.ID, "service", intent.Services[0].ID}
+	for _, device := range devices {
+		policyTargets = append(policyTargets, "device", device.ID)
+	}
+	f.operation(t, "policy.put", "policy", policy.ID, intent.Policies[0], f.dependencies(t, policyTargets...)...)
 	for _, record := range intent.DNSRecords {
 		f.operation(t, "dns_record.put", "dns_record", record.ID, record)
 	}
-	for _, id := range []string{"demo-device", "demo-exit"} {
-		f.cli(t, "client", "sync", "-state", states[id])
+	stores := map[string]*deviceclient.Store{}
+	for _, device := range devices {
+		f.cli(t, "client", "sync", "-state", states[device.ID])
+		store, err := deviceclient.Load(states[device.ID])
+		if err != nil || store.LKG() == nil {
+			t.Fatal("formal device did not persist its certified LKG", err)
+		}
+		stores[device.ID] = store
 	}
-	store, err := deviceclient.Load(states["demo-device"])
-	if err != nil || store.LKG() == nil {
-		t.Fatal("formal source did not persist its certified LKG", err)
-	}
-	return f, store, states["demo-device"]
+	return f, stores, states
 }
 
 func (f *nativeForwardControl) file(t *testing.T, name string, body []byte) string {
