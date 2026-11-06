@@ -2,28 +2,19 @@ package linuxclient
 
 import (
 	"bufio"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/ecdh"
-	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -40,16 +31,21 @@ import (
 	"loom/internal/clientadapter"
 	"loom/internal/clientmodel"
 	"loom/internal/control"
+	"loom/internal/deviceclient"
 )
 
 // The normal composed access/forward entry starts at its own Link. Its one
 // access candidate stays fixed while the forward selector compares two actual
 // resources belonging to the same next hop. Only relay packet delay changes;
-// neither the test nor its report receiver supplies samples or selector writes.
+// neither the test nor its control authority supplies samples or selector writes.
 func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testing.T) {
 	executable := os.Getenv("LOOM_LINUX_MIXED_EXECUTABLE")
 	if executable == "" {
 		t.Skip("requires the reviewed native executable in a dedicated namespace")
+	}
+	cli := os.Getenv("LOOM_MEMBER_CLI")
+	if cli == "" {
+		t.Fatal("explicit native acceptance also requires the freshly built official CLI")
 	}
 	current, err := os.Stat("/proc/self/ns/mnt")
 	initial, initialErr := os.Stat("/proc/1/ns/mnt")
@@ -61,7 +57,9 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 	// minimum switch interval. The bound includes one idle discovery, four
 	// active rounds and four normal round deadlines; waits observe results.
 	timing := clientadapter.DefaultMeasurementTiming
-	limit := timing.IdlePeriod + 4*timing.ActivePeriod + 4*timing.RoundTimeout
+	// The additional control restart has a ten-second stop, ten-second start
+	// and the next normal fifteen-second report tick, plus five seconds work.
+	limit := timing.IdlePeriod + 4*timing.ActivePeriod + 4*timing.RoundTimeout + 40*time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	root := t.TempDir()
@@ -165,6 +163,7 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 		t.Fatal(err)
 	}
 	p.NetworkIntent.Policies[0].EntryScope = control.PolicyScope{Mode: "only", NodeIDs: []string{"demo-device"}}
+	p.NetworkIntent.DNSRecords = []control.DNSRecord{}
 	private, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -173,31 +172,30 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 	if err := os.WriteFile(keyPath, []byte(base64.StdEncoding.EncodeToString(private.Bytes())), 0600); err != nil {
 		t.Fatal(err)
 	}
-	var endpoint control.EndpointGeneration
-	store, identityPath, makeView := linuxAcceptanceProjectionFixture(t, func(projection *control.Projection) {
-		source := projection.DeviceAuthorizations[0]
-		source.Responsibilities = []string{"access", "forward"}
-		source.PolicyIDs, source.DNSServers = []string{"demo-policy"}, []string{"127.0.0.1"}
-		source.WireGuardPublicKey = base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes())
-		exit := p.DeviceAuthorizations[2]
-		exit.DNSServers = []string{"127.0.0.1"}
-		projection.DeviceAuthorizations = []control.DeviceAuthorization{source, exit}
-		projection.NetworkIntent = p.NetworkIntent
-		projection.EndpointGenerations = []control.EndpointGeneration{endpoint}
-		p.Config, p.EndpointGenerations, p.DeviceAuthorizations = projection.Config, projection.EndpointGenerations, projection.DeviceAuthorizations
-	})
-	var lkg control.DeviceViewEnvelope
-	var accepted atomic.Pointer[control.DeviceViewEnvelope]
-	var reports *nativeForwardReports
-	endpoint, reports = nativeForwardReportReceiver(t, ctx, evidence, store.PublicKey(), func() control.DeviceViewEnvelope { return *accepted.Load() })
-	lkg = makeView(7, true)
-	if err := store.SaveLKG(lkg); err != nil {
+	var exitWGPublic string
+	for _, resource := range p.NetworkIntent.Resources {
+		if resource.Kind == "wireguard" {
+			exitWGPublic = *resource.Authentication.PublicKey
+		}
+	}
+	authority, store, identityPath := startNativeForwardControl(t, ctx, cli, evidence, p.NetworkIntent, base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes()), exitWGPublic)
+	lkg := *store.LKG()
+	initialIdentity, err := store.IdentityReadback()
+	if err != nil {
+		t.Fatal("could not inspect the admitted public identity", err)
+	}
+	if store.Preference().PolicyID != "demo-policy" {
+		t.Fatal("first authenticated LKG did not initialize its unique Internet Policy")
+	}
+	// Read the receiver's exact persisted authorization only while its owner is
+	// stopped. Once business starts, all control evidence uses the admin socket.
+	authority.stop(t)
+	actualAuthority, err := control.OpenAuthority(authority.root)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetPreference(clientmodel.Preference{Schema: 3, PolicyID: "demo-policy"}); err != nil {
-		t.Fatal(err)
-	}
-	accepted.Store(&lkg)
+	p = actualAuthority.Snapshot()
+	authority.start(t)
 	execution, err := control.ProjectDeviceCandidates(lkg.View, []string{"demo-policy"})
 	if err != nil || len(execution.Routes) != 1 || execution.Routes[0].EntryNodeID != "demo-device" || execution.Routes[0].FirstResourceID != "" || execution.Routes[0].FinalExit != "demo-exit" {
 		t.Fatal("composed entry did not retain exactly one local forward candidate", err)
@@ -245,15 +243,57 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 		t.Fatal(err)
 	}
 	defer log.Close()
-	options := Options{DeviceState: identityPath, LocalState: filepath.Join(root, "observations.json"), Status: filepath.Join(root, "status.json"), Config: filepath.Join(root, "config.json"), SingBox: executable, WireGuardPrivateKey: keyPath, Capture: "mixed", RefreshPoll: time.Second, Log: log, Generation: func() (string, error) { return "demo-underlay", nil }}
+	options := Options{DeviceState: identityPath, LocalState: filepath.Join(root, "observations.json"), Status: filepath.Join(root, "status.json"), Config: filepath.Join(root, "config.json"), SingBox: executable, WireGuardPrivateKey: keyPath, Capture: "mixed", Log: log}
+	run := exec.CommandContext(ctx, cli, "client", "run", "-state", identityPath, "-capture", "mixed", "-sing-box", executable, "-wireguard-private-key", keyPath, "-runtime-config", options.Config, "-runtime-state", options.LocalState, "-status", options.Status)
+	run.Stdout, run.Stderr = log, log
+	if err := run.Start(); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, options) }()
+	go func() { done <- run.Wait() }()
 	defer func() {
-		cancel()
-		if err := <-done; err != nil {
-			t.Error("normal forward supervisor did not clean up", err)
+		_ = run.Process.Signal(os.Interrupt)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error("normal forward supervisor did not clean up", err)
+			}
+		case <-time.After(10 * time.Second):
+			cancel()
+			<-done
+			t.Error("normal forward supervisor did not stop")
 		}
 	}()
+	var generation string
+	var currentControl control.WebSnapshot
+	var currentEvidence *control.DeviceEvidence
+	samples := func() []control.Observation {
+		snapshot, err := authority.snapshot(ctx)
+		if err != nil {
+			return nil
+		}
+		for _, device := range snapshot.Devices {
+			value := device.Evidence
+			if device.ID != "demo-device" || value == nil || value.Freshness != "current" || value.ViewDigest != lkg.ViewDigest || value.Runtime == nil || value.Runtime.State != "running" || value.Runtime.AppliedViewDigest != lkg.ViewDigest {
+				continue
+			}
+			if generation == "" {
+				generation = value.NetworkGeneration
+			}
+			if value.NetworkGeneration != generation || generation == "" {
+				t.Fatal("normal report changed the source network generation")
+			}
+			currentControl, currentEvidence = snapshot, value
+			result := []control.Observation{}
+			for _, sample := range value.Measurements {
+				if sample.Level == "link" {
+					result = append(result, sample.Observation)
+				}
+			}
+			return result
+		}
+		return nil
+	}
 	var api nativeForwardAPI
 	var before nativeForwardSnapshot
 	wait := func(stage string, check func() bool) {
@@ -273,10 +313,11 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 			api, _ = nativeForwardReadAPI(options.Config)
 		}
 		before, err = api.snapshot(ctx)
-		return err == nil && nativeForwardSamplePair(t, reports.samples(), links, specs, 0, "hysteria2", execution.Resources) && before.first() == tags["hysteria2"]
+		values := samples()
+		return err == nil && nativeForwardSamplePair(t, values, links, specs, generation, 0, "hysteria2", execution.Resources) && before.first() == tags["hysteria2"]
 	})
 	status, err := ReadStatus(options.Status)
-	if err != nil || status.Runtime != "running" || len(status.Selections) != 1 || status.Selections[0].CandidateID != execution.Routes[0].ID {
+	if err != nil || status.Runtime != "running" || status.NetworkGeneration != generation || len(status.Selections) != 1 || status.Selections[0].CandidateID != execution.Routes[0].ID {
 		t.Fatal("actual access readback did not retain its sole local candidate")
 	}
 	access, err := NewHTTPSelector(string(mustNativeForwardConfig(t, options.Config)))
@@ -330,7 +371,7 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 		}
 		return false
 	})
-	if err := atomicJSON(filepath.Join(evidence, "forward-before.json"), map[string]any{"forward": before, "samples": reports.samples(), "old_id": oldID, "access": accessBefore}); err != nil {
+	if err := writeNativeForwardEvidence(filepath.Join(evidence, "forward-before.json"), map[string]any{"forward": before, "samples": samples(), "old_id": oldID, "access": accessBefore, "control": currentControl}); err != nil {
 		t.Fatal(err)
 	}
 	flipped := time.Now().UnixMilli()
@@ -344,7 +385,8 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 			lastKeep = time.Now()
 		}
 		after, err = api.snapshot(ctx)
-		return err == nil && after.Revision != before.Revision && after.first() == tags["wireguard"] && nativeForwardSamplePair(t, reports.samples(), links, specs, flipped, "wireguard", execution.Resources)
+		values := samples()
+		return err == nil && after.Revision != before.Revision && after.first() == tags["wireguard"] && nativeForwardSamplePair(t, values, links, specs, generation, flipped, "wireguard", execution.Resources)
 	})
 	checkStream(old, oldReader)
 	next, nextReader := connect()
@@ -371,12 +413,130 @@ func TestOfficialLinuxNativeForwardMeasuredRTTReversalKeepsExistingTCP(t *testin
 	if err != nil || accessAfter.CandidateID != accessBefore.CandidateID || accessAfter.PolicyID != accessBefore.PolicyID || !reflect.DeepEqual(accessAfter.Targets, accessBefore.Targets) || store.LKG().ViewDigest != lkg.ViewDigest {
 		t.Fatal("resource RTT reversal changed authorization or the sole access decision", err)
 	}
-	if err := atomicJSON(filepath.Join(evidence, "forward-after.json"), map[string]any{"forward": after, "samples": reports.samples(), "flipped_at": flipped, "connections": finalConnections, "access": accessAfter}); err != nil {
+	if err := writeNativeForwardEvidence(filepath.Join(evidence, "forward-after.json"), map[string]any{"forward": after, "samples": samples(), "flipped_at": flipped, "connections": finalConnections, "access": accessAfter, "control": currentControl}); err != nil {
 		t.Fatal(err)
+	}
+	var beforeRestartSamples []control.Observation
+	wait("complete current control samples before owner stop", func() bool {
+		beforeRestartSamples = samples()
+		return len(beforeRestartSamples) == len(links) && nativeForwardSamplePair(t, beforeRestartSamples, links, specs, generation, flipped, "wireguard", execution.Resources)
+	})
+	beforeRestart := *currentEvidence
+	for id, link := range links {
+		var history control.WebLinkHistory
+		err := authority.get(ctx, "/api/control/ui/link-history?link="+url.QueryEscape(id), &history)
+		if writeErr := writeNativeForwardEvidence(filepath.Join(evidence, "control-link-before-"+id+".json"), map[string]any{"history": history, "optional_round_trips_present": history.RoundTrips != nil}); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if err != nil || history.Schema != 3 || history.LinkID != id || history.FromNodeID != link.FromNodeID || history.ToNodeID != link.ToNodeID || history.ResourceID != link.ResourceID || history.SpecDigest != specs[id] {
+			t.Fatal("formal Link history lost actual independent measurement references", err)
+		}
+		matched := false
+		for _, sample := range beforeRestartSamples {
+			if sample.LinkID != id {
+				continue
+			}
+			for _, bucket := range history.Buckets {
+				matched = matched || !bucket.Ambiguous && bucket.Observation != nil && reflect.DeepEqual(*bucket.Observation, sample)
+			}
+		}
+		if !matched {
+			t.Fatal("formal Link history did not preserve its current raw Observation")
+		}
+	}
+	authority.stop(t)
+	checkStream(old, oldReader)
+	checkStream(next, nextReader)
+	originals := authority.offlineReports(t, "control-offline-before-restart")
+	var highest control.U64
+	postFlip := map[string]map[int64]bool{}
+	for _, report := range originals {
+		if report.DeviceID == "demo-device" && report.ReportSequence > highest {
+			highest = report.ReportSequence
+		}
+		if report.DeviceID != lkg.View.DeviceID || report.ViewDigest != lkg.ViewDigest || report.NetworkGeneration != generation {
+			continue
+		}
+		for _, sample := range report.Observations {
+			link, found := links[sample.LinkID]
+			if !found || sample.ObservedAt <= flipped || sample.Result != "available" || sample.RoundTripMS == nil {
+				continue
+			}
+			if sample.Level != "link" || sample.ResourceID != link.ResourceID || sample.SpecDigest != specs[link.ID] || sample.Action != link.ProbeTarget.Action || sample.Target != net.JoinHostPort(link.ProbeTarget.Host, strconv.Itoa(link.ProbeTarget.Port)) || sample.NetworkGeneration != generation || sample.Validate() != nil {
+				t.Fatal("original post-reversal measurement lost its actual Link specification")
+			}
+			if postFlip[sample.ResourceID] == nil {
+				postFlip[sample.ResourceID] = map[int64]bool{}
+			}
+			postFlip[sample.ResourceID][sample.ObservedAt] = true
+		}
+	}
+	for _, link := range links {
+		if len(postFlip[link.ResourceID]) < clientmodel.DefaultPerformanceRule.Confirmations {
+			t.Fatal("control did not persist two distinct real post-reversal samples for each resource")
+		}
+	}
+	if highest < beforeRestart.ReportSequence {
+		t.Fatal("durable original report sequence fell behind formal current readback")
+	}
+	authority.start(t)
+	checkStream(old, oldReader)
+	checkStream(next, nextReader)
+	var restoredSamples []control.Observation
+	wait("restarted control's complete persisted samples", func() bool {
+		restoredSamples = samples()
+		return len(restoredSamples) == len(links) && nativeForwardSamplePair(t, restoredSamples, links, specs, generation, flipped, "wireguard", execution.Resources)
+	})
+	for _, original := range beforeRestartSamples {
+		if !slices.ContainsFunc(restoredSamples, func(restored control.Observation) bool { return reflect.DeepEqual(restored, original) }) {
+			t.Fatal("restarted control did not recover the same current sample before its next measurement")
+		}
+	}
+	if err := writeNativeForwardEvidence(filepath.Join(evidence, "control-restored-before-next-report.json"), currentControl); err != nil {
+		t.Fatal(err)
+	}
+	wait("restarted control current measurements and a later original report", func() bool {
+		values := samples()
+		return currentEvidence != nil && currentEvidence.ReportSequence > highest && nativeForwardSamplePair(t, values, links, specs, generation, flipped, "wireguard", execution.Resources)
+	})
+	checkStream(old, oldReader)
+	checkStream(next, nextReader)
+	restoredConnections, err := api.connections(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, previous := range finalConnections {
+		if previous.Metadata.Host == "demo-forward.example" && previous.Metadata.DestinationPort == port && !slices.ContainsFunc(restoredConnections, func(current nativeForwardConnection) bool {
+			return current.ID == previous.ID && reflect.DeepEqual(current.Chains, previous.Chains)
+		}) {
+			t.Fatal("control restart lost an existing connection's pinned tracker")
+		}
+	}
+	reloaded, err := deviceclient.Load(identityPath)
+	if err != nil || reloaded.LKG() == nil || !reflect.DeepEqual(*reloaded.LKG(), lkg) || !reloaded.Preference().Equal(store.Preference()) {
+		t.Fatal("control restart changed the client's protected identity, LKG or choice", err)
+	}
+	restoredIdentity, err := reloaded.IdentityReadback()
+	if err != nil || !reflect.DeepEqual(restoredIdentity, initialIdentity) {
+		t.Fatal("control restart changed the public enrollment or trust identity", err)
+	}
+	if err := writeNativeForwardEvidence(filepath.Join(evidence, "control-after-restart.json"), map[string]any{"snapshot": currentControl, "previous_samples": beforeRestartSamples, "previous_highest_sequence": highest, "current_report_sequence": currentEvidence.ReportSequence, "connections": restoredConnections, "initial_identity": initialIdentity, "restored_identity": restoredIdentity, "complete_lkg_unchanged": true}); err != nil {
+		t.Fatal(err)
+	}
+	authority.stop(t)
+	afterOriginals := authority.offlineReports(t, "control-offline-after-restart")
+	for _, original := range originals {
+		body, err := control.CanonicalEncode(original)
+		if err != nil || !slices.ContainsFunc(afterOriginals, func(candidate control.DeviceReport) bool {
+			current, err := control.CanonicalEncode(candidate)
+			return err == nil && string(current) == string(body)
+		}) {
+			t.Fatal("control restart changed or dropped a canonical signed report original")
+		}
 	}
 }
 
-func nativeForwardSamplePair(t *testing.T, samples []control.Observation, links map[string]control.NetworkLink, specs map[string]string, after int64, faster string, resources []control.TransportResource) bool {
+func nativeForwardSamplePair(t *testing.T, samples []control.Observation, links map[string]control.NetworkLink, specs map[string]string, generation string, after int64, faster string, resources []control.TransportResource) bool {
 	t.Helper()
 	metrics := map[string]int64{}
 	for _, sample := range samples {
@@ -384,7 +544,7 @@ func nativeForwardSamplePair(t *testing.T, samples []control.Observation, links 
 		if !found || sample.ObservedAt <= after || sample.Result != "available" || sample.RoundTripMS == nil {
 			continue
 		}
-		if sample.Level != "link" || sample.ResourceID != link.ResourceID || sample.SpecDigest != specs[link.ID] || sample.Action != link.ProbeTarget.Action || sample.Target != net.JoinHostPort(link.ProbeTarget.Host, strconv.Itoa(link.ProbeTarget.Port)) || sample.NetworkGeneration != "demo-underlay" || sample.Validate() != nil {
+		if sample.Level != "link" || sample.ResourceID != link.ResourceID || sample.SpecDigest != specs[link.ID] || sample.Action != link.ProbeTarget.Action || sample.Target != net.JoinHostPort(link.ProbeTarget.Host, strconv.Itoa(link.ProbeTarget.Port)) || sample.NetworkGeneration != generation || sample.Validate() != nil {
 			t.Fatal("actual report sample lost its current Link/resource/specification binding")
 		}
 		for _, resource := range resources {
@@ -401,6 +561,16 @@ func nativeForwardSamplePair(t *testing.T, samples []control.Observation, links 
 		slower = "hysteria2"
 	}
 	return metrics[faster]+clientmodel.DefaultPerformanceRule.MinimumImprovement.Milliseconds() < metrics[slower]
+}
+
+// UI readbacks are disposable JSON projections. Signed report originals use
+// their unchanged canonical bytes in the separate offline inspection.
+func writeNativeForwardEvidence(path string, value any) error {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return atomicJSONBytes(path, body)
 }
 
 func nativeForwardDNS(t *testing.T, address [4]byte) {
@@ -599,188 +769,4 @@ func (api nativeForwardAPI) connections(ctx context.Context) ([]nativeForwardCon
 	}
 	err := api.get(ctx, "/connections", &value)
 	return value.Connections, err
-}
-
-type nativeForwardReports struct {
-	mu     sync.Mutex
-	latest map[string]control.Observation
-}
-
-type nativeForwardChallenge struct {
-	Schema int    `json:"schema"`
-	Nonce  string `json:"nonce"`
-}
-
-func (reports *nativeForwardReports) samples() []control.Observation {
-	reports.mu.Lock()
-	defer reports.mu.Unlock()
-	values := make([]control.Observation, 0, len(reports.latest))
-	for _, value := range reports.latest {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i].LinkID < values[j].LinkID })
-	return values
-}
-
-// This disposable receiver authenticates the real client tunnel and verifies
-// each original DeviceReport before preserving it and acknowledging its exact
-// sequence. It is evidence consumption, not a measurement or control writer.
-func nativeForwardReportReceiver(t *testing.T, ctx context.Context, root, devicePublic string, view func() control.DeviceViewEnvelope) (control.EndpointGeneration, *nativeForwardReports) {
-	t.Helper()
-	public, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"demo.example"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	der, err := x509.CreateCertificate(rand.Reader, leaf, leaf, public, private)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := func(body []byte) string { sum := sha256.Sum256(body); return "sha256:" + hex.EncodeToString(sum[:]) }
-	listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{"loom-tunnel/3"}, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: private}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := control.EndpointGeneration{ID: "demo-report-entry", Generation: 1, OwnerControlID: "demo-control", Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port, ServerName: "demo.example", SPKISHA256: digest(parsed.RawSubjectPublicKeyInfo), CertificateDigest: digest(der), Modes: []string{"device"}, State: "serving"}
-	reports := &nativeForwardReports{latest: map[string]control.Observation{}}
-	var workers sync.WaitGroup
-	var connections sync.Map
-	acceptDone := make(chan struct{})
-	go func() {
-		defer close(acceptDone)
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			connections.Store(connection, true)
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				defer connection.Close()
-				defer connections.Delete(connection)
-				_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
-				reader := bufio.NewReader(connection)
-				read := func(value any) error {
-					var header [4]byte
-					if _, err := io.ReadFull(reader, header[:]); err != nil {
-						return err
-					}
-					size := binary.BigEndian.Uint32(header[:])
-					if size == 0 || size > 8<<20 {
-						return fmt.Errorf("invalid test tunnel frame")
-					}
-					body := make([]byte, size)
-					if _, err := io.ReadFull(reader, body); err != nil {
-						return err
-					}
-					return control.DecodeCanonical(body, value, control.ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20})
-				}
-				write := func(value any) error {
-					body, err := control.CanonicalEncode(value)
-					if err != nil {
-						return err
-					}
-					var header [4]byte
-					binary.BigEndian.PutUint32(header[:], uint32(len(body)))
-					_, err = io.Copy(connection, bytes.NewReader(append(header[:], body...)))
-					return err
-				}
-				var hello control.TunnelHello
-				if read(&hello) != nil || hello.Validate() != nil || hello.Mode != "device" || hello.DeviceID != "demo-device" || hello.EndpointID != endpoint.ID || hello.Generation != endpoint.Generation {
-					return
-				}
-				var nonce [32]byte
-				if _, err := rand.Read(nonce[:]); err != nil {
-					return
-				}
-				challenge := nativeForwardChallenge{3, base64.RawURLEncoding.EncodeToString(nonce[:])}
-				if write(challenge) != nil {
-					return
-				}
-				var proof control.TunnelProof
-				if read(&proof) != nil || proof.Validate() != nil {
-					return
-				}
-				message, err := control.CanonicalEncode(struct {
-					Hello     control.TunnelHello    `json:"hello"`
-					Challenge nativeForwardChallenge `json:"challenge"`
-				}{hello, challenge})
-				key, _ := base64.RawURLEncoding.DecodeString(devicePublic)
-				signature, _ := base64.RawURLEncoding.DecodeString(proof.Signature)
-				if err != nil || !ed25519.Verify(key, append([]byte("loom-device-tunnel-proof-v3\x00"), message...), signature) || write(struct {
-					Schema int    `json:"schema"`
-					Status string `json:"status"`
-				}{3, "ready"}) != nil {
-					return
-				}
-				request, err := http.ReadRequest(reader)
-				if err != nil {
-					return
-				}
-				defer request.Body.Close()
-				response := httptest.NewRecorder()
-				current := view()
-				switch request.URL.Path {
-				case "/device/report":
-					var body io.Reader = request.Body
-					if request.Header.Get("Content-Encoding") == "gzip" {
-						compressed, err := gzip.NewReader(request.Body)
-						if err != nil {
-							return
-						}
-						defer compressed.Close()
-						body = compressed
-					}
-					raw, err := io.ReadAll(io.LimitReader(body, 8<<20+1))
-					var report control.DeviceReport
-					if err != nil || control.DecodeCanonical(raw, &report, control.ContractDecodeLimits{MaxBytes: 8 << 20, MaxDepth: 128, MaxItems: 1 << 20}) != nil || report.Verify(devicePublic) != nil || report.NetworkID != current.NetworkID || report.ViewDigest != current.ViewDigest || report.DeviceID != current.View.DeviceID {
-						return
-					}
-					if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("signed-report-%d.json", report.ReportSequence)), raw, 0600); err != nil {
-						return
-					}
-					reports.mu.Lock()
-					for _, sample := range report.Observations {
-						if sample.Level == "link" && sample.ObservedAt > reports.latest[sample.LinkID].ObservedAt {
-							reports.latest[sample.LinkID] = sample
-						}
-					}
-					reports.mu.Unlock()
-					acknowledgement, _ := control.CanonicalEncode(control.DeviceReportResponse{Schema: 3, ReportSequence: report.ReportSequence, Status: "accepted"})
-					_, _ = response.Write(acknowledgement)
-				case "/device/config":
-					// This case changes only packet latency. Keep the long poll
-					// pending so management cannot manufacture another View.
-					if request.Header.Get(control.DeviceConfigWaitHeader) != "" {
-						<-ctx.Done()
-						return
-					}
-					body, _ := control.CanonicalEncode(current)
-					_, _ = response.Write(body)
-				case "/device/link-observations":
-					body, _ := control.CanonicalEncode(control.DeviceLinkObservations{Schema: 3, NetworkID: current.NetworkID, DeviceID: current.View.DeviceID, ViewDigest: current.ViewDigest, Cursor: "demo-empty", Reset: true, Removed: []string{}, Observations: []control.DeviceLinkObservation{}})
-					_, _ = response.Write(body)
-				default:
-					response.WriteHeader(http.StatusNotFound)
-				}
-				result := response.Result()
-				defer result.Body.Close()
-				result.ContentLength, result.Close = int64(response.Body.Len()), true
-				_ = result.Write(connection)
-			}()
-		}
-	}()
-	t.Cleanup(func() {
-		listener.Close()
-		<-acceptDone
-		connections.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
-		workers.Wait()
-	})
-	return endpoint, reports
 }

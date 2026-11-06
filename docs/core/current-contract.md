@@ -636,11 +636,16 @@ LAN 分别在该 Service 恰好一条可选 Policy 时初始化；其他情况�
 合法旧流，也不能从目标网站或当前选择猜测旧连接归属。此项随按需回收的原生修订接线，
 较早仅按 scope 关闭的制品不算已满足该边界。
 
-当前签名报告使用可选 `policy_id:ID` 采样唯一选择，省略时不宣称已选择；该值不授予权限。
-历史 policy_choices/preference 仅按原字节验证，新报告不能同时携带它们。Selection 可带可选
+当前签名报告使用可选 `policy_id:ID` 采样唯一互联网选择，省略时不宣称已选择；独立 LAN
+意图使用可选 `lan_policy_ids:{ServiceID:PolicyID}`，空 map 必须省略。两者只采样本机意图，
+不授予权限；LAN 项仍须对应当前获授的局域网 Service／Policy。历史 policy_choices/preference
+仅按原字节验证，新报告不能携带它们。Selection 可带可选
 target（规范 `tcp://host:port` 或 `udp://host:port`）；省略表示默认优选，存在时表示该网络及连接目标
 的优选，按 ServiceID、
 target 排序且唯一。它们描述新连接选择，存量连接的实际路径须从数据面连接回读，不从偏好推断。
+新签发的每条 Selection 必须有非空 PolicyID，并匹配该 Service 的当前互联网选择或独立 LAN
+选择；未选择互联网 Policy 不阻止报告已确认的 LAN 结果。没有实际选择时仍可报告 unknown，
+不能借无关 LAN 意图签发未绑定 Policy 的选择。
 
 国内/国外样本不产生 traffic_class、地域域名/IP 库或实际请求的地域 Service 归属。Policy 的
 固定出口限制只约束最终出口，不能因样本较快改选别的 Policy 或 Direct。探测没有独立 ID、
@@ -1640,8 +1645,10 @@ DeviceReport 字段为 `schema=3,network_id,device_id,report_sequence:U64,view_d
 实际选择与保存意图必须分别报告，不能从其中一个制造另一个。互联网当前意图只包含一条
 Policy，由其确定 Service，实际新连接仍须保持该 Policy 和最终出口约束。现存报告的
 `selections:[{service_id,policy_id,candidate_id}]` 及 `policy_choices:[{service_id,policy_id?}]`
-按原义验签和保全，不能用它们要求新的客户端按服务分别选择。新当前意图的字段级修订与
-前向替换尚未完成，不能复用旧字段静默改变语义。报告不授予权限，不增加报告 store。
+按原义验签和保全，不能用它们要求新的客户端按服务分别选择。当前意图使用上文规定的
+`policy_id` 与独立 `lan_policy_ids`，实际已确认选择仍由 selections 采样，不能从保存意图
+制造执行结果。历史 policy_choices／preference 不再用于新报告签发，不重解释或重签旧原件；
+报告不授予权限，不增加报告 store。
 
 runtime 为 `state,applied_view_digest,error_code`，另可有 `permission_view_digest`；state 仅 `running/error/stopped/unknown`，
 无故障时 error_code 为空字符串，不能承载含秘密的错误正文。运行摘要必须来自实际加载结果，失败时不能将
@@ -1873,7 +1880,9 @@ domain、签名 wire、persistent 仍是原 Report 与 Observation，规范 sche
 
 正式在线 writer 只有现有 control daemon；设备上传与成员合并使用同一事务入口。daemon 持有一个
 数据库句柄，退出时关闭；短读事务与串行写事务由数据库隔离，读取不占用写入许可。写者等待可
-取消，事务失败不留下部分原件或索引。启动核对受保护普通文件与 bucket，运行中核对文件身份以
+取消。控制服务取消或因监听失败退出时，先取消本实例的 HTTP 请求上下文，包括管理 live 与
+设备配置等待，再沿原有 HTTP 关闭流程和 Runtime.Close 释放报告 owner；请求上下文不持久化，
+服务退出不等于设备撤权或业务流停止。事务失败不留下部分原件或索引。启动核对受保护普通文件与 bucket，运行中核对文件身份以
 拒绝原路径被删除或替换；不再为每次查询重新打开、映射和关闭数据库。迁移仍停服，第二个在线
 数据库 owner 必须明确失败，不能通过进程级句柄 registry 接管。打开时允许短暂、有界地等待
 已退出 owner 的内核文件锁释放；持续持锁则失败，不接管、不无限轮询，也不影响运行期短事务。去掉为逐次打开所设的共享／排他

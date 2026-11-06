@@ -71,6 +71,82 @@ func TestReportedPreferenceKeepsOriginalBytesAndBindsNewSamples(t *testing.T) {
 	}
 }
 
+func TestCurrentReportSignsIndependentLANSelections(t *testing.T) {
+	key := testKey(t)
+	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	digest := ReleaseDigest([]byte("demo-report-view"))
+	for _, test := range []struct {
+		name   string
+		change func(*DeviceReport)
+		valid  bool
+	}{
+		{name: "LAN only", valid: true},
+		{name: "Internet and LAN", valid: true, change: func(report *DeviceReport) {
+			report.PolicyID = "demo-web-policy"
+			report.Selections = append(report.Selections, ReportSelection{ServiceID: "demo-web", PolicyID: report.PolicyID, CandidateID: digest})
+		}},
+		{name: "unknown without a choice", valid: true, change: func(report *DeviceReport) {
+			report.LANPolicyIDs = nil
+			report.Selections = []ReportSelection{}
+			report.Runtime = RuntimeReadback{State: "unknown"}
+		}},
+		{name: "unbound selection with unrelated LAN choice", change: func(report *DeviceReport) {
+			report.Selections[0].ServiceID = "demo-unbound"
+			report.Selections[0].PolicyID = ""
+		}},
+		{name: "different LAN policy", change: func(report *DeviceReport) {
+			report.Selections[0].PolicyID = "demo-other-policy"
+		}},
+		{name: "historical policy choices", change: func(report *DeviceReport) {
+			report.LANPolicyIDs = nil
+			report.Selections = []ReportSelection{}
+			report.PolicyChoices = &[]PolicyChoice{{ServiceID: "demo-lan", PolicyID: "demo-lan-policy"}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report := DeviceReport{Schema: 3, NetworkID: "demo-network", DeviceID: "demo-access", ReportSequence: 1,
+				ViewDigest: digest, NetworkGeneration: "demo-underlay", ReportedAt: 1,
+				LANPolicyIDs: map[string]string{"demo-lan": "demo-lan-policy"},
+				Selections:   []ReportSelection{{ServiceID: "demo-lan", PolicyID: "demo-lan-policy", CandidateID: digest}},
+				Observations: []Observation{}, Runtime: RuntimeReadback{State: "running", AppliedViewDigest: digest}, Components: []ComponentReadback{}}
+			if test.change != nil {
+				test.change(&report)
+			}
+			before, err := CanonicalEncode(report.unsigned())
+			if err != nil {
+				t.Fatal(err)
+			}
+			signed, err := SignDeviceReport(report, key)
+			if (err == nil) != test.valid {
+				t.Fatal("current report signing accepted or rejected the wrong intent binding", err)
+			}
+			if !test.valid {
+				return
+			}
+			after, err := CanonicalEncode(signed.unsigned())
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("signing changed the report's current intent or actual selection", err)
+			}
+			body, err := CanonicalEncode(signed)
+			var restored DeviceReport
+			if err != nil || decodeStoredReport(body, &restored) != nil || !reflect.DeepEqual(restored, signed) || restored.Verify(public) != nil {
+				t.Fatal("signed current intent and actual selection did not round trip", err)
+			}
+			if signed.LANPolicyIDs != nil {
+				tampered := signed
+				tampered.LANPolicyIDs = map[string]string{}
+				for service, policy := range signed.LANPolicyIDs {
+					tampered.LANPolicyIDs[service] = policy
+				}
+				tampered.LANPolicyIDs["demo-extra-lan"] = "demo-extra-lan-policy"
+				if tampered.Validate() != nil || tampered.Verify(public) == nil {
+					t.Fatal("canonical LAN intent was outside the report signature")
+				}
+			}
+		})
+	}
+}
+
 func TestReportedPolicyChoiceRemainsSeparateFromSelectionAndSurvivesRestart(t *testing.T) {
 	fixture, _, projection := deviceContractFixture(t)
 	view, err := ProjectDeviceView(projection, "demo-access")

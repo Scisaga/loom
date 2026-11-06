@@ -255,6 +255,69 @@ WG／Hy2 两个实际资源之间选路。测试只改变隔离 namespace 中 UD
 实际异网位置、Android／ARM64 实体机或生产迁移。新测试默认无显式输入时保持 opt-in 跳过，
 上述通过结论来自两次显式原生执行，不由默认根测试推定。
 
+### 真实控制面报告续验与独立 LAN 签发
+
+操作者继续推进后，以 `3e77bfdb` 的干净工作区开始本轮报告闭环续验；范围仍为源码、本机
+隔离运行和构建，不含生产签名、发布、部署或配置迁移。原始日志及报告原件仍只保存在
+被忽略的 `out/`／`deploy/evidence/`，仓库只记录实现、回归源码和结果摘要。
+
+实际发现并修复共享签名器的 LAN-only 缺陷：互联网待选、独立 LAN 已确认时，正常调用方会
+生成非空 LAN selections，但原 SignDeviceReport 因缺少互联网 PolicyID 一律拒绝，报告尚未
+发出。control 新回归及 Android 正常报告桥均在修复前实际失败。现在逐条要求 selection 的
+PolicyID 非空且匹配当前互联网或该 LAN 意图；无关 LAN map 不能掩护未绑定选择，历史
+policy_choices／preference 仍不能新签发。unsigned 编码、签名算法、schema 3、历史解码和
+原件验签均未改，现行契约中过时的“新字段未完成”文字已清理。
+
+control 签名及现有调用方普通／race 回归、共享移动核心全库 test／race／vet 均通过，
+修复前后证据在 `out/current-review-postpush/lan-report-signing-summary.json`、
+`out/continuation-control-forward/android-lan-first.log` 与 `lan-mobile-core-checks/`。
+最终共享源码的双 ABI AAR 重建成功；88 项 JVM 测试实际重跑，无失败／跳过，Debug APK
+构建通过，AAR／APK 原生库及来源逐成员一致。后续 control HTTP 修正后的 AAR 再次重建，
+完整 AAR 及全部成员字节不变，复用同一 JVM／APK 结果；证据在
+`out/current-review-postpush/lan-android-checks/` 与 `lan-android-final-source/`。
+未安装到 Android 设备或执行 release 签名。
+
+另以真实管理 WebSocket 复现了控制服务生命周期缺口：收到首个正常 snapshot 后取消 Serve，
+原实现的请求上下文没有随服务结束，连接仍未关闭。现仅派生并绑定本实例请求上下文，退出时
+先取消请求，再执行原有 HTTP shutdown；ConnContext 身份、关闭上限和错误上抛保持。
+该唯一反例已红转绿，连同既有 Serve、TLS 身份／撤权和配置长轮询测试普通／race 通过，
+证据为 `out/current-review-postpush/control-stop-context/verification.json`。
+此前一次原生 race 运行在最终停止等待上限被终止，未取得进程堆栈；其具体原因仍未知，
+不能因独立 WebSocket 缺陷已修而倒写旧失败定因，原失败与已通过阶段均保留。
+
+现有 Forward 定向原生用例已接入真实临时 control：正式 CLI 完成 init、Endpoint 本机输入、
+serve、普通事实写入、邀请加入、WG 公钥登记、资源配置、同步和 source client run。Source
+使用真实 authority 签发并持久保存的同轮 LKG，保留 CLI 默认十五秒刷新；出口仍复用已验的
+原生接收适配器，只消费该实际 authority 的投影。本轮删除原手工 TLS／ACK 报告接收器，
+报告由真实私有认证入口进入唯一 observations.db，在线读取走正常 Unix 管理 snapshot／
+Link history；仅在 daemon 正常退出后只读核验数据库，不打开第二个在线 owner。
+
+最终冻结源码普通／race 各在 fresh user／network／mount namespace 完整实跑通过，0 跳过，
+无 race 诊断。每个资源至少两次不同观测时间的反转后真实样本均在已签原件中保留；当前
+snapshot 与 Link history 的精确方向、资源、规格及原 Observation 相等。forward 的真实
+CAS／新 WG 流和原 Hy2 tracker 保持，access 唯一候选不变。control 正常停止、离线逐件核
+规范字节／签名／原件键与最高序列后，同目录重启恢复相同样本，后续实际报告序列继续前进；
+公开身份、完整 LKG（含签名、证明与事实前沿）及偏好不变。第二次停服后再次逐字核对全部
+原件保全，原生及 CLI 子进程均退出，无残留。未修改 GORACE、关闭上限、测量节奏或稳定门槛。
+
+首轮夹具缺少 device.put 必需的 Service 直接因果依赖、当前 UI freshness 字面值写错、
+UI 投影误用权威 canonical writer，以及把可选 RoundTrips 统计当原件计数的反例均保留。
+最高报告可只携带其中一条变化 Link，另一已 ACK 样本正常省略；页面当前样本和原件仍在，
+不能从统计缺席推断数据丢失。最终凭据改为完整历史原样本与已签原件，未改生产统计算法，
+本轮也不宣称波动统计验收通过。
+
+完整命令、每轮固定 CLI／数据面摘要、原始失败与最终原件位于
+`deploy/evidence/2026-11-06-control-forward-3e77bfdb/`。最终两轮为 `run-9m1167i9`／
+`run-1b2i_9yq`，main 测试源码摘要
+`9f7246dfc7b2c69fde865030db7f8729094a0d85aeafe7eeb1c6696b74722041`。
+根 build／全库 test／vet、最终 test-only 来源的 linuxclient／vet 补查均通过，覆盖关系见
+`out/current-review-postpush/real-control-root-checks/final-http-context/latest-source-coverage.json`；
+完整托管 race 仍按新提交对应工作流实际回读。隔离执行未修改宿主网络或挂载；短路径 scratch
+创建／清理造成的宿主目录 mtime 变化保留原值，不冒称所有文件元数据完全不变。
+
+本次补齐本机真实 control 报告持久化、当前回读及重启恢复；仍不抵扣独立 access 经多个
+forward 的实网链、波动统计、Android／ARM64 实体机和生产迁移验收。
+
 ## 操作者指定的端口占用与可用范围修正
 
 2026-11-04，操作者确认一台节点的指定端口已由其他程序使用，并重申原先提供的完整可用范围。

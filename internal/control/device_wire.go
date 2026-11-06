@@ -517,10 +517,13 @@ func (report DeviceReport) Verify(publicKey string) error {
 	return verifyContractSignature(reportDomain, report.unsigned(), report.Signature, publicKey)
 }
 func SignDeviceReport(report DeviceReport, private ed25519.PrivateKey) (DeviceReport, error) {
-	if report.Preference != nil || report.PolicyChoices != nil || len(report.Selections) > 0 && report.PolicyID == "" {
-		return DeviceReport{}, errors.New("new reports require one current Policy; historical preferences cannot be signed")
+	if report.Preference != nil || report.PolicyChoices != nil {
+		return DeviceReport{}, errors.New("new reports cannot contain historical routing preferences")
 	}
 	for _, selection := range report.Selections {
+		if selection.PolicyID == "" || selection.PolicyID != report.SelectedPolicy(selection.ServiceID) {
+			return DeviceReport{}, errors.New("new report selections require their current Policy")
+		}
 		if selection.Target != "" {
 			if _, _, _, err := protocol.ParseConnectionTargetKey(selection.Target); err != nil {
 				return DeviceReport{}, errors.New("new reports require network-qualified target selections")

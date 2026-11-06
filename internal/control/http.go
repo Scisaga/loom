@@ -59,6 +59,8 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 	if err := server.Config.Validate(); err != nil {
 		return err
 	}
+	requests, cancelRequests := context.WithCancel(ctx)
+	defer cancelRequests()
 	parent := filepath.Dir(server.AdminSocket)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
@@ -100,7 +102,7 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 	servers := make([]*http.Server, len(listeners))
 	errorsOut := make(chan error, len(listeners))
 	for i, listener := range listeners {
-		service := &http.Server{Handler: handlers[i], ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+		service := &http.Server{Handler: handlers[i], BaseContext: func(net.Listener) context.Context { return requests }, ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
 			return endpointConnContext(controlConnContext(ctx, conn), conn)
 		},
 			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
@@ -109,6 +111,9 @@ func (server *Server) Serve(ctx context.Context) (retErr error) {
 		go func() { errorsOut <- service.Serve(listener) }()
 	}
 	defer func() {
+		// End long-lived requests on cancellation and listener failure before
+		// waiting for the existing graceful HTTP shutdown boundary.
+		cancelRequests()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		for _, service := range servers {
