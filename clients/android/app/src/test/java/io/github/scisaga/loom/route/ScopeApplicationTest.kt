@@ -15,6 +15,33 @@ import org.junit.Test
 
 class ScopeApplicationTest {
     @Test
+    fun reportKeepsOnlyTheIndependentlyConfirmedScopeDuringAnotherScopeCAS() {
+        val access = AppliedSelector("access", "demo-access", emptyList(), "demo-exit", policyID = "demo-internet-policy")
+        val lan = AppliedSelector("local_network:demo-lan", "demo-lan", emptyList(), "demo-gateway", policyID = "demo-lan-policy")
+        val route = AppliedRoute(emptyMap(), listOf(access, lan))
+        val candidates = mapOf(access.selector to access.candidate, lan.selector to lan.candidate)
+        val policies = mapOf(access.selector to access.policyID, lan.selector to lan.policyID)
+        val targets = candidates.mapValues { emptyMap<String, String>() }
+        val choices = candidates.mapValues { emptyMap<String, Map<String, String>>() }
+        val revisions = candidates.mapValues { "demo-revision" }
+        fun report(pending: Set<String>, actualPolicies: Map<String, String> = policies,
+            actualTargets: Map<String, Map<String, String>> = targets,
+            actualChoices: Map<String, RouteChoices> = choices,
+            actualRevisions: Map<String, String> = revisions) = route.confirmedReportSelectors(
+                policies, pending, candidates, actualTargets, actualPolicies, actualChoices, actualRevisions)
+        assertTrue(report(candidates.keys).isEmpty())
+        assertEquals(listOf(access), report(setOf(lan.selector)))
+        assertEquals(listOf(lan), report(setOf(access.selector)))
+        assertEquals(listOf(access, lan), report(emptySet()))
+        assertTrue(report(setOf(lan.selector), policies + (access.selector to "demo-old-policy")).isEmpty())
+        assertTrue(report(setOf(lan.selector), actualTargets = targets + (access.selector to mapOf("demo-target" to "demo-stale"))).isEmpty())
+        assertTrue(report(setOf(lan.selector), actualChoices = choices + (access.selector to mapOf("demo-stale" to emptyMap()))).isEmpty())
+        assertTrue(report(setOf(lan.selector), actualRevisions = revisions - access.selector).isEmpty())
+        assertFalse(route.hasCompleteReadback(candidates.keys, candidates - lan.selector,
+            targets, policies, choices))
+    }
+
+    @Test
     fun accessReadPrepareCasAndReadbackFinishBeforeLanInitialGetReturns() = runBlocking {
         val scopes = SelectorCallScopes().apply { plan(listOf("access", "local_network:demo-lan")) }
         val lanReading = CompletableDeferred<Unit>()

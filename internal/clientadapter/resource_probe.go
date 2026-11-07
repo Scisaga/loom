@@ -217,6 +217,7 @@ func probeHY2FirstHop(ctx context.Context, probe control.ResourceProbe, dns []st
 		events = append(events, func() { emitEchoDiagnostic(ctx, id, phase, elapsed, cause) })
 	}
 	record("request-start", 0, nil)
+	events = append(events, func() { emitEchoBinding(ctx, id, probe.Resource.ID, probe.SpecDigest, operation, probe.PolicyID) })
 	defer func() {
 		markMeasurementCompletion(ctx)
 		record("request-finish", time.Since(started), errors.Join(resultErr, ctx.Err()))

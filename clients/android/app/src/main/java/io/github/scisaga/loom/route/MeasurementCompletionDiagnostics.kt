@@ -7,12 +7,14 @@ private fun measurementDigest(value: String): String = MessageDigest.getInstance
     .digest(value.encodeToByteArray()).joinToString("") { "%02x".format(it) }
 
 private val echoDiagnostic = Regex("echo_id=([0-9a-f]{64}) phase=(request-start|local-connect|underlay-resolve|underlay-dial|hy2-authenticate|execution-stream-open|preface-write|request-write|response-read|response-validate|socket-close|request-finish) elapsed_ns=(0|[1-9][0-9]{0,18}) outcome=(started|success|canceled|timeout|denied|unavailable|local-pending|superseded|failed)")
+private val echoBinding = Regex("echo_id=[0-9a-f]{64} binding resource_id_sha256=[0-9a-f]{64} spec_digest=(sha256:[0-9a-f]{64}|-) operation=(transport_echo|admission_echo) network_generation_sha256=([0-9a-f]{64}|-) policy_id_sha256=([0-9a-f]{64}|-)")
 
 /** Fixed Debug metadata only; raw errors, targets and frames cannot be logged. */
 internal fun emitEchoDiagnostic(line: String, emit: (String) -> Unit) {
     runCatching {
-        val match = echoDiagnostic.matchEntire(line) ?: return
-        if (match.groupValues[3].toLongOrNull() == null) return
+        val match = echoDiagnostic.matchEntire(line)
+        if (match == null && !echoBinding.matches(line)) return
+        if (match != null && match.groupValues[3].toLongOrNull() == null) return
         emit("echo-diagnostic $line")
     }
 }

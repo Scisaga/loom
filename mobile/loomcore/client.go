@@ -436,8 +436,16 @@ func androidReport(state deviceclient.State, preferenceBody, resourceBody, obser
 	if err := decodeStrictJSON(componentsBody, 1<<20, &components); err != nil {
 		return control.DeviceReport{}, err
 	}
-	if (len(observations) > 0 || len(selections) > 0) && (runtime.State != "running" || runtime.AppliedViewDigest != state.LKG.ViewDigest) {
-		return control.DeviceReport{}, errors.New("actual selections and business samples require fully confirmed Android execution")
+	fullyApplied := runtime.State == "running" && runtime.AppliedViewDigest == state.LKG.ViewDigest
+	if len(observations) > 0 && !fullyApplied {
+		return control.DeviceReport{}, errors.New("business samples require fully confirmed Android execution")
+	}
+	// Kotlin supplies only the scopes with a complete current native readback.
+	// Their confirmed subset does not assert whole-runtime application; intent
+	// and candidate qualification are still checked below by ReportSelections.
+	partialScopes := runtime.State == "unknown" && runtime.AppliedViewDigest == "" && runtime.PermissionViewDigest == state.LKG.ViewDigest
+	if len(selections) > 0 && !fullyApplied && !partialScopes {
+		return control.DeviceReport{}, errors.New("actual selections require confirmed current Android execution or permissions")
 	}
 	for _, component := range components {
 		if (component.ComponentID != "agent" && component.ComponentID != "sing-box") || component.Platform != androidComponentPlatform() {

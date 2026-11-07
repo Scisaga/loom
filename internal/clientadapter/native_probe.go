@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,6 +65,36 @@ func emitEchoDiagnostic(ctx context.Context, id, phase string, elapsed time.Dura
 	// The sink is diagnostic-only, including a host callback which panics.
 	defer func() { _ = recover() }()
 	sink(fmt.Sprintf("echo_id=%s phase=%s elapsed_ns=%d outcome=%s", id, phase, max(0, elapsed.Nanoseconds()), outcome))
+}
+
+// Bind the real challenge to its scheduling inputs without logging identifiers,
+// credentials or targets. Capture this at flight creation and deliver it with
+// the other diagnostics only after the original completion time is fixed.
+func emitEchoBinding(ctx context.Context, id, resource, specification string, operation protocol.Operation, policy string) {
+	sink, _ := ctx.Value(echoDiagnosticLogKey{}).(func(string))
+	if sink == nil {
+		return
+	}
+	label := "transport_echo"
+	if operation == protocol.AdmissionEcho {
+		label = "admission_echo"
+	} else if operation != protocol.TransportEcho {
+		return
+	}
+	if specification == "" {
+		specification = "-"
+	} else if control.ValidateDigest(specification) != nil {
+		return
+	}
+	generation, _ := ctx.Value(measurementNetworkKey{}).(string)
+	hash := func(value string) string {
+		if value == "" {
+			return "-"
+		}
+		return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+	}
+	defer func() { _ = recover() }()
+	sink(fmt.Sprintf("echo_id=%s binding resource_id_sha256=%s spec_digest=%s operation=%s network_generation_sha256=%s policy_id_sha256=%s", id, hash(resource), specification, label, hash(generation), hash(policy)))
 }
 
 func newEchoRequest(operation protocol.Operation, policy string) (protocol.Request, error) {
@@ -157,6 +188,7 @@ func measureWireGuardEcho(ctx context.Context, network string, resource control.
 			events = append(events, func() { emitEchoDiagnostic(pending, id, phase, elapsed, cause) })
 		}
 		record("request-start", 0, nil)
+		events = append(events, func() { emitEchoBinding(pending, id, resource.ID, specification, operation, policy) })
 		defer func() {
 			markMeasurementCompletion(pending)
 			record("request-finish", time.Since(started), errors.Join(resultErr, pending.Err()))

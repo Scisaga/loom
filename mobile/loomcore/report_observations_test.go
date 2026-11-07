@@ -131,7 +131,13 @@ func TestAndroidPartialResourcesReportOnlyIndependentMeasurements(t *testing.T) 
 	}
 	route := testDeviceExecution(state.LKG.View).Routes[0]
 	selections, _ := json.Marshal([]androidSelection{{Scope: control.AccessSelectorScope, CandidateID: route.ID}})
-	if _, err := androidReport(state, nil, cache, []byte(`[]`), selections, runtimeBody, []byte(`[]`), nil, "demo-underlay", at.Format(androidReportTimeLayout)); err == nil {
-		t.Fatal("permission proof was mistaken for a completed business selection")
+	partial, err := androidReport(state, nil, cache, []byte(`[]`), selections, runtimeBody, []byte(`[]`), nil, "demo-underlay", at.Format(androidReportTimeLayout))
+	if err != nil || len(partial.Selections) != 1 || partial.Selections[0].CandidateID != route.ID || partial.Runtime.State != "unknown" || partial.Runtime.AppliedViewDigest != "" || len(partial.Observations) != 1 || partial.Verify(state.PublicKey) != nil {
+		t.Fatal("independent measurements or host-confirmed scope were lost while another scope was pending", err)
+	}
+	business, _ := json.Marshal([]androidObservation{{CandidateID: route.ID, Scope: control.AccessSelectorScope, Target: "https://demo.example:8443/health", Action: "https_request", NetworkGeneration: "demo-underlay", Result: "available",
+		ObservedAt: at.Add(-time.Second).Format(time.RFC3339), ValidUntil: at.Add(time.Minute).Format(time.RFC3339)}})
+	if _, err := androidReport(state, nil, cache, business, selections, runtimeBody, []byte(`[]`), nil, "demo-underlay", at.Format(androidReportTimeLayout)); err == nil {
+		t.Fatal("a partial scope report claimed fully applied business samples")
 	}
 }

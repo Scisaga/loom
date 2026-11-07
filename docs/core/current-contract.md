@@ -1664,7 +1664,13 @@ runtime 为 `state,applied_view_digest,error_code`，另可有 `permission_view_
 不构成生产发布。
 
 独立链路／出口观测可由上述当前权限证明交付，仍逐样本核对职责、资源／请求规格、网络代、
-原时间及截止；业务路径、选择、监听／ACL 和整实例应用证明继续要求完整 running 回读。
+原时间及截止；完整业务样本、监听／ACL 和整实例应用证明继续要求完整 running 回读。
+互联网与 LAN 独立 Scope 的选择分别由完整 GET、准备、CAS 和回读确认；在相同当前 View、
+网络代和运行实例内，一个 Scope 已确认而另一个仍待应用时，报告可保留前者的 selections，
+未确认项不填。此时 runtime 保持 unknown、applied 留空，并须有等于本报告 View 的
+permission_view_digest；保存的两个 Policy 意图独立保留，不能据部分选择制造整实例完成。
+停止、失败、权限未确认、已被接管或不匹配当前偏好的选择不报告；签名桥仍验证候选资格与
+Policy 绑定，不能仅凭权限证明生成选择。原 schema 3 字段和签名原义不变，不增加跨 Scope 事务。
 资源未齐不能令无关有效样本全失效，重复报告也不能为样本续期；原报告的其他 View 字段不进入
 测量身份。control 的验签缓存及批量读取必须保留该标量，不能以 UI 状态代替这项确认。
 承载 Hy2/WG 的运行报告另有非空可选 `resources`，按 resource_id 排序；纯 access 不写空的替代集合。

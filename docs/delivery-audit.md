@@ -6,8 +6,47 @@
 后续明确纠正为准。以下验收记录保留原日期、源码和范围；不把当时通过误记为新目标已经完成。
 历史文档中的部署、删旧和前向接管授权只覆盖原任务，不能自动授权当前操作。
 
+## 最终收敛的本轮判定
+
+2026-11-07，本轮从干净的 `6207c8db426bd1bc74d53d120e5800edbc7644d2` 开始，并核对
+远端 main 同坐标。以下是新增结果；后文各旧窗口的失败、超时、未取证及制品边界仍按当时原义保留。
+没有生产程序／数据面替换、生产授权或密钥变更、服务重启、正式发布或迁移。
+
+| 范围 | 本轮当前判定 | 保留的缺口或限制 |
+|---|---|---|
+| 阶段 1：独立 Scope | 已实现；既有隔离业务保持；新精确 Android ARM64 APK 的同时待应用、Internet 先确认／LAN 未确认、真实部分签报、全确认 running 和正常 stopped 均已取得并离线审计 | 原冻结 APK 在真实部分确认时清空全部 selections 的反例保留，不能把修复后的新 APK 结果倒写给它；不外推实体 LAN 拓扑 |
+| 阶段 2：正式诊断消费 | 普通／race 均无跳过通过；正式 Run 默认测量产生的真实 WG 失败样本已进入持久缓存、选择、实际 selector 和正常签名报告；同一原样本有效期内，实际业务 deadline／unknown TCP 反馈与解除故障后的完整 TLS／available 反馈分别取证，正常采样恢复 | 这是 Linux 独立 namespace 集成；恢复／停止未另等新签报 ACK，不宣称对应原件。不把此前额外 sampler 的其他配对改记为正式 daemon 消费，也不抵扣手机故障配对或所有错误类型 |
+| 历史手机 WG 超时 | 原件只读专项审计完成；仍未定位。新源码、独立 CLI 和新 APK 已补安全的同请求绑定入口，新 APK 实际日志已产生绑定 | 原请求缺 Echo／native 关联、同请求 Operation／Policy 及发送／receiver／underlay 证据；相近时间的内部 TCP deadline 不能补齐这些因果关系 |
+| 阶段 3：多级 Forward | 既有三台不同主机的真实路径、故障、恢复、固定 E、旧流保持和精确撤权通过最终证据审计，无需重跑矩阵 | 前一恢复窗口 TTL／EOF／failed／cleanup 保留；后续独立 RUN 证明恢复。浏览器依赖成功仍未独立证明新 HTTP 连接路径 |
+| 外部环境 | 六节点新 SSH 只读回查及三类异常溯源已完成 | Nginx 历史 stop/start 已证实、触发者未知；备用节点 ACL 真实增删来源未知；SSH relay reset 根因未知。初始防火墙基线仍缺 |
+
+Scope 的实际缺陷限于报告桥：Kotlin 现在逐 Scope 核对当前 Policy、完整原生回读、revision 和
+该 Scope 在途状态；mobile 桥允许当前权限证明下的已确认子集。整体 unknown／空 applied 与
+完整 running 分开，业务样本仍要求完整应用；整体完成还须绑定 RouteManager 当前运行 View，
+不能借新服务 View 与旧完整回读拼出 applied。schema 3、原签名字节和独立 Scope 应用顺序不变，
+没有新增权威状态或跨 Scope 事务。
+
+旧 APK、真实反例、中间未安装 APK 与最终同签名测试 APK 分别保全；最终 APK 的双 ABI AAR、
+实际 ARM64 加载库及报告 components 已精确核对。仅 Kotlin 的最后修正复用了冻结 AAR。
+全部 producer 正常退出后，报告数据库全库的规范字节、历史签名、键／序列、保存快照的报告和
+每条测量引用均通过，数据库及权威原件的字节、身份、时间与目录集合保持。部分签报与真实
+selector／JDI 回读一致；最终 running 原件在同一 worker RUN 内，worker 结束后的另一份 running
+原件明确排除。较早快照仍保留原 unknown 值，不改造成新的 running 快照。
+
+手机正常停止、临时测试授权按新事实撤回并正常接受，原偏好、身份／密钥、认证进度及报告序列
+经独立加密持久双读保全；自有进程、socket、namespace、ADB 映射和临时凭据均清理。未证明引入
+归属的共享 jar／通用 UI dump 只作非运行文件保留。宿主结构只声称从本轮保存的较晚基线至最终
+回读相同，不补造初始防火墙基线。新制品和验收原件在
+`deploy/evidence/2026-11-07-convergence-scope/`；诊断消费及其首轮错误断言、修正续验在
+`deploy/evidence/2026-11-07-convergence-diagnostic/`；历史异常与 Forward 审计分别在
+`2026-11-07-convergence-wg-history/` 和 `2026-11-07-convergence-audit/`。
+
+本轮本地检查及精确制品不等于新提交托管 CI 或正式发布。唯一核心工作项仍 open；下一业务入口
+仍为阶段 4 的正式 Policy 操作与合法旧流保持，阶段 5–8 的外部条件及生产激活授权门禁不变。
+
 ## 多 Scope 的当前续验
 
+本节保留前一窗口的结果；后续新证据以[本轮判定](#最终收敛的本轮判定)为准。
 2026-11-07，起始本地／远端 HEAD 为 `c5fb6b10`，工作区干净，该提交主 CI 已读回成功。
 Scope 及资源池的现有实现保持；新增测试与后续证据见
 [组合 Scope 续验](progress.md#internet-与-lan-的组合-scope-续验)。以下范围分别判定：
@@ -223,6 +262,24 @@ PID 的 fd 编号变化另标。尚有一台 Nginx worker PID 集合更替，以
 preflight 相同。宿主本机全 IPv4／IPv6 结构对照通过；
 其余远端新 IPv6／WG 握手／代理及公网主动业务未补验。具体来源、归一字段及差异仅在
 `deploy/evidence/2026-11-07-final-six-node-postcheck-*/`。
+
+2026-11-07 最终收敛只读补审，未重跑多 Forward 故障矩阵。逐文件核对既有摘要、CAS
+原日志、完整新流前集合、两次 tracker 和撤权后集合，确认后续 epoch 自身完成实际选 F2、
+三端各两条新 TLS 双向增长及精确撤权。前一恢复窗口的两个 RUN、EOF／failed／cleanup
+与 TTL 干扰分别保留；后续 epoch 的 namespace owner 身份不同，恢复结论不拼接旧 RUN，
+也不推导缺少时钟偏差证据的 TTL／EOF 精确先后。浏览器六项依赖成功仍只证明该页面，
+未观察到新 HTTP 连接，不单独证明新 Forward 路径；不因此重复已有原生业务验收。
+
+本轮又并行完成六节点只读连接：与前次最终回查相比，身份、程序／清单、IPv4 main
+路由与规则保持，原多 Forward 测试根及其 Loom／native 进程均未发现。扩大历史区间的 journal
+新证实原异常主机曾发生 Nginx 服务 stop/start，触发者仍未知，不改写前次窄窗口结论。
+备用节点 ACL 此后仍有实际增删；现装厂商脚本含相同链名，但缺少对应审计／操作记录，
+不能据此归因。测试 relay 的客户端 reset／broken-pipe、SSH 非零退出与 relay 正常退出
+分开保全，服务端窄窗口记录不能关联同一次请求，根因仍未知，不计作 Forward 业务故障。
+没有初始防火墙基线，也未新增全六节点主动基础网络验收，不宣称所有网络和进程不变。
+上述新增原件、范围、命令及各自失败／未知在
+`deploy/evidence/2026-11-07-convergence-audit/forward-final-audit-expanded.json`、
+`environment-final-review.json` 与 `six-current-baseline-summary.json`；未修改生产或宿主网络。
 
 精确源码、失败、CAS、新旧流、撤权、最终接受与归档／删除原件仅在受保护的
 `deploy/evidence/2026-11-07-multiforward-linktrace/continuation-0004/` 及同根 `phone/`、

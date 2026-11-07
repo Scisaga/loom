@@ -118,6 +118,16 @@ internal fun AppliedRoute.hasCompleteReadback(
     policies: Map<String, String>, choices: Map<String, RouteChoices>,
 ): Boolean = execution().map { it.selector }.toSet() == scopes && matchesReadback(candidates, targets, policies, choices)
 
+internal fun AppliedRoute.confirmedReportSelectors(
+    preferredPolicies: Map<String, String>, pendingScopes: Set<String>,
+    candidates: Map<String, String>, targets: Map<String, Map<String, String>>,
+    policies: Map<String, String>, choices: Map<String, RouteChoices>, revisions: Map<String, String>,
+): List<AppliedSelector> = selectors.filter { selected ->
+    selected.selector !in pendingScopes && !revisions[selected.selector].isNullOrBlank() &&
+        selected.policyID == preferredPolicies[selected.selector] &&
+        copy(selectors = listOf(selected), blockedScopes = emptyList()).matchesReadback(candidates, targets, policies, choices)
+}
+
 internal fun AppliedRoute.blockedSelectedScopes(
     internetPolicyID: String, lanPolicyIDs: Map<String, String>, actual: Map<String, String>,
 ): Set<String> = blockedScopes.filterTo(linkedSetOf()) { scope ->
@@ -963,11 +973,19 @@ class RouteManager private constructor(context: Context) {
                 else preference.optJSONObject("lan_policy_ids")?.optString(selected.selector.removePrefix("local_network:")).orEmpty()
             selected.policyID == policy
         } == true
-        val complete = permissionCurrent && runtime.selectorClient == null &&
+        val complete = permissionCurrent && runtime.runningProfile?.viewDigest == acceptedView && runtime.selectorClient == null &&
             policiesCurrent &&
             runtime.application?.hasCompleteReadback(scopes, runtime.actual, runtime.actualTargets, runtime.actualPolicies, runtime.actualChoices) == true
         val selectionConfirmed = running && complete
-        val selected = if (selectionConfirmed) runtime.application?.selectors.orEmpty() else emptyList()
+        val preferredPolicies = scopes.associateWith { scope ->
+            if (scope == "access") preference.optString("policy_id")
+            else preference.optJSONObject("lan_policy_ids")?.optString(scope.removePrefix("local_network:")).orEmpty()
+        }
+        val pendingScopes = scopes.filterTo(linkedSetOf()) { runtime.selectorClient?.mayWrite(it) == true }
+        val selected = if (permissionCurrent && runtime.runningProfile?.viewDigest == acceptedView)
+            runtime.application?.confirmedReportSelectors(preferredPolicies, pendingScopes,
+                runtime.actual, runtime.actualTargets, runtime.actualPolicies, runtime.actualChoices, runtime.actualRevisions).orEmpty()
+            else emptyList()
         val selections = JSONArray(selected.sortedBy { it.selector }.map {
             JSONObject().put("scope", it.selector).put("candidate_id", it.candidate).put("targets",JSONObject(it.targets))
         }).toString().encodeToByteArray()

@@ -7,6 +7,24 @@ import org.junit.Test
 
 class MeasurementCompletionDiagnosticsTest {
     @Test
+    fun echoBindingPreservesOnlyCanonicalHashesAndPurpose() {
+        val hash = "a".repeat(64)
+        val line = "echo_id=$hash binding resource_id_sha256=$hash spec_digest=sha256:$hash operation=admission_echo network_generation_sha256=$hash policy_id_sha256=$hash"
+        val lines = mutableListOf<String>()
+        emitEchoDiagnostic(line) { lines += it }
+        assertEquals(listOf("echo-diagnostic $line"), lines)
+        for (invalid in listOf(
+            line.replace("operation=admission_echo", "operation=connect_tcp"),
+            line.replace("resource_id_sha256=$hash", "resource_id_sha256=demo-private-resource"),
+            line.replace("spec_digest=sha256:$hash", "spec_digest=demo-invalid"),
+            "$line target=192.0.2.1",
+            "$line\n",
+        )) emitEchoDiagnostic(invalid) { lines += it }
+        assertEquals(1, lines.size)
+        emitEchoDiagnostic(line) { throw IllegalStateException("demo-sink-failure") }
+    }
+
+    @Test
     fun echoDebugAcceptsOnlySafeFixedFieldsAndContainsSinkFailures() {
         val id = "a".repeat(64)
         val line = "echo_id=$id phase=response-validate elapsed_ns=123 outcome=denied"

@@ -268,7 +268,8 @@ func TestWireGuardEchoLocalConnectPreservesCauseAndStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	cause := errors.New("demo-local-connect-failure")
-	ctx, err := NativeDiagnosticContext(WithMeasurementBudget(context.Background(), budget), "demo-secret", func(context.Context, string, string) (net.Conn, error) {
+	var lines []string
+	ctx, err := NativeDiagnosticContext(WithEchoDiagnosticLog(WithMeasurementNetwork(WithMeasurementBudget(context.Background(), budget), "demo-underlay"), func(line string) { lines = append(lines, line) }), "demo-secret", func(context.Context, string, string) (net.Conn, error) {
 		return nil, cause
 	})
 	if err != nil {
@@ -279,6 +280,22 @@ func TestWireGuardEchoLocalConnectPreservesCauseAndStage(t *testing.T) {
 		t.Fatal("local connection failure lost its cause or produced RTT", err)
 	}
 	checkDiagnosticStage(t, err, "WG stage=local-connect")
+	if len(lines) < 2 || !strings.Contains(lines[1], " binding resource_id_sha256=") ||
+		!strings.Contains(lines[1], "spec_digest="+probes[0].SpecDigest+" operation=admission_echo ") ||
+		!strings.Contains(lines[1], "network_generation_sha256=") || !strings.Contains(lines[1], "policy_id_sha256=") {
+		t.Fatal("failed actual admission lost its flight binding", lines)
+	}
+	id := strings.Fields(lines[0])[0]
+	for _, line := range lines {
+		if !strings.HasPrefix(line, id+" ") {
+			t.Fatal("flight binding differs from its actual phase ID")
+		}
+		for _, private := range []string{"demo-local-connect-failure", "demo-secret", probes[0].Resource.ID, probes[0].PolicyID, "demo-underlay", probes[0].Resource.DialHost} {
+			if strings.Contains(line, private) {
+				t.Fatal("flight diagnostic exposed its private input")
+			}
+		}
+	}
 }
 
 func TestWGAdmissionInflightReuseCannotBorrowAnotherPolicyOrSpecification(t *testing.T) {

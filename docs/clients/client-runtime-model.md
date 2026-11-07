@@ -1036,6 +1036,13 @@ LKG、信任绑定及 floor，再按新授权收口运行投影。宿主 preflig
 
 #### 新报告的观测投影
 
+Android 的互联网与 LAN Scope 各自完成 GET、准备、CAS、回读和确认。当前权限已完整回读，
+但仍有 Scope 待应用时，正常报告保留相同 View、网络代、运行实例及当前偏好下已确认的选择，
+未确认、被接管或尚需 CAS 的 Scope 不填；两个保存意图继续独立报告。runtime 为 unknown、
+applied 留空，permission_view_digest 必须匹配当前 View。全部 Scope 确认后才能报告整实例
+running 与 applied；停止、失败或权限未确认时不报告选择。桥接器校验资格和 Policy，不能从
+Preference 或权限证明制造选择；业务样本仍要求完整 running，不随部分选择放宽。
+
 执行选路的 access 和 forward 都可领取当前 Policy/最终出口约束内所需的远端样本：access
 仍须自己测首跳，forward 仍须自己测后续有向链路，二者不能被远端结果替代。转发权限来自原请求
 的授权上下文，不要求 forward 获得来源设备的 access PolicyIDs。无相关消费者的节点不领取全网
