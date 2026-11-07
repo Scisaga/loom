@@ -7,6 +7,25 @@ import org.junit.Test
 
 class MeasurementCompletionDiagnosticsTest {
     @Test
+    fun echoDebugAcceptsOnlySafeFixedFieldsAndContainsSinkFailures() {
+        val id = "a".repeat(64)
+        val line = "echo_id=$id phase=response-validate elapsed_ns=123 outcome=denied"
+        val lines = mutableListOf<String>()
+        emitEchoDiagnostic(line) { lines += it }
+        assertEquals(listOf("echo-diagnostic $line"), lines)
+        for (invalid in listOf(
+            "$line error=demo-private-error",
+            line.replace(id, "demo-raw-nonce"),
+            line.replace("response-validate", "demo-private-target"),
+            line.replace("elapsed_ns=123", "elapsed_ns=-1"),
+            line.replace("elapsed_ns=123", "elapsed_ns=9999999999999999999"),
+            "$line\n",
+        )) emitEchoDiagnostic(invalid) { lines += it }
+        assertEquals(1, lines.size)
+        emitEchoDiagnostic(line) { throw IllegalStateException("demo-sink-failure") }
+    }
+
+    @Test
     fun logsOriginalFailureTimesAndOnlyFixedMetadata() {
         val specification = "sha256:" + "a".repeat(64)
         val body = """{"schema":3,"observations":[{"level":"resource","resource_id":"demo-sensitive-resource","spec_digest":"$specification","target":"192.0.2.10:51820","action":"wireguard_echo","result":"unavailable","observed_at":1893456000123,"valid_until":1893456030123,"network_generation":"demo-network","credential":"demo-private-credential"}]}""".encodeToByteArray()

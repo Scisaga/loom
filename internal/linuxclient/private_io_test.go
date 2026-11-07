@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,133 @@ import (
 	"loom/internal/control"
 	"loom/internal/deviceclient"
 )
+
+func TestPrivateLinkDiagnosticsKeepExactCacheAcrossFetchFailure(t *testing.T) {
+	store, path, makeView := linuxAcceptanceFixture(t)
+	if err := store.SaveLKG(makeView(7, true)); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	lkg := store.LKG()
+	ctx, cancel := context.WithCancel(context.Background())
+	requests := make(chan struct{}, 1)
+	results := make(chan control.DeviceLinkObservations, 1)
+	bases := make(chan string, 3)
+	lines := make(chan string, 3)
+	done := make(chan struct{})
+	calls := 0
+	diagnosticCalls := 0
+	go func() {
+		defer close(done)
+		refreshPrivateLinkObservationsWithFetch(ctx, store, requests, results, func(_ context.Context, _ deviceclient.IdentityStore, previous *control.DeviceLinkObservations) (control.DeviceLinkObservations, error) {
+			calls++
+			base := "nil"
+			if previous != nil {
+				base = previous.Cursor
+			}
+			bases <- base
+			if calls == 2 {
+				return control.DeviceLinkObservations{}, context.DeadlineExceeded
+			}
+			cursor := "demo-private-cursor-first"
+			if calls == 3 {
+				cursor = "demo-private-cursor-next"
+			}
+			return control.DeviceLinkObservations{Schema: 3, NetworkID: lkg.View.NetworkID, DeviceID: lkg.View.DeviceID, ViewDigest: lkg.ViewDigest,
+				Cursor: cursor, Reset: true, Removed: []string{}, Observations: []control.DeviceLinkObservation{}}, nil
+		}, func(line string) error {
+			diagnosticCalls++
+			lines <- line
+			if diagnosticCalls == 1 {
+				panic("demo-private sink panic")
+			}
+			return errors.New("demo-private sink failure")
+		})
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("diagnostics left a private fetch worker running")
+		}
+	}()
+	readLine := func() string {
+		t.Helper()
+		select {
+		case line := <-lines:
+			return line
+		case <-time.After(time.Second):
+			t.Fatal("private measurement lifecycle diagnostic missing")
+			return ""
+		}
+	}
+	requests <- struct{}{}
+	first := <-results
+	firstLog := readLine()
+	if <-bases != "nil" || first.Cursor != "demo-private-cursor-first" || first.ValidateForView(lkg.View) != nil {
+		t.Fatal("initial complete measurement cache differs")
+	}
+	requests <- struct{}{}
+	failedLog := readLine()
+	if <-bases != first.Cursor || !strings.Contains(failedLog, "outcome=timeout") {
+		t.Fatal("failed fetch lost its exact original base or safe timeout class")
+	}
+	select {
+	case <-results:
+		t.Fatal("failed fetch published another measurement cache")
+	default:
+	}
+	requests <- struct{}{}
+	next := <-results
+	nextLog := readLine()
+	if <-bases != first.Cursor || next.Cursor != "demo-private-cursor-next" {
+		t.Fatal("failed fetch changed the base supplied to the next real fetch")
+	}
+	for _, line := range []string{firstLog, failedLog, nextLog} {
+		if !strings.Contains(line, "wire_mode=unknown") {
+			t.Fatal("merged cache was mislabeled as a wire reset/delta")
+		}
+		for _, secret := range []string{"demo-private", "demo-network", "demo-device", "192.0.2.1"} {
+			if strings.Contains(line, secret) {
+				t.Fatal("measurement diagnostic leaked an identifier, cursor, target or callback error")
+			}
+		}
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("measurement diagnostics wrote authenticated identity or progress")
+	}
+}
+
+func TestPrivateLinkDiagnosticsMatchConsumedSetWithoutExposingFacts(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	one := control.DeviceLinkObservation{DeviceID: "demo-private-source", ReportSequence: 1, ReportDigest: control.ReleaseDigest([]byte("demo-report")), CurrentUntil: at + 60_000,
+		Observation: control.Observation{Level: "link", ResourceID: "demo-private-resource", LinkID: "demo-link", SpecDigest: control.ReleaseDigest([]byte("demo-spec")), Target: "192.0.2.1:443", Action: "hysteria2_echo", NetworkGeneration: "demo-private-network", Result: "available", ObservedAt: at, ValidUntil: at + 60_000, DurationMS: new(int64(1)), RoundTripMS: new(int64(1))}}
+	two := one
+	two.Observation.ResourceID = "demo-private-other"
+	two.Observation.LinkID = "demo-other-link"
+	values := []control.DeviceLinkObservation{one, two}
+	want := measurementDiagnosticSet(values)
+	if want == "unavailable" || want == "-" || want != measurementDiagnosticSet([]control.DeviceLinkObservation{two, one}) {
+		t.Fatal("public sample-set diagnostic depends on order or cannot encode real facts")
+	}
+	changed := one
+	changed.Observation.ObservedAt++
+	if measurementDiagnosticSet([]control.DeviceLinkObservation{changed, two}) == want {
+		t.Fatal("a changed original sample kept the same diagnostic digest")
+	}
+	value := control.DeviceLinkObservations{Cursor: "demo-private-cursor", ViewDigest: control.ReleaseDigest([]byte("demo-view")), Observations: values}
+	var line string
+	logPrivateLinkDelivery(func(value string) error { line = value; return nil }, "consume", nil, &value, value.ViewDigest, "valid", nil, values)
+	if !strings.Contains(line, "merged_set="+want) || !strings.Contains(line, "adopted_set="+want) || !strings.Contains(line, "base=unknown") || !strings.Contains(line, "wire_mode=unknown") {
+		t.Fatal("received and adopted exact sets cannot be correlated", line)
+	}
+	logPrivateLinkDelivery(func(value string) error { line = value; return nil }, "consume", nil, &value, value.ViewDigest, "invalid", errors.New("192.0.2.1 demo-private failure"), nil)
+	if !strings.Contains(line, "adopted_count=0") || !strings.Contains(line, "validate=invalid") || strings.Contains(line, "demo-private") || strings.Contains(line, "192.0.2.1") {
+		t.Fatal("invalid consumption exposed facts or claimed an adopted set", line)
+	}
+}
 
 func TestRuntimeReportUploadCoalescesPendingSnapshotsAndCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

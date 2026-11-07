@@ -29,7 +29,19 @@ type reviewedArtifact struct {
 }
 
 var reviewedArtifacts = map[string]reviewedArtifact{
-	DataPlaneVersion: {
+	"1.11.4-loom.28": {
+		sources: map[string]string{
+			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
+			"build-dataplane.sh":     "4d344406d3663cc4e11846074a8631fb6661c8b3115632070bb4e3ed3378fb40",
+			"domain-cache.patch":     "8b0a8c3324ad479668a8063c44b44e9ac43b7ce0e131b5f6e58d4c8cd037d0a7",
+			"prepare-sing-box.py":    "1e605be77b24467a008938fdcb6144d9eacf3df21ff59b2f062a6a0bba18aef1",
+			"source-provenance.json": "c7dfe8fd8372afe92bd877d9e0d84cb46ed2371d55d455d3c23b80d6c15cea43",
+		},
+		linux: map[string]string{
+			"amd64": "0ca72e165b2638c7d617b5eb2967001127ccd35187f2713652bace321571274f",
+		},
+	},
+	"1.11.4-loom.27": {
 		sources: map[string]string{
 			"LICENSE":                "650d5e3b99a446fb38e820fa87a49562e0c79eab868fff58618ac487a58e554c",
 			"build-dataplane.sh":     "f5997022827512f2038959cfed55a840379f9239e4ac791d48fe8ae529b99c94",

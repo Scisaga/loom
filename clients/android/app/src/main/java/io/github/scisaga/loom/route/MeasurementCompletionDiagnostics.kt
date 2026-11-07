@@ -6,6 +6,17 @@ import org.json.JSONObject
 private fun measurementDigest(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.encodeToByteArray()).joinToString("") { "%02x".format(it) }
 
+private val echoDiagnostic = Regex("echo_id=([0-9a-f]{64}) phase=(request-start|local-connect|underlay-resolve|underlay-dial|hy2-authenticate|execution-stream-open|preface-write|request-write|response-read|response-validate|socket-close|request-finish) elapsed_ns=(0|[1-9][0-9]{0,18}) outcome=(started|success|canceled|timeout|denied|unavailable|local-pending|superseded|failed)")
+
+/** Fixed Debug metadata only; raw errors, targets and frames cannot be logged. */
+internal fun emitEchoDiagnostic(line: String, emit: (String) -> Unit) {
+    runCatching {
+        val match = echoDiagnostic.matchEntire(line) ?: return
+        if (match.groupValues[3].toLongOrNull() == null) return
+        emit("echo-diagnostic $line")
+    }
+}
+
 /** Completion-time metadata only; this never logs the sample or its target. */
 internal fun emitMeasurementCompletionDiagnostics(body: ByteArray, emit: (String) -> Unit, failed: () -> Unit) {
     try {

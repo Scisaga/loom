@@ -51,6 +51,7 @@ type Options struct {
 	Reload              <-chan os.Signal
 	Capture             string
 	ResourceInputs      string
+	TraceProbes         bool
 	captureNamespace    *os.File
 }
 
@@ -60,6 +61,9 @@ func (options *Options) defaults() {
 	}
 	if options.Log == nil {
 		options.Log = io.Discard
+	}
+	if options.TraceProbes {
+		options.Log = serializedProbeOutput(options.Log)
 	}
 	if options.Now == nil {
 		options.Now = time.Now
@@ -555,6 +559,16 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	if err != nil {
 		return err
 	}
+	if options.TraceProbes {
+		config, err = withProbeDebugConfig(config)
+		if err != nil {
+			return err
+		}
+		serverConfig, err = withProbeDebugConfig(serverConfig)
+		if err != nil {
+			return err
+		}
+	}
 	connected, _ := clientadapter.ConnectedIPv4Prefixes()
 	var localNetworks []control.LocalNetworkPrefix
 	for _, service := range lkg.View.Services {
@@ -675,7 +689,8 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			server := exec.Command(options.SingBox, "run", "-c", serverPath)
 			server.Dir = filepath.Dir(options.Config)
 			server.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-			server.Stdout, server.Stderr = options.Log, options.Log
+			serverLog := probeNativeOutput(options)
+			server.Stdout, server.Stderr = serverLog, serverLog
 			if err := server.Start(); err != nil {
 				return err
 			}
@@ -702,7 +717,8 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 				defer file.Close()
 			}
 		}
-		command.Stdout, command.Stderr = options.Log, options.Log
+		commandLog := probeNativeOutput(options)
+		command.Stdout, command.Stderr = commandLog, commandLog
 		if err := command.Start(); err != nil {
 			return err
 		}
@@ -762,6 +778,17 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 			return err
 		}
 	}
+	var routingDiagnostic func(string) error
+	if options.TraceProbes {
+		diagnosticContext = clientadapter.WithEchoDiagnosticLog(diagnosticContext, func(line string) {
+			_, _ = fmt.Fprintln(options.Log, "DEBUG", line)
+		})
+		routingDiagnostic = func(line string) error {
+			_, err := fmt.Fprintln(options.Log, "DEBUG", line)
+			return err
+		}
+		diagnosticContext = clientadapter.WithForwardDiagnosticLog(diagnosticContext, routingDiagnostic)
+	}
 	var forwardSelector *clientadapter.HTTPSelector
 	var forwardMemory map[string]clientmodel.SelectionMemory
 	needsSharedMeasurements := hasAccess || slices.Contains(lkg.View.Responsibilities, "forward")
@@ -805,7 +832,7 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 	privateWorkers.Add(3)
 	go func() {
 		defer privateWorkers.Done()
-		refreshPrivateLinkObservations(ctx, store, linkRequests, linkResults)
+		refreshPrivateLinkObservations(ctx, store, linkRequests, linkResults, routingDiagnostic)
 	}()
 	go func() {
 		defer privateWorkers.Done()
@@ -1171,11 +1198,14 @@ func runGeneration(ctx context.Context, options Options, store *deviceclient.Sto
 		activation := Activation{State: local, Selections: []SelectionStatus{}}
 		select {
 		case delivery := <-linkResults:
+			validation := "invalid"
 			if delivery.ValidateForView(lkg.View) == nil {
 				remoteLinks = append([]control.DeviceLinkObservation{}, delivery.Observations...)
+				validation = "valid"
 			} else {
 				remoteLinks = nil
 			}
+			logPrivateLinkDelivery(routingDiagnostic, "consume", nil, &delivery, lkg.ViewDigest, validation, nil, remoteLinks)
 		default:
 		}
 		linkObservations := []control.Observation{}

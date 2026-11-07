@@ -85,6 +85,15 @@ func TestCurrentReportSignsIndependentLANSelections(t *testing.T) {
 			report.PolicyID = "demo-web-policy"
 			report.Selections = append(report.Selections, ReportSelection{ServiceID: "demo-web", PolicyID: report.PolicyID, CandidateID: digest})
 		}},
+		{name: "Internet confirmed with LAN intent unconfirmed", valid: true, change: func(report *DeviceReport) {
+			report.PolicyID = "demo-web-policy"
+			report.Selections = []ReportSelection{{ServiceID: "demo-web", PolicyID: report.PolicyID, CandidateID: digest}}
+		}},
+		{name: "partial Android execution keeps both intents without whole application proof", valid: true, change: func(report *DeviceReport) {
+			report.PolicyID = "demo-web-policy"
+			report.Selections = []ReportSelection{}
+			report.Runtime = RuntimeReadback{State: "unknown", PermissionViewDigest: digest}
+		}},
 		{name: "unknown without a choice", valid: true, change: func(report *DeviceReport) {
 			report.LANPolicyIDs = nil
 			report.Selections = []ReportSelection{}

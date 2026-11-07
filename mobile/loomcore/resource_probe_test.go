@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -63,6 +64,7 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 		t.Fatal("fixture must have one authorized first hop", err)
 	}
 	var requests atomic.Int32
+	var echoedID atomic.Value
 	server := &http3.Server{StreamHijacker: func(kind http3.FrameType, _ quic.ConnectionTracingID, stream quic.Stream, err error) (bool, error) {
 		if kind != protocol.Hy2FrameType || err != nil {
 			return false, nil
@@ -77,6 +79,7 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 			if err != nil || request.Operation != protocol.AdmissionEcho {
 				return
 			}
+			echoedID.Store(protocol.EchoDiagnosticID(request.Nonce))
 			response, _ := (protocol.Response{Nonce: request.Nonce, Status: protocol.Accepted}).Marshal()
 			_ = protocol.WriteFrame(stream, response)
 		}()
@@ -103,13 +106,31 @@ func TestAndroidFirstHopProtectedAuthenticationCacheAndOriginalReport(t *testing
 		}
 	}
 	selections, _ := json.Marshal([]androidSelection{{Scope: control.AccessSelectorScope, CandidateID: route.ID}})
-	cache, err := observeAndroidFirstHopsForTest(body, selections, nil, "demo-underlay")
+	logging := &androidDiagnosticObserver{}
+	first, err := NewAndroidFirstHopRequest(body, selections, nil, nil, nil, nil, nil, "demo-underlay", logging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := first.Run()
 	if err != nil || protector.calls.Load() == 0 || requests.Load() != 1 {
 		t.Fatal("Android did not authenticate through its protected socket", err)
 	}
 	samples, err := clientadapter.DecodeResourceObservations(cache, *state.LKG, "demo-underlay", testPolicyIDs(state.LKG.View))
 	if err != nil || len(samples) != 1 || samples[0].Result != "available" {
 		t.Fatal("Android lost the original authenticated resource result", err)
+	}
+	if len(logging.lines) < 8 {
+		t.Fatal("Android observer did not receive the actual echo phases")
+	}
+	for _, line := range logging.lines {
+		if !strings.Contains(line, "echo_id="+echoedID.Load().(string)) {
+			t.Fatal("Android log did not retain the same actual nonce diagnostic ID")
+		}
+		for _, forbidden := range []string{probes[0].Credential, "127.0.0.1", "demo-resource", "demo-policy"} {
+			if strings.Contains(line, forbidden) {
+				t.Fatal("Android diagnostic expanded private measurement inputs")
+			}
+		}
 	}
 	unchanged, err := observeAndroidFirstHopsForTest(body, selections, cache, "demo-underlay")
 	if err != nil || !bytes.Equal(cache, unchanged) || requests.Load() != 1 {
@@ -276,6 +297,19 @@ type androidMeasurementObserverFunc func([]byte) error
 
 func (observer androidMeasurementObserverFunc) Completed(body []byte) error  { return observer(body) }
 func (observer androidMeasurementObserverFunc) Calibrated(body []byte) error { return nil }
+func (observer androidMeasurementObserverFunc) Diagnostic(line string) error { return nil }
+
+type androidDiagnosticObserver struct{ lines []string }
+
+func (observer *androidDiagnosticObserver) Completed([]byte) error  { return nil }
+func (observer *androidDiagnosticObserver) Calibrated([]byte) error { return nil }
+func (observer *androidDiagnosticObserver) Diagnostic(line string) error {
+	observer.lines = append(observer.lines, line)
+	if len(observer.lines) == 1 {
+		panic("demo-log-callback-failure")
+	}
+	return errors.New("demo-log-callback-error")
+}
 
 func TestAndroidFirstHopRequestOwnsDeferredInputs(t *testing.T) {
 	state, stateBody := androidFixture(t, 7, false)

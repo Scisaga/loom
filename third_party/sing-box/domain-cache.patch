@@ -4244,7 +4244,7 @@
 +}
 --- /dev/null
 +++ b/common/execution/receiver.go
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,374 @@
 +package execution
 +
 +import (
@@ -4255,6 +4255,7 @@
 +	"strconv"
 +	"sync"
 +	"sync/atomic"
++	"time"
 +
 +	"github.com/sagernet/sing-box/adapter"
 +	"github.com/sagernet/sing-box/common/dialer"
@@ -4398,19 +4399,36 @@
 +	}
 +	return limit
 +}
-+func (r *Receiver) Echo(key, policyID string) error {
++func (r *Receiver) Echo(key, policyID string, diagnostics ...EchoDiagnostic) error {
++	var diagnostic EchoDiagnostic
++	if len(diagnostics) != 0 {
++		diagnostic = diagnostics[0]
++	}
++	var started time.Time
++	if diagnostic != nil {
++		started = time.Now()
++	}
 +	s, sender, err := r.sender(key)
++	observeEcho(diagnostic, "sender-authentication", started, err)
 +	if err != nil {
 +		return err
 +	}
++	if diagnostic != nil {
++		started = time.Now()
++	}
 +	if policyID == "" {
++		observeEcho(diagnostic, "receiver-echo", started, nil)
 +		return nil
 +	}
 +	p := s.policies[policyID]
 +	if !s.access || p == nil {
-+		return errors.New("Policy has no current ordinary entry admission")
++		err = errors.New("Policy has no current ordinary entry admission")
++		observeEcho(diagnostic, "receiver-echo", started, err)
++		return err
 +	}
-+	return p.compiled.AdmitEntry(sender, s.nodeID, s.forward, s.egress)
++	err = p.compiled.AdmitEntry(sender, s.nodeID, s.forward, s.egress)
++	observeEcho(diagnostic, "receiver-echo", started, err)
++	return err
 +}
 +func (p *Policy) target(destination M.Socksaddr) error {
 +	host := destination.Fqdn
@@ -11223,7 +11241,7 @@
 +}
 --- /dev/null
 +++ b/experimental/clashapi/egress.go
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,189 @@
 +package clashapi
 +
 +import (
@@ -11239,6 +11257,7 @@
 +	"github.com/sagernet/sing-box/common/execution"
 +	P "github.com/sagernet/sing-box/common/loomprotocol"
 +	"github.com/sagernet/sing-box/common/sourcepool"
++	"github.com/sagernet/sing-box/log"
 +	"github.com/sagernet/sing-box/protocol/direct"
 +	"github.com/sagernet/sing/common"
 +	M "github.com/sagernet/sing/common/metadata"
@@ -11306,6 +11325,15 @@
 +	}
 +	ctx, cancel := context.WithDeadline(owner, deadline)
 +	defer cancel()
++	// Keep the server-owned lifetime and cancellation handoff intact. Only
++	// this local Echo request receives a log ID; no authority uses this value.
++	echoID := ""
++	if r.URL.Path == "/loom/probe" {
++		echoID, _ = echoDiagnosticHeader(r)
++		if echoID != "" {
++			ctx = log.ContextWithNewID(ctx)
++		}
++	}
 +	requestCancelled := make(chan struct{})
 +	stopRequest := context.AfterFunc(r.Context(), func() {
 +		cancel()
@@ -11323,7 +11351,10 @@
 +	if r.Context().Err() != nil {
 +		cancel()
 +	}
++	s.echoDiagnostic(ctx, echoID, "local-connect-begin", 0, nil)
++	dialStarted := time.Now()
 +	remote, err := dial(ctx)
++	s.echoDiagnostic(ctx, echoID, "local-connect-end", time.Since(dialStarted), err)
 +	if err != nil {
 +		status := http.StatusBadGateway
 +		if errors.Is(err, sourcepool.ErrConflict) || errors.Is(err, execution.ErrSuperseded) {
@@ -11990,7 +12021,7 @@
 +}
 --- /dev/null
 +++ b/experimental/clashapi/probe.go
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,153 @@
 +package clashapi
 +
 +import (
@@ -12027,6 +12058,10 @@
 +		}
 +		if r.Method != http.MethodConnect || r.ProtoMajor != 1 || r.URL.Path != "/loom/probe" || r.URL.RawQuery != "" || r.URL.ForceQuery || r.ContentLength != 0 || len(r.TransferEncoding) != 0 || len(r.Header.Values("X-Loom-Target")) != 1 || len(r.Header.Values("X-Loom-Scope")) > 1 || len(r.Header.Values("X-Loom-Expected-Revision")) > 1 {
 +			http.Error(w, "invalid probe request", http.StatusBadRequest)
++			return
++		}
++		if _, valid := echoDiagnosticHeader(r); !valid {
++			http.Error(w, "invalid echo diagnostic correlation", http.StatusBadRequest)
 +			return
 +		}
 +		network, host, port, err := P.ParseConnectionTargetKey(r.Header.Get("X-Loom-Target"))
@@ -18447,7 +18482,7 @@
 +}
 --- /dev/null
 +++ b/protocol/hysteria2/execution.go
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,140 @@
 +package hysteria2
 +
 +import (
@@ -18458,6 +18493,7 @@
 +
 +	"github.com/sagernet/sing-box/common/execution"
 +	P "github.com/sagernet/sing-box/common/loomprotocol"
++	"github.com/sagernet/sing-box/log"
 +	"github.com/sagernet/sing-quic/hysteria2"
 +	"github.com/sagernet/sing/common/auth"
 +	M "github.com/sagernet/sing/common/metadata"
@@ -18482,20 +18518,38 @@
 +		return err
 +	}
 +	started := time.Now()
++	isEcho := request.Operation == P.TransportEcho || request.Operation == P.AdmissionEcho
++	echoID := ""
++	var records []echoStageRecord
++	var observe execution.EchoDiagnostic
++	if isEcho {
++		ctx = log.ContextWithNewID(ctx)
++		echoID = P.EchoDiagnosticID(request.Nonce)
++		records = append(records, echoStageRecord{phase: "received"})
++		observe = func(phase string, elapsed time.Duration, cause error) {
++			records = append(records, echoStageRecord{phase, elapsed, cause})
++		}
++	}
 +	reply := func(status P.Status) error {
 +		response := P.Response{Nonce: request.Nonce, Status: status, ProcessingNanos: uint64(time.Since(started))}
 +		body, err := response.Marshal()
 +		if err != nil {
 +			return err
 +		}
-+		if err = P.WriteFrame(conn, body); err != nil {
++		writeStarted := time.Now()
++		err = P.WriteFrame(conn, body)
++		if isEcho {
++			records = append(records, echoStageRecord{"response-write", time.Since(writeStarted), err})
++			flushEchoDiagnostics(ctx, h.logger, echoID, records)
++		}
++		if err != nil {
 +			return err
 +		}
 +		return conn.Close()
 +	}
 +	switch request.Operation {
 +	case P.TransportEcho, P.AdmissionEcho:
-+		if err = h.execution.Echo(user, request.PolicyID); err != nil {
++		if err = h.execution.Echo(user, request.PolicyID, observe); err != nil {
 +			return reply(P.Denied)
 +		}
 +		return reply(P.Accepted)
@@ -19663,7 +19717,7 @@
 +}
 --- /dev/null
 +++ b/protocol/wireguard/execution.go
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,368 @@
 +package wireguard
 +
 +import (
@@ -19682,6 +19736,7 @@
 +	"github.com/sagernet/sing-box/adapter"
 +	"github.com/sagernet/sing-box/common/execution"
 +	P "github.com/sagernet/sing-box/common/loomprotocol"
++	"github.com/sagernet/sing-box/log"
 +	E "github.com/sagernet/sing/common/exceptions"
 +	M "github.com/sagernet/sing/common/metadata"
 +	N "github.com/sagernet/sing/common/network"
@@ -19853,13 +19908,31 @@
 +	}
 +	_ = conn.SetReadDeadline(time.Time{})
 +	started := time.Now()
++	isEcho := request.Operation == P.TransportEcho || request.Operation == P.AdmissionEcho
++	echoID := ""
++	var records []echoStageRecord
++	var observe execution.EchoDiagnostic
++	if isEcho {
++		ctx = log.ContextWithNewID(ctx)
++		echoID = P.EchoDiagnosticID(request.Nonce)
++		records = append(records, echoStageRecord{phase: "received"})
++		observe = func(phase string, elapsed time.Duration, cause error) {
++			records = append(records, echoStageRecord{phase, elapsed, cause})
++		}
++	}
 +	reply := func(status P.Status, address netip.Addr) error {
 +		_ = conn.SetWriteDeadline(time.Now().Add(8 * time.Second))
 +		response, err := (P.Response{Nonce: request.Nonce, Status: status, Address: address, ProcessingNanos: uint64(time.Since(started))}).Marshal()
 +		if err != nil {
 +			return err
 +		}
-+		if err = P.WriteFrame(conn, response); err != nil {
++		writeStarted := time.Now()
++		err = P.WriteFrame(conn, response)
++		if isEcho {
++			records = append(records, echoStageRecord{"response-write", time.Since(writeStarted), err})
++			flushEchoDiagnostics(ctx, w.logger, echoID, records)
++		}
++		if err != nil {
 +			return err
 +		}
 +		err = conn.Close()
@@ -19871,12 +19944,12 @@
 +	key := source.Addr.String()
 +	switch request.Operation {
 +	case P.TransportEcho:
-+		if err = w.execution.Echo(key, ""); err != nil {
++		if err = w.execution.Echo(key, "", observe); err != nil {
 +			return reply(P.Denied, netip.Addr{})
 +		}
 +		return reply(P.Accepted, netip.Addr{})
 +	case P.AdmissionEcho:
-+		if err = w.execution.Echo(key, request.PolicyID); err != nil {
++		if err = w.execution.Echo(key, request.PolicyID, observe); err != nil {
 +			return reply(P.Denied, netip.Addr{})
 +		}
 +		return reply(P.Accepted, netip.Addr{})
@@ -26142,6 +26215,675 @@
 +			}
 +			if _, _, err := r.Admit(context.Background(), "demo-principal", incoming, target); err == nil {
 +				t.Fatal("replayed incoming context bypassed current revocation")
++			}
++		})
++	}
++}
+--- a/.loom-sing/service/pause/default.go
++++ b/.loom-sing/service/pause/default.go
+@@ -120,13 +120,19 @@
+ }
+ 
+ func (d *defaultManager) WaitActive() {
++	d.access.Lock()
++	devicePause := d.devicePause
++	d.access.Unlock()
+ 	select {
+-	case <-d.devicePause:
++	case <-devicePause:
+ 	case <-d.ctx.Done():
+ 	}
+ 
++	d.access.Lock()
++	networkPause := d.networkPause
++	d.access.Unlock()
+ 	select {
+-	case <-d.networkPause:
++	case <-networkPause:
+ 	case <-d.ctx.Done():
+ 	}
+ }
+--- /dev/null
++++ b/.loom-sing/service/pause/wait_active_test.go
+@@ -0,0 +1,37 @@
++package pause
++
++import (
++	"context"
++	"sync"
++	"testing"
++
++	"github.com/sagernet/sing/service"
++)
++
++func TestWaitActiveCapturesChannelsWhilePauseStateChanges(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	manager := service.FromContext[Manager](WithDefaultManager(ctx))
++	start := make(chan struct{})
++	var workers sync.WaitGroup
++	workers.Add(2)
++	go func() {
++		defer workers.Done()
++		<-start
++		for index := 0; index < 256; index++ {
++			manager.DevicePause()
++			manager.DeviceWake()
++			manager.NetworkPause()
++			manager.NetworkWake()
++		}
++	}()
++	go func() {
++		defer workers.Done()
++		<-start
++		for index := 0; index < 256; index++ {
++			manager.WaitActive()
++		}
++	}()
++	close(start)
++	workers.Wait()
++}
+--- /dev/null
++++ b/common/execution/echo_diagnostic.go
+@@ -0,0 +1,44 @@
++package execution
++
++import (
++	"context"
++	"errors"
++	"net"
++	"time"
++)
++
++// EchoDiagnostic observes one call only. It cannot change its result or grant
++// permission, and a failed observer must not interfere with authorization.
++type EchoDiagnostic func(phase string, elapsed time.Duration, cause error)
++
++func observeEcho(diagnostic EchoDiagnostic, phase string, started time.Time, cause error) {
++	if diagnostic == nil {
++		return
++	}
++	elapsed := time.Since(started)
++	defer func() { _ = recover() }()
++	diagnostic(phase, elapsed, cause)
++}
++
++// EchoDiagnosticOutcome excludes error text, addresses and credentials. The
++// original error remains the caller's result; this is only a safe log label.
++func EchoDiagnosticOutcome(cause error) string {
++	if cause == nil {
++		return "success"
++	}
++	switch {
++	case errors.Is(cause, context.Canceled):
++		return "canceled"
++	case errors.Is(cause, context.DeadlineExceeded):
++		return "timeout"
++	case errors.Is(cause, ErrDenied):
++		return "denied"
++	case errors.Is(cause, ErrUnavailable):
++		return "unavailable"
++	}
++	var timeout net.Error
++	if errors.As(cause, &timeout) && timeout.Timeout() {
++		return "timeout"
++	}
++	return "failed"
++}
+--- /dev/null
++++ b/common/execution/echo_diagnostic_test.go
+@@ -0,0 +1,55 @@
++package execution
++
++import (
++	"context"
++	"errors"
++	"net"
++	"reflect"
++	"testing"
++	"time"
++)
++
++func TestEchoDiagnosticCannotChangeAuthenticationOrAdmission(t *testing.T) {
++	receiver, err := New(receivingFixture())
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, test := range []struct {
++		key, policy string
++		phases      []string
++	}{
++		{"demo-principal", "demo-policy", []string{"sender-authentication", "receiver-echo"}},
++		{"demo-principal", "", []string{"sender-authentication", "receiver-echo"}},
++		{"demo-unknown", "demo-policy", []string{"sender-authentication"}},
++		{"demo-principal", "demo-unknown", []string{"sender-authentication", "receiver-echo"}},
++	} {
++		plain := receiver.Echo(test.key, test.policy)
++		for _, panicObserver := range []bool{false, true} {
++			before := receiver.State()
++			var phases []string
++			observed := receiver.Echo(test.key, test.policy, func(phase string, elapsed time.Duration, cause error) {
++				phases = append(phases, phase)
++				if elapsed < 0 {
++					t.Error("diagnostic stage duration became negative")
++				}
++				if panicObserver {
++					panic("demo diagnostic observer failed")
++				}
++			})
++			if !reflect.DeepEqual(phases, test.phases) || before != receiver.State() || (plain == nil) != (observed == nil) || plain != nil && plain.Error() != observed.Error() {
++				t.Fatal("diagnostic changed the original receiver query result or state", phases)
++			}
++		}
++	}
++}
++
++func TestEchoDiagnosticOutcomeRetainsOnlySafeErrorClasses(t *testing.T) {
++	for _, test := range []struct {
++		cause error
++		want  string
++	}{{nil, "success"}, {context.Canceled, "canceled"}, {context.DeadlineExceeded, "timeout"}, {net.ErrClosed, "failed"}, {ErrDenied, "denied"}, {ErrUnavailable, "unavailable"}, {errors.New("demo secret target must not enter logs"), "failed"}} {
++		if EchoDiagnosticOutcome(test.cause) != test.want {
++			t.Fatal("diagnostic outcome lost its safe error class")
++		}
++	}
++}
+--- /dev/null
++++ b/common/loomprotocol/diagnostic.go
+@@ -0,0 +1,13 @@
++package protocol
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++)
++
++// EchoDiagnosticID correlates an existing echo challenge without exposing its
++// raw nonce. It is diagnostic metadata, never identity or authorization.
++func EchoDiagnosticID(nonce [16]byte) string {
++	digest := sha256.Sum256(nonce[:])
++	return hex.EncodeToString(digest[:])
++}
+--- /dev/null
++++ b/common/loomprotocol/diagnostic_test.go
+@@ -0,0 +1,11 @@
++package protocol
++
++import "testing"
++
++func TestEchoDiagnosticIDUsesTheExistingChallenge(t *testing.T) {
++	nonce := [16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
++	const expected = "be45cb2605bf36bebde684841a28f0fd43c69850a3dce5fedba69928ee3a8991"
++	if EchoDiagnosticID(nonce) != expected {
++		t.Fatal("echo correlation differs from the canonical SHA256 of its challenge")
++	}
++}
+--- /dev/null
++++ b/experimental/clashapi/echo_diagnostic.go
+@@ -0,0 +1,49 @@
++package clashapi
++
++import (
++	"context"
++	"fmt"
++	"net/http"
++	"time"
++
++	"github.com/sagernet/sing-box/common/execution"
++	"github.com/sagernet/sing-box/log"
++)
++
++const echoDiagnosticHeaderName = "X-Loom-Echo-ID"
++
++func echoDiagnosticHeader(request *http.Request) (string, bool) {
++	values := request.Header.Values(echoDiagnosticHeaderName)
++	if len(values) == 0 {
++		return "", true
++	}
++	if len(values) != 1 || len(values[0]) != 64 {
++		return "", false
++	}
++	for _, character := range values[0] {
++		if character < '0' || character > '9' && character < 'a' || character > 'f' {
++			return "", false
++		}
++	}
++	return values[0], true
++}
++
++func (s *Server) echoDiagnostic(ctx context.Context, id, phase string, elapsed time.Duration, cause error) {
++	if id == "" {
++		return
++	}
++	logger, ok := s.logger.(log.ContextLogger)
++	if !ok {
++		return
++	}
++	defer func() { _ = recover() }()
++	outcomeCause := cause
++	if cause != nil && ctx.Err() != nil {
++		outcomeCause = ctx.Err()
++	}
++	outcome := execution.EchoDiagnosticOutcome(outcomeCause)
++	if phase == "local-connect-begin" {
++		outcome = "started"
++	}
++	logger.DebugContext(ctx, "echo_id=", id, " phase=", phase, " elapsed_ns=", elapsed.Nanoseconds(), " outcome=", outcome, " error_type=", fmt.Sprintf("%T", cause))
++}
+--- /dev/null
++++ b/experimental/clashapi/echo_diagnostic_test.go
+@@ -0,0 +1,94 @@
++package clashapi
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing/common/logger"
++)
++
++type localEchoDiagnosticLogger struct {
++	logger.ContextLogger
++	lines []string
++	ids   []log.ID
++}
++
++func (l *localEchoDiagnosticLogger) DebugContext(ctx context.Context, args ...any) {
++	id, found := log.IDFromContext(ctx)
++	if !found {
++		panic("local echo stage has no existing log context ID")
++	}
++	l.lines = append(l.lines, fmt.Sprint(args...))
++	l.ids = append(l.ids, id)
++}
++
++func TestEchoDiagnosticHeaderIsOptionalCanonicalAndLocalToProbe(t *testing.T) {
++	for _, values := range [][]string{nil, {strings.Repeat("a", 64)}, {""}, {strings.Repeat("A", 64)}, {strings.Repeat("a", 63)}, {strings.Repeat("g", 64)}, {strings.Repeat("a", 64), strings.Repeat("b", 64)}} {
++		s := newEgressTestServer(t, "demo-secret", "127.0.0.1:0")
++		request := httptest.NewRequest(http.MethodConnect, "/loom/probe", nil)
++		request.RemoteAddr = "127.0.0.1:1"
++		request.Header.Set("Authorization", "Bearer demo-secret")
++		request.Header.Set("X-Loom-Target", "tcp://[fdab::53]:53")
++		request.Header[http.CanonicalHeaderKey(echoDiagnosticHeaderName)] = values
++		result := httptest.NewRecorder()
++		s.httpServer.Handler.ServeHTTP(result, request)
++		want := http.StatusBadRequest
++		if len(values) == 0 || len(values) == 1 && values[0] == strings.Repeat("a", 64) {
++			want = http.StatusServiceUnavailable // No test source has been prepared.
++		}
++		if result.Code != want {
++			t.Fatal("diagnostic metadata changed the local probe boundary", result.Code, want)
++		}
++	}
++	s := newEgressTestServer(t, "demo-secret", "127.0.0.1:0")
++	request := httptest.NewRequest(http.MethodConnect, "/loom/egress", nil)
++	request.RemoteAddr = "127.0.0.1:1"
++	request.Header.Set("Authorization", "Bearer demo-secret")
++	request.Header.Set("X-Loom-Target", "tcp://demo.example:443")
++	request.Header.Set(echoDiagnosticHeaderName, "invalid metadata on another API")
++	result := httptest.NewRecorder()
++	s.httpServer.Handler.ServeHTTP(result, request)
++	if result.Code != http.StatusServiceUnavailable {
++		t.Fatal("echo metadata affected the unrelated egress API")
++	}
++}
++
++func TestEchoDiagnosticKeepsServerOwnerAndExistingDialContext(t *testing.T) {
++	s := newEgressTestServer(t, "demo-secret", "127.0.0.1:0")
++	type ownerKey struct{}
++	s.egressContext = context.WithValue(s.egressContext, ownerKey{}, true)
++	output := &localEchoDiagnosticLogger{ContextLogger: logger.NOP()}
++	s.logger = output
++	request := httptest.NewRequest(http.MethodConnect, "/loom/probe", nil)
++	request.Header.Set(echoDiagnosticHeaderName, strings.Repeat("a", 64))
++	result := httptest.NewRecorder()
++	var dialID log.ID
++	var dialContext context.Context
++	s.serveEgressTunnel(result, request, func(ctx context.Context) (net.Conn, error) {
++		dialContext = ctx
++		var found bool
++		dialID, found = log.IDFromContext(ctx)
++		if !found || ctx.Value(ownerKey{}) != true {
++			t.Error("echo correlation replaced the server-owned context")
++		}
++		if _, bounded := ctx.Deadline(); !bounded {
++			t.Error("echo correlation removed the existing deadline")
++		}
++		return nil, errors.New("demo private target or credential text")
++	})
++	if result.Code != http.StatusBadGateway || len(output.lines) != 2 || dialContext == nil || dialContext.Err() == nil {
++		t.Fatal("diagnostics changed the original dial result or cleanup", result.Code, len(output.lines))
++	}
++	for index, line := range output.lines {
++		if output.ids[index] != dialID || !strings.Contains(line, "echo_id="+strings.Repeat("a", 64)) || strings.Contains(line, "demo private") || !strings.Contains(line, "elapsed_ns=") {
++			t.Fatal("local echo logs lost correlation or exposed error text")
++		}
++	}
++}
+--- /dev/null
++++ b/protocol/hysteria2/echo_diagnostic.go
+@@ -0,0 +1,31 @@
++package hysteria2
++
++import (
++	"context"
++	"fmt"
++	"time"
++
++	"github.com/sagernet/sing-box/common/execution"
++	"github.com/sagernet/sing/common/logger"
++)
++
++type echoStageRecord struct {
++	phase   string
++	elapsed time.Duration
++	cause   error
++}
++
++// Called only after the Echo response write. Logger failures cannot change
++// the already determined authorization or escape into protocol processing.
++func flushEchoDiagnostics(ctx context.Context, output logger.ContextLogger, id string, records []echoStageRecord) {
++	for _, record := range records {
++		func() {
++			defer func() { _ = recover() }()
++			outcome := execution.EchoDiagnosticOutcome(record.cause)
++			if record.cause != nil && (record.phase == "sender-authentication" || record.phase == "receiver-echo") {
++				outcome = "denied"
++			}
++			output.DebugContext(ctx, "echo_id=", id, " phase=", record.phase, " elapsed_ns=", record.elapsed.Nanoseconds(), " outcome=", outcome, " error_type=", fmt.Sprintf("%T", record.cause))
++		}()
++	}
++}
+--- /dev/null
++++ b/protocol/hysteria2/echo_diagnostic_test.go
+@@ -0,0 +1,124 @@
++//go:build with_quic
++
++package hysteria2
++
++import (
++	"context"
++	"encoding/hex"
++	"fmt"
++	"net"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/common/execution"
++	P "github.com/sagernet/sing-box/common/loomprotocol"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing/common/auth"
++	"github.com/sagernet/sing/common/logger"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++type echoDiagnosticTestLogger struct {
++	logger.ContextLogger
++	release     <-chan struct{}
++	entered     chan struct{}
++	once        sync.Once
++	lines       []string
++	ids         []log.ID
++	panicOutput bool
++}
++
++func (l *echoDiagnosticTestLogger) DebugContext(ctx context.Context, args ...any) {
++	l.once.Do(func() { close(l.entered) })
++	<-l.release
++	id, found := log.IDFromContext(ctx)
++	if !found {
++		panic("echo receiver omitted the existing log context ID")
++	}
++	l.lines = append(l.lines, fmt.Sprint(args...))
++	l.ids = append(l.ids, id)
++	if l.panicOutput {
++		panic("demo logging failed after the response")
++	}
++}
++
++func TestEchoDiagnosticsFollowResponseAndKeepCurrentAuthorization(t *testing.T) {
++	for _, test := range []struct {
++		name, principal, policy string
++		status                  P.Status
++		panicOutput             bool
++	}{
++		{"transport", "demo-user-a", "", P.Accepted, false},
++		{"admission", "demo-user-a", "demo-policy", P.Accepted, false},
++		{"unknown-sender", "demo-user-b", "demo-policy", P.Denied, false},
++		{"unknown-policy", "demo-user-a", "demo-other-policy", P.Denied, false},
++		{"logger-failure", "demo-user-a", "demo-policy", P.Accepted, true},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			client, server := net.Pipe()
++			defer client.Close()
++			defer server.Close()
++			_ = client.SetDeadline(time.Now().Add(3 * time.Second))
++			releaseLogs := make(chan struct{})
++			release := sync.OnceFunc(func() { close(releaseLogs) })
++			defer release()
++			output := &echoDiagnosticTestLogger{ContextLogger: logger.NOP(), release: releaseLogs, entered: make(chan struct{}), panicOutput: test.panicOutput}
++			receiver, err := execution.New(receivingPolicy())
++			if err != nil {
++				t.Fatal(err)
++			}
++			endpoint := &Inbound{execution: receiver, logger: output}
++			done := make(chan error, 1)
++			go func() {
++				done <- endpoint.handleExecution(auth.ContextWithUser(context.Background(), test.principal), server, M.ParseSocksaddr("192.0.2.1:12345"), nil, nil)
++			}()
++			request := P.Request{Operation: P.AdmissionEcho, PolicyID: test.policy, Nonce: [16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}}
++			if test.policy == "" {
++				request.Operation = P.TransportEcho
++			}
++			body, err := request.Marshal(1)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := P.WriteFrame(client, body); err != nil {
++				t.Fatal(err)
++			}
++			// The logger is blocked until the complete native response arrives.
++			// Logging before the response would fail this bounded real exchange.
++			raw, err := P.ReadFrame(client, 128)
++			if err != nil {
++				t.Fatal("Echo logging blocked its response or changed framing", err)
++			}
++			response, err := P.UnmarshalResponse(raw, request.Nonce)
++			if err != nil || response.Status != test.status {
++				t.Fatal("diagnostics changed the existing Echo result", err)
++			}
++			select {
++			case <-output.entered:
++			case <-time.After(3 * time.Second):
++				t.Fatal("Echo response omitted its deferred Debug diagnostics")
++			}
++			release()
++			if err := <-done; err != nil {
++				t.Fatal("diagnostics changed normal receiver completion", err)
++			}
++			phases := []string{"received", "sender-authentication", "receiver-echo", "response-write"}
++			if test.name == "unknown-sender" {
++				phases = []string{"received", "sender-authentication", "response-write"}
++			}
++			if len(output.lines) != len(phases) || len(output.ids) != len(phases) {
++				t.Fatal("Echo diagnostics omitted a real processing stage")
++			}
++			for index, line := range output.lines {
++				if test.name == "unknown-sender" && phases[index] == "sender-authentication" && !strings.Contains(line, "outcome=denied") || test.name == "unknown-policy" && phases[index] == "receiver-echo" && !strings.Contains(line, "outcome=denied") {
++					t.Fatal("the actual receiving refusal lost its diagnostic stage")
++				}
++				if !strings.Contains(line, "echo_id="+P.EchoDiagnosticID(request.Nonce)+" phase="+phases[index]) || !strings.Contains(line, "elapsed_ns=") || output.ids[index] != output.ids[0] || strings.Contains(line, hex.EncodeToString(request.Nonce[:])) || strings.Contains(line, test.principal) || strings.Contains(line, "demo-policy") {
++					t.Fatal("Echo diagnostics lost correlation or expanded sensitive metadata")
++				}
++			}
++		})
++	}
++}
+--- /dev/null
++++ b/protocol/wireguard/echo_diagnostic.go
+@@ -0,0 +1,31 @@
++package wireguard
++
++import (
++	"context"
++	"fmt"
++	"time"
++
++	"github.com/sagernet/sing-box/common/execution"
++	"github.com/sagernet/sing/common/logger"
++)
++
++type echoStageRecord struct {
++	phase   string
++	elapsed time.Duration
++	cause   error
++}
++
++// Called only after the Echo response write. Logger failures cannot change
++// the already determined authorization or escape into protocol processing.
++func flushEchoDiagnostics(ctx context.Context, output logger.ContextLogger, id string, records []echoStageRecord) {
++	for _, record := range records {
++		func() {
++			defer func() { _ = recover() }()
++			outcome := execution.EchoDiagnosticOutcome(record.cause)
++			if record.cause != nil && (record.phase == "sender-authentication" || record.phase == "receiver-echo") {
++				outcome = "denied"
++			}
++			output.DebugContext(ctx, "echo_id=", id, " phase=", record.phase, " elapsed_ns=", record.elapsed.Nanoseconds(), " outcome=", outcome, " error_type=", fmt.Sprintf("%T", record.cause))
++		}()
++	}
++}
+--- /dev/null
++++ b/protocol/wireguard/echo_diagnostic_test.go
+@@ -0,0 +1,123 @@
++//go:build with_gvisor && with_wireguard
++
++package wireguard
++
++import (
++	"context"
++	"encoding/hex"
++	"fmt"
++	"net"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/common/execution"
++	P "github.com/sagernet/sing-box/common/loomprotocol"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing/common/logger"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++type echoDiagnosticTestLogger struct {
++	logger.ContextLogger
++	release     <-chan struct{}
++	entered     chan struct{}
++	once        sync.Once
++	lines       []string
++	ids         []log.ID
++	panicOutput bool
++}
++
++func (l *echoDiagnosticTestLogger) DebugContext(ctx context.Context, args ...any) {
++	l.once.Do(func() { close(l.entered) })
++	<-l.release
++	id, found := log.IDFromContext(ctx)
++	if !found {
++		panic("echo receiver omitted the existing log context ID")
++	}
++	l.lines = append(l.lines, fmt.Sprint(args...))
++	l.ids = append(l.ids, id)
++	if l.panicOutput {
++		panic("demo logging failed after the response")
++	}
++}
++
++func TestEchoDiagnosticsFollowResponseAndKeepCurrentAuthorization(t *testing.T) {
++	for _, test := range []struct {
++		name, principal, policy string
++		status                  P.Status
++		panicOutput             bool
++	}{
++		{"transport", "fdab:77::1", "", P.Accepted, false},
++		{"admission", "fdab:77::1", "demo-policy", P.Accepted, false},
++		{"unknown-sender", "fdab:77::2", "demo-policy", P.Denied, false},
++		{"unknown-policy", "fdab:77::1", "demo-other-policy", P.Denied, false},
++		{"logger-failure", "fdab:77::1", "demo-policy", P.Accepted, true},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			client, server := net.Pipe()
++			defer client.Close()
++			defer server.Close()
++			_ = client.SetDeadline(time.Now().Add(3 * time.Second))
++			releaseLogs := make(chan struct{})
++			release := sync.OnceFunc(func() { close(releaseLogs) })
++			defer release()
++			output := &echoDiagnosticTestLogger{ContextLogger: logger.NOP(), release: releaseLogs, entered: make(chan struct{}), panicOutput: test.panicOutput}
++			receiver, err := execution.New(testReceivingOptions("fdab:77::1"))
++			if err != nil {
++				t.Fatal(err)
++			}
++			endpoint := &Endpoint{execution: receiver, logger: output}
++			done := make(chan error, 1)
++			go func() {
++				done <- endpoint.handleExecution(context.Background(), server, M.ParseSocksaddr("["+test.principal+"]:12345"), nil)
++			}()
++			request := P.Request{Operation: P.AdmissionEcho, PolicyID: test.policy, Nonce: [16]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}}
++			if test.policy == "" {
++				request.Operation = P.TransportEcho
++			}
++			body, err := request.Marshal(1)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := P.WriteFrame(client, body); err != nil {
++				t.Fatal(err)
++			}
++			// The logger is blocked until the complete native response arrives.
++			// Logging before the response would fail this bounded real exchange.
++			raw, err := P.ReadFrame(client, 128)
++			if err != nil {
++				t.Fatal("Echo logging blocked its response or changed framing", err)
++			}
++			response, err := P.UnmarshalResponse(raw, request.Nonce)
++			if err != nil || response.Status != test.status {
++				t.Fatal("diagnostics changed the existing Echo result", err)
++			}
++			select {
++			case <-output.entered:
++			case <-time.After(3 * time.Second):
++				t.Fatal("Echo response omitted its deferred Debug diagnostics")
++			}
++			release()
++			if err := <-done; err != nil {
++				t.Fatal("diagnostics changed normal receiver completion", err)
++			}
++			phases := []string{"received", "sender-authentication", "receiver-echo", "response-write"}
++			if test.name == "unknown-sender" {
++				phases = []string{"received", "sender-authentication", "response-write"}
++			}
++			if len(output.lines) != len(phases) || len(output.ids) != len(phases) {
++				t.Fatal("Echo diagnostics omitted a real processing stage")
++			}
++			for index, line := range output.lines {
++				if test.name == "unknown-sender" && phases[index] == "sender-authentication" && !strings.Contains(line, "outcome=denied") || test.name == "unknown-policy" && phases[index] == "receiver-echo" && !strings.Contains(line, "outcome=denied") {
++					t.Fatal("the actual receiving refusal lost its diagnostic stage")
++				}
++				if !strings.Contains(line, "echo_id="+P.EchoDiagnosticID(request.Nonce)+" phase="+phases[index]) || !strings.Contains(line, "elapsed_ns=") || output.ids[index] != output.ids[0] || strings.Contains(line, hex.EncodeToString(request.Nonce[:])) || strings.Contains(line, test.principal) || strings.Contains(line, "demo-policy") {
++					t.Fatal("Echo diagnostics lost correlation or expanded sensitive metadata")
++				}
 +			}
 +		})
 +	}

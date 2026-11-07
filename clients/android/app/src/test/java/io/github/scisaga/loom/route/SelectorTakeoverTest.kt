@@ -4,6 +4,8 @@ import java.io.BufferedInputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
+import java.net.URLDecoder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -162,6 +164,104 @@ class SelectorTakeoverTest {
         assertTrue(cancelled.uncertainScopes().isEmpty())
     }
 
+    @Test
+    fun successorCasRejectsCancelledLatePutForInternetAndLan(): Unit = runBlocking {
+        for (scope in listOf("access", "local_network:demo-lan")) {
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val rejectedLate = CountDownLatch(1)
+            val lock = Any()
+            var revision = "demo-r0"
+            var puts = 0
+            TestServer(5, concurrent = true) { request ->
+                assertEquals(scope, request.scope)
+                val old = synchronized(lock) { request.method == "PUT" && ++puts == 1 }
+                if (old) {
+                    entered.countDown()
+                    assertTrue(release.await(3, TimeUnit.SECONDS))
+                }
+                synchronized(lock) {
+                    if (request.method == "PUT") {
+                        assertEquals("reject", request.body.getString("expected_name"))
+                        assertEquals("", request.body.getString("expected_policy_id"))
+                        assertEquals(0, request.body.getJSONObject("expected_targets").length())
+                        assertEquals(0, request.body.getJSONObject("expected_choices").length())
+                        if (request.body.getString("expected_revision") != revision) {
+                            assertTrue("only the cancelled predecessor may be stale", old)
+                            rejectedLate.countDown()
+                            return@TestServer 409 to JSONObject()
+                        }
+                        assertFalse("late predecessor replaced its successor", old)
+                        revision = "demo-successor"
+                    }
+                    200 to rejected(revision)
+                }
+            }.use { server ->
+                val old = client(server.port).apply { planScopes(listOf(scope), requireCAS = listOf(scope)) }
+                val call = async { runCatching { old.apply(listOf(reject(scope))) } }
+                try {
+                    withContext(Dispatchers.IO) { assertTrue(entered.await(2, TimeUnit.SECONDS)) }
+                    old.cancel()
+                    assertTrue(withTimeout(1_000) { call.await() }.exceptionOrNull() is SelectionSuperseded)
+                    assertEquals(setOf(scope), old.uncertainScopes())
+
+                    val successor = client(server.port)
+                    try {
+                        successor.planScopes(listOf(scope), requireCAS = old.uncertainScopes())
+                        successor.apply(listOf(reject(scope)))
+                        successor.confirmed(scope)
+                        assertEquals("demo-successor", successor.readbackRevisions[scope])
+                        assertTrue(successor.uncertainScopes().isEmpty())
+                        release.countDown()
+                        withContext(Dispatchers.IO) { assertTrue(rejectedLate.await(2, TimeUnit.SECONDS)) }
+                        assertEquals("demo-successor", synchronized(lock) { revision })
+                        server.await(allowClosedResponse = true)
+                    } finally { successor.cancel() }
+                } finally {
+                    release.countDown()
+                    old.cancel()
+                    call.cancel()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun internetAndLanCasAdvanceOnlyTheirOwnRevision(): Unit = runBlocking {
+        val scopes = listOf("access", "local_network:demo-lan")
+        val revisions = scopes.associateWith { "demo-$it-0" }.toMutableMap()
+        val puts = scopes.associateWith { 0 }.toMutableMap()
+        selectorServer(10) { request ->
+            val scope = request.scope
+            assertTrue(scope in scopes)
+            if (request.method == "PUT") {
+                assertEquals(revisions.getValue(scope), request.body.getString("expected_revision"))
+                puts[scope] = puts.getValue(scope) + 1
+                revisions[scope] = "demo-$scope-${puts.getValue(scope)}"
+            }
+            200 to rejected(revisions.getValue(scope))
+        }.use { server ->
+            val initial = client(server.port)
+            val next = client(server.port)
+            try {
+                initial.planScopes(scopes, requireCAS = scopes)
+                initial.apply(scopes.reversed().map(::reject))
+                scopes.forEach(initial::confirmed)
+                assertTrue(initial.uncertainScopes().isEmpty())
+                val lanRevision = initial.readbackRevisions.getValue(scopes[1])
+
+                next.planScopes(listOf("access"), requireCAS = listOf("access"))
+                next.apply(listOf(reject("access")))
+                next.confirmed("access")
+                next.readCurrent(listOf(reject(scopes[1])))
+                assertEquals("demo-access-2", next.readbackRevisions["access"])
+                assertEquals(lanRevision, next.readbackRevisions[scopes[1]])
+                assertEquals(mapOf("access" to 2, scopes[1] to 1), puts)
+                server.await()
+            } finally { initial.cancel(); next.cancel() }
+        }
+    }
+
     private fun client(port: Int = 61800) = SelectorClient(
         """{"experimental":{"clash_api":{"external_controller":"127.0.0.1:61800","secret":"demo-secret"}}}""",
     ) { secret, method, path, body, maximum, socket ->
@@ -171,12 +271,12 @@ class SelectorTakeoverTest {
     private fun rejected(revision: String) = JSONObject().put("now", "reject").put("revision", revision)
         .put("policy_id", "").put("targets", JSONObject()).put("choices", JSONObject())
 
-    private data class Request(val method: String, val body: JSONObject)
+    private data class Request(val method: String, val body: JSONObject, val scope: String)
 
     /** Uses the real loopback HTTP transport on a test-owned ephemeral port. */
-    private fun selectorServer(count: Int, reply: (Request) -> Pair<Int, JSONObject>) = TestServer(count, reply)
+    private fun selectorServer(count: Int, reply: (Request) -> Pair<Int, JSONObject>) = TestServer(count, reply = reply)
 
-    private class TestServer(count: Int, reply: (Request) -> Pair<Int, JSONObject>) : AutoCloseable {
+    private class TestServer(count: Int, concurrent: Boolean = false, reply: (Request) -> Pair<Int, JSONObject>) : AutoCloseable {
         private val server = ServerSocket().apply {
             reuseAddress = true
             bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
@@ -186,33 +286,16 @@ class SelectorTakeoverTest {
         private val failure = AtomicReference<Throwable?>()
         private val worker = thread(isDaemon = true) {
             try {
+                val handlers = mutableListOf<Thread>()
                 repeat(count) {
-                    server.accept().use { socket ->
-                        socket.soTimeout = 3_000
-                        val input = BufferedInputStream(socket.getInputStream())
-                        val method = line(input).substringBefore(' ')
-                        var length = 0
-                        while (true) {
-                            val header = line(input)
-                            if (header.isEmpty()) break
-                            if (header.startsWith("Content-Length:", ignoreCase = true)) length = header.substringAfter(':').trim().toInt()
-                        }
-                        require(length in 0..64 * 1024)
-                        val bytes = ByteArray(length)
-                        var offset = 0
-                        while (offset < length) {
-                            val read = input.read(bytes, offset, length - offset)
-                            check(read > 0)
-                            offset += read
-                        }
-                        val request = Request(method, if (bytes.isEmpty()) JSONObject() else JSONObject(bytes.decodeToString()))
-                        val (status, response) = reply(request)
-                        val body = response.toString().encodeToByteArray()
-                        socket.getOutputStream().write("HTTP/1.1 $status Test\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".encodeToByteArray())
-                        socket.getOutputStream().write(body)
-                        socket.getOutputStream().flush()
+                    val socket = server.accept()
+                    val serve = {
+                        try { socket.use { serve(it, reply) } }
+                        catch (error: Throwable) { failure.compareAndSet(null, error) }
                     }
+                    if (concurrent) handlers += thread(isDaemon = true) { serve() } else serve()
                 }
+                handlers.forEach { it.join(4_000); check(!it.isAlive) { "selector handler did not finish" } }
             } catch (error: Throwable) { failure.set(error) }
         }
 
@@ -223,6 +306,34 @@ class SelectorTakeoverTest {
         }
 
         override fun close() { server.close(); worker.join(1_000) }
+
+        private fun serve(socket: Socket, reply: (Request) -> Pair<Int, JSONObject>) {
+            socket.soTimeout = 3_000
+            val input = BufferedInputStream(socket.getInputStream())
+            val requestLine = line(input).split(' ')
+            val method = requestLine[0]
+            var length = 0
+            while (true) {
+                val header = line(input)
+                if (header.isEmpty()) break
+                if (header.startsWith("Content-Length:", ignoreCase = true)) length = header.substringAfter(':').trim().toInt()
+            }
+            require(length in 0..64 * 1024)
+            val bytes = ByteArray(length)
+            var offset = 0
+            while (offset < length) {
+                val read = input.read(bytes, offset, length - offset)
+                check(read > 0)
+                offset += read
+            }
+            val request = Request(method, if (bytes.isEmpty()) JSONObject() else JSONObject(bytes.decodeToString()),
+                URLDecoder.decode(requestLine[1].removePrefix("/proxies/"), "UTF-8"))
+            val (status, response) = reply(request)
+            val body = response.toString().encodeToByteArray()
+            socket.getOutputStream().write("HTTP/1.1 $status Test\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".encodeToByteArray())
+            socket.getOutputStream().write(body)
+            socket.getOutputStream().flush()
+        }
 
         private fun line(input: BufferedInputStream): String {
             val result = StringBuilder()

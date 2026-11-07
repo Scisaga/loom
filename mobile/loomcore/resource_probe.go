@@ -59,11 +59,13 @@ func androidSelectedCandidates(view control.DeviceExecution, body, memoryBody []
 	return slices.Compact(selected), nil
 }
 
-// AndroidMeasurementObserver receives only newly completed original samples.
-// Calls are serial and finish before Run returns, including cancellation.
+// AndroidMeasurementObserver receives original sample completions serially.
+// Diagnostic is a log-only callback from the actual shared measurement flight;
+// it may be concurrent and never commits samples or runtime state.
 type AndroidMeasurementObserver interface {
 	Completed(body []byte) error
 	Calibrated(body []byte) error
+	Diagnostic(line string) error
 }
 
 // NewAndroidFirstHopRequest reuses the cancellable call used for private I/O.
@@ -125,6 +127,9 @@ func observeAndroidFirstHops(ctx context.Context, state deviceclient.State, sele
 	diagnostic, err := clientadapter.NativeDiagnosticContext(ctx, androidLocalRuntimeSecret(state), nil)
 	if err != nil {
 		return nil, err
+	}
+	if observer != nil {
+		diagnostic = clientadapter.WithEchoDiagnosticLog(diagnostic, func(line string) { _ = observer.Diagnostic(line) })
 	}
 	var recovery *clientadapter.TCPRecoveryInput
 	if len(currentBody) > 0 && len(nativeBody) > 0 && !bytes.Equal(bytes.TrimSpace(nativeBody), []byte("[]")) && len(memoryBody) > 0 {

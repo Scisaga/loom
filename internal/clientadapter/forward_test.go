@@ -3,6 +3,7 @@ package clientadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -61,6 +62,7 @@ func TestForwardOptimizationAppliesIndependentResourceMeasurements(t *testing.T)
 			}
 			states := map[string]forwardReadback{}
 			requests := []string{}
+			var putErr error
 			wantCount := 2
 			transport := forwardTestTransport(func(r *http.Request) (*http.Response, error) {
 				requests = append(requests, r.Method+" "+r.URL.Path)
@@ -70,6 +72,9 @@ func TestForwardOptimizationAppliesIndependentResourceMeasurements(t *testing.T)
 					state = forwardReadback{Revision: "demo-initial", Choices: map[string][]string{"demo-exit": {}}}
 				}
 				if r.Method == http.MethodPut {
+					if putErr != nil {
+						return nil, putErr
+					}
 					var update struct {
 						Choices  map[string][]string `json:"exit_choices"`
 						Expected map[string][]string `json:"expected_exit_choices"`
@@ -88,7 +93,15 @@ func TestForwardOptimizationAppliesIndependentResourceMeasurements(t *testing.T)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(body))), Header: http.Header{}}, err
 			})
 			selector := &HTTPSelector{secret: "demo-secret", client: &http.Client{Transport: transport}, started: time.Now()}
-			memory, err := selector.OptimizeForwarding(context.Background(), view, local, nil, "demo-network", at, nil)
+			lines := []string{}
+			diagnostic := WithForwardDiagnosticLog(context.Background(), func(line string) error {
+				lines = append(lines, line)
+				if len(lines) == 1 {
+					panic("demo-private diagnostic panic")
+				}
+				return errors.New("demo-private diagnostic error")
+			})
+			memory, err := selector.OptimizeForwarding(diagnostic, view, local, nil, "demo-network", at, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,6 +114,57 @@ func TestForwardOptimizationAppliesIndependentResourceMeasurements(t *testing.T)
 					t.Fatal("confirmed memory does not match applied resource", key, memory[key])
 				}
 			}
+			if len(lines) < 2*len(view.Policies) || !strings.Contains(strings.Join(lines, "\n"), "outcome=cas-success") {
+				t.Fatal("forward lifecycle diagnostics omitted the plan or CAS result")
+			}
+			for _, forbidden := range []string{"demo-secret", "demo-private", "demo-network", view.DeviceID, "192.0.2.", view.Policies[0].ID, view.Resources[0].ID} {
+				if strings.Contains(strings.Join(lines, "\n"), forbidden) {
+					t.Fatal("forward diagnostics exposed identifiers, targets or error text")
+				}
+			}
+			// A genuinely new, better original must expose pending proof memory
+			// while the existing stability rule keeps the actual current choice.
+			otherResource := view.Resources[0].ID
+			if otherResource == wantResource {
+				otherResource = view.Resources[1].ID
+			}
+			other, err := control.ForwardSegmentTag(otherResource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			improved := slices.Clone(local)
+			for index := range improved {
+				rtt := int64(120)
+				if improved[index].ResourceID == otherResource {
+					rtt = 10
+				}
+				improved[index].ObservedAt = at.Add(time.Second).UnixMilli()
+				improved[index].RoundTripMS, improved[index].DurationMS = new(rtt), new(rtt+1)
+			}
+			memory, err = selector.OptimizeForwarding(diagnostic, view, improved, nil, "demo-network", at.Add(time.Second), memory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range memory {
+				decision := value.Decisions[""]
+				if decision.Current != want || decision.Pending != other || decision.Confirmations != 1 || decision.Through == 0 || value.Version == 0 || len(value.Samples) == 0 {
+					t.Fatal("diagnostic delivery changed the actual stability decision", value)
+				}
+			}
+			pendingLog := lines[len(lines)-1]
+			if !strings.Contains(pendingLog, "confirmations=1") || strings.Contains(pendingLog, "sample_versions=-") || strings.Contains(pendingLog, otherResource) {
+				t.Fatal("pending original proof was lost or emitted with raw resource identity")
+			}
+			putErr = errors.New("demo-private.example target-bearing CAS failure")
+			for scope, value := range states {
+				value.Choices = map[string][]string{"demo-exit": {}}
+				states[scope] = value
+			}
+			unchanged, failed := selector.OptimizeForwarding(diagnostic, view, local, nil, "demo-network", at, memory)
+			if !errors.Is(failed, putErr) || !reflect.DeepEqual(unchanged, memory) || !strings.Contains(strings.Join(lines, "\n"), "outcome=cas-failed") || strings.Contains(strings.Join(lines, "\n"), "demo-private.example") {
+				t.Fatal("diagnostics changed failed CAS memory/cause or exposed its error text", failed)
+			}
+			putErr = nil
 			// Current topology is reprojected: measurements cannot restore the
 			// removed resource, even when it had the best RTT and confirmed memory.
 			view.Resources = slices.DeleteFunc(view.Resources, func(r control.TransportResource) bool { return r.ID == wantResource })

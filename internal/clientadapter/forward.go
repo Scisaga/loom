@@ -2,8 +2,12 @@ package clientadapter
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -26,6 +30,84 @@ type forwardProjection struct {
 
 type forwardNextHop struct {
 	NodeID, ResourceID string
+}
+
+type forwardDiagnosticKey struct{}
+
+// WithForwardDiagnosticLog supplies a transient Debug-only sink. It never
+// supplies selection inputs or owns memory, measurements or authorization.
+func WithForwardDiagnosticLog(ctx context.Context, sink func(string) error) context.Context {
+	return context.WithValue(ctx, forwardDiagnosticKey{}, sink)
+}
+
+func forwardDiagnosticHash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func forwardDiagnosticRank(values []string) string {
+	if len(values) == 0 {
+		return "-"
+	}
+	result := make([]string, len(values))
+	for index, value := range values {
+		result[index] = forwardDiagnosticHash(value)
+	}
+	return strings.Join(result, ",")
+}
+
+func forwardDiagnosticSamples(memory clientmodel.SelectionMemory) string {
+	keys := make([]string, 0, len(memory.Samples))
+	for key := range memory.Samples {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		sample := memory.Samples[key]
+		values = append(values, fmt.Sprintf("%s@%d:%d", forwardDiagnosticHash(key), sample.ObservedAt, sample.Version))
+	}
+	if len(values) == 0 {
+		return "-"
+	}
+	return strings.Join(values, ",")
+}
+
+func forwardDiagnosticReason(cause error) string {
+	var timeout net.Error
+	switch {
+	case cause == nil:
+		return "none"
+	case errors.Is(cause, context.Canceled):
+		return "canceled"
+	case errors.Is(cause, context.DeadlineExceeded), errors.As(cause, &timeout) && timeout.Timeout():
+		return "timeout"
+	case errors.Is(cause, ErrSelectionSuperseded):
+		return "superseded"
+	case errors.Is(cause, ErrResourcesNotReady):
+		return "local-pending"
+	case errors.Is(cause, clientmodel.ErrNoUsableCandidate):
+		return "no-candidate"
+	default:
+		return "failed"
+	}
+}
+
+func forwardDiagnosticLine(scope, exit, generation string, actual, desired []string, before, planned clientmodel.SelectionMemory, outcome string, cause error) string {
+	previous, decision := before.Decisions[""], planned.Decisions[""]
+	return fmt.Sprintf("forward scope=%s exit=%s network=%s actual_rank=%s planned_rank=%s previous_pending=%s previous_confirmations=%d previous_through=%d previous_basis=%s previous_proof_version=%d pending=%s confirmations=%d through=%d basis=%s proof_version=%d applied_ms=%d clock_ms=%d sample_versions=%s outcome=%s reason=%s",
+		forwardDiagnosticHash(scope), forwardDiagnosticHash(exit), forwardDiagnosticHash(generation), forwardDiagnosticRank(actual), forwardDiagnosticRank(desired),
+		forwardDiagnosticHash(previous.Pending), previous.Confirmations, previous.Through, forwardDiagnosticHash(previous.Basis), before.Version,
+		forwardDiagnosticHash(decision.Pending), decision.Confirmations, decision.Through, forwardDiagnosticHash(decision.Basis), planned.Version, decision.AppliedMS, planned.ClockMS,
+		forwardDiagnosticSamples(planned), outcome, forwardDiagnosticReason(cause))
+}
+
+func deliverForwardDiagnostic(sink func(string) error, line string) {
+	defer func() { _ = recover() }()
+	_ = sink(line)
 }
 
 // Performance work only applies where this node can continue a Policy path.
@@ -181,6 +263,21 @@ func (selector *HTTPSelector) applyForward(ctx context.Context, scope string, be
 // OptimizeForwarding returns memory only after complete own-operation readback.
 // It stores no recommendations or measurements in the signed authorization.
 func (selector *HTTPSelector) OptimizeForwarding(ctx context.Context, view control.DeviceView, local []control.Observation, shared []control.DeviceLinkObservation, generation string, now time.Time, memory map[string]clientmodel.SelectionMemory) (map[string]clientmodel.SelectionMemory, error) {
+	sink, _ := ctx.Value(forwardDiagnosticKey{}).(func(string) error)
+	var diagnostics []string
+	// Capture actual lifecycle values locally; deliver only after the complete
+	// calculation/CAS result. Callback failures cannot change returned memory or
+	// the chooser's captured clock. A synchronous sink can still delay return.
+	defer func() {
+		for _, line := range diagnostics {
+			deliverForwardDiagnostic(sink, line)
+		}
+	}()
+	record := func(scope, exit string, actual, desired []string, before, planned clientmodel.SelectionMemory, outcome string, cause error) {
+		if sink != nil {
+			diagnostics = append(diagnostics, forwardDiagnosticLine(scope, exit, generation, actual, desired, before, planned, outcome, cause))
+		}
+	}
 	projections, err := forwardProjections(view)
 	if err != nil {
 		return memory, err
@@ -251,6 +348,7 @@ func (selector *HTTPSelector) OptimizeForwarding(ctx context.Context, view contr
 	for _, p := range projections {
 		before, err := selector.readForward(ctx, p.Tag)
 		if err != nil {
+			record(p.Tag, "", nil, nil, clientmodel.SelectionMemory{}, clientmodel.SelectionMemory{}, "read-failed", err)
 			return memory, err
 		}
 		if len(before.Choices) != len(p.Policy.Exits) {
@@ -274,14 +372,22 @@ func (selector *HTTPSelector) OptimizeForwarding(ctx context.Context, view contr
 				choices = []string{}
 				decision = clientmodel.SelectionMemory{PolicyID: p.Policy.PolicyID, NetworkGeneration: generation, ClockMS: clock, Decisions: map[string]clientmodel.SelectionDecision{}}
 			} else if err != nil {
+				record(p.Tag, exit, before.Choices[exit], choices, nextMemory[key], decision, "choose-failed", err)
 				return memory, err
 			}
 			desired[exit], planned[key] = choices, decision
+			record(p.Tag, exit, before.Choices[exit], choices, nextMemory[key], decision, "planned", err)
 		}
+		outcome := "unchanged"
 		if !reflect.DeepEqual(before.Choices, desired) {
 			if _, err = selector.applyForward(ctx, p.Tag, before, desired); err != nil {
+				for _, exit := range p.Policy.Exits {
+					key := p.Tag + "\x00" + exit
+					record(p.Tag, exit, before.Choices[exit], desired[exit], nextMemory[key], planned[key], "cas-failed", err)
+				}
 				return memory, err
 			}
+			outcome = "cas-success"
 		}
 		for exit, choices := range desired {
 			current := "reject"
@@ -291,8 +397,10 @@ func (selector *HTTPSelector) OptimizeForwarding(ctx context.Context, view contr
 			key := p.Tag + "\x00" + exit
 			confirmed, err := clientmodel.ConfirmSelection(planned[key], clientmodel.Selection{Scope: p.Tag, CandidateID: current, Targets: map[string]string{}}, clock)
 			if err != nil {
+				record(p.Tag, exit, before.Choices[exit], choices, nextMemory[key], planned[key], "confirm-failed", err)
 				return memory, err
 			}
+			record(p.Tag, exit, before.Choices[exit], choices, nextMemory[key], confirmed, outcome, nil)
 			nextMemory[key] = confirmed
 		}
 	}

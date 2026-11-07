@@ -103,6 +103,9 @@ func dialNativeConnect(ctx context.Context, diagnostic nativeDiagnostic, path, s
 	}
 	request.Header.Set("Authorization", "Bearer "+diagnostic.secret)
 	request.Header.Set("X-Loom-Target", target)
+	if id, _ := ctx.Value(echoDiagnosticIDKey{}).(string); path == "/loom/probe" && id != "" {
+		request.Header.Set("X-Loom-Echo-ID", id)
+	}
 	if scope != "" {
 		request.Header.Set("X-Loom-Scope", scope)
 	}

@@ -107,8 +107,8 @@ type Verified struct {
 // Platform artifact coordinates are release data, independent of schema 3.
 // These select source build targets; no installed or published pointer changes.
 const DataPlaneVersion = "1.11.4-loom.27"
-const LinuxDataPlaneVersion = "1.11.4-loom.27"
-const AndroidDataPlaneVersion = "1.11.4-loom.27"
+const LinuxDataPlaneVersion = "1.11.4-loom.28"
+const AndroidDataPlaneVersion = "1.11.4-loom.28"
 const upstreamCommit = "eb07c7a79eeca943370eafea601e87da76c0e57e"
 const upstreamVersion = "v1.11.4"
 const upstreamURL = "https://proxy.golang.org/github.com/sagernet/sing-box/@v/v1.11.4.zip"

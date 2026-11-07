@@ -55,14 +55,20 @@ class ScopeApplicationTest {
 
     @Test
     fun partialIoFailureDoesNotDiscardSuccessfulScopeOrSkipLaterScope() = runBlocking {
-        val confirmed = mutableSetOf<String>()
-        val failed = mutableSetOf<String>()
-        applyScopesIndependently(listOf("local_network:demo-lan-2", "access", "local_network:demo-lan-1"), apply = {
-            if (it == "local_network:demo-lan-1") throw RuntimeResourcesPending()
-            confirmed += it
-        }, failed = { scope, _ -> failed += scope })
-        assertEquals(setOf("access", "local_network:demo-lan-2"), confirmed)
-        assertEquals(setOf("local_network:demo-lan-1"), failed)
+        val all = setOf("access", "local_network:demo-lan-1", "local_network:demo-lan-2")
+        for (pending in listOf("access", "local_network:demo-lan-1")) {
+            val confirmed = mutableSetOf<String>()
+            val failed = mutableSetOf<String>()
+            applyScopesIndependently(all.reversed(), apply = {
+                if (it == pending) throw RuntimeResourcesPending()
+                confirmed += it
+            }, failed = { scope, error ->
+                assertTrue(error is RuntimeResourcesPending)
+                failed += scope
+            })
+            assertEquals(all - pending, confirmed)
+            assertEquals(setOf(pending), failed)
+        }
     }
 
     @Test

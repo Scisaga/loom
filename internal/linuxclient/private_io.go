@@ -3,11 +3,75 @@ package linuxclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
+	"sort"
 	"time"
 
 	"loom/internal/control"
 	"loom/internal/deviceclient"
 )
+
+func measurementDiagnosticHash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+// Hash canonical public facts as an unordered set. No cursor, target, source
+// identifier or sample content reaches the log, and ordering cannot change it.
+func measurementDiagnosticSet(values []control.DeviceLinkObservation) string {
+	items := make([]string, 0, len(values))
+	for _, value := range values {
+		body, err := control.CanonicalEncode(value)
+		if err != nil {
+			return "unavailable"
+		}
+		items = append(items, measurementDiagnosticHash(string(body)))
+	}
+	sort.Strings(items)
+	body, err := control.CanonicalEncode(items)
+	if err != nil {
+		return "unavailable"
+	}
+	return measurementDiagnosticHash(string(body))
+}
+
+func logPrivateLinkDelivery(log func(string) error, event string, base, value *control.DeviceLinkObservations, expectedView, validation string, cause error, adopted []control.DeviceLinkObservation) {
+	if log == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	mode, baseCursor, baseSet, baseCount := "nil", "-", "-", 0
+	if event == "consume" {
+		mode = "unknown"
+	} else if base != nil {
+		mode, baseCursor, baseSet, baseCount = "cache", measurementDiagnosticHash(base.Cursor), measurementDiagnosticSet(base.Observations), len(base.Observations)
+	}
+	cursor, set, view, count := "-", "-", "-", 0
+	if value != nil {
+		cursor, set, view, count = measurementDiagnosticHash(value.Cursor), measurementDiagnosticSet(value.Observations), measurementDiagnosticHash(value.ViewDigest), len(value.Observations)
+	}
+	outcome := "success"
+	var timeout net.Error
+	switch {
+	case errors.Is(cause, context.Canceled):
+		outcome = "canceled"
+	case errors.Is(cause, context.DeadlineExceeded), errors.As(cause, &timeout) && timeout.Timeout():
+		outcome = "timeout"
+	case cause != nil:
+		outcome = "failed"
+	}
+	// Fetch returns an already merged cache. Its Reset field cannot reveal the
+	// server's wire reset/delta, so that unavailable fact stays explicitly unknown.
+	_ = log(fmt.Sprintf("measurements event=%s base=%s base_cursor=%s base_count=%d base_set=%s cursor=%s merged_count=%d merged_set=%s view=%s expected_view=%s validate=%s outcome=%s adopted_count=%d adopted_set=%s wire_mode=unknown",
+		event, mode, baseCursor, baseCount, baseSet, cursor, count, set, view, measurementDiagnosticHash(expectedView), validation, outcome, len(adopted), measurementDiagnosticSet(adopted)))
+}
 
 // These values belong only to the running generation. The report and its
 // readback are immutable snapshots, not a durable delivery queue.
@@ -18,7 +82,16 @@ type runtimeReportAttempt struct {
 
 // Delivery is replaced as a whole and lives only in this running generation.
 // Failed reads preserve the exact base and cursor without extending deadlines.
-func refreshPrivateLinkObservations(ctx context.Context, store *deviceclient.Store, requests <-chan struct{}, results chan control.DeviceLinkObservations) {
+func refreshPrivateLinkObservations(ctx context.Context, store *deviceclient.Store, requests <-chan struct{}, results chan control.DeviceLinkObservations, diagnostic ...func(string) error) {
+	var log func(string) error
+	if len(diagnostic) > 0 {
+		log = diagnostic[0]
+	}
+	refreshPrivateLinkObservationsWithFetch(ctx, store, requests, results, deviceclient.FetchLinkObservations, log)
+}
+
+func refreshPrivateLinkObservationsWithFetch(ctx context.Context, store *deviceclient.Store, requests <-chan struct{}, results chan control.DeviceLinkObservations,
+	fetch func(context.Context, deviceclient.IdentityStore, *control.DeviceLinkObservations) (control.DeviceLinkObservations, error), diagnostic func(string) error) {
 	var cached *control.DeviceLinkObservations
 	for {
 		select {
@@ -31,16 +104,26 @@ func refreshPrivateLinkObservations(ctx context.Context, store *deviceclient.Sto
 			return
 		}
 		pending, cancel := context.WithTimeout(ctx, 10*time.Second)
-		value, err := deviceclient.FetchLinkObservations(pending, store, cached)
+		base := cached
+		value, err := fetch(pending, store, cached)
 		cancel()
 		if ctx.Err() != nil {
+			logPrivateLinkDelivery(diagnostic, "fetch", base, nil, lkg.ViewDigest, "not-run", ctx.Err(), nil)
 			return
 		}
 		if err != nil {
+			logPrivateLinkDelivery(diagnostic, "fetch", base, nil, lkg.ViewDigest, "not-run", err, nil)
 			continue
 		}
 		cached = &value
 		offerLatest(results, value)
+		if diagnostic != nil {
+			validation := "valid"
+			if value.ValidateForView(lkg.View) != nil {
+				validation = "invalid"
+			}
+			logPrivateLinkDelivery(diagnostic, "fetch", base, &value, lkg.ViewDigest, validation, nil, nil)
+		}
 	}
 }
 

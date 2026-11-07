@@ -881,6 +881,9 @@ class RouteManager private constructor(context: Context) {
                 currentBody(runtime,runtime.actual),runtime.nativeObservations,
                 if(runtime.linkObservationViewDigest==profile.viewDigest) runtime.linkObservations ?: "[]".encodeToByteArray() else "[]".encodeToByteArray(),
                 generation, object : AndroidMeasurementObserver {
+                override fun diagnostic(line: String) {
+                    emitEchoDiagnostic(line) { Log.d("Loom", it) }
+                }
                 override fun completed(body: ByteArray) = runBlocking(ownerContext) {
                     operation.withLock {
                         check(owner?.isActive != false && catalog.contains(profileId) && runtime.firstHopRequest === request &&

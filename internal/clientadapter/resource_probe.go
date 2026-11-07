@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -29,6 +30,25 @@ type firstHopMeasurement struct {
 // AuthenticateHY2 performs a real TLS and Hy2 login, with no forwarding request.
 // The caller owns the underlay socket and supplies the certificate-check time.
 func AuthenticateHY2(ctx context.Context, resource control.TransportResource, socket net.PacketConn, peer net.Addr, credential string, at time.Time, policy string) (firstHopMeasurement, error) {
+	operation := protocol.AdmissionEcho
+	if policy == "" {
+		operation = protocol.TransportEcho
+	}
+	request, err := newEchoRequest(operation, policy)
+	if err != nil {
+		return firstHopMeasurement{}, err
+	}
+	return authenticateHY2(ctx, resource, socket, peer, credential, at, request, nil)
+}
+
+func authenticateHY2(ctx context.Context, resource control.TransportResource, socket net.PacketConn, peer net.Addr, credential string, at time.Time, request protocol.Request, record func(string, time.Duration, error)) (measuredResult firstHopMeasurement, resultErr error) {
+	authStarted := time.Now()
+	authRecorded := false
+	defer func() {
+		if !authRecorded && record != nil {
+			record("hy2-authenticate", time.Since(authStarted), resultErr)
+		}
+	}()
 	certificates, err := control.HY2TrustPEM(resource)
 	if err != nil || control.ValidatePublicKey(credential) != nil {
 		return firstHopMeasurement{}, errors.New("Hy2 authentication inputs are invalid")
@@ -53,13 +73,13 @@ func AuthenticateHY2(ctx context.Context, resource control.TransportResource, so
 			return connection, err
 		}}
 	defer transport.Close()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://hysteria/auth", nil)
+	login, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://hysteria/auth", nil)
 	if err != nil {
 		return firstHopMeasurement{}, err
 	}
-	request.Header.Set("Hysteria-Auth", credential)
-	request.Header.Set("Hysteria-CC-RX", "0")
-	response, err := transport.RoundTrip(request)
+	login.Header.Set("Hysteria-Auth", credential)
+	login.Header.Set("Hysteria-CC-RX", "0")
+	response, err := transport.RoundTrip(login)
 	if err != nil {
 		return firstHopMeasurement{}, err
 	}
@@ -77,7 +97,15 @@ func AuthenticateHY2(ctx context.Context, resource control.TransportResource, so
 	if authenticated == nil {
 		return firstHopMeasurement{}, errors.New("Hy2 login did not retain its authenticated transport")
 	}
+	authRecorded = true
+	if record != nil {
+		record("hy2-authenticate", time.Since(authStarted), nil)
+	}
+	streamStarted := time.Now()
 	stream, err := authenticated.OpenStreamSync(ctx)
+	if record != nil {
+		record("execution-stream-open", time.Since(streamStarted), err)
+	}
 	if err != nil {
 		return firstHopMeasurement{}, err
 	}
@@ -91,11 +119,7 @@ func AuthenticateHY2(ctx context.Context, resource control.TransportResource, so
 		}
 	}
 	// A frame-type prefix identifies Hy2's own native execution stream.
-	operation := protocol.AdmissionEcho
-	if policy == "" {
-		operation = protocol.TransportEcho
-	}
-	rtt, err := echoRoundTrip(stream, operation, quicvarint.Append(nil, protocol.Hy2FrameType), policy)
+	rtt, err := echoRoundTrip(stream, request, quicvarint.Append(nil, protocol.Hy2FrameType), record)
 	if err != nil {
 		return firstHopMeasurement{}, err
 	}
@@ -177,7 +201,29 @@ func probeFirstHop(ctx context.Context, probe control.ResourceProbe, dns []strin
 	})
 }
 
-func probeHY2FirstHop(ctx context.Context, probe control.ResourceProbe, dns []string, at time.Time) (firstHopMeasurement, error) {
+func probeHY2FirstHop(ctx context.Context, probe control.ResourceProbe, dns []string, at time.Time) (measured firstHopMeasurement, resultErr error) {
+	operation := protocol.AdmissionEcho
+	if probe.PolicyID == "" {
+		operation = protocol.TransportEcho
+	}
+	request, err := newEchoRequest(operation, probe.PolicyID)
+	if err != nil {
+		return firstHopMeasurement{}, err
+	}
+	id := protocol.EchoDiagnosticID(request.Nonce)
+	started := time.Now()
+	var events []func()
+	record := func(phase string, elapsed time.Duration, cause error) {
+		events = append(events, func() { emitEchoDiagnostic(ctx, id, phase, elapsed, cause) })
+	}
+	record("request-start", 0, nil)
+	defer func() {
+		markMeasurementCompletion(ctx)
+		record("request-finish", time.Since(started), errors.Join(resultErr, ctx.Err()))
+		for _, emit := range events {
+			emit()
+		}
+	}()
 	originalDial := control.EndpointDialer(ctx)
 	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
 		connection, err := originalDial(ctx, network, address)
@@ -186,25 +232,39 @@ func probeHY2FirstHop(ctx context.Context, probe control.ResourceProbe, dns []st
 		}
 		return measurementConnection(ctx, connection), nil
 	}
+	resolveStarted := time.Now()
 	addresses, err := netx.ResolveCertifiedIPs(ctx, probe.Resource.DialHost, dns, dial)
+	record("underlay-resolve", time.Since(resolveStarted), err)
 	if err != nil {
 		return firstHopMeasurement{}, err
 	}
-	for _, address := range addresses {
+	var failures []error
+	for index, address := range addresses {
 		if ctx.Err() != nil {
-			return firstHopMeasurement{}, ctx.Err()
+			return firstHopMeasurement{}, errors.Join(append(failures, ctx.Err())...)
 		}
+		started := time.Now()
 		connection, err := dial(ctx, "udp", net.JoinHostPort(address.String(), strconv.Itoa(probe.Resource.DialPort)))
+		record("underlay-dial", time.Since(started), err)
 		if err != nil {
+			failures = append(failures, fmt.Errorf("Hy2 stage=underlay-dial attempt=%d elapsed=%s: %w", index+1, time.Since(started), err))
 			continue
 		}
-		transfer, err := AuthenticateHY2(ctx, probe.Resource, connectedProbePacket{connection}, connection.RemoteAddr(), probe.Credential, at, probe.PolicyID)
+		started = time.Now()
+		transfer, err := authenticateHY2(ctx, probe.Resource, connectedProbePacket{connection}, connection.RemoteAddr(), probe.Credential, at, request, record)
+		elapsed := time.Since(started)
+		closeStarted := time.Now()
 		closeErr := connection.Close()
+		record("socket-close", time.Since(closeStarted), closeErr)
+		if closeErr != nil {
+			closeErr = fmt.Errorf("Hy2 stage=socket-close attempt=%d elapsed=%s: %w", index+1, time.Since(closeStarted), closeErr)
+		}
 		if err == nil {
 			return transfer, closeErr
 		}
+		failures = append(failures, fmt.Errorf("Hy2 stage=authenticate attempt=%d elapsed=%s: %w", index+1, elapsed, err), closeErr)
 	}
-	return firstHopMeasurement{}, errors.New("public first hop authentication failed")
+	return firstHopMeasurement{}, errors.Join(errors.New("public first hop authentication failed"), errors.Join(failures...), ctx.Err())
 }
 
 // RetainResourceObservations compares the complete execution specification.

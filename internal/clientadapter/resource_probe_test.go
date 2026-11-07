@@ -24,6 +24,7 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 func resourceProbeFixture(t *testing.T, kinds ...string) (control.DeviceView, tls.Certificate, time.Time) {
@@ -114,6 +115,95 @@ func TestAdmissionSpecsSeparatePolicyBindingsAndRetainOnlyMatchingDependencies(t
 	}
 }
 
+func TestHY2FirstHopRetainsUnderlayCauseAndCancellation(t *testing.T) {
+	view, _, at := resourceProbeFixture(t)
+	probes, err := control.FirstHopProbes(testDeviceExecution(view))
+	if err != nil || len(probes) == 0 {
+		t.Fatal("fixture has no first-hop probe", err)
+	}
+	for _, mode := range []string{"dial failure", "deadline", "cancel during last dial"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cause := errors.New("demo-underlay-failure")
+			if mode == "deadline" {
+				cause = context.DeadlineExceeded
+			} else if mode == "cancel during last dial" {
+				cause = context.Canceled
+			}
+			calls := 0
+			ctx = control.WithEndpointDialer(ctx, func(_ context.Context, network, address string) (net.Conn, error) {
+				calls++
+				if network != "udp" || address != "192.0.2.10:443" {
+					t.Fatal("probe changed its underlay target")
+				}
+				if mode == "cancel during last dial" {
+					cancel()
+				}
+				return nil, cause
+			})
+			measured, err := probeHY2FirstHop(ctx, probes[0], nil, at)
+			if !errors.Is(err, cause) || calls != 1 || measured.roundTripMS != nil || measured.transfer != nil {
+				t.Fatal("failed Hy2 attempt lost its original cause, retried or produced a metric", err, calls)
+			}
+		})
+	}
+}
+
+func TestHY2FirstHopRetainsEveryFailedAddressWithoutExtraAttempts(t *testing.T) {
+	view, _, at := resourceProbeFixture(t)
+	probes, err := control.FirstHopProbes(testDeviceExecution(view))
+	if err != nil || len(probes) == 0 {
+		t.Fatal("fixture has no first-hop probe", err)
+	}
+	probe := probes[0]
+	probe.Resource.DialHost = "demo-first-hop.example"
+	causes := map[string]error{"192.0.2.10:443": errors.New("demo-first-address"), "192.0.2.11:443": errors.New("demo-second-address")}
+	var attempts atomic.Int32
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ctx = control.WithEndpointDialer(ctx, func(_ context.Context, network, address string) (net.Conn, error) {
+		if cause, ok := causes[address]; ok && network == "udp" {
+			attempts.Add(1)
+			return nil, cause
+		}
+		if network != "udp" || address != "192.0.2.53:53" {
+			return nil, errors.New("unexpected synthetic resolver dial")
+		}
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			_ = server.SetDeadline(time.Now().Add(time.Second))
+			var raw [2048]byte
+			n, err := server.Read(raw[:])
+			var query dnsmessage.Message
+			if err != nil || query.Unpack(raw[:n]) != nil || len(query.Questions) != 1 {
+				return
+			}
+			query.Response = true
+			if query.Questions[0].Type == dnsmessage.TypeA {
+				for _, address := range [][4]byte{{192, 0, 2, 10}, {192, 0, 2, 11}} {
+					query.Answers = append(query.Answers, dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: query.Questions[0].Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 30}, Body: &dnsmessage.AResource{A: address}})
+				}
+			}
+			body, err := query.Pack()
+			if err == nil {
+				_, _ = server.Write(body)
+			}
+		}()
+		return client, nil
+	})
+	measured, err := probeHY2FirstHop(ctx, probe, []string{"192.0.2.53"}, at)
+	for _, cause := range causes {
+		if !errors.Is(err, cause) {
+			t.Fatal("failed-address aggregation lost an original cause", err)
+		}
+	}
+	if attempts.Load() != 2 || measured.transfer != nil || measured.roundTripMS != nil {
+		t.Fatal("failed addresses retried or produced metrics", attempts.Load())
+	}
+}
+
 func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) {
 	view, certificate, at := resourceProbeFixture(t)
 	probes, _ := control.FirstHopProbes(testDeviceExecution(view))
@@ -124,6 +214,7 @@ func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) 
 	}
 	defer listener.Close()
 	var requests atomic.Int32
+	var echoStatus atomic.Uint32
 	server := &http3.Server{StreamHijacker: func(kind http3.FrameType, _ quic.ConnectionTracingID, stream quic.Stream, err error) (bool, error) {
 		if kind != protocol.Hy2FrameType || err != nil {
 			return false, nil
@@ -138,7 +229,7 @@ func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) 
 			if err != nil || request.Operation != protocol.AdmissionEcho {
 				return
 			}
-			response, _ := (protocol.Response{Nonce: request.Nonce, Status: protocol.Accepted}).Marshal()
+			response, _ := (protocol.Response{Nonce: request.Nonce, Status: protocol.Status(echoStatus.Load())}).Marshal()
 			_ = protocol.WriteFrame(stream, response)
 		}()
 		return true, nil
@@ -164,24 +255,39 @@ func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) 
 		name   string
 		change func(*control.ResourceProbe)
 		good   bool
+		status protocol.Status
+		cause  error
 	}{
 		{name: "actual TLS and login", good: true},
+		{name: "declared admission denial", status: protocol.Denied, cause: ErrEchoDenied},
+		{name: "declared remote unavailability", status: protocol.Unavailable, cause: ErrEchoUnavailable},
 		{name: "wrong credential", change: func(p *control.ResourceProbe) {
 			p.Credential = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
 		}},
 		{name: "wrong TLS name", change: func(p *control.ResourceProbe) { name := "wrong.example"; p.Resource.Authentication.ServerName = &name }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			echoStatus.Store(uint32(test.status))
 			value := probe
 			if test.change != nil {
 				test.change(&value)
 			}
-			attempt, cancel := context.WithTimeout(ctx, time.Second)
+			var clock atomic.Int64
+			clock.Store(at.UnixMilli())
+			logged := WithEchoDiagnosticLog(ctx, func(string) { clock.Store(at.Add(time.Hour).UnixMilli()) })
+			logged, captured := captureMeasurementTime(logged, func() time.Time { return time.UnixMilli(clock.Load()) })
+			attempt, cancel := context.WithTimeout(logged, time.Second)
 			defer cancel()
 			measured, err := probeFirstHop(attempt, value, nil, at)
 			transfer := measured.transfer
 			if (err == nil) != test.good {
 				t.Fatalf("actual authenticated outcome: %v", err)
+			}
+			if !captured.timing.completed.Equal(at) {
+				t.Fatal("Hy2 diagnostic flush renewed the original completion time", captured.timing.completed)
+			}
+			if test.cause != nil && !errors.Is(err, test.cause) {
+				t.Fatal("Hy2 address attempts lost the receiver's declared echo result", err)
 			}
 			if test.good && (transfer == nil || transfer.RXBytes == 0 || transfer.TXBytes == 0 || transfer.DurationNS <= 0) || !test.good && transfer != nil {
 				t.Fatal("authentication bytes were missing or a failed login manufactured throughput")
@@ -191,7 +297,7 @@ func TestFirstHopUsesProtectedDialerAndVerifiedQUICAuthentication(t *testing.T) 
 			}
 		})
 	}
-	if sockets.Load() != 3 || requests.Load() != 1 {
+	if sockets.Load() != 5 || requests.Load() != 3 {
 		t.Fatal("authentication bypassed platform socket or TLS/credential verification")
 	}
 }

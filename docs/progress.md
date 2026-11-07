@@ -9,6 +9,574 @@
 用户随后已要求继续当前计划，恢复范围及实际结果见下一节。历史原始证据保持原义；实体终验和
 正式入口回读仍按各任务实际范围判定。
 
+## Internet 与 LAN 的组合 Scope 续验
+
+2026-11-07，从干净的 `c5fb6b103689761781ec0ba59811e762e2ca1345` 开始；本地与远端
+`main` 相同，该提交主 CI 四个 Job 已正常读回成功。以下新增测试的本地结果不冒称已经有
+新的托管 CI。Scope 独立应用已有实现，本次未重写 RouteManager、资源池、授权或 schema 3。
+
+Android JVM 补齐两个 Scope 的真实回环 HTTP 接管交错：旧 PUT 完整到达、客户端取消、新的
+同值完整 CAS 与回读完成后再释放旧 PUT，测试接收器返回冲突；另核对各自 revision 独立推进。
+资源准备失败的原回调用例扩为 Internet／LAN 对称覆盖。完整 JVM 为 21 组、90 项，全部通过，
+无跳过；日志及 XML 在 `out/scope-jvm-followup-results/`。报告原表补齐双意图但只有 Internet
+确认，以及部分执行保留意图、权限证明而不伪造整实例成功；定向普通／race 均通过。
+
+新增显式 opt-in 的 `TestOfficialLinuxNativeInternetAndLANScopesKeepConcurrentConnections`，
+正式 Linux Run 消费签名 LKG 和持久 Preference。独立 user／net／mount namespace 在生成
+合成公网地址前核对只有 loopback、没有外部路由；HTTPS 使用测试信任根与名称校验取得完整
+正文，LAN TCP 按签名映射到真实接收 socket。两个接收应用互等请求到达后才响应，证明同时
+在途。两 Scope 分别换选择及一起待应用时，各自完整 CAS／revision 回读成立；原两条连接的
+UUID、资源链和持续双向业务保持，新连接仅以本轮新增 UUID 核对实际选择。
+
+测试调用的局部回环 gate 仅注入本机 API 边界：两个 Scope 各一次资源 GET 失败；LAN 准备
+请求挂起及真实取消；完整旧 PUT 被接收、调用方取消、新 CAS 完成后才向真实 native handler
+转发。冲突由真实 handler 返回，gate 不制造冲突。失败和取消期间两条旧流继续收发，完整
+选择快照保持。它不代表真实 sender factory 构造失败，也不代表 Android RouteManager 已在
+手机上执行相同故障。最终普通／race 均实际通过、无跳过或 race 诊断，宿主结构回读保持。
+
+夹具首次一次写两项偏好、误用删去 lazy sender 的启动配置、以及缺少完整新 UUID 排除的
+取证缺项均保留原记录。扩展中一次 race 发现选择快照变化，原轮未保存前后快照，原因仍未
+定位；不将其写成已证实的选路或产品缺陷。最终夹具明确每条 Policy 只有一个合法首跳资源，
+保持相同最终出口，并保存各故障窗口前后的完整快照；未放宽断言、延长期限或改变生产选择。
+完整命令、精确二进制及原件在 `deploy/evidence/2026-11-07-multiscope-native/`。
+
+当时固定的 `.27` 原生库对应 Android ARM64 Debug APK 随后完成正常组合业务：独立测试
+control 先取得 Gateway
+的真实签名 LAN 报告，再经正常分配预览、Service／Policy 写入及设备授权交付。手机沿正常
+配置更新、LAN 策略选择和连接界面接受、持久保存并启用两 Scope；原互联网 Policy 保持。
+普通 UID socket 同时持续取得非探测网站的完整 HTTPS 正文及 LAN TCP／HTTP 响应；另以同一
+应用 UID 的 DatagramSocket 完成真实 LAN UDP 回包。原生 tracker、Service、确认 Policy、
+两 Scope revision 与接收端分别核对，两条原 UUID／资源链及 native Box 保持。
+
+| 实际手机报告状态 | 已确认选择 | 整实例证明 |
+|---|---|---|
+| 启动／部分执行的 `unknown` | 不伪造未齐选择 | applied 留空，独立权限证明保留 |
+| 两 Scope 确认后的 `running` | Internet 与 LAN 各一条 | applied 与本次认证 View 相同 |
+| 正常断开后的 `stopped` | 无当前运行选择 | 不复用上次成功证明 |
+
+安装 APK 与实际 ARM64 库摘要匹配正常签名报告。control owner 退出后以只读方式逐件核验
+全部本轮手机和 Gateway 报告的规范字节、签名、数据库键及序列，正常 snapshot 精确引用
+匹配，数据库前后字节、文件身份与时间不变。临时授权以新事实撤回，手机正常更新接受，
+原偏好恢复；两次独立加密存储读取等于缓存，完整规范身份、密钥、latch、high-water 和报告
+进度核验通过，无明文身份落盘。辅助对象、映射和隔离实例精确清理，宿主结构保持。
+证据及 Scope 矩阵在 `deploy/evidence/2026-11-07-multiscope/review-summary.json`。
+
+后续精确 `.28` Debug APK 沿正式 UI 再次启用两 Scope，真实普通 HTTPS 与映射 LAN TCP
+同时持续收发。第一轮取得 LAN GET 在一次性本机 API gate 挂起、正常 UI 后继操作取消的
+独立证据；旧 peer EOF、新调用对象及前驱 cancelled 相互对应。该轮临远端 TTL 的后续 worker
+终态 `failed` 单列为 confounded，不用于产品失败判定，也不与下一 RUN 拼接连续性。
+
+新 epoch 使用同一 `.28` APK、原身份和偏好，另建普通业务 RUN／tracker。LAN、Internet
+各一次准备故障仅改变本次 native prepare/auth 请求配置副本中的本机 API secret，保留
+原 body、配置和权限。两次都在真实返回点读到 `supported=true`、`permission_current=false`、
+`resources_ready=false`，随后正常 UI 恢复并读回新 revision。这是一次本机准备／认证调用
+失败，不是 sender factory 构造坏，也未直接取证原始 HTTP 401；布尔值不改写授权事实。
+LAN 的完整非 reject PUT 则在客户端取消后保留原 body，由正常 UI 同 Scope 的新完整同值
+reject CAS、新选择与完整 GET 接管后，才原样转发至原 native handler，实际返回 409。
+gate 不合成冲突。原产品的三秒 socket 和八秒准备期限均未改变。
+
+以下对应本轮 A–F 风险，覆盖层次分别判定。JVM 的真实 HTTP 使用契约 receiver，不能称为
+真实 native；函数见 [ScopeApplicationTest](../clients/android/app/src/test/java/io/github/scisaga/loom/route/ScopeApplicationTest.kt)
+与 [SelectorTakeoverTest](../clients/android/app/src/test/java/io/github/scisaga/loom/route/SelectorTakeoverTest.kt)。
+Linux 项统一由上述正式 Run 测试覆盖，故障只在本机 API 边界注入。
+
+| 风险 | Android JVM／HTTP 契约 | 真实 Linux Run／native API | 当前 `.28` 手机 |
+|---|---|---|---|
+| A：LAN 准备失败，Internet 保持 | `ScopeApplicationTest.partialIoFailureDoesNotDiscardSuccessfulScopeOrSkipLaterScope` 通过 | LAN 准备资源 GET 失败、原业务及确认保持通过 | 本次 native prepare/auth 返回三布尔失败；旧 Internet 连接、revision 与确认决策保持，通过 |
+| B：Internet 准备失败，LAN 保持 | 同一对称用例通过 | Internet 准备资源 GET 失败、原业务及确认保持通过 | 对称真实返回失败；旧 LAN 连接、revision 与确认决策保持，通过 |
+| C：LAN 在途不阻挡 Internet | `accessReadPrepareCasAndReadbackFinishBeforeLanInitialGetReturns` 通过 | LAN 准备资源 GET 挂起时两条旧流持续，通过 | 本机 Scope GET 准备边界实际挂起，原 HTTPS／LAN TCP 保持，通过 |
+| D：取消及确认记忆隔离 | `cancellationInvalidatesOnlyUnconfirmedWritesAndDoesNotBecomeNetworkFailure` 通过 | 真实取消、socket 退出及完整确认保持通过 | 正常 UI 取消旧调用，EOF／前驱取消对应；Internet 确认决策、样本和版本保持，通过 |
+| E：旧完整 PUT 迟到 | `SelectorTakeoverTest.successorCasRejectsCancelledLatePutForInternetAndLan` 通过 | 新完整 CAS 后真实 handler 拒绝迟到写入，通过 | LAN 新完整 CAS／GET 后旧原请求实际 native 409，通过 |
+| F：各自 revision／CAS | `internetAndLanCasAdvanceOnlyTheirOwnRevision` 通过 | 两项偏好一起待应用后，各自 CAS／revision 通过 | 正常 UI 独立变化及另一 Scope revision 保持通过；未另做两项同时待应用的手机交错 |
+
+新 epoch 三个故障前后及整个本 RUN 的两条原 worker 连接、本机端口、native UUID 和资源链
+相同，完整 2xx 正文持续增加。每次另一 Scope 的确认决策、样本、版本、Policy、网络代与
+native binding 保持；仅本机决策时钟／健康期限自然推进，不称整份 memory 字节相同。
+Box、app 与原映射保持，临时 JDI／gate 正常退出并精确清理。交接给阶段 3 的 fresh worker
+只承接自己的 RUN；手机首跳不证明远端 F1 的实际后续路径。当前精确 `.28` 另沿普通应用
+UID 完成正常 LAN UDP：消费本窗口的 Scope 参数，三次 datagram 均为 exact reply，socket
+正常关闭。工作负载 jar 字节虽复用，业务已在本 APK 重新执行；这不计作故障期间 UDP。
+
+手机、三个远端节点、Gateway 及 control 的本轮 producer 正常退出后，离线只读审计已通过。
+五个报告源的规范字节、签名、数据库键、序列及历史签名身份逐件核对，故障过程与最终正常
+snapshot 的报告和样本引用均匹配原件；数据库摘要、文件身份、长度、时间及权威原件不变。
+两次 prepare 真实返回后取得的正常报告，均有双意图但为保守 `unknown`，applied 与 selections
+为空；恢复后的原件存在两 Scope 全确认、applied 匹配 View 的 `running`。本轮没有部分 Scope
+确认的签名报告，不由单测或本机确认记忆补造该历史。正常断开后的本机报告序列继续前进，
+已停 control 未收到的后续序列不冒称已经入库。
+
+按用户要求，本节结项信息保留七项，源码、本地、隔离、设备与发布范围不合并：
+
+| 报告字段 | 当前记录 |
+|---|---|
+| 1. 提交 SHA | 当前 HEAD 为 `c5fb6b103689761781ec0ba59811e762e2ca1345`，新增工作区输入及各精确制品按摘要分别保全；新增结果未冒称新提交托管 CI |
+| 2. 修改文件与理由 | 上述 `ScopeApplicationTest.kt`、`SelectorTakeoverTest.kt`、`native_scopes_network_linux_test.go` 和 `report_preference_test.go` 补验收；真机一次性夹具仅在忽略目录，不重写 Scope／资源池或增加产品 test hook |
+| 3. 已修复缺陷 | 本轮未据夹具失败宣称新 Scope 产品缺陷；已修正夹具断点、恢复配对及等待／回读门禁，旧失败原件保留 |
+| 4. 命令与结果 | `:app:testDebugUnitTest` 当轮 90 项通过；独立 namespace 执行器内 `scopes-normal.test`／`scopes-race.test` 的本测试 `-test.count=1 -test.timeout=90s` 均无跳过通过；`go test ./internal/control -run TestCurrentReportSignsIndependentLANSelections -count=1` 及对应 `-race` 定向签名往返通过；真机沿正常 UI、私有 `phone_window.py` 与 `udp_current.py` 执行；停 producer 后显式包含 Gateway 与 joint Scope 的原件审计通过，私有审计器格式反例及普通／race 检查通过，命令及摘要见原件 |
+| 5. 真实业务证据 | `.27` 正常组合保持原制品范围；本轮 `.28` 为普通 HTTPS／LAN TCP、两向准备失败、挂起／取消、完整迟到 CAS 与两条原连接保持，另有本 APK 正常 LAN UDP 重验；逐 RUN 保存 Scope／receiver／tracker／正文及恢复证据 |
+| 6. 具体缺口 | 本轮原始签名与正常投影已完成离线核对；最终身份双读、偏好恢复已由下述最终窗口的正常入口完成，精确清理另留记录；正常 UDP 不写成故障期间 UDP，通过范围不外推实体 LAN 拓扑、正式制品或生产激活 |
+| 7. 下一入口 | 阶段 3 的实际业务与远端链单独取证；后续有界 epoch 保留原身份与认证进度，正常回读和清理不以原件验签代替 |
+
+已签名的部分报告规范往返仍由 `TestCurrentReportSignsIndependentLANSelections` 覆盖：
+Internet 已确认而 LAN 未齐、LAN 已确认而 Internet 待选、双意图部分执行的保守 `unknown`
+均保持规范签名；Android 未齐时不伪造整实例 applied 或 selections。此前正常组合窗口的签名
+原件与本轮 `.28` 故障原件均已各自离线核验；部分确认的规范测试不充当本轮手机实际报告。
+本轮两 epoch 的 `closure-audit-reviewed.json`／`closure-reviewed.json`、精确源码／制品摘要、
+失败和清理原件仅在 `deploy/evidence/2026-11-07-multiforward-linktrace/phone/` 的各自窗口内。
+原件审计结果、输入摘要、停 producer 凭证及只读矩阵保存在同一证据根的
+`signed-report-audit-*.json` 与 `scope-raw-audit-*/`，实际序列和指标只进入私有证据。
+独立 Gateway 使用隔离测试 LAN，不外推外部实体局域网拓扑。当前核心工作项保持 open，
+未执行正式发布或生产激活。
+
+### 现有六节点的只读测试准备
+
+操作者明确测试隔离针对实例和影响范围，不要求新增物理机器。六节点经既有严格部署加载器
+与 SSH 执行器有界并行只读核对，正式身份、职责、安装与运行字节、资源及已有映射均有回读。
+生产程序来源仍为 `fd274e04`、数据面仍为 `.15`，未替换它们；认证公共资源与实际运行回读
+分别保存，不由声明数推导物理 peer 或会话数。
+
+实际 F1、F2 和境外 E 已从不同既有主机选定，备用出口亦已登记；位置依据是认证部署标签及
+既有操作史，本轮未重新做物理地理定位。一个原候选只有生产已占用入口，已改选有操作者提供
+空闲映射的出口，不占生产端口。管理坐标与 SSH 实际地址的一项历史差异保留为事实，未编造
+隧道原因或修改配置。真实分工、坐标、来源和差异仅在
+`deploy/evidence/2026-11-07-six-node-readonly/final-redacted-summary.json`。
+
+后续复用既有远端隔离工具：每台主机独立测试目录、身份、材料及 user／net／mount namespace，
+以 slirp 消费原映射。测试入口必须取得真实认证传输及回包证据；空闲监听不证明 NAT 可达。
+故障只作用于测试 namespace 的精确测试链路，不停止或替换生产实例、不修改生产授权／密钥、
+宿主默认路由／DNS／防火墙或路由器映射。本节尚未创建远端测试实例或验证新测试端口。
+
+## 阶段 2：诊断错误链与 Echo 关联续验
+
+2026-11-07，本节继续使用 `c5fb6b10` 加本轮工作区源码快照；构建前后逐文件来源一致，
+不把基线提交号当成包含所有修改的干净提交。Transport Echo、指定 Policy 的 Admission Echo
+与普通 TCP／UDP 业务保持三个独立结果；观测失败不能撤回授权，真实认证拒绝和撤权仍须拒绝。
+未改变候选模型、稳定选择、固定最终出口、逐跳认证或 schema 3，也未增加重试掩盖故障。
+
+代码反例确认 Hy2 首跳循环曾丢弃解析、拨号及认证的原始 cause，最后只返回通用认证失败。
+修复保留各次错误与阶段、耗时，通过错误链保全取消／超时的 `errors.Is`／`errors.As` 语义。
+WG 本机连接失败同样保留阶段与 cause。两传输共用的 Echo 往返明确区分 preface 写入、
+请求写入、响应读取和响应校验；远端明确拒绝为 `ErrEchoDenied`，明确不可用为
+`ErrEchoUnavailable`，畸形响应或 nonce 不符独立报错。合法响应的接收端处理时间不能比较时，
+保留接受结果但不制造 RTT。原生 HTTP 502 仍不传出内部原始 dial cause，须配合同次 native
+诊断证据；不能称所有跨层错误正文都已透传。
+
+本轮用现有 Echo nonce 的 SHA-256 派生关联 ID，不新增 wire 字段或授权身份。root、mobile
+与两传输 native 的 Debug 记录覆盖请求开始、peer 准备、内部连接、请求发送、接收请求、
+认证身份、Receiver Echo／Admit、响应返回及最终超时／取消这些事件位置。安全解析只接受
+固定格式的 ID、阶段、耗时、结果与错误类型，不记录原始 nonce、帧、密钥、凭据或业务目标，
+不增加正常业务高频 Info。日志失败与 observer panic 不改变既定结果；Linux 仅显式
+`client run -trace-probes` 开启，默认关闭。启动与热更新共用同一 Debug 配置投影，已用
+先失败后通过的 reload 回归阻止仅因日志级别不一致而误替换运行实例。
+
+测量完成时刻、有效期与各阶段耗时先固定，再交付诊断日志；完成标记只记一次，测量预算等
+实际 flight 完成才释放，复用中的调用不能借另一请求的时间戳。root／mobile 的反例和普通／
+race 回归均通过。同步日志消费者仍可能延迟调用返回，不将此表述为日志完全不影响等待时间；
+本轮没有增加独立日志队列或后台状态机。
+
+native 定向 race 实际发现既有 `pause.WaitActive` 无锁读取 channel、与暂停状态更新并发的
+数据竞争。独立纯内存反例在原源码报告 race；修复仅在锁内取得 channel 快照，等待仍在锁外。
+修复后反例及相关包普通／race 通过。旧 `.27` 的原精确 transport 关闭单项本轮未复现该 race；
+不能把新反例或锁修复当成原手机超时的根因。
+
+| 实际检查 | 本轮结果与边界 |
+|---|---|
+| 错误链反例与回归 | 原反例失败保留；clientadapter 定向普通／race 各 36 个通过事件、无跳过 |
+| 完成计时与隔离 | root 定向普通／race 各 46 个通过事件，mobile 各 9 个；反例及最终来源快照保留 |
+| native 诊断与暂停修复 | 六相关包普通／race 各 170 个通过事件；纯内存 race 红绿记录独立保留 |
+| 官方原生入口 | `python3 scripts/test-native-dataplane.py` 的来源、正反补丁、协议副本、关键集普通／race 各 244 个通过事件，无失败／跳过；正式 Linux amd64 构建与来源读回通过 |
+| 根模块完整检查 | 最终 `go build ./...`、`go test ./...`、`go vet ./...`、仓库安全与 diff 检查均退出 0，全部 tracked／untracked Go 格式检查无输出，源码输入前后相同；本阶段未重复根全库 race，不借历史结果冒称本轮全库 race |
+| Android 官方构建 | 双 ABI AAR、91 项 JVM、lint、Debug APK 与 instrumentation APK 均通过；AAR／APK 两 ABI 库逐字一致，与 Linux 来源记录相同，Debug 签名核对通过 |
+
+Android 沿 `clients/android/scripts/build-mobile-aar.sh` 和 Gradle 的
+`testDebugUnitTest`、`lintDebug`、`assembleDebug`、`assembleDebugAndroidTest` 正式入口构建，
+并发有界。新增 native 修改登记为制品 `1.11.4-loom.28`，不是协议升级；`.27` 的历史来源、
+摘要与原件字面冻结。Windows 继续引用 `.27`，本轮 Linux amd64 与 Android 双 ABI 独立固定
+`.28` 来源；未构建的平台没有填入假摘要。源码、CLI、AAR、APK、库及签名的精确坐标只在
+`out/diagnostic28/` 和受保护证据中。本节只确认构建及本地范围，不抵扣新 APK 的真机业务、
+真实多级 Forward 或正式发布签名。
+
+后续对既有远端 `.28` 原件的只读审计已定位一项实际 WG 失败：同一 flight 的 peer 准备成功，
+随后内部 TCP 建连到期，本机 CONNECT 未建立，尚未发送 Echo 执行帧。安全 Echo ID 与 native
+日志 ID 唯一对应，但未取得该 flight 的 Resource／Spec／Operation 映射，不能命名为某个出口
+WG 或 Admission Echo。未匹配到接收端事件的结论仅覆盖已保存的三端日志窗口，不证明窗口外
+没有接收；也不将 HTTP 层的最终超时分类说成内部原始 cause 已跨层透传。本项不是诊断与
+普通业务的配对通过，原手机 WG Admission Echo 超时仍未定位。原件在
+`deploy/evidence/2026-11-07-multiforward-linktrace/continuation-0002/`。
+
+原手机 WG Admission Echo 超时仍未定位。新增九类事件接线及本地回归使下一次真实复现可
+按同一 ID 追查，不能补写过去缺失的接收端证据。六行须逐行绑定实际精确制品、候选或路径、
+Policy、证据来源与故障窗口；源码、隔离原生与手机证据分别判定，不要求共用一个全局环境、
+Policy 或出口，也不要求全部在手机执行。
+
+本轮新增 `TestOfficialLinuxNativeDiagnosticBusinessMatrix`，复用正式 `Run`、签名 LKG、
+持久偏好及既有 `.28` native，在独立 user／net／mount namespace 内取得下列真实配对。
+每行绑定实际候选、Policy、规格及窗口，有测量的行另核真实样本有效期；成功业务均完成
+SOCKS5、证书／名称校验的
+TLS 及完整正文，失败业务为真实关闭目标的 native TCP 连接失败，并读回对应 TCP 观测。
+原 TLS tracker／UUID／资源链持续保持；测试未手写 selector、伪造 Observation 或修改权威。
+
+| 诊断结果 | 真实业务结果 | 本轮隔离原生实际证据 |
+|---|---|---|
+| 成功 | 成功 | 真实 Receiver 接受响应交付，完整 TLS 正文成功 |
+| 超时 | 成功 | 仅暂扣本次诊断真实响应至调用到期，合法候选上的完整 TLS 业务继续 |
+| 失败 | 失败 | 本次诊断响应交付真实 EOF；另一个关闭目标的实际业务连接失败 |
+| 成功 | 失败 | 真实 Echo 接受，关闭目标的实际业务连接失败，不制造业务成功 |
+| 未知 | 成功 | 正式 Run 首次合法选择且尚无真实诊断观测时，完整 TLS 正文成功 |
+| 未知 | 失败 | 同一正式 Run 未测窗口，关闭目标的实际业务失败及反馈读回 |
+
+未知两行使用正式 Run 的首次 running／合法 selector、`ResourceObservations` 为空的真实
+窗口；仅在现有测量回调前等待，最终返回真实当前时间，不伪造时钟。释放后取得正式采样
+恢复的真实观测。其余四行复用额外一次真实 sampler flight，保留响应状态、原 Observation
+及阶段绑定；未将它们注入正式 Run 缓存或权威，不能称 daemon 已消费这些额外失败样本。
+其中诊断超时／失败只控制该诊断响应交付，不冒称 underlay 故障；失败／失败一行也不冒称
+诊断交付 EOF 与业务目标拒绝来自同一个远端故障。以上六行完成隔离原生配对，不能抵扣
+手机普通 UID 业务或正式 Run 消费额外失败诊断样本的集成结论。
+
+另有两类真实网络 deadline 续验。精确测试 UDP 代理丢弃实际加密 WG 报文后，关联日志为
+peer 准备成功、内部 TCP 到期、本机 CONNECT 未建立且未发送 Echo 执行帧，真实新业务亦
+失败；解除该丢弃后同候选／Policy 的完整 TLS 恢复。执行确认窗口只在测试 namespace 对
+一个合成目标的 TCP SYN 精确丢包，实际读到 SYN_SENT；同一 native ID 的 peer 准备及
+内部 TCP 成功，随后原有执行确认期限实际到期，调用方期限尚未到期。接收端仅该测试配置
+的目标拨号等待长于原生确认期限，未改产品期限；否则原先较短的接收端拒绝不能充作确认
+超时，首次失败原件已保留。旁路原 TLS 持续成功，删除经回读核对的自有 filter／qdisc 后，
+同目标完整 TLS 恢复。安全日志 reader 最小补收既有 `execution-confirm` 阶段，原 native、
+远端 CLI、AAR／APK 字节未因此重建或替换，不能把后续 reader 来源写入历史制品来源。
+
+上述定向普通／race 均无跳过通过；先确认只有 loopback 且无外部路由，才生成并仅在测试
+namespace 绑定合成地址。宿主 namespace、IPv4／IPv6 路由／规则／链路／地址及解析器摘要
+前后结构一致，仅排除自然到期字段并保留原差异；未采集防火墙前基线，不宣称防火墙前后
+一致。最终全库普通检查在独立 net／mount 与私有临时目录执行，保留原用户映射供真实非
+root 权限测试使用；首轮仅 root 映射导致的两项权限夹具失败保全，未改源码或测试绕过。
+peer、认证拒绝、撤权、用户取消及远端明确拒绝的既有证据仍按各自来源判定，不统称一个
+unavailable，也不以本轮两项 deadline 外推全部错误类型已完成普通业务配对。固定出口约束
+保持，禁止 Direct fallback。
+原始红绿日志及来源摘要位于 `out/phase2-diagnostic-*`、`out/phase2-echo-*`、
+`out/echo-diagnostic-native/`、`out/diagnostic28/root-checks/`、
+`out/native-dataplane-tests/run-r9v86y9o/` 与
+`deploy/evidence/2026-11-07-native28-preparation/`；CLI 来源另在
+`deploy/evidence/2026-11-07-diagnostic28/`。本轮六行、两项 deadline、失败原件、最终源码与
+全库检查在 `deploy/evidence/2026-11-07-multiforward-linktrace/phase2-paired-isolated/`，安全
+日志 reader 的红绿与独立 CLI 来源在 `deploy/evidence/2026-11-07-diagnostic28-confirmtrace/`。
+真实多 Forward 由后续独立记录，不继承本节隔离原生或阶段 1 旧 APK 的结论。
+
+| 报告字段 | 阶段 2 当前记录 |
+|---|---|
+| 1. 提交 SHA | `c5fb6b103689761781ec0ba59811e762e2ca1345` 加本轮未提交工作区；每次构建和验证的真实来源另以摘要冻结 |
+| 2. 修改文件与理由 | `protocol/diagnostic.go`、`internal/clientadapter/*probe*.go`、`measurement_budget.go`、`mobile/loomcore/resource_probe.go` 及 Android 完成日志保留原错误与真实完成时刻；Linux `probe_debug.go`、启动／热更新接线与 `forward.go` 增加显式安全诊断；native 补丁修正等待竞争，制品来源登记同步更新；对应测试和官方构建脚本保留反例 |
+| 3. 已修复缺陷 | Hy2 原始 cause 丢失、日志交付前未固定真实测量完成时刻、`pause.WaitActive` channel 读取竞争；未将夹具失败或本轮内部 TCP 到期称为历史手机超时根因 |
+| 4. 命令与结果 | 官方 native 脚本普通／race、Android AAR／JVM／lint／APK 及根 build／test／vet 通过；`TestOfficialLinuxNativeDiagnosticBusinessMatrix` 的独立 namespace 普通／race 无跳过通过；上述两类真实 deadline、日志 reader 反例及对应回归通过，精确参数和产物摘要见私有记录 |
+| 5. 真实业务证据 | 正式 Run 六行真实诊断／TLS 配对，目标失败和 TCP 反馈、旁路原 TLS 保持、解除精确丢包后同目标完整 TLS 恢复；这是隔离原生业务，未声称全部发生在手机 |
+| 6. 具体缺口 | 原手机 WG Admission Echo 超时仍未定位；部分配对是独立真实 sampler flight，未声称 daemon 消费了额外失败样本；跨 HTTP 的内部原始 dial cause 仍需同次 native 关联 |
+| 7. 下一入口 | 阶段 3 用精确 APK、真实异网节点、正常共享测量、实际 CAS、新旧连接及固定出口证据分别判定；下一次 WG 实际复现沿现有安全 ID 追查 |
+
+
+## 阶段 3：既有异网节点与当前 Android 制品的首轮窗口
+
+2026-11-07，复用前述六节点只读核对中选定的三台不同主机，分别执行 F1、F2 与境外 E。
+每台具有独立测试身份、目录、监听及 user／net／mount namespace；只消费操作者原有且实际
+空闲的 UDP 映射。生产实例、身份、密钥、授权与安装路径没有被测试实例接管。正常 Link
+回显及跨节点响应已证明本轮使用的部分真实传输入口可达，不能再把整体缺口笼统归为 NAT。
+
+本轮正常 Invite／加入、沿用原互联网 Service 及新 Policy／设备授权写入限定手机经 F1 接入、
+可经 F2 中继且只允许同一
+最终 E；不授权 Direct 或本机出口。新 `.28` APK 经同签名覆盖安装，安装后实际字节等于
+冻结 APK，原身份、密钥、认证进度、报告序列与 latch 保留。手机通过正常配置更新、Policy
+选择和连接入口运行；Linux 三端均消费正常认证配置并产生真实签名报告。
+
+精确 APK 在此窗口取得普通境外 HTTPS 完整正文；另两条普通 UID TLS 连接持续取得完整
+响应，原 UUID、tracker、资源链及 native Box 有读回。出口 IP 的地址族与摘要和同一 E
+namespace 的独立读回匹配。普通浏览器也显示了目标页面，但 UI 文字不证明其全部网络依赖。
+这只抵扣本轮制品的已取证业务，不能当作自动中继或完整应用依赖验收。
+
+故障工具只在测试 namespace 的精确链路设置报文时延：先保持直达 E 的基线，再只降低
+F2→E 时延。正常签名共享样本覆盖三段，来源、完整规格与当前 F1 视图匹配；跨节点同一
+Echo ID 能关联发送完成与接收认证／Admit／响应写入。纯函数对实际输入回放可得经 F2 的
+合法优选，但在本轮有界观察内没有取到 F1 自动反转的必要证据。未手动 PUT selector、
+伪造 Observation、修改 Policy 或以重新授权推动切换。
+
+Forward 的当前顺序须读 `exit_choices[final_exit]` 及 CAS revision；通用 `now=reject` 与空
+`targets` 是其正常投影，不能误判为尚未应用。本轮 F2 的真实顺序更新不能替代 F1 所需
+反转。两条旧 TLS 在质量变化期间保持业务，也不能写成“已跨成功自动换路保持”。尚无
+换路后新连接经过 F2、换路前后同一出口 IP，以及五项失效／恢复／撤权的完整矩阵。
+
+本轮 F1 的只读 nil-base 共享样本领取成功，不能证明原 daemon 的历史 cursor／delta
+领取与运行内存。为下一窗口增加显式 `-trace-probes` 下的安全摘要：批量领取／实际消费
+的集合摘要、校验结果，及选择排序、pending、确认次数、原采样版本和 CAS／确认结果。
+标识只输出摘要，错误只输出有限类型；已合并缓存不能反推服务端 reset／delta，故该字段
+明确为 unknown。日志在原计算和发布边界之后交付，不能改变选路规则、缓存失败语义或
+原时间；同步 sink 仍可能延迟返回。新增 CLI 独立冻结，不把原 AAR／APK 称为来自后续
+修改的源码树，也不重建或替换本轮已取证的 Android 字节。
+
+首轮封存原件的后续时间审计表明，支持反转的第二份远端新样本靠近观察末端才进入签名
+报告；未证明 daemon 在窗口内还有再次领取、消费与确认的机会。旧源时钟偏差亦缺少界限，
+不能由条件同钟统计推断缓存或算法缺陷，也不能因此将未观察到的自动反转改记为通过。
+后续使用真实消费／确认记录判定，保持原性能条件及原采样有效期。
+
+隔离入口准备的失败原件均保留：证书用途、规范输入末尾字节、私有 `/run` 导致解析器
+符号链接目标缺失，以及父执行器曾未传播子进程失败。修正仅作用于测试工具、测试证书或
+私有 namespace，保留原 CA、身份与认证进度；不能把这些夹具问题当作生产缺陷或历史 WG
+超时根因。原手机 WG Admission Echo 超时和本轮 F1 未反转原因仍未定位。
+
+窗口结束后手机正常断开并恢复原偏好，正常更新接受测试授权撤回；独立加密存储重复读取
+与缓存一致。三端先正常退出，再归档全部测试身份和状态，最后按精确所有权删除测试目录；
+本机辅助映射与凭据精确清理。六节点重新建立管理连接，生产字节、长期进程和原生产监听
+保持；DNS／防火墙前后比较只覆盖实际保存了基线的节点和窗口，不补造全六节点相等。
+全部生产者和本地 control owner 退出后，严格离线审计通过本轮规范报告、签名、来源键、
+序列、分叉、共享测量原件与页面引用；手机确有固定 Policy、已确认选择且 applied 等于
+认证 View 的 running 原件，数据库前后字节、inode、大小与时间保持。页面快照取到的
+unknown／stopped 不能反推出整个窗口没有 running；报告真实性也不抵扣自动中继。
+完整普通业务、失败窗口、来源、清理和回读位于
+`deploy/evidence/2026-11-07-multiforward-physical/`、
+`deploy/evidence/2026-11-07-multiforward-executor28/` 与
+`deploy/evidence/2026-11-07-six-node-postcheck-3383468160880184/`。
+
+阶段 3 保持未闭合；下一窗口复用同一执行工具和既有三台主机，以新 CLI 的实际消费证据
+定位缺口。已删除测试设备的墓碑不能复活，下一轮按正式加入建立新的测试设备；旧原件和
+身份历史保全，手机原身份不变。阶段 1 的手机局部故障和阶段 2 的真实配对矩阵仍单独保留，
+不因本节正常境外业务成功而判定通过。正式发布、生产激活均未执行。
+
+## 阶段 3：同身份续窗的真实自动反转
+
+续窗复用既有三个异网主机、同一独立测试 authority 和原工具。新测试身份正常加入后，同根
+执行 epoch 之间只轮换已停止的执行元数据，保留身份、密钥、认证进度和报告序列；首轮已
+删除设备的墓碑不复活。手机仍为相同 `.28` APK，Linux 测试实例独立冻结 CLI 摘要以
+`0bfe4fcf` 开头；native／AAR／APK 不重建，生产实例不替换。源码 HEAD 仍 `c5fb6b10`
+加未提交工作区，后续 Linux 日志白名单修正产生的独立 `073838d7` CLI 尚未在该窗口运行。
+
+在真实普通 HTTPS 与 LAN TCP 原连接持续运行时，仅降低 F2→E 的测试链路时延。F1 的
+真实共享测量领取、消费、pending 与原样本版本确认已保存，实际 Forward CAS 从直达 E
+改为经 F2；Policy、最终 E、授权和手机首跳不变。只读领取与消费的整集合摘要不能逐条证明
+某个 UI 样本进入缓存，已合并读取亦不能反推 wire reset／delta。自动反转本身由实际 CAS
+及正常 GET 证明，不用纯算法回放、F2 的选择或手机首跳代替。
+
+旧两条业务的手机 UUID／资源链、本机端口、Box、各自 Policy／revision 保持，完整响应
+继续增加；旧 HTTPS 在 F1 的原 tracker 仍直达 E 且双向字节增加。随后另建普通应用 HTTPS
+连接并取得完整正文，三端实际连接分别显示 F1→F2、F2→E、Egress，第二次回读同一 tracker
+的双向字节继续增加。F1 新 tracker 不在换路前完整旧集合中；F2／E 未保存新流前的完整
+集合，仅据独立 UUID、唯一普通目标上下文、实际资源链与连续字节增长关联，不制造跨节点
+全局 UUID 或要求不同层字节相等。手机换路前后出口 IP 的地址族与摘要相同，且匹配同 E
+namespace 的独立读回。原 Scope worker 此后正常停止，其保持证明不外推后续刻意丢包。
+
+接着仅对 F2→E 的测试链路注入丢包。首个普通 HTTPS 实际连接超时，VPN 仍已连接，原件
+保留；真实失败样本经正常报告传播后，F1 自然回到直达同 E，后续新普通请求取得完整正文。
+两次请求和传播观察分别记录，不以后一成功覆盖首败，不宣称即时或零中断恢复。未修改
+Policy／最终出口、伪造 Observation、手工写 selector 或增加重试。该链路已恢复健康；
+持续运行内的新鲜恢复样本／再选 F2 与精确撤权另行取证。
+
+本窗口手机、Gateway、三端 client／native、relay、bridge 及本地 control 已正常退出，
+实际 foreground join 与 owner 读回保留。辅助 UI 脚本曾未找到滚动区外的断开按钮，失败
+原件单列；最终通过产品 UI 正常断开，未 force-stop。手机断开晚于 control 停止，不声称
+手机最终 stopped 报告在此之前送达。原手机身份与密钥、latch 保持，正常验证器确认认证及
+报告进度前向；最终持久双读、全链路签名原件审计与精确清理仍须分别完成。
+
+实际 CAS、旧流、新流、出口与故障首败／恢复原件位于
+`deploy/evidence/2026-11-07-multiforward-linktrace/continuation-0002/` 与同窗口 `phone/`。
+下一同身份 epoch 已分别验证两条链路失效。F1 原首选为直达 E 时，只对 F1→F2 的两传输
+丢包；正常报告出现两项新的 unavailable，实际首选保持 E，普通 HTTPS 完整成功且出口
+IP 摘要相同。该项不称自动首选切换。恢复后正常报告取得 F1→F2 的新鲜 available，并
+确认 F2→E 可用、各自当前网络代及未过期，才开始下一项故障。
+
+随后仅对 F1 直达 E 的两传输丢包。首个普通 TCP 请求超时并单列保留，F1 后续实际 CAS
+从 E 改为 F2。该节点为 forward-only，冻结源码的选择入口不接收 native TCP 反馈；这次
+CAS 来自正常 Link／共享测量链，未证明究竟哪次本机回调先触发。故障切换没有两组性能
+确认，不能套用先前质量优化的确认解释。换路后两条普通 TLS 均持续取得完整正文，三端
+完整新流前 UUID 集合排除旧流，两次回读的新 UUID／链保持且双向字节增长，明确经过
+F1→F2→同 E。出口 IP 摘要仍相同，工作负载随后正常停止，持续失败为零。原件在当前
+窗口 `continuation-0003/`；它补齐此案例三端的新流前集合，不补造前一案例缺失的集合。
+
+本 epoch 解除 F2→E 故障后，正常报告回读取得合法备选的 available 样本；未要求实际首选
+立即反转。恢复前已有的普通 HTTPS／LAN TCP 与恢复后新建的双 TLS 分属两个独立 RUN，
+均实际取得完整 2xx 正文。相同 app 的单调时钟证明：新 RUN 达到真实 baseline 后，旧 RUN
+的两个原 socket 仍继续响应，connection ID／端口保持；不跨 RUN 拼接连续性。前置只读
+capture 已把旧两流绑定到各自手机 native tracker，F1 的唯一普通目标上下文实际使用 E
+传输；新 RUN 缺少对应三端 tracker，不把其正文成功写成新流已经实证经过 F1→F2→E。
+
+窗口末三个 TLS 约同刻 EOF，两个 worker 随后均为 `failed` 且 cleanup 已确认，原件完整保留。
+远端一小时 TTL 已结束，实际 namespace／client／恢复后 relay 均退出，Root 后续 stop 操作
+发生在这些 owner 已死之后；原 relay 外层失败也另存。该末段受 TTL 停机干扰，不能算撤权、
+产品故障或无故障持续运行通过。没有本窗跨机时钟偏差区间，不由各源墙钟推断精确 TTL／EOF
+先后；恢复后已取得的正文与旧 socket 保持区间按手机单调时钟单独成立。
+
+既有默认浏览器已在本次独占创建的普通测试 tab 完成 document、CSS、三个 JS 和 image。
+六项均按本次 loader／request ID 逐一核对 request、response、loadingFinished 的实际事件序，
+取得 200、有效 TLS、非缓存／service worker 的完整传输，并核对必要 DOM、样式、脚本和图片
+结果。私有 helper `30308e6b` 实际退出 0 并 join，仅关闭本次 tab、精确移除本次 forward，
+app／浏览器 owner 与原映射保持。旧 helper 对 response／finish 时间戳的额外排序假设误拒，
+以及正常前台前 metadata 请求超时，均保留原件；未据此定位浏览器冻结原因。此轮没有观测到
+新建 HTTP 连接，CDP 成功不单独证明下游 native 路径或出口，也不外推其他页面／应用。
+
+限定恢复与浏览器证据分别在同窗口 `continuation-0003/recovery-existing-evidence-audit-*.json`
+及 `phone/browser-final-summary-*.json`，实际时长、序列、UUID 与坐标只进私有证据。
+至该 epoch 结束时，精确撤权、最终原件审计、持久回读及清理尚未完成；后续实际结果见下节，
+不追溯改写本 epoch 的失败或缺失证据。正式签名制品与生产激活未执行。
+
+## 阶段 3：精确撤权与最终保全
+
+最后一个有界 epoch 仍在相同三台异网主机、同一组测试身份和原 `.28` APK 上执行。Linux
+原测试 CLI／native 不变，仅外层既有 SSH 执行器显式复用已有保活参数；未修改 sshd、NAT，
+未重启 namespace／client／native 或生产实例。上一 epoch 私有 control relay 的外层 SSH 曾复位，而 namespace、
+client、native 与其他 relay 仍活；只恢复精确 relay 后正常配置领取／消费／报告恢复。原复位
+原因未知，不把当时 control 不可用的业务失败当作选路算法缺陷。
+
+先取得正常 F1→E 首选及三段当前规格、网络代、未过期 Link 样本，只降低测试 F2→E 的实际
+报文时延。F1 由正常共享测量和稳定确认完成 E-Hy2→F2-WG 的实际 CAS；pending 变化及
+新采样进度均在原日志读回，没有手工 selector 或重新授权。旧 HTTPS／LAN 的手机连接、
+UUID、资源链与 Box 保持，完整响应继续；F1 旧 HTTPS tracker 仍直达原 E 且双向字节增长。
+新建双 TLS 后，三端完整旧 UUID 集合均排除这些新流，两个时点的真实资源链与增长分别
+证明 F1→F2-WG→E-Hy2→互联网。这里不制造跨节点统一 UUID，也不要求层间字节相等。
+
+随后只沿正常 `policy.put` 从该测试 Policy 的 RelayScope 移除 F2，其他字段和无关对象的
+认证 head 保持。三端均接受新 View／权限证明并应用；F2 的相关转发消失，原其他 Policy
+保持，F1 仍有直达同 E 的合法资源。两个新 F2 TLS 实际 EOF，worker 为 `failed` 且注册
+socket 均清理，三端对应 tracker 消失；手机原直达 E HTTPS、LAN 的 UUID／链与 Box 保持，
+同一旧流完整正文和双向字节继续增加。撤权后的新普通 HTTPS 完整成功，出口 IP 的地址族
+和摘要仍匹配此前同 E 的独立读回；N4 没有另做一次 E 端独立 IP 读取。授权变化会正常提高
+确认 revision，不能要求整份内存
+字节不变。额外一次超过计划观察上限的回读另标，不伪称都在该限内；未取得的拒绝日志
+字段不补造。旧 worker 后续自然到达自身有界寿命，不将其末段称为撤权关闭。
+
+故障与恢复矩阵按各自独立窗口判定，不能把不连续 RUN 拼接为一个长连接：
+
+| 场景 | 正常测量／实际选择与业务结果 | 范围限制 |
+|---|---|---|
+| F2→E 失效 | 正常失败样本传播，F1 回到同 E 的直达首选，后续普通正文成功 | 首请求实际超时保留，不承诺零中断 |
+| F1→F2 失效 | 非首选链路两传输新 unavailable，原 E 首选、普通正文及同出口保持 | 不称首选切换 |
+| 直达 E 失效 | 首请求失败后正常 Link／共享测量驱动 F1 CAS 至 F2；新双 TLS 三端 tracker／资源链、正文及同出口通过 | forward-only 入口未消费 native TCP 反馈，不套用性能优化确认次数 |
+| F2 恢复 | 解除精确故障后取得当前规格／网络代的新鲜 available；新普通业务成功，原两 Scope socket 在独立同钟区间继续收发；最后 epoch 再由新样本实际选 F2 并完成三端新流取证 | 恢复 RUN 缺三端 tracker，末段 TTL 停机不计持续业务或产品失败；不强加恢复后立即首选反转 |
+| 精确撤销 F2 | 正常新权限三端应用；仅新 F2 流关闭，旧直达 E／LAN 保持，后续新正文及同出口通过 | 不外推未测试 Policy 或所有传输组合 |
+
+测试后先正常恢复该 Policy 的 F2 范围并回读，再由手机正常 UI 断开、恢复原 Internet 偏好及
+空 LAN 偏好。Gateway／远端 client、native、relay、bridge 和 namespace 的真实 foreground
+均退出；最后 accepted running 报告不倒写为 stopped 已送达。先归档三端身份、状态及签名
+历史，再对全部指定测试根整树比较，全体通过后并行精确删除；本机归档和 authority 原件保留。
+LAN Service／Policy、Gateway 临时角色、手机测试授权和多 Forward 测试材料均通过正常
+新事实撤回。一次正常 snapshot 读取失败的原始原因未保留，后续同入口读取成功并按原
+请求继续，不臆测认证或产品故障，也不改写历史 head。
+
+全部授权清理之后，手机再次通过正常“检查更新”接受最终认证前沿，保持原偏好及断开状态。
+正常 CLI `export-device-view` 的规范字节与手机 LKG 一致；完整身份验证器及两次独立加密
+存储读取等于缓存，原身份、密钥、claim、invite、latch 保持，high-water／认证拒退边界和
+报告序列均前向。原身份只在专用消费者内读取，不保存明文副本。此前清理回执明确标记
+尚未验证最终手机接受；其 false 原样保留，以独立 POST 证明补齐，不回写旧回执。
+
+本地 control 随后正常停止，原 foreground 实际退出 0，namespace／slirp 均退出。手机动态
+RUN 的自有 nonce 文件、API 凭据和精确映射已清理，forward／reverse 恢复原基线；无引入
+归属证明的共享 jar／UI dump 保留为非运行文件。全部生产者与 control 停止后，冻结审计器
+实际退出 0：五源完整报告的规范字节、签名、数据库键、序列／分叉／因果、签名历史身份及
+全部输入正常 snapshot 的报告／测量引用通过。共同 running 原件存在；手机末份原件为
+stopped，其他源的最后已收签报仍为 running，其停止由独立 owner／join 证明，不补造报告。
+数据库摘要、inode、大小、mtime 和 authority 原件均不变。
+
+旧 snapshot 仅按原 SHA 定位已迁移的原件；新增嵌套 capture 格式只按唯一 JSON key 的原
+字节偏移提取正常对象，绑定来源、偏移、长度与摘要，不重编码或改动签名 RAW。该输入
+取证不声称片段就是原 API wire，也不将报告真实性当作业务成功。最终原件与命令在同根
+`final-signed-raw-audit-*/`、`signed-report-audit-*.json`，六节点新连接回查另记。
+
+最终复用既有执行器并行取得六节点新 SSH 只读回读。Loom 身份、程序／清单字节、长期
+进程的 PID／启动时间／namespace、已有服务字段及 IPv4 route／rule 均与最初材料相同。
+完整 TCP／UDP／Loom Unix 监听按端点核对；本机手机辅助 API 移除后补读，没有新增端点，
+消失的旧测试监听逐项绑定同一 slirp owner 与停止证明。bridge 的精确 gc_timer 字段及
+地址自然寿命变化单列；一项相同 UDP 端点／owner PID 的 fd 编号变化不伪称新端口。
+
+回查仍有两个具体未解释变化：一台主机相同 Nginx 监听的 worker PID 集合更替，以及一个
+未参与转发测试的备用节点输入防火墙 ACL 实际增删。后者不只是计数器；初始六节点没有
+防火墙基线，现有证据只证明前次回查到本次的差异，不能确定写入者或归因本任务。原严格
+比较的 false 保留，稳定字段通过和这些未知分别记录，不宣称全六节点防火墙或全部进程
+从未变化，也不为清零差异修改生产。实际三台转发测试主机的防火墙与已保存的早期 preflight
+相同，DNS 只按实际较晚基线判定；未新增全六节点
+IPv6、WireGuard 握手、宿主代理或公网主动业务验收。宿主本机另有完整 IPv4／IPv6 路由、
+规则、接口、地址、namespace 与 resolver 对照通过。六节点原件及严格差异在
+`deploy/evidence/2026-11-07-final-six-node-postcheck-*/`，不会用后采材料冒充初始基线。
+本节实际 CAS、新旧流、精确撤权、正常最终接受和三端归档／删除原件在
+`deploy/evidence/2026-11-07-multiforward-linktrace/continuation-0004/`、同根 `phone/`、
+`authority/` 与 `lan-attach/`。真实坐标、指标和签名原文仅保留于私有证据。
+
+| 报告字段 | 阶段 3 当前记录 |
+|---|---|
+| 1. 提交 SHA | `c5fb6b103689761781ec0ba59811e762e2ca1345` 加未提交工作区；实际远端 CLI `0bfe4fcf`、native 与已安装 APK 分别固定来源；后续 `073838d7` 日志 reader CLI 未部署 |
+| 2. 修改文件与理由 | `internal/clientadapter/forward.go`、Linux `private_io.go`／`probe_debug.go` 及相关测试补显式领取／消费与稳定选择证据；不改选路算法。其余拓扑、故障、浏览器与清理工具仅在忽略目录复用既有入口，未另建部署平台 |
+| 3. 已修复缺陷 | 本阶段未证实新的多 Forward 产品算法缺陷；修正一次性工具的证据门禁、浏览器事件序假设、规范删除请求与本次已接受事实的清理输入，原失败保留 |
+| 4. 命令与结果 | 正常 CLI 加入／配置／运行／`policy.put`／撤回／导出，手机正常 UI 与既有 UID worker、三端只读 tracker、精确 namespace 链路工具、owned browser helper 均实际执行；最后三端 check 全通过再并行 delete，真实退出 0；根完整检查见阶段 2 |
+| 5. 真实业务证据 | 精确 `.28` 手机、异网 F1／F2／境外 E，正常测量驱动实际 CAS、新流经 F2、旧直达流保持、同出口、五项故障恢复矩阵及一个普通浏览器页面的六项实际依赖；原失败与各 RUN 边界分别保全 |
+| 6. 具体缺口 | 浏览器未观察新 HTTP 连接，不独立抵扣 native 路径；恢复末段受 TTL 干扰，已验区间与缺失 tracker 单列；六节点 Nginx worker／备用节点 ACL 的观测变化未归因，不宣称全项不变；历史手机 WG 超时、正式签名制品及生产激活仍未闭合，核心工作项 open |
+| 7. 下一入口 | 按下节阶段 4 的正式 Policy 操作／精确 Service 重建／既定模拟图像扫码入口继续；阶段 5–8 保留各自设备、连续窗口和生产授权门禁 |
+
+
+## 阶段 4–8 的后续执行入口
+
+以下是前三阶段之后的执行计划，不代表已执行，也不新增权威状态、Policy 语义或资源池。
+各项先核当前精确制品与既有实现，再补缺失的最小实测；真实手机期间不得并行干扰 ADB、VPN
+或网络。真实坐标、逐字签名原件、失败日志与观测窗口仅进入忽略的私有证据。
+
+### 阶段 4：Policy、连接与加入交互
+
+复用 Android `ScopeApplicationTest`、`SelectorTakeoverTest`、
+`SelectorOperationInstrumentedTest` 与正式 UI：启动旧请求挂起时手动选择另一 Policy，
+新 revision 完整确认后释放旧请求，核对锁外 I/O、取消及真实 selector CAS 回读。随后执行
+允许范围内的 A→B：旧合法 A 连接 UUID、资源租用与收发保持，新连接使用 B；再以正常授权
+入口撤销 A，只关闭失权连接，B 保持。沿现有产品 Service 重建入口核对 Kotlin、JNI 与
+native receiver，确认仅目标 Service 的连接重建，其他 Scope／Service 的连接、统计与
+资源继续工作；不以重启整个 Box 代替精确操作。
+
+加入复用 `InviteScannerInstrumentedTest` 的既有图像输入方法：ADB 模拟二维码图像，经过
+真实 CameraX Analyzer、ZXing 与产品回调，不新增光学摄像头前置条件。用同一单调时钟记录
+图像提交、解码、扫码回调、bootstrap、身份绑定、加密持久化、连接和首个普通业务完整响应；
+重复连续试验并分别输出分段分布，不把不连续窗口相加。每轮检查正常界面回读及身份进度，
+不为提速跳过正常加入或持久化。
+
+### 阶段 5：跨物理网络恢复
+
+沿现有 `NetworkProbe`、`UnderlyingNetworkSelection` 与 `LoomVpnService`，记录 Android
+Network ID／网络代、实际接口、WG／Hy2 underlay socket 绑定、选择 revision、新旧样本及
+新业务。分别执行 Wi-Fi→蜂窝、蜂窝→Wi-Fi，必要时不同 Wi-Fi 之间切换；旧代测量必须失效，
+新代正常产生测量并恢复新连接。旧 TCP 不要求存活，但失效须如实报告；不重新加入或重置
+身份、密钥、floor、high-water、latch 与报告序列，不修改宿主网络制造条件。
+
+当前设备 SIM 非 ready，尚缺可用蜂窝数据条件；同一 Wi-Fi 断开恢复不能抵扣本项。可先复核
+现有采集入口与身份只读基线，待蜂窝或相应物理网络可用后执行对应方向，不要求新增 Linux
+测试机器，也不把不同 Wi-Fi 的结果替代蜂窝方向。
+
+### 阶段 6：闲置、冷建与长期成本
+
+复用现有 Lease、CAS、Receiver Fence 与纯发送资源池，结合当前隔离 Gateway 和真实手机
+普通工作负载：两种传输可用时保留被选路径及旧连接，另一条无实际需求后，核对真实 WG peer
+删除和 Hy2 会话回收；接收／管理基础保留。重新产生需求后核对冷建、新业务和迟到 Release
+不能删除新 generation。使用现有 `/loom/resources`、`/loom/wireguard-counters`、
+`/connections/`、正式运行回读及签名报告，不由描述对象数推导实际 peer 数。
+
+按候选节点、Forward Link、测量目标逐档增加，先声明工作负载与连续观测窗口，再记录发送／
+接收／管理 peer、实际 Hy2 会话、各节点／Link／目标请求量、签名原件及差量字节、CPU、
+RSS／PSS、Loom 进程或 UID 的 RX／TX、Android 实际耗电与需求到可用的冷建耗时。保留采集
+前后基线和原始样本；接口总流量不充当 Loom 独占流量，短时 RSS 不推导内存上界，短窗口不
+宣称续航或长期成本已经验收。
+
+### 阶段 7：Windows 实体终验
+
+按 [Windows 测试环境](operations/windows-test-vm.md) 保留当前服务器开发与 VM 证据，
+不重复已经通过的软件构建、安装或 VM 检查来抵扣实体缺口。复用
+`scripts/windows-test-vm.sh`、`scripts/windows-full-tests.ps1`、
+`scripts/verify-windows-installer.ps1` 与 `scripts/ui-review-windows.ps1` 的既有执行／
+采集入口，先固定精确制品、日志路径与恢复步骤；VM 日常维护由代理负责。
+
+Windows ARM64 实际运行、真实网卡切换、睡眠／唤醒、TUN 恢复、显示器／DPI 变化及原生 GUI
+长期运行仍须对应实体设备。目前缺少该实体条件，保持待验；取得设备后逐项记录正常入口、
+网络及管理安全、恢复后的新业务、身份进度与界面结果，不把 VM 判为物理通过。
+
+### 阶段 8：正式制品与生产前向迁移准备
+
+本轮不激活生产。先沿严格配置加载器、正常 inspect／签名 View 及服务回读，整理生产程序和
+数据面版本、实际入口、节点身份、固定 WG key／Hy2 认证材料的受保护引用、签名 Material
+原件、认证前沿、high-water、floor、latch 与报告序列；密钥正文不进入文档、参数或日志。
+沿现有构建／打包／签名清单入口制定各目标的真实来源及签名计划，独立保留 `.27` 与本轮
+Linux／Android `.28` 坐标，不伪造未构建平台摘要，也不将 Debug 签名当正式发行。
+
+先准备停止精确数据 owner 后的逐字原件备份与验签、可验证的前向步骤、分批激活及重启恢复
+回读、安全停止和不可回退约束。真正生产激活须在其他阶段完成并取得单独明确授权后执行；
+届时各独立节点有界并行，先全体验身份、再分发实际所需制品，全部制品及规定 HTTPS 验证
+通过才推进发布指针，始终保留管理入口。异常只停止或 compare-and-delete 本次确实拥有的
+对象，不改生产授权／Policy／密钥，不删签名原件，不降低认证进度，也不恢复旧协议 fallback。
+
 ## 当前版本定向审查与修复
 
 2026-11-06，起始工作区干净，分支 `main`、本地 `origin/main` 与 HEAD 均为

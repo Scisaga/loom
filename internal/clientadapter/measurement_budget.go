@@ -57,6 +57,15 @@ type measurementTimeCapture struct {
 	timing measurementTime
 }
 type measurementTimeKey struct{}
+type measurementCompletionKey struct{}
+
+// markMeasurementCompletion fixes this actual flight's original completion
+// before diagnostic delivery. Direct probes without a flight have no marker.
+func markMeasurementCompletion(ctx context.Context) {
+	if complete, _ := ctx.Value(measurementCompletionKey{}).(func()); complete != nil {
+		complete()
+	}
+}
 
 func captureMeasurementTime(ctx context.Context, now func() time.Time) (context.Context, *measurementTimeCapture) {
 	capture := &measurementTimeCapture{now: now}
@@ -151,8 +160,13 @@ func runMeasurementOn[T any](ctx context.Context, budget *MeasurementBudget, key
 				clock = capture.now
 			}
 			started := time.Now()
-			value, err := run(pending)
-			timing := measurementTime{completed: clock(), duration: time.Since(started)}
+			var once sync.Once
+			var timing measurementTime
+			complete := func() {
+				once.Do(func() { timing = measurementTime{completed: clock(), duration: time.Since(started)} })
+			}
+			value, err := run(context.WithValue(pending, measurementCompletionKey{}, complete))
+			complete()
 			quota.mu.Lock()
 			if quota.rx == 0 || quota.tx == 0 {
 				err = ErrMeasurementDeferred

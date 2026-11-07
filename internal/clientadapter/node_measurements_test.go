@@ -134,6 +134,11 @@ func TestCoalescedNodeMeasurementsKeepOneOriginalTimeAndDuration(t *testing.T) {
 	started, finish := make(chan struct{}, 1), make(chan struct{})
 	var clock atomic.Int64
 	clock.Store(at.UnixMilli())
+	const diagnosticDelay = 100 * time.Millisecond
+	ctx = WithEchoDiagnosticLog(ctx, func(string) {
+		clock.Store(at.Add(time.Hour).UnixMilli())
+		time.Sleep(diagnosticDelay)
+	})
 	var calls atomic.Int32
 	task := nodeMeasurement{template: control.Observation{Level: "egress", Target: "https://demo.example/health", Action: "https_request", SpecDigest: "sha256:" + strings.Repeat("a", 64)}}
 	task.run = func(pending context.Context) (*int64, *control.HY2Transfer, bool, error) {
@@ -144,6 +149,9 @@ func TestCoalescedNodeMeasurementsKeepOneOriginalTimeAndDuration(t *testing.T) {
 			case <-pending.Done():
 				return 0, pending.Err()
 			case <-finish:
+				markMeasurementCompletion(pending)
+				emitEchoDiagnostic(pending, strings.Repeat("a", 64), "request-finish", 0, nil)
+				markMeasurementCompletion(pending)
 				return 1, nil
 			}
 		})
@@ -154,6 +162,7 @@ func TestCoalescedNodeMeasurementsKeepOneOriginalTimeAndDuration(t *testing.T) {
 		err     error
 	}
 	first, second := make(chan result, 1), make(chan result, 1)
+	wallStarted := time.Now()
 	go func() {
 		samples, err := observeNodeJobs(ctx, []nodeMeasurement{task}, nil, "demo-underlay", func() time.Time { return time.UnixMilli(clock.Load()) }, timing, nil)
 		first <- result{samples, err}
@@ -185,8 +194,11 @@ func TestCoalescedNodeMeasurementsKeepOneOriginalTimeAndDuration(t *testing.T) {
 		t.Fatal("shared measurement failed", a.err, b.err, calls.Load())
 	}
 	left, right := a.samples[0], b.samples[0]
-	if left.ObservedAt != clock.Load() || right.ObservedAt != left.ObservedAt || right.ValidUntil != left.ValidUntil || *right.DurationMS != *left.DurationMS {
+	if left.ObservedAt != at.Add(time.Second).UnixMilli() || left.ValidUntil != at.Add(time.Second+timing.SuccessValidity).UnixMilli() || right.ObservedAt != left.ObservedAt || right.ValidUntil != left.ValidUntil || *right.DurationMS != *left.DurationMS {
 		t.Fatal("coalescing renewed a sample or timed only a consumer's remaining wait")
+	}
+	if time.Since(wallStarted)-time.Duration(*left.DurationMS)*time.Millisecond < diagnosticDelay {
+		t.Fatal("diagnostic delivery entered the original shared measurement duration")
 	}
 }
 

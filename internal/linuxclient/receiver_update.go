@@ -15,6 +15,15 @@ func rebuildReceivingConfigs(view control.DeviceView, options Options, secret st
 	if err != nil {
 		return "", "", err
 	}
+	if options.TraceProbes {
+		config, err = withProbeDebugConfig(config)
+		if err == nil {
+			server, err = withProbeDebugConfig(server)
+		}
+		if err != nil {
+			return "", "", err
+		}
+	}
 	config, err = clientadapter.WithLocalNetworkBoundary(config, connected, localNetworks...)
 	if err != nil {
 		return "", "", err

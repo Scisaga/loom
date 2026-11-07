@@ -185,6 +185,13 @@ worker 经[受信本机物理 I/O](../core/current-contract.md#本机出口测�
 DNS 和平台 underlay 绑定。两者均受节点统一预算限制，不能由探测样本缩减普通互联网权限。
 端口占用时不得停止其他进程来完成验证。该方式不抵扣隔离 TUN 或自动安装包验收；正式部署仍逐项验证宿主不变量。
 
+需要定位传输入口或 Policy 准入回显时，可仅对该次 `loom client run` 加 `-trace-probes`。
+它开启原生 Debug，并只将回显白名单字段和原生关联 ID 交给现有日志输出；普通业务的 Debug/Info
+目标不进入该输出，既有警告和错误继续保留。`echo_id` 是本次随机回显 nonce 的摘要，用于关联发送、
+接收、认证、准入和响应阶段，不改变执行帧、权限、重试或持久模型。默认关闭，重载保持同一日志投影，
+不会仅因开启诊断而替换内核。日志投递仍同步；慢日志消费者会延迟调用返回，但不能延后该次观测的
+完成时间、有效期或测量时长。仅开启诊断、取得回显或收到本机 CONNECT 响应均不证明实际业务成功。
+
 承载一跳 Hy2 的节点额外传入 `-resource-inputs /path/to/demo-resource-inputs.json`，文件形状与
 TLS 引用见[本机配置模型](configuration-model.md)。普通 `resource.put` 与 Service/Policy 事实经私有
 配置通道投影出 listener 和入站用户；本机文件只能定位材料，不能增加资源、用户或目标权限。

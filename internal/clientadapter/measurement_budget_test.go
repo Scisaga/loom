@@ -24,16 +24,19 @@ func TestNodeMeasurementBudgetSharesInflightAndCancelsOnlyAfterLastConsumer(t *t
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-finish:
+			markMeasurementCompletion(ctx)
 			return "demo-result", nil
 		}
 	}
 	first, cancel := context.WithCancel(context.Background())
+	first, firstTiming := captureMeasurementTime(first, func() time.Time { return at })
 	firstDone := make(chan error, 1)
 	go func() { _, err := runMeasurementOn(first, budget, "demo-same", 512, run); firstDone <- err }()
 	<-started
 	secondDone := make(chan error, 1)
+	second, secondTiming := captureMeasurementTime(context.Background(), func() time.Time { return at.Add(time.Hour) })
 	go func() {
-		value, err := runMeasurementOn(context.Background(), budget, "demo-same", 512, run)
+		value, err := runMeasurementOn(second, budget, "demo-same", 512, run)
 		if value != "demo-result" && err == nil {
 			err = errors.New("lost shared result")
 		}
@@ -65,6 +68,35 @@ func TestNodeMeasurementBudgetSharesInflightAndCancelsOnlyAfterLastConsumer(t *t
 	close(finish)
 	if err := <-secondDone; err != nil || calls.Load() != 1 {
 		t.Fatal("one cancellation cancelled the shared measurement", err, calls.Load())
+	}
+	if !firstTiming.timing.completed.IsZero() || !secondTiming.timing.completed.Equal(at) {
+		t.Fatal("actual completion mutated a canceled consumer or borrowed a later consumer's clock")
+	}
+}
+
+func TestMeasurementTimingFallbackKeepsTheSameFlightBoundary(t *testing.T) {
+	for _, early := range []bool{false, true} {
+		at := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+		clock := at
+		budget, err := NewMeasurementBudget(MeasurementLimits{Window: time.Minute, Requests: 1, Concurrent: 1, Bytes: 1024, Timeout: time.Second}, func() time.Time { return clock })
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, captured := captureMeasurementTime(context.Background(), func() time.Time { return clock })
+		_, err = runMeasurementOn(ctx, budget, "demo-completion", 128, func(pending context.Context) (int, error) {
+			if early {
+				markMeasurementCompletion(pending)
+			}
+			clock = at.Add(time.Second)
+			return 1, nil
+		})
+		want := at.Add(time.Second)
+		if early {
+			want = at
+		}
+		if err != nil || !captured.timing.completed.Equal(want) {
+			t.Fatal("unmarked fallback or marked original completion changed", early, err)
+		}
 	}
 }
 

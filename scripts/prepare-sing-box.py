@@ -118,7 +118,7 @@ def prepare(destination):
             "sing_quic_version": QUIC_VERSION, "sing_quic_commit": QUIC_COMMIT, "sing_quic_module_sum": QUIC_SUM,
             "sing_version": SING_VERSION, "sing_commit": SING_COMMIT, "sing_module_sum": SING_SUM,
             "wireguard_version": WG_VERSION, "wireguard_commit": WG_COMMIT, "wireguard_module_sum": WG_SUM,
-            "artifact_version": "1.11.4-loom.27"}
+            "artifact_version": "1.11.4-loom.28"}
 
 
 if __name__ == "__main__":

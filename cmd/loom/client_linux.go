@@ -61,6 +61,7 @@ func cmdClientRun(args []string) error {
 	capture := fs.String("capture", "mixed", "tun (supervised isolated applications) or mixed (explicit loopback proxy)")
 	resources := fs.String("resource-inputs", "", "protected local server listener/TLS input file")
 	wgKey := fs.String("wireguard-private-key", "/etc/wireguard/node.key", "protected WireGuard private key file")
+	traceProbes := fs.Bool("trace-probes", false, "emit safe Debug correlation for transport echo diagnostics")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -73,7 +74,7 @@ func cmdClientRun(args []string) error {
 	signal.Notify(reload, syscall.SIGHUP)
 	defer signal.Stop(reload)
 	return linuxclient.Run(ctx, linuxclient.Options{DeviceState: *state, LocalState: *local, Status: *status,
-		Config: *config, SingBox: *singBox, Capture: *capture, ResourceInputs: *resources, WireGuardPrivateKey: *wgKey, Reload: reload, Log: os.Stderr})
+		Config: *config, SingBox: *singBox, Capture: *capture, ResourceInputs: *resources, WireGuardPrivateKey: *wgKey, Reload: reload, TraceProbes: *traceProbes, Log: os.Stderr})
 }
 
 func cmdClientPreflight(args []string) error {
